@@ -51,7 +51,7 @@ func New(config Config) (*Proxy, error) {
 	if routesConfigPath == "" {
 		upstreamBaseURL := strings.TrimSpace(config.UpstreamBaseURL)
 		if upstreamBaseURL == "" {
-			upstreamBaseURL = "http://ai.hwdrama.com"
+			upstreamBaseURL = "https://ai.hwdrama.com"
 		}
 		parsedUpstream, err := url.Parse(upstreamBaseURL)
 		if err != nil {

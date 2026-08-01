@@ -269,24 +269,37 @@ func baseRelayEvent(c *gin.Context, info *relaycommon.RelayInfo, eventType strin
 		APIKeyRedacted:    info.TokenKey != "",
 		Group:             group,
 	}
+	channelID := 0
 	channelType := ""
+	upstreamModelName := ""
+	upstreamBaseURL := ""
+	isModelMapped := false
 	if info.ChannelMeta != nil {
+		channelID = info.ChannelMeta.ChannelId
 		channelType = constant.ChannelTypeNames[info.ChannelMeta.ChannelType]
+		upstreamModelName = info.ChannelMeta.UpstreamModelName
+		upstreamBaseURL = info.ChannelMeta.ChannelBaseUrl
+		isModelMapped = info.ChannelMeta.IsModelMapped
+	} else if c != nil {
+		channelID = common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+		channelType = constant.ChannelTypeNames[common.GetContextKeyInt(c, constant.ContextKeyChannelType)]
+		upstreamModelName = common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+		upstreamBaseURL = common.GetContextKeyString(c, constant.ContextKeyChannelBaseUrl)
 	}
-	event.RoutingContext.ChannelID = intString(info.ChannelId)
+	if upstreamModelName == "" {
+		upstreamModelName = info.OriginModelName
+	}
+	event.RoutingContext.ChannelID = intString(channelID)
 	event.RoutingContext.ChannelType = channelType
 	event.RoutingContext.ModelName = info.OriginModelName
 	event.RoutingContext.OriginModelName = info.OriginModelName
-	event.RoutingContext.UpstreamModelName = info.UpstreamModelName
-	if event.RoutingContext.UpstreamModelName == "" && info.ChannelMeta != nil {
-		event.RoutingContext.UpstreamModelName = info.ChannelMeta.UpstreamModelName
-	}
+	event.RoutingContext.UpstreamModelName = upstreamModelName
 	event.RoutingContext.CallType = callTypeFromRelayMode(info.RelayMode)
 	event.RoutingContext.RelayMode = relayModeName(info.RelayMode)
 	event.RoutingContext.RelayFormat = string(info.GetFinalRequestRelayFormat())
-	event.RoutingContext.UpstreamBaseURL = info.ChannelBaseUrl
+	event.RoutingContext.UpstreamBaseURL = upstreamBaseURL
 	event.RoutingContext.IsStream = info.IsStream
-	event.RoutingContext.IsModelMapped = info.IsModelMapped
+	event.RoutingContext.IsModelMapped = isModelMapped
 	if info.TaskRelayInfo != nil {
 		event.TaskID = info.PublicTaskID
 		event.UsageContext.ExtraJSON = map[string]interface{}{

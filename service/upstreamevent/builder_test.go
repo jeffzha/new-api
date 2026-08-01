@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -64,6 +65,41 @@ func TestBuildUpstreamResponseEventIncludesContextsAndRawUsage(t *testing.T) {
 	assert.Equal(t, "anthropic", event.UsageContext.RawUsageJSON["provider"])
 	assert.Equal(t, "official", event.UsageContext.ExtraJSON["usage_quality_hint"])
 	assert.Equal(t, 42, event.UsageContext.ExtraJSON["quota"])
+}
+
+func TestBuildBillingDeltaEventUsesSelectedChannelContextWithoutChannelMeta(t *testing.T) {
+	oldCfg := currentConfig()
+	configValue.Store(Config{SourceSystem: "new-api:test"})
+	t.Cleanup(func() { configValue.Store(oldCfg) })
+
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	common.SetContextKey(c, constant.ContextKeyChannelId, 4)
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, "https://tokenhub.tencentmaas.com")
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, "hy3")
+
+	info := &relaycommon.RelayInfo{
+		TokenId:         5,
+		UserId:          1,
+		UsingGroup:      "hunyuan-test",
+		OriginModelName: "hy3",
+		RelayMode:       relayconstant.RelayModeChatCompletions,
+		RelayFormat:     types.RelayFormatOpenAI,
+	}
+
+	var event ProviderEvent
+	require.NotPanics(t, func() {
+		event = BuildBillingDeltaEvent(c, info, "preconsume", 2, 2, 2, nil)
+	})
+
+	assert.Equal(t, "4", event.RoutingContext.ChannelID)
+	assert.Equal(t, constant.ChannelTypeNames[constant.ChannelTypeOpenAI], event.RoutingContext.ChannelType)
+	assert.Equal(t, "hy3", event.RoutingContext.UpstreamModelName)
+	assert.Equal(t, "https://tokenhub.tencentmaas.com", event.RoutingContext.UpstreamBaseURL)
+	assert.False(t, event.RoutingContext.IsModelMapped)
+	assert.Equal(t, "preconsume", event.UsageContext.ExtraJSON["billing_stage"])
 }
 
 func TestMetadataFromBodyKeepsBillingFieldsAndRedactsPayload(t *testing.T) {

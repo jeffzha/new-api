@@ -610,6 +610,8 @@ func handleConfigUpdate(key, value string) bool {
 	} else if configName == "seedance_video_pricing" {
 		if err := seedancepricing.RebuildPriceIndex(); err != nil {
 			common.SysError("failed to rebuild Seedance video CNY price index: " + err.Error())
+		} else {
+			InvalidatePricingCache()
 		}
 	} else if configName == "theme" {
 		system_setting.UpdateAndSyncTheme()

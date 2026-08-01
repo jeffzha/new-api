@@ -23,6 +23,7 @@ import {
   UndoIcon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import { useQueryClient } from '@tanstack/react-query'
 import type { TFunction } from 'i18next'
 import { useEffect, useMemo, useRef } from 'react'
 import { useForm } from 'react-hook-form'
@@ -100,6 +101,7 @@ type Props = {
 
 export function SeedanceVideoPricingCard({ defaultValue }: Props) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const updateOption = useUpdateOption()
   const parsedDefaults = useMemo(
     () => parseSeedanceVideoPrices(defaultValue),
@@ -140,6 +142,7 @@ export function SeedanceVideoPricingCard({ defaultValue }: Props) {
 
       baselineSerializedRef.current = serialized
       form.reset(values)
+      await queryClient.invalidateQueries({ queryKey: ['pricing'] })
     } catch {
       // useUpdateOption reports the request error to the operator.
     }

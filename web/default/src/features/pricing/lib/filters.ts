@@ -24,6 +24,10 @@ import {
   ENDPOINT_TYPES,
 } from '../constants'
 import type { PricingModel } from '../types'
+import {
+  getLowestVideoTokenMatrixPrice,
+  getVideoTokenMatrixPricing,
+} from './provider-pricing'
 
 // ----------------------------------------------------------------------------
 // Filter Utilities
@@ -102,6 +106,10 @@ export function filterByEndpointType(
  * Get model price for sorting
  */
 function getModelPrice(model: PricingModel): number {
+  const providerPricing = getVideoTokenMatrixPricing(model)
+  if (providerPricing) {
+    return getLowestVideoTokenMatrixPrice(providerPricing) ?? 0
+  }
   return model.quota_type === 0 ? model.model_ratio : model.model_price || 0
 }
 

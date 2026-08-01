@@ -34,14 +34,16 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isTokenBasedModel } from '../lib/model-helpers'
+import { getDisplayGroupRatio, isTokenBasedModel } from '../lib/model-helpers'
 import {
   formatPrice,
   formatRequestPrice,
   stripTrailingZeros,
 } from '../lib/price'
+import { getVideoTokenMatrixPricing } from '../lib/provider-pricing'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
+import { VideoTokenMatrixPricing } from './video-token-matrix-pricing'
 
 // ----------------------------------------------------------------------------
 // Pricing Table Columns
@@ -114,6 +116,16 @@ export function usePricingColumns(
       ),
       cell: ({ row }) => {
         const model = row.original
+        const providerPricing = getVideoTokenMatrixPricing(model)
+        if (providerPricing) {
+          return (
+            <VideoTokenMatrixPricing
+              pricing={providerPricing}
+              groupRatio={getDisplayGroupRatio(model, selectedGroup)}
+            />
+          )
+        }
+
         const dynamicSummary = getDynamicPricingSummary(model, {
           tokenUnit,
           showRechargePrice,
@@ -233,7 +245,7 @@ export function usePricingColumns(
           </div>
         )
       },
-      size: 180,
+      size: 220,
       enableSorting: false,
     },
 

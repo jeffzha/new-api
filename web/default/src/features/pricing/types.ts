@@ -27,6 +27,19 @@ export type PricingVendor = {
   description?: string
 }
 
+export type VideoTokenPricingTier = {
+  resolution: string
+  without_video: number
+  with_video: number
+}
+
+export type VideoTokenMatrixPricing = {
+  kind: 'video_token_matrix'
+  currency: 'CNY'
+  unit: '1M_video_tokens'
+  tiers: VideoTokenPricingTier[]
+}
+
 export type PricingModel = {
   id: number
   model_name: string
@@ -56,6 +69,8 @@ export type PricingModel = {
   billing_expr?: string
   /** Pricing version returned by backend, useful for cache busting */
   pricing_version?: string
+  /** Provider-owned pricing that does not use the generic text-token formula. */
+  provider_pricing?: VideoTokenMatrixPricing
   /**
    * Optional model metadata fields reserved for backend-provided catalog data.
    * Keep them data-driven; do not synthesize display values on the client.

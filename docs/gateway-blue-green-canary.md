@@ -93,6 +93,9 @@ GO_PROXY=https://goproxy.cn,direct
 
 The lower Bun request concurrency avoids integrity failures caused by
 overloading the domestic mirror or the server's outbound path.
+If Bun still reports a tarball integrity failure, the image build retries up
+to `DockerBuildAttempts` times and reuses completed Docker layers. Other build
+errors fail immediately and are never retried.
 
 The production SSH endpoint throttles rapid new handshakes. The scripts pace
 successive SSH/SCP sessions by 30 seconds by default; override

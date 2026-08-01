@@ -34,6 +34,7 @@ param(
     [string]$Platform = "linux/amd64",
     [string]$BunRegistry = "https://registry.npmmirror.com",
     [ValidateRange(1, 64)][int]$BunMaxHttpRequests = 8,
+    [ValidateRange(1, 5)][int]$DockerBuildAttempts = 3,
     [string]$GoProxy = "https://goproxy.cn,direct",
     [ValidateRange(0, 120)][int]$SshConnectionCooldownSeconds = 30,
     [ValidateRange(1, 5)][int]$SshReadRetryCount = 3,
@@ -361,6 +362,7 @@ override_file="$overrideFile"
 platform="$Platform"
 bun_registry="$BunRegistry"
 bun_max_http_requests="$BunMaxHttpRequests"
+docker_build_attempts="$DockerBuildAttempts"
 go_proxy="$GoProxy"
 node_name="$nodeName"
 batch_update_enabled="$batchUpdateEnabled"
@@ -420,14 +422,32 @@ echo "Building immutable image `$image with domestic package mirrors..."
 rm -rf "`$build_dir"
 mkdir -p "`$build_dir"
 tar -xf "`$source_tar" -C "`$build_dir"
-docker build \
-    --platform "`$platform" \
-    --build-arg "BUILD_VERSION=`$image_tag" \
-    --build-arg "BUN_REGISTRY=`$bun_registry" \
-    --build-arg "BUN_MAX_HTTP_REQUESTS=`$bun_max_http_requests" \
-    --build-arg "GO_PROXY=`$go_proxy" \
-    -t "`$image" \
-    "`$build_dir"
+build_log="`$(mktemp "`$remote_dir/builds/.docker-build-`$target_slot.XXXXXX.log")"
+build_attempt=1
+while true; do
+    : > "`$build_log"
+    if docker build \
+        --platform "`$platform" \
+        --build-arg "BUILD_VERSION=`$image_tag" \
+        --build-arg "BUN_REGISTRY=`$bun_registry" \
+        --build-arg "BUN_MAX_HTTP_REQUESTS=`$bun_max_http_requests" \
+        --build-arg "GO_PROXY=`$go_proxy" \
+        -t "`$image" \
+        "`$build_dir" 2>&1 | tee "`$build_log"; then
+        rm -f "`$build_log"
+        break
+    fi
+
+    if ! grep -Eq 'Integrity check failed|IntegrityCheckFailed' "`$build_log" || [ "`$build_attempt" -ge "`$docker_build_attempts" ]; then
+        rm -f "`$build_log"
+        echo "Docker build failed and is not eligible for another integrity retry." >&2
+        exit 1
+    fi
+
+    echo "Domestic mirror integrity failure on build attempt `$build_attempt; retrying cached build layers..." >&2
+    build_attempt=`$((build_attempt + 1))
+    sleep 5
+done
 
 if [ "`$skip_backup" != "1" ]; then
     postgres_id="`$(service_container "`$postgres_service")"

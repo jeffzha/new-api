@@ -87,8 +87,12 @@ The remote Docker build uses:
 
 ```text
 BUN_REGISTRY=https://registry.npmmirror.com
+BUN_MAX_HTTP_REQUESTS=8
 GO_PROXY=https://goproxy.cn,direct
 ```
+
+The lower Bun request concurrency avoids integrity failures caused by
+overloading the domestic mirror or the server's outbound path.
 
 The production SSH endpoint throttles rapid new handshakes. The scripts pace
 successive SSH/SCP sessions by 30 seconds by default; override

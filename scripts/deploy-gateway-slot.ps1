@@ -33,6 +33,7 @@ param(
     [string]$VersionNamespace = "gateway",
     [string]$Platform = "linux/amd64",
     [string]$BunRegistry = "https://registry.npmmirror.com",
+    [ValidateRange(1, 64)][int]$BunMaxHttpRequests = 8,
     [string]$GoProxy = "https://goproxy.cn,direct",
     [ValidateRange(0, 120)][int]$SshConnectionCooldownSeconds = 30,
     [ValidateRange(1, 5)][int]$SshReadRetryCount = 3,
@@ -359,6 +360,7 @@ build_dir="$remoteBuildDir"
 override_file="$overrideFile"
 platform="$Platform"
 bun_registry="$BunRegistry"
+bun_max_http_requests="$BunMaxHttpRequests"
 go_proxy="$GoProxy"
 node_name="$nodeName"
 batch_update_enabled="$batchUpdateEnabled"
@@ -422,6 +424,7 @@ docker build \
     --platform "`$platform" \
     --build-arg "BUILD_VERSION=`$image_tag" \
     --build-arg "BUN_REGISTRY=`$bun_registry" \
+    --build-arg "BUN_MAX_HTTP_REQUESTS=`$bun_max_http_requests" \
     --build-arg "GO_PROXY=`$go_proxy" \
     -t "`$image" \
     "`$build_dir"

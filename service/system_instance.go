@@ -46,9 +46,10 @@ type SystemInstanceHostInfo struct {
 }
 
 type SystemInstanceResources struct {
-	CPU     SystemInstanceResourceUsage  `json:"cpu"`
-	Memory  SystemInstanceResourceUsage  `json:"memory"`
-	Storage SystemInstanceStorageMetrics `json:"storage"`
+	CPU     SystemInstanceResourceUsage   `json:"cpu"`
+	Memory  SystemInstanceResourceUsage   `json:"memory"`
+	Storage SystemInstanceStorageMetrics  `json:"storage"`
+	Network *SystemInstanceNetworkMetrics `json:"network,omitempty"`
 }
 
 type SystemInstanceResourceUsage struct {
@@ -60,6 +61,13 @@ type SystemInstanceStorageMetrics struct {
 	UsedBytes   uint64  `json:"used_bytes"`
 	FreeBytes   uint64  `json:"free_bytes"`
 	UsedPercent float64 `json:"used_percent"`
+}
+
+type SystemInstanceNetworkMetrics struct {
+	ReceivedBytes          uint64  `json:"received_bytes"`
+	SentBytes              uint64  `json:"sent_bytes"`
+	ReceiveBytesPerSecond  float64 `json:"receive_bytes_per_second"`
+	TransmitBytesPerSecond float64 `json:"transmit_bytes_per_second"`
 }
 
 func StartSystemInstanceReporter() {
@@ -90,6 +98,28 @@ func ReportCurrentSystemInstance() error {
 	}
 	systemStatus := common.GetSystemStatus()
 	diskInfo := common.GetDiskSpaceInfo()
+	resources := SystemInstanceResources{
+		CPU: SystemInstanceResourceUsage{
+			UsagePercent: systemStatus.CPUUsage,
+		},
+		Memory: SystemInstanceResourceUsage{
+			UsagePercent: systemStatus.MemoryUsage,
+		},
+		Storage: SystemInstanceStorageMetrics{
+			TotalBytes:  diskInfo.Total,
+			UsedBytes:   diskInfo.Used,
+			FreeBytes:   diskInfo.Free,
+			UsedPercent: diskInfo.UsedPercent,
+		},
+	}
+	if networkStatus, err := common.GetNetworkIOStatus(); err == nil {
+		resources.Network = &SystemInstanceNetworkMetrics{
+			ReceivedBytes:          networkStatus.ReceivedBytes,
+			SentBytes:              networkStatus.SentBytes,
+			ReceiveBytesPerSecond:  networkStatus.ReceiveBytesPerSecond,
+			TransmitBytesPerSecond: networkStatus.TransmitBytesPerSecond,
+		}
+	}
 	info := SystemInstanceInfo{
 		SchemaVersion: 1,
 		Node:          identity,
@@ -105,20 +135,7 @@ func ReportCurrentSystemInstance() error {
 		Host: SystemInstanceHostInfo{
 			Hostname: hostname,
 		},
-		Resources: SystemInstanceResources{
-			CPU: SystemInstanceResourceUsage{
-				UsagePercent: systemStatus.CPUUsage,
-			},
-			Memory: SystemInstanceResourceUsage{
-				UsagePercent: systemStatus.MemoryUsage,
-			},
-			Storage: SystemInstanceStorageMetrics{
-				TotalBytes:  diskInfo.Total,
-				UsedBytes:   diskInfo.Used,
-				FreeBytes:   diskInfo.Free,
-				UsedPercent: diskInfo.UsedPercent,
-			},
-		},
+		Resources: resources,
 	}
 	return model.UpsertSystemInstance(identity.Name, info, common.StartTime, common.GetTimestamp())
 }

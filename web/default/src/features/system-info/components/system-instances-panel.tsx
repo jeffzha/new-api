@@ -64,7 +64,11 @@ import {
   deleteStaleSystemInstances,
   listSystemInstances,
 } from '../api'
-import type { SystemInstance, SystemInstanceStatus } from '../types'
+import type {
+  SystemInstance,
+  SystemInstanceNetworkMetrics,
+  SystemInstanceStatus,
+} from '../types'
 
 const INSTANCE_POLL_INTERVAL_MS = 30_000
 const INSTANCE_SKELETON_KEYS = [
@@ -225,6 +229,60 @@ function ResourceCell(props: ResourceCellProps) {
   )
 }
 
+type NetworkCellProps = {
+  network?: SystemInstanceNetworkMetrics
+}
+
+function NetworkCell(props: NetworkCellProps) {
+  const { t } = useTranslation()
+  if (!props.network) return <span className='text-muted-foreground'>-</span>
+
+  const content = (
+    <div className='space-y-0.5 font-mono text-[11px] leading-tight tabular-nums'>
+      <div className='whitespace-nowrap'>
+        <span aria-hidden='true'>↓ </span>
+        <span className='sr-only'>{t('Download')} </span>
+        {formatBytes(props.network.receive_bytes_per_second)}/s
+      </div>
+      <div className='whitespace-nowrap'>
+        <span aria-hidden='true'>↑ </span>
+        <span className='sr-only'>{t('Upload')} </span>
+        {formatBytes(props.network.transmit_bytes_per_second)}/s
+      </div>
+    </div>
+  )
+
+  return (
+    <TooltipProvider delay={100}>
+      <Tooltip>
+        <TooltipTrigger className='block w-full rounded-sm text-left focus-visible:ring-2 focus-visible:outline-none'>
+          {content}
+        </TooltipTrigger>
+        <TooltipContent className='max-w-80'>
+          <div className='grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs'>
+            <span className='text-muted-foreground'>{t('Download')}</span>
+            <span className='font-mono'>
+              {formatBytes(props.network.receive_bytes_per_second)}/s
+            </span>
+            <span className='text-muted-foreground'>{t('Upload')}</span>
+            <span className='font-mono'>
+              {formatBytes(props.network.transmit_bytes_per_second)}/s
+            </span>
+            <span className='text-muted-foreground'>{t('Total download')}</span>
+            <span className='font-mono'>
+              {formatBytes(props.network.received_bytes)}
+            </span>
+            <span className='text-muted-foreground'>{t('Total upload')}</span>
+            <span className='font-mono'>
+              {formatBytes(props.network.sent_bytes)}
+            </span>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
 type SystemInstancesTableProps = {
   instances: SystemInstance[]
   deletingNodeName: string | null
@@ -237,7 +295,7 @@ function SystemInstancesList(props: SystemInstancesTableProps) {
 
   return (
     <div className='overflow-x-auto rounded-md border'>
-      <Table className='min-w-[1230px]'>
+      <Table className='min-w-[1350px]'>
         <TableHeader>
           <TableRow className='bg-muted/40 hover:bg-muted/40'>
             <TableHead className='h-9 min-w-[240px] px-4 text-xs'>
@@ -253,6 +311,9 @@ function SystemInstancesList(props: SystemInstancesTableProps) {
             </TableHead>
             <TableHead className='h-9 w-[96px] text-xs'>
               {t('Storage')}
+            </TableHead>
+            <TableHead className='h-9 w-[120px] text-xs'>
+              {t('Network')}
             </TableHead>
             <TableHead className='h-9 w-[100px] text-xs'>
               {t('Version')}
@@ -417,6 +478,9 @@ function SystemInstancesList(props: SystemInstancesTableProps) {
                       ) : undefined
                     }
                   />
+                </TableCell>
+                <TableCell className='py-2.5 align-middle'>
+                  <NetworkCell network={resources?.network} />
                 </TableCell>
                 <TableCell className='py-2.5 align-middle'>
                   <div className='truncate font-mono text-xs'>

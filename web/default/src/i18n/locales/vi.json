@@ -888,6 +888,7 @@
     "Cloudflare": "Cloudflare",
     "CNY": "CNY",
     "CNY / 1M tokens": "CNY / 1 triệu token",
+    "CNY / 1M video tokens": "CNY / 1 triệu token video",
     "CNY per USD": "CNY trên USD",
     "Code": "Mã",
     "Code generation, refactoring, autocomplete": "Sinh code, refactor, gợi ý hoàn thành",
@@ -2819,6 +2820,7 @@
     "Needs API key": "Cần khóa API",
     "Nested JSON defining per-group rules for adding (+:), removing (-:), or appending usable groups.": "JSON lồng nhau xác định quy tắc theo nhóm để thêm (+:), xóa (-:), hoặc nối các nhóm có thể sử dụng.",
     "Nested JSON: source group →": "JSON lồng nhau: nhóm nguồn →",
+    "Network": "Mạng",
     "Network connection failed or server not responding": "Kết nối mạng thất bại hoặc máy chủ không phản hồi",
     "Network proxy for this channel (supports socks5 protocol)": "Proxy mạng cho kênh này (hỗ trợ giao thức socks5)",
     "Never": "Không bao giờ",
@@ -4720,6 +4722,7 @@
     "Total cost": "Tổng chi phí",
     "Total Cost": "Tổng chi phí",
     "Total Count": "Tổng số",
+    "Total download": "Tổng tải xuống",
     "Total earned": "Tổng thu nhập",
     "Total Earned": "Total income",
     "Total GPUs": "Tổng GPU",
@@ -4732,6 +4735,7 @@
     "Total time": "Tổng thời gian",
     "Total tokens": "Tổng số token",
     "Total Tokens": "Tổng số token",
+    "Total upload": "Tổng tải lên",
     "Total Usage": "Tổng Mức Sử dụng",
     "Total:": "Tổng cộng:",
     "TPM": "TPM",
@@ -5229,7 +5233,6 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "CNY / 1M video tokens": "CNY / 1 triệu token video"
+    "Zoom": "Zoom"
   }
 }

@@ -888,6 +888,7 @@
     "Cloudflare": "Cloudflare",
     "CNY": "元",
     "CNY / 1M tokens": "人民幣 / 百萬 Token",
+    "CNY / 1M video tokens": "人民幣 / 百萬影片 Token",
     "CNY per USD": "人民幣兌美元匯率",
     "Code": "代碼",
     "Code generation, refactoring, autocomplete": "代碼生成、重構、自動補全",
@@ -2819,6 +2820,7 @@
     "Needs API key": "需要 API 金鑰",
     "Nested JSON defining per-group rules for adding (+:), removing (-:), or appending usable groups.": "嵌套 JSON，定義按分組新增（+:）、移除（-:）或追加可用分組的規則。",
     "Nested JSON: source group →": "嵌套 JSON：源分組 →",
+    "Network": "網絡",
     "Network connection failed or server not responding": "網絡連接失敗或伺服器未回應",
     "Network proxy for this channel (supports socks5 protocol)": "此渠道的網絡代理（支援 socks5 協定）",
     "Never": "永不",
@@ -4720,6 +4722,7 @@
     "Total cost": "總成本",
     "Total Cost": "總費用",
     "Total Count": "總數",
+    "Total download": "累計下載",
     "Total earned": "累計獲得",
     "Total Earned": "總收入",
     "Total GPUs": "總 GPU",
@@ -4732,6 +4735,7 @@
     "Total time": "總耗時",
     "Total tokens": "總 Token",
     "Total Tokens": "總 Token 數",
+    "Total upload": "累計上傳",
     "Total Usage": "總用量",
     "Total:": "總計：",
     "TPM": "TPM",
@@ -5229,7 +5233,6 @@
     "Zero retention": "零數據保留",
     "Zhipu": "智譜",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放",
-    "CNY / 1M video tokens": "人民幣 / 百萬影片 Token"
+    "Zoom": "縮放"
   }
 }

@@ -888,6 +888,7 @@
     "Cloudflare": "Cloudflare",
     "CNY": "元",
     "CNY / 1M tokens": "人民币 / 百万 Token",
+    "CNY / 1M video tokens": "人民币 / 百万视频 Token",
     "CNY per USD": "人民币兑美元汇率",
     "Code": "代码",
     "Code generation, refactoring, autocomplete": "代码生成、重构、自动补全",
@@ -2819,6 +2820,7 @@
     "Needs API key": "需要 API 密钥",
     "Nested JSON defining per-group rules for adding (+:), removing (-:), or appending usable groups.": "嵌套 JSON，定义按分组添加（+:）、移除（-:）或追加可用分组的规则。",
     "Nested JSON: source group →": "嵌套 JSON：源分组 →",
+    "Network": "网络",
     "Network connection failed or server not responding": "网络连接失败或服务器未响应",
     "Network proxy for this channel (supports socks5 protocol)": "此渠道的网络代理（支持 socks5 协议）",
     "Never": "永不",
@@ -4720,6 +4722,7 @@
     "Total cost": "总成本",
     "Total Cost": "总费用",
     "Total Count": "总数",
+    "Total download": "累计下载",
     "Total earned": "累计获得",
     "Total Earned": "总收入",
     "Total GPUs": "总 GPU",
@@ -4732,6 +4735,7 @@
     "Total time": "总耗时",
     "Total tokens": "总 Token",
     "Total Tokens": "总 Token 数",
+    "Total upload": "累计上传",
     "Total Usage": "总用量",
     "Total:": "总计：",
     "TPM": "TPM",
@@ -5229,7 +5233,6 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放",
-    "CNY / 1M video tokens": "人民币 / 百万视频 Token"
+    "Zoom": "缩放"
   }
 }

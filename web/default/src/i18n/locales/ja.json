@@ -888,6 +888,7 @@
     "Cloudflare": "Cloudflare",
     "CNY": "CNY",
     "CNY / 1M tokens": "人民元 / 100万トークン",
+    "CNY / 1M video tokens": "人民元 / 100万動画トークン",
     "CNY per USD": "1 USD あたりの CNY",
     "Code": "コード",
     "Code generation, refactoring, autocomplete": "コード生成・リファクタリング・補完",
@@ -2819,6 +2820,7 @@
     "Needs API key": "API キーが必要",
     "Nested JSON defining per-group rules for adding (+:), removing (-:), or appending usable groups.": "追加 (+:)、削除 (-:)、または使用可能なグループの追加を行うグループごとのルールを定義するネストされたJSON。",
     "Nested JSON: source group →": "ネストされたJSON: ソースグループ →",
+    "Network": "ネットワーク",
     "Network connection failed or server not responding": "ネットワーク接続に失敗したか、サーバーが応答していません",
     "Network proxy for this channel (supports socks5 protocol)": "このチャネルのネットワークプロキシ (socks5プロトコルをサポート)",
     "Never": "しない",
@@ -4720,6 +4722,7 @@
     "Total cost": "総費用",
     "Total Cost": "総コスト",
     "Total Count": "合計数",
+    "Total download": "累計ダウンロード",
     "Total earned": "总收入",
     "Total Earned": "総収益",
     "Total GPUs": "合計 GPU",
@@ -4732,6 +4735,7 @@
     "Total time": "総時間",
     "Total tokens": "合計トークン",
     "Total Tokens": "合計トークン",
+    "Total upload": "累計アップロード",
     "Total Usage": "総使用量",
     "Total:": "合計:",
     "TPM": "TPM",
@@ -5229,7 +5233,6 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム",
-    "CNY / 1M video tokens": "人民元 / 100万動画トークン"
+    "Zoom": "ズーム"
   }
 }

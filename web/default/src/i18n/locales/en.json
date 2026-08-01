@@ -888,6 +888,7 @@
     "Cloudflare": "Cloudflare",
     "CNY": "CNY",
     "CNY / 1M tokens": "CNY / 1M tokens",
+    "CNY / 1M video tokens": "CNY / 1M video tokens",
     "CNY per USD": "CNY per USD",
     "Code": "Code",
     "Code generation, refactoring, autocomplete": "Code generation, refactoring, autocomplete",
@@ -2819,6 +2820,7 @@
     "Needs API key": "Needs API key",
     "Nested JSON defining per-group rules for adding (+:), removing (-:), or appending usable groups.": "Nested JSON defining per-group rules for adding (+:), removing (-:), or appending usable groups.",
     "Nested JSON: source group →": "Nested JSON: source group →",
+    "Network": "Network",
     "Network connection failed or server not responding": "Network connection failed or server not responding",
     "Network proxy for this channel (supports socks5 protocol)": "Network proxy for this channel (supports socks5 protocol)",
     "Never": "Never",
@@ -4720,6 +4722,7 @@
     "Total cost": "Total cost",
     "Total Cost": "Total Cost",
     "Total Count": "Total Count",
+    "Total download": "Total download",
     "Total earned": "Total earned",
     "Total Earned": "Total Earned",
     "Total GPUs": "Total GPUs",
@@ -4732,6 +4735,7 @@
     "Total time": "Total time",
     "Total tokens": "Total tokens",
     "Total Tokens": "Total Tokens",
+    "Total upload": "Total upload",
     "Total Usage": "Total Usage",
     "Total:": "Total:",
     "TPM": "TPM",
@@ -5229,7 +5233,6 @@
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "CNY / 1M video tokens": "CNY / 1M video tokens"
+    "Zoom": "Zoom"
   }
 }

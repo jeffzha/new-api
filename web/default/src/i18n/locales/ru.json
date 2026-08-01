@@ -888,6 +888,7 @@
     "Cloudflare": "Cloudflare",
     "CNY": "Юань",
     "CNY / 1M tokens": "CNY / 1 млн токенов",
+    "CNY / 1M video tokens": "CNY / 1 млн видеотокенов",
     "CNY per USD": "CNY за USD",
     "Code": "Код",
     "Code generation, refactoring, autocomplete": "Генерация кода, рефакторинг, автодополнение",
@@ -2819,6 +2820,7 @@
     "Needs API key": "Нужен API-ключ",
     "Nested JSON defining per-group rules for adding (+:), removing (-:), or appending usable groups.": "Вложенный JSON, определяющий правила для каждой группы для добавления (+:), удаления (-:) или добавления используемых групп.",
     "Nested JSON: source group →": "Вложенный JSON: исходная группа →",
+    "Network": "Сеть",
     "Network connection failed or server not responding": "Сбой сетевого подключения или сервер не отвечает",
     "Network proxy for this channel (supports socks5 protocol)": "Сетевой прокси для этого канала (поддерживает протокол socks5)",
     "Never": "Никогда",
@@ -4720,6 +4722,7 @@
     "Total cost": "Общая стоимость",
     "Total Cost": "Общая стоимость",
     "Total Count": "Общее количество",
+    "Total download": "Всего загружено",
     "Total earned": "Итого заработано",
     "Total Earned": "Всего заработано",
     "Total GPUs": "Всего GPU",
@@ -4732,6 +4735,7 @@
     "Total time": "Общее время",
     "Total tokens": "Всего токенов",
     "Total Tokens": "Всего токенов",
+    "Total upload": "Всего отправлено",
     "Total Usage": "Общее использование",
     "Total:": "Всего:",
     "TPM": "TPM",
@@ -5229,7 +5233,6 @@
     "Zero retention": "Без хранения данных",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "CNY / 1M video tokens": "CNY / 1 млн видеотокенов"
+    "Zoom": "Zoom"
   }
 }

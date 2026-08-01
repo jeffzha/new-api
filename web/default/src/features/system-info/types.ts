@@ -18,6 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 export type SystemInstanceStatus = 'online' | 'stale'
 
+export type SystemInstanceNetworkMetrics = {
+  received_bytes?: number
+  sent_bytes?: number
+  receive_bytes_per_second?: number
+  transmit_bytes_per_second?: number
+  [key: string]: unknown
+}
+
 export type SystemInstanceInfo = {
   schema_version?: number
   node?: {
@@ -58,6 +66,7 @@ export type SystemInstanceInfo = {
       used_percent?: number
       [key: string]: unknown
     }
+    network?: SystemInstanceNetworkMetrics
     [key: string]: unknown
   }
   [key: string]: unknown

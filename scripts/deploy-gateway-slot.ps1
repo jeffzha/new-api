@@ -31,6 +31,7 @@ param(
     [string]$PostgresDatabase = "newapi",
     [string]$ImageRepository = "new-api-seedance",
     [string]$ImageTag = "",
+    [string]$ImageCommit = "",
     [string]$VersionNamespace = "gateway",
     [string]$Platform = "linux/amd64",
     [string]$BunRegistry = "https://registry.npmmirror.com",
@@ -305,6 +306,20 @@ printf '\n'
     if ($ImageTag -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$') {
         throw "ImageTag must be Docker-safe and no longer than 128 characters."
     }
+    $releaseCommit = $sha
+    if ($UseExistingImage) {
+        if (-not $ImageCommit) {
+            $commitMatch = [regex]::Match($ImageTag, '\.g([0-9a-fA-F]{12})(?:\.dirty)?$')
+            if (-not $commitMatch.Success) {
+                throw "UseExistingImage requires ImageCommit when ImageTag does not end in .g<12-hex-commit>."
+            }
+            $ImageCommit = $commitMatch.Groups[1].Value
+        }
+        if ($ImageCommit -notmatch '^[0-9a-fA-F]{7,40}$') {
+            throw "ImageCommit must contain 7 to 40 hexadecimal characters."
+        }
+        $releaseCommit = $ImageCommit.ToLowerInvariant()
+    }
     $image = "${ImageRepository}:${ImageTag}"
 
     if ($PreflightOnly) {
@@ -320,6 +335,7 @@ printf '\n'
         Write-Host "Branch: $branch"
         Write-Host "Commit: $sha"
         Write-Host "Image/version: $image"
+        Write-Host "Image source commit: $releaseCommit"
         if ($UseExistingImage) {
             Write-Host "Image source: existing immutable server image (verified before deployment)"
         } else {
@@ -564,7 +580,7 @@ while [ `$SECONDS -lt `$deadline ]; do
             mkdir -p "`$remote_dir/releases"
             manifest_tmp="`$(mktemp "`$remote_dir/releases/.gateway-`$target_slot.XXXXXX")"
             printf '{"slot":"%s","service":"%s","image":"%s","version":"%s","commit":"%s","deployed_at":"%s"}\n' \
-                "`$target_slot" "`$target_service" "`$image" "`$runtime_version" "$sha" "`$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                "`$target_slot" "`$target_service" "`$image" "`$runtime_version" "$releaseCommit" "`$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
                 > "`$manifest_tmp"
             chmod 600 "`$manifest_tmp"
             mv "`$manifest_tmp" "`$release_manifest"

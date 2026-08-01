@@ -112,7 +112,9 @@ job, deploy that exact tag without uploading source or rebuilding it:
 `UseExistingImage` still requires an explicit Docker-safe tag. The server must
 already contain that image, and the normal candidate health check still
 requires `/new-api --version` to exactly equal the tag before a release
-manifest can be written.
+manifest can be written. The source commit is derived from the standard
+`.g<12-hex-commit>` tag suffix; pass `ImageCommit` explicitly for a tag that
+does not use that suffix.
 
 The production SSH endpoint throttles rapid new handshakes. The scripts pace
 successive SSH/SCP sessions by 30 seconds by default; override

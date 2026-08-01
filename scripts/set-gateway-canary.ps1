@@ -26,6 +26,8 @@ param(
     [string]$ExpectedVersion = "",
     [string]$DomainStatusUrl = "https://gateway.nexus-reach.com/api/status",
     [string]$IpStatusUrl = "https://124.174.0.221/api/status",
+    [ValidateRange(0, 120)][int]$SshConnectionCooldownSeconds = 30,
+    [ValidateRange(1, 5)][int]$SshReadRetryCount = 3,
     [switch]$Promote,
     [switch]$Rollback,
     [switch]$Install,
@@ -104,7 +106,7 @@ $sshArguments = @(
     "-i", $SshKeyPath,
     "-o", "BatchMode=yes",
     "-o", "ConnectTimeout=15",
-    "-o", "ConnectionAttempts=3",
+    "-o", "ConnectionAttempts=1",
     "-o", "ServerAliveInterval=30",
     "-o", "ServerAliveCountMax=6",
     $RemoteHost
@@ -113,11 +115,39 @@ $sshArguments = @(
 function Get-RemoteOutput {
     param([Parameter(Mandatory = $true)][string]$Command)
 
-    $output = & ssh @sshArguments $Command
-    if ($LASTEXITCODE -ne 0) {
-        throw "Remote command failed on $RemoteHost."
+    for ($attempt = 1; $attempt -le $SshReadRetryCount; $attempt++) {
+        $normalized = $Command.TrimStart([char]0xFEFF) -replace "`r`n", "`n"
+        $processInfo = New-Object Diagnostics.ProcessStartInfo
+        $processInfo.FileName = "ssh"
+        $remoteCommand = "sed '1s/^\xEF\xBB\xBF//' | bash -s"
+        $processInfo.Arguments = (($sshArguments + @($remoteCommand)) | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }) -join " "
+        $processInfo.UseShellExecute = $false
+        $processInfo.RedirectStandardInput = $true
+        $processInfo.RedirectStandardOutput = $true
+        $processInfo.RedirectStandardError = $true
+        $process = [Diagnostics.Process]::Start($processInfo)
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $scriptBytes = (New-Object Text.UTF8Encoding($false)).GetBytes($normalized)
+        $process.StandardInput.BaseStream.Write($scriptBytes, 0, $scriptBytes.Length)
+        $process.StandardInput.Close()
+        $process.WaitForExit()
+        $output = $stdoutTask.Result
+        $errorOutput = $stderrTask.Result
+        if ($process.ExitCode -eq 0) {
+            if ($errorOutput) {
+                Write-Verbose $errorOutput.Trim()
+            }
+            return $output.TrimEnd()
+        }
+        if ($errorOutput) {
+            Write-Warning $errorOutput.Trim()
+        }
+        if ($attempt -lt $SshReadRetryCount -and $SshConnectionCooldownSeconds -gt 0) {
+            Start-Sleep -Seconds $SshConnectionCooldownSeconds
+        }
     }
-    return ($output -join "`n")
+    throw "Remote command failed on $RemoteHost after $SshReadRetryCount attempts."
 }
 
 function Invoke-RemoteScript {
@@ -147,6 +177,12 @@ function Add-BlockIndent {
     )
 
     return (($Block -split "`n" | ForEach-Object { "$Indent$_" }) -join "`n")
+}
+
+function Wait-ForNextSshConnection {
+    if ($SshConnectionCooldownSeconds -gt 0) {
+        Start-Sleep -Seconds $SshConnectionCooldownSeconds
+    }
 }
 
 $currentCaddyfileBase64 = (Get-RemoteOutput "set -eu; test -f '$Caddyfile'; base64 -w 0 '$Caddyfile'").Trim()
@@ -243,6 +279,7 @@ $(if ($blueWeight -gt 0) { 'docker exec "$caddy_container" wget -q -O - http://'
 $(if ($greenWeight -gt 0) { 'docker exec "$caddy_container" wget -q -O - http://' + $GreenUpstream + '/api/status | grep -q success' })
 echo "Gateway Caddy preflight OK: blue=$blueWeight green=$greenWeight. No configuration was changed."
 "@
+    Wait-ForNextSshConnection
     Invoke-RemoteScript $preflightScript
     return
 }
@@ -431,4 +468,5 @@ echo "Gateway canary traffic updated: blue=`$blue_weight green=`$green_weight"
 echo "Backup: `$backup_dir"
 "@
 
+Wait-ForNextSshConnection
 Invoke-RemoteScript $remoteScript

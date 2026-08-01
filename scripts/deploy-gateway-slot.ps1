@@ -34,6 +34,8 @@ param(
     [string]$Platform = "linux/amd64",
     [string]$BunRegistry = "https://registry.npmmirror.com",
     [string]$GoProxy = "https://goproxy.cn,direct",
+    [ValidateRange(0, 120)][int]$SshConnectionCooldownSeconds = 30,
+    [ValidateRange(1, 5)][int]$SshReadRetryCount = 3,
     [int]$HealthTimeoutSeconds = 240,
     [ValidateSet("Direct", "Batch")][string]$BatchUpdateMode = "Direct",
     [ValidateRange(1, 300)][int]$BatchUpdateInterval = 5,
@@ -55,7 +57,7 @@ $sshArguments = @(
     "-i", $SshKeyPath,
     "-o", "BatchMode=yes",
     "-o", "ConnectTimeout=15",
-    "-o", "ConnectionAttempts=3",
+    "-o", "ConnectionAttempts=1",
     "-o", "ServerAliveInterval=30",
     "-o", "ServerAliveCountMax=6",
     $RemoteHost
@@ -77,11 +79,39 @@ function Get-CommandOutput {
 function Get-RemoteOutput {
     param([Parameter(Mandatory = $true)][string]$Command)
 
-    $output = & ssh @sshArguments $Command
-    if ($LASTEXITCODE -ne 0) {
-        throw "Remote command failed on $RemoteHost."
+    for ($attempt = 1; $attempt -le $SshReadRetryCount; $attempt++) {
+        $normalized = $Command.TrimStart([char]0xFEFF) -replace "`r`n", "`n"
+        $processInfo = New-Object Diagnostics.ProcessStartInfo
+        $processInfo.FileName = "ssh"
+        $remoteCommand = "sed '1s/^\xEF\xBB\xBF//' | bash -s"
+        $processInfo.Arguments = (($sshArguments + @($remoteCommand)) | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }) -join " "
+        $processInfo.UseShellExecute = $false
+        $processInfo.RedirectStandardInput = $true
+        $processInfo.RedirectStandardOutput = $true
+        $processInfo.RedirectStandardError = $true
+        $process = [Diagnostics.Process]::Start($processInfo)
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $scriptBytes = (New-Object Text.UTF8Encoding($false)).GetBytes($normalized)
+        $process.StandardInput.BaseStream.Write($scriptBytes, 0, $scriptBytes.Length)
+        $process.StandardInput.Close()
+        $process.WaitForExit()
+        $output = $stdoutTask.Result
+        $errorOutput = $stderrTask.Result
+        if ($process.ExitCode -eq 0) {
+            if ($errorOutput) {
+                Write-Verbose $errorOutput.Trim()
+            }
+            return $output.Trim()
+        }
+        if ($errorOutput) {
+            Write-Warning $errorOutput.Trim()
+        }
+        if ($attempt -lt $SshReadRetryCount -and $SshConnectionCooldownSeconds -gt 0) {
+            Start-Sleep -Seconds $SshConnectionCooldownSeconds
+        }
     }
-    return ($output -join "`n").Trim()
+    throw "Remote command failed on $RemoteHost after $SshReadRetryCount attempts."
 }
 
 function Invoke-RemoteScript {
@@ -114,15 +144,21 @@ function Invoke-Scp {
         "-i", $SshKeyPath,
         "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=15",
-        "-o", "ConnectionAttempts=3",
+        "-o", "ConnectionAttempts=1",
         "-o", "ServerAliveInterval=30",
         "-o", "ServerAliveCountMax=6",
         "-C", $Source, $Destination
     )
-    & scp @scpArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Source upload failed: $Source"
+    for ($attempt = 1; $attempt -le $SshReadRetryCount; $attempt++) {
+        & scp @scpArguments
+        if ($LASTEXITCODE -eq 0) {
+            return
+        }
+        if ($attempt -lt $SshReadRetryCount -and $SshConnectionCooldownSeconds -gt 0) {
+            Start-Sleep -Seconds $SshConnectionCooldownSeconds
+        }
     }
+    throw "Source upload failed after $SshReadRetryCount attempts: $Source"
 }
 
 function Get-GatewayCanaryState {
@@ -156,6 +192,12 @@ function Get-GatewayCanaryState {
     return [pscustomobject]@{ Blue = $blueWeight; Green = $greenWeight }
 }
 
+function Wait-ForNextSshConnection {
+    if ($SshConnectionCooldownSeconds -gt 0) {
+        Start-Sleep -Seconds $SshConnectionCooldownSeconds
+    }
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Push-Location $repoRoot
 try {
@@ -169,7 +211,49 @@ try {
         throw "Remote builds use git archive HEAD and cannot include working-tree changes. Commit before deployment."
     }
 
-    $caddyConfig = Get-RemoteOutput "set -eu; test -f '$Caddyfile'; cat '$Caddyfile'"
+    $prepareDirectoriesCommand = if ($PreflightOnly) { ":" } else { "mkdir -p '$RemoteDir/releases' '$RemoteDir/builds' '$RemoteDir/backups'" }
+    $remoteStateCommand = @"
+set -eu
+test -d '$RemoteDir'
+test -f '$ComposeFile'
+test -f '$Caddyfile'
+command -v docker >/dev/null
+command -v flock >/dev/null
+command -v gzip >/dev/null
+command -v sha256sum >/dev/null
+docker compose version >/dev/null
+blue_status=0
+green_status=0
+blue_id=`$(docker ps \
+  --filter 'label=com.docker.compose.project=$ComposeProject' \
+  --filter 'label=com.docker.compose.service=$BlueServiceName' \
+  --format '{{.ID}}' | head -n 1)
+green_id=`$(docker ps \
+  --filter 'label=com.docker.compose.project=$ComposeProject' \
+  --filter 'label=com.docker.compose.service=$GreenServiceName' \
+  --format '{{.ID}}' | head -n 1)
+if [ -n "`$blue_id" ] && docker exec "`$blue_id" wget -q -O /dev/null http://127.0.0.1:3000/api/status; then
+  blue_status=1
+fi
+if [ -n "`$green_id" ] && docker exec "`$green_id" wget -q -O /dev/null http://127.0.0.1:3000/api/status; then
+  green_status=1
+fi
+$prepareDirectoriesCommand
+printf 'blue=%s green=%s\n' "`$blue_status" "`$green_status"
+base64 -w 0 '$Caddyfile'
+printf '\n'
+"@
+    $remoteState = Get-RemoteOutput $remoteStateCommand
+    $remoteStateLines = @($remoteState -split "`n" | Where-Object { $_ })
+    $statusMatch = if ($remoteStateLines.Count -ge 1) { [regex]::Match($remoteStateLines[0], '^blue=([01]) green=([01])$') } else { $null }
+    if ($remoteStateLines.Count -ne 2 -or -not $statusMatch.Success) {
+        throw "Gateway preflight returned an unexpected state payload."
+    }
+    $blueHealthy = $statusMatch.Groups[1].Value -eq "1"
+    $greenHealthy = $statusMatch.Groups[2].Value -eq "1"
+    Write-Verbose "Remote slot health: $($remoteStateLines[0])"
+    $caddyConfigBytes = [Convert]::FromBase64String($remoteStateLines[1].Trim())
+    $caddyConfig = [Text.Encoding]::UTF8.GetString($caddyConfigBytes)
     $canaryState = Get-GatewayCanaryState -Config $caddyConfig
     $blueWeight = $canaryState.Blue
     $greenWeight = $canaryState.Green
@@ -200,6 +284,10 @@ try {
     $slotName = $targetSlot.ToLowerInvariant()
     $nodeName = "gateway-production-$slotName"
     $batchUpdateEnabled = if ($BatchUpdateMode -eq "Batch") { "true" } else { "false" }
+    $sourceHealthy = if ($sourceSlot -eq "Blue") { $blueHealthy } else { $greenHealthy }
+    if (-not $sourceHealthy) {
+        throw "Active source slot $sourceSlot ($sourceService) is not healthy."
+    }
 
     if (-not $ImageTag) {
         $baseVersion = Get-CommandOutput git describe --tags --abbrev=0 HEAD
@@ -211,25 +299,6 @@ try {
         throw "ImageTag must be Docker-safe and no longer than 128 characters."
     }
     $image = "${ImageRepository}:${ImageTag}"
-
-    $remotePreflight = @"
-set -eu
-test -d '$RemoteDir'
-test -f '$ComposeFile'
-test -f '$Caddyfile'
-command -v docker >/dev/null
-command -v flock >/dev/null
-command -v gzip >/dev/null
-command -v sha256sum >/dev/null
-docker compose version >/dev/null
-source_id=`$(docker ps \
-  --filter 'label=com.docker.compose.project=$ComposeProject' \
-  --filter 'label=com.docker.compose.service=$sourceService' \
-  --format '{{.ID}}' | head -n 1)
-test -n "`$source_id"
-docker exec "`$source_id" wget -q -O - http://127.0.0.1:3000/api/status | grep -Eq '"success"[[:space:]]*:[[:space:]]*true'
-"@
-    Get-RemoteOutput $remotePreflight | Out-Null
 
     if ($PreflightOnly) {
         Write-Host "Preflight OK. Inactive slot: $targetSlot. Planned image: $image"
@@ -264,7 +333,7 @@ docker exec "`$source_id" wget -q -O - http://127.0.0.1:3000/api/status | grep -
         Remove-Item -LiteralPath $localSourceTar -Force
     }
     Get-CommandOutput git archive --format=tar "--output=$localSourceTar" HEAD | Out-Null
-    Get-RemoteOutput "mkdir -p '$RemoteDir/releases' '$RemoteDir/builds' '$RemoteDir/backups'" | Out-Null
+    Wait-ForNextSshConnection
     Invoke-Scp -Source $localSourceTar -Destination "${RemoteHost}:$remoteSourceTar"
 
     $skipBackupValue = if ($SkipDatabaseBackup) { "1" } else { "0" }
@@ -480,6 +549,7 @@ fi
 exit 1
 "@
 
+    Wait-ForNextSshConnection
     Invoke-RemoteScript $remoteScript
 
     if (-not $KeepLocalSourceTar -and (Test-Path -LiteralPath $localSourceTar)) {

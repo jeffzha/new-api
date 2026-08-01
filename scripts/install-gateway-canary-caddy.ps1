@@ -22,6 +22,8 @@ param(
     [string]$GreenUpstream = "new-api-green:3000",
     [string]$DomainStatusUrl = "https://gateway.nexus-reach.com/api/status",
     [string]$IpStatusUrl = "https://124.174.0.221/api/status",
+    [ValidateRange(0, 120)][int]$SshConnectionCooldownSeconds = 30,
+    [ValidateRange(1, 5)][int]$SshReadRetryCount = 3,
     [switch]$PreflightOnly,
     [switch]$DryRun,
     [switch]$Yes
@@ -42,6 +44,8 @@ $parameters = @{
     GreenUpstream     = $GreenUpstream
     DomainStatusUrl   = $DomainStatusUrl
     IpStatusUrl       = $IpStatusUrl
+    SshConnectionCooldownSeconds = $SshConnectionCooldownSeconds
+    SshReadRetryCount  = $SshReadRetryCount
     Install           = $true
     PreflightOnly     = $PreflightOnly.IsPresent
     DryRun            = $DryRun.IsPresent

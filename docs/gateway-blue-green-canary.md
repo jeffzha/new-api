@@ -90,6 +90,12 @@ BUN_REGISTRY=https://registry.npmmirror.com
 GO_PROXY=https://goproxy.cn,direct
 ```
 
+The production SSH endpoint throttles rapid new handshakes. The scripts pace
+successive SSH/SCP sessions by 30 seconds by default; override
+`SshConnectionCooldownSeconds` only after verifying the server-side limit.
+Read-only checks and source uploads retry up to `SshReadRetryCount` times;
+state-changing remote scripts are never retried automatically.
+
 Before starting the candidate, the script writes a compressed PostgreSQL
 backup and SHA-256 checksum under `/opt/new-api/deploy/backups`, then verifies
 the gzip stream. It validates the Compose model, starts only the candidate

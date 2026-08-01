@@ -27,7 +27,7 @@ import { EndpointDetail } from './components/endpoint-detail'
 import { buildDocModel } from './lib/openapi-doc'
 import mobileOfficialSpec from './openapi-mobile-official-spec.json'
 import openApiSpec from './openapi-spec.json'
-import type { DocSource, OpenApiSpec } from './types'
+import type { DocSource, OpenApiPathItem, OpenApiSpec } from './types'
 
 const legacySpec = openApiSpec as unknown as OpenApiSpec
 const mobileSpec = mobileOfficialSpec as unknown as OpenApiSpec
@@ -39,6 +39,32 @@ const openAiTextPaths = [
   '/v1/responses/compact',
 ] as const
 const openAiTextTags = new Set(['OpenAI格式(Chat)', 'OpenAI格式(Responses)'])
+const openAiTextRequestExamples: Record<
+  (typeof openAiTextPaths)[number],
+  unknown
+> = {
+  '/v1/chat/completions': {
+    model: 'hy3',
+    messages: [
+      { role: 'system', content: 'You are a helpful assistant.' },
+      { role: 'user', content: '你好' },
+    ],
+    stream: false,
+  },
+  '/v1/responses': {
+    model: 'hy3',
+    input: '请简要介绍你自己。',
+    stream: false,
+  },
+  '/v1/responses/compact': {
+    model: 'hy3',
+    input: [
+      { role: 'user', content: '请记住：项目代号是 Nexus。' },
+      { role: 'assistant', content: '好的，我会记住。' },
+      { role: 'user', content: '压缩这段对话，保留关键信息。' },
+    ],
+  },
+}
 const openAiTextSchemaNames = [
   'ChatCompletionRequest',
   'ChatCompletionResponse',
@@ -73,6 +99,34 @@ const openAiTextSchemas = Object.fromEntries(
     return schema ? [[name, schema]] : []
   })
 )
+
+function buildOpenAiTextPathItem(
+  path: (typeof openAiTextPaths)[number]
+): OpenApiPathItem | undefined {
+  const pathItem = relaySpec.paths[path]
+  const post = pathItem?.post
+  const requestBody = post?.requestBody
+  const media = requestBody?.content?.['application/json']
+  if (!pathItem || !post || !requestBody || !media) return pathItem
+
+  return {
+    ...pathItem,
+    post: {
+      ...post,
+      requestBody: {
+        ...requestBody,
+        content: {
+          ...requestBody.content,
+          'application/json': {
+            ...media,
+            example: openAiTextRequestExamples[path],
+          },
+        },
+      },
+    },
+  }
+}
+
 const mergedSpec = {
   ...legacySpec,
   info: {
@@ -101,7 +155,7 @@ const mergedSpec = {
     ),
     ...Object.fromEntries(
       openAiTextPaths.flatMap((path) => {
-        const pathItem = relaySpec.paths[path]
+        const pathItem = buildOpenAiTextPathItem(path)
         return pathItem ? [[path, pathItem]] : []
       })
     ),

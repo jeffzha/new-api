@@ -4,9 +4,10 @@ Deploy the current checkout to the inactive Gateway Blue or Green slot.
 
 .DESCRIPTION
 The script reads the Caddy-managed blue/green weights, refuses to replace a
-slot that receives traffic, builds an immutable image on the Gateway server,
-and starts only the inactive new-api service. It does not change traffic and
-does not recreate Caddy, PostgreSQL, Redis, API docs, or hwdrama-proxy.
+slot that receives traffic, builds an immutable image on the Gateway server
+(or verifies an explicitly prebuilt image), and starts only the inactive
+new-api service. It does not change traffic and does not recreate Caddy,
+PostgreSQL, Redis, API docs, or hwdrama-proxy.
 
 Versions follow:
 <nearest-git-tag>.gateway.<UTC yyyyMMddTHHmmssZ>.g<12-char-commit>
@@ -42,6 +43,7 @@ param(
     [ValidateSet("Direct", "Batch")][string]$BatchUpdateMode = "Direct",
     [ValidateRange(1, 300)][int]$BatchUpdateInterval = 5,
     [switch]$SkipDatabaseBackup,
+    [switch]$UseExistingImage,
     [switch]$AllowDirty,
     [switch]$PreflightOnly,
     [switch]$KeepLocalSourceTar,
@@ -291,6 +293,9 @@ printf '\n'
         throw "Active source slot $sourceSlot ($sourceService) is not healthy."
     }
 
+    if ($UseExistingImage -and -not $ImageTag) {
+        throw "UseExistingImage requires an explicit ImageTag."
+    }
     if (-not $ImageTag) {
         $baseVersion = Get-CommandOutput git describe --tags --abbrev=0 HEAD
         $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
@@ -315,7 +320,11 @@ printf '\n'
         Write-Host "Branch: $branch"
         Write-Host "Commit: $sha"
         Write-Host "Image/version: $image"
-        Write-Host "Package mirrors: Bun=$BunRegistry, Go=$GoProxy"
+        if ($UseExistingImage) {
+            Write-Host "Image source: existing immutable server image (verified before deployment)"
+        } else {
+            Write-Host "Package mirrors: Bun=$BunRegistry, Go=$GoProxy"
+        }
         Write-Host "Traffic will NOT be changed by this script."
         $answer = Read-Host "Type $($targetSlot.ToUpperInvariant()) to continue"
         if ($answer -ne $targetSlot.ToUpperInvariant()) {
@@ -331,14 +340,17 @@ printf '\n'
     $remoteBuildDir = "$RemoteDir/builds/$slotName-$safeTag"
     $overrideFile = "$RemoteDir/compose.$slotName.override.yml"
 
-    if (Test-Path -LiteralPath $localSourceTar) {
-        Remove-Item -LiteralPath $localSourceTar -Force
+    if (-not $UseExistingImage) {
+        if (Test-Path -LiteralPath $localSourceTar) {
+            Remove-Item -LiteralPath $localSourceTar -Force
+        }
+        Get-CommandOutput git archive --format=tar "--output=$localSourceTar" HEAD | Out-Null
+        Wait-ForNextSshConnection
+        Invoke-Scp -Source $localSourceTar -Destination "${RemoteHost}:$remoteSourceTar"
     }
-    Get-CommandOutput git archive --format=tar "--output=$localSourceTar" HEAD | Out-Null
-    Wait-ForNextSshConnection
-    Invoke-Scp -Source $localSourceTar -Destination "${RemoteHost}:$remoteSourceTar"
 
     $skipBackupValue = if ($SkipDatabaseBackup) { "1" } else { "0" }
+    $useExistingImageValue = if ($UseExistingImage) { "1" } else { "0" }
     $showFailureLogsValue = if ($ShowFailureLogs) { "1" } else { "0" }
     $remoteScript = @"
 set -Eeuo pipefail
@@ -369,6 +381,7 @@ batch_update_enabled="$batchUpdateEnabled"
 batch_update_interval="$BatchUpdateInterval"
 health_timeout="$HealthTimeoutSeconds"
 skip_backup="$skipBackupValue"
+use_existing_image="$useExistingImageValue"
 show_failure_logs="$showFailureLogsValue"
 blue_upstream="$BlueUpstream"
 green_upstream="$GreenUpstream"
@@ -418,36 +431,41 @@ fi
 
 cd "`$remote_dir"
 
-echo "Building immutable image `$image with domestic package mirrors..."
-rm -rf "`$build_dir"
-mkdir -p "`$build_dir"
-tar -xf "`$source_tar" -C "`$build_dir"
-build_log="`$(mktemp "`$remote_dir/builds/.docker-build-`$target_slot.XXXXXX.log")"
-build_attempt=1
-while true; do
-    : > "`$build_log"
-    if docker build \
-        --platform "`$platform" \
-        --build-arg "BUILD_VERSION=`$image_tag" \
-        --build-arg "BUN_REGISTRY=`$bun_registry" \
-        --build-arg "BUN_MAX_HTTP_REQUESTS=`$bun_max_http_requests" \
-        --build-arg "GO_PROXY=`$go_proxy" \
-        -t "`$image" \
-        "`$build_dir" 2>&1 | tee "`$build_log"; then
-        rm -f "`$build_log"
-        break
-    fi
+if [ "`$use_existing_image" = "1" ]; then
+    echo "Verifying existing immutable image `$image..."
+    docker image inspect "`$image" >/dev/null
+else
+    echo "Building immutable image `$image with domestic package mirrors..."
+    rm -rf "`$build_dir"
+    mkdir -p "`$build_dir"
+    tar -xf "`$source_tar" -C "`$build_dir"
+    build_log="`$(mktemp "`$remote_dir/builds/.docker-build-`$target_slot.XXXXXX.log")"
+    build_attempt=1
+    while true; do
+        : > "`$build_log"
+        if docker build \
+            --platform "`$platform" \
+            --build-arg "BUILD_VERSION=`$image_tag" \
+            --build-arg "BUN_REGISTRY=`$bun_registry" \
+            --build-arg "BUN_MAX_HTTP_REQUESTS=`$bun_max_http_requests" \
+            --build-arg "GO_PROXY=`$go_proxy" \
+            -t "`$image" \
+            "`$build_dir" 2>&1 | tee "`$build_log"; then
+            rm -f "`$build_log"
+            break
+        fi
 
-    if ! grep -Eq 'Integrity check failed|IntegrityCheckFailed' "`$build_log" || [ "`$build_attempt" -ge "`$docker_build_attempts" ]; then
-        rm -f "`$build_log"
-        echo "Docker build failed and is not eligible for another integrity retry." >&2
-        exit 1
-    fi
+        if ! grep -Eq 'Integrity check failed|IntegrityCheckFailed' "`$build_log" || [ "`$build_attempt" -ge "`$docker_build_attempts" ]; then
+            rm -f "`$build_log"
+            echo "Docker build failed and is not eligible for another integrity retry." >&2
+            exit 1
+        fi
 
-    echo "Domestic mirror integrity failure on build attempt `$build_attempt; retrying cached build layers..." >&2
-    build_attempt=`$((build_attempt + 1))
-    sleep 5
-done
+        echo "Domestic mirror integrity failure on build attempt `$build_attempt; retrying cached build layers..." >&2
+        build_attempt=`$((build_attempt + 1))
+        sleep 5
+    done
+fi
 
 if [ "`$skip_backup" != "1" ]; then
     postgres_id="`$(service_container "`$postgres_service")"

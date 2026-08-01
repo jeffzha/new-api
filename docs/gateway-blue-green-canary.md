@@ -97,6 +97,23 @@ If Bun still reports a tarball integrity failure, the image build retries up
 to `DockerBuildAttempts` times and reuses completed Docker layers. Other build
 errors fail immediately and are never retried.
 
+If an immutable image was built and verified by CI or by a detached recovery
+job, deploy that exact tag without uploading source or rebuilding it:
+
+```powershell
+./scripts/deploy-gateway-slot.ps1 `
+  -Slot Auto `
+  -ImageTag '<prebuilt-version>' `
+  -UseExistingImage `
+  -BatchUpdateMode Direct `
+  -Yes
+```
+
+`UseExistingImage` still requires an explicit Docker-safe tag. The server must
+already contain that image, and the normal candidate health check still
+requires `/new-api --version` to exactly equal the tag before a release
+manifest can be written.
+
 The production SSH endpoint throttles rapid new handshakes. The scripts pace
 successive SSH/SCP sessions by 30 seconds by default; override
 `SshConnectionCooldownSeconds` only after verifying the server-side limit.

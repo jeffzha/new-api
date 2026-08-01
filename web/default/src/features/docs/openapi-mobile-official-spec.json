@@ -5,14 +5,7 @@
     "version": "2026-07-24.1",
     "description": "移动官方 Seedance 2.0 视频生成、素材库管理和真人认证接口。请求统一发送到 Nexus Reach API Gateway，并使用 Nexus Reach API Key 鉴权。"
   },
-  "servers": [
-    {
-      "url": "https://124.174.0.221"
-    },
-    {
-      "url": "https://gateway.nexus-reach.com"
-    }
-  ],
+  "servers": [],
   "security": [
     {
       "BearerAuth": []

@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import relayOpenApiSpec from '../../../../../docs/openapi/relay.json'
 import { DocsHeader } from './components/docs-header'
 import { DocsSidebar } from './components/docs-sidebar'
 import { EndpointAside } from './components/endpoint-aside'
@@ -30,7 +31,29 @@ import type { DocSource, OpenApiSpec } from './types'
 
 const legacySpec = openApiSpec as unknown as OpenApiSpec
 const mobileSpec = mobileOfficialSpec as unknown as OpenApiSpec
+const relaySpec = relayOpenApiSpec as unknown as OpenApiSpec
 const mobilePathPrefix = '/api/openapi-maas/exp/aicc/v2/'
+const openAiTextPaths = [
+  '/v1/chat/completions',
+  '/v1/responses',
+  '/v1/responses/compact',
+] as const
+const openAiTextTags = new Set(['OpenAI格式(Chat)', 'OpenAI格式(Responses)'])
+const openAiTextSchemaNames = [
+  'ChatCompletionRequest',
+  'ChatCompletionResponse',
+  'ErrorResponse',
+  'Message',
+  'MessageContent',
+  'ResponseFormat',
+  'ResponsesCompactionRequest',
+  'ResponsesCompactionResponse',
+  'ResponsesRequest',
+  'ResponsesResponse',
+  'Tool',
+  'ToolCall',
+  'Usage',
+] as const
 const replacedVideoPaths = new Set([
   '/v1/video/generations',
   '/v1/video/generations/{task_id}',
@@ -41,18 +64,31 @@ const legacyComponents = (
 const mobileComponents = (
   mobileSpec as unknown as { components?: Record<string, unknown> }
 ).components
+const relayComponents = (
+  relaySpec as unknown as { components?: Record<string, unknown> }
+).components
+const openAiTextSchemas = Object.fromEntries(
+  openAiTextSchemaNames.flatMap((name) => {
+    const schema = relaySpec.components?.schemas?.[name]
+    return schema ? [[name, schema]] : []
+  })
+)
 const mergedSpec = {
   ...legacySpec,
   info: {
     ...legacySpec.info,
-    version: '2026-07-24.2',
+    version: '2026-08-01.1',
     description:
-      'Nexus Reach 对外 API 文档。移动官方 Seedance 2.0 视频生成、素材库管理和真人认证的 14 个接口已统一归入“移动官方视频生成和素材库管理”分组；其余既有接口保持原分组和契约。',
+      'Nexus Reach 对外 API 文档。已补充 OpenAI Chat Completions 与 Responses API；移动官方 Seedance 2.0 视频生成、素材库管理和真人认证接口保持原有分组和契约。',
   },
+  servers: [],
   tags: [
+    ...(relaySpec.tags ?? []).filter((tag) => openAiTextTags.has(tag.name)),
     ...(legacySpec.tags ?? []).filter(
       (tag) =>
-        tag.name !== '移动视频-素材库' && tag.name !== '移动视频-真人认证'
+        !openAiTextTags.has(tag.name) &&
+        tag.name !== '移动视频-素材库' &&
+        tag.name !== '移动视频-真人认证'
     ),
     ...(mobileSpec.tags ?? []),
   ],
@@ -63,6 +99,12 @@ const mergedSpec = {
           !path.startsWith(mobilePathPrefix) && !replacedVideoPaths.has(path)
       )
     ),
+    ...Object.fromEntries(
+      openAiTextPaths.flatMap((path) => {
+        const pathItem = relaySpec.paths[path]
+        return pathItem ? [[path, pathItem]] : []
+      })
+    ),
     ...mobileSpec.paths,
   },
   components: {
@@ -70,6 +112,9 @@ const mergedSpec = {
     ...mobileComponents,
     securitySchemes: {
       ...(legacyComponents?.securitySchemes as
+        | Record<string, unknown>
+        | undefined),
+      ...(relayComponents?.securitySchemes as
         | Record<string, unknown>
         | undefined),
       ...(mobileComponents?.securitySchemes as
@@ -86,6 +131,7 @@ const mergedSpec = {
     },
     schemas: {
       ...legacySpec.components?.schemas,
+      ...openAiTextSchemas,
       ...mobileSpec.components?.schemas,
     },
   },
@@ -123,10 +169,7 @@ export function DocsContent() {
       typeof window !== 'undefined' && window.location.origin !== 'null'
         ? window.location.origin
         : ''
-    const baseUrl =
-      runtimeOrigin ||
-      DOC_SOURCE.spec.servers?.[0]?.url?.replace(/\/$/, '') ||
-      ''
+    const baseUrl = runtimeOrigin.replace(/\/$/, '')
     return buildDocModel(DOC_SOURCE, baseUrl)
   }, [])
 

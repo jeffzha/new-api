@@ -142,6 +142,24 @@ function buildExample(
   }
 }
 
+function materializeBaseUrl(value: unknown, baseUrl: string): unknown {
+  if (typeof value === 'string') {
+    return value.replaceAll('{{BASE_URL}}', baseUrl)
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => materializeBaseUrl(item, baseUrl))
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        materializeBaseUrl(item, baseUrl),
+      ])
+    )
+  }
+  return value
+}
+
 /** Sort tags by their declaration order in the spec, falling back to locale. */
 function compareTags(spec: OpenApiSpec, a: string, b: string): number {
   const order = new Map(
@@ -192,6 +210,7 @@ function generateSample(
   spec: OpenApiSpec,
   schema: OpenApiSchema | undefined,
   key = 'value',
+  baseUrl = '',
   seen = new Set<string>()
 ): unknown {
   if (!schema) return undefined
@@ -211,7 +230,7 @@ function generateSample(
   const type = effectiveType(resolved)
 
   if (type === 'array') {
-    const item = generateSample(spec, resolved.items, key, seen)
+    const item = generateSample(spec, resolved.items, key, baseUrl, seen)
     return item === undefined ? [] : [item]
   }
 
@@ -219,7 +238,7 @@ function generateSample(
     const properties = resolved.properties ?? {}
     const value: Record<string, unknown> = {}
     for (const [name, propSchema] of Object.entries(properties)) {
-      const sample = generateSample(spec, propSchema, name, seen)
+      const sample = generateSample(spec, propSchema, name, baseUrl, seen)
       if (sample !== undefined) value[name] = sample
     }
     return value
@@ -242,7 +261,7 @@ function generateSample(
   if (type === 'string') {
     const lowered = key.toLowerCase()
     if (lowered.includes('url')) {
-      return 'https://gateway.nexus-reach.com/apidocs/example-resource'
+      return `${baseUrl}/apidocs/example-resource`
     }
     if (lowered.includes('model')) return 'gpt-4o'
     if (lowered === 'object') return 'object'
@@ -251,7 +270,7 @@ function generateSample(
     if (resolved.format === 'date-time') return '2026-06-30T12:00:00Z'
     if (resolved.format === 'date') return '2026-06-30'
     if (resolved.format === 'uri' || resolved.format === 'url') {
-      return 'https://gateway.nexus-reach.com/apidocs/example-resource'
+      return `${baseUrl}/apidocs/example-resource`
     }
     return 'string'
   }
@@ -273,7 +292,11 @@ function extractRequest(spec: OpenApiSpec, operation: OpenApiOperation) {
   }
 }
 
-function extractResponse(spec: OpenApiSpec, operation: OpenApiOperation) {
+function extractResponse(
+  spec: OpenApiSpec,
+  operation: OpenApiOperation,
+  baseUrl: string
+) {
   const responses = operation.responses ?? {}
   const statusCodes = Object.keys(responses)
   const successKey =
@@ -309,7 +332,7 @@ function extractResponse(spec: OpenApiSpec, operation: OpenApiOperation) {
     schema,
     schemaDescription: normalizeText(resolved.description ?? ''),
     fields: extractFields(spec, schema),
-    example: example ?? generateSample(spec, schema, 'response'),
+    example: example ?? generateSample(spec, schema, 'response', baseUrl),
   }
 }
 
@@ -363,12 +386,18 @@ function buildEndpoint(
 ): DocEndpoint {
   const tag = operation.tags?.[0] ?? 'Default'
   const request = extractRequest(spec, operation)
-  const response = extractResponse(spec, operation)
-  const requestExample = buildExample('request-json', 'JSON', request.example)
+  const response = extractResponse(spec, operation, baseUrl)
+  const resolvedRequestExample = materializeBaseUrl(request.example, baseUrl)
+  const resolvedResponseExample = materializeBaseUrl(response.example, baseUrl)
+  const requestExample = buildExample(
+    'request-json',
+    'JSON',
+    resolvedRequestExample
+  )
   const responseExample = buildExample(
     'response-json',
     'Response JSON',
-    response.example
+    resolvedResponseExample
   )
   const searchParts = [
     method,
@@ -398,7 +427,7 @@ function buildEndpoint(
     requestSchema: request.schema,
     requestSchemaDescription: request.schemaDescription,
     requestFields: request.fields,
-    requestExample: request.example,
+    requestExample: resolvedRequestExample,
     responseContentType: response.contentType,
     responseStatusCodes: response.statusCodes,
     responseHeaders: response.headers,
@@ -413,7 +442,7 @@ function buildEndpoint(
       path,
       operation.parameters,
       request.contentType,
-      request.example
+      resolvedRequestExample
     ),
     searchText: searchParts.filter(Boolean).join(' ').toLowerCase(),
   }

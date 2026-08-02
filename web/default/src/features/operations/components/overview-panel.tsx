@@ -42,24 +42,50 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { cn } from '@/lib/utils'
 
 import { formatCompact, formatMilliseconds, formatPercent } from '../format'
-import type { OpsSnapshot } from '../types'
+import {
+  higherIsBetterTone,
+  lowerIsBetterTone,
+  METRIC_TONE_DOT_CLASS,
+  METRIC_TONE_TEXT_CLASS,
+  worstMetricTone,
+  type MetricTone,
+} from '../metric-status'
+import type { OpsSettings, OpsSnapshot } from '../types'
 
 function MetricCard({
   title,
   value,
   description,
+  tone = 'neutral',
 }: {
   title: string
   value: string
   description: string
+  tone?: MetricTone
 }) {
   return (
     <Card>
       <CardHeader className='pb-2'>
-        <CardDescription>{title}</CardDescription>
-        <CardTitle className='text-2xl tabular-nums'>{value}</CardTitle>
+        <CardDescription className='flex items-center gap-1.5'>
+          {tone !== 'neutral' && (
+            <span
+              className={cn(
+                'size-1.5 shrink-0 rounded-full',
+                METRIC_TONE_DOT_CLASS[tone]
+              )}
+              aria-hidden='true'
+            />
+          )}
+          {title}
+        </CardDescription>
+        <CardTitle
+          className={cn('text-2xl tabular-nums', METRIC_TONE_TEXT_CLASS[tone])}
+        >
+          {value}
+        </CardTitle>
       </CardHeader>
       <CardContent className='text-muted-foreground text-xs'>
         {description}
@@ -68,9 +94,45 @@ function MetricCard({
   )
 }
 
-export function OverviewPanel({ snapshot }: { snapshot: OpsSnapshot }) {
+export function OverviewPanel({
+  snapshot,
+  settings,
+}: {
+  snapshot: OpsSnapshot
+  settings?: OpsSettings
+}) {
   const { t } = useTranslation()
   const { overview, realtime, latency } = snapshot
+  const slaTone = overview.request_count
+    ? higherIsBetterTone(overview.sla, settings?.sla_threshold, 0.001)
+    : 'neutral'
+  const requestErrorTone = overview.request_count
+    ? lowerIsBetterTone(
+        overview.request_error_rate,
+        settings?.request_error_rate_threshold
+      )
+    : 'neutral'
+  const upstreamErrorTone = overview.request_count
+    ? lowerIsBetterTone(
+        overview.upstream_error_rate,
+        settings?.upstream_error_rate_threshold
+      )
+    : 'neutral'
+  const errorTone = worstMetricTone(requestErrorTone, upstreamErrorTone)
+  const ttftTone = latency.ttft.samples
+    ? lowerIsBetterTone(latency.ttft.p99, settings?.ttft_p99_threshold_ms)
+    : 'neutral'
+  const telemetryDrops =
+    snapshot.telemetry.dropped_requests + snapshot.telemetry.dropped_attempts
+  const telemetryQueue =
+    snapshot.telemetry.request_queue_depth +
+    snapshot.telemetry.attempt_queue_depth
+  let telemetryTone: MetricTone = 'success'
+  if (telemetryDrops > 0) {
+    telemetryTone = 'critical'
+  } else if (telemetryQueue > 0) {
+    telemetryTone = 'warning'
+  }
   const throughputConfig = {
     qps: { label: 'QPS', color: 'var(--chart-1)' },
     tps: { label: 'TPS', color: 'var(--chart-2)' },
@@ -121,21 +183,25 @@ export function OverviewPanel({ snapshot }: { snapshot: OpsSnapshot }) {
           title={t('SLA')}
           value={overview.request_count ? formatPercent(overview.sla, 3) : '-'}
           description={`${t('SLA errors')}: ${formatCompact(overview.sla_error_count)} · ${t('Business limits')}: ${formatCompact(overview.business_limit_count)}`}
+          tone={slaTone}
         />
         <MetricCard
           title={t('Requests and tokens')}
           value={formatCompact(overview.request_count)}
           description={`${formatCompact(overview.total_tokens)} ${t('tokens')}`}
+          tone='info'
         />
         <MetricCard
           title={t('Current QPS / TPS')}
           value={`${realtime.current_qps.toFixed(2)} / ${realtime.current_tps.toFixed(1)}`}
           description={`${t('Peak')}: ${realtime.peak_qps.toFixed(2)} / ${realtime.peak_tps.toFixed(1)}`}
+          tone='info'
         />
         <MetricCard
           title={t('Request / upstream error rate')}
           value={`${formatPercent(overview.request_error_rate)} / ${formatPercent(overview.upstream_error_rate)}`}
           description={`${t('Upstream errors')}: ${formatCompact(overview.upstream_error_count)}`}
+          tone={errorTone}
         />
         <MetricCard
           title={t('Request latency P99')}
@@ -148,11 +214,13 @@ export function OverviewPanel({ snapshot }: { snapshot: OpsSnapshot }) {
             latency.ttft.samples ? formatMilliseconds(latency.ttft.p99) : '-'
           }
           description={`${t('Average')}: ${latency.ttft.samples ? formatMilliseconds(latency.ttft.avg) : '-'} · ${t('Samples')}: ${formatCompact(latency.ttft.samples)}`}
+          tone={ttftTone}
         />
         <MetricCard
           title={t('Average account switches')}
           value={overview.average_switches.toFixed(3)}
           description={t('Average switches per downstream request')}
+          tone='info'
         />
         <MetricCard
           title={t('Telemetry health')}
@@ -164,6 +232,7 @@ export function OverviewPanel({ snapshot }: { snapshot: OpsSnapshot }) {
               : t('Degraded')
           }
           description={`${t('Queue depth')}: ${snapshot.telemetry.request_queue_depth + snapshot.telemetry.attempt_queue_depth}`}
+          tone={telemetryTone}
         />
       </div>
 

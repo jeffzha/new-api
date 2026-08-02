@@ -34,7 +34,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
-import { getOpsSnapshot } from './api'
+import { getOpsSettings, getOpsSnapshot } from './api'
 import {
   ConcurrencyPanel,
   ErrorsPanel,
@@ -103,6 +103,18 @@ export function OperationsDashboard() {
     },
     refetchInterval: 30 * 1000,
     staleTime: 10 * 1000,
+    retry: false,
+  })
+  const settingsQuery = useQuery({
+    queryKey: ['ops', 'settings'],
+    queryFn: async () => {
+      const response = await getOpsSettings()
+      if (!response.success || !response.data) {
+        throw new Error(response.message || t('Load failed'))
+      }
+      return response.data
+    },
+    staleTime: 30 * 1000,
     retry: false,
   })
 
@@ -288,7 +300,7 @@ export function OperationsDashboard() {
             <TabsTrigger value='settings'>{t('Settings')}</TabsTrigger>
           </TabsList>
           <TabsContent value='overview'>
-            <OverviewPanel snapshot={snapshot} />
+            <OverviewPanel snapshot={snapshot} settings={settingsQuery.data} />
           </TabsContent>
           <TabsContent value='infrastructure'>
             <InfrastructurePanel snapshot={snapshot} />

@@ -21,6 +21,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
 
+import { StatusBadge as SemanticStatusBadge } from '@/components/status-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -53,6 +54,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { cn } from '@/lib/utils'
 
 import { getOpsRequestDetail } from '../api'
 import {
@@ -62,6 +64,14 @@ import {
   formatPercent,
   formatTimestamp,
 } from '../format'
+import {
+  boundedUsageTone,
+  concurrencyLoadTone,
+  healthScoreTone,
+  METRIC_TONE_PROGRESS_CLASS,
+  METRIC_TONE_TEXT_CLASS,
+  type MetricTone,
+} from '../metric-status'
 import type { OpsSnapshot } from '../types'
 
 function aggregateSystemTrend(snapshot: OpsSnapshot) {
@@ -107,13 +117,33 @@ function aggregateSystemTrend(snapshot: OpsSnapshot) {
     }))
 }
 
-function StatusBadge({ healthy, label }: { healthy: boolean; label: string }) {
-  return <Badge variant={healthy ? 'secondary' : 'destructive'}>{label}</Badge>
+function HealthStatusBadge({
+  healthy,
+  label,
+  unhealthyTone = 'critical',
+}: {
+  healthy: boolean
+  label: string
+  unhealthyTone?: 'warning' | 'critical'
+}) {
+  const variant = unhealthyTone === 'warning' ? 'warning' : 'danger'
+  return (
+    <SemanticStatusBadge
+      variant={healthy ? 'success' : variant}
+      label={label}
+      copyable={false}
+      showDot
+    />
+  )
 }
 
 export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
   const { t } = useTranslation()
   const trend = aggregateSystemTrend(snapshot)
+  const overallHealthTone = healthScoreTone(
+    snapshot.health.score,
+    snapshot.health.state
+  )
   const resourceConfig = {
     cpu: { label: 'CPU', color: 'var(--chart-1)' },
     memory: { label: t('Memory'), color: 'var(--chart-2)' },
@@ -157,27 +187,61 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
                     </TableCell>
                     <TableCell className='min-w-28'>
                       <div className='flex flex-col gap-1'>
-                        <span className='tabular-nums'>
+                        <span
+                          className={cn(
+                            'tabular-nums',
+                            METRIC_TONE_TEXT_CLASS[
+                              boundedUsageTone(node.cpu_percent, 80, 95)
+                            ]
+                          )}
+                        >
                           {node.cpu_percent.toFixed(1)}%
                         </span>
-                        <Progress value={node.cpu_percent} />
+                        <Progress
+                          value={node.cpu_percent}
+                          className={
+                            METRIC_TONE_PROGRESS_CLASS[
+                              boundedUsageTone(node.cpu_percent, 80, 95)
+                            ]
+                          }
+                        />
                       </div>
                     </TableCell>
                     <TableCell className='min-w-28'>
                       <div className='flex flex-col gap-1'>
-                        <span className='tabular-nums'>
+                        <span
+                          className={cn(
+                            'tabular-nums',
+                            METRIC_TONE_TEXT_CLASS[
+                              boundedUsageTone(node.memory_percent, 85, 95)
+                            ]
+                          )}
+                        >
                           {node.memory_percent.toFixed(1)}%
                         </span>
-                        <Progress value={node.memory_percent} />
+                        <Progress
+                          value={node.memory_percent}
+                          className={
+                            METRIC_TONE_PROGRESS_CLASS[
+                              boundedUsageTone(node.memory_percent, 85, 95)
+                            ]
+                          }
+                        />
                       </div>
                     </TableCell>
-                    <TableCell>{node.disk_percent.toFixed(1)}%</TableCell>
-                    <TableCell className='whitespace-nowrap'>
+                    <TableCell
+                      className={METRIC_TONE_TEXT_CLASS[
+                        boundedUsageTone(node.disk_percent, 80, 95)
+                      ]}
+                    >
+                      {node.disk_percent.toFixed(1)}%
+                    </TableCell>
+                    <TableCell className='text-info whitespace-nowrap'>
                       ↓ {formatBytesPerSecond(node.network_receive_bps)}
                       <br />↑ {formatBytesPerSecond(node.network_transmit_bps)}
                     </TableCell>
                     <TableCell className='whitespace-nowrap'>
-                      <StatusBadge
+                      <HealthStatusBadge
                         healthy={node.db_healthy}
                         label={node.db_healthy ? t('Healthy') : t('Down')}
                       />
@@ -191,7 +255,7 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
                     <TableCell className='whitespace-nowrap'>
                       {node.redis_enabled ? (
                         <>
-                          <StatusBadge
+                          <HealthStatusBadge
                             healthy={node.redis_healthy}
                             label={
                               node.redis_healthy ? t('Healthy') : t('Down')
@@ -210,8 +274,22 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
                         <Badge variant='outline'>{t('Disabled')}</Badge>
                       )}
                     </TableCell>
-                    <TableCell>{formatCompact(node.goroutines)}</TableCell>
-                    <TableCell>{formatCompact(node.queue_depth)}</TableCell>
+                    <TableCell
+                      className={METRIC_TONE_TEXT_CLASS[
+                        boundedUsageTone(node.goroutines, 8_000, 15_000)
+                      ]}
+                    >
+                      {formatCompact(node.goroutines)}
+                    </TableCell>
+                    <TableCell
+                      className={
+                        METRIC_TONE_TEXT_CLASS[
+                          node.queue_depth > 0 ? 'warning' : 'success'
+                        ]
+                      }
+                    >
+                      {formatCompact(node.queue_depth)}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -227,7 +305,12 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
             </CardDescription>
           </CardHeader>
           <CardContent className='flex flex-col gap-4'>
-            <div className='text-4xl font-semibold tabular-nums'>
+            <div
+              className={cn(
+                'text-4xl font-semibold tabular-nums',
+                METRIC_TONE_TEXT_CLASS[overallHealthTone]
+              )}
+            >
               {snapshot.health.score}
             </div>
             {[
@@ -241,11 +324,31 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
               <div key={label as string} className='flex flex-col gap-1'>
                 <div className='flex justify-between text-sm'>
                   <span>{label as string}</span>
-                  <span className='tabular-nums'>
+                  <span
+                    className={cn(
+                      'tabular-nums',
+                      METRIC_TONE_TEXT_CLASS[
+                        healthScoreTone(
+                          value as number,
+                          snapshot.health.state
+                        )
+                      ]
+                    )}
+                  >
                     {(value as number).toFixed(0)}
                   </span>
                 </div>
-                <Progress value={value as number} />
+                <Progress
+                  value={value as number}
+                  className={
+                    METRIC_TONE_PROGRESS_CLASS[
+                      healthScoreTone(
+                        value as number,
+                        snapshot.health.state
+                      )
+                    ]
+                  }
+                />
               </div>
             ))}
           </CardContent>
@@ -394,19 +497,40 @@ export function ConcurrencyPanel({ snapshot }: { snapshot: OpsSnapshot }) {
                   <TableCell>{channel.groups.join(', ') || '-'}</TableCell>
                   <TableCell>{channel.in_use}</TableCell>
                   <TableCell>{channel.capacity || '-'}</TableCell>
-                  <TableCell>{channel.waiting}</TableCell>
+                  <TableCell
+                    className={
+                      METRIC_TONE_TEXT_CLASS[
+                        channel.waiting > 0 ? 'warning' : 'success'
+                      ]
+                    }
+                  >
+                    {channel.waiting}
+                  </TableCell>
                   <TableCell className='min-w-32'>
                     {channel.capacity > 0 ? (
                       <div className='flex flex-col gap-1'>
-                        <span>{channel.load_percent.toFixed(0)}%</span>
-                        <Progress value={Math.min(channel.load_percent, 100)} />
+                        <span
+                          className={METRIC_TONE_TEXT_CLASS[
+                            concurrencyLoadTone(channel.load_percent)
+                          ]}
+                        >
+                          {channel.load_percent.toFixed(0)}%
+                        </span>
+                        <Progress
+                          value={Math.min(channel.load_percent, 100)}
+                          className={
+                            METRIC_TONE_PROGRESS_CLASS[
+                              concurrencyLoadTone(channel.load_percent)
+                            ]
+                          }
+                        />
                       </div>
                     ) : (
                       '-'
                     )}
                   </TableCell>
                   <TableCell>
-                    <StatusBadge
+                    <HealthStatusBadge
                       healthy={channel.available}
                       label={
                         channel.available
@@ -442,6 +566,7 @@ export function ConcurrencyPanel({ snapshot }: { snapshot: OpsSnapshot }) {
                     <TableHead>{t('In use')}</TableHead>
                     <TableHead>{t('Capacity')}</TableHead>
                     <TableHead>{t('Waiting')}</TableHead>
+                    <TableHead>{t('Load')}</TableHead>
                     <TableHead>{t('Available')}</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -451,7 +576,26 @@ export function ConcurrencyPanel({ snapshot }: { snapshot: OpsSnapshot }) {
                       <TableCell>{row.name}</TableCell>
                       <TableCell>{row.in_use}</TableCell>
                       <TableCell>{row.capacity || '-'}</TableCell>
-                      <TableCell>{row.waiting}</TableCell>
+                      <TableCell
+                        className={
+                          METRIC_TONE_TEXT_CLASS[
+                            row.waiting > 0 ? 'warning' : 'success'
+                          ]
+                        }
+                      >
+                        {row.waiting}
+                      </TableCell>
+                      <TableCell
+                        className={
+                          METRIC_TONE_TEXT_CLASS[
+                            concurrencyLoadTone(row.load_percent)
+                          ]
+                        }
+                      >
+                        {row.capacity > 0
+                          ? `${row.load_percent.toFixed(0)}%`
+                          : '-'}
+                      </TableCell>
                       <TableCell>
                         {row.available}/{row.total}
                       </TableCell>
@@ -492,6 +636,10 @@ export function ConcurrencyPanel({ snapshot }: { snapshot: OpsSnapshot }) {
 export function TaskPanel({ snapshot }: { snapshot: OpsSnapshot }) {
   const { t } = useTranslation()
   const tasks = snapshot.tasks
+  let failureTone: MetricTone = 'neutral'
+  if (tasks.terminal > 0) {
+    failureTone = tasks.failed > 0 ? 'critical' : 'success'
+  }
 
   return (
     <div className='grid gap-4 xl:grid-cols-2'>
@@ -553,7 +701,14 @@ export function TaskPanel({ snapshot }: { snapshot: OpsSnapshot }) {
           </div>
           <div>
             <div className='text-muted-foreground text-sm'>{t('Failures')}</div>
-            <div className='text-xl font-medium'>{tasks.failed}</div>
+            <div
+              className={cn(
+                'text-xl font-medium tabular-nums',
+                METRIC_TONE_TEXT_CLASS[failureTone]
+              )}
+            >
+              {tasks.failed}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -580,9 +735,10 @@ export function TaskPanel({ snapshot }: { snapshot: OpsSnapshot }) {
                 <TableRow key={job.type}>
                   <TableCell>{job.type}</TableCell>
                   <TableCell>
-                    <StatusBadge
+                    <HealthStatusBadge
                       healthy={job.status === 'healthy'}
                       label={job.status}
+                      unhealthyTone='warning'
                     />
                   </TableCell>
                   <TableCell>{formatTimestamp(job.last_success_at)}</TableCell>

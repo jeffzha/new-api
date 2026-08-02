@@ -22,7 +22,6 @@ import { useTranslation } from 'react-i18next'
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
 
 import { StatusBadge as SemanticStatusBadge } from '@/components/status-badge'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -65,14 +64,23 @@ import {
   formatTimestamp,
 } from '../format'
 import {
+  availabilityTone,
   boundedUsageTone,
+  connectionPoolTone,
   concurrencyLoadTone,
   healthScoreTone,
+  higherIsBetterTone,
+  lowerIsBetterTone,
   METRIC_TONE_PROGRESS_CLASS,
   METRIC_TONE_TEXT_CLASS,
+  statusCodeTone,
   type MetricTone,
 } from '../metric-status'
-import type { OpsSnapshot } from '../types'
+import type { OpsSettings, OpsSnapshot } from '../types'
+
+function statusVariantFromTone(tone: MetricTone) {
+  return tone === 'critical' ? ('danger' as const) : tone
+}
 
 function aggregateSystemTrend(snapshot: OpsSnapshot) {
   const buckets = new Map<
@@ -230,9 +238,11 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
                       </div>
                     </TableCell>
                     <TableCell
-                      className={METRIC_TONE_TEXT_CLASS[
-                        boundedUsageTone(node.disk_percent, 80, 95)
-                      ]}
+                      className={
+                        METRIC_TONE_TEXT_CLASS[
+                          boundedUsageTone(node.disk_percent, 80, 95)
+                        ]
+                      }
                     >
                       {node.disk_percent.toFixed(1)}%
                     </TableCell>
@@ -245,7 +255,18 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
                         healthy={node.db_healthy}
                         label={node.db_healthy ? t('Healthy') : t('Down')}
                       />
-                      <div className='text-muted-foreground mt-1 text-xs'>
+                      <div
+                        className={cn(
+                          'mt-1 text-xs tabular-nums',
+                          METRIC_TONE_TEXT_CLASS[
+                            connectionPoolTone(
+                              node.db_healthy,
+                              node.db_open_connections,
+                              node.db_max_open_connections
+                            )
+                          ]
+                        )}
+                      >
                         {node.db_in_use_connections}/{node.db_open_connections}
                         {node.db_max_open_connections > 0
                           ? `/${node.db_max_open_connections}`
@@ -261,7 +282,18 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
                               node.redis_healthy ? t('Healthy') : t('Down')
                             }
                           />
-                          <div className='text-muted-foreground mt-1 text-xs'>
+                          <div
+                            className={cn(
+                              'mt-1 text-xs tabular-nums',
+                              METRIC_TONE_TEXT_CLASS[
+                                connectionPoolTone(
+                                  node.redis_healthy,
+                                  node.redis_total_connections,
+                                  node.redis_max_connections
+                                )
+                              ]
+                            )}
+                          >
                             {node.redis_total_connections -
                               node.redis_idle_connections}
                             /{node.redis_total_connections}
@@ -271,13 +303,20 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
                           </div>
                         </>
                       ) : (
-                        <Badge variant='outline'>{t('Disabled')}</Badge>
+                        <SemanticStatusBadge
+                          variant='neutral'
+                          label={t('Disabled')}
+                          copyable={false}
+                          showDot
+                        />
                       )}
                     </TableCell>
                     <TableCell
-                      className={METRIC_TONE_TEXT_CLASS[
-                        boundedUsageTone(node.goroutines, 8_000, 15_000)
-                      ]}
+                      className={
+                        METRIC_TONE_TEXT_CLASS[
+                          boundedUsageTone(node.goroutines, 8_000, 15_000)
+                        ]
+                      }
                     >
                       {formatCompact(node.goroutines)}
                     </TableCell>
@@ -328,10 +367,7 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
                     className={cn(
                       'tabular-nums',
                       METRIC_TONE_TEXT_CLASS[
-                        healthScoreTone(
-                          value as number,
-                          snapshot.health.state
-                        )
+                        healthScoreTone(value as number, snapshot.health.state)
                       ]
                     )}
                   >
@@ -342,10 +378,7 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
                   value={value as number}
                   className={
                     METRIC_TONE_PROGRESS_CLASS[
-                      healthScoreTone(
-                        value as number,
-                        snapshot.health.state
-                      )
+                      healthScoreTone(value as number, snapshot.health.state)
                     ]
                   }
                 />
@@ -453,20 +486,28 @@ export function ConcurrencyPanel({ snapshot }: { snapshot: OpsSnapshot }) {
               </CardDescription>
             </div>
             <div className='flex gap-2'>
-              <Badge
+              <SemanticStatusBadge
                 variant={
-                  concurrency.enforcement_enabled ? 'default' : 'outline'
+                  concurrency.enforcement_enabled ? 'success' : 'neutral'
                 }
-              >
-                {concurrency.enforcement_enabled
-                  ? t('Enforcement enabled')
-                  : t('Observation only')}
-              </Badge>
-              <Badge variant='outline'>
-                {concurrency.redis_backed
-                  ? t('Redis coordinated')
-                  : t('Local process only')}
-              </Badge>
+                label={
+                  concurrency.enforcement_enabled
+                    ? t('Enforcement enabled')
+                    : t('Observation only')
+                }
+                copyable={false}
+                showDot
+              />
+              <SemanticStatusBadge
+                variant={concurrency.redis_backed ? 'success' : 'neutral'}
+                label={
+                  concurrency.redis_backed
+                    ? t('Redis coordinated')
+                    : t('Local process only')
+                }
+                copyable={false}
+                showDot
+              />
             </div>
           </div>
         </CardHeader>
@@ -495,8 +536,18 @@ export function ConcurrencyPanel({ snapshot }: { snapshot: OpsSnapshot }) {
                   </TableCell>
                   <TableCell>{channel.platform}</TableCell>
                   <TableCell>{channel.groups.join(', ') || '-'}</TableCell>
-                  <TableCell>{channel.in_use}</TableCell>
-                  <TableCell>{channel.capacity || '-'}</TableCell>
+                  <TableCell className='text-info tabular-nums'>
+                    {channel.in_use}
+                  </TableCell>
+                  <TableCell
+                    className={
+                      channel.capacity > 0
+                        ? 'text-info tabular-nums'
+                        : 'text-muted-foreground'
+                    }
+                  >
+                    {channel.capacity || '-'}
+                  </TableCell>
                   <TableCell
                     className={
                       METRIC_TONE_TEXT_CLASS[
@@ -510,9 +561,11 @@ export function ConcurrencyPanel({ snapshot }: { snapshot: OpsSnapshot }) {
                     {channel.capacity > 0 ? (
                       <div className='flex flex-col gap-1'>
                         <span
-                          className={METRIC_TONE_TEXT_CLASS[
-                            concurrencyLoadTone(channel.load_percent)
-                          ]}
+                          className={
+                            METRIC_TONE_TEXT_CLASS[
+                              concurrencyLoadTone(channel.load_percent)
+                            ]
+                          }
                         >
                           {channel.load_percent.toFixed(0)}%
                         </span>
@@ -574,8 +627,18 @@ export function ConcurrencyPanel({ snapshot }: { snapshot: OpsSnapshot }) {
                   {rows.map((row) => (
                     <TableRow key={row.name}>
                       <TableCell>{row.name}</TableCell>
-                      <TableCell>{row.in_use}</TableCell>
-                      <TableCell>{row.capacity || '-'}</TableCell>
+                      <TableCell className='text-info tabular-nums'>
+                        {row.in_use}
+                      </TableCell>
+                      <TableCell
+                        className={
+                          row.capacity > 0
+                            ? 'text-info tabular-nums'
+                            : 'text-muted-foreground'
+                        }
+                      >
+                        {row.capacity || '-'}
+                      </TableCell>
                       <TableCell
                         className={
                           METRIC_TONE_TEXT_CLASS[
@@ -596,7 +659,13 @@ export function ConcurrencyPanel({ snapshot }: { snapshot: OpsSnapshot }) {
                           ? `${row.load_percent.toFixed(0)}%`
                           : '-'}
                       </TableCell>
-                      <TableCell>
+                      <TableCell
+                        className={
+                          METRIC_TONE_TEXT_CLASS[
+                            availabilityTone(row.available, row.total)
+                          ]
+                        }
+                      >
                         {row.available}/{row.total}
                       </TableCell>
                     </TableRow>
@@ -618,9 +687,13 @@ export function ConcurrencyPanel({ snapshot }: { snapshot: OpsSnapshot }) {
         <CardContent className='flex flex-wrap gap-2'>
           {concurrency.users.length ? (
             concurrency.users.map((user) => (
-              <Badge key={user.user_id} variant='outline'>
-                {t('User')} {user.user_id}: {user.in_use}
-              </Badge>
+              <SemanticStatusBadge
+                key={user.user_id}
+                variant='info'
+                label={`${t('User')} ${user.user_id}: ${user.in_use}`}
+                copyable={false}
+                showDot
+              />
             ))
           ) : (
             <span className='text-muted-foreground text-sm'>
@@ -633,9 +706,29 @@ export function ConcurrencyPanel({ snapshot }: { snapshot: OpsSnapshot }) {
   )
 }
 
-export function TaskPanel({ snapshot }: { snapshot: OpsSnapshot }) {
+export function TaskPanel({
+  snapshot,
+  settings,
+}: {
+  snapshot: OpsSnapshot
+  settings?: OpsSettings
+}) {
   const { t } = useTranslation()
   const tasks = snapshot.tasks
+  const submitTone = tasks.submitted
+    ? higherIsBetterTone(
+        tasks.submit_success_rate,
+        settings?.sla_threshold,
+        0.001
+      )
+    : 'neutral'
+  const generationTone = tasks.terminal
+    ? higherIsBetterTone(
+        tasks.generation_success_rate,
+        settings?.sla_threshold,
+        0.001
+      )
+    : 'neutral'
   let failureTone: MetricTone = 'neutral'
   if (tasks.terminal > 0) {
     failureTone = tasks.failed > 0 ? 'critical' : 'success'
@@ -655,7 +748,12 @@ export function TaskPanel({ snapshot }: { snapshot: OpsSnapshot }) {
             <div className='text-muted-foreground text-sm'>
               {t('Submit success rate')}
             </div>
-            <div className='text-2xl font-semibold tabular-nums'>
+            <div
+              className={cn(
+                'text-2xl font-semibold tabular-nums',
+                METRIC_TONE_TEXT_CLASS[submitTone]
+              )}
+            >
               {tasks.submitted ? formatPercent(tasks.submit_success_rate) : '-'}
             </div>
             <div className='text-muted-foreground text-xs'>
@@ -666,7 +764,12 @@ export function TaskPanel({ snapshot }: { snapshot: OpsSnapshot }) {
             <div className='text-muted-foreground text-sm'>
               {t('Generation success rate')}
             </div>
-            <div className='text-2xl font-semibold tabular-nums'>
+            <div
+              className={cn(
+                'text-2xl font-semibold tabular-nums',
+                METRIC_TONE_TEXT_CLASS[generationTone]
+              )}
+            >
               {tasks.terminal
                 ? formatPercent(tasks.generation_success_rate)
                 : '-'}
@@ -679,24 +782,45 @@ export function TaskPanel({ snapshot }: { snapshot: OpsSnapshot }) {
             <div className='text-muted-foreground text-sm'>
               {t('Average queue time')}
             </div>
-            <div className='text-xl font-medium'>
-              {formatMilliseconds(tasks.average_queue_ms)}
+            <div
+              className={cn(
+                'text-xl font-medium',
+                tasks.submitted ? 'text-info' : 'text-muted-foreground'
+              )}
+            >
+              {tasks.submitted
+                ? formatMilliseconds(tasks.average_queue_ms)
+                : '-'}
             </div>
           </div>
           <div>
             <div className='text-muted-foreground text-sm'>
               {t('Average generation time')}
             </div>
-            <div className='text-xl font-medium'>
-              {formatMilliseconds(tasks.average_generation_ms)}
+            <div
+              className={cn(
+                'text-xl font-medium',
+                tasks.terminal ? 'text-info' : 'text-muted-foreground'
+              )}
+            >
+              {tasks.terminal
+                ? formatMilliseconds(tasks.average_generation_ms)
+                : '-'}
             </div>
           </div>
           <div>
             <div className='text-muted-foreground text-sm'>
               {t('Average end-to-end time')}
             </div>
-            <div className='text-xl font-medium'>
-              {formatMilliseconds(tasks.average_end_to_end_ms)}
+            <div
+              className={cn(
+                'text-xl font-medium',
+                tasks.terminal ? 'text-info' : 'text-muted-foreground'
+              )}
+            >
+              {tasks.terminal
+                ? formatMilliseconds(tasks.average_end_to_end_ms)
+                : '-'}
             </div>
           </div>
           <div>
@@ -753,7 +877,13 @@ export function TaskPanel({ snapshot }: { snapshot: OpsSnapshot }) {
   )
 }
 
-export function ErrorsPanel({ snapshot }: { snapshot: OpsSnapshot }) {
+export function ErrorsPanel({
+  snapshot,
+  settings,
+}: {
+  snapshot: OpsSnapshot
+  settings?: OpsSettings
+}) {
   const { t } = useTranslation()
   const [requestId, setRequestId] = useState('')
   const detailQuery = useQuery({
@@ -781,9 +911,13 @@ export function ErrorsPanel({ snapshot }: { snapshot: OpsSnapshot }) {
           </CardHeader>
           <CardContent className='flex flex-wrap gap-2'>
             {snapshot.errors.distribution.map((row) => (
-              <Badge key={row.status_code} variant='outline'>
-                {row.status_code}: {row.total}
-              </Badge>
+              <SemanticStatusBadge
+                key={row.status_code}
+                variant={statusVariantFromTone(statusCodeTone(row.status_code))}
+                label={`${row.status_code}: ${row.total}`}
+                copyable={false}
+                showDot
+              />
             ))}
           </CardContent>
         </Card>
@@ -839,18 +973,47 @@ export function ErrorsPanel({ snapshot }: { snapshot: OpsSnapshot }) {
                     </TableCell>
                     <TableCell>{error.model_name || '-'}</TableCell>
                     <TableCell>
-                      {error.upstream_status_code || error.status_code}
+                      <SemanticStatusBadge
+                        variant={statusVariantFromTone(
+                          statusCodeTone(
+                            error.upstream_status_code || error.status_code
+                          )
+                        )}
+                        label={String(
+                          error.upstream_status_code || error.status_code
+                        )}
+                        copyable={false}
+                        showDot
+                      />
                     </TableCell>
                     <TableCell>{error.error_owner || '-'}</TableCell>
                     <TableCell className='max-w-80'>
-                      <div className='font-medium'>
+                      <div
+                        className={cn(
+                          'font-medium',
+                          METRIC_TONE_TEXT_CLASS[
+                            statusCodeTone(
+                              error.upstream_status_code || error.status_code
+                            )
+                          ]
+                        )}
+                      >
                         {error.error_code || '-'}
                       </div>
                       <div className='text-muted-foreground truncate text-xs'>
                         {error.error_summary}
                       </div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell
+                      className={
+                        METRIC_TONE_TEXT_CLASS[
+                          lowerIsBetterTone(
+                            error.duration_ms,
+                            settings?.request_p99_threshold_ms
+                          )
+                        ]
+                      }
+                    >
                       {formatMilliseconds(error.duration_ms)}
                     </TableCell>
                   </TableRow>
@@ -892,7 +1055,16 @@ export function ErrorsPanel({ snapshot }: { snapshot: OpsSnapshot }) {
                   <div className='text-muted-foreground text-xs'>
                     {t('Total duration')}
                   </div>
-                  <div>
+                  <div
+                    className={
+                      METRIC_TONE_TEXT_CLASS[
+                        lowerIsBetterTone(
+                          detailQuery.data.request.duration_ms,
+                          settings?.request_p99_threshold_ms
+                        )
+                      ]
+                    }
+                  >
                     {formatMilliseconds(detailQuery.data.request.duration_ms)}
                   </div>
                 </div>
@@ -917,14 +1089,46 @@ export function ErrorsPanel({ snapshot }: { snapshot: OpsSnapshot }) {
                       <TableCell>{attempt.attempt_index + 1}</TableCell>
                       <TableCell>{attempt.channel_id}</TableCell>
                       <TableCell>{attempt.channel_key_index}</TableCell>
-                      <TableCell>{attempt.status_code}</TableCell>
                       <TableCell>
+                        <SemanticStatusBadge
+                          variant={statusVariantFromTone(
+                            statusCodeTone(attempt.status_code)
+                          )}
+                          label={String(attempt.status_code)}
+                          copyable={false}
+                          showDot
+                        />
+                      </TableCell>
+                      <TableCell
+                        className={
+                          METRIC_TONE_TEXT_CLASS[
+                            lowerIsBetterTone(
+                              attempt.duration_ms,
+                              settings?.request_p99_threshold_ms
+                            )
+                          ]
+                        }
+                      >
                         {formatMilliseconds(attempt.duration_ms)}
                       </TableCell>
-                      <TableCell>
+                      <TableCell
+                        className={
+                          METRIC_TONE_TEXT_CLASS[
+                            attempt.concurrency_wait_ms > 0
+                              ? 'warning'
+                              : 'success'
+                          ]
+                        }
+                      >
                         {formatMilliseconds(attempt.concurrency_wait_ms)}
                       </TableCell>
-                      <TableCell>
+                      <TableCell
+                        className={
+                          METRIC_TONE_TEXT_CLASS[
+                            attempt.switched_channel ? 'warning' : 'success'
+                          ]
+                        }
+                      >
                         {attempt.switched_channel ? t('Yes') : t('No')}
                       </TableCell>
                     </TableRow>

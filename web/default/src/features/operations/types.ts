@@ -304,6 +304,7 @@ export type OpsSettings = {
   overload_cooldown_seconds: number
   temporary_unschedulable_seconds: number
   sla_threshold: number
+  request_p99_threshold_ms: number
   ttft_p99_threshold_ms: number
   request_error_rate_threshold: number
   upstream_error_rate_threshold: number

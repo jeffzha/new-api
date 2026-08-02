@@ -20,7 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 export type MetricTone = 'neutral' | 'info' | 'success' | 'warning' | 'critical'
 
 export const METRIC_TONE_TEXT_CLASS: Record<MetricTone, string> = {
-  neutral: 'text-foreground',
+  neutral: 'text-muted-foreground',
   info: 'text-info',
   success: 'text-success',
   warning: 'text-warning',
@@ -56,7 +56,7 @@ export function higherIsBetterTone(
     return 'neutral'
   }
   if (value < criticalThreshold) return 'critical'
-  if (value < criticalThreshold + warningBuffer) return 'warning'
+  if (value < Math.min(1, criticalThreshold + warningBuffer)) return 'warning'
   return 'success'
 }
 
@@ -69,7 +69,9 @@ export function lowerIsBetterTone(
     return 'neutral'
   }
   if (value >= criticalThreshold) return 'critical'
-  if (value >= criticalThreshold * warningRatio) return 'warning'
+  if (value + Number.EPSILON >= criticalThreshold * warningRatio) {
+    return 'warning'
+  }
   return 'success'
 }
 
@@ -100,6 +102,45 @@ export function concurrencyLoadTone(
   return boundedUsageTone(loadPercent, 50, 90)
 }
 
+export function connectionPoolTone(
+  healthy: boolean,
+  openConnections: number | null | undefined,
+  maxConnections: number | null | undefined
+): MetricTone {
+  if (!healthy) return 'critical'
+  if (
+    !isMetricNumber(openConnections) ||
+    !isMetricNumber(maxConnections) ||
+    maxConnections <= 0
+  ) {
+    return 'info'
+  }
+  return boundedUsageTone((openConnections / maxConnections) * 100, 70, 90)
+}
+
+export function availabilityTone(
+  available: number | null | undefined,
+  total: number | null | undefined
+): MetricTone {
+  if (!isMetricNumber(available) || !isMetricNumber(total) || total <= 0) {
+    return 'neutral'
+  }
+  if (available <= 0) return 'critical'
+  if (available < total) return 'warning'
+  return 'success'
+}
+
+export function statusCodeTone(
+  statusCode: number | null | undefined
+): MetricTone {
+  if (!isMetricNumber(statusCode) || statusCode <= 0 || statusCode >= 500) {
+    return 'critical'
+  }
+  if (statusCode >= 400) return 'warning'
+  if (statusCode >= 200) return 'success'
+  return 'info'
+}
+
 export function worstMetricTone(...tones: MetricTone[]): MetricTone {
   const rank: Record<MetricTone, number> = {
     neutral: 0,
@@ -108,7 +149,15 @@ export function worstMetricTone(...tones: MetricTone[]): MetricTone {
     warning: 3,
     critical: 4,
   }
-  return tones.reduce((worst, tone) =>
-    rank[tone] > rank[worst] ? tone : worst
+  const worst = tones.reduce((current, tone) =>
+    rank[tone] > rank[current] ? tone : current
   )
+  if (
+    worst !== 'critical' &&
+    worst !== 'warning' &&
+    tones.includes('neutral')
+  ) {
+    return 'neutral'
+  }
+  return worst
 }

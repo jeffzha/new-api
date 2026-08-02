@@ -3906,6 +3906,7 @@
     "Request Model": "Mô hình yêu cầu",
     "Request Model:": "Mô hình yêu cầu:",
     "Request overrides, routing behavior, and upstream model automation": "Ghi đè yêu cầu, hành vi định tuyến và tự động hóa mô hình upstream",
+    "Request P99 latency threshold (ms)": "Ngưỡng độ trễ P99 của yêu cầu (ms)",
     "Request retry": "Thử lại yêu cầu",
     "Request rule pricing": "Quy tắc tính giá theo request",
     "Request success rate sampled over the last 24 hours": "Tỷ lệ yêu cầu thành công được lấy mẫu trong 24 giờ qua",

@@ -21,6 +21,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { StatusBadge as SemanticStatusBadge } from '@/components/status-badge'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,7 +32,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -234,6 +234,16 @@ function SettingsForm({ settings }: { settings: OpsSettings }) {
             step={0.01}
             onChange={(value) =>
               setForm({ ...form, sla_threshold: value / 100 })
+            }
+          />
+          <NumberField
+            id='request-latency-threshold'
+            label={t('Request P99 latency threshold (ms)')}
+            value={form.request_p99_threshold_ms}
+            min={1}
+            max={600000}
+            onChange={(request_p99_threshold_ms) =>
+              setForm({ ...form, request_p99_threshold_ms })
             }
           />
           <NumberField
@@ -518,9 +528,12 @@ function LimitEditor({ channels }: { channels: ConcurrencyChannel[] }) {
                     {limit.key_index < 0 ? t('All keys') : limit.key_index}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={limit.enabled ? 'secondary' : 'outline'}>
-                      {limit.enabled ? t('Enabled') : t('Disabled')}
-                    </Badge>
+                    <SemanticStatusBadge
+                      variant={limit.enabled ? 'success' : 'neutral'}
+                      label={limit.enabled ? t('Enabled') : t('Disabled')}
+                      copyable={false}
+                      showDot
+                    />
                   </TableCell>
                   <TableCell>{limit.max_concurrency}</TableCell>
                   <TableCell>{limit.queue_size}</TableCell>

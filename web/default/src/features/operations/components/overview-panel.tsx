@@ -94,6 +94,25 @@ function MetricCard({
   )
 }
 
+function diagnosticTone(severity: string): MetricTone {
+  if (severity === 'critical') return 'critical'
+  if (severity === 'warning') return 'warning'
+  return 'info'
+}
+
+function latencyPercentileTone(
+  hasSamples: boolean,
+  percentile: string,
+  value: number,
+  p99Threshold: number | undefined
+): MetricTone {
+  if (!hasSamples) return 'neutral'
+  if (percentile === 'p99') {
+    return lowerIsBetterTone(value, p99Threshold)
+  }
+  return 'info'
+}
+
 export function OverviewPanel({
   snapshot,
   settings,
@@ -119,6 +138,12 @@ export function OverviewPanel({
       )
     : 'neutral'
   const errorTone = worstMetricTone(requestErrorTone, upstreamErrorTone)
+  const requestLatencyTone = latency.duration.samples
+    ? lowerIsBetterTone(
+        latency.duration.p99,
+        settings?.request_p99_threshold_ms
+      )
+    : 'neutral'
   const ttftTone = latency.ttft.samples
     ? lowerIsBetterTone(latency.ttft.p99, settings?.ttft_p99_threshold_ms)
     : 'neutral'
@@ -154,27 +179,46 @@ export function OverviewPanel({
       color: 'var(--chart-5)',
     },
   } satisfies ChartConfig
+  const latencyRows = [
+    {
+      label: t('Duration'),
+      values: latency.duration,
+      p99Threshold: settings?.request_p99_threshold_ms,
+    },
+    {
+      label: t('TTFT'),
+      values: latency.ttft,
+      p99Threshold: settings?.ttft_p99_threshold_ms,
+    },
+  ]
 
   return (
     <div className='flex flex-col gap-4'>
       {snapshot.diagnostics.length > 0 && (
         <div className='grid gap-3 lg:grid-cols-2'>
-          {snapshot.diagnostics.map((diagnostic) => (
-            <Alert
-              key={`${diagnostic.metric}-${diagnostic.severity}-${diagnostic.value}-${diagnostic.threshold}`}
-              variant={
-                diagnostic.severity === 'critical' ? 'destructive' : 'default'
-              }
-            >
-              <AlertTitle>{t('Operations diagnosis')}</AlertTitle>
-              <AlertDescription>
-                {t('Metric')}: {diagnostic.metric}
-                {diagnostic.threshold > 0
-                  ? ` · ${t('Value')}: ${diagnostic.value.toFixed(3)} · ${t('Threshold')}: ${diagnostic.threshold.toFixed(3)}`
-                  : ''}
-              </AlertDescription>
-            </Alert>
-          ))}
+          {snapshot.diagnostics.map((diagnostic) => {
+            const tone = diagnosticTone(diagnostic.severity)
+            return (
+              <Alert
+                key={`${diagnostic.metric}-${diagnostic.severity}-${diagnostic.value}-${diagnostic.threshold}`}
+                variant={tone === 'critical' ? 'destructive' : 'default'}
+                className={cn(
+                  tone === 'warning' &&
+                    'border-warning/50 text-warning [&>svg]:text-warning',
+                  tone === 'info' &&
+                    'border-info/50 text-info [&>svg]:text-info'
+                )}
+              >
+                <AlertTitle>{t('Operations diagnosis')}</AlertTitle>
+                <AlertDescription>
+                  {t('Metric')}: {diagnostic.metric}
+                  {diagnostic.threshold > 0
+                    ? ` · ${t('Value')}: ${diagnostic.value.toFixed(3)} · ${t('Threshold')}: ${diagnostic.threshold.toFixed(3)}`
+                    : ''}
+                </AlertDescription>
+              </Alert>
+            )
+          })}
         </div>
       )}
 
@@ -205,8 +249,13 @@ export function OverviewPanel({
         />
         <MetricCard
           title={t('Request latency P99')}
-          value={formatMilliseconds(latency.duration.p99)}
-          description={`${t('Average')}: ${formatMilliseconds(latency.duration.avg)} · ${t('Samples')}: ${formatCompact(latency.duration.samples)}`}
+          value={
+            latency.duration.samples
+              ? formatMilliseconds(latency.duration.p99)
+              : '-'
+          }
+          description={`${t('Average')}: ${latency.duration.samples ? formatMilliseconds(latency.duration.avg) : '-'} · ${t('Samples')}: ${formatCompact(latency.duration.samples)}`}
+          tone={requestLatencyTone}
         />
         <MetricCard
           title={t('TTFT P99')}
@@ -384,10 +433,7 @@ export function OverviewPanel({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {[
-                  { label: t('Duration'), values: latency.duration },
-                  { label: t('TTFT'), values: latency.ttft },
-                ].map(({ label, values }) => (
+                {latencyRows.map(({ label, values, p99Threshold }) => (
                   <TableRow key={label}>
                     <TableCell>{label}</TableCell>
                     {[
@@ -399,9 +445,21 @@ export function OverviewPanel({
                     ].map((percentile) => (
                       <TableCell
                         key={percentile.percentile}
-                        className='tabular-nums'
+                        className={cn(
+                          'tabular-nums',
+                          METRIC_TONE_TEXT_CLASS[
+                            latencyPercentileTone(
+                              values.samples > 0,
+                              percentile.percentile,
+                              percentile.value,
+                              p99Threshold
+                            )
+                          ]
+                        )}
                       >
-                        {formatMilliseconds(percentile.value)}
+                        {values.samples
+                          ? formatMilliseconds(percentile.value)
+                          : '-'}
                       </TableCell>
                     ))}
                   </TableRow>
@@ -435,16 +493,22 @@ export function OverviewPanel({
                     <TableCell>
                       <Badge variant='outline'>{row.model_name}</Badge>
                     </TableCell>
-                    <TableCell>{formatCompact(row.request_count)}</TableCell>
-                    <TableCell>
+                    <TableCell className='text-info'>
+                      {formatCompact(row.request_count)}
+                    </TableCell>
+                    <TableCell className='text-info'>
                       {row.average_tokens_per_second.toFixed(2)}
                     </TableCell>
-                    <TableCell>
+                    <TableCell
+                      className={
+                        row.ttft_samples ? 'text-info' : 'text-muted-foreground'
+                      }
+                    >
                       {row.ttft_samples
                         ? formatMilliseconds(row.average_ttft_ms)
                         : '-'}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className='text-info'>
                       {formatMilliseconds(row.average_duration_ms)}
                     </TableCell>
                   </TableRow>

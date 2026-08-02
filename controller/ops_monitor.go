@@ -71,6 +71,7 @@ type updateOpsSettingsRequest struct {
 	OverloadCooldownSeconds       int     `json:"overload_cooldown_seconds"`
 	TemporaryUnschedulableSeconds int     `json:"temporary_unschedulable_seconds"`
 	SLAThreshold                  float64 `json:"sla_threshold"`
+	RequestP99ThresholdMs         *int    `json:"request_p99_threshold_ms"`
 	TTFTP99ThresholdMs            int     `json:"ttft_p99_threshold_ms"`
 	RequestErrorRateThreshold     float64 `json:"request_error_rate_threshold"`
 	UpstreamErrorRateThreshold    float64 `json:"upstream_error_rate_threshold"`
@@ -82,6 +83,10 @@ func UpdateOpsSettings(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
+	requestP99ThresholdMs := ops_monitor_setting.Get().RequestP99ThresholdMs
+	if request.RequestP99ThresholdMs != nil {
+		requestP99ThresholdMs = *request.RequestP99ThresholdMs
+	}
 	if request.RawRetentionDays < 1 || request.RawRetentionDays > 365 ||
 		request.AggregateRetentionDays < request.RawRetentionDays || request.AggregateRetentionDays > 3650 ||
 		request.SystemRetentionDays < 1 || request.SystemRetentionDays > 3650 ||
@@ -91,6 +96,7 @@ func UpdateOpsSettings(c *gin.Context) {
 		request.OverloadCooldownSeconds < 1 || request.OverloadCooldownSeconds > 86400 ||
 		request.TemporaryUnschedulableSeconds < 1 || request.TemporaryUnschedulableSeconds > 3600 ||
 		request.SLAThreshold <= 0 || request.SLAThreshold > 1 ||
+		requestP99ThresholdMs < 1 || requestP99ThresholdMs > 600000 ||
 		request.TTFTP99ThresholdMs < 1 || request.TTFTP99ThresholdMs > 600000 ||
 		request.RequestErrorRateThreshold <= 0 || request.RequestErrorRateThreshold > 1 ||
 		request.UpstreamErrorRateThreshold <= 0 || request.UpstreamErrorRateThreshold > 1 {
@@ -110,6 +116,7 @@ func UpdateOpsSettings(c *gin.Context) {
 		"ops_monitor_setting.overload_cooldown_seconds":       strconv.Itoa(request.OverloadCooldownSeconds),
 		"ops_monitor_setting.temporary_unschedulable_seconds": strconv.Itoa(request.TemporaryUnschedulableSeconds),
 		"ops_monitor_setting.sla_threshold":                   strconv.FormatFloat(request.SLAThreshold, 'f', -1, 64),
+		"ops_monitor_setting.request_p99_threshold_ms":        strconv.Itoa(requestP99ThresholdMs),
 		"ops_monitor_setting.ttft_p99_threshold_ms":           strconv.Itoa(request.TTFTP99ThresholdMs),
 		"ops_monitor_setting.request_error_rate_threshold":    strconv.FormatFloat(request.RequestErrorRateThreshold, 'f', -1, 64),
 		"ops_monitor_setting.upstream_error_rate_threshold":   strconv.FormatFloat(request.UpstreamErrorRateThreshold, 'f', -1, 64),

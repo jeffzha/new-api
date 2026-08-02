@@ -685,17 +685,32 @@ func sortedSetValues(values map[string]struct{}) []string {
 
 func buildDiagnostics(snapshot DashboardSnapshot, settings ops_monitor_setting.Setting) []Diagnostic {
 	diagnostics := make([]Diagnostic, 0)
-	if snapshot.Overview.RequestCount > 0 && snapshot.Overview.SLA < settings.SLAThreshold {
-		diagnostics = append(diagnostics, Diagnostic{Severity: "critical", Metric: "sla", Message: "SLA is below the configured threshold", Value: snapshot.Overview.SLA, Threshold: settings.SLAThreshold})
+	if snapshot.Overview.RequestCount > 0 {
+		if snapshot.Overview.SLA < settings.SLAThreshold {
+			diagnostics = append(diagnostics, Diagnostic{Severity: "critical", Metric: "sla", Message: "SLA is below the configured threshold", Value: snapshot.Overview.SLA, Threshold: settings.SLAThreshold})
+		} else if snapshot.Overview.SLA < math.Min(1, settings.SLAThreshold+0.001) {
+			diagnostics = append(diagnostics, Diagnostic{Severity: "warning", Metric: "sla", Message: "SLA is near the configured threshold", Value: snapshot.Overview.SLA, Threshold: settings.SLAThreshold})
+		}
 	}
-	if snapshot.Latency.TTFT.Samples > 0 && snapshot.Latency.TTFT.P99 >= int64(settings.TTFTP99ThresholdMs) {
-		diagnostics = append(diagnostics, Diagnostic{Severity: "warning", Metric: "ttft_p99", Message: "TTFT P99 reached the configured threshold", Value: float64(snapshot.Latency.TTFT.P99), Threshold: float64(settings.TTFTP99ThresholdMs)})
+	if snapshot.Latency.Duration.Samples > 0 {
+		severity := lowerIsBetterDiagnosticSeverity(float64(snapshot.Latency.Duration.P99), float64(settings.RequestP99ThresholdMs))
+		if severity != "" {
+			diagnostics = append(diagnostics, Diagnostic{Severity: severity, Metric: "request_p99", Message: "Request P99 latency is near or above the configured threshold", Value: float64(snapshot.Latency.Duration.P99), Threshold: float64(settings.RequestP99ThresholdMs)})
+		}
 	}
-	if snapshot.Overview.RequestErrorRate >= settings.RequestErrorRateThreshold {
-		diagnostics = append(diagnostics, Diagnostic{Severity: "critical", Metric: "request_error_rate", Message: "Request error rate reached the configured threshold", Value: snapshot.Overview.RequestErrorRate, Threshold: settings.RequestErrorRateThreshold})
+	if snapshot.Latency.TTFT.Samples > 0 {
+		severity := lowerIsBetterDiagnosticSeverity(float64(snapshot.Latency.TTFT.P99), float64(settings.TTFTP99ThresholdMs))
+		if severity != "" {
+			diagnostics = append(diagnostics, Diagnostic{Severity: severity, Metric: "ttft_p99", Message: "TTFT P99 is near or above the configured threshold", Value: float64(snapshot.Latency.TTFT.P99), Threshold: float64(settings.TTFTP99ThresholdMs)})
+		}
 	}
-	if snapshot.Overview.UpstreamErrorRate >= settings.UpstreamErrorRateThreshold {
-		diagnostics = append(diagnostics, Diagnostic{Severity: "critical", Metric: "upstream_error_rate", Message: "Upstream error rate reached the configured threshold", Value: snapshot.Overview.UpstreamErrorRate, Threshold: settings.UpstreamErrorRateThreshold})
+	if snapshot.Overview.RequestCount > 0 {
+		if severity := lowerIsBetterDiagnosticSeverity(snapshot.Overview.RequestErrorRate, settings.RequestErrorRateThreshold); severity != "" {
+			diagnostics = append(diagnostics, Diagnostic{Severity: severity, Metric: "request_error_rate", Message: "Request error rate is near or above the configured threshold", Value: snapshot.Overview.RequestErrorRate, Threshold: settings.RequestErrorRateThreshold})
+		}
+		if severity := lowerIsBetterDiagnosticSeverity(snapshot.Overview.UpstreamErrorRate, settings.UpstreamErrorRateThreshold); severity != "" {
+			diagnostics = append(diagnostics, Diagnostic{Severity: severity, Metric: "upstream_error_rate", Message: "Upstream error rate is near or above the configured threshold", Value: snapshot.Overview.UpstreamErrorRate, Threshold: settings.UpstreamErrorRateThreshold})
+		}
 	}
 	for _, system := range snapshot.System.LatestByNode {
 		if !system.DBHealthy {
@@ -704,14 +719,14 @@ func buildDiagnostics(snapshot DashboardSnapshot, settings ops_monitor_setting.S
 		if system.RedisEnabled && !system.RedisHealthy {
 			diagnostics = append(diagnostics, Diagnostic{Severity: "critical", Metric: "redis", Message: system.NodeName + ": Redis health check failed"})
 		}
-		if system.CPUPercent >= 85 {
-			diagnostics = append(diagnostics, Diagnostic{Severity: "warning", Metric: "cpu", Message: system.NodeName + ": CPU utilization is high", Value: system.CPUPercent, Threshold: 85})
+		if severity, threshold := boundedUsageDiagnosticSeverity(system.CPUPercent, 80, 95); severity != "" {
+			diagnostics = append(diagnostics, Diagnostic{Severity: severity, Metric: "cpu", Message: system.NodeName + ": CPU utilization is high", Value: system.CPUPercent, Threshold: threshold})
 		}
-		if system.MemoryPercent >= 95 {
-			diagnostics = append(diagnostics, Diagnostic{Severity: "critical", Metric: "memory", Message: system.NodeName + ": memory utilization is high", Value: system.MemoryPercent, Threshold: 95})
+		if severity, threshold := boundedUsageDiagnosticSeverity(system.MemoryPercent, 85, 95); severity != "" {
+			diagnostics = append(diagnostics, Diagnostic{Severity: severity, Metric: "memory", Message: system.NodeName + ": memory utilization is high", Value: system.MemoryPercent, Threshold: threshold})
 		}
-		if system.DiskPercent >= 90 {
-			diagnostics = append(diagnostics, Diagnostic{Severity: "warning", Metric: "disk", Message: system.NodeName + ": disk utilization is high", Value: system.DiskPercent, Threshold: 90})
+		if severity, threshold := boundedUsageDiagnosticSeverity(system.DiskPercent, 80, 95); severity != "" {
+			diagnostics = append(diagnostics, Diagnostic{Severity: severity, Metric: "disk", Message: system.NodeName + ": disk utilization is high", Value: system.DiskPercent, Threshold: threshold})
 		}
 	}
 	for _, job := range snapshot.Jobs {
@@ -723,4 +738,24 @@ func buildDiagnostics(snapshot DashboardSnapshot, settings ops_monitor_setting.S
 		diagnostics = append(diagnostics, Diagnostic{Severity: "critical", Metric: "telemetry", Message: "Operations telemetry events were dropped", Value: float64(snapshot.Telemetry.DroppedRequests + snapshot.Telemetry.DroppedAttempts)})
 	}
 	return diagnostics
+}
+
+func lowerIsBetterDiagnosticSeverity(value, criticalThreshold float64) string {
+	if value >= criticalThreshold {
+		return "critical"
+	}
+	if value+1e-12 >= criticalThreshold*0.8 {
+		return "warning"
+	}
+	return ""
+}
+
+func boundedUsageDiagnosticSeverity(value, warningThreshold, criticalThreshold float64) (string, float64) {
+	if value >= criticalThreshold {
+		return "critical", criticalThreshold
+	}
+	if value >= warningThreshold {
+		return "warning", warningThreshold
+	}
+	return "", 0
 }

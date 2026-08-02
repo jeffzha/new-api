@@ -598,18 +598,29 @@ Health &lt; 60       → critical</div>
               <thead><tr><th>诊断</th><th>级别</th><th>条件</th><th>阈值来源</th></tr></thead>
               <tbody>
                 <tr><td>SLA 低</td><td><span class="tag red">critical</span></td><td>有请求且 SLA &lt; SLA threshold</td><td>可配置，默认 99.5%</td></tr>
-                <tr><td>TTFT P99 高</td><td><span class="tag amber">warning</span></td><td>有 TTFT 样本且 P99 ≥ 阈值</td><td>可配置，默认 500ms</td></tr>
-                <tr><td>请求错误率高</td><td><span class="tag red">critical</span></td><td>请求错误率 ≥ 阈值</td><td>可配置，默认 5%</td></tr>
-                <tr><td>上游错误率高</td><td><span class="tag red">critical</span></td><td>上游错误率 ≥ 阈值</td><td>可配置，默认 5%</td></tr>
+                <tr><td>SLA 接近下限</td><td><span class="tag amber">warning</span></td><td>SLA 在阈值以上 0.1 个百分点以内</td><td>可配置，默认 99.5%</td></tr>
+                <tr><td>请求 P99 延迟高</td><td>warning / critical</td><td>P99 ≥ 阈值的 80% 为 warning；P99 ≥ 阈值为 critical</td><td>可配置，默认 10000ms</td></tr>
+                <tr><td>TTFT P99 高</td><td>warning / critical</td><td>P99 ≥ 阈值的 80% 为 warning；P99 ≥ 阈值为 critical</td><td>可配置，默认 500ms</td></tr>
+                <tr><td>请求错误率高</td><td>warning / critical</td><td>错误率 ≥ 阈值的 80% 为 warning；错误率 ≥ 阈值为 critical</td><td>可配置，默认 5%</td></tr>
+                <tr><td>上游错误率高</td><td>warning / critical</td><td>错误率 ≥ 阈值的 80% 为 warning；错误率 ≥ 阈值为 critical</td><td>可配置，默认 5%</td></tr>
                 <tr><td>DB / Redis 失败</td><td><span class="tag red">critical</span></td><td>健康探针失败</td><td>固定</td></tr>
-                <tr><td>CPU 高</td><td><span class="tag amber">warning</span></td><td>CPU ≥ 85%</td><td>固定</td></tr>
-                <tr><td>内存高</td><td><span class="tag red">critical</span></td><td>Memory ≥ 95%</td><td>固定</td></tr>
-                <tr><td>磁盘高</td><td><span class="tag amber">warning</span></td><td>Disk ≥ 90%</td><td>固定</td></tr>
+                <tr><td>CPU 高</td><td>warning / critical</td><td>CPU ≥ 80% 为 warning；CPU ≥ 95% 为 critical</td><td>固定</td></tr>
+                <tr><td>内存高</td><td>warning / critical</td><td>Memory ≥ 85% 为 warning；Memory ≥ 95% 为 critical</td><td>固定</td></tr>
+                <tr><td>磁盘高</td><td>warning / critical</td><td>Disk ≥ 80% 为 warning；Disk ≥ 95% 为 critical</td><td>固定</td></tr>
                 <tr><td>任务不健康</td><td><span class="tag amber">warning</span></td><td>job 状态不是 healthy</td><td>固定</td></tr>
                 <tr><td>遥测丢弃</td><td><span class="tag red">critical</span></td><td>dropped request/attempt &gt; 0</td><td>固定</td></tr>
               </tbody>
             </table>
           </div>
+          <h3>界面统一颜色规则</h3>
+          <ul>
+            <li><strong>灰色 neutral：</strong>无样本、未知、未启用或仅观察模式。</li>
+            <li><strong>蓝色 info：</strong>请求量、吞吐、绝对并发数、网络速率和无告警阈值的耗时等纯信息指标。</li>
+            <li><strong>绿色 success：</strong>健康、可用、零失败或处于正常阈值范围。</li>
+            <li><strong>黄色 warning：</strong>接近阈值、部分可用、发生排队或渠道切换等需要关注但仍可恢复的状态。</li>
+            <li><strong>红色 critical：</strong>达到严重阈值、服务不可用、任务失败、5xx 或遥测数据丢弃。</li>
+          </ul>
+          <p>所有“越低越好”的可配置指标统一在达到严重阈值的 80% 时变黄、达到阈值时变红；SLA 等“越高越好”的指标低于阈值变红，阈值以上 0.1 个百分点以内变黄。HTTP 4xx 显示黄色，5xx 和无有效状态码显示红色；趋势图的多序列颜色只用于区分数据系列，不代表健康状态。</p>
         </section>
 
         <section id="concurrency" class="section-card">
@@ -700,7 +711,8 @@ Health &lt; 60       → critical</div>
                 <tr><td><code>overload_cooldown_seconds</code></td><td>30</td><td>1–86400 秒</td><td>上游返回 529 后保持 overloaded 的时间。</td></tr>
                 <tr><td><code>temporary_unschedulable_seconds</code></td><td>10</td><td>1–3600 秒</td><td>其他 ≥500 错误后保持临时不可调度的时间。</td></tr>
                 <tr><td><code>sla_threshold</code></td><td>0.995</td><td>(0, 1]</td><td>SLA 低于该值触发 critical 诊断；界面默认显示 99.5%。</td></tr>
-                <tr><td><code>ttft_p99_threshold_ms</code></td><td>500</td><td>1–600000ms</td><td>TTFT P99 达到该值触发 warning。</td></tr>
+                <tr><td><code>request_p99_threshold_ms</code></td><td>10000</td><td>1–600000ms</td><td>请求总耗时 P99 的 critical 阈值；达到 80% 时先显示 warning。</td></tr>
+                <tr><td><code>ttft_p99_threshold_ms</code></td><td>500</td><td>1–600000ms</td><td>TTFT P99 的 critical 阈值；达到 80% 时先显示 warning。</td></tr>
                 <tr><td><code>request_error_rate_threshold</code></td><td>0.05</td><td>(0, 1]</td><td>请求错误率达到该值触发 critical；界面默认显示 5%。</td></tr>
                 <tr><td><code>upstream_error_rate_threshold</code></td><td>0.05</td><td>(0, 1]</td><td>上游错误率达到该值触发 critical；界面默认显示 5%。</td></tr>
               </tbody>
@@ -790,11 +802,12 @@ Health &lt; 60       → critical</div>
     "overload_cooldown_seconds": 30,
     "temporary_unschedulable_seconds": 10,
     "sla_threshold": 0.995,
+    "request_p99_threshold_ms": 10000,
     "ttft_p99_threshold_ms": 500,
     "request_error_rate_threshold": 0.05,
     "upstream_error_rate_threshold": 0.05
   }'</code></pre>
-          <div class="callout warn">PUT 是完整对象更新，不是 PATCH。遗漏布尔字段会按 false 绑定，遗漏数值字段会变成 0 并导致校验失败；建议先 GET、修改目标字段，再 PUT 完整对象。</div>
+          <div class="callout warn">PUT 是完整对象更新，不是 PATCH。遗漏布尔字段会按 false 绑定，遗漏数值字段会变成 0 并导致校验失败；建议先 GET、修改目标字段，再 PUT 完整对象。为兼容旧版管理页面，新增的 <code>request_p99_threshold_ms</code> 暂时允许省略，省略时保留当前值。</div>
 
           <h4>配置渠道全部密钥并发规则</h4>
           <pre><code>curl -X PUT -b cookies.txt \

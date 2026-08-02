@@ -3906,6 +3906,7 @@
     "Request Model": "Request Model",
     "Request Model:": "Request Model:",
     "Request overrides, routing behavior, and upstream model automation": "Request overrides, routing behavior, and upstream model automation",
+    "Request P99 latency threshold (ms)": "Request P99 latency threshold (ms)",
     "Request retry": "Request retry",
     "Request rule pricing": "Request rule pricing",
     "Request success rate sampled over the last 24 hours": "Request success rate sampled over the last 24 hours",

@@ -3906,6 +3906,7 @@
     "Request Model": "请求模型",
     "Request Model:": "请求模型：",
     "Request overrides, routing behavior, and upstream model automation": "请求覆盖、路由行为和上游模型自动化",
+    "Request P99 latency threshold (ms)": "请求 P99 延迟阈值（毫秒）",
     "Request retry": "请求重试",
     "Request rule pricing": "请求规则计费",
     "Request success rate sampled over the last 24 hours": "最近 24 小时按时间桶采样的请求成功率",

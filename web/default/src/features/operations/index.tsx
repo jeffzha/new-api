@@ -20,6 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { StatusBadge as SemanticStatusBadge } from '@/components/status-badge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -158,17 +159,20 @@ export function OperationsDashboard() {
             <div className='flex flex-wrap items-center gap-2'>
               <CardTitle>{t('Operations monitoring')}</CardTitle>
               <Badge variant='outline'>Root</Badge>
-              <Badge
+              <SemanticStatusBadge
                 variant={
                   snapshot.concurrency.enforcement_enabled
-                    ? 'default'
-                    : 'outline'
+                    ? 'success'
+                    : 'neutral'
                 }
-              >
-                {snapshot.concurrency.enforcement_enabled
-                  ? t('Concurrency enforcement enabled')
-                  : t('Concurrency enforcement disabled')}
-              </Badge>
+                label={
+                  snapshot.concurrency.enforcement_enabled
+                    ? t('Concurrency enforcement enabled')
+                    : t('Concurrency enforcement disabled')
+                }
+                copyable={false}
+                showDot
+              />
             </div>
             <CardDescription>
               {t(
@@ -309,10 +313,10 @@ export function OperationsDashboard() {
             <ConcurrencyPanel snapshot={snapshot} />
           </TabsContent>
           <TabsContent value='tasks'>
-            <TaskPanel snapshot={snapshot} />
+            <TaskPanel snapshot={snapshot} settings={settingsQuery.data} />
           </TabsContent>
           <TabsContent value='errors'>
-            <ErrorsPanel snapshot={snapshot} />
+            <ErrorsPanel snapshot={snapshot} settings={settingsQuery.data} />
           </TabsContent>
           <TabsContent value='settings'>
             <SettingsPanel channels={channels} />

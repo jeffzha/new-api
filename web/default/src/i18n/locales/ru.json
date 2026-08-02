@@ -3906,6 +3906,7 @@
     "Request Model": "Запрошенная модель",
     "Request Model:": "Модель запроса:",
     "Request overrides, routing behavior, and upstream model automation": "Переопределения запросов, маршрутизация и автоматизация upstream-моделей",
+    "Request P99 latency threshold (ms)": "Порог задержки запросов P99 (мс)",
     "Request retry": "Повтор запросов",
     "Request rule pricing": "Правила ценообразования по запросу",
     "Request success rate sampled over the last 24 hours": "Доля успешных запросов по выборкам за последние 24 часа",

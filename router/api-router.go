@@ -291,6 +291,18 @@ func SetApiRouter(router *gin.Engine) {
 			systemInfoRoute.DELETE("/stale-instances", controller.DeleteStaleSystemInstances)
 			systemInfoRoute.DELETE("/instances/:node_name", controller.DeleteStaleSystemInstance)
 		}
+		opsRoute := apiRouter.Group("/ops")
+		opsRoute.Use(middleware.RootAuth())
+		{
+			opsRoute.GET("/dashboard/snapshot", controller.GetOpsDashboardSnapshot)
+			opsRoute.GET("/requests/:request_id", controller.GetOpsRequestDetail)
+			opsRoute.GET("/concurrency", controller.GetOpsConcurrency)
+			opsRoute.GET("/settings", controller.GetOpsSettings)
+			opsRoute.PUT("/settings", controller.UpdateOpsSettings)
+			opsRoute.GET("/concurrency-limits", controller.ListOpsConcurrencyLimits)
+			opsRoute.PUT("/concurrency-limits", controller.UpsertOpsConcurrencyLimit)
+			opsRoute.DELETE("/concurrency-limits/:channel_id", controller.DeleteOpsConcurrencyLimit)
+		}
 		upstreamEventRoute := apiRouter.Group("/upstream-events")
 		upstreamEventRoute.Use(middleware.RootAuth())
 		{

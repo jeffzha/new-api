@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service/opsmonitor"
 	"github.com/gin-gonic/gin"
 )
 
@@ -40,6 +41,7 @@ func BuildUpstreamResponseEvent(c *gin.Context, info *relaycommon.RelayInfo, usa
 }
 
 func EmitUpstreamResponse(c *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage, extra map[string]interface{}) {
+	opsmonitor.ObserveUsage(c, info, usage)
 	Emit(BuildUpstreamResponseEvent(c, info, usage, extra), PriorityHigh)
 }
 
@@ -162,6 +164,7 @@ func BuildTaskSubmitResponseEvent(c *gin.Context, info *relaycommon.RelayInfo, u
 }
 
 func EmitTaskSubmitResponse(c *gin.Context, info *relaycommon.RelayInfo, upstreamTaskID string, taskData []byte, platform constant.TaskPlatform, quota int) {
+	opsmonitor.ObserveRelay(c, info)
 	Emit(BuildTaskSubmitResponseEvent(c, info, upstreamTaskID, taskData, platform, quota), PriorityCritical)
 }
 

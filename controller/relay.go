@@ -21,6 +21,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/opsmonitor"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -73,6 +74,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	var (
 		newAPIError *types.NewAPIError
+		relayInfo   *relaycommon.RelayInfo
 		ws          *websocket.Conn
 	)
 
@@ -88,6 +90,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	defer func() {
 		if newAPIError != nil {
+			opsmonitor.ObserveError(c, relayInfo, relayFormat, newAPIError)
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			switch relayFormat {
@@ -117,7 +120,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
-	relayInfo, err := relaycommon.GenRelayInfo(c, relayFormat, request, ws)
+	relayInfo, err = relaycommon.GenRelayInfo(c, relayFormat, request, ws)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
@@ -209,6 +212,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
+		attempt, concurrencyErr := opsmonitor.BeginAttempt(c, relayInfo, channel)
+		if concurrencyErr != nil {
+			newAPIError = concurrencyErr
+			break
+		}
 
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
@@ -220,6 +228,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		default:
 			newAPIError = relayHandler(c, relayInfo)
 		}
+		attempt.FinishRelay(newAPIError)
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
@@ -478,7 +487,9 @@ func RelayTaskFetch(c *gin.Context) {
 		})
 		return
 	}
+	opsmonitor.ObserveRelay(c, relayInfo)
 	if taskErr := relay.RelayTaskFetch(c, relayInfo.RelayMode); taskErr != nil {
+		opsmonitor.ObserveTaskError(c, relayInfo, taskErr)
 		respondTaskError(c, taskErr)
 	}
 }
@@ -493,8 +504,10 @@ func RelayTask(c *gin.Context) {
 		})
 		return
 	}
+	opsmonitor.ObserveRelay(c, relayInfo)
 
 	if taskErr := relay.ResolveOriginTask(c, relayInfo); taskErr != nil {
+		opsmonitor.ObserveTaskError(c, relayInfo, taskErr)
 		respondTaskError(c, taskErr)
 		return
 	}
@@ -547,8 +560,14 @@ func RelayTask(c *gin.Context) {
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
+		attempt, concurrencyErr := opsmonitor.BeginAttempt(c, relayInfo, channel)
+		if concurrencyErr != nil {
+			taskErr = service.TaskErrorWrapperLocal(concurrencyErr.Err, "concurrency_limit_reached", concurrencyErr.StatusCode)
+			break
+		}
 
 		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
+		attempt.FinishTask(taskErr)
 		if taskErr == nil {
 			break
 		}
@@ -611,6 +630,7 @@ func RelayTask(c *gin.Context) {
 	}
 
 	if taskErr != nil {
+		opsmonitor.ObserveTaskError(c, relayInfo, taskErr)
 		respondTaskError(c, taskErr)
 	}
 }

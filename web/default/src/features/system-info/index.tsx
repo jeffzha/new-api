@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { OperationsDashboard } from '@/features/operations'
 
 import { SystemInstancesPanel } from './components/system-instances-panel'
@@ -40,7 +41,9 @@ export function SystemInfo() {
       </SectionPageLayout.Title>
       <SectionPageLayout.Content>
         <div className='flex flex-col gap-4'>
-          <OperationsDashboard />
+          <TooltipProvider delay={150}>
+            <OperationsDashboard />
+          </TooltipProvider>
           <SystemInstancesPanel />
           <SystemTasksPanel />
         </div>

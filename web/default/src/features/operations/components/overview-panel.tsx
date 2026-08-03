@@ -54,14 +54,15 @@ import {
   type MetricTone,
 } from '../metric-status'
 import type { OpsSettings, OpsSnapshot } from '../types'
+import { MetricHelp, type MetricHelpId } from './metric-help'
 
 function MetricCard({
-  title,
+  metric,
   value,
   description,
   tone = 'neutral',
 }: {
-  title: string
+  metric: MetricHelpId
   value: string
   description: string
   tone?: MetricTone
@@ -79,7 +80,7 @@ function MetricCard({
               aria-hidden='true'
             />
           )}
-          {title}
+          <MetricHelp metric={metric} />
         </CardDescription>
         <CardTitle
           className={cn('text-2xl tabular-nums', METRIC_TONE_TEXT_CLASS[tone])}
@@ -92,6 +93,16 @@ function MetricCard({
       </CardContent>
     </Card>
   )
+}
+
+function diagnosticMetricId(metric: string): MetricHelpId | undefined {
+  if (metric === 'sla') return 'effectiveRequestSuccessRate'
+  if (metric === 'request_p99') return 'requestLatencyP99'
+  if (metric === 'ttft_p99') return 'ttftP99'
+  if (metric === 'request_error_rate' || metric === 'upstream_error_rate') {
+    return 'errorRates'
+  }
+  return undefined
 }
 
 function diagnosticTone(severity: string): MetricTone {
@@ -122,7 +133,7 @@ export function OverviewPanel({
 }) {
   const { t } = useTranslation()
   const { overview, realtime, latency } = snapshot
-  const slaTone = overview.request_count
+  const effectiveSuccessTone = overview.request_count
     ? higherIsBetterTone(overview.sla, settings?.sla_threshold, 0.001)
     : 'neutral'
   const requestErrorTone = overview.request_count
@@ -163,7 +174,10 @@ export function OverviewPanel({
     tps: { label: 'TPS', color: 'var(--chart-2)' },
   } satisfies ChartConfig
   const errorConfig = {
-    sla_errors: { label: t('SLA errors'), color: 'var(--destructive)' },
+    sla_errors: {
+      label: t('Effective request failures'),
+      color: 'var(--destructive)',
+    },
     upstream_errors: {
       label: t('Upstream errors'),
       color: 'var(--chart-3)',
@@ -181,12 +195,12 @@ export function OverviewPanel({
   } satisfies ChartConfig
   const latencyRows = [
     {
-      label: t('Duration'),
+      metric: 'requestDuration' as const,
       values: latency.duration,
       p99Threshold: settings?.request_p99_threshold_ms,
     },
     {
-      label: t('TTFT'),
+      metric: 'ttft' as const,
       values: latency.ttft,
       p99Threshold: settings?.ttft_p99_threshold_ms,
     },
@@ -198,6 +212,7 @@ export function OverviewPanel({
         <div className='grid gap-3 lg:grid-cols-2'>
           {snapshot.diagnostics.map((diagnostic) => {
             const tone = diagnosticTone(diagnostic.severity)
+            const metricId = diagnosticMetricId(diagnostic.metric)
             return (
               <Alert
                 key={`${diagnostic.metric}-${diagnostic.severity}-${diagnostic.value}-${diagnostic.threshold}`}
@@ -211,7 +226,12 @@ export function OverviewPanel({
               >
                 <AlertTitle>{t('Operations diagnosis')}</AlertTitle>
                 <AlertDescription>
-                  {t('Metric')}: {diagnostic.metric}
+                  {t('Metric')}:{' '}
+                  {metricId ? (
+                    <MetricHelp metric={metricId} />
+                  ) : (
+                    diagnostic.metric
+                  )}
                   {diagnostic.threshold > 0
                     ? ` · ${t('Value')}: ${diagnostic.value.toFixed(3)} · ${t('Threshold')}: ${diagnostic.threshold.toFixed(3)}`
                     : ''}
@@ -224,31 +244,31 @@ export function OverviewPanel({
 
       <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-4'>
         <MetricCard
-          title={t('SLA')}
+          metric='effectiveRequestSuccessRate'
           value={overview.request_count ? formatPercent(overview.sla, 3) : '-'}
-          description={`${t('SLA errors')}: ${formatCompact(overview.sla_error_count)} · ${t('Business limits')}: ${formatCompact(overview.business_limit_count)}`}
-          tone={slaTone}
+          description={`${t('Effective request failures')}: ${formatCompact(overview.sla_error_count)} · ${t('Business limits')}: ${formatCompact(overview.business_limit_count)}`}
+          tone={effectiveSuccessTone}
         />
         <MetricCard
-          title={t('Requests and tokens')}
+          metric='requestsAndTokens'
           value={formatCompact(overview.request_count)}
           description={`${formatCompact(overview.total_tokens)} ${t('tokens')}`}
           tone='info'
         />
         <MetricCard
-          title={t('Current QPS / TPS')}
+          metric='realtimeThroughput'
           value={`${realtime.current_qps.toFixed(2)} / ${realtime.current_tps.toFixed(1)}`}
           description={`${t('Peak')}: ${realtime.peak_qps.toFixed(2)} / ${realtime.peak_tps.toFixed(1)}`}
           tone='info'
         />
         <MetricCard
-          title={t('Request / upstream error rate')}
+          metric='errorRates'
           value={`${formatPercent(overview.request_error_rate)} / ${formatPercent(overview.upstream_error_rate)}`}
           description={`${t('Upstream errors')}: ${formatCompact(overview.upstream_error_count)}`}
           tone={errorTone}
         />
         <MetricCard
-          title={t('Request latency P99')}
+          metric='requestLatencyP99'
           value={
             latency.duration.samples
               ? formatMilliseconds(latency.duration.p99)
@@ -258,7 +278,7 @@ export function OverviewPanel({
           tone={requestLatencyTone}
         />
         <MetricCard
-          title={t('TTFT P99')}
+          metric='ttftP99'
           value={
             latency.ttft.samples ? formatMilliseconds(latency.ttft.p99) : '-'
           }
@@ -266,13 +286,13 @@ export function OverviewPanel({
           tone={ttftTone}
         />
         <MetricCard
-          title={t('Average account switches')}
+          metric='averageAccountSwitches'
           value={overview.average_switches.toFixed(3)}
           description={t('Average switches per downstream request')}
           tone='info'
         />
         <MetricCard
-          title={t('Telemetry health')}
+          metric='telemetryHealth'
           value={
             snapshot.telemetry.dropped_requests +
               snapshot.telemetry.dropped_attempts ===
@@ -288,7 +308,12 @@ export function OverviewPanel({
       <div className='grid gap-4 xl:grid-cols-3'>
         <Card>
           <CardHeader>
-            <CardTitle>{t('Throughput trend')}</CardTitle>
+            <CardTitle>
+              <MetricHelp
+                metric='realtimeThroughput'
+                label={t('Throughput trend')}
+              />
+            </CardTitle>
             <CardDescription>
               {t('QPS and token throughput for the selected window')}
             </CardDescription>
@@ -331,9 +356,13 @@ export function OverviewPanel({
 
         <Card>
           <CardHeader>
-            <CardTitle>{t('Error trend')}</CardTitle>
+            <CardTitle>
+              <MetricHelp metric='errorRates' label={t('Error trend')} />
+            </CardTitle>
             <CardDescription>
-              {t('SLA errors, upstream errors, and business limits')}
+              {t(
+                'Effective request failures, upstream errors, and business limits'
+              )}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -376,7 +405,12 @@ export function OverviewPanel({
 
         <Card>
           <CardHeader>
-            <CardTitle>{t('Account switch trend')}</CardTitle>
+            <CardTitle>
+              <MetricHelp
+                metric='averageAccountSwitches'
+                label={t('Account switch trend')}
+              />
+            </CardTitle>
             <CardDescription>
               {t('Average switches per downstream request')}
             </CardDescription>
@@ -425,17 +459,25 @@ export function OverviewPanel({
               <TableHeader>
                 <TableRow>
                   <TableHead>{t('Metric')}</TableHead>
-                  <TableHead>P50</TableHead>
-                  <TableHead>P90</TableHead>
-                  <TableHead>P95</TableHead>
-                  <TableHead>P99</TableHead>
-                  <TableHead>{t('Max')}</TableHead>
+                  {['P50', 'P90', 'P95', 'P99'].map((percentile) => (
+                    <TableHead key={percentile}>
+                      <MetricHelp
+                        metric='latencyPercentile'
+                        label={percentile}
+                      />
+                    </TableHead>
+                  ))}
+                  <TableHead>
+                    <MetricHelp metric='latencyPercentile' label={t('Max')} />
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {latencyRows.map(({ label, values, p99Threshold }) => (
-                  <TableRow key={label}>
-                    <TableCell>{label}</TableCell>
+                {latencyRows.map(({ metric, values, p99Threshold }) => (
+                  <TableRow key={metric}>
+                    <TableCell>
+                      <MetricHelp metric={metric} />
+                    </TableCell>
                     {[
                       { percentile: 'p50', value: values.p50 },
                       { percentile: 'p90', value: values.p90 },
@@ -481,10 +523,18 @@ export function OverviewPanel({
               <TableHeader>
                 <TableRow>
                   <TableHead>{t('Model')}</TableHead>
-                  <TableHead>{t('Requests')}</TableHead>
-                  <TableHead>{t('Tokens/s')}</TableHead>
-                  <TableHead>{t('Average TTFT')}</TableHead>
-                  <TableHead>{t('Average duration')}</TableHead>
+                  <TableHead>
+                    <MetricHelp metric='modelRequests' />
+                  </TableHead>
+                  <TableHead>
+                    <MetricHelp metric='tokensPerSecond' />
+                  </TableHead>
+                  <TableHead>
+                    <MetricHelp metric='averageTtft' />
+                  </TableHead>
+                  <TableHead>
+                    <MetricHelp metric='averageDuration' />
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

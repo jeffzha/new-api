@@ -77,6 +77,7 @@ import {
   type MetricTone,
 } from '../metric-status'
 import type { OpsSettings, OpsSnapshot } from '../types'
+import { MetricHelp } from './metric-help'
 
 function statusVariantFromTone(tone: MetricTone) {
   return tone === 'critical' ? ('danger' as const) : tone
@@ -177,14 +178,30 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>{t('Node')}</TableHead>
-                  <TableHead>CPU</TableHead>
-                  <TableHead>{t('Memory')}</TableHead>
-                  <TableHead>{t('Disk')}</TableHead>
-                  <TableHead>{t('Network')}</TableHead>
-                  <TableHead>DB</TableHead>
-                  <TableHead>Redis</TableHead>
-                  <TableHead>{t('Goroutines')}</TableHead>
-                  <TableHead>{t('Queue')}</TableHead>
+                  <TableHead>
+                    <MetricHelp metric='cpuUsage' />
+                  </TableHead>
+                  <TableHead>
+                    <MetricHelp metric='memoryUsage' />
+                  </TableHead>
+                  <TableHead>
+                    <MetricHelp metric='diskUsage' />
+                  </TableHead>
+                  <TableHead>
+                    <MetricHelp metric='networkThroughput' />
+                  </TableHead>
+                  <TableHead>
+                    <MetricHelp metric='databasePool' />
+                  </TableHead>
+                  <TableHead>
+                    <MetricHelp metric='redisPool' />
+                  </TableHead>
+                  <TableHead>
+                    <MetricHelp metric='goroutines' />
+                  </TableHead>
+                  <TableHead>
+                    <MetricHelp metric='queueDepth' />
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -338,7 +355,9 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
 
         <Card>
           <CardHeader>
-            <CardTitle>{t('Composite health score')}</CardTitle>
+            <CardTitle>
+              <MetricHelp metric='compositeHealth' />
+            </CardTitle>
             <CardDescription>
               {t('Business 70%, infrastructure 30%')}
             </CardDescription>
@@ -353,32 +372,50 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
               {snapshot.health.score}
             </div>
             {[
-              [t('Business'), snapshot.health.business_score],
-              [t('Error score'), snapshot.health.error_score],
-              [t('TTFT score'), snapshot.health.ttft_score],
-              [t('Storage'), snapshot.health.storage_score],
-              [t('Compute'), snapshot.health.compute_score],
-              [t('Jobs'), snapshot.health.job_score],
-            ].map(([label, value]) => (
-              <div key={label as string} className='flex flex-col gap-1'>
+              {
+                metric: 'businessScore' as const,
+                value: snapshot.health.business_score,
+              },
+              {
+                metric: 'errorScore' as const,
+                value: snapshot.health.error_score,
+              },
+              {
+                metric: 'ttftScore' as const,
+                value: snapshot.health.ttft_score,
+              },
+              {
+                metric: 'storageScore' as const,
+                value: snapshot.health.storage_score,
+              },
+              {
+                metric: 'computeScore' as const,
+                value: snapshot.health.compute_score,
+              },
+              {
+                metric: 'jobsScore' as const,
+                value: snapshot.health.job_score,
+              },
+            ].map(({ metric, value }) => (
+              <div key={metric} className='flex flex-col gap-1'>
                 <div className='flex justify-between text-sm'>
-                  <span>{label as string}</span>
+                  <MetricHelp metric={metric} />
                   <span
                     className={cn(
                       'tabular-nums',
                       METRIC_TONE_TEXT_CLASS[
-                        healthScoreTone(value as number, snapshot.health.state)
+                        healthScoreTone(value, snapshot.health.state)
                       ]
                     )}
                   >
-                    {(value as number).toFixed(0)}
+                    {value.toFixed(0)}
                   </span>
                 </div>
                 <Progress
-                  value={value as number}
+                  value={value}
                   className={
                     METRIC_TONE_PROGRESS_CLASS[
-                      healthScoreTone(value as number, snapshot.health.state)
+                      healthScoreTone(value, snapshot.health.state)
                     ]
                   }
                 />
@@ -391,7 +428,9 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
       <div className='grid gap-4 xl:grid-cols-2'>
         <Card>
           <CardHeader>
-            <CardTitle>{t('System resource trend')}</CardTitle>
+            <CardTitle>
+              <MetricHelp metric='systemResourceTrend' />
+            </CardTitle>
             <CardDescription>
               {t('Average across nodes for each collection bucket')}
             </CardDescription>
@@ -427,7 +466,12 @@ export function InfrastructurePanel({ snapshot }: { snapshot: OpsSnapshot }) {
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>{t('Network throughput trend')}</CardTitle>
+            <CardTitle>
+              <MetricHelp
+                metric='networkThroughput'
+                label={t('Network throughput trend')}
+              />
+            </CardTitle>
             <CardDescription>{t('Bytes per second')}</CardDescription>
           </CardHeader>
           <CardContent>
@@ -518,11 +562,21 @@ export function ConcurrencyPanel({ snapshot }: { snapshot: OpsSnapshot }) {
                 <TableHead>{t('Channel')}</TableHead>
                 <TableHead>{t('Platform')}</TableHead>
                 <TableHead>{t('Groups')}</TableHead>
-                <TableHead>{t('In use')}</TableHead>
-                <TableHead>{t('Capacity')}</TableHead>
-                <TableHead>{t('Waiting')}</TableHead>
-                <TableHead>{t('Load')}</TableHead>
-                <TableHead>{t('Availability')}</TableHead>
+                <TableHead>
+                  <MetricHelp metric='concurrencyInUse' />
+                </TableHead>
+                <TableHead>
+                  <MetricHelp metric='concurrencyCapacity' />
+                </TableHead>
+                <TableHead>
+                  <MetricHelp metric='concurrencyWaiting' />
+                </TableHead>
+                <TableHead>
+                  <MetricHelp metric='concurrencyLoad' />
+                </TableHead>
+                <TableHead>
+                  <MetricHelp metric='concurrencyAvailability' />
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -616,11 +670,24 @@ export function ConcurrencyPanel({ snapshot }: { snapshot: OpsSnapshot }) {
                 <TableHeader>
                   <TableRow>
                     <TableHead>{t('Name')}</TableHead>
-                    <TableHead>{t('In use')}</TableHead>
-                    <TableHead>{t('Capacity')}</TableHead>
-                    <TableHead>{t('Waiting')}</TableHead>
-                    <TableHead>{t('Load')}</TableHead>
-                    <TableHead>{t('Available')}</TableHead>
+                    <TableHead>
+                      <MetricHelp metric='concurrencyInUse' />
+                    </TableHead>
+                    <TableHead>
+                      <MetricHelp metric='concurrencyCapacity' />
+                    </TableHead>
+                    <TableHead>
+                      <MetricHelp metric='concurrencyWaiting' />
+                    </TableHead>
+                    <TableHead>
+                      <MetricHelp metric='concurrencyLoad' />
+                    </TableHead>
+                    <TableHead>
+                      <MetricHelp
+                        metric='concurrencyAvailability'
+                        label={t('Available')}
+                      />
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -679,7 +746,9 @@ export function ConcurrencyPanel({ snapshot }: { snapshot: OpsSnapshot }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>{t('Active user concurrency')}</CardTitle>
+          <CardTitle>
+            <MetricHelp metric='activeUserConcurrency' />
+          </CardTitle>
           <CardDescription>
             {t('Only users with active leases are shown')}
           </CardDescription>
@@ -746,7 +815,7 @@ export function TaskPanel({
         <CardContent className='grid gap-4 sm:grid-cols-2'>
           <div>
             <div className='text-muted-foreground text-sm'>
-              {t('Submit success rate')}
+              <MetricHelp metric='submitSuccessRate' />
             </div>
             <div
               className={cn(
@@ -762,7 +831,7 @@ export function TaskPanel({
           </div>
           <div>
             <div className='text-muted-foreground text-sm'>
-              {t('Generation success rate')}
+              <MetricHelp metric='generationSuccessRate' />
             </div>
             <div
               className={cn(
@@ -780,7 +849,7 @@ export function TaskPanel({
           </div>
           <div>
             <div className='text-muted-foreground text-sm'>
-              {t('Average queue time')}
+              <MetricHelp metric='averageQueueTime' />
             </div>
             <div
               className={cn(
@@ -795,7 +864,7 @@ export function TaskPanel({
           </div>
           <div>
             <div className='text-muted-foreground text-sm'>
-              {t('Average generation time')}
+              <MetricHelp metric='averageGenerationTime' />
             </div>
             <div
               className={cn(
@@ -810,7 +879,7 @@ export function TaskPanel({
           </div>
           <div>
             <div className='text-muted-foreground text-sm'>
-              {t('Average end-to-end time')}
+              <MetricHelp metric='averageEndToEndTime' />
             </div>
             <div
               className={cn(
@@ -824,7 +893,9 @@ export function TaskPanel({
             </div>
           </div>
           <div>
-            <div className='text-muted-foreground text-sm'>{t('Failures')}</div>
+            <div className='text-muted-foreground text-sm'>
+              <MetricHelp metric='taskFailures' />
+            </div>
             <div
               className={cn(
                 'text-xl font-medium tabular-nums',
@@ -849,9 +920,15 @@ export function TaskPanel({
             <TableHeader>
               <TableRow>
                 <TableHead>{t('Job')}</TableHead>
-                <TableHead>{t('Status')}</TableHead>
-                <TableHead>{t('Last success')}</TableHead>
-                <TableHead>{t('Last error')}</TableHead>
+                <TableHead>
+                  <MetricHelp metric='jobHealthStatus' />
+                </TableHead>
+                <TableHead>
+                  <MetricHelp metric='jobLastSuccess' />
+                </TableHead>
+                <TableHead>
+                  <MetricHelp metric='jobLastError' />
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -904,7 +981,9 @@ export function ErrorsPanel({
       <div className='flex flex-col gap-4'>
         <Card>
           <CardHeader>
-            <CardTitle>{t('Error status distribution')}</CardTitle>
+            <CardTitle>
+              <MetricHelp metric='errorDistribution' />
+            </CardTitle>
             <CardDescription>
               {t('Top 20 effective status codes in the selected window')}
             </CardDescription>
@@ -937,10 +1016,14 @@ export function ErrorsPanel({
                   <TableHead>{t('Request ID')}</TableHead>
                   <TableHead>{t('Endpoint')}</TableHead>
                   <TableHead>{t('Model')}</TableHead>
-                  <TableHead>{t('Status')}</TableHead>
+                  <TableHead>
+                    <MetricHelp metric='effectiveStatus' />
+                  </TableHead>
                   <TableHead>{t('Owner')}</TableHead>
                   <TableHead>{t('Error')}</TableHead>
-                  <TableHead>{t('Duration')}</TableHead>
+                  <TableHead>
+                    <MetricHelp metric='requestDuration' />
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1053,7 +1136,10 @@ export function ErrorsPanel({
                 </div>
                 <div>
                   <div className='text-muted-foreground text-xs'>
-                    {t('Total duration')}
+                    <MetricHelp
+                      metric='requestDuration'
+                      label={t('Total duration')}
+                    />
                   </div>
                   <div
                     className={
@@ -1075,10 +1161,21 @@ export function ErrorsPanel({
                     <TableHead>{t('Attempt')}</TableHead>
                     <TableHead>{t('Channel')}</TableHead>
                     <TableHead>{t('Key')}</TableHead>
-                    <TableHead>{t('Status')}</TableHead>
-                    <TableHead>{t('Duration')}</TableHead>
-                    <TableHead>{t('Concurrency wait')}</TableHead>
-                    <TableHead>{t('Switched')}</TableHead>
+                    <TableHead>
+                      <MetricHelp metric='effectiveStatus' />
+                    </TableHead>
+                    <TableHead>
+                      <MetricHelp
+                        metric='requestDuration'
+                        label={t('Duration')}
+                      />
+                    </TableHead>
+                    <TableHead>
+                      <MetricHelp metric='concurrencyWait' />
+                    </TableHead>
+                    <TableHead>
+                      <MetricHelp metric='switchedAttempt' />
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

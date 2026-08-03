@@ -227,7 +227,7 @@ function SettingsForm({ settings }: { settings: OpsSettings }) {
           />
           <NumberField
             id='sla-threshold'
-            label={t('SLA threshold')}
+            label={t('Effective request success rate threshold')}
             value={form.sla_threshold * 100}
             min={0.01}
             max={100}

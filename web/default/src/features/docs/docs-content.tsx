@@ -80,7 +80,7 @@ const openAiTextSchemaNames = [
   'ToolCall',
   'Usage',
 ] as const
-const replacedVideoPaths = new Set([
+const domesticVideoPaths = new Set([
   '/v1/video/generations',
   '/v1/video/generations/{task_id}',
 ])
@@ -131,9 +131,9 @@ const mergedSpec = {
   ...legacySpec,
   info: {
     ...legacySpec.info,
-    version: '2026-08-01.1',
+    version: '2026-08-03.1',
     description:
-      'Nexus Reach 对外 API 文档。已补充 OpenAI Chat Completions 与 Responses API；移动官方 Seedance 2.0 视频生成、素材库管理和真人认证接口保持原有分组和契约。',
+      'Nexus Reach 对外 API 文档。国内 Seedance 2.0 与移动官方 Seedance 2.0 视频生成接口分别保留各自的参数、模型和调用示例；移动官方素材库管理和真人认证接口保持原有分组和契约。',
   },
   servers: [],
   tags: [
@@ -150,7 +150,7 @@ const mergedSpec = {
     ...Object.fromEntries(
       Object.entries(legacySpec.paths).filter(
         ([path]) =>
-          !path.startsWith(mobilePathPrefix) && !replacedVideoPaths.has(path)
+          !path.startsWith(mobilePathPrefix) && !domesticVideoPaths.has(path)
       )
     ),
     ...Object.fromEntries(
@@ -191,11 +191,29 @@ const mergedSpec = {
   },
 } as unknown as OpenApiSpec
 
+const domesticVideoSpec = {
+  ...legacySpec,
+  servers: [],
+  tags: (legacySpec.tags ?? []).filter((tag) => tag.name === '视频生成'),
+  paths: Object.fromEntries(
+    Object.entries(legacySpec.paths).filter(([path]) =>
+      domesticVideoPaths.has(path)
+    )
+  ),
+} as OpenApiSpec
+
 const DOC_SOURCE: DocSource = {
   id: 'seedance-domestic',
   title: 'Seedance 2.0 API',
   subtitle: 'Seedance 2.0 domestic video and asset endpoints',
   spec: mergedSpec,
+}
+
+const DOMESTIC_VIDEO_DOC_SOURCE: DocSource = {
+  id: 'seedance-domestic-video',
+  title: 'Seedance 2.0 国内视频生成 API',
+  subtitle: 'Seedance 2.0 domestic video generation endpoints',
+  spec: domesticVideoSpec,
 }
 
 function pickDefaultEndpointId(doc: ReturnType<typeof buildDocModel>): string {
@@ -224,7 +242,43 @@ export function DocsContent() {
         ? window.location.origin
         : ''
     const baseUrl = runtimeOrigin.replace(/\/$/, '')
-    return buildDocModel(DOC_SOURCE, baseUrl)
+    const primaryDoc = buildDocModel(DOC_SOURCE, baseUrl)
+    const domesticVideoDoc = buildDocModel(DOMESTIC_VIDEO_DOC_SOURCE, baseUrl)
+    const restoredEndpoints = domesticVideoDoc.endpoints.map((endpoint) => ({
+      ...endpoint,
+      id: `${DOMESTIC_VIDEO_DOC_SOURCE.id}:${endpoint.id}`,
+    }))
+    const restoredGroup = domesticVideoDoc.groups[0]
+    if (!restoredGroup || restoredEndpoints.length === 0) return primaryDoc
+
+    let restoredExistingGroup = false
+    const groups = primaryDoc.groups.map((group) => {
+      if (group.title !== restoredGroup.title) return group
+      restoredExistingGroup = true
+      return {
+        ...group,
+        endpoints: [...restoredEndpoints, ...group.endpoints],
+      }
+    })
+    if (!restoredExistingGroup) {
+      groups.push({ ...restoredGroup, endpoints: restoredEndpoints })
+    }
+
+    const endpoints = groups.flatMap((group) => group.endpoints)
+    const methodCounts = endpoints.reduce<Record<string, number>>(
+      (counts, endpoint) => {
+        counts[endpoint.method] = (counts[endpoint.method] ?? 0) + 1
+        return counts
+      },
+      {}
+    )
+    return {
+      ...primaryDoc,
+      groups,
+      endpoints,
+      endpointCount: endpoints.length,
+      methodCounts,
+    }
   }, [])
 
   const [activeEndpointId, setActiveEndpointId] = useState(() =>

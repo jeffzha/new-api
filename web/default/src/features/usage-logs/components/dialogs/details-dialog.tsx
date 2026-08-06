@@ -471,7 +471,7 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
   }
 
   if (
-    (other.cache_creation_ratio != null || cacheWrite > 0) &&
+    (other.cache_creation_pricing_configured === true || cacheWrite > 0) &&
     cacheWrite5m === 0 &&
     cacheWrite1h === 0
   ) {
@@ -481,14 +481,14 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
     })
   }
 
-  if (other.cache_creation_ratio_5m != null || cacheWrite5m > 0) {
+  if (other.cache_creation_pricing_configured === true || cacheWrite5m > 0) {
     rows.push({
       label: t('Cache Write (5m)'),
       value: cacheWrite5m.toLocaleString(),
     })
   }
 
-  if (other.cache_creation_ratio_1h != null || cacheWrite1h > 0) {
+  if (other.cache_creation_pricing_configured === true || cacheWrite1h > 0) {
     rows.push({
       label: t('Cache Write (1h)'),
       value: cacheWrite1h.toLocaleString(),

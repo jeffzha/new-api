@@ -344,7 +344,10 @@ export function buildBillingCalculation(
             },
           ]
         )
-      } else if (other.cache_creation_ratio != null || cacheWriteTokens > 0) {
+      } else if (
+        other.cache_creation_pricing_configured === true ||
+        cacheWriteTokens > 0
+      ) {
         addComponent(
           'cache_write',
           'Cache Write',

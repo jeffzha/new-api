@@ -477,9 +477,8 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	other["cache_creation_tokens"] = summary.CacheCreationTokens
 	other["cache_creation_tokens_5m"] = summary.CacheCreationTokens5m
 	other["cache_creation_tokens_1h"] = summary.CacheCreationTokens1h
-	other["cache_creation_ratio"] = summary.CacheCreationRatio
-	other["cache_creation_ratio_5m"] = summary.CacheCreationRatio5m
-	other["cache_creation_ratio_1h"] = summary.CacheCreationRatio1h
+	appendCacheCreationPricing(other, relayInfo.PriceData.CacheCreationPricingConfigured,
+		cacheWriteTokensTotal(summary), summary.CacheCreationRatio, summary.CacheCreationRatio5m, summary.CacheCreationRatio1h)
 	// cache_write_tokens: normalized cache creation total for UI display.
 	// If split 5m/1h values are present, this is their sum; otherwise it falls back
 	// to cache_creation_tokens. Keep the zero value so a configured cache-write

@@ -76,12 +76,13 @@ func TestGenerateTextOtherInfoSnapshotsBillingConfiguration(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 
 	priceData := types.PriceData{
-		CacheCreationRatio:   1.25,
-		CacheCreation5mRatio: 1.25,
-		CacheCreation1hRatio: 2,
-		ImageRatio:           0.8,
-		AudioRatio:           3,
-		AudioCompletionRatio: 4,
+		CacheCreationRatio:             1.25,
+		CacheCreation5mRatio:           1.25,
+		CacheCreation1hRatio:           2,
+		CacheCreationPricingConfigured: true,
+		ImageRatio:                     0.8,
+		AudioRatio:                     3,
+		AudioCompletionRatio:           4,
 	}
 	priceData.AddOtherRatio("region", 0.9)
 	relayInfo := &relaycommon.RelayInfo{
@@ -96,11 +97,29 @@ func TestGenerateTextOtherInfoSnapshotsBillingConfiguration(t *testing.T) {
 	require.Equal(t, 1.25, other["cache_creation_ratio"])
 	require.Equal(t, 1.25, other["cache_creation_ratio_5m"])
 	require.Equal(t, 2.0, other["cache_creation_ratio_1h"])
+	require.Equal(t, true, other["cache_creation_pricing_configured"])
 	require.Equal(t, 0.8, other["image_ratio"])
 	require.Equal(t, 3.0, other["audio_ratio"])
 	require.Equal(t, 4.0, other["audio_completion_ratio"])
 	require.Equal(t, common.QuotaPerUnit, other["quota_per_unit"])
 	require.Equal(t, map[string]float64{"region": 0.9}, other["other_ratios"])
+}
+
+func TestCacheCreationPricingSnapshotDistinguishesFallbackFromConfiguredPrice(t *testing.T) {
+	other := map[string]interface{}{}
+
+	appendCacheCreationPricing(other, false, 0, 1.25, 1.25, 2)
+
+	require.Equal(t, false, other["cache_creation_pricing_configured"])
+	require.NotContains(t, other, "cache_creation_ratio")
+	require.NotContains(t, other, "cache_creation_ratio_5m")
+	require.NotContains(t, other, "cache_creation_ratio_1h")
+
+	appendCacheCreationPricing(other, false, 10, 1.25, 1.25, 2)
+
+	require.Equal(t, 1.25, other["cache_creation_ratio"])
+	require.Equal(t, 1.25, other["cache_creation_ratio_5m"])
+	require.Equal(t, 2.0, other["cache_creation_ratio_1h"])
 }
 
 func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.T) {

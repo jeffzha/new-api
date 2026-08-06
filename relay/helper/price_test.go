@@ -272,3 +272,54 @@ func TestModelPriceHelperRequestBillingRatiosOnlyApplyToFixedPrice(t *testing.T)
 	require.Equal(t, common.QuotaClampOverflow, clamp.Kind)
 	require.Nil(t, info.Billing)
 }
+
+func TestModelPriceHelperTracksExplicitCacheCreationPricing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	savedModelRatios := ratio_setting.ModelRatio2JSONString()
+	savedCreateCacheRatios := ratio_setting.CreateCacheRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedModelRatios))
+		require.NoError(t, ratio_setting.UpdateCreateCacheRatioByJSONString(savedCreateCacheRatios))
+	})
+
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"cache-write-configured":0.5,"cache-write-fallback":0.5}`))
+	require.NoError(t, ratio_setting.UpdateCreateCacheRatioByJSONString(`{"cache-write-configured":1.4}`))
+
+	tests := []struct {
+		name           string
+		model          string
+		wantRatio      float64
+		wantConfigured bool
+	}{
+		{
+			name:           "explicit cache write price",
+			model:          "cache-write-configured",
+			wantRatio:      1.4,
+			wantConfigured: true,
+		},
+		{
+			name:           "legacy fallback is not explicit pricing",
+			model:          "cache-write-fallback",
+			wantRatio:      1.25,
+			wantConfigured: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Set("group", "default")
+			info := &relaycommon.RelayInfo{
+				OriginModelName: tt.model,
+				UserGroup:       "default",
+				UsingGroup:      "default",
+			}
+
+			priceData, err := ModelPriceHelper(ctx, info, 100, &types.TokenCountMeta{})
+
+			require.NoError(t, err)
+			require.Equal(t, tt.wantRatio, priceData.CacheCreationRatio)
+			require.Equal(t, tt.wantConfigured, priceData.CacheCreationPricingConfigured)
+		})
+	}
+}

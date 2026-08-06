@@ -68,6 +68,20 @@ func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other
 	}
 }
 
+func appendCacheCreationPricing(other map[string]interface{}, configured bool, cacheWriteTokens int,
+	cacheCreationRatio, cacheCreationRatio5m, cacheCreationRatio1h float64) {
+	other["cache_creation_pricing_configured"] = configured
+	if !configured && cacheWriteTokens <= 0 {
+		delete(other, "cache_creation_ratio")
+		delete(other, "cache_creation_ratio_5m")
+		delete(other, "cache_creation_ratio_1h")
+		return
+	}
+	other["cache_creation_ratio"] = cacheCreationRatio
+	other["cache_creation_ratio_5m"] = cacheCreationRatio5m
+	other["cache_creation_ratio_1h"] = cacheCreationRatio1h
+}
+
 func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelRatio, groupRatio, completionRatio float64,
 	cacheTokens int, cacheRatio float64, modelPrice float64, userGroupRatio float64) map[string]interface{} {
 	other := make(map[string]interface{})
@@ -78,9 +92,8 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other["cache_ratio"] = cacheRatio
 	other["model_price"] = modelPrice
 	other["user_group_ratio"] = userGroupRatio
-	other["cache_creation_ratio"] = relayInfo.PriceData.CacheCreationRatio
-	other["cache_creation_ratio_5m"] = relayInfo.PriceData.CacheCreation5mRatio
-	other["cache_creation_ratio_1h"] = relayInfo.PriceData.CacheCreation1hRatio
+	appendCacheCreationPricing(other, relayInfo.PriceData.CacheCreationPricingConfigured, 0,
+		relayInfo.PriceData.CacheCreationRatio, relayInfo.PriceData.CacheCreation5mRatio, relayInfo.PriceData.CacheCreation1hRatio)
 	other["image_ratio"] = relayInfo.PriceData.ImageRatio
 	other["audio_ratio"] = relayInfo.PriceData.AudioRatio
 	other["audio_completion_ratio"] = relayInfo.PriceData.AudioCompletionRatio
@@ -287,14 +300,18 @@ func GenerateClaudeOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	info := GenerateTextOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio, cacheTokens, cacheRatio, modelPrice, userGroupRatio)
 	info["claude"] = true
 	info["cache_creation_tokens"] = cacheCreationTokens
-	info["cache_creation_ratio"] = cacheCreationRatio
+	cacheWriteTokens := cacheCreationTokens
+	if splitCacheWriteTokens := cacheCreationTokens5m + cacheCreationTokens1h; splitCacheWriteTokens > cacheWriteTokens {
+		cacheWriteTokens = splitCacheWriteTokens
+	}
+	appendCacheCreationPricing(info, relayInfo.PriceData.CacheCreationPricingConfigured,
+		cacheWriteTokens,
+		cacheCreationRatio, cacheCreationRatio5m, cacheCreationRatio1h)
 	if cacheCreationTokens5m != 0 {
 		info["cache_creation_tokens_5m"] = cacheCreationTokens5m
-		info["cache_creation_ratio_5m"] = cacheCreationRatio5m
 	}
 	if cacheCreationTokens1h != 0 {
 		info["cache_creation_tokens_1h"] = cacheCreationTokens1h
-		info["cache_creation_ratio_1h"] = cacheCreationRatio1h
 	}
 	return info
 }

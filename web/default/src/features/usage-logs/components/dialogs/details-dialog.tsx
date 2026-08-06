@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { TFunction } from 'i18next'
 import {
   Copy,
   Check,
@@ -31,7 +32,6 @@ import {
   Info,
   LogIn,
 } from 'lucide-react'
-import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -39,13 +39,28 @@ import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { Label } from '@/components/ui/label'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { DynamicPricingBreakdown } from '@/features/pricing/components/dynamic-pricing-breakdown'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
-import { formatBillingCurrencyFromUSD } from '@/lib/currency'
+import {
+  formatBillingCurrencyFromUSD,
+  getCurrencyDisplay,
+} from '@/lib/currency'
 import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import type { UsageLog } from '../../data/schema'
+import {
+  buildBillingCalculation,
+  type BillingComponentUnit,
+} from '../../lib/billing-calculation'
 import {
   parseLogOther,
   getParamOverrideActionLabel,
@@ -146,9 +161,10 @@ function DetailSection(props: {
   )
 }
 
-function formatRatio(ratio: number | undefined): string {
-  if (ratio == null) return '-'
-  return ratio.toFixed(4)
+function formatBillingNumber(value: number): string {
+  if (!Number.isFinite(value)) return '-'
+  if (Number.isInteger(value)) return value.toLocaleString()
+  return value.toFixed(12).replace(/\.?0+$/, '')
 }
 
 function getUsageBillingPathLabel(
@@ -179,7 +195,9 @@ function getUsageBillingPathLabel(
   }
 }
 
-function isUsageBillingPathLocal(adminInfo: LogOtherData['admin_info']): boolean {
+function isUsageBillingPathLocal(
+  adminInfo: LogOtherData['admin_info']
+): boolean {
   if (adminInfo?.usage_billing_path) {
     return adminInfo.usage_billing_path === USAGE_BILLING_PATH.LOCAL
   }
@@ -203,14 +221,19 @@ function BillingBreakdown(props: {
   const { t } = useTranslation()
   const { log, other, isAdmin } = props
   const isPerCall = isPerCallBilling(other.model_price)
-  const isClaude = other.claude === true
   const isTieredExpr = other.billing_mode === 'tiered_expr'
   const tieredSummary = getTieredBillingSummary(other)
+  const { config } = getCurrencyDisplay()
+  const calculation = buildBillingCalculation(log, other, config.quotaPerUnit)
 
   const rows: Array<{ label: string; value: string }> = []
   const priceOpts = { digitsLarge: 4, digitsSmall: 6, abbreviate: false }
   const fmtPrice = (usd: number) => formatBillingCurrencyFromUSD(usd, priceOpts)
-  const baseInputUSD = other.model_ratio != null ? other.model_ratio * 2.0 : 0
+  const unitLabel = (unit: BillingComponentUnit) => {
+    if (unit === 'million_tokens') return t('per 1M tokens')
+    if (unit === 'thousand_calls') return t('per 1K calls')
+    return t('per call')
+  }
 
   if (isTieredExpr) {
     rows.push({
@@ -238,125 +261,30 @@ function BillingBreakdown(props: {
     }
   } else if (isPerCall) {
     rows.push({ label: t('Billing Mode'), value: t('Per-call') })
-    if (other.model_price != null) {
-      rows.push({
-        label: t('Model Price'),
-        value: fmtPrice(other.model_price),
-      })
-    }
   } else {
     rows.push({ label: t('Billing Mode'), value: t('Per-token') })
-    if (other.model_ratio != null) {
-      rows.push({
-        label: t('Input'),
-        value: `${fmtPrice(baseInputUSD)}/M`,
-      })
-    }
-    if (other.completion_ratio != null && other.model_ratio != null) {
-      rows.push({
-        label: t('Output'),
-        value: `${fmtPrice(baseInputUSD * other.completion_ratio)}/M`,
-      })
-    }
   }
 
-  const userGR = other.user_group_ratio
-  const isUserGR = userGR != null && Number.isFinite(userGR) && userGR !== -1
-  const effectiveGR = isUserGR ? userGR : other.group_ratio
-  if (effectiveGR != null && Number.isFinite(effectiveGR)) {
+  const userGroupRatio = other.user_group_ratio
+  const usesUserGroupRatio =
+    userGroupRatio != null &&
+    Number.isFinite(userGroupRatio) &&
+    userGroupRatio !== -1
+  rows.push({
+    label: usesUserGroupRatio ? t('User Exclusive Ratio') : t('Group Ratio'),
+    value: `${formatBillingNumber(calculation.effectiveGroupRatio)}x`,
+  })
+
+  if (other.billing_source) {
+    let billingSourceLabel = other.billing_source
+    if (other.billing_source === 'subscription') {
+      billingSourceLabel = t('Subscription')
+    } else if (other.billing_source === 'wallet') {
+      billingSourceLabel = t('Wallet')
+    }
     rows.push({
-      label: isUserGR ? t('User Exclusive Ratio') : t('Group Ratio'),
-      value: `${formatRatio(effectiveGR)}x`,
-    })
-  }
-
-  if (!isTieredExpr && isClaude && hasAnyCacheTokens(other)) {
-    if (other.cache_ratio != null && other.cache_ratio !== 1) {
-      rows.push({
-        label: t('Cache Read'),
-        value: `${fmtPrice(baseInputUSD * other.cache_ratio)}/M`,
-      })
-    }
-    if (
-      other.cache_creation_ratio != null &&
-      other.cache_creation_ratio !== 1
-    ) {
-      rows.push({
-        label: t('Cache Creation'),
-        value: `${fmtPrice(baseInputUSD * other.cache_creation_ratio)}/M`,
-      })
-    }
-    if (
-      other.cache_creation_ratio_5m != null &&
-      other.cache_creation_ratio_5m !== 0
-    ) {
-      rows.push({
-        label: t('Cache Creation (5m)'),
-        value: `${fmtPrice(baseInputUSD * other.cache_creation_ratio_5m)}/M`,
-      })
-    }
-    if (
-      other.cache_creation_ratio_1h != null &&
-      other.cache_creation_ratio_1h !== 0
-    ) {
-      rows.push({
-        label: t('Cache Creation (1h)'),
-        value: `${fmtPrice(baseInputUSD * other.cache_creation_ratio_1h)}/M`,
-      })
-    }
-  }
-
-  if (!isTieredExpr) {
-    if (other.audio_ratio != null && other.audio_ratio !== 1) {
-      rows.push({
-        label: t('Audio input'),
-        value: `${fmtPrice(baseInputUSD * other.audio_ratio)}/M`,
-      })
-    }
-
-    if (
-      other.audio_completion_ratio != null &&
-      other.audio_completion_ratio !== 1
-    ) {
-      rows.push({
-        label: t('Audio output'),
-        value: `${fmtPrice(baseInputUSD * other.audio_completion_ratio)}/M`,
-      })
-    }
-
-    if (other.image_ratio != null && other.image_ratio !== 1) {
-      rows.push({
-        label: t('Image input'),
-        value: `${fmtPrice(baseInputUSD * other.image_ratio)}/M`,
-      })
-    }
-  }
-
-  if (other.web_search && other.web_search_call_count) {
-    rows.push({
-      label: t('Web Search'),
-      value: `${other.web_search_call_count}x${other.web_search_price ? ` (${fmtPrice(other.web_search_price)})` : ''}`,
-    })
-  }
-
-  if (other.file_search && other.file_search_call_count) {
-    rows.push({
-      label: t('File Search'),
-      value: `${other.file_search_call_count}x${other.file_search_price ? ` (${fmtPrice(other.file_search_price)})` : ''}`,
-    })
-  }
-
-  if (other.image_generation_call && other.image_generation_call_price) {
-    rows.push({
-      label: t('Image Generation'),
-      value: fmtPrice(other.image_generation_call_price),
-    })
-  }
-
-  if (other.audio_input_seperate_price && other.audio_input_price) {
-    rows.push({
-      label: t('Audio Input Price'),
-      value: fmtPrice(other.audio_input_price),
+      label: t('Billing Source'),
+      value: billingSourceLabel,
     })
   }
 
@@ -367,11 +295,6 @@ function BillingBreakdown(props: {
     })
   }
 
-  rows.push({
-    label: t('Total Cost'),
-    value: formatLogQuota(log.quota),
-  })
-
   if (rows.length === 0) return null
 
   return (
@@ -379,6 +302,125 @@ function BillingBreakdown(props: {
       {rows.map((row) => (
         <DetailRow key={row.label} label={row.label} value={row.value} mono />
       ))}
+
+      {calculation.components.length > 0 && (
+        <div className='space-y-1.5 pt-1'>
+          <p className='text-muted-foreground text-xs font-medium'>
+            {t('Billing Components')}
+          </p>
+          <div className='bg-background/60 overflow-hidden rounded-md border'>
+            <Table className='min-w-[42rem]'>
+              <TableHeader>
+                <TableRow className='hover:bg-transparent'>
+                  <TableHead className='h-8 text-xs'>{t('Items')}</TableHead>
+                  <TableHead className='h-8 text-right text-xs'>
+                    {t('Quantity')}
+                  </TableHead>
+                  <TableHead className='h-8 text-right text-xs'>
+                    {t('Price')}
+                  </TableHead>
+                  <TableHead className='h-8 text-xs'>{t('Ratio')}</TableHead>
+                  <TableHead className='h-8 text-right text-xs'>
+                    {t('Cost')}
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody className='[&>tr]:h-auto'>
+                {calculation.components.map((component) => (
+                  <TableRow key={component.key}>
+                    <TableCell className='py-1.5 text-xs'>
+                      {t(component.labelKey)}
+                    </TableCell>
+                    <TableCell className='py-1.5 text-right font-mono text-xs'>
+                      {formatBillingNumber(component.quantity)}
+                    </TableCell>
+                    <TableCell className='py-1.5 text-right font-mono text-xs'>
+                      {fmtPrice(component.unitPriceUSD)}{' '}
+                      {unitLabel(component.unit)}
+                    </TableCell>
+                    <TableCell className='py-1.5 font-mono text-[11px]'>
+                      {component.ratios.length > 0
+                        ? component.ratios
+                            .map(
+                              (ratio) =>
+                                `${ratio.name}=${formatBillingNumber(ratio.value)}x`
+                            )
+                            .join(' × ')
+                        : '-'}
+                    </TableCell>
+                    <TableCell className='py-1.5 text-right font-mono text-xs'>
+                      {fmtPrice(component.subtotalUSD)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+
+      {calculation.ratios.length > 0 && (
+        <div className='space-y-1 pt-1'>
+          <p className='text-muted-foreground text-xs font-medium'>
+            {t('Pricing Ratios')}
+          </p>
+          <div className='grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2'>
+            {calculation.ratios.map((ratio) => (
+              <DetailRow
+                key={ratio.name}
+                label={ratio.name}
+                value={`${formatBillingNumber(ratio.value)}x`}
+                mono
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!isTieredExpr && calculation.ratios.length > 0 && (
+        <DetailRow
+          label={t('Effective Multiplier')}
+          value={`${formatBillingNumber(calculation.effectiveMultiplier)}x`}
+          mono
+        />
+      )}
+
+      {!isTieredExpr && calculation.components.length > 0 && (
+        <>
+          <DetailRow
+            label={t('Calculated Cost')}
+            value={fmtPrice(calculation.calculatedCostUSD)}
+            mono
+          />
+          <DetailRow
+            label={t('Quota Per Unit')}
+            value={formatBillingNumber(calculation.quotaPerUnit)}
+            mono
+          />
+          <DetailRow
+            label={t('Raw Quota')}
+            value={formatBillingNumber(calculation.rawQuota)}
+            mono
+          />
+        </>
+      )}
+      <DetailRow
+        label={t('Billed Quota')}
+        value={formatBillingNumber(log.quota)}
+        mono
+      />
+      <DetailRow
+        label={t('Total Cost')}
+        value={fmtPrice(log.quota / calculation.quotaPerUnit)}
+        mono
+      />
+      {!isTieredExpr && calculation.components.length > 0 && (
+        <p className='text-muted-foreground pt-0.5 text-[11px] leading-relaxed'>
+          {t(
+            'Component subtotals are calculated before integer quota rounding; Total Cost is the amount actually deducted.'
+          )}
+        </p>
+      )}
     </DetailSection>
   )
 }
@@ -386,47 +428,67 @@ function BillingBreakdown(props: {
 function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
   const { t } = useTranslation()
   const { log, other } = props
+  const { config } = getCurrencyDisplay()
+  const calculation = buildBillingCalculation(log, other, config.quotaPerUnit)
 
   const promptTokens = log.prompt_tokens || 0
   const completionTokens = log.completion_tokens || 0
-  const cacheRead = other.cache_tokens || 0
-  const cacheWrite = other.cache_creation_tokens || 0
-  const cacheWrite5m = other.cache_creation_tokens_5m || 0
-  const cacheWrite1h = other.cache_creation_tokens_1h || 0
+  const cacheRead = calculation.cacheReadTokens
+  const cacheWrite = calculation.cacheWriteTokens
+  const cacheWrite5m = calculation.cacheWrite5mTokens
+  const cacheWrite1h = calculation.cacheWrite1hTokens
   const hasTokens = promptTokens > 0 || completionTokens > 0
 
   if (!hasTokens) return null
 
   const rows: Array<{ label: string; value: string }> = []
 
-  rows.push({ label: t('Input Tokens'), value: promptTokens.toLocaleString() })
+  rows.push({
+    label: t('Input Tokens'),
+    value: calculation.totalInputTokens.toLocaleString(),
+  })
+  if (
+    other.billing_mode !== 'tiered_expr' &&
+    !isPerCallBilling(other.model_price) &&
+    !other.ws &&
+    !other.audio
+  ) {
+    rows.push({
+      label: t('Billable input tokens'),
+      value: calculation.billableInputTokens.toLocaleString(),
+    })
+  }
   rows.push({
     label: t('Output Tokens'),
     value: completionTokens.toLocaleString(),
   })
 
-  if (cacheRead > 0) {
+  if (other.cache_ratio != null || cacheRead > 0) {
     rows.push({
       label: t('Cache Read'),
       value: cacheRead.toLocaleString(),
     })
   }
 
-  if (cacheWrite > 0 && cacheWrite5m === 0 && cacheWrite1h === 0) {
+  if (
+    (other.cache_creation_ratio != null || cacheWrite > 0) &&
+    cacheWrite5m === 0 &&
+    cacheWrite1h === 0
+  ) {
     rows.push({
       label: t('Cache Write'),
       value: cacheWrite.toLocaleString(),
     })
   }
 
-  if (cacheWrite5m > 0) {
+  if (other.cache_creation_ratio_5m != null || cacheWrite5m > 0) {
     rows.push({
       label: t('Cache Write (5m)'),
       value: cacheWrite5m.toLocaleString(),
     })
   }
 
-  if (cacheWrite1h > 0) {
+  if (other.cache_creation_ratio_1h != null || cacheWrite1h > 0) {
     rows.push({
       label: t('Cache Write (1h)'),
       value: cacheWrite1h.toLocaleString(),
@@ -610,7 +672,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
       contentClassName={cn(
         'min-w-0 overflow-hidden',
         'max-sm:max-h-[calc(100dvh-1.5rem)] max-sm:w-[calc(100vw-1.5rem)] max-sm:max-w-[calc(100vw-1.5rem)] max-sm:p-4',
-        isTieredBilling ? 'sm:max-w-4xl lg:max-w-5xl' : 'sm:max-w-lg'
+        isConsume && !isViolation ? 'sm:max-w-4xl lg:max-w-5xl' : 'sm:max-w-lg'
       )}
       headerClassName='max-sm:gap-1'
       titleClassName='flex items-center gap-2 text-base'

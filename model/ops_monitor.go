@@ -7,7 +7,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const OpsConcurrencyAllKeys = -1
+const (
+	OpsConcurrencyAllKeys         = -1
+	OpsEndpointTypeUnmatchedRoute = "unmatched_route"
+)
 
 // OpsRequestEvent is the short-retention, normalized source of truth for the
 // operations dashboard. It intentionally contains no request/response bodies.
@@ -306,7 +309,8 @@ func applyOpsEventFilter(query *gorm.DB, filter OpsMetricFilter) *gorm.DB {
 // remain identical to the minute-aggregate path.
 func QueryOpsRequestAggregates(filter OpsMetricFilter) ([]OpsMinuteMetric, error) {
 	var rows []OpsMinuteMetric
-	query := applyOpsEventFilter(DB.Model(&OpsRequestEvent{}), filter)
+	query := applyOpsEventFilter(DB.Model(&OpsRequestEvent{}), filter).
+		Where("endpoint_type <> ?", OpsEndpointTypeUnmatchedRoute)
 	statusExpression := "CASE WHEN upstream_status_code > 0 THEN upstream_status_code ELSE status_code END"
 	err := query.Select(statusExpression+` AS status_code, error_owner, business_limited,
 		COUNT(*) AS request_count,
@@ -332,7 +336,8 @@ type OpsRealtimeAggregate struct {
 
 func QueryOpsRealtimeAggregate(filter OpsMetricFilter) (OpsRealtimeAggregate, error) {
 	var result OpsRealtimeAggregate
-	query := applyOpsEventFilter(DB.Model(&OpsRequestEvent{}), filter)
+	query := applyOpsEventFilter(DB.Model(&OpsRequestEvent{}), filter).
+		Where("endpoint_type <> ?", OpsEndpointTypeUnmatchedRoute)
 	err := query.Select(`
 		COUNT(*) AS request_count,
 		COALESCE(SUM(CASE WHEN success = ? THEN input_tokens ELSE 0 END), 0) AS input_tokens,

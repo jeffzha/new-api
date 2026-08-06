@@ -5430,7 +5430,15 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Billing Components": "计费组成",
+    "Calculated Cost": "计算费用",
+    "Billed Quota": "实扣额度",
+    "Effective Multiplier": "综合倍率",
+    "per 1M tokens": "每百万 Token",
+    "per 1K calls": "每千次调用",
+    "per call": "每次调用",
+    "Component subtotals are calculated before integer quota rounding; Total Cost is the amount actually deducted.": "各项小计按整数额度取整前计算；“总费用”为实际扣除金额。"
   },
   "Current background job health. A job is failed when its latest error is newer than its latest success; polling jobs are stale after 15 minutes without a successful run.": "当前后台任务健康状态。若最近一次错误晚于最近一次成功，则任务为失败；轮询任务连续 15 分钟没有成功运行时为过期。",
   "Completion time of the most recent successful system task for this background job type.": "此后台任务类型最近一次成功系统任务的完成时间。",

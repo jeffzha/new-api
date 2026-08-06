@@ -24,6 +24,7 @@ import (
 
 type textQuotaSummary struct {
 	PromptTokens             int
+	BillableInputTokens      int
 	CompletionTokens         int
 	TotalTokens              int
 	CacheTokens              int
@@ -231,7 +232,6 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		summary.PromptTokens -= summary.CacheCreationTokens
 	}
 
-	dPromptTokens := decimal.NewFromInt(int64(summary.PromptTokens))
 	dCacheTokens := decimal.NewFromInt(int64(summary.CacheTokens))
 	dImageTokens := decimal.NewFromInt(int64(summary.ImageTokens))
 	dAudioTokens := decimal.NewFromInt(int64(summary.AudioTokens))
@@ -253,12 +253,12 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 
 	var audioInputQuota decimal.Decimal
 	if !relayInfo.PriceData.UsePrice {
-		baseTokens := dPromptTokens
+		billableInputTokens := summary.PromptTokens
 
 		var cachedTokensWithRatio decimal.Decimal
 		if !dCacheTokens.IsZero() {
 			if !summary.IsClaudeUsageSemantic && !legacyClaudeDerived {
-				baseTokens = baseTokens.Sub(dCacheTokens)
+				billableInputTokens -= summary.CacheTokens
 			}
 			cachedTokensWithRatio = dCacheTokens.Mul(dCacheRatio)
 		}
@@ -267,7 +267,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		hasSplitCacheCreationTokens := summary.CacheCreationTokens5m > 0 || summary.CacheCreationTokens1h > 0
 		if !dCachedCreationTokens.IsZero() || hasSplitCacheCreationTokens {
 			if !summary.IsClaudeUsageSemantic && !legacyClaudeDerived {
-				baseTokens = baseTokens.Sub(dCachedCreationTokens)
+				billableInputTokens -= summary.CacheCreationTokens
 				cachedCreationTokensWithRatio = dCachedCreationTokens.Mul(dCacheCreationRatio)
 			} else {
 				remaining := summary.CacheCreationTokens - summary.CacheCreationTokens5m - summary.CacheCreationTokens1h
@@ -282,14 +282,14 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 
 		var imageTokensWithRatio decimal.Decimal
 		if !dImageTokens.IsZero() {
-			baseTokens = baseTokens.Sub(dImageTokens)
+			billableInputTokens -= summary.ImageTokens
 			imageTokensWithRatio = dImageTokens.Mul(dImageRatio)
 		}
 
 		if !dAudioTokens.IsZero() {
 			summary.AudioInputPrice = operation_setting.GetGeminiInputAudioPricePerMillionTokens(summary.ModelName)
 			if summary.AudioInputPrice > 0 {
-				baseTokens = baseTokens.Sub(dAudioTokens)
+				billableInputTokens -= summary.AudioTokens
 				audioInputQuota = decimal.NewFromFloat(summary.AudioInputPrice).
 					Div(decimal.NewFromInt(1000000)).Mul(dAudioTokens).Mul(dGroupRatio).Mul(dQuotaPerUnit)
 			}
@@ -299,9 +299,11 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		// cached_tokens + cache_write_tokens can exceed prompt_tokens and the
 		// remainder can go negative. Clamp at zero so overlap never turns into
 		// a negative base charge.
-		if baseTokens.IsNegative() {
-			baseTokens = decimal.Zero
+		if billableInputTokens < 0 {
+			billableInputTokens = 0
 		}
+		summary.BillableInputTokens = billableInputTokens
+		baseTokens := decimal.NewFromInt(int64(billableInputTokens))
 
 		promptQuota := baseTokens.Add(cachedTokensWithRatio).Add(imageTokensWithRatio).Add(cachedCreationTokensWithRatio)
 		completionQuota := dCompletionTokens.Mul(dCompletionRatio)
@@ -431,6 +433,15 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	} else {
 		other = GenerateTextOtherInfo(ctx, relayInfo, summary.ModelRatio, summary.GroupRatio, summary.CompletionRatio, summary.CacheTokens, summary.CacheRatio, summary.ModelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	}
+	other["usage_semantic"] = summary.UsageSemantic
+	if !tieredBillingApplied && !relayInfo.PriceData.UsePrice {
+		other["billable_input_tokens"] = summary.BillableInputTokens
+	}
+	if summary.IsClaudeUsageSemantic {
+		other["input_tokens_total"] = summary.PromptTokens + summary.CacheTokens + cacheWriteTokensTotal(summary)
+	} else {
+		other["input_tokens_total"] = summary.PromptTokens
+	}
 	appendUsageBillingPathForLog(other, common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens), originUsage)
 	if adminRejectReason != "" {
 		other["reject_reason"] = adminRejectReason
@@ -463,32 +474,17 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other["image_generation_call"] = true
 		other["image_generation_call_price"] = summary.ImageGenerationCallPrice
 	}
-	if summary.CacheCreationTokens > 0 {
-		other["cache_creation_tokens"] = summary.CacheCreationTokens
-		other["cache_creation_ratio"] = summary.CacheCreationRatio
-	}
-	if summary.CacheCreationTokens5m > 0 {
-		other["cache_creation_tokens_5m"] = summary.CacheCreationTokens5m
-		other["cache_creation_ratio_5m"] = summary.CacheCreationRatio5m
-	}
-	if summary.CacheCreationTokens1h > 0 {
-		other["cache_creation_tokens_1h"] = summary.CacheCreationTokens1h
-		other["cache_creation_ratio_1h"] = summary.CacheCreationRatio1h
-	}
-	cacheWriteTokens := cacheWriteTokensTotal(summary)
-	if cacheWriteTokens > 0 {
-		// cache_write_tokens: normalized cache creation total for UI display.
-		// If split 5m/1h values are present, this is their sum; otherwise it falls back
-		// to cache_creation_tokens.
-		other["cache_write_tokens"] = cacheWriteTokens
-	}
-	if relayInfo.GetFinalRequestRelayFormat() != types.RelayFormatClaude && billingUsage != nil && billingUsage.UsageSource != "" && billingUsage.InputTokens > 0 {
-		// input_tokens_total: explicit normalized total input used by the usage log UI.
-		// Only write this field when upstream/current conversion has already provided a
-		// reliable total input value and tagged the usage source. Do not infer it from
-		// prompt/cache fields here, otherwise old upstream payloads may be double-counted.
-		other["input_tokens_total"] = billingUsage.InputTokens
-	}
+	other["cache_creation_tokens"] = summary.CacheCreationTokens
+	other["cache_creation_tokens_5m"] = summary.CacheCreationTokens5m
+	other["cache_creation_tokens_1h"] = summary.CacheCreationTokens1h
+	other["cache_creation_ratio"] = summary.CacheCreationRatio
+	other["cache_creation_ratio_5m"] = summary.CacheCreationRatio5m
+	other["cache_creation_ratio_1h"] = summary.CacheCreationRatio1h
+	// cache_write_tokens: normalized cache creation total for UI display.
+	// If split 5m/1h values are present, this is their sum; otherwise it falls back
+	// to cache_creation_tokens. Keep the zero value so a configured cache-write
+	// price can still be shown when this request did not create a cache entry.
+	other["cache_write_tokens"] = cacheWriteTokensTotal(summary)
 	if tieredBillingApplied {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}

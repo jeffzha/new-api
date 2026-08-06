@@ -5430,7 +5430,15 @@
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Billing Components": "Billing Components",
+    "Calculated Cost": "Calculated Cost",
+    "Billed Quota": "Billed Quota",
+    "Effective Multiplier": "Effective Multiplier",
+    "per 1M tokens": "per 1M tokens",
+    "per 1K calls": "per 1K calls",
+    "per call": "per call",
+    "Component subtotals are calculated before integer quota rounding; Total Cost is the amount actually deducted.": "Component subtotals are calculated before integer quota rounding; Total Cost is the amount actually deducted."
   },
   "Current background job health. A job is failed when its latest error is newer than its latest success; polling jobs are stale after 15 minutes without a successful run.": "Current background job health. A job is failed when its latest error is newer than its latest success; polling jobs are stale after 15 minutes without a successful run.",
   "Completion time of the most recent successful system task for this background job type.": "Completion time of the most recent successful system task for this background job type.",

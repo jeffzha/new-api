@@ -77,6 +77,12 @@ func Middleware() gin.HandlerFunc {
 		}
 		c.Set(observationContextKey, observation)
 		c.Next()
+		// Gin leaves FullPath empty when no registered route matched. Preserve the
+		// event for security/error investigation, but classify it separately so it
+		// can stay outside model-service traffic and SLA metrics.
+		if c.FullPath() == "" {
+			observation.endpointType = model.OpsEndpointTypeUnmatchedRoute
+		}
 
 		completedAt := time.Now()
 		statusCode := c.Writer.Status()

@@ -5430,7 +5430,15 @@
     "Zero retention": "Без хранения данных",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Billing Components": "Компоненты тарификации",
+    "Calculated Cost": "Расчётная стоимость",
+    "Billed Quota": "Списанная квота",
+    "Effective Multiplier": "Итоговый множитель",
+    "per 1M tokens": "за 1 млн токенов",
+    "per 1K calls": "за 1 тыс. вызовов",
+    "per call": "за вызов",
+    "Component subtotals are calculated before integer quota rounding; Total Cost is the amount actually deducted.": "Промежуточные суммы рассчитываются до округления квоты до целого; итоговая стоимость — фактически списанная сумма."
   },
   "Current background job health. A job is failed when its latest error is newer than its latest success; polling jobs are stale after 15 minutes without a successful run.": "Текущее состояние фоновой задачи. Задача считается сбойной, если последняя ошибка новее последнего успеха; задачи опроса считаются устаревшими после 15 минут без успешного запуска.",
   "Completion time of the most recent successful system task for this background job type.": "Время завершения последней успешной системной задачи данного типа фоновой задачи.",

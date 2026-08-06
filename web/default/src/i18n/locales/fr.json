@@ -5430,7 +5430,15 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Billing Components": "Composants de facturation",
+    "Calculated Cost": "Coût calculé",
+    "Billed Quota": "Quota facturé",
+    "Effective Multiplier": "Multiplicateur effectif",
+    "per 1M tokens": "par million de jetons",
+    "per 1K calls": "par millier d’appels",
+    "per call": "par appel",
+    "Component subtotals are calculated before integer quota rounding; Total Cost is the amount actually deducted.": "Les sous-totaux sont calculés avant l’arrondi du quota à un entier ; le coût total correspond au montant réellement déduit."
   },
   "Current background job health. A job is failed when its latest error is newer than its latest success; polling jobs are stale after 15 minutes without a successful run.": "État de santé actuel de la tâche en arrière-plan. Une tâche est en échec si sa dernière erreur est plus récente que son dernier succès ; les tâches d’interrogation sont obsolètes après 15 minutes sans exécution réussie.",
   "Completion time of the most recent successful system task for this background job type.": "Heure de fin de la tâche système réussie la plus récente pour ce type de tâche en arrière-plan.",

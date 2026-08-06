@@ -78,6 +78,16 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other["cache_ratio"] = cacheRatio
 	other["model_price"] = modelPrice
 	other["user_group_ratio"] = userGroupRatio
+	other["cache_creation_ratio"] = relayInfo.PriceData.CacheCreationRatio
+	other["cache_creation_ratio_5m"] = relayInfo.PriceData.CacheCreation5mRatio
+	other["cache_creation_ratio_1h"] = relayInfo.PriceData.CacheCreation1hRatio
+	other["image_ratio"] = relayInfo.PriceData.ImageRatio
+	other["audio_ratio"] = relayInfo.PriceData.AudioRatio
+	other["audio_completion_ratio"] = relayInfo.PriceData.AudioCompletionRatio
+	other["quota_per_unit"] = common.QuotaPerUnit
+	if otherRatios := relayInfo.PriceData.OtherRatios(); len(otherRatios) > 0 {
+		other["other_ratios"] = otherRatios
+	}
 	other["frt"] = float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.StartTime.UnixMilli())
 	if relayInfo.ReasoningEffort != "" {
 		other["reasoning_effort"] = relayInfo.ReasoningEffort

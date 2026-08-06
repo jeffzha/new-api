@@ -132,6 +132,9 @@ func persistRequestBatch(events []model.OpsRequestEvent) error {
 	}
 	aggregates := make(map[minuteMetricKey]*model.OpsMinuteMetric)
 	for _, event := range events {
+		if event.EndpointType == model.OpsEndpointTypeUnmatchedRoute {
+			continue
+		}
 		effectiveStatusCode := event.StatusCode
 		if event.UpstreamStatusCode > 0 {
 			effectiveStatusCode = event.UpstreamStatusCode

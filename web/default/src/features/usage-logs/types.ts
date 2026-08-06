@@ -166,6 +166,11 @@ export interface LogOtherData {
   cache_creation_tokens?: number
   cache_creation_tokens_5m?: number
   cache_creation_tokens_1h?: number
+  cache_write_tokens?: number
+  input_tokens_total?: number
+  billable_input_tokens?: number
+  quota_per_unit?: number
+  usage_semantic?: string
   claude?: boolean
   model_ratio?: number
   completion_ratio?: number
@@ -180,6 +185,7 @@ export interface LogOtherData {
   upstream_model_name?: string
   audio_ratio?: number
   audio_completion_ratio?: number
+  other_ratios?: Record<string, number>
   frt?: number
   // Tiered (expression-based) billing fields, set by backend when
   // billing_mode === 'tiered_expr'. expr_b64 is the base64-encoded billing
@@ -205,6 +211,8 @@ export interface LogOtherData {
   is_system_prompt_overwritten?: boolean
   po?: string[]
   billing_source?: string
+  billing_preference?: string
+  wallet_quota_deducted?: number
   group?: string
   stream_status?: {
     status?: string

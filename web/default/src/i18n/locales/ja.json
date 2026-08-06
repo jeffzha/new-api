@@ -5430,7 +5430,15 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Billing Components": "課金内訳",
+    "Calculated Cost": "計算料金",
+    "Billed Quota": "請求クォータ",
+    "Effective Multiplier": "実効倍率",
+    "per 1M tokens": "100万トークンあたり",
+    "per 1K calls": "1,000回あたり",
+    "per call": "1回あたり",
+    "Component subtotals are calculated before integer quota rounding; Total Cost is the amount actually deducted.": "各小計はクォータを整数に丸める前に計算され、「合計料金」は実際の控除額です。"
   },
   "Current background job health. A job is failed when its latest error is newer than its latest success; polling jobs are stale after 15 minutes without a successful run.": "現在のバックグラウンドジョブの健全性です。最新のエラーが最新の成功より新しい場合は失敗、ポーリングジョブが 15 分間成功していない場合は期限切れです。",
   "Completion time of the most recent successful system task for this background job type.": "このバックグラウンドジョブ種別で最後に成功したシステムタスクの完了時刻です。",

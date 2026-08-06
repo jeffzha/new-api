@@ -5430,7 +5430,15 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Billing Components": "Thành phần tính phí",
+    "Calculated Cost": "Chi phí tính toán",
+    "Billed Quota": "Hạn mức đã tính phí",
+    "Effective Multiplier": "Hệ số hiệu dụng",
+    "per 1M tokens": "mỗi 1 triệu token",
+    "per 1K calls": "mỗi 1.000 lượt gọi",
+    "per call": "mỗi lượt gọi",
+    "Component subtotals are calculated before integer quota rounding; Total Cost is the amount actually deducted.": "Các khoản tạm tính được tính trước khi làm tròn hạn mức thành số nguyên; Tổng chi phí là số tiền thực tế bị trừ."
   },
   "Current background job health. A job is failed when its latest error is newer than its latest success; polling jobs are stale after 15 minutes without a successful run.": "Trạng thái sức khỏe hiện tại của tác vụ nền. Tác vụ được coi là lỗi khi lỗi gần nhất mới hơn lần thành công gần nhất; tác vụ thăm dò được coi là quá hạn sau 15 phút không chạy thành công.",
   "Completion time of the most recent successful system task for this background job type.": "Thời điểm hoàn tất tác vụ hệ thống thành công gần nhất cho loại tác vụ nền này.",

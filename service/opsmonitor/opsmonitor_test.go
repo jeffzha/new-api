@@ -3,14 +3,18 @@ package opsmonitor
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/ops_monitor_setting"
 
+	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestClassifyEndpointSeparatesVideoLifecycleAndMobileAssets(t *testing.T) {
@@ -33,6 +37,94 @@ func TestClassifyEndpointSeparatesVideoLifecycleAndMobileAssets(t *testing.T) {
 			assert.Equal(t, test.expected, classifyEndpoint(test.method, test.path))
 		})
 	}
+}
+
+func TestMiddlewarePreservesUnmatchedRelayLikePathsForErrorDetails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	originalQueue := requestQueue
+	requestQueue = make(chan model.OpsRequestEvent, 2)
+	t.Cleanup(func() {
+		requestQueue = originalQueue
+	})
+
+	router := gin.New()
+	router.Use(Middleware())
+	router.POST("/v1/chat/completions", func(c *gin.Context) {
+		c.Status(http.StatusBadGateway)
+	})
+
+	unmatched := httptest.NewRecorder()
+	unmatchedRequest := httptest.NewRequest(http.MethodGet, "/v1/auth/users?pageNo=1&pageSize=100", nil)
+	router.ServeHTTP(unmatched, unmatchedRequest)
+	require.Equal(t, http.StatusNotFound, unmatched.Code)
+	require.Len(t, requestQueue, 1)
+	unmatchedEvent := <-requestQueue
+	assert.Equal(t, model.OpsEndpointTypeUnmatchedRoute, unmatchedEvent.EndpointType)
+	assert.Equal(t, http.StatusNotFound, unmatchedEvent.StatusCode)
+	assert.False(t, unmatchedEvent.Success)
+
+	matched := httptest.NewRecorder()
+	matchedRequest := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	router.ServeHTTP(matched, matchedRequest)
+	require.Equal(t, http.StatusBadGateway, matched.Code)
+	require.Len(t, requestQueue, 1)
+	event := <-requestQueue
+	assert.Equal(t, "chat", event.EndpointType)
+	assert.Equal(t, http.StatusBadGateway, event.StatusCode)
+	assert.False(t, event.Success)
+}
+
+func TestPersistRequestBatchKeepsUnmatchedDetailsOutOfMetrics(t *testing.T) {
+	originalDB := model.DB
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.OpsRequestEvent{}, &model.OpsMinuteMetric{}))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = originalDB
+	})
+
+	events := []model.OpsRequestEvent{
+		{
+			RequestID:     "scan-request",
+			OccurredAtMs:  120_000,
+			CompletedAtMs: 120_010,
+			EndpointType:  model.OpsEndpointTypeUnmatchedRoute,
+			StatusCode:    http.StatusNotFound,
+			ErrorOwner:    "gateway",
+		},
+		{
+			RequestID:     "model-request",
+			OccurredAtMs:  120_000,
+			CompletedAtMs: 120_020,
+			EndpointType:  "chat",
+			StatusCode:    http.StatusBadGateway,
+			ErrorOwner:    "provider",
+		},
+	}
+	require.NoError(t, persistRequestBatch(events))
+
+	var storedEvents []model.OpsRequestEvent
+	require.NoError(t, db.Order("id asc").Find(&storedEvents).Error)
+	require.Len(t, storedEvents, 2)
+	assert.Equal(t, model.OpsEndpointTypeUnmatchedRoute, storedEvents[0].EndpointType)
+
+	var metrics []model.OpsMinuteMetric
+	require.NoError(t, db.Find(&metrics).Error)
+	require.Len(t, metrics, 1)
+	assert.Equal(t, "chat", metrics[0].EndpointType)
+	assert.EqualValues(t, 1, metrics[0].RequestCount)
+
+	filter := model.OpsMetricFilter{StartTs: 0, EndTs: 300}
+	aggregates, err := model.QueryOpsRequestAggregates(filter)
+	require.NoError(t, err)
+	require.Len(t, aggregates, 1)
+	assert.EqualValues(t, 1, aggregates[0].RequestCount)
+	assert.Equal(t, "provider", aggregates[0].ErrorOwner)
+
+	realtime, err := model.QueryOpsRealtimeAggregate(filter)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, realtime.RequestCount)
 }
 
 func TestNormalizedUsageKeepsTokenClassesDisjoint(t *testing.T) {

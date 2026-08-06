@@ -67,7 +67,40 @@ func TestCalculateTextQuotaSummaryUnifiedForClaudeSemantic(t *testing.T) {
 	require.Equal(t, messageSummary.CacheCreationTokens5m, chatSummary.CacheCreationTokens5m)
 	require.Equal(t, messageSummary.CacheCreationTokens1h, chatSummary.CacheCreationTokens1h)
 	require.True(t, chatSummary.IsClaudeUsageSemantic)
+	require.Equal(t, 1000, chatSummary.BillableInputTokens)
 	require.Equal(t, 1488, chatSummary.Quota)
+}
+
+func TestGenerateTextOtherInfoSnapshotsBillingConfiguration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	priceData := types.PriceData{
+		CacheCreationRatio:   1.25,
+		CacheCreation5mRatio: 1.25,
+		CacheCreation1hRatio: 2,
+		ImageRatio:           0.8,
+		AudioRatio:           3,
+		AudioCompletionRatio: 4,
+	}
+	priceData.AddOtherRatio("region", 0.9)
+	relayInfo := &relaycommon.RelayInfo{
+		PriceData:         priceData,
+		StartTime:         time.Now(),
+		FirstResponseTime: time.Now(),
+		ChannelMeta:       &relaycommon.ChannelMeta{},
+	}
+
+	other := GenerateTextOtherInfo(ctx, relayInfo, 0.5, 1, 4, 0, 0.25, -1, -1)
+
+	require.Equal(t, 1.25, other["cache_creation_ratio"])
+	require.Equal(t, 1.25, other["cache_creation_ratio_5m"])
+	require.Equal(t, 2.0, other["cache_creation_ratio_1h"])
+	require.Equal(t, 0.8, other["image_ratio"])
+	require.Equal(t, 3.0, other["audio_ratio"])
+	require.Equal(t, 4.0, other["audio_completion_ratio"])
+	require.Equal(t, common.QuotaPerUnit, other["quota_per_unit"])
+	require.Equal(t, map[string]float64{"region": 0.9}, other["other_ratios"])
 }
 
 func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.T) {
@@ -405,6 +438,7 @@ func TestCalculateTextQuotaSummaryBillsOpenAICacheWriteTokens(t *testing.T) {
 		summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
 
 		require.Equal(t, 1470, summary.CacheCreationTokens)
+		require.Equal(t, 3, summary.BillableInputTokens)
 		// (1473-0-1470) + 1470*1.25 + 19*2 = 3 + 1837.5 + 38 = 1878.5 => 1879
 		require.Equal(t, 1879, summary.Quota)
 	})
@@ -426,6 +460,7 @@ func TestCalculateTextQuotaSummaryBillsOpenAICacheWriteTokens(t *testing.T) {
 
 		require.Equal(t, 3619, summary.PromptTokens)
 		require.Equal(t, 3616, summary.CacheCreationTokens)
+		require.Zero(t, summary.BillableInputTokens)
 		// max(3619-2921-3616, 0) + 2921*0.1 + 3616*1.25 + 36*2 = 4884.1 => 4884
 		require.Equal(t, 4884, summary.Quota)
 	})

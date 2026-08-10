@@ -507,6 +507,7 @@ services:
   new-api-identity-proxy:
     <<: *service-defaults
     image: ${CADDY_IMAGE:-docker.m.daocloud.io/library/caddy:2.10-alpine}
+    user: caddy
     command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
     environment:
       NEW_API_INTERNAL_UPSTREAM: ${NEW_API_INTERNAL_UPSTREAM:?set NEW_API_INTERNAL_UPSTREAM}
@@ -544,6 +545,7 @@ services:
   workbench-switch:
     <<: *service-defaults
     image: ${CADDY_IMAGE:-docker.m.daocloud.io/library/caddy:2.10-alpine}
+    user: caddy
     command: ["caddy", "run", "--config", "/config-runtime/Caddyfile.active", "--adapter", "caddyfile"]
     secrets:
       - workbench_control_tls_cert

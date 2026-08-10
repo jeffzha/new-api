@@ -41,7 +41,15 @@ jobs:
               echo "Release tag does not match the trusted prefix." >&2
               exit 1
             fi
-            adp_revision="${GITHUB_REF_NAME#${prefix}}"
+            tag_payload="${GITHUB_REF_NAME#${prefix}}"
+            if [[ "${tag_payload}" =~ ^[0-9a-f]{40}$ ]]; then
+              adp_revision="${tag_payload}"
+            elif [[ "${tag_payload}" =~ ^[0-9a-f]{12}-([0-9a-f]{40})$ ]]; then
+              adp_revision="${BASH_REMATCH[1]}"
+            else
+              echo "Release tag must contain an exact ADP commit, optionally prefixed by the 12-character new-api revision." >&2
+              exit 1
+            fi
           fi
           if [[ ! "${adp_revision}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "adp_revision must be an exact lowercase 40-character commit." >&2
@@ -103,7 +111,7 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
           context: .
-          file: Dockerfile
+          file: deploy/claw-workbench/docker/Dockerfile.new-api
           platforms: linux/amd64
           push: true
           provenance: mode=max

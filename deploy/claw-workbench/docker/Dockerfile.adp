@@ -25,7 +25,10 @@ FROM ${PYTHON_BUILD_IMAGE} AS runtime
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
-RUN groupadd --system --gid 10001 workbench \
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 workbench \
     && useradd --system --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin workbench
 WORKDIR /app
 COPY --from=python-build /opt/venv /opt/venv

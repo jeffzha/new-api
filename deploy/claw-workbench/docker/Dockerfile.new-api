@@ -1,0 +1,84 @@
+FROM oven/bun:1@sha256:0733e50325078969732ebe3b15ce4c4be5082f18c4ac1a0f0ca4839c2e4e42a7 AS builder
+
+ARG BUILD_VERSION
+ARG BUN_REGISTRY=https://registry.npmjs.org
+ARG BUN_MAX_HTTP_REQUESTS=48
+ENV BUN_CONFIG_REGISTRY=${BUN_REGISTRY} BUN_CONFIG_MAX_HTTP_REQUESTS=${BUN_MAX_HTTP_REQUESTS}
+
+WORKDIR /build/web
+COPY web/package.json web/bun.lock ./
+COPY web/default/package.json ./default/package.json
+COPY web/classic/package.json ./classic/package.json
+RUN bun install --filter ./default --frozen-lockfile
+COPY ./web/default ./default
+COPY ./VERSION /build/VERSION
+RUN version="${BUILD_VERSION:-$(cat /build/VERSION)}" \
+    && cd default \
+    && DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION="$version" bun run build
+
+FROM oven/bun:1@sha256:0733e50325078969732ebe3b15ce4c4be5082f18c4ac1a0f0ca4839c2e4e42a7 AS builder-classic
+
+ARG BUILD_VERSION
+ARG BUN_REGISTRY=https://registry.npmjs.org
+ARG BUN_MAX_HTTP_REQUESTS=48
+ENV BUN_CONFIG_REGISTRY=${BUN_REGISTRY} BUN_CONFIG_MAX_HTTP_REQUESTS=${BUN_MAX_HTTP_REQUESTS}
+
+WORKDIR /build/web
+COPY web/package.json web/bun.lock ./
+COPY web/default/package.json ./default/package.json
+COPY web/classic/package.json ./classic/package.json
+RUN bun install --filter ./classic --frozen-lockfile
+COPY ./web/classic ./classic
+COPY ./VERSION /build/VERSION
+RUN version="${BUILD_VERSION:-$(cat /build/VERSION)}" \
+    && cd classic \
+    && VITE_REACT_APP_VERSION="$version" bun run build
+
+FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS builder2
+ARG BUILD_VERSION
+ARG GO_PROXY=https://proxy.golang.org,direct
+ENV GO111MODULE=on CGO_ENABLED=0 GOPROXY=${GO_PROXY}
+
+ARG TARGETOS
+ARG TARGETARCH
+ENV GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64}
+ENV GOEXPERIMENT=greenteagc
+
+WORKDIR /build
+
+ADD go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+# Keep security-only dependency overrides isolated from the upstream module files.
+RUN go get golang.org/x/image@v0.43.0 golang.org/x/sync@v0.21.0 golang.org/x/text@v0.39.0 \
+    && go mod verify
+COPY --from=builder /build/web/default/dist ./web/default/dist
+COPY --from=builder-classic /build/web/classic/dist ./web/classic/dist
+RUN version="${BUILD_VERSION:-$(cat VERSION)}" \
+    && go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${version}'" -o new-api \
+    && go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${version}'" -o hwdrama-proxy ./cmd/hwdrama-proxy \
+    && go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${version}'" -o reverse-newapi-volcengine ./cmd/reverse-newapi-volcengine \
+    && go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${version}'" -o enterprise-policy-hub ./cmd/enterprise-policy-hub
+
+FROM debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a
+
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata libasan8 wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-ca-certificates \
+    && groupadd --system --gid 10001 new-api \
+    && useradd --system --uid 10001 --gid 10001 --home-dir /data --shell /usr/sbin/nologin new-api \
+    && mkdir -p /data \
+    && chown 10001:10001 /data
+
+COPY --from=builder2 /build/new-api /
+COPY --from=builder2 /build/hwdrama-proxy /
+COPY --from=builder2 /build/reverse-newapi-volcengine /
+COPY --from=builder2 /build/enterprise-policy-hub /
+COPY LICENSE NOTICE THIRD-PARTY-LICENSES.md /licenses/
+EXPOSE 3000
+WORKDIR /data
+USER 10001:10001
+ENTRYPOINT ["/new-api"]

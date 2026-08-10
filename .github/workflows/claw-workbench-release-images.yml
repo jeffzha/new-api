@@ -29,6 +29,7 @@ jobs:
     env:
       ADP_REPOSITORY: jeffzha/adp-chat-client
       ADP_REVISION: ${{ inputs.adp_revision }}
+      CLAMAV_IMAGE: docker.m.daocloud.io/clamav/clamav@sha256:a73435b0fa51886e9e6dd1881656023ba9dce756e055f23981270badbb8ca3d7
     steps:
       - name: Resolve trusted ADP revision
         shell: bash
@@ -204,6 +205,16 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ${{ steps.names.outputs.adp }}@${{ steps.adp.outputs.digest }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Scan pinned ClamAV dependency
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ${{ env.CLAMAV_IMAGE }}
           scanners: vuln,secret
           severity: HIGH,CRITICAL
           ignore-unfixed: true

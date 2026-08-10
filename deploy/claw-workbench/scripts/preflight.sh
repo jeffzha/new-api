@@ -719,20 +719,20 @@ python3 "$root/scripts/normalize_compose_color.py" \
 cmp -s "$config_compare_dir/adp-blue.yml" "$config_compare_dir/adp-green.yml" \
   || fail "rendered ADP Blue and Green configuration differs outside the allowed instance/image/log-volume fields"
 docker run --rm --entrypoint caddy \
-  --user caddy \
+  --user 10001:10001 \
   --cap-drop ALL --cap-add NET_BIND_SERVICE \
   --security-opt no-new-privileges:true \
   -v "$root/caddy:/etc/caddy:ro" \
   "$CADDY_IMAGE" validate --config /etc/caddy/Caddyfile.public.validate --adapter caddyfile >/dev/null
 docker run --rm --entrypoint caddy \
-  --user caddy \
+  --user 10001:10001 \
   --cap-drop ALL --cap-add NET_BIND_SERVICE \
   --security-opt no-new-privileges:true \
   -e NEW_API_INTERNAL_UPSTREAM="$NEW_API_INTERNAL_UPSTREAM" \
   -v "$root/caddy:/etc/caddy:ro" \
   "$CADDY_IMAGE" adapt --config /etc/caddy/Caddyfile.identity-proxy --adapter caddyfile >/dev/null
 docker run --rm --entrypoint caddy \
-  --user caddy \
+  --user 10001:10001 \
   --cap-drop ALL --cap-add NET_BIND_SERVICE \
   --security-opt no-new-privileges:true \
   -v "$root/state:/config-runtime:ro" \

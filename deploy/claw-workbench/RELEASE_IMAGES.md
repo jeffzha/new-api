@@ -33,6 +33,12 @@ publish BuildKit provenance plus an SBOM. The release candidate artifact
 contains only revisions and immutable `repository@sha256:...` references; it
 contains no registry credential or provider secret.
 
+The ADP runtime is installed from its frozen `uv.lock` into a dedicated virtual
+environment. Build-time Python package installers are removed from the final
+runtime image, so their dependency trees cannot become an unused but vulnerable
+production surface. Any fixed HIGH or CRITICAL dependency reported by the image
+scanner must be upgraded in the ADP fork and re-locked before publication.
+
 Use the three digest references only for the inactive Blue/Green color. Keep the
 active color on its previous digests until the inactive color has passed
 preflight and live acceptance. The deployment host must pull with its read-only

@@ -666,7 +666,9 @@ case "$compose_major:$compose_minor" in *[!0-9:]*) fail "cannot parse Docker Com
 if [ "$compose_major" -lt 2 ] || { [ "$compose_major" -eq 2 ] && [ "$compose_minor" -lt 17 ]; }; then
   fail "Docker Compose >=2.17 is required for additional build contexts"
 fi
-docker buildx version >/dev/null 2>&1 || fail "Docker Buildx/BuildKit is required"
+if [ "$CLAW_BUILD_LOCAL_IMAGES" = true ]; then
+  docker buildx version >/dev/null 2>&1 || fail "Docker Buildx/BuildKit is required for local image builds"
+fi
 docker network inspect "$WORKBENCH_EDGE_NETWORK" >/dev/null 2>&1 || fail "external network $WORKBENCH_EDGE_NETWORK does not exist"
 
 openssl verify -CAfile "$root/secrets/internal_ca.crt" "$root/secrets/workbench_control.crt" >/dev/null \

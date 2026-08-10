@@ -120,6 +120,40 @@ def normalize_rendered_compose(text: str, service_name: str) -> str:
             raise ComposeNormalizationError(
                 f"{service_name} must contain its dedicated log volume"
             )
+
+        volumes_indexes = [
+            index
+            for index, line in enumerate(normalized)
+            if line.rstrip("\r\n") == "volumes:"
+        ]
+        if len(volumes_indexes) != 1:
+            raise ComposeNormalizationError(
+                "rendered Compose must contain exactly one top-level volumes mapping"
+            )
+        volumes_index = volumes_indexes[0]
+        volumes_end = len(normalized)
+        for index in range(volumes_index + 1, len(normalized)):
+            line = normalized[index]
+            if line.strip() and not line.startswith((" ", "\t", "#")):
+                volumes_end = index
+                break
+        volume_headers = [
+            index
+            for index in range(volumes_index + 1, volumes_end)
+            if SERVICE_HEADER_RE.fullmatch(normalized[index])
+        ]
+        if not volume_headers:
+            raise ComposeNormalizationError(
+                "rendered Compose top-level volumes mapping is empty"
+            )
+        volume_blocks: list[list[str]] = []
+        for position, start in enumerate(volume_headers):
+            end = volume_headers[position + 1] if position + 1 < len(volume_headers) else volumes_end
+            volume_blocks.append(normalized[start:end])
+        volume_blocks.sort(key=lambda block: block[0].rstrip("\r\n"))
+        normalized[volumes_index + 1 : volumes_end] = [
+            line for block in volume_blocks for line in block
+        ]
     return "".join(normalized)
 
 

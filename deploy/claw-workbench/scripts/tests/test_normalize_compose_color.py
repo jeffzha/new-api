@@ -137,6 +137,25 @@ class ComposeColorNormalizationTests(unittest.TestCase):
         )
         self.assertNotEqual(blue, green)
 
+    def test_adp_top_level_volume_order_is_canonicalized_after_color_rename(self) -> None:
+        blue_source = rendered_adp(
+            "blue", "registry/adp@sha256:" + "1" * 64
+        ).replace(
+            "volumes:\n  adp_blue_logs:\n    name: claw-workbench_adp_blue_logs\n",
+            "volumes:\n  adp_blue_logs:\n    name: claw-workbench_adp_blue_logs\n"
+            "  adp_db_data:\n    name: claw-workbench_adp_db_data\n",
+        )
+        green_source = rendered_adp(
+            "green", "registry/adp@sha256:" + "2" * 64
+        ).replace(
+            "volumes:\n  adp_green_logs:\n    name: claw-workbench_adp_green_logs\n",
+            "volumes:\n  adp_db_data:\n    name: claw-workbench_adp_db_data\n"
+            "  adp_green_logs:\n    name: claw-workbench_adp_green_logs\n",
+        )
+        blue = normalizer.normalize_rendered_compose(blue_source, "adp-blue")
+        green = normalizer.normalize_rendered_compose(green_source, "adp-green")
+        self.assertEqual(blue, green)
+
     def test_adp_requires_stable_instance_and_dedicated_log_volume(self) -> None:
         source = rendered_adp("blue", "registry/adp@sha256:" + "1" * 64)
         missing_instance = source.replace(

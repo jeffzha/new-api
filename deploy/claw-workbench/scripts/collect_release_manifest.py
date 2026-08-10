@@ -439,20 +439,39 @@ class ReleaseManifestCollector:
             or allowed != [hostname]
         ):
             raise CollectionError("new-api routing must identify exactly one non-placeholder container")
-        inspected = self._inspect(hostname, "inspect active new-api container")
-        self._require_running(inspected, "new-api")
-
-        names = {str(inspected.get("Name", "")).lstrip("/")}
-        networks = inspected.get("NetworkSettings")
-        network_map = networks.get("Networks") if isinstance(networks, dict) else None
-        if isinstance(network_map, dict):
-            for network in network_map.values():
-                aliases = network.get("Aliases") if isinstance(network, dict) else None
-                if isinstance(aliases, list):
-                    names.update(str(alias) for alias in aliases if isinstance(alias, str))
-        if hostname not in names:
-            raise CollectionError("new-api upstream does not match the inspected container identity")
-        return inspected
+        raw_ids = self._run(
+            ["docker", "ps", "--filter", "status=running", "--quiet", "--no-trunc"],
+            purpose="enumerate running containers for new-api",
+        )
+        container_ids = [line.strip() for line in raw_ids.splitlines() if line.strip()]
+        if (
+            not container_ids
+            or len(container_ids) > 256
+            or len(container_ids) != len(set(container_ids))
+            or any(not CONTAINER_ID_RE.fullmatch(value) for value in container_ids)
+        ):
+            raise CollectionError("running container inventory is invalid")
+        matches: list[dict[str, object]] = []
+        for container_id in container_ids:
+            inspected = self._inspect(container_id, "inspect running container")
+            names = {str(inspected.get("Name", "")).lstrip("/")}
+            networks = inspected.get("NetworkSettings")
+            network_map = networks.get("Networks") if isinstance(networks, dict) else None
+            if isinstance(network_map, dict):
+                for network in network_map.values():
+                    aliases = network.get("Aliases") if isinstance(network, dict) else None
+                    if isinstance(aliases, list):
+                        names.update(
+                            str(alias) for alias in aliases if isinstance(alias, str)
+                        )
+            if hostname in names:
+                matches.append(inspected)
+        if len(matches) != 1:
+            raise CollectionError(
+                "new-api upstream must match exactly one running container identity"
+            )
+        self._require_running(matches[0], "new-api")
+        return matches[0]
 
     def _provider_region(
         self, env: dict[str, str], adp_container: dict[str, object]

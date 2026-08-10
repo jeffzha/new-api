@@ -33,6 +33,7 @@ class FakeRunner:
         self.repository = repository
         self.adp = adp
         self.dirty_repository = False
+        self.duplicate_new_api_alias = False
         self.stopped: set[str] = set()
         self.revision_labels = {
             "gateway-production-green": ROOT_REVISION,
@@ -80,19 +81,22 @@ class FakeRunner:
         }[container_id]
 
     def _container(self, target: str) -> dict[str, object]:
-        if target == "gateway-production-green":
+        if target in {"gateway-production-green", NEW_API_CONTAINER_ID}:
+            reference_key = "gateway-production-green"
             config = {
-                "Image": self.image_references[target],
-                "Labels": {release.OCI_REVISION_LABEL: self.revision_labels[target]},
+                "Image": self.image_references[reference_key],
+                "Labels": {
+                    release.OCI_REVISION_LABEL: self.revision_labels[reference_key]
+                },
             }
             return {
                 "Id": NEW_API_CONTAINER_ID,
                 "Name": "/gateway-production-green-container",
                 "State": {
-                    "Running": target not in self.stopped,
+                    "Running": reference_key not in self.stopped,
                     "Health": {"Status": "healthy"},
                 },
-                "Image": self.local_image_ids[target],
+                "Image": self.local_image_ids[reference_key],
                 "Config": config,
                 "NetworkSettings": {
                     "Networks": {
@@ -119,6 +123,9 @@ class FakeRunner:
                 f"WORKBENCH_AGSX_REGION={self.runtime_region}",
                 f"WORKBENCH_FILE_COS_REGION={self.runtime_region}",
             ]
+        networks: dict[str, object] = {}
+        if target == CONTROL_CONTAINER_ID and self.duplicate_new_api_alias:
+            networks = {"duplicate": {"Aliases": ["gateway-production-green"]}}
         return {
             "Id": target,
             "Name": "/claw-workbench-" + service + "-1",
@@ -128,7 +135,7 @@ class FakeRunner:
             },
             "Image": image,
             "Config": config,
-            "NetworkSettings": {"Networks": {}},
+            "NetworkSettings": {"Networks": networks},
         }
 
     def run(
@@ -149,6 +156,20 @@ class FakeRunner:
                 return release.CommandOutput(" M tracked.go\n" if dirty else "")
         if args[:2] == ["docker", "inspect"]:
             return release.CommandOutput(json.dumps([self._container(args[2])]))
+        if args[:2] == ["docker", "ps"]:
+            return release.CommandOutput(
+                "\n".join(
+                    (
+                        NEW_API_CONTAINER_ID,
+                        CONTROL_CONTAINER_ID,
+                        ADP_CONTAINER_ID,
+                        CONTROL_DB_CONTAINER_ID,
+                        ADP_DB_CONTAINER_ID,
+                        SWITCH_CONTAINER_ID,
+                    )
+                )
+                + "\n"
+            )
         if args[:3] == ["docker", "image", "inspect"]:
             local_id = args[3]
             targets = [
@@ -327,6 +348,11 @@ class ReleaseManifestCollectorTest(unittest.TestCase):
         os.chmod(env, 0o600)
         self.runner.overlay_revision = "9" * 40
         with self.assertRaisesRegex(release.CollectionError, "overlay revision does not match"):
+            self.collect()
+
+    def test_rejects_ambiguous_new_api_network_alias(self) -> None:
+        self.runner.duplicate_new_api_alias = True
+        with self.assertRaisesRegex(release.CollectionError, "exactly one running container"):
             self.collect()
 
     def test_rejects_stopped_active_container(self) -> None:

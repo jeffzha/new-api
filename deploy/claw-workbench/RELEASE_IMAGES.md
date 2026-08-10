@@ -38,6 +38,11 @@ active color on its previous digests until the inactive color has passed
 preflight and live acceptance. The deployment host must pull with its read-only
 registry credential; it must not rebuild, retag, or replace either digest.
 
+The candidate artifact also records the exact ClamAV digest that passed the
+same release scan. This keeps the evidence-scanning runtime dependency in the
+immutable candidate provenance instead of relying on a separately copied
+deployment value.
+
 The candidate artifact is not the authoritative production release manifest.
 After deployment and cutover, run `scripts/collect-release-manifest.sh` on the
 production host. That collector reads the actual containers, image labels,

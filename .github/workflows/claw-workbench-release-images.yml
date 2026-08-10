@@ -230,6 +230,7 @@ jobs:
           CONTROL_DIGEST: ${{ steps.control.outputs.digest }}
           ADP_IMAGE: ${{ steps.names.outputs.adp }}
           ADP_DIGEST: ${{ steps.adp.outputs.digest }}
+          CLAMAV_IMAGE: ${{ env.CLAMAV_IMAGE }}
         run: |
           set -euo pipefail
           mkdir -p .release/output
@@ -246,6 +247,7 @@ jobs:
               "new_api_image": os.environ["NEW_API_IMAGE"] + "@" + os.environ["NEW_API_DIGEST"],
               "claw_control_image": os.environ["CONTROL_IMAGE"] + "@" + os.environ["CONTROL_DIGEST"],
               "adp_workbench_image": os.environ["ADP_IMAGE"] + "@" + os.environ["ADP_DIGEST"],
+              "clamav_image": os.environ["CLAMAV_IMAGE"],
               "registry": "ghcr.io",
               "scan_policy": "trivy-high-critical-fixed-and-secret",
           }

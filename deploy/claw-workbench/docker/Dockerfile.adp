@@ -28,6 +28,8 @@ ENV PATH=/opt/venv/bin:$PATH \
 RUN apt-get update \
     && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/* \
+    && python -m pip uninstall --yes jaraco.context setuptools wheel \
+    && python -m pip uninstall --yes pip \
     && groupadd --system --gid 10001 workbench \
     && useradd --system --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin workbench
 WORKDIR /app

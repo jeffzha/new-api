@@ -39,6 +39,7 @@ class FakeRunner:
             CONTROL_CONTAINER_ID: ROOT_REVISION,
             ADP_CONTAINER_ID: ADP_REVISION,
         }
+        self.overlay_revision = ROOT_REVISION
         self.image_references = {
             "gateway-production-green": "registry.local/new-api@sha256:" + "3" * 64,
             CONTROL_CONTAINER_ID: "registry.local/claw-control@sha256:" + "4" * 64,
@@ -112,6 +113,7 @@ class FakeRunner:
             config["Image"] = self.image_references[target]
             image = self.local_image_ids[target]
         if target == ADP_CONTAINER_ID:
+            labels[release.OVERLAY_REVISION_LABEL] = self.overlay_revision
             config["Env"] = [
                 "WORKBENCH_SANDBOX_PROVIDER=tencent_agsx",
                 f"WORKBENCH_AGSX_REGION={self.runtime_region}",
@@ -201,6 +203,7 @@ class ReleaseManifestCollectorTest(unittest.TestCase):
             "\n".join(
                 (
                     "COMPOSE_PROJECT_NAME=claw-workbench",
+                    "CLAW_BUILD_LOCAL_IMAGES=true",
                     "NEW_API_INTERNAL_UPSTREAM=http://gateway-production-green:3000",
                     "NEW_API_INTERNAL_ALLOWED_HOSTS=gateway-production-green",
                     "ADP_SOURCE_DIR=../../../adp",
@@ -295,6 +298,34 @@ class ReleaseManifestCollectorTest(unittest.TestCase):
     def test_rejects_dirty_source_worktree(self) -> None:
         self.runner.dirty_repository = True
         with self.assertRaisesRegex(release.CollectionError, "worktree is dirty"):
+            self.collect()
+
+    def test_immutable_production_collection_uses_oci_revisions_without_git(self) -> None:
+        env = self.root / ".env"
+        env.write_text(
+            env.read_text(encoding="utf-8").replace(
+                "CLAW_BUILD_LOCAL_IMAGES=true", "CLAW_BUILD_LOCAL_IMAGES=false"
+            ),
+            encoding="utf-8",
+        )
+        os.chmod(env, 0o600)
+        self.runner.dirty_repository = True
+        manifest = self.collect()
+        self.assertEqual(ROOT_REVISION, manifest["new_api_revision"])
+        self.assertEqual(ROOT_REVISION, manifest["claw_control_revision"])
+        self.assertEqual(ADP_REVISION, manifest["adp_revision"])
+
+    def test_immutable_production_collection_rejects_overlay_revision_mismatch(self) -> None:
+        env = self.root / ".env"
+        env.write_text(
+            env.read_text(encoding="utf-8").replace(
+                "CLAW_BUILD_LOCAL_IMAGES=true", "CLAW_BUILD_LOCAL_IMAGES=false"
+            ),
+            encoding="utf-8",
+        )
+        os.chmod(env, 0o600)
+        self.runner.overlay_revision = "9" * 40
+        with self.assertRaisesRegex(release.CollectionError, "overlay revision does not match"):
             self.collect()
 
     def test_rejects_stopped_active_container(self) -> None:

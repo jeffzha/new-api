@@ -36,6 +36,7 @@ PLACEHOLDER_MARKERS = ("replace", "placeholder", "change-me", "changeme", "examp
 MAX_CONFIG_FILE_BYTES = 4 * 1024 * 1024
 MAX_CONFIG_TOTAL_BYTES = 16 * 1024 * 1024
 OCI_REVISION_LABEL = "org.opencontainers.image.revision"
+OVERLAY_REVISION_LABEL = "com.nexus-reach.workbench.overlay-revision"
 ADP_REQUIRED_TABLES = frozenset(
     {
         "account",
@@ -376,6 +377,27 @@ class ReleaseManifestCollector:
             raise CollectionError(f"{component} configured digest is not attached to the running image")
         return matched.group("digest")
 
+    def _container_revision(
+        self, inspected: dict[str, object], component: str
+    ) -> str:
+        config = inspected.get("Config")
+        labels = config.get("Labels") if isinstance(config, dict) else None
+        revision = labels.get(OCI_REVISION_LABEL) if isinstance(labels, dict) else None
+        if not isinstance(revision, str) or not REVISION_RE.fullmatch(revision):
+            raise CollectionError(f"{component} OCI revision label is invalid")
+        return revision
+
+    def _require_overlay_revision(
+        self, inspected: dict[str, object], expected_revision: str
+    ) -> None:
+        config = inspected.get("Config")
+        labels = config.get("Labels") if isinstance(config, dict) else None
+        revision = labels.get(OVERLAY_REVISION_LABEL) if isinstance(labels, dict) else None
+        if not isinstance(revision, str) or not REVISION_RE.fullmatch(revision):
+            raise CollectionError("ADP overlay revision label is invalid")
+        if revision != expected_revision:
+            raise CollectionError("ADP overlay revision does not match claw-control")
+
     def _active_color(self) -> str:
         color_file = self.deployment_root / "state" / "active-color"
         _regular_file(color_file, "active color state")
@@ -544,19 +566,33 @@ class ReleaseManifestCollector:
             raise CollectionError("Compose project name is invalid")
         self._project = project
 
-        new_api_worktree = self.deployment_root.parent.parent
-        adp_source = env.get("ADP_SOURCE_DIR", "")
-        if not adp_source or _is_placeholder(adp_source):
-            raise CollectionError("ADP source worktree is missing")
-        adp_worktree = (self.deployment_root / adp_source).resolve(strict=True)
-
-        new_api_revision = self._git_revision(new_api_worktree, "new-api/claw-control")
-        adp_revision = self._git_revision(adp_worktree, "ADP")
         active_color = self._active_color()
-
         new_api = self._new_api_container(env)
         _, control = self._service_container(f"claw-control-{active_color}")
         _, adp = self._service_container(f"adp-{active_color}")
+        build_local = env.get("CLAW_BUILD_LOCAL_IMAGES", "false")
+        if build_local not in {"true", "false"}:
+            raise CollectionError("CLAW_BUILD_LOCAL_IMAGES must be true or false")
+        if build_local == "true":
+            new_api_worktree = self.deployment_root.parent.parent
+            adp_source = env.get("ADP_SOURCE_DIR", "")
+            if not adp_source or _is_placeholder(adp_source):
+                raise CollectionError("ADP source worktree is missing")
+            adp_worktree = (self.deployment_root / adp_source).resolve(strict=True)
+            new_api_revision = self._git_revision(
+                new_api_worktree, "new-api/claw-control"
+            )
+            claw_control_revision = new_api_revision
+            adp_revision = self._git_revision(adp_worktree, "ADP")
+        else:
+            new_api_revision = self._container_revision(new_api, "new-api")
+            claw_control_revision = self._container_revision(control, "claw-control")
+            if claw_control_revision != new_api_revision:
+                raise CollectionError(
+                    "new-api and claw-control OCI revisions do not match"
+                )
+            adp_revision = self._container_revision(adp, "ADP")
+            self._require_overlay_revision(adp, new_api_revision)
         provider_region = self._provider_region(env, adp)
         self._service_container("workbench-control-db")
         self._service_container("workbench-adp-db")
@@ -571,7 +607,7 @@ class ReleaseManifestCollector:
 
         return {
             "new_api_revision": new_api_revision,
-            "claw_control_revision": new_api_revision,
+            "claw_control_revision": claw_control_revision,
             "adp_revision": adp_revision,
             "new_api_image_digest": self._container_image(
                 new_api, new_api_revision, "new-api"

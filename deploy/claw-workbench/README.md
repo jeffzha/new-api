@@ -20,10 +20,17 @@ The wrapper accepts no caller-supplied revision, digest, migration, color, or
 region. It writes `state/release-manifest.json` atomically with mode `0600`.
 The JSON is assembled from these authoritative sources:
 
-- `new_api_revision` and `claw_control_revision`: the clean Git `HEAD` of this
-  repository; both components are built from the same worktree.
-- `adp_revision`: the clean Git `HEAD` of the worktree resolved from
-  `ADP_SOURCE_DIR` in the strict `.env` file.
+- In immutable production mode (`CLAW_BUILD_LOCAL_IMAGES=false`),
+  `new_api_revision`, `claw_control_revision`, and `adp_revision` come from the
+  running containers' exact `org.opencontainers.image.revision` labels. The
+  collector requires new-api and claw-control to carry the same revision, and
+  requires ADP's `com.nexus-reach.workbench.overlay-revision` to equal that
+  revision. It then verifies the same labels on the local image objects and
+  binds them to the configured registry digests. Production therefore does not
+  need mutable or stale Git worktrees merely to produce release evidence.
+- In local-build mode (`CLAW_BUILD_LOCAL_IMAGES=true`), the revisions continue
+  to come from clean Git `HEAD`s in this repository and `ADP_SOURCE_DIR`; the
+  running image labels must match those worktrees exactly.
 - The three image digests: immutable `repository@sha256:...` references on the
   running new-api, active claw-control, and active ADP containers, checked
   against the local image object. Both the image and container must carry

@@ -7,6 +7,9 @@ on:
         description: Exact 40-character commit from the trusted ADP workbench fork
         required: true
         type: string
+  push:
+    tags:
+      - "claw-workbench-release-*"
 
 permissions:
   contents: read
@@ -27,6 +30,25 @@ jobs:
       ADP_REPOSITORY: jeffzha/adp-chat-client
       ADP_REVISION: ${{ inputs.adp_revision }}
     steps:
+      - name: Resolve trusted ADP revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          adp_revision="${ADP_REVISION}"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            prefix="claw-workbench-release-"
+            if [[ "${GITHUB_REF_NAME}" != "${prefix}"* ]]; then
+              echo "Release tag does not match the trusted prefix." >&2
+              exit 1
+            fi
+            adp_revision="${GITHUB_REF_NAME#${prefix}}"
+          fi
+          if [[ ! "${adp_revision}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "adp_revision must be an exact lowercase 40-character commit." >&2
+            exit 1
+          fi
+          echo "ADP_REVISION=${adp_revision}" >> "${GITHUB_ENV}"
+
       - name: Validate trusted source selection
         shell: bash
         run: |

@@ -47,7 +47,11 @@ ENV GOEXPERIMENT=greenteagc
 WORKDIR /build
 
 ADD go.mod go.sum ./
-RUN go mod download
+RUN for attempt in 1 2 3; do \
+        go mod download && exit 0; \
+        if [ "${attempt}" -lt 3 ]; then sleep $((attempt * 3)); fi; \
+    done; \
+    exit 1
 
 COPY . .
 # Keep security-only dependency overrides isolated from the upstream module files.

@@ -78,7 +78,9 @@ COPY --from=builder2 /build/hwdrama-proxy /
 COPY --from=builder2 /build/reverse-newapi-volcengine /
 COPY --from=builder2 /build/enterprise-policy-hub /
 COPY LICENSE NOTICE THIRD-PARTY-LICENSES.md /licenses/
+COPY deploy/claw-workbench/docker/entrypoint-new-api.sh /entrypoint-new-api.sh
+RUN chmod 0555 /entrypoint-new-api.sh
 EXPOSE 3000
 WORKDIR /data
 USER 10001:10001
-ENTRYPOINT ["/new-api"]
+ENTRYPOINT ["/entrypoint-new-api.sh"]

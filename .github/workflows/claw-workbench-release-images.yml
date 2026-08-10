@@ -186,6 +186,7 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ env.ADP_REVISION }}
             org.opencontainers.image.source=https://github.com/${{ env.ADP_REPOSITORY }}
+            com.nexus-reach.workbench.overlay-revision=${{ github.sha }}
           cache-from: type=gha,scope=adp-workbench
           cache-to: type=gha,mode=max,scope=adp-workbench
 

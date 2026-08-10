@@ -39,7 +39,9 @@ case "${WORKBENCH_FILES_ENABLED:-false}" in
     ;;
 esac
 
-python main.py --check-secret-key
+# SECRET_KEY is already loaded from the read-only Docker secret above. The
+# upstream development entrypoint mutates a local .env file, which does not
+# exist (and must not be writable) in the production image.
 # Workbench SSO uses a one-time ticket in the query string. Caddy skips this
 # surface and the ADP process must do the same; application audit logs provide
 # secret-free request/Turn correlation instead.

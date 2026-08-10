@@ -531,6 +531,12 @@ services:
     read_only: true
     cap_drop:
       - ALL
+    # The upstream Caddy binary carries cap_net_bind_service as a file
+    # capability. Keep only that capability in the container bounding set;
+    # otherwise no-new-privileges makes execve(caddy) fail with EPERM even
+    # though this proxy listens only on unprivileged ports.
+    cap_add:
+      - NET_BIND_SERVICE
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=32m
     pids_limit: 128
@@ -567,6 +573,8 @@ services:
     read_only: true
     cap_drop:
       - ALL
+    cap_add:
+      - NET_BIND_SERVICE
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=32m
     pids_limit: 128

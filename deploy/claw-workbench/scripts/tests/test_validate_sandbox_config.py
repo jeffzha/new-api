@@ -73,7 +73,12 @@ class SandboxConfigTests(unittest.TestCase):
 
     def test_rejects_missing_or_weak_secrets(self) -> None:
         self.write_secrets()
-        (self.root / "client-token-hmac-key").write_bytes(b"short")
+        target = self.root / "client-token-hmac-key"
+        if os.name == "posix":
+            target.chmod(0o600)
+        target.write_bytes(b"short")
+        if os.name == "posix":
+            target.chmod(0o400)
         with mock.patch.object(sandbox, "EXPECTED_SECRET_UID", os.geteuid() if os.name == "posix" else 10001):
             with self.assertRaises(sandbox.SandboxConfigError):
                 sandbox.validate(self.args())

@@ -88,10 +88,11 @@ def _validate_existing_secret(path: Path, owner_uid: int | None) -> None:
         raise BootstrapError(f"existing secret {path.name} is not a regular file")
     if metadata.st_size <= 0 or metadata.st_size > 65536:
         raise BootstrapError(f"existing secret {path.name} has an invalid size")
-    if owner_uid is not None:
+    if os.name == "posix":
         mode = stat.S_IMODE(metadata.st_mode)
         if mode & 0o077 or not mode & 0o400:
             raise BootstrapError(f"existing secret {path.name} has unsafe permissions")
+    if owner_uid is not None:
         if metadata.st_uid != owner_uid:
             raise BootstrapError(f"existing secret {path.name} has an unexpected owner")
 

@@ -83,6 +83,7 @@ def validate(root: Path) -> None:
 
     sso = _block(public, "handle @workbenchSSO {")
     _require(sso, "forward_auth claw-control-active:8080", "SSO forward_auth")
+    _require(sso, "uri /api/workbench/sso-preflight", "SSO provisioning preflight")
     _require(sso, "reverse_proxy adp-chat-client:8000", "SSO ADP upstream")
     _require(
         sso,

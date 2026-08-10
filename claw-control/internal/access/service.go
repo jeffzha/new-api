@@ -900,7 +900,7 @@ func (s *Service) AppContext(ctx context.Context, command AppContextCommand) (*A
 }
 
 func (s *Service) ConfigForSession(ctx context.Context, token string) (*BrowserConfig, error) {
-	resolved, _, err := s.resolveSession(token)
+	resolved, _, err := s.resolveSession(token, false)
 	if err != nil {
 		return nil, err
 	}
@@ -920,7 +920,7 @@ func (s *Service) ConfigForSession(ctx context.Context, token string) (*BrowserC
 }
 
 func (s *Service) PlanForSession(ctx context.Context, token string) (*BrowserPlan, error) {
-	resolved, _, err := s.resolveSession(token)
+	resolved, _, err := s.resolveSession(token, false)
 	if err != nil {
 		return nil, err
 	}
@@ -948,7 +948,22 @@ func (s *Service) PlanForSession(ctx context.Context, token string) (*BrowserPla
 	}, nil
 }
 
-func (s *Service) resolveSession(token string) (*resolvedAccess, *model.ControlSession, error) {
+// AuthorizeSSOPreflight validates the short-lived selected control session
+// before Caddy forwards the one-time SSO ticket to ADP. Provisioning identities
+// are allowed only on this bootstrap boundary; ordinary browser config and plan
+// reads continue to require a confirmed active identity.
+func (s *Service) AuthorizeSSOPreflight(ctx context.Context, token string) error {
+	resolved, _, err := s.resolveSession(token, true)
+	if err != nil {
+		return err
+	}
+	if s.identityVerifier == nil {
+		return fmt.Errorf("new-api identity verifier is unavailable")
+	}
+	return s.identityVerifier.Verify(ctx, resolved.identity.NewAPIUserID, resolved.identity.IdentityVersion)
+}
+
+func (s *Service) resolveSession(token string, allowProvisioning bool) (*resolvedAccess, *model.ControlSession, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return nil, nil, domain.Forbidden("control session is required")
@@ -969,7 +984,7 @@ func (s *Service) resolveSession(token string) (*resolvedAccess, *model.ControlS
 	if err := s.db.First(&binding, session.IdentityBindingID).Error; err != nil {
 		return nil, nil, domain.Forbidden("control session identity is unavailable")
 	}
-	resolved, err := s.resolveExact(s.db, binding.PublicID, session.CustomerAppID, false)
+	resolved, err := s.resolveExact(s.db, binding.PublicID, session.CustomerAppID, allowProvisioning)
 	if err != nil {
 		return nil, nil, err
 	}

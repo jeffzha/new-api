@@ -142,6 +142,52 @@ func TestWorkbenchSelectionBrowserFlowDoesNotSilentlyChooseAmongOneCustomersApps
 	assert.NotEqual(t, listed.Data[0].AppSelector, listed.Data[1].AppSelector)
 }
 
+func TestWorkbenchSSOPreflightAllowsOnlyTheProvisioningBootstrapBoundary(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	const identityVersion = "v1.http-sso-provisioning"
+	accessService := access.New(
+		db, secrets.EnvironmentResolver{}, acceptingVerifier{},
+		time.Minute, time.Minute, time.Hour, time.Hour, time.Minute,
+	)
+	seedHTTPSelectableContext(t, db, 8103, identityVersion, "provisioning-customer", "provisioning-app")
+	require.NoError(t, db.Model(&model.IdentityBinding{}).
+		Where("new_api_user_id = ?", 8103).
+		Update("status", model.IdentityStatusProvisioning).Error)
+	entryTicket, err := accessService.IssueEntryTicket(access.IssueEntryTicketCommand{
+		NewAPIUserID: 8103, IdentityVersion: identityVersion,
+	})
+	require.NoError(t, err)
+	server := httpapi.New(httpapi.Services{DB: db, Access: accessService}, "emergency-admin-token", httpapi.InternalAuth{}, httpapi.PublicConfig{
+		ADPSSORedirectPath: "/workbench/auth/sso", AdminRedirectPath: "/workbench/admin",
+	})
+
+	entryRequest := httptest.NewRequest(http.MethodGet, "/api/workbench/entry?ticket="+url.QueryEscape(entryTicket.Ticket), nil)
+	entryResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(entryResponse, entryRequest)
+	require.Equal(t, http.StatusFound, entryResponse.Code)
+	controlCookie := cookieByName(entryResponse.Result().Cookies(), "claw_control_session")
+	require.NotNil(t, controlCookie)
+
+	preflightRequest := httptest.NewRequest(http.MethodGet, "/api/workbench/sso-preflight", nil)
+	preflightRequest.AddCookie(controlCookie)
+	preflightResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(preflightResponse, preflightRequest)
+	assert.Equal(t, http.StatusNoContent, preflightResponse.Code)
+	assert.Equal(t, "no-store", preflightResponse.Header().Get("Cache-Control"))
+
+	configRequest := httptest.NewRequest(http.MethodGet, "/api/workbench/config", nil)
+	configRequest.AddCookie(controlCookie)
+	configResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(configResponse, configRequest)
+	assert.Equal(t, http.StatusForbidden, configResponse.Code, "ordinary browser reads must remain closed until ADP confirms the identity")
+
+	missingCookieRequest := httptest.NewRequest(http.MethodGet, "/api/workbench/sso-preflight", nil)
+	missingCookieResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(missingCookieResponse, missingCookieRequest)
+	assert.Equal(t, http.StatusForbidden, missingCookieResponse.Code)
+}
+
 func seedHTTPSelectableContext(t *testing.T, db *gorm.DB, userID int64, identityVersion, customerCode, appID string) uint64 {
 	t.Helper()
 	now := time.Now().UTC()

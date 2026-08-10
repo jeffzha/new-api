@@ -94,7 +94,10 @@ handle @workbenchSSO {
 	# receives exactly the one-time, browser-bound cookie and no other claw_*
 	# credential. ADP deletes this cookie on both success and failure.
 	forward_auth claw-control-active:8080 {
-		uri /api/workbench/config
+		# This exact bootstrap check revalidates the new-api identity and the
+		# selected control session while allowing only a provisioning identity.
+		# Ordinary config/plan routes still require an active identity.
+		uri /api/workbench/sso-preflight
 		header_up X-Original-Method {method}
 		header_up X-Original-URI {uri}
 	}

@@ -158,6 +158,7 @@ func New(services Services, adminToken string, internalAuth InternalAuth, public
 	mux.HandleFunc("GET /readyz", server.ready)
 	mux.Handle("POST /api/admin/workbench/secret-fingerprints/re-enroll", server.requireLoopbackBootstrap(http.HandlerFunc(server.reenrollSecretFingerprints)))
 	mux.HandleFunc("GET /api/workbench/entry", server.enterWorkbench)
+	mux.HandleFunc("GET /api/workbench/sso-preflight", server.workbenchSSOPreflight)
 	mux.HandleFunc("GET /api/workbench/config", server.workbenchConfig)
 	mux.HandleFunc("GET /api/workbench/plan", server.workbenchPlan)
 	mux.HandleFunc("GET /api/workbench/selections", server.listWorkbenchSelections)
@@ -356,6 +357,20 @@ func (s *Server) workbenchConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.services.Access.ConfigForSession(r.Context(), cookie.Value)
 	writeResult(w, r, http.StatusOK, result, err)
+}
+
+func (s *Server) workbenchSSOPreflight(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	cookie, err := r.Cookie("claw_control_session")
+	if err != nil {
+		writeError(w, r, domain.Forbidden("control session is required"))
+		return
+	}
+	if err = s.services.Access.AuthorizeSSOPreflight(r.Context(), cookie.Value); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) workbenchPlan(w http.ResponseWriter, r *http.Request) {

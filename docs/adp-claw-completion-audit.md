@@ -14,7 +14,9 @@
   - Blue 保留上一个健康不可变版本作为快速回滚目标，没有被同 digest 覆盖。
 - 生产预检已验证内部 CA、两张服务证书、私有路由、Cookie/Header 剔除、SSE flush、Blue/Green 配置、Secret owner/mode 和容器健康。
 - 真实生产链路在 `https://gateway.nexus-reach.com` 完成：登录 `200`、session-ticket `200`、entry `302`、entry replay `409`、ADP SSO `302`、SSO replay `409`、工作台页面 `200`、账号/应用查询 `200`、真实 `/workbench/chat/message` SSE `200`、终态 `completed`、历史查询 `200`。该 Turn 产生 13 个结构化事件，约 6.331 秒完成，模型精确返回验证词，历史保存 2 条记录。
-- ADP 生产库当前可见 `active` identity/Agent，2 个 `completed` Turn，2 条 evidence 和 2 条 usage datum；claw-control 生产库的 customer/member/identity/App/period 均为 `active`，App config 为 `verified`，plan 为 `published`，invoice 为 `paid`，outbox 均为 `delivered`。
+- 按用户授权保留现有 ADP 凭据、不执行轮换后再次完成公网真实 Turn：SSE 返回 `200`，模型返回本次唯一验证词，持久化终态为 `completed`，共 17 个结构化事件；复核窗口内活动 Green 两个服务均为 `healthy`，无 HTTP 5xx、Traceback 或 panic。
+- ADP 生产库当前可见 `active` identity/Agent，3 个 `completed` Turn，3 条 evidence、3 条 usage datum 和 45 条持久化事件；claw-control 生产库的 customer/member/identity/App/period 均为 `active`，App config 为 `verified`，plan 为 `published`，invoice 为 `paid`，outbox 均为 `delivered`。
+- 备份链路不再读取可能滞后的 `.env` revision，而是在与切流/回滚互斥的锁内采集活动容器 OCI 标签和迁移状态。生产恢复点 `/opt/new-api/deploy/claw-workbench/backups/20260810T191011Z-final-verified` 已通过精确文件集与 SHA-256 校验；其发布清单绑定当前 Green、上述三个镜像 digest、control migration `0020_app_migration_lineage`、ADP schema fingerprint 和 `ap-guangzhou`，全部备份文件均限制为 owner-only。
 - 安全边界重验：匿名签发票据返回 `401`，公网内部票据消费路由返回 `404`，未授权 Sandbox 返回 `403`。部署后无 5xx、Traceback 或 panic；日志中唯一新增 400 是验收过程中故意使用旧 `Prompt` 字段的预检请求，改用当前合同 `Contents` 后同一生产链路成功。
 
 ### 当前生产门禁

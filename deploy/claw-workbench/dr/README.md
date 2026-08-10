@@ -49,6 +49,8 @@
 sha256sum /usr/local/bin/restic /usr/bin/dash /usr/bin/docker \
   /usr/bin/python3 /usr/bin/sha256sum /usr/bin/date /usr/bin/sed \
   /opt/new-api/deploy/claw-workbench/scripts/backup.sh \
+  /opt/new-api/deploy/claw-workbench/scripts/backup_manifest.py \
+  /opt/new-api/deploy/claw-workbench/scripts/collect_release_manifest.py \
   /opt/new-api/deploy/claw-workbench/scripts/compose.sh \
   /opt/new-api/deploy/claw-workbench/scripts/strict_dotenv.py \
   /opt/new-api/deploy/claw-workbench/scripts/verify_backup.py \

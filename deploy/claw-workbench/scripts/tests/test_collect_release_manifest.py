@@ -224,6 +224,7 @@ class ReleaseManifestCollectorTest(unittest.TestCase):
         (self.root / "state" / "Caddyfile.active").write_text(
             "reverse_proxy claw-control-green:8090\n"
             "reverse_proxy claw-control-green:8090\n"
+            "reverse_proxy adp-green:8000\n"
             "reverse_proxy adp-green:8000\n",
             encoding="utf-8",
         )

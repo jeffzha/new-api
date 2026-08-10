@@ -417,7 +417,7 @@ class ReleaseManifestCollector:
         other = "green" if color == "blue" else "blue"
         expected_counts = {
             f"claw-control-{color}:8090": 2,
-            f"adp-{color}:8000": 1,
+            f"adp-{color}:8000": 2,
         }
         forbidden = (f"claw-control-{other}:8090", f"adp-{other}:8000")
         if any(caddy.count(value) != count for value, count in expected_counts.items()) or any(

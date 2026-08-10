@@ -48,6 +48,7 @@ redis_id="$(compose ps -q workbench-redis)"
 compose exec -T workbench-redis sh -ec \
   'rm -f /tmp/workbench-backup.rdb; REDISCLI_AUTH="$(cat /run/secrets/redis_password)" redis-cli --rdb /tmp/workbench-backup.rdb >/dev/null'
 docker cp "$redis_id:/tmp/workbench-backup.rdb" "$target/redis-forensics.rdb" >/dev/null
+chmod 0600 "$target/redis-forensics.rdb"
 compose exec -T workbench-redis rm -f /tmp/workbench-backup.rdb
 
 {

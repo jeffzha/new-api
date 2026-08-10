@@ -38,6 +38,8 @@ environment. Build-time Python package installers are removed from the final
 runtime image, so their dependency trees cannot become an unused but vulnerable
 production surface. Any fixed HIGH or CRITICAL dependency reported by the image
 scanner must be upgraded in the ADP fork and re-locked before publication.
+Runtime packages that legitimately require `setuptools` use an explicit locked
+version so its vendored libraries are covered by the same scanner gate.
 
 Use the three digest references only for the inactive Blue/Green color. Keep the
 active color on its previous digests until the inactive color has passed

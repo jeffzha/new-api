@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -85,6 +86,11 @@ exit 0
         self.assertIn("claw-control-green:8090", active)
         self.assertIn("adp-green:8000", active)
         self.assertEqual("green\n", (self.root / "state" / "active-color").read_text(encoding="utf-8"))
+        if os.name == "posix":
+            self.assertEqual(
+                0o644,
+                stat.S_IMODE((self.root / "state" / "Caddyfile.active").stat().st_mode),
+            )
         self.assert_clean_transaction_files()
 
     def test_reload_failure_restores_previous_route_and_color(self) -> None:

@@ -15,7 +15,7 @@ if [ ! -f "$state_file" ]; then
     -e 's/__CONTROL_UPSTREAM__/claw-control-blue:8090/g' \
     -e 's/__ADP_UPSTREAM__/adp-blue:8000/g' \
     "$root/caddy/Caddyfile.switch.template" > "$state_file"
-  chmod 0600 "$state_file"
+  chmod 0644 "$state_file"
 fi
 
 exec docker compose \

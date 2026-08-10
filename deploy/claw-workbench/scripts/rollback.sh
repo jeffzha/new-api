@@ -30,11 +30,12 @@ trap 'exit 143' TERM
 cp "$active" "$previous"
 chmod 0600 "$previous"
 cp "$root/caddy/Caddyfile.switch.disabled" "$next"
-chmod 0600 "$next"
+chmod 0644 "$next"
 compose exec -T workbench-switch caddy validate --config /config-runtime/Caddyfile.disabled.next --adapter caddyfile
 mv "$next" "$active"
 if ! compose exec -T workbench-switch caddy reload --config /config-runtime/Caddyfile.active --adapter caddyfile; then
   cp "$previous" "$next"
+  chmod 0644 "$next"
   mv "$next" "$active"
   compose exec -T workbench-switch caddy reload --config /config-runtime/Caddyfile.active --adapter caddyfile \
     || echo "CRITICAL: Caddy rejected both the disabled and restored configuration" >&2

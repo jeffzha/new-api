@@ -123,7 +123,7 @@ require_secure_secret_dir() {
   case "$owner_uid" in 0|10001) ;; *) fail "$label must be owned by root or container UID 10001" ;; esac
   [ $((0$mode & 077)) -eq 0 ] \
     || fail "$label must not be accessible by group/other"
-  [ $((0$mode & 0500)) -eq 0500 ] \
+  [ $((0$mode & 0500)) -eq $((0500)) ] \
     || fail "$label must be owner-readable and searchable"
 }
 

@@ -1,5 +1,34 @@
 # ADP Claw 智能工作台完成度审计
 
+## 2026-08-11 生产增量审计（当前权威结论）
+
+> 本节使用当前已提交、已推送的双仓库源码、GitHub Actions 发布清单、生产容器标签、生产数据库投影和真实 ADP 请求重新审计。本节更新了下文 2026-08-10 的历史快照；两者冲突时以本节为准。
+
+### 已验证的生产范围
+
+- new-api 源码与 claw-control 镜像绑定提交 `f6bead9c146b899e808b93eb29030fa4f231d6f4`；ADP fork 镜像绑定提交 `732f008d33d86b894a1bbee10abfbad10b54437b`。
+- 发布工作流 `31418748011` 成功；new-api、claw-control、ADP Workbench 和固定 ClamAV 镜像均通过高危/严重已修复漏洞与 Secret 扫描，发布清单绑定精确提交和不可变 digest。
+- 生产工作台当前流量在 Green：
+  - claw-control `ghcr.io/jeffzha/claw-control@sha256:6c095045918650bde8368f72f9cb933b1fda02082d5dbe2205166fb63daa80f8`；
+  - ADP Workbench `ghcr.io/jeffzha/adp-workbench@sha256:5f568fbd5aa8a8d1b38abbd19e1f8ef244c6f75b7da1fab797a7cf7322c47409`；
+  - Blue 保留上一个健康不可变版本作为快速回滚目标，没有被同 digest 覆盖。
+- 生产预检已验证内部 CA、两张服务证书、私有路由、Cookie/Header 剔除、SSE flush、Blue/Green 配置、Secret owner/mode 和容器健康。
+- 真实生产链路在 `https://gateway.nexus-reach.com` 完成：登录 `200`、session-ticket `200`、entry `302`、entry replay `409`、ADP SSO `302`、SSO replay `409`、工作台页面 `200`、账号/应用查询 `200`、真实 `/workbench/chat/message` SSE `200`、终态 `completed`、历史查询 `200`。该 Turn 产生 13 个结构化事件，约 6.331 秒完成，模型精确返回验证词，历史保存 2 条记录。
+- ADP 生产库当前可见 `active` identity/Agent，2 个 `completed` Turn，2 条 evidence 和 2 条 usage datum；claw-control 生产库的 customer/member/identity/App/period 均为 `active`，App config 为 `verified`，plan 为 `published`，invoice 为 `paid`，outbox 均为 `delivered`。
+- 安全边界重验：匿名签发票据返回 `401`，公网内部票据消费路由返回 `404`，未授权 Sandbox 返回 `403`。部署后无 5xx、Traceback 或 panic；日志中唯一新增 400 是验收过程中故意使用旧 `Prompt` 字段的预检请求，改用当前合同 `Contents` 后同一生产链路成功。
+
+### 当前生产门禁
+
+`chat` 是目前唯一已完成真实供应商验收并开放的执行能力。`files`、`scheduled_tasks`、`integrations`、`sandbox`、`sandbox_code` 和 `sandbox_pty` 仍必须保持 false；这些状态是未完成外部验收时的安全门禁，不是已产品化功能的证据。特别是：
+
+1. AGSX 缺少 region、ToolId/ToolName、`ark_` API key、最小权限 CAM 和配额，因此不得开启生命周期、Shell、六语言 `run_code` 或 PTY。
+2. 文件能力缺少私有 COS bucket/region/endpoint 和最小权限凭据，因此不得开启上传、下载、EICAR 或 retention 的真实对象存储路径。
+3. 使用者 OAuth 缺少 provider metadata、client secret、已注册 callback 和测试账号；且公开 ADP 合同仍不允许把本地 OAuth token 安全关联到用户 Agent，不得猜测性注入。
+4. Tool/Plugin/Connector 只完成目录、受控绑定、安全停用和 pre/post readback；依赖这些集成的 Turn 执行在真实只读非 OAuth Plugin/Tool 验收及供应商限额语义证明前继续 fail-closed。
+5. 完整隔离、高可用与性能放行还需要同客户第二用户、另一客户/App/用户、独立 Prometheus 只读 observer 与签名身份、以及异地 DR 目标。
+
+因此，当前精确结论是“固定套餐 Chat 白名单生产链路已验收；完整 P0+P1+P2 仍未达成”。不得用本节的 Chat 成功替代文件、OAuth、Tool/Plugin/Connector、定时任务、AGSX Sandbox、跨租户、负载和 DR 的独立验收。
+
 > 审计日期：2026-08-10
 > 需求基线：`docs/adp-claw-workbench-playground-replacement-design.md`
 > new-api 工作树：`D:\codex\new-api-seedance-cn`，功能基线 `91f6b455dbd36858a7cff9d65b87e1d5a3fb4861`

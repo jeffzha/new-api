@@ -1,0 +1,70 @@
+{
+  "$schema": "./schema.json",
+  "version": 1,
+  "backup_staging_root": "/opt/new-api/deploy/claw-workbench/backups",
+  "drill_root": "/var/lib/claw-workbench-drills",
+  "protected_roots": [
+    "/opt/new-api/deploy/claw-workbench/state",
+    "/var/lib/docker/volumes/claw-workbench_control_db_data",
+    "/var/lib/docker/volumes/claw-workbench_adp_db_data",
+    "/var/lib/docker/volumes/claw-workbench_evidence_data"
+  ],
+  "restic": {
+    "command": ["/usr/local/bin/restic"],
+    "sha256": {"/usr/local/bin/restic": "0000000000000000000000000000000000000000000000000000000000000000"},
+    "expected_version": "restic 0.18.0 compiled with go1.24.1 on linux/amd64"
+  },
+  "backup": {
+    "command": ["/usr/bin/dash", "/opt/new-api/deploy/claw-workbench/scripts/backup.sh", "{backup_dir}"],
+    "sha256": {
+      "/usr/bin/dash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "/opt/new-api/deploy/claw-workbench/scripts/backup.sh": "0000000000000000000000000000000000000000000000000000000000000000",
+      "/opt/new-api/deploy/claw-workbench/scripts/compose.sh": "0000000000000000000000000000000000000000000000000000000000000000",
+      "/opt/new-api/deploy/claw-workbench/scripts/strict_dotenv.py": "0000000000000000000000000000000000000000000000000000000000000000",
+      "/opt/new-api/deploy/claw-workbench/scripts/verify_backup.py": "0000000000000000000000000000000000000000000000000000000000000000",
+      "/usr/bin/python3": "0000000000000000000000000000000000000000000000000000000000000000",
+      "/usr/bin/docker": "0000000000000000000000000000000000000000000000000000000000000000",
+      "/usr/bin/sha256sum": "0000000000000000000000000000000000000000000000000000000000000000",
+      "/usr/bin/date": "0000000000000000000000000000000000000000000000000000000000000000",
+      "/usr/bin/sed": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "environment_allowlist": ["HOME", "DOCKER_HOST", "XDG_RUNTIME_DIR"],
+    "timeout_seconds": 3600
+  },
+  "restore_validation_commands": [
+    {
+      "command": ["/usr/bin/pg_restore", "--list", "{backup_dir}/control-db.dump"],
+      "sha256": {"/usr/bin/pg_restore": "0000000000000000000000000000000000000000000000000000000000000000"},
+      "timeout_seconds": 300
+    },
+    {
+      "command": ["/usr/bin/pg_restore", "--list", "{backup_dir}/adp-db.dump"],
+      "sha256": {"/usr/bin/pg_restore": "0000000000000000000000000000000000000000000000000000000000000000"},
+      "timeout_seconds": 300
+    }
+  ],
+  "targets": [
+    {
+      "name": "primary",
+      "endpoint": "https://cos.ap-guangzhou.example.invalid",
+      "bucket": "claw-dr-primary-1234567890",
+      "region": "ap-guangzhou",
+      "prefix": "workbench/restic",
+      "access_key_id_ref": "env:CLAW_DR_PRIMARY_ACCESS_KEY_ID",
+      "secret_access_key_ref": "env:CLAW_DR_PRIMARY_SECRET_ACCESS_KEY",
+      "repository_password_ref": "env:CLAW_DR_PRIMARY_RESTIC_PASSWORD"
+    },
+    {
+      "name": "secondary",
+      "endpoint": "https://s3.ap-shanghai.example.invalid",
+      "bucket": "claw-dr-secondary-1234567890",
+      "region": "ap-shanghai",
+      "prefix": "workbench/restic",
+      "access_key_id_ref": "env:CLAW_DR_SECONDARY_ACCESS_KEY_ID",
+      "secret_access_key_ref": "env:CLAW_DR_SECONDARY_SECRET_ACCESS_KEY",
+      "repository_password_ref": "env:CLAW_DR_SECONDARY_RESTIC_PASSWORD"
+    }
+  ],
+  "retention": {"daily": 14, "weekly": 8, "monthly": 12, "yearly": 3, "local_verified_backups": 3},
+  "objectives": {"rpo_seconds": 86400, "rto_seconds": 14400}
+}

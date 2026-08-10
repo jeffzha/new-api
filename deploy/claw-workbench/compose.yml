@@ -1,0 +1,642 @@
+name: ${COMPOSE_PROJECT_NAME:-claw-workbench}
+
+x-profile: &workbench-profile
+  profiles: ["claw-workbench"]
+
+x-service-defaults: &service-defaults
+  <<: *workbench-profile
+  restart: unless-stopped
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+x-control-environment: &control-environment
+  CLAW_CONTROL_ADDR: :8090
+  # Internal Docker network only. No metrics port is published to the host.
+  CLAW_METRICS_ADDR: :9090
+  CLAW_DB_DRIVER: postgres
+  CLAW_DB_HOST: workbench-control-db
+  CLAW_DB_PORT: "5432"
+  CLAW_DB_NAME: ${CLAW_DB_NAME:-claw_control}
+  CLAW_DB_USER: ${CLAW_DB_USER:-claw_control}
+  CLAW_DB_MAX_OPEN_CONNS: ${CLAW_DB_MAX_OPEN_CONNS:-20}
+  CLAW_DB_MAX_IDLE_CONNS: ${CLAW_DB_MAX_IDLE_CONNS:-5}
+  CLAW_DB_CONN_MAX_LIFETIME: ${CLAW_DB_CONN_MAX_LIFETIME:-30m}
+  CLAW_ENVIRONMENT: ${CLAW_ENVIRONMENT:-prod}
+  CLAW_ALLOW_UNTRUSTED_PROVIDER_VERIFICATION: "false"
+  CLAW_INTERNAL_HMAC_TIME_SKEW: ${CLAW_INTERNAL_HMAC_TIME_SKEW:-1m}
+  CLAW_NEW_API_SERVICE_NAME: new-api-core
+  CLAW_ADP_SERVICE_NAME: adp-backend
+  CLAW_SSO_TICKET_TTL: ${CLAW_SSO_TICKET_TTL:-1m}
+  CLAW_ENTRY_TICKET_TTL: ${CLAW_ENTRY_TICKET_TTL:-1m}
+  CLAW_CONTROL_SESSION_TTL: ${CLAW_CONTROL_SESSION_TTL:-15m}
+  CLAW_ADMIN_SESSION_TTL: ${CLAW_ADMIN_SESSION_TTL:-30m}
+  CLAW_APP_CONTEXT_TTL: ${CLAW_APP_CONTEXT_TTL:-1m}
+  CLAW_NEW_API_IDENTITY_STATUS_URL: https://new-api-identity.internal:8443/api/internal/workbench/identity-status
+  CLAW_NEW_API_ADMIN_IDENTITY_STATUS_URL: https://new-api-identity.internal:8443/api/internal/workbench/admin-identity-status
+  CLAW_NEW_API_IDENTITY_STATUS_TIMEOUT: ${CLAW_NEW_API_IDENTITY_STATUS_TIMEOUT:-3s}
+  CLAW_ADP_SSO_REDIRECT_PATH: /workbench/auth/sso
+  CLAW_ADMIN_REDIRECT_PATH: /workbench/admin
+  CLAW_ADMIN_ASSET_DIR: /app/admin-ui
+  CLAW_PROVIDER_VERIFICATION_TIMEOUT: ${CLAW_PROVIDER_VERIFICATION_TIMEOUT:-15s}
+  CLAW_EVIDENCE_ROOT: ${CLAW_EVIDENCE_ROOT:-/var/lib/claw-control/evidence}
+  CLAW_EVIDENCE_MAX_BYTES: ${CLAW_EVIDENCE_MAX_BYTES:-10485760}
+  CLAW_EVIDENCE_CLAMAV_ADDR: workbench-clamav:3310
+  CLAW_EVIDENCE_CLAMAV_TIMEOUT: ${CLAW_EVIDENCE_CLAMAV_TIMEOUT:-15s}
+  CLAW_TENCENT_BILLING_IMPORT_ENABLED: ${CLAW_TENCENT_BILLING_IMPORT_ENABLED:-false}
+  CLAW_TENCENT_BILLING_PAYER_UIN: ${CLAW_TENCENT_BILLING_PAYER_UIN:-}
+  CLAW_TENCENT_BILLING_IMPORT_INTERVAL: ${CLAW_TENCENT_BILLING_IMPORT_INTERVAL:-5s}
+  CLAW_TENCENT_BILLING_TIMEOUT: ${CLAW_TENCENT_BILLING_TIMEOUT:-15s}
+  CLAW_TENCENT_BILLING_PAGE_SIZE: ${CLAW_TENCENT_BILLING_PAGE_SIZE:-300}
+  CLAW_TENCENT_BILLING_MAX_PAGES: ${CLAW_TENCENT_BILLING_MAX_PAGES:-100}
+  CLAW_TENCENT_BILLING_MAX_RECORDS: ${CLAW_TENCENT_BILLING_MAX_RECORDS:-30000}
+  CLAW_TENCENT_BILLING_MAX_ATTEMPTS: ${CLAW_TENCENT_BILLING_MAX_ATTEMPTS:-3}
+  CLAW_TENCENT_BILLING_LEASE_DURATION: ${CLAW_TENCENT_BILLING_LEASE_DURATION:-30m}
+  CLAW_TENCENT_BILLING_MAX_RESPONSE_BYTES: ${CLAW_TENCENT_BILLING_MAX_RESPONSE_BYTES:-4194304}
+  CLAW_PERIOD_RECONCILE_INTERVAL: ${CLAW_PERIOD_RECONCILE_INTERVAL:-1m}
+  CLAW_OUTBOX_INTERVAL: ${CLAW_OUTBOX_INTERVAL:-1s}
+  CLAW_MAINTENANCE_INTERVAL: ${CLAW_MAINTENANCE_INTERVAL:-1h}
+  CLAW_EPHEMERAL_RETENTION: ${CLAW_EPHEMERAL_RETENTION:-24h}
+  CLAW_DELIVERED_OUTBOX_RETENTION: ${CLAW_DELIVERED_OUTBOX_RETENTION:-720h}
+  CLAW_ADP_RETENTION_URL: https://workbench-control.internal:8443/api/internal/workbench/retention/intents
+  CLAW_RETENTION_COORDINATOR_INTERVAL: ${CLAW_RETENTION_COORDINATOR_INTERVAL:-5s}
+  CLAW_RETENTION_COORDINATOR_TIMEOUT: ${CLAW_RETENTION_COORDINATOR_TIMEOUT:-15s}
+  CLAW_REDIS_ADDR: workbench-redis:6379
+  CLAW_REDIS_DB: "0"
+  CLAW_REDIS_EVENT_CHANNEL: ${CLAW_REDIS_EVENT_CHANNEL:-claw:control:events}
+  SSL_CERT_FILE: /run/secrets/internal_ca
+
+x-adp-environment: &adp-environment
+  WORKBENCH_MODE: "true"
+  # Independent internal listener; Caddy has no route to this port.
+  WORKBENCH_METRICS_ENABLED: "true"
+  WORKBENCH_METRICS_HOST: 0.0.0.0
+  WORKBENCH_METRICS_PORT: "9100"
+  AUTO_CREATE_ACCOUNT: "false"
+  WORKBENCH_ENABLE_HELPER_ASR: "false"
+  WORKBENCH_CONTROL_URL: https://workbench-control.internal:8443
+  WORKBENCH_SERVICE_ID: adp-backend
+  WORKBENCH_SESSION_EXPIRE_MINUTES: ${WORKBENCH_SESSION_EXPIRE_MINUTES:-15}
+  WORKBENCH_STREAM_REAUTH_SECONDS: ${WORKBENCH_STREAM_REAUTH_SECONDS:-30}
+  WORKBENCH_CONTROL_TIMEOUT_SECONDS: ${WORKBENCH_CONTROL_TIMEOUT_SECONDS:-10}
+  WORKBENCH_CONTROL_MAX_RESPONSE_BYTES: "1048576"
+  # Both colors poll; claw-control's database lease makes each member task
+  # single-consumer across Blue/Green.
+  WORKBENCH_APP_MIGRATION_WORKER_ENABLED: ${WORKBENCH_APP_MIGRATION_WORKER_ENABLED:-true}
+  WORKBENCH_APP_MIGRATION_POLL_SECONDS: ${WORKBENCH_APP_MIGRATION_POLL_SECONDS:-5}
+  WORKBENCH_APP_MIGRATION_LEASE_SECONDS: ${WORKBENCH_APP_MIGRATION_LEASE_SECONDS:-60}
+  WORKBENCH_ALLOW_INSECURE_CONTROL_HTTP: "false"
+  WORKBENCH_CONTROL_CA_FILE: /run/secrets/internal_ca
+  WORKBENCH_ALLOWED_CLOCK_SKEW_SECONDS: ${WORKBENCH_ALLOWED_CLOCK_SKEW_SECONDS:-30}
+  WORKBENCH_CONTROL_EVENT_CHANNEL: ${CLAW_REDIS_EVENT_CHANNEL:-claw:control:events}
+  WORKBENCH_CONTROL_EVENT_PROCESSED_TTL_SECONDS: ${WORKBENCH_CONTROL_EVENT_PROCESSED_TTL_SECONDS:-604800}
+  WORKBENCH_CONTROL_EVENT_MAX_BACKOFF_SECONDS: ${WORKBENCH_CONTROL_EVENT_MAX_BACKOFF_SECONDS:-30}
+  WORKBENCH_CONTROL_EVENT_MAX_BYTES: ${WORKBENCH_CONTROL_EVENT_MAX_BYTES:-65536}
+  WORKBENCH_USAGE_EVIDENCE_KEY_ID: ${WORKBENCH_USAGE_EVIDENCE_KEY_ID:-v1}
+  WORKBENCH_FILE_LOCATOR_KEY_ID: ${WORKBENCH_FILE_LOCATOR_KEY_ID:-v1}
+  WORKBENCH_WORKSPACE_LOCATOR_KEY_ID: ${WORKBENCH_WORKSPACE_LOCATOR_KEY_ID:-v1}
+  WORKBENCH_WORKSPACE_HOST_SUFFIXES: ${WORKBENCH_WORKSPACE_HOST_SUFFIXES:-}
+  WORKBENCH_FILES_ENABLED: ${WORKBENCH_FILES_ENABLED:-false}
+  WORKBENCH_FILE_SCANNER_HOST: workbench-clamav
+  WORKBENCH_FILE_SCANNER_PORT: ${WORKBENCH_FILE_SCANNER_PORT:-3310}
+  WORKBENCH_FILE_SCANNER_TIMEOUT_SECONDS: ${WORKBENCH_FILE_SCANNER_TIMEOUT_SECONDS:-30}
+  WORKBENCH_FILE_SCANNER_MAX_BYTES: ${WORKBENCH_FILE_SCANNER_MAX_BYTES:-52428800}
+  WORKBENCH_FILE_ABSOLUTE_MAX_BYTES: ${WORKBENCH_FILE_ABSOLUTE_MAX_BYTES:-52428800}
+  WORKBENCH_FILE_QUARANTINE_CAPACITY_BYTES: ${WORKBENCH_FILE_QUARANTINE_CAPACITY_BYTES:-104857600}
+  WORKBENCH_FILE_MAX_CONCURRENT_UPLOADS: ${WORKBENCH_FILE_MAX_CONCURRENT_UPLOADS:-2}
+  WORKBENCH_FILE_QUARANTINE_DIR: /var/lib/workbench-quarantine
+  WORKBENCH_FILE_COS_REGION: ${WORKBENCH_FILE_COS_REGION:-}
+  WORKBENCH_FILE_COS_BUCKET: ${WORKBENCH_FILE_COS_BUCKET:-}
+  WORKBENCH_FILE_URL_EXPIRE_SECONDS: ${WORKBENCH_FILE_URL_EXPIRE_SECONDS:-300}
+  WORKBENCH_VENDOR_CACHE_IDLE_SECONDS: ${WORKBENCH_VENDOR_CACHE_IDLE_SECONDS:-300}
+  WORKBENCH_VENDOR_CACHE_MAX_ENTRIES: ${WORKBENCH_VENDOR_CACHE_MAX_ENTRIES:-128}
+  WORKBENCH_SCHEDULED_TASKS_ENABLED: ${WORKBENCH_SCHEDULED_TASKS_ENABLED:-false}
+  WORKBENCH_SCHEDULE_REAUTH_SECONDS: ${WORKBENCH_SCHEDULE_REAUTH_SECONDS:-300}
+  WORKBENCH_SCHEDULE_WORKER_INTERVAL_SECONDS: ${WORKBENCH_SCHEDULE_WORKER_INTERVAL_SECONDS:-5}
+  WORKBENCH_SCHEDULE_LEASE_SECONDS: ${WORKBENCH_SCHEDULE_LEASE_SECONDS:-90}
+  WORKBENCH_SCHEDULE_BATCH_SIZE: ${WORKBENCH_SCHEDULE_BATCH_SIZE:-20}
+  WORKBENCH_SCHEDULE_MIN_INTERVAL_MINUTES: ${WORKBENCH_SCHEDULE_MIN_INTERVAL_MINUTES:-15}
+  WORKBENCH_SCHEDULE_MAX_TASKS_PER_USER: ${WORKBENCH_SCHEDULE_MAX_TASKS_PER_USER:-20}
+  WORKBENCH_SCHEDULE_MAX_DAILY_RUNS: ${WORKBENCH_SCHEDULE_MAX_DAILY_RUNS:-24}
+  WORKBENCH_SCHEDULE_MAX_PROMPT_CHARS: ${WORKBENCH_SCHEDULE_MAX_PROMPT_CHARS:-16000}
+  WORKBENCH_SCHEDULE_MAX_ATTACHMENTS: ${WORKBENCH_SCHEDULE_MAX_ATTACHMENTS:-10}
+  WORKBENCH_SCHEDULE_DELEGATION_DAYS: ${WORKBENCH_SCHEDULE_DELEGATION_DAYS:-30}
+  WORKBENCH_SCHEDULE_MISFIRE_GRACE_SECONDS: ${WORKBENCH_SCHEDULE_MISFIRE_GRACE_SECONDS:-300}
+  WORKBENCH_INTEGRATIONS_ENABLED: ${WORKBENCH_INTEGRATIONS_ENABLED:-false}
+  WORKBENCH_INTEGRATION_ALLOWLIST_FILE: /run/workbench/config/integration-allowlist.json
+  WORKBENCH_OAUTH_PROVIDERS_FILE: /run/workbench/config/oauth-providers.json
+  WORKBENCH_OAUTH_SECRET_DIR: /run/workbench/oauth-secrets
+  WORKBENCH_PUBLIC_BASE_URL: ${WORKBENCH_CANONICAL_ORIGIN:?set WORKBENCH_CANONICAL_ORIGIN}/workbench
+  WORKBENCH_CONNECTOR_TOKEN_KEY_FILE: /run/secrets/adp_connector_token_key
+  WORKBENCH_CONNECTOR_TOKEN_PREVIOUS_KEYS_FILE: /run/secrets/adp_connector_token_previous_keys
+  WORKBENCH_CONNECTOR_TOKEN_KEY_ID: ${WORKBENCH_CONNECTOR_TOKEN_KEY_ID:-v1}
+  WORKBENCH_OAUTH_STATE_KEY_FILE: /run/secrets/adp_oauth_state_key
+  WORKBENCH_OAUTH_STATE_PREVIOUS_KEYS_FILE: /run/secrets/adp_oauth_state_previous_keys
+  WORKBENCH_OAUTH_STATE_KEY_ID: ${WORKBENCH_OAUTH_STATE_KEY_ID:-v1}
+  WORKBENCH_OAUTH_STATE_TTL_SECONDS: ${WORKBENCH_OAUTH_STATE_TTL_SECONDS:-300}
+  WORKBENCH_INTEGRATION_REAUTH_SECONDS: ${WORKBENCH_INTEGRATION_REAUTH_SECONDS:-300}
+  WORKBENCH_OAUTH_HTTP_TIMEOUT_SECONDS: ${WORKBENCH_OAUTH_HTTP_TIMEOUT_SECONDS:-15}
+  WORKBENCH_OAUTH_MAX_RESPONSE_BYTES: ${WORKBENCH_OAUTH_MAX_RESPONSE_BYTES:-262144}
+  WORKBENCH_SANDBOX_ENABLED: ${WORKBENCH_SANDBOX_ENABLED:-false}
+  WORKBENCH_SANDBOX_CODE_ENABLED: ${WORKBENCH_SANDBOX_CODE_ENABLED:-false}
+  WORKBENCH_SANDBOX_CODE_WORKER_MEMORY_BYTES: ${WORKBENCH_SANDBOX_CODE_WORKER_MEMORY_BYTES:-536870912}
+  WORKBENCH_SANDBOX_PTY_ENABLED: ${WORKBENCH_SANDBOX_PTY_ENABLED:-false}
+  WORKBENCH_SANDBOX_PTY_TICKET_TTL_SECONDS: ${WORKBENCH_SANDBOX_PTY_TICKET_TTL_SECONDS:-30}
+  WORKBENCH_SANDBOX_PTY_MAX_RUNTIME_SECONDS: ${WORKBENCH_SANDBOX_PTY_MAX_RUNTIME_SECONDS:-600}
+  WORKBENCH_SANDBOX_PTY_REAUTH_SECONDS: ${WORKBENCH_SANDBOX_PTY_REAUTH_SECONDS:-15}
+  WORKBENCH_SANDBOX_PTY_HEARTBEAT_SECONDS: ${WORKBENCH_SANDBOX_PTY_HEARTBEAT_SECONDS:-10}
+  WORKBENCH_SANDBOX_PTY_STALE_SECONDS: ${WORKBENCH_SANDBOX_PTY_STALE_SECONDS:-45}
+  WORKBENCH_SANDBOX_PTY_REAPER_SECONDS: ${WORKBENCH_SANDBOX_PTY_REAPER_SECONDS:-15}
+  WORKBENCH_SANDBOX_PTY_GLOBAL_CAPACITY: ${WORKBENCH_SANDBOX_PTY_GLOBAL_CAPACITY:-100}
+  WORKBENCH_SANDBOX_PTY_CUSTOMER_CAPACITY: ${WORKBENCH_SANDBOX_PTY_CUSTOMER_CAPACITY:-10}
+  WORKBENCH_SANDBOX_PTY_USER_CAPACITY: ${WORKBENCH_SANDBOX_PTY_USER_CAPACITY:-2}
+  WORKBENCH_SANDBOX_PTY_MAX_INPUT_FRAME_BYTES: ${WORKBENCH_SANDBOX_PTY_MAX_INPUT_FRAME_BYTES:-16384}
+  WORKBENCH_SANDBOX_PTY_MAX_OUTPUT_FRAME_BYTES: ${WORKBENCH_SANDBOX_PTY_MAX_OUTPUT_FRAME_BYTES:-32768}
+  WORKBENCH_SANDBOX_PTY_MAX_INPUT_BYTES: ${WORKBENCH_SANDBOX_PTY_MAX_INPUT_BYTES:-1048576}
+  WORKBENCH_SANDBOX_PTY_MAX_OUTPUT_BYTES: ${WORKBENCH_SANDBOX_PTY_MAX_OUTPUT_BYTES:-8388608}
+  WORKBENCH_SANDBOX_PTY_MAX_INPUT_FRAMES_PER_SECOND: ${WORKBENCH_SANDBOX_PTY_MAX_INPUT_FRAMES_PER_SECOND:-30}
+  WORKBENCH_SANDBOX_PTY_OUTPUT_QUEUE_FRAMES: ${WORKBENCH_SANDBOX_PTY_OUTPUT_QUEUE_FRAMES:-32}
+  WORKBENCH_SANDBOX_PROVIDER: ${WORKBENCH_SANDBOX_PROVIDER:-tencent_agsx}
+  WORKBENCH_AGSX_REGION: ${WORKBENCH_AGSX_REGION:-ap-guangzhou}
+  WORKBENCH_AGSX_DOMAIN: ${WORKBENCH_AGSX_DOMAIN:-ap-guangzhou.tencentags.com}
+  WORKBENCH_AGSX_CONTROL_ENDPOINT: ${WORKBENCH_AGSX_CONTROL_ENDPOINT:-ags.tencentcloudapi.com}
+  WORKBENCH_AGSX_TOOL_ID: ${WORKBENCH_AGSX_TOOL_ID:-}
+  WORKBENCH_AGSX_TOOL_NAME: ${WORKBENCH_AGSX_TOOL_NAME:-}
+  WORKBENCH_AGSX_API_KEY_FILE: /run/secrets/workbench-sandbox/agsx-api-key
+  WORKBENCH_AGSX_CAM_SECRET_ID_FILE: /run/secrets/workbench-sandbox/cam-secret-id
+  WORKBENCH_AGSX_CAM_SECRET_KEY_FILE: /run/secrets/workbench-sandbox/cam-secret-key
+  WORKBENCH_SANDBOX_CLIENT_TOKEN_KEY_FILE: /run/secrets/workbench-sandbox/client-token-hmac-key
+  WORKBENCH_SANDBOX_NETWORK_MODE: ${WORKBENCH_SANDBOX_NETWORK_MODE:-SANDBOX}
+  WORKBENCH_SANDBOX_AUTH_MODE: ${WORKBENCH_SANDBOX_AUTH_MODE:-TOKEN}
+  WORKBENCH_SANDBOX_LEASE_SECONDS: ${WORKBENCH_SANDBOX_LEASE_SECONDS:-30}
+  WORKBENCH_SANDBOX_STARTS_PER_USER_MINUTE: ${WORKBENCH_SANDBOX_STARTS_PER_USER_MINUTE:-6}
+  WORKBENCH_SANDBOX_STARTS_PER_CUSTOMER_MINUTE: ${WORKBENCH_SANDBOX_STARTS_PER_CUSTOMER_MINUTE:-60}
+  WORKBENCH_SANDBOX_TERMINAL_RETENTION_DAYS: ${WORKBENCH_SANDBOX_TERMINAL_RETENTION_DAYS:-30}
+  WORKBENCH_SANDBOX_DEFAULT_TIMEOUT_SECONDS: ${WORKBENCH_SANDBOX_DEFAULT_TIMEOUT_SECONDS:-600}
+  WORKBENCH_SANDBOX_HARD_MAX_RUNTIME_SECONDS: ${WORKBENCH_SANDBOX_HARD_MAX_RUNTIME_SECONDS:-3600}
+  WORKBENCH_SANDBOX_MAX_COMMAND_SECONDS: ${WORKBENCH_SANDBOX_MAX_COMMAND_SECONDS:-120}
+  WORKBENCH_SANDBOX_PROVIDER_TIMEOUT_SECONDS: ${WORKBENCH_SANDBOX_PROVIDER_TIMEOUT_SECONDS:-30}
+  WORKBENCH_SANDBOX_MAX_CODE_CHARS: ${WORKBENCH_SANDBOX_MAX_CODE_CHARS:-65536}
+  WORKBENCH_SANDBOX_MAX_COMMAND_CHARS: ${WORKBENCH_SANDBOX_MAX_COMMAND_CHARS:-8192}
+  WORKBENCH_SANDBOX_MAX_OUTPUT_BYTES: ${WORKBENCH_SANDBOX_MAX_OUTPUT_BYTES:-1048576}
+  WORKBENCH_SANDBOX_HARD_MAX_FILE_BYTES: ${WORKBENCH_SANDBOX_HARD_MAX_FILE_BYTES:-10485760}
+  WORKBENCH_COOKIE_PATH: /workbench
+  WORKBENCH_REDIRECT_PATH: /workbench/
+  SERVICE_API_URL: ${WORKBENCH_CANONICAL_ORIGIN:?set WORKBENCH_CANONICAL_ORIGIN}/workbench
+  SERVER_HTTP_PORT: "8000"
+  SERVER_RESPONSE_TIMEOUT: ${SERVER_RESPONSE_TIMEOUT:-300}
+  SSE_IDLE_TIMEOUT: ${SSE_IDLE_TIMEOUT:-5400}
+  CORS_ORIGINS: ${WORKBENCH_CANONICAL_ORIGIN:?set WORKBENCH_CANONICAL_ORIGIN}
+  IFRAME_ORIGINS: ""
+  PGSQL_HOST: workbench-adp-db
+  PGSQL_PORT: "5432"
+  PGSQL_DB: ${ADP_DB_NAME:-adp_workbench}
+  PGSQL_USER: ${ADP_DB_USER:-adp_workbench}
+  REDIS_HOST: workbench-redis
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_USE_SSL: "false"
+  APP_CONFIGS: "[]"
+  ADP_VISITOR_ID_TYPE: CUSTOMER_ID
+  RATE_LIMIT: ${RATE_LIMIT:-100/minute}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  workbench-control-db:
+    <<: *service-defaults
+    image: ${POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:16.4-alpine}
+    environment:
+      POSTGRES_DB: ${CLAW_DB_NAME:-claw_control}
+      POSTGRES_USER: ${CLAW_DB_USER:-claw_control}
+      POSTGRES_PASSWORD_FILE: /run/secrets/control_db_password
+      TZ: ${POSTGRES_TIMEZONE:-UTC}
+    secrets:
+      - control_db_password
+    volumes:
+      - control_db_data:/var/lib/postgresql/data
+    networks:
+      - workbench_backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U '$${POSTGRES_USER}' -d '$${POSTGRES_DB}'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    stop_grace_period: 60s
+    mem_limit: ${POSTGRES_MEMORY:-1g}
+
+  workbench-adp-db:
+    <<: *service-defaults
+    image: ${POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:16.4-alpine}
+    environment:
+      POSTGRES_DB: ${ADP_DB_NAME:-adp_workbench}
+      POSTGRES_USER: ${ADP_DB_USER:-adp_workbench}
+      POSTGRES_PASSWORD_FILE: /run/secrets/adp_db_password
+      TZ: ${POSTGRES_TIMEZONE:-UTC}
+    secrets:
+      - adp_db_password
+    volumes:
+      - adp_db_data:/var/lib/postgresql/data
+    networks:
+      - workbench_backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U '$${POSTGRES_USER}' -d '$${POSTGRES_DB}'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    stop_grace_period: 60s
+    mem_limit: ${POSTGRES_MEMORY:-1g}
+
+  workbench-redis:
+    <<: *service-defaults
+    image: ${REDIS_IMAGE:-docker.m.daocloud.io/library/redis:7.4-alpine}
+    command:
+      - /bin/sh
+      - -ec
+      - exec redis-server --appendonly yes --appendfsync everysec --save 900 1 --save 300 10 --requirepass "$$(cat /run/secrets/redis_password)"
+    secrets:
+      - redis_password
+    volumes:
+      - redis_data:/data
+    networks:
+      - workbench_backend
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$(cat /run/secrets/redis_password) redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    stop_grace_period: 30s
+    mem_limit: ${REDIS_MEMORY:-512m}
+
+  workbench-clamav:
+    <<: *service-defaults
+    image: ${CLAMAV_IMAGE:-docker.m.daocloud.io/clamav/clamav:stable-debian}
+    user: clamav
+    entrypoint: ["/init-unprivileged"]
+    environment:
+      CLAMD_CONF_StreamMaxLength: ${CLAMAV_STREAM_MAX_BYTES:-52428800}
+      CLAMD_CONF_MaxFileSize: ${CLAMAV_MAX_FILE_BYTES:-52428800}
+      CLAMD_CONF_MaxScanSize: ${CLAMAV_MAX_SCAN_BYTES:-104857600}
+      FRESHCLAM_CONF_Checks: ${CLAMAV_FRESHCLAM_CHECKS:-12}
+    volumes:
+      - clamav_db:/var/lib/clamav
+    networks:
+      - workbench_backend
+      - workbench_egress
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 6m
+    cap_drop:
+      - ALL
+    cpus: ${CLAMAV_CPUS:-2.0}
+    mem_limit: ${CLAMAV_MEMORY:-4g}
+    pids_limit: 512
+    stop_grace_period: 90s
+
+  claw-control-blue:
+    <<: *service-defaults
+    image: ${CLAW_CONTROL_IMAGE_BLUE:?set CLAW_CONTROL_IMAGE_BLUE to an immutable release ref}
+    build:
+      context: ../..
+      dockerfile: deploy/claw-workbench/docker/Dockerfile.claw-control
+      args:
+        GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:-docker.m.daocloud.io/library/golang:1.22-alpine}
+        BUN_BUILD_IMAGE: ${BUN_BUILD_IMAGE:-docker.m.daocloud.io/oven/bun:1.3.6-alpine}
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    environment:
+      <<: *control-environment
+    secrets: &control-secrets
+      - control_db_password
+      - redis_password
+      - claw_admin_token
+      - new_api_control_hmac
+      - adp_control_hmac
+      - new_api_identity_hmac
+      - evidence_master_key
+      - internal_ca
+    volumes:
+      - ./secrets/provider:/run/workbench/provider-secrets:ro
+      - ./secrets/billing:/run/workbench/billing-secrets:ro
+      - evidence_data:/var/lib/claw-control/evidence
+    networks:
+      - workbench_backend
+      - workbench_egress
+    depends_on:
+      workbench-control-db:
+        condition: service_healthy
+      workbench-redis:
+        condition: service_healthy
+      workbench-clamav:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8090/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    read_only: true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cpus: ${CLAW_CONTROL_CPUS:-1.0}
+    mem_limit: ${CLAW_CONTROL_MEMORY:-512m}
+    pids_limit: 256
+    stop_grace_period: 20s
+
+  claw-control-green:
+    <<: *service-defaults
+    image: ${CLAW_CONTROL_IMAGE_GREEN:?set CLAW_CONTROL_IMAGE_GREEN to an immutable release ref}
+    build:
+      context: ../..
+      dockerfile: deploy/claw-workbench/docker/Dockerfile.claw-control
+      args:
+        GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:-docker.m.daocloud.io/library/golang:1.22-alpine}
+        BUN_BUILD_IMAGE: ${BUN_BUILD_IMAGE:-docker.m.daocloud.io/oven/bun:1.3.6-alpine}
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    environment:
+      <<: *control-environment
+    secrets: *control-secrets
+    volumes:
+      - ./secrets/provider:/run/workbench/provider-secrets:ro
+      - ./secrets/billing:/run/workbench/billing-secrets:ro
+      - evidence_data:/var/lib/claw-control/evidence
+    networks:
+      - workbench_backend
+      - workbench_egress
+    depends_on:
+      workbench-control-db:
+        condition: service_healthy
+      workbench-redis:
+        condition: service_healthy
+      workbench-clamav:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8090/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    read_only: true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cpus: ${CLAW_CONTROL_CPUS:-1.0}
+    mem_limit: ${CLAW_CONTROL_MEMORY:-512m}
+    pids_limit: 256
+    stop_grace_period: 20s
+
+  adp-blue:
+    <<: *service-defaults
+    image: ${ADP_WORKBENCH_IMAGE_BLUE:?set ADP_WORKBENCH_IMAGE_BLUE to an immutable release ref}
+    build: &adp-build
+      context: ../..
+      dockerfile: deploy/claw-workbench/docker/Dockerfile.adp
+      additional_contexts:
+        adp_source: ${ADP_SOURCE_DIR:-../../../adp-chat-client-claw}
+      args:
+        PYTHON_BUILD_IMAGE: ${PYTHON_BUILD_IMAGE:-docker.m.daocloud.io/library/python:3.12-slim}
+        NODE_BUILD_IMAGE: ${NODE_BUILD_IMAGE:-docker.m.daocloud.io/library/node:22-bookworm-slim}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    environment:
+      <<: *adp-environment
+      WORKBENCH_INSTANCE_ID: adp-blue
+    secrets: &adp-secrets
+      - adp_db_password
+      - redis_password
+      - adp_session_secret
+      - adp_control_hmac
+      - adp_usage_evidence_key
+      - adp_file_locator_key
+      - adp_file_locator_previous_keys
+      - adp_workspace_locator_key
+      - adp_workspace_locator_previous_keys
+      - adp_connector_token_key
+      - adp_connector_token_previous_keys
+      - adp_oauth_state_key
+      - adp_oauth_state_previous_keys
+      - internal_ca
+    volumes:
+      - adp_blue_logs:/app/logs
+      - ./config:/run/workbench/config:ro
+      - ./secrets/oauth:/run/workbench/oauth-secrets:ro
+      - ./secrets/files:/run/workbench/file-secrets:ro
+      - ./secrets/sandbox:/run/secrets/workbench-sandbox:ro
+    networks:
+      - workbench_backend
+      - workbench_egress
+    depends_on:
+      workbench-adp-db:
+        condition: service_healthy
+      workbench-redis:
+        condition: service_healthy
+      workbench-clamav:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/system/config', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 60s
+    read_only: true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+      - /var/lib/workbench-quarantine:rw,noexec,nosuid,nodev,size=128m,uid=10001,gid=10001,mode=0700
+    cpus: ${ADP_CPUS:-2.0}
+    mem_limit: ${ADP_MEMORY:-2g}
+    pids_limit: 512
+    stop_grace_period: 90s
+
+  adp-green:
+    <<: *service-defaults
+    image: ${ADP_WORKBENCH_IMAGE_GREEN:?set ADP_WORKBENCH_IMAGE_GREEN to an immutable release ref}
+    build: *adp-build
+    environment:
+      <<: *adp-environment
+      WORKBENCH_INSTANCE_ID: adp-green
+    secrets: *adp-secrets
+    volumes:
+      - adp_green_logs:/app/logs
+      - ./config:/run/workbench/config:ro
+      - ./secrets/oauth:/run/workbench/oauth-secrets:ro
+      - ./secrets/files:/run/workbench/file-secrets:ro
+      - ./secrets/sandbox:/run/secrets/workbench-sandbox:ro
+    networks:
+      - workbench_backend
+      - workbench_egress
+    depends_on:
+      workbench-adp-db:
+        condition: service_healthy
+      workbench-redis:
+        condition: service_healthy
+      workbench-clamav:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/system/config', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 60s
+    read_only: true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+      - /var/lib/workbench-quarantine:rw,noexec,nosuid,nodev,size=128m,uid=10001,gid=10001,mode=0700
+    cpus: ${ADP_CPUS:-2.0}
+    mem_limit: ${ADP_MEMORY:-2g}
+    pids_limit: 512
+    stop_grace_period: 90s
+
+  new-api-identity-proxy:
+    <<: *service-defaults
+    image: ${CADDY_IMAGE:-docker.m.daocloud.io/library/caddy:2.10-alpine}
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    environment:
+      NEW_API_INTERNAL_UPSTREAM: ${NEW_API_INTERNAL_UPSTREAM:?set NEW_API_INTERNAL_UPSTREAM}
+    secrets:
+      - new_api_identity_tls_cert
+      - new_api_identity_tls_key
+    volumes:
+      - ./caddy/Caddyfile.identity-proxy:/etc/caddy/Caddyfile:ro
+      - identity_caddy_data:/data
+      - identity_caddy_config:/config
+    networks:
+      workbench_backend:
+        aliases:
+          - new-api-identity.internal
+      workbench_edge: {}
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    read_only: true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    pids_limit: 128
+
+  workbench-switch:
+    <<: *service-defaults
+    image: ${CADDY_IMAGE:-docker.m.daocloud.io/library/caddy:2.10-alpine}
+    command: ["caddy", "run", "--config", "/config-runtime/Caddyfile.active", "--adapter", "caddyfile"]
+    secrets:
+      - workbench_control_tls_cert
+      - workbench_control_tls_key
+    volumes:
+      - ./state:/config-runtime:ro
+      - switch_caddy_data:/data
+      - switch_caddy_config:/config
+    networks:
+      workbench_backend:
+        aliases:
+          - workbench-control.internal
+      workbench_edge:
+        aliases:
+          - claw-control-active
+          - workbench-control.internal
+          - adp-chat-client
+    depends_on:
+      new-api-identity-proxy:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/healthz >/dev/null && wget -q -O - http://127.0.0.1:8000/system/config >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    read_only: true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    pids_limit: 128
+
+secrets:
+  control_db_password:
+    file: ./secrets/control_db_password
+  adp_db_password:
+    file: ./secrets/adp_db_password
+  redis_password:
+    file: ./secrets/redis_password
+  claw_admin_token:
+    file: ./secrets/claw_admin_token
+  new_api_control_hmac:
+    file: ./secrets/new_api_control_hmac
+  adp_control_hmac:
+    file: ./secrets/adp_control_hmac
+  new_api_identity_hmac:
+    file: ./secrets/new_api_identity_hmac
+  evidence_master_key:
+    file: ./secrets/evidence_master_key
+  adp_usage_evidence_key:
+    file: ./secrets/adp_usage_evidence_key
+  adp_file_locator_key:
+    file: ./secrets/adp_file_locator_key
+  adp_file_locator_previous_keys:
+    file: ./secrets/adp_file_locator_previous_keys.json
+  adp_workspace_locator_key:
+    file: ./secrets/adp_workspace_locator_key
+  adp_workspace_locator_previous_keys:
+    file: ./secrets/adp_workspace_locator_previous_keys.json
+  adp_connector_token_key:
+    file: ./secrets/adp_connector_token_key
+  adp_connector_token_previous_keys:
+    file: ./secrets/adp_connector_token_previous_keys.json
+  adp_oauth_state_key:
+    file: ./secrets/adp_oauth_state_key
+  adp_oauth_state_previous_keys:
+    file: ./secrets/adp_oauth_state_previous_keys.json
+  adp_session_secret:
+    file: ./secrets/adp_session_secret
+  internal_ca:
+    file: ./secrets/internal_ca.crt
+  workbench_control_tls_cert:
+    file: ./secrets/workbench_control.crt
+  workbench_control_tls_key:
+    file: ./secrets/workbench_control.key
+  new_api_identity_tls_cert:
+    file: ./secrets/new_api_identity.crt
+  new_api_identity_tls_key:
+    file: ./secrets/new_api_identity.key
+
+volumes:
+  control_db_data:
+  evidence_data:
+  adp_db_data:
+  redis_data:
+  clamav_db:
+  adp_blue_logs:
+  adp_green_logs:
+  switch_caddy_data:
+  switch_caddy_config:
+  identity_caddy_data:
+  identity_caddy_config:
+
+networks:
+  workbench_backend:
+    internal: true
+  workbench_egress:
+    driver: bridge
+  workbench_edge:
+    external: true
+    name: ${WORKBENCH_EDGE_NETWORK:?set WORKBENCH_EDGE_NETWORK}

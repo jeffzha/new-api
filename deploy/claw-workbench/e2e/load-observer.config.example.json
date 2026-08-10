@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "prometheus_url": "https://prometheus.internal.example",
+  "bearer_token": "file:/run/secrets/prometheus-query-token",
+  "ca_file": "file:/run/secrets/observability-ca.pem",
+  "timeout_seconds": 10,
+  "poll_seconds": 2,
+  "range_step_seconds": 5,
+  "evidence_signing_key_file": "file:/run/secrets/load-observer-ed25519",
+  "metrics": {
+    "active_connections_peak": {
+      "edge": {
+        "metric": "container_network_tcp_usage_total",
+        "labels": {"job": "workbench-cadvisor", "component": "edge", "tcp_state": "established"}
+      },
+      "new_api": {
+        "metric": "container_network_tcp_usage_total",
+        "labels": {"job": "workbench-cadvisor", "component": "new_api", "tcp_state": "established"}
+      },
+      "claw_control": {
+        "metric": "container_network_tcp_usage_total",
+        "labels": {"job": "workbench-cadvisor", "component": "claw_control", "tcp_state": "established"}
+      },
+      "adp": {
+        "metric": "container_network_tcp_usage_total",
+        "labels": {"job": "workbench-cadvisor", "component": "adp", "tcp_state": "established"}
+      }
+    },
+    "memory_peak_bytes": {
+      "new_api": {
+        "metric": "container_memory_working_set_bytes",
+        "labels": {"job": "workbench-cadvisor", "component": "new_api"}
+      },
+      "claw_control": {
+        "metric": "container_memory_working_set_bytes",
+        "labels": {"job": "workbench-cadvisor", "component": "claw_control"}
+      },
+      "adp": {
+        "metric": "container_memory_working_set_bytes",
+        "labels": {"job": "workbench-cadvisor", "component": "adp"}
+      }
+    },
+    "terminal_turns": {
+      "metric": "workbench_turns_total",
+      "labels": {"job": "adp-workbench"},
+      "status_label": "status",
+      "successful_status": "completed"
+    },
+    "persisted_turn_events": {
+      "metric": "workbench_turn_events_persisted_total",
+      "labels": {"job": "adp-workbench"}
+    },
+    "db_latency": {
+      "bucket_metric": "workbench_turn_event_persist_db_seconds_bucket",
+      "count_metric": "workbench_turn_event_persist_db_seconds_count",
+      "labels": {"job": "adp-workbench"},
+      "upper_bound_label": "le"
+    }
+  }
+}

@@ -1,0 +1,149 @@
+name: Claw control
+
+on:
+  pull_request:
+    paths:
+      - "claw-control/**"
+      - "controller/workbench_*"
+      - "deploy/claw-workbench/**"
+      - "docs/adp-claw-*"
+      - "router/api-router.go"
+      - "router/workbench_*"
+      - "service/workbenchbridge/**"
+      - "web/default/src/features/workbench-entry/**"
+      - "web/default/src/routeTree.gen.ts"
+      - "web/default/src/routes/_authenticated/playground/**"
+      - "web/default/src/routes/_authenticated/workbench-admin.tsx"
+      - ".github/scripts/check_claw_constraints.py"
+      - ".github/scripts/tests/**"
+      - ".github/workflows/claw-control.yml"
+      - ".github/workflows/claw-workbench-release-images.yml"
+  push:
+    paths:
+      - "claw-control/**"
+      - "controller/workbench_*"
+      - "deploy/claw-workbench/**"
+      - "docs/adp-claw-*"
+      - "router/api-router.go"
+      - "router/workbench_*"
+      - "service/workbenchbridge/**"
+      - "web/default/src/features/workbench-entry/**"
+      - "web/default/src/routeTree.gen.ts"
+      - "web/default/src/routes/_authenticated/playground/**"
+      - "web/default/src/routes/_authenticated/workbench-admin.tsx"
+      - ".github/scripts/check_claw_constraints.py"
+      - ".github/scripts/tests/**"
+      - ".github/workflows/claw-control.yml"
+      - ".github/workflows/claw-workbench-release-images.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  upstream-compatibility:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test boundary and ADR enforcement fixtures
+        run: python3 -m unittest discover -s .github/scripts/tests -p "test_*.py" -v
+      - name: Test deployment security validators
+        run: python3 -m unittest discover -s deploy/claw-workbench/scripts/tests -p "test_*.py" -v
+      - name: Lint the deployment overlay security boundary
+        run: python3 deploy/claw-workbench/scripts/lint_overlay_security.py --root deploy/claw-workbench
+      - name: Enforce additive upstream compatibility budget
+        run: python3 .github/scripts/check_claw_constraints.py --repo "$GITHUB_WORKSPACE"
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: docker.m.daocloud.io/library/mysql:8.0
+        env:
+          MYSQL_DATABASE: claw_control_test
+          MYSQL_ROOT_PASSWORD: rootpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -prootpass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+      postgres:
+        image: docker.m.daocloud.io/library/postgres:16
+        env:
+          POSTGRES_DB: claw_control_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d claw_control_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    defaults:
+      run:
+        working-directory: claw-control
+    env:
+      GOPROXY: https://goproxy.cn,direct
+      CLAW_TEST_MYSQL_DSN: root:rootpass@tcp(127.0.0.1:3306)/claw_control_test?charset=utf8mb4&parseTime=True&loc=UTC
+      CLAW_TEST_POSTGRES_DSN: host=127.0.0.1 user=postgres password=postgres dbname=claw_control_test port=5432 sslmode=disable TimeZone=UTC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+          cache-dependency-path: claw-control/go.sum
+      - name: Unit and cross-database tests
+        run: go test ./...
+      - name: Static analysis
+        run: go vet ./...
+
+  new-api-bridge:
+    runs-on: ubuntu-latest
+    env:
+      GOPROXY: https://goproxy.cn,direct
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Test the isolated identity bridge
+        run: go test ./router ./controller ./service/workbenchbridge
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install default frontend dependencies
+        working-directory: web
+        run: bun install --frozen-lockfile
+      - name: Build default frontend
+        working-directory: web/default
+        run: bun run build
+      - name: Install control admin dependencies
+        working-directory: claw-control/admin-ui
+        run: bun install --frozen-lockfile
+      - name: Test control admin frontend
+        working-directory: claw-control/admin-ui
+        run: bun run test
+      - name: Build control admin frontend
+        working-directory: claw-control/admin-ui
+        run: bun run build
+
+  acceptance-runner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile acceptance tooling
+        run: python3 -m compileall -q deploy/claw-workbench/e2e
+      - name: Run offline acceptance-runner tests
+        run: python3 -m unittest discover -s deploy/claw-workbench/e2e/tests -p "test_*.py"

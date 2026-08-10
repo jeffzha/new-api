@@ -1,0 +1,16 @@
+{
+	admin 127.0.0.1:2019
+	auto_https off
+}
+:8080 {
+	respond 404
+}
+
+https://workbench-control.internal:8443 {
+	tls /run/secrets/workbench_control_tls_cert /run/secrets/workbench_control_tls_key
+	respond 404
+}
+
+:8000 {
+	respond 404
+}

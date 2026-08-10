@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gateway.example.invalid/claw-workbench-e2e.schema.json",
+  "title": "Claw Workbench live acceptance configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "base_url", "secrets"],
+  "not": {
+    "required": ["acceptance_report_signing_key_file", "acceptance_report_allowed_signers_file"]
+  },
+  "properties": {
+    "$schema": {"type": "string"},
+    "version": {"const": 1},
+    "base_url": {"$ref": "#/$defs/urlOrRef"},
+    "direct_adp_base_url": {"$ref": "#/$defs/urlOrRef"},
+    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 900},
+    "acceptance_report_signing_key_file": {"$ref": "#/$defs/fileRef"},
+    "acceptance_report_allowed_signers_file": {"$ref": "#/$defs/fileRef"},
+    "secrets": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/secretRef"},
+      "required": ["user_a_session"]
+    },
+    "variables": {
+      "type": "object",
+      "additionalProperties": {"type": ["string", "integer", "boolean"]}
+    },
+    "selection_targets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "customer_code": {"type": "string", "minLength": 1},
+          "app_selector": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "release_manifest": {"anyOf": [{"$ref": "#/$defs/releaseManifest"}, {"$ref": "#/$defs/fileRef"}]},
+    "paths": {"type": "object", "additionalProperties": {"$ref": "#/$defs/path"}},
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create_customer_members": {"$ref": "#/$defs/requestList"},
+        "invalid_app_validation": {"$ref": "#/$defs/requestList"},
+        "no_plan_gate": {"$ref": "#/$defs/requestList"},
+        "activate_plan": {"$ref": "#/$defs/requestList"}
+      }
+    },
+    "turn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_fixture"],
+      "properties": {
+        "request_fixture": {"$ref": "#/$defs/fileRef"},
+        "disconnect_after_events": {"type": "integer", "minimum": 1, "maximum": 20}
+      }
+    },
+    "isolation_checks": {"$ref": "#/$defs/requestList"},
+    "eicar": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"file_ref": {"$ref": "#/$defs/fileRef"}}
+    },
+    "policy_checks": {"$ref": "#/$defs/requestList"},
+    "limit_checks": {"$ref": "#/$defs/requestList"},
+    "selector_checks": {"$ref": "#/$defs/requestList"},
+    "oauth_checks": {"$ref": "#/$defs/requestList"},
+    "scheduled_task_checks": {"$ref": "#/$defs/requestList"},
+    "sandbox_checks": {"$ref": "#/$defs/requestList"},
+    "sandbox_mode": {"enum": ["off", "enabled"]},
+    "sandbox_pty": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor", "ticket_path", "connect_path", "conversation_variable", "sandbox_variable"],
+      "properties": {
+        "actor": {"enum": ["admin", "admin_requester", "admin_approver", "user_a", "user_b_same", "user_b_other", "user_a_context_1", "user_a_context_2", "user_a_customer_2", "user_a_stale_context"]},
+        "ticket_path": {"$ref": "#/$defs/path"},
+        "connect_path": {"$ref": "#/$defs/path"},
+        "conversation_variable": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*$"},
+        "sandbox_variable": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*$"},
+        "timeout_seconds": {"type": "integer", "minimum": 5, "maximum": 120},
+        "rows": {"type": "integer", "minimum": 2, "maximum": 200},
+        "cols": {"type": "integer", "minimum": 10, "maximum": 400}
+      }
+    },
+    "acceptance_observer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_signers_file", "evidence"],
+      "properties": {
+        "allowed_signers_file": {"$ref": "#/$defs/fileRef"},
+        "wait_seconds": {"type": "integer", "minimum": 1, "maximum": 300},
+        "max_age_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
+        "evidence": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"pattern": "^(scheduled|byok|billing_import)\\.[a-z][a-z0-9_]{1,63}$"},
+          "additionalProperties": {"$ref": "#/$defs/fileRef"}
+        }
+      }
+    },
+    "gate_scenarios": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "state", "transition", "write_probe", "read_probe", "restore"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "state": {"enum": ["suspended", "disabled", "expired"]},
+          "transition": {"$ref": "#/$defs/request"},
+          "write_probe": {"$ref": "#/$defs/request"},
+          "read_probe": {"$ref": "#/$defs/request"},
+          "restore": {"$ref": "#/$defs/request"}
+        }
+      }
+    },
+    "rotation_checks": {"$ref": "#/$defs/requestList"},
+    "byok_checks": {"$ref": "#/$defs/requestList"},
+    "usage_audit_checks": {"$ref": "#/$defs/requestList"},
+    "billing_import_checks": {"$ref": "#/$defs/requestList"},
+    "smoke_checks": {"$ref": "#/$defs/requestList"},
+    "security_checks": {"$ref": "#/$defs/requestList"},
+    "direct_adp_paths": {"type": "array", "items": {"$ref": "#/$defs/path"}},
+    "load": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_fixture"],
+      "properties": {
+        "request_fixture": {"$ref": "#/$defs/fileRef"},
+        "turn_path": {"$ref": "#/$defs/path"},
+        "timeout_seconds": {"type": "integer", "minimum": 10, "maximum": 3600},
+        "external_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["50", "100"],
+          "properties": {
+            "50": {"$ref": "#/$defs/fileRef"},
+            "100": {"$ref": "#/$defs/fileRef"}
+          }
+        },
+        "external_evidence_allowed_signers_file": {"$ref": "#/$defs/fileRef"},
+        "external_evidence_wait_seconds": {"type": "integer", "minimum": 1, "maximum": 300}
+      },
+      "dependentRequired": {
+        "external_evidence": ["external_evidence_allowed_signers_file"]
+      },
+      "not": {"required": ["external_evidence_signing_key_file"]}
+    }
+  },
+  "$defs": {
+    "releaseManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["new_api_revision", "claw_control_revision", "adp_revision", "new_api_image_digest", "claw_control_image_digest", "adp_image_digest", "config_sha256", "control_migration", "adp_migration", "caddy_version", "active_color", "provider_region", "collected_at"],
+      "properties": {
+        "new_api_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "claw_control_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "adp_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "new_api_image_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "claw_control_image_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "adp_image_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "control_migration": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$"},
+        "adp_migration": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$"},
+        "caddy_version": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$"},
+        "active_color": {"enum": ["blue", "green"]},
+        "provider_region": {"type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)+$"},
+        "collected_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "urlOrRef": {
+      "anyOf": [
+        {"type": "string", "format": "uri"},
+        {"type": "string", "pattern": "^(env:[A-Z][A-Z0-9_]*|file:(/|[A-Za-z]:[\\\\/]))"}
+      ]
+    },
+    "secretRef": {"type": "string", "pattern": "^(env:[A-Z][A-Z0-9_]*|file:(/|[A-Za-z]:[\\\\/]))"},
+    "fileRef": {"type": "string", "pattern": "^file:(/|[A-Za-z]:[\\\\/])"},
+    "path": {"type": "string", "pattern": "^/[^\\r\\n]*$"},
+    "requestList": {"type": "array", "items": {"$ref": "#/$defs/request"}},
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "actor", "method", "path", "expect_status"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "requirement": {"type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$"},
+        "actor": {"enum": ["admin", "admin_requester", "admin_approver", "user_a", "user_b_same", "user_b_other", "user_a_context_1", "user_a_context_2", "user_a_customer_2", "user_a_stale_context", "api_key", "anonymous"]},
+        "method": {"enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
+        "path": {"$ref": "#/$defs/path"},
+        "body_fixture": {"$ref": "#/$defs/fileRef"},
+        "body_min_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576},
+        "fixture_json_min_lengths": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {"type": "integer", "minimum": 1, "maximum": 1048576},
+          "propertyNames": {"pattern": "^/"}
+        },
+        "expect_status": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 100, "maximum": 599}},
+        "provider_cost": {"type": "boolean"},
+        "csrf_mode": {"enum": ["auto", "omit", "invalid"]},
+        "cleanup": {"type": "boolean"},
+        "capture": {"type": "object", "additionalProperties": {"type": "string"}},
+        "capture_sha256": {"type": "object", "additionalProperties": {"type": "string"}},
+        "assert_variables_equal": {"type": "object", "additionalProperties": {"type": "string"}},
+        "assert_variables_not_equal": {"type": "object", "additionalProperties": {"type": "string"}},
+        "selection_token_source": {"enum": ["consumed", "option"]},
+        "selection_token_actor": {"enum": ["user_a", "user_b_same", "user_b_other", "user_a_context_1", "user_a_context_2", "user_a_customer_2", "user_a_stale_context"]},
+        "selection_target": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "customer_code": {"type": "string", "minLength": 1},
+            "app_selector": {"type": "string", "minLength": 1}
+          }
+        },
+        "json_equals": {"type": "object", "additionalProperties": {"type": ["string", "number", "integer", "boolean", "null"]}},
+        "json_not_equals": {"type": "object", "additionalProperties": {"type": ["string", "number", "integer", "boolean", "null"]}},
+        "json_one_of": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": ["string", "number", "integer", "boolean", "null"]}
+          }
+        },
+        "json_absent": {"type": "array", "items": {"type": "string", "pattern": "^/"}},
+        "json_types": {"type": "object", "additionalProperties": {"enum": ["string", "number", "integer", "boolean", "object", "array", "null"]}},
+        "header_equals": {"type": "object", "additionalProperties": {"type": "string"}},
+        "poll": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["pointer", "equals"],
+          "properties": {
+            "pointer": {"type": "string", "pattern": "^/"},
+            "equals": {"type": ["string", "number", "integer", "boolean", "null"]},
+            "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 900},
+            "interval_seconds": {"type": "number", "minimum": 0.1, "maximum": 10},
+            "forbid_values": {"type": "array", "items": {"type": ["string", "number", "integer", "boolean", "null"]}}
+          }
+        },
+        "require_response_markers": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "forbid_response_markers": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+	admin 127.0.0.1:2019
+	auto_https off
+}
+
+:8080 {
+	reverse_proxy __CONTROL_UPSTREAM__
+}
+
+https://workbench-control.internal:8443 {
+	tls /run/secrets/workbench_control_tls_cert /run/secrets/workbench_control_tls_key
+
+	@retentionIntent {
+		method POST
+		path /api/internal/workbench/retention/intents
+	}
+	handle @retentionIntent {
+		reverse_proxy __ADP_UPSTREAM__
+	}
+
+	handle {
+		reverse_proxy __CONTROL_UPSTREAM__
+	}
+}
+
+:8000 {
+	reverse_proxy __ADP_UPSTREAM__ {
+		flush_interval -1
+	}
+}

@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gateway.example.invalid/claw-workbench-dr.schema.json",
+  "title": "Claw Workbench two-region restic DR configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version", "backup_staging_root", "drill_root", "protected_roots",
+    "restic", "backup", "restore_validation_commands", "targets",
+    "retention", "objectives"
+  ],
+  "properties": {
+    "$schema": {"type": "string"},
+    "version": {"const": 1},
+    "backup_staging_root": {"type": "string", "minLength": 2},
+    "drill_root": {"type": "string", "minLength": 2},
+    "protected_roots": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 2}},
+    "restic": {"$ref": "#/$defs/versionedCommand"},
+    "backup": {"$ref": "#/$defs/command"},
+    "restore_validation_commands": {
+      "type": "array", "minItems": 1,
+      "items": {"$ref": "#/$defs/command"}
+    },
+    "targets": {
+      "type": "array", "minItems": 2, "maxItems": 2,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "endpoint", "bucket", "region", "prefix", "access_key_id_ref", "secret_access_key_ref", "repository_password_ref"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,31}$"},
+          "endpoint": {"type": "string", "format": "uri"},
+          "bucket": {"type": "string", "minLength": 3},
+          "region": {"type": "string", "minLength": 1},
+          "prefix": {"type": "string", "minLength": 1},
+          "access_key_id_ref": {"$ref": "#/$defs/secretRef"},
+          "secret_access_key_ref": {"$ref": "#/$defs/secretRef"},
+          "session_token_ref": {"$ref": "#/$defs/secretRef"},
+          "repository_password_ref": {"$ref": "#/$defs/secretRef"}
+        }
+      }
+    },
+    "retention": {
+      "type": "object", "additionalProperties": false,
+      "required": ["daily", "weekly", "monthly", "yearly", "local_verified_backups"],
+      "properties": {
+        "daily": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "weekly": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "monthly": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "yearly": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "local_verified_backups": {"type": "integer", "minimum": 1, "maximum": 10000}
+      }
+    },
+    "objectives": {
+      "type": "object", "additionalProperties": false,
+      "required": ["rpo_seconds", "rto_seconds"],
+      "properties": {
+        "rpo_seconds": {"type": "integer", "minimum": 1},
+        "rto_seconds": {"type": "integer", "minimum": 1}
+      }
+    }
+  },
+  "$defs": {
+    "secretRef": {"type": "string", "pattern": "^(env:[A-Z][A-Z0-9_]*|file:(/|[A-Za-z]:[\\\\/]))"},
+    "command": {
+      "type": "object", "additionalProperties": false,
+      "required": ["command", "sha256"],
+      "properties": {
+        "command": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "sha256": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400},
+        "expected_version": {"type": "string", "minLength": 1},
+        "environment_allowlist": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}}
+      }
+    },
+    "versionedCommand": {
+      "allOf": [
+        {"$ref": "#/$defs/command"},
+        {
+          "type": "object",
+          "required": ["expected_version"],
+          "properties": {}
+        }
+      ]
+    }
+  }
+}

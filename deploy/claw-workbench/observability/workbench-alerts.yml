@@ -1,0 +1,164 @@
+groups:
+  - name: claw-workbench
+    rules:
+      - alert: WorkbenchControlMetricsTargetDown
+        expr: up{job="claw-control"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: A claw-control metrics target is unavailable
+          description: One Blue/Green control instance cannot be scraped; verify process health and the private metrics network.
+
+      - alert: WorkbenchADPMetricsTargetDown
+        expr: up{job="adp-workbench"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: An ADP workbench metrics target is unavailable
+          description: One Blue/Green ADP instance cannot be scraped; failover and durable Turn recovery may be impaired.
+
+      - alert: WorkbenchControlEventDeliveryFailing
+        expr: sum by (job) (increase(workbench_control_event_failures_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Workbench control events are failing
+          description: Control-plane invalidation or revocation delivery has failed in the last five minutes.
+
+      - alert: WorkbenchControlEventLagHigh
+        expr: max by (job) (workbench_control_event_lag_seconds) > 60
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Workbench control-event lag exceeds 60 seconds
+          description: Authorization revocation may not be reaching every workbench component promptly.
+
+      - alert: WorkbenchProviderOutcomeUnknown
+        expr: sum(increase(workbench_turns_total{status="provider_unknown"}[10m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: A workbench Turn has an unknown provider outcome
+          description: Do not retry automatically; reconcile provider state and evidence first.
+
+      - alert: WorkbenchTurnTerminalErrorRateHigh
+        expr: (sum(increase(workbench_turns_total{status!="completed",status!="cancel_confirmed"}[10m])) / clamp_min(sum(increase(workbench_turns_total[10m])), 1)) > 0.05 and sum(increase(workbench_turns_total[10m])) >= 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Workbench terminal Turn error rate exceeds 5 percent
+          description: At least ten Turns completed in the window and more than five percent reached a non-cancel error terminal state.
+
+      - alert: WorkbenchFirstEventLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(workbench_first_event_seconds_bucket[15m]))) > 30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Workbench first-event P95 exceeds 30 seconds
+          description: Check Tencent provider latency, control authorization latency and ADP saturation.
+
+      - alert: WorkbenchTurnEventPersistenceSlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(workbench_turn_event_persist_db_seconds_bucket[15m]))) > 0.25
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Durable Turn-event database P95 exceeds 250 milliseconds
+          description: Inspect ADP PostgreSQL locks, storage latency and connection-pool pressure before SSE replay lag grows.
+
+      - alert: WorkbenchUsageEvidenceCaptureFailing
+        expr: sum(increase(workbench_usage_evidence_capture_failures_total[10m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Provider usage evidence cannot be persisted
+          description: The Turn path remains fail-closed; investigate encryption, database, and provider evidence integrity.
+
+      - alert: WorkbenchSecureFilePipelineFailing
+        expr: sum by (stage) (increase(workbench_file_failures_total[10m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Workbench secure file pipeline is failing
+          description: Malware scanning or private object upload has repeatedly failed.
+
+      - alert: WorkbenchUsageAuditStale
+        expr: workbench_usage_audit_stale_days > 35
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: Manual Tencent usage audit is stale
+          description: The latest locked audit period ended more than 35 days ago.
+
+      - alert: WorkbenchUsageAuditMissing
+        expr: workbench_usage_audit_missing_apps > 0
+        for: 24h
+        labels:
+          severity: warning
+        annotations:
+          summary: No locked Tencent usage audit is available
+          description: One or more active Apps have no locked manual usage audit.
+
+      - alert: WorkbenchPaidPlanExpiringSoon
+        expr: max(workbench_plan_expiring_total{days="7"}) > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: A paid workbench plan expires within seven days
+          description: Review renewal evidence before the plan becomes read-only.
+
+      - alert: WorkbenchAppVerificationFailing
+        expr: sum(increase(workbench_app_verify_total{result="failure"}[15m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: A customer App verification failed
+          description: Review the protected provider-verification audit; metrics intentionally omit App identifiers.
+
+      - alert: WorkbenchIdentityBindingFailing
+        expr: sum(increase(workbench_identity_bind_total{result="failure"}[15m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: ADP shadow-account identity confirmation failed
+          description: Check binding tuple integrity and control-plane availability before retrying.
+
+      - alert: WorkbenchAgentProvisioningSlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(workbench_agent_provision_seconds_bucket[30m]))) > 60
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Per-user Agent provisioning P95 exceeds 60 seconds
+          description: Check Tencent CopyAgentFromApp latency and ownership-report delivery.
+
+      - alert: WorkbenchActionDenialSpike
+        expr: sum(increase(workbench_action_denied_total[10m])) > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Workbench Action denials are elevated
+          description: Investigate client drift or unauthorized generic Action probing in protected logs.
+
+      - alert: WorkbenchEstimatedMarginNegative
+        expr: workbench_estimated_margin_cny{confidence!="unverified"} < 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: Reviewed workbench margin is negative
+          description: Paid fixed-plan invoice revenue is below locked reviewed upstream cost.

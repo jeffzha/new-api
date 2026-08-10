@@ -109,7 +109,7 @@ require_secure_top_level_file() {
         || fail "secrets/$name must not be group/world accessible"
       ;;
   esac
-  [ $((0$mode & 400)) -ne 0 ] \
+  [ $((0$mode & 0400)) -ne 0 ] \
     || fail "secrets/$name must be readable by its owner"
 }
 
@@ -123,7 +123,7 @@ require_secure_secret_dir() {
   case "$owner_uid" in 0|10001) ;; *) fail "$label must be owned by root or container UID 10001" ;; esac
   [ $((0$mode & 077)) -eq 0 ] \
     || fail "$label must not be accessible by group/other"
-  [ $((0$mode & 500)) -eq 500 ] \
+  [ $((0$mode & 0500)) -eq 0500 ] \
     || fail "$label must be owner-readable and searchable"
 }
 
@@ -149,7 +149,7 @@ for path in "$root"/secrets/provider/*; do
   mode="$(stat -c '%a' "$path")"
   [ "$owner_uid" = "10001" ] || fail "provider secret $name must be owned by container UID 10001"
   [ $((0$mode & 077)) -eq 0 ] || fail "provider secret $name must not be group/world accessible"
-  [ $((0$mode & 400)) -ne 0 ] || fail "provider secret $name must be readable by its owner"
+  [ $((0$mode & 0400)) -ne 0 ] || fail "provider secret $name must be readable by its owner"
   provider_secret_count=$((provider_secret_count + 1))
 done
 [ "$provider_secret_count" -gt 0 ] || fail "at least one WORKBENCH_PROVIDER_* secret is required"

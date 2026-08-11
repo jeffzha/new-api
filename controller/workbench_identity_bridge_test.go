@@ -19,6 +19,7 @@ import (
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -319,6 +320,62 @@ func TestAdminStepUpTicketVerifiesPasswordOnlyInsideNewAPI(t *testing.T) {
 	assert.Equal(t, []string{"pwd"}, tickets.request.AMR)
 	assert.NotEmpty(t, tickets.request.ReauthNonce)
 	assert.NotContains(t, fmt.Sprintf("%#v", tickets.request), "RootPassword@2026")
+}
+
+func TestDefaultAdminStepUpLookupReadsTheStoredPasswordHash(t *testing.T) {
+	originalDB := model.DB
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = originalDB
+		sqlDB, dbErr := db.DB()
+		if dbErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	require.NoError(t, db.AutoMigrate(&model.User{}))
+
+	hashedPassword, err := common.Password2Hash("RootPassword@2026")
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.User{
+		Id:       42,
+		Username: "root",
+		Password: hashedPassword,
+		Role:     common.RoleRootUser,
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	config := workbenchbridge.Config{
+		Enabled:             true,
+		ControlURL:          "https://claw-control.internal",
+		ControlHMACSecret:   workbenchControlTestSecret,
+		ControlServiceName:  "new-api-core",
+		ControlTimeout:      time.Second,
+		ServiceHMACSecret:   workbenchServiceTestSecret,
+		InternalRequestSkew: time.Minute,
+	}
+	tickets := &fakeWorkbenchTicketIssuer{issued: workbenchbridge.IssuedTicket{
+		Value:     "control-issued-step-up-ticket",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}}
+	bridge := NewWorkbenchIdentityBridge(config, tickets, nil)
+
+	router := gin.New()
+	router.POST("/api/admin/workbench/step-up-ticket", func(c *gin.Context) {
+		c.Set("id", 42)
+		c.Next()
+	}, bridge.AdminStepUpTicket)
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/step-up-ticket", bytes.NewBufferString(`{"method":"password","password":"RootPassword@2026"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://example.com")
+	result := httptest.NewRecorder()
+	router.ServeHTTP(result, request)
+
+	require.Equal(t, http.StatusOK, result.Code, result.Body.String())
+	assert.Equal(t, []string{"pwd"}, tickets.request.AMR)
+	assert.NotEmpty(t, tickets.request.ReauthNonce)
 }
 
 func TestSessionTicketRejectsUserDisabledAfterSessionWasCreated(t *testing.T) {

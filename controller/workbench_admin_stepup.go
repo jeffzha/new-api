@@ -49,7 +49,7 @@ func (bridge *WorkbenchIdentityBridge) AdminStepUpTicket(c *gin.Context) {
 	var amr, reauthNonce string
 	switch request.Method {
 	case "password":
-		user, err := bridge.lookupUser(c.GetInt("id"))
+		user, err := bridge.lookupStepUpUser(c.GetInt("id"))
 		if err != nil || user == nil || user.Role != common.RoleRootUser || user.Status != common.UserStatusEnabled || user.Password == "" || !common.ValidatePasswordAndHash(request.Password, user.Password) {
 			respondWorkbenchError(c, http.StatusForbidden, "administrator password verification failed")
 			return

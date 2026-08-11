@@ -20,10 +20,11 @@ const maximumIdentityStatusBodyBytes = 4096
 type WorkbenchUserLookup func(userID int) (*model.User, error)
 
 type WorkbenchIdentityBridge struct {
-	config     workbenchbridge.Config
-	tickets    workbenchbridge.TicketIssuer
-	lookupUser WorkbenchUserLookup
-	now        func() time.Time
+	config           workbenchbridge.Config
+	tickets          workbenchbridge.TicketIssuer
+	lookupUser       WorkbenchUserLookup
+	lookupStepUpUser WorkbenchUserLookup
+	now              func() time.Time
 }
 
 type workbenchAPIResponse struct {
@@ -56,17 +57,26 @@ func NewWorkbenchIdentityBridge(
 	tickets workbenchbridge.TicketIssuer,
 	lookupUser WorkbenchUserLookup,
 ) *WorkbenchIdentityBridge {
+	lookupStepUpUser := lookupUser
 	if lookupUser == nil {
 		lookupUser = func(userID int) (*model.User, error) {
 			return model.GetUserById(userID, false)
 		}
+		lookupStepUpUser = lookupWorkbenchAdministratorCredentials
 	}
 	return &WorkbenchIdentityBridge{
-		config:     config,
-		tickets:    tickets,
-		lookupUser: lookupUser,
-		now:        time.Now,
+		config:           config,
+		tickets:          tickets,
+		lookupUser:       lookupUser,
+		lookupStepUpUser: lookupStepUpUser,
+		now:              time.Now,
 	}
+}
+
+func lookupWorkbenchAdministratorCredentials(userID int) (*model.User, error) {
+	var user model.User
+	err := model.DB.Select("id", "role", "status", "password").First(&user, "id = ?", userID).Error
+	return &user, err
 }
 
 func IssueWorkbenchSessionTicket(c *gin.Context) {

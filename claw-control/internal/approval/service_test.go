@@ -246,6 +246,12 @@ func TestVerifiedAppMigrationRequiresEvidenceAndTwoPersonCutover(t *testing.T) {
 	require.NoError(t, db.Create(&config).Error)
 	target.CurrentConfigVersionID = &config.ID
 	require.NoError(t, db.Save(&target).Error)
+	require.NoError(t, db.Create(&model.AppVerification{
+		PublicID: "verify-approval-target", CustomerAppID: target.ID, AppConfigVersionID: config.ID,
+		Result: "verified", AppMode: 4, ReleaseStatus: "published", TemplateAgentStatus: "available",
+		DynamicAgentConfig: true, ProviderRequestIDsJSON: `["request-approval"]`,
+		SanitizedResponseHash: "sha256:" + strings.Repeat("d", 64), VerifiedBy: "test", VerifiedAt: now,
+	}).Error)
 	identity := model.IdentityBinding{
 		PublicID: "migration-binding", CustomerID: customer.ID, NewAPIUserID: 77,
 		CanonicalSubject: "new-api:77", ADPAccountID: "migration-account", ADPAccountVersion: 1,

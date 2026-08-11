@@ -41,6 +41,10 @@ class BackupManifestTest(unittest.TestCase):
         self.clock = lambda: datetime(2026, 8, 10, 1, 3, tzinfo=timezone.utc)
 
     def tearDown(self) -> None:
+        if os.name == "nt":
+            for path in self.root.rglob("*"):
+                if path.is_file():
+                    os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
         self.temporary.cleanup()
 
     def write_release(self) -> None:

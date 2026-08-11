@@ -66,8 +66,16 @@ func (s *Server) listEvidence(w http.ResponseWriter, r *http.Request) {
 		}
 		customerID = &parsed
 	}
-	result, err := s.services.Evidence.List(customerID, queryLimit(r))
-	writeResult(w, r, http.StatusOK, result, err)
+	scope := "evidence:all"
+	if customerID != nil {
+		scope = "evidence:" + strconv.FormatUint(*customerID, 10)
+	}
+	beforeID, limit, ok := adminPageRequest(w, r, scope)
+	if !ok {
+		return
+	}
+	page, err := s.services.Evidence.ListPage(customerID, beforeID, limit)
+	writePageResult(w, r, page.Items, scope, page.NextBeforeID, err)
 }
 
 func (s *Server) downloadEvidence(w http.ResponseWriter, r *http.Request) {

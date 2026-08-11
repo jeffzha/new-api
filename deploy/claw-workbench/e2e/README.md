@@ -30,20 +30,67 @@ customer identifiers to stay outside the checked-in configuration.
 
 ### Non-HTTP acceptance evidence
 
-Scheduled-worker single-claim, provider no-repost, BYOK leak scan, and billing
-coordinator single-claim are not public product APIs. The runner does not call
+Scheduled-worker single-claim, provider no-repost, Agent Store CopyAgent counts,
+App-migration lineage, retention delivery/deletion, integration provider
+readback, BYOK leak scan, and billing coordinator single-claim are not public
+product APIs. The runner does not call
 fabricated `/acceptance/...` routes. `acceptance_observer` pins a dedicated
 `claw-acceptance-observer` Ed25519 public key and maps qualified requirements to
 detached-signed evidence files. Each exact v1 object binds the run ID, canonical
 release-manifest SHA-256, requirement, observation time window, read-only source
-kind/query digest/row count, and one expected fact. Missing, stale, future,
+kind/query digest/row count, and an exact closed fact object. PostgreSQL and
+Prometheus are accepted only for requirements they can prove; provider call
+absence/readback requires `provider_audit`, COS deletion requires
+`object_inventory`, and bundle scanning requires `artifact_scan`. Missing, stale, future,
 extra-field, wrong-run, wrong-release, wrong-fact, or invalidly signed evidence
 is a blocker. The observer private key must never be given to this runner.
 
 The evidence producer is deliberately a separate production interface. It must
-derive facts from a read-only PostgreSQL/Prometheus query or bounded artifact
-scan and publish `<evidence>.sig` before the evidence file. Hand-written summary
+derive facts from a bounded read-only PostgreSQL/Prometheus query, provider
+request audit, object inventory, or artifact scan and publish `<evidence>.sig`
+before the evidence file. Hand-written summary
 files are not evidence.
+
+### Agent Store, migration, retention, and integration execution
+
+These phases are mandatory in the full runner, but the checked-in example does
+not invent five Tencent Applications or pre-fill evidence. Empty fixtures are a
+required blocker in live mode until the operator supplies real disposable
+customers/Apps and independently signed evidence.
+
+- `agent_store_checks` proves the exact provider-derived AppMode/runtime-profile
+  tuple for `standard_v2`, `multi_agent_v2`, `workflow_v2`, `claw_static_v2`,
+  and `claw_dynamic_v2`. Each acceptance deployment is explicitly execution-enabled
+  and must complete its own real Turn and captured-Conversation history readback.
+  The launch fixture sets `consume_launch_redirect: true`; the runner validates
+  the same-origin SSO path, consumes it, proves replay rejection, and checks the
+  authenticated Workbench root without reporting the ticket. The runner hashes
+  the resulting same-origin AppContext and verifies that exact hash again before
+  both the profile Turn and history request; an interposed launch cannot pass.
+  A separate disabled deployment fixture must prove that launch is rejected.
+  Signed provider audit proves zero `CopyAgentFromApp` for all four non-dynamic
+  profiles. Separate provider-audit and PostgreSQL evidence prove exactly one
+  CopyAgent request and one active dynamic binding.
+- `app_migration_checks` uses a real source Conversation, prepare, provider
+  verify, two-person cutover, old-history read, old-write rejection and current
+  exact-completed Turn. Signed PostgreSQL evidence proves exactly one immutable
+  lineage row and one cutover event.
+- `retention_checks` runs last because success deletes the disposable customer's
+  operational data. HTTP fixtures prove legal-hold and stale-policy fail-closed
+  behavior and enqueue durable delivery. Separate signed evidence proves the
+  completed receipt, exact ADP deletion, empty COS inventory, durable provider
+  revocation, and preservation of invoice/audit/receipt records.
+- `integration_execution_mode: blocked` requires catalog, bind/readback,
+  dependent-Turn rejection, unbind and post-unbind readback. Set it to `enabled`
+  only after the provider contract and disposable integration exist; then the
+  runner requires a structured completed Turn, signed provider binding
+  readback, usage/limit evidence, unbind and a subsequent rejected Turn.
+
+Cost-bearing fixtures use `sse_terminal` with a JSON pointer to the request
+fixture's `ClientRequestId`. Success requires `Type=workbench.turn` bound to
+that ID and a later `Type=workbench.turn_status` for the same `TurnId` with exact
+`Status=completed`. Model text, another Turn, `[DONE]`, or an arbitrary provider
+completed event cannot pass.
 
 ### Managed sandbox profiles
 
@@ -228,17 +275,21 @@ The runner fixes the order rather than trusting configuration order:
 9. EICAR fail-closed upload.
 10. Model/Skill/Tool/connector allowlist fixtures.
 11. Limit fixtures.
-12. Multi-App/multi-customer selector, OAuth/PKCE, and scheduled-task fixtures.
-13. Managed sandbox config, create/query, bounded Shell/Shell stream, workspace
+12. Agent Store catalog/launch and all five runtime-profile contracts.
+13. Multi-App/multi-customer selector, OAuth/PKCE, conditional integration
+    execution, and scheduled-task fixtures.
+14. Managed sandbox config, create/query, bounded Shell/Shell stream, workspace
     file, fail-closed code/PTY, pause/resume, and mandatory stop cleanup.
-14. Suspended and disabled gate scenarios, always followed by configured restore.
-15. Credential/App rotation and BYOK two-person-approval fixtures.
-16. Expired-plan read-only scenario and restore/renewal.
-17. Usage-audit/margin and Tencent billing-import immutability fixtures.
-18. Existing model/asset smoke fixtures, only when explicit safe fixtures exist.
-19. Anonymous/forged-forward-auth and CSRF/XSS security fixtures.
-20. Direct ADP rejection checks against known routes; only 401/403 count as an
+15. Suspended and disabled gate scenarios, always followed by configured restore.
+16. Credential/App rotation, App migration lineage/history, and BYOK approval.
+17. Expired-plan read-only scenario and restore/renewal.
+18. Usage-audit/margin and Tencent billing-import immutability fixtures.
+19. Existing model/asset smoke fixtures, only when explicit safe fixtures exist.
+20. Anonymous/forged-forward-auth and CSRF/XSS security fixtures.
+21. Direct ADP rejection checks against known routes; only 401/403 count as an
     authentication rejection, never 404.
+22. Retention legal-hold/race/delivery and signed cross-component receipt checks,
+    always last.
 
 BYOK checks use two distinct browser sessions (`admin_requester_session` and
 `admin_approver_session`). Safe fixtures may contain only the non-secret
@@ -259,6 +310,11 @@ IDs. Merely configuring one convenient 200 response cannot satisfy a phase:
 | managed sandbox | `capability_contract`, `lifecycle_ownership`, `shell_bounded`, `shell_stream_bounded`, `file_roundtrip`, `code_fail_closed`, `pty_fail_closed`, `lifecycle_transitions`, `cross_scope_idor`, `rate_limits`, `provider_unknown_no_duplicate`, `resource_bounds`, `csrf_rejected`, `cleanup_terminal` |
 | BYOK | `platform_profile_sharing`, `customer_profile_isolation`, `additional_app_inherits_primary`, `self_approval_rejected`, `two_person_approval`, `rotation`, `rollback_retire`, `readiness_fingerprint_mismatch`, `public_reenroll_hidden`, `secret_leak_scan` |
 | billing import | `terminal_import`, `idempotent_import`, `invoice_immutable`, `account_only_unattributed`, `multipage_adjustment`, `failed_retry`, `coordinator_single_claim` |
+| Agent Store | `profile_standard_v2`, `profile_multi_agent_v2`, `profile_workflow_v2`, `profile_claw_static_v2`, `profile_claw_dynamic_v2`, `context_standard_v2`, `context_multi_agent_v2`, `context_workflow_v2`, `context_claw_static_v2`, `context_claw_dynamic_v2`, `disabled_deployment_launch_rejected`, `cross_customer_hidden`, `non_dynamic_zero_copy`, `dynamic_copy_single_request`, `dynamic_binding_unique` |
+| App migration | `migration_prepared`, `migration_verified`, `cutover_approved`, `lineage_single_activation`, `old_history_readable`, `old_write_rejected`, `current_write_completed`, `cross_scope_history_hidden` |
+| retention | `legal_hold_blocked`, `policy_version_race_blocked`, `delivery_enqueued`, `delivery_receipt_completed`, `adp_exact_deletion`, `cos_exact_deletion`, `provider_revoked`, `control_records_preserved` |
+| integration execution (`blocked`) | `catalog_readback`, `binding_readback`, `dependent_turn_blocked`, `revocation_readback` |
+| integration execution (`enabled`) | `catalog_readback`, `binding_readback`, `provider_binding_readback`, `dependent_turn_completed`, `usage_limit_recorded`, `revocation_readback`, `revocation_blocks_turn` |
 
 The executable configuration is validated against an equivalent strict runtime
 contract and the complete closed-set requirement/semantic matrix before a

@@ -54,6 +54,9 @@ type TicketIssueRequest struct {
 	IdentityVersion string
 	Surface         string
 	IsSuperAdmin    bool
+	AuthenticatedAt time.Time
+	AMR             []string
+	ReauthNonce     string
 }
 
 type HTTPDoer interface {
@@ -108,12 +111,21 @@ func (client *ControlClient) Issue(ctx context.Context, ticketRequest TicketIssu
 	if ticketRequest.Surface == SurfaceAdmin && !ticketRequest.IsSuperAdmin {
 		return IssuedTicket{}, ErrInvalidConfiguration
 	}
-	body, err := common.Marshal(map[string]any{
+	payload := map[string]any{
 		"new_api_user_id":  ticketRequest.UserID,
 		"identity_version": ticketRequest.IdentityVersion,
 		"surface":          ticketRequest.Surface,
 		"is_super_admin":   ticketRequest.IsSuperAdmin,
-	})
+	}
+	if !ticketRequest.AuthenticatedAt.IsZero() || len(ticketRequest.AMR) > 0 || strings.TrimSpace(ticketRequest.ReauthNonce) != "" {
+		if ticketRequest.Surface != SurfaceAdmin || ticketRequest.AuthenticatedAt.IsZero() || len(ticketRequest.AMR) == 0 || strings.TrimSpace(ticketRequest.ReauthNonce) == "" {
+			return IssuedTicket{}, ErrInvalidConfiguration
+		}
+		payload["authenticated_at"] = ticketRequest.AuthenticatedAt.UTC().Unix()
+		payload["amr"] = ticketRequest.AMR
+		payload["reauth_nonce"] = strings.TrimSpace(ticketRequest.ReauthNonce)
+	}
+	body, err := common.Marshal(payload)
 	if err != nil {
 		return IssuedTicket{}, err
 	}

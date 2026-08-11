@@ -8,6 +8,8 @@ Every endpoint is same-origin, requires `claw_admin_session`, and returns an env
 
 Mutations additionally require the `claw_admin_csrf` cookie value in `X-CSRF-Token`. The SPA never sends `Authorization` or `X-Claw-Actor`.
 
+All mutations also require a recent new-api step-up. A missing or expired proof returns HTTP 403 with `error.code=recent_auth_required`; the SPA must navigate to `/workbench-admin?step_up=1`, complete password, 2FA, or Passkey verification on new-api, and enter the returned one-time ticket through `/api/workbench/entry`. Passwords are never sent to claw-control.
+
 ## Read projections required by the SPA
 
 ### `GET /api/admin/workbench/dashboard`
@@ -60,8 +62,25 @@ and retirement optimistic locking; it is distinct from immutable credential
 `owner_scope`/`customer_id`; omitting both preserves the platform-level legacy
 behavior. Rotation and retirement responses use the same safe projection. An App
 configuration may select only a platform profile or a profile owned by that exact
-customer. All lists are presently arrays; a future cursor envelope requires an
-explicit SPA contract version.
+customer. Collection responses preserve the array in `data` and add pagination
+metadata without changing existing consumers:
+
+```json
+{
+  "success": true,
+  "data": [],
+  "meta": { "next_cursor": "opaque-or-empty" }
+}
+```
+
+Clients send the opaque value back as `cursor`; it is bound to the route and
+active filters and must not be combined with legacy `before_id`. The default
+page size is 100 and the hard maximum is 200. This applies to customers,
+customer Apps, plan catalog, invoices, usage/admin audits, credential profiles,
+evidence, notifications, approvals, Tencent billing imports, and Agent Store
+items/audits. Agent Store item ordering uses `(sort_order,item_id)`; all numeric
+control-plane tables use descending immutable ID keysets. Existing notification
+and approval `before_id` requests remain accepted for compatibility.
 
 ### Multi-App administration
 
@@ -79,6 +98,43 @@ explicit SPA contract version.
   `expected_target_version` and `expected_current_default_version`. It swaps the
   `primary` slot, bumps both App authorization epochs, invalidates cached
   contexts, and audits both sides without changing selectors or aliases.
+
+### Agent Store deployments and entitlements
+
+`GET /api/admin/workbench/agent-store/items?limit=100` returns logical catalog
+items. Each item has `deployments: AgentStoreDeployment[]`, and each deployment
+has its own `entitlements: AgentStoreEntitlement[]`. The legacy top-level
+`deployment` and `entitlements` fields mirror the first deployment only and are
+read-only compatibility projections; new UI code must render `deployments`.
+Provider credentials and Secret references never appear in this projection.
+
+Every mutation below requires the administrator session, double-submit CSRF,
+and recent administrator authentication. All writes use optimistic locking:
+
+- `POST /api/admin/workbench/agent-store/items/{item_id}/deployments` accepts
+  `{ expected_item_version, customer_id, customer_app_id, entitlements }` and
+  returns the updated item with HTTP 201.
+- `PATCH /api/admin/workbench/agent-store/items/{item_id}/deployments/{deployment_id}`
+  accepts `{ expected_deployment_version, execution_enabled, entitlements? }`.
+  Omitting `entitlements` preserves them; sending an empty array restores the
+  default customer entitlement. Execution remains disabled unless the deployment
+  is verified or active and its runtime profile is one of `standard_v2`,
+  `multi_agent_v2`, `workflow_v2`, `claw_static_v2`, or `claw_dynamic_v2`;
+  unknown profiles fail closed.
+- `POST /api/admin/workbench/agent-store/items/{item_id}/deployments/{deployment_id}/verify`
+  accepts `{ expected_version, expected_deployment_version }`. Provider AppMode,
+  runtime profile, presentation data and capabilities are trusted readback and
+  cannot be supplied by the browser.
+- `POST /api/admin/workbench/agent-store/items/{item_id}/deployments/{deployment_id}/disable`
+  accepts `{ expected_deployment_version, reason }`. It disables only that
+  customer deployment, revokes its active authorization and prevents direct
+  re-enabling; recovery requires trusted verification followed by an explicit
+  execution enable.
+
+Entitlement inputs contain `subject_type` (`customer`, `user`, `role`, or
+`plan`), `subject_ref`, and optional ISO-8601 `valid_from`/`valid_until`. A
+customer subject must match the deployment customer. Duplicate subjects and an
+end time that is not later than the start time are rejected.
 
 ## Customer workbench context selection
 

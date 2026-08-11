@@ -152,6 +152,9 @@ func TestNonDynamicRuntimeClaimAndReadinessNeverRequirePerUserAgent(t *testing.T
 	assert.Equal(t, 1, task.ProviderAppMode)
 	assert.Equal(t, "standard_v2", task.RuntimeProfile)
 	assert.True(t, task.ExecutionEnabled)
+	assert.Equal(t, task.ProviderAppMode, task.Provider.ProviderAppMode)
+	assert.Equal(t, task.RuntimeProfile, task.Provider.RuntimeProfile)
+	assert.Equal(t, task.ExecutionEnabled, task.Provider.ExecutionEnabled)
 	assert.Empty(t, task.Provider.TemplateAgentID)
 
 	report := successfulReport(task, "")
@@ -160,6 +163,44 @@ func TestNonDynamicRuntimeClaimAndReadinessNeverRequirePerUserAgent(t *testing.T
 	ready, err := appmigration.AssertReadyForCutover(fixture.db, fixture.source, fixture.target)
 	require.NoError(t, err)
 	assert.Equal(t, job.PublicID, ready.PublicID)
+}
+
+func TestNonDynamicRuntimeReportsRequireEmptyAgentAndReadbackEvidence(t *testing.T) {
+	for _, testCase := range []struct {
+		mode    int
+		dynamic bool
+		profile string
+	}{
+		{1, false, "standard_v2"},
+		{2, false, "multi_agent_v2"},
+		{3, false, "workflow_v2"},
+		{4, false, "claw_static_v2"},
+	} {
+		t.Run(testCase.profile, func(t *testing.T) {
+			fixture := newMigrationFixture(t, 1)
+			require.NoError(t, fixture.db.Where("job_id = ?", fixture.job.ID).Delete(&model.AppMigrationMember{}).Error)
+			require.NoError(t, fixture.db.Delete(&model.AppMigrationJob{}, fixture.job.ID).Error)
+			require.NoError(t, fixture.db.Model(&model.AppVerification{}).
+				Where("customer_app_id = ? AND app_config_version_id = ?", fixture.target.ID, fixture.config.ID).
+				Updates(map[string]any{"app_mode": testCase.mode, "dynamic_agent_config": testCase.dynamic, "template_agent_status": "not_required"}).Error)
+			_, err := appmigration.EnsureJob(fixture.db, fixture.target, fixture.config)
+			require.NoError(t, err)
+			service := appmigration.New(fixture.db, fixture.resolver)
+			task, err := service.Claim(context.Background(), "worker-"+testCase.profile, 30*time.Second, time.Now().UTC())
+			require.NoError(t, err)
+			require.NotNil(t, task)
+			assert.Equal(t, testCase.profile, task.RuntimeProfile)
+
+			invalid := successfulReport(task, "")
+			invalid.TargetReadbackHash = "sha256:" + strings.Repeat("a", 64)
+			_, err = service.Report(context.Background(), invalid, time.Now().UTC().Add(time.Second))
+			assert.ErrorContains(t, err, "readiness evidence")
+
+			valid := successfulReport(task, "")
+			_, err = service.Report(context.Background(), valid, time.Now().UTC().Add(2*time.Second))
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestReplanSupersedesOldMemberSetAndOnlyNewGenerationIsClaimable(t *testing.T) {
@@ -191,13 +232,17 @@ func TestReplanSupersedesOldMemberSetAndOnlyNewGenerationIsClaimable(t *testing.
 }
 
 func successfulReport(task *appmigration.ClaimedTask, agentID string) appmigration.ReportCommand {
-	return appmigration.ReportCommand{
+	report := appmigration.ReportCommand{
 		MigrationMemberID: task.MigrationMemberID, AttemptID: task.AttemptID, LeaseToken: task.LeaseToken,
 		Status: model.AppMigrationMemberStatusSucceeded, TargetAppProfileID: task.TargetAppProfileID,
 		TargetConfigVersion: task.TargetConfigVersion, TargetConfigFingerprint: task.TargetConfigFingerprint,
 		ProviderAppMode: task.ProviderAppMode, RuntimeProfile: task.RuntimeProfile, ExecutionEnabled: task.ExecutionEnabled,
-		TargetAgentID: agentID, TargetReadbackHash: "sha256:" + strings.Repeat("a", 64),
+		TargetAgentID: agentID,
 	}
+	if task.RuntimeProfile == "claw_dynamic_v2" {
+		report.TargetReadbackHash = "sha256:" + strings.Repeat("a", 64)
+	}
+	return report
 }
 
 func newMigrationFixture(t *testing.T, activeBindings int) migrationFixture {

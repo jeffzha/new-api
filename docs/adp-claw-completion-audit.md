@@ -1,5 +1,22 @@
 # ADP Claw 智能工作台完成度审计
 
+## 2026-08-11 Agent Store 与多 AppMode 增量审计
+
+本轮将“Agent Store 中的 Agent 是一个已发布的腾讯 ADP Application”固化为产品和运行时合同，不再把目录商品等同于动态 Claw 模板 Agent。控制面接受且只接受 provider 读回的 `AppMode in {1,2,3,4}`，并映射为 `standard_v2`、`multi_agent_v2`、`workflow_v2`、`claw_static_v2`、`claw_dynamic_v2` 五种闭集运行档案；只有动态 Claw 为每个 new-api 用户执行 `CopyAgentFromApp(Kind=1)`，其余档案创建无 `AgentId` 的会话并使用本地所有权主体，浏览器不能提交或覆盖 AppId、AppMode、AgentId、runtime profile 或 capability。
+
+已完成的本地增量包括：
+
+- 一个逻辑商品可绑定多个客户独立 deployment；每个 deployment 独立配置 CustomerApp、验证快照、执行开关和 customer/user/role/plan entitlement，目录分页在授权过滤前完成稳定 keyset 查询。
+- 管理员可创建、编辑、逐 deployment 验证、上架、下架、禁用和归档商品；provider-derived 元数据、运行模式和发布状态均由受信校验器读回，AppKey、Secret 引用、provider RequestId 和内部标识不进入用户目录响应。
+- launch 使用与商品、deployment、目录版本、行版本和 purpose 绑定的一次性票据；签发前后均重验 entitlement、执行状态和 App 快照，避免下架/禁用并发窗口继续启动。
+- 所有管理写操作强制 admin session、CSRF 和真实 step-up。普通管理入口不再自动获得写权限；密码只在 new-api 内校验，2FA/Passkey 复用既有安全验证，短期 `authenticated_at + amr + 256-bit nonce` 进入签名票据，control 只保存 nonce 摘要并拒绝重放。
+- App 迁移按 runtime profile 分支：非动态模式绝不初始化 provider Agent、绝不 Copy；动态 Claw 才执行 Copy+Describe readback。历史 lineage 支持 A→B→C 传递闭包，旧会话只读且显式 `execution_enabled=false`。
+- live E2E runner 已加入 Agent Store 五档、迁移 lineage、retention 和 integration execution 闭集合同；同一 deployment 的 readback、launch、SSO、AppContext hash、Turn 终态和 Conversation 历史必须形成同一捕获链，不能由无关成功请求拼接通过。
+
+本地验证证据：claw-control 全包 Go 测试通过；new-api `controller/router/workbenchbridge` 通过；默认前端 typecheck 与生产构建通过；control admin UI `28/28`、typecheck 与生产构建通过；ADP Workbench `530 passed, 3 skipped`；部署脚本 `88` 项中 `75` 通过、`13` 项仅因 Windows/POSIX 条件跳过；E2E runner `49/49` 通过；new-api 合并边界为既有文件 `3/10`、直接修改 `63/100` 行、新增比例 `99.78%`。
+
+本节只证明代码和离线合同闭环，尚不代表本轮增量已生产验收。当前只有一个真实动态 Claw AppMode=4 Application；要完成五档真实验收，仍需分别提供 AppMode 1、2、3、静态 AppMode 4 的已发布应用及其 AppId/AppKey/SpaceId/Region。AGSX、私有 COS、OAuth 测试应用、只读非 OAuth Plugin/Tool、第二用户/第二客户、Prometheus 观察者和异地 DR 资料仍按下文门禁保持关闭。本轮代码提交推送后由项目所有者手工执行发布脚本，取得镜像 digest、迁移、蓝绿切流和公网验收证据后才能把该增量标记为已部署。
+
 ## 2026-08-11 生产增量审计（当前权威结论）
 
 > 本节使用当前已提交、已推送的双仓库源码、GitHub Actions 发布清单、生产容器标签、生产数据库投影和真实 ADP 请求重新审计。本节更新了下文 2026-08-10 的历史快照；两者冲突时以本节为准。

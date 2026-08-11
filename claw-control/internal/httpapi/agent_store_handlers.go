@@ -18,7 +18,7 @@ func (s *Server) agentStoreStatus(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, r, http.StatusOK, map[string]bool{"enabled": s.publicConfig.AgentStoreEnabled}, nil)
 }
 
-const agentStoreRecentAuthAge = 15 * time.Minute
+const recentAdminAuthAge = 15 * time.Minute
 
 type agentStoreDeploymentInput struct {
 	CustomerID       uint64 `json:"customer_id"`
@@ -44,8 +44,20 @@ func (s *Server) listAgentStoreItems(w http.ResponseWriter, r *http.Request) {
 	if !s.agentStoreAvailable(w, r) {
 		return
 	}
-	result, err := s.services.AgentStore.AdminList(queryLimit(r))
-	writeResult(w, r, http.StatusOK, result, err)
+	const scope = "agent-store-items"
+	afterSortOrder, afterItemID, limit, ok := adminAgentStorePageRequest(w, r, scope)
+	if !ok {
+		return
+	}
+	page, err := s.services.AgentStore.AdminListPage(limit, afterSortOrder, afterItemID)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "data": page.Items,
+		"meta": map[string]any{"next_cursor": adminAgentStoreNextCursor(scope, page.NextSortOrder, page.NextItemID)},
+	})
 }
 
 func (s *Server) createAgentStoreItem(w http.ResponseWriter, r *http.Request) {
@@ -93,17 +105,15 @@ func (s *Server) updateAgentStoreItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ExpectedVersion  int64                          `json:"expected_version"`
-		DisplayName      *string                        `json:"display_name"`
-		Summary          *string                        `json:"summary"`
-		Description      *string                        `json:"description"`
-		AvatarURL        *string                        `json:"avatar_url"`
-		Category         *string                        `json:"category"`
-		Tags             *[]string                      `json:"tags"`
-		SortOrder        *int                           `json:"sort_order"`
-		Featured         *bool                          `json:"featured"`
-		ExecutionEnabled *bool                          `json:"execution_enabled"`
-		Entitlements     *[]agentstore.EntitlementInput `json:"entitlements"`
+		ExpectedVersion int64     `json:"expected_version"`
+		DisplayName     *string   `json:"display_name"`
+		Summary         *string   `json:"summary"`
+		Description     *string   `json:"description"`
+		AvatarURL       *string   `json:"avatar_url"`
+		Category        *string   `json:"category"`
+		Tags            *[]string `json:"tags"`
+		SortOrder       *int      `json:"sort_order"`
+		Featured        *bool     `json:"featured"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
@@ -127,24 +137,16 @@ func (s *Server) updateAgentStoreItem(w http.ResponseWriter, r *http.Request) {
 	if body.Tags != nil {
 		metadata.Tags = *body.Tags
 	}
-	sortOrder, featured, executionEnabled := current.SortOrder, current.Featured, current.Deployment.ExecutionEnabled
+	sortOrder, featured := current.SortOrder, current.Featured
 	if body.SortOrder != nil {
 		sortOrder = *body.SortOrder
 	}
 	if body.Featured != nil {
 		featured = *body.Featured
 	}
-	if body.ExecutionEnabled != nil {
-		executionEnabled = *body.ExecutionEnabled
-	}
-	var entitlements []agentstore.EntitlementInput
-	if body.Entitlements != nil {
-		entitlements = *body.Entitlements
-	}
 	result, err := s.services.AgentStore.Update(agentstore.UpdateCommand{
 		ItemID: current.ItemID, ExpectedVersion: body.ExpectedVersion, Metadata: metadata,
-		SortOrder: sortOrder, Featured: featured, ExecutionEnabled: executionEnabled,
-		Entitlements: entitlements, Actor: actor(r), RequestID: requestID(r),
+		SortOrder: sortOrder, Featured: featured, Actor: actor(r), RequestID: requestID(r),
 	})
 	writeResult(w, r, http.StatusOK, result, err)
 }
@@ -162,6 +164,90 @@ func (s *Server) verifyAgentStoreItem(w http.ResponseWriter, r *http.Request) {
 	result, err := s.services.AgentStore.Verify(r.Context(), agentstore.TransitionCommand{
 		ItemID: r.PathValue("item_id"), ExpectedVersion: body.ExpectedVersion,
 		Action: "verify", Actor: actor(r), RequestID: requestID(r),
+	})
+	writeResult(w, r, http.StatusOK, result, err)
+}
+
+func (s *Server) createAgentStoreDeployment(w http.ResponseWriter, r *http.Request) {
+	if !s.agentStoreAvailable(w, r) {
+		return
+	}
+	var body struct {
+		ExpectedItemVersion int64                         `json:"expected_item_version"`
+		CustomerID          uint64                        `json:"customer_id"`
+		CustomerAppID       uint64                        `json:"customer_app_id"`
+		Entitlements        []agentstore.EntitlementInput `json:"entitlements"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	result, err := s.services.AgentStore.AddDeployment(agentstore.DeploymentCommand{
+		ItemID: r.PathValue("item_id"), ExpectedItemVersion: body.ExpectedItemVersion,
+		CustomerID: body.CustomerID, CustomerAppID: body.CustomerAppID, Entitlements: body.Entitlements,
+		Actor: actor(r), RequestID: requestID(r),
+	})
+	writeResult(w, r, http.StatusCreated, result, err)
+}
+
+func (s *Server) updateAgentStoreDeployment(w http.ResponseWriter, r *http.Request) {
+	if !s.agentStoreAvailable(w, r) {
+		return
+	}
+	var body struct {
+		ExpectedDeploymentVersion int64                          `json:"expected_deployment_version"`
+		ExecutionEnabled          bool                           `json:"execution_enabled"`
+		Entitlements              *[]agentstore.EntitlementInput `json:"entitlements"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	var entitlements []agentstore.EntitlementInput
+	if body.Entitlements != nil {
+		entitlements = *body.Entitlements
+	}
+	result, err := s.services.AgentStore.UpdateDeployment(agentstore.DeploymentCommand{
+		ItemID: r.PathValue("item_id"), DeploymentID: r.PathValue("deployment_id"),
+		ExpectedDeploymentVersion: body.ExpectedDeploymentVersion, ExecutionEnabled: body.ExecutionEnabled,
+		Entitlements: entitlements, ReplaceEntitlements: body.Entitlements != nil,
+		Actor: actor(r), RequestID: requestID(r),
+	})
+	writeResult(w, r, http.StatusOK, result, err)
+}
+
+func (s *Server) verifyAgentStoreDeployment(w http.ResponseWriter, r *http.Request) {
+	if !s.agentStoreAvailable(w, r) {
+		return
+	}
+	var body struct {
+		ExpectedVersion           int64 `json:"expected_version"`
+		ExpectedDeploymentVersion int64 `json:"expected_deployment_version"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	result, err := s.services.AgentStore.Verify(r.Context(), agentstore.TransitionCommand{
+		ItemID: r.PathValue("item_id"), DeploymentID: r.PathValue("deployment_id"),
+		ExpectedVersion: body.ExpectedVersion, ExpectedDeploymentVersion: body.ExpectedDeploymentVersion,
+		Action: "verify", Actor: actor(r), RequestID: requestID(r),
+	})
+	writeResult(w, r, http.StatusOK, result, err)
+}
+
+func (s *Server) disableAgentStoreDeployment(w http.ResponseWriter, r *http.Request) {
+	if !s.agentStoreAvailable(w, r) {
+		return
+	}
+	var body struct {
+		ExpectedDeploymentVersion int64  `json:"expected_deployment_version"`
+		Reason                    string `json:"reason"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	result, err := s.services.AgentStore.DisableDeployment(agentstore.DeploymentCommand{
+		ItemID: r.PathValue("item_id"), DeploymentID: r.PathValue("deployment_id"),
+		ExpectedDeploymentVersion: body.ExpectedDeploymentVersion, Reason: body.Reason,
+		Actor: actor(r), RequestID: requestID(r),
 	})
 	writeResult(w, r, http.StatusOK, result, err)
 }
@@ -189,8 +275,22 @@ func (s *Server) agentStoreAudits(w http.ResponseWriter, r *http.Request) {
 	if !s.agentStoreAvailable(w, r) {
 		return
 	}
-	result, err := s.services.AgentStore.Audits(r.PathValue("item_id"), queryLimit(r))
-	writeResult(w, r, http.StatusOK, result, err)
+	itemID := r.PathValue("item_id")
+	scope := "agent-store-audits:" + itemID
+	position, limit, ok := adminAgentStoreAuditPageRequest(w, r, scope)
+	if !ok {
+		return
+	}
+	page, err := s.services.AgentStore.AuditsPage(itemID, limit, position)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"data":    map[string]any{"admin_audits": page.AdminAudits, "launch_audits": page.LaunchAudits},
+		"meta":    map[string]any{"next_cursor": adminAgentStoreAuditNextCursor(scope, page.Next)},
+	})
 }
 
 func (s *Server) agentStoreCatalog(w http.ResponseWriter, r *http.Request) {
@@ -288,19 +388,4 @@ func (s *Server) agentStoreAvailable(w http.ResponseWriter, r *http.Request) boo
 		return false
 	}
 	return true
-}
-
-func (s *Server) requireRecentAgentStoreAdmin(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("claw_admin_session")
-		if err != nil {
-			writeError(w, r, domain.Forbidden("recent administrator authentication is required"))
-			return
-		}
-		if _, err := s.services.Access.AuthorizeRecentAdminSession(r.Context(), cookie.Value, agentStoreRecentAuthAge); err != nil {
-			writeError(w, r, err)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -198,6 +199,126 @@ func TestAdminSessionTicketRequiresAndRecordsSuperAdministratorSurface(t *testin
 	require.Equal(t, http.StatusOK, recorder.Code)
 	assert.Equal(t, workbenchbridge.SurfaceAdmin, tickets.request.Surface)
 	assert.True(t, tickets.request.IsSuperAdmin)
+}
+
+func TestAdminStepUpTicketConsumesTrustedSecureVerificationOnce(t *testing.T) {
+	bridge, tickets := newWorkbenchTestBridge(t, &model.User{
+		Id: 42, Username: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled,
+	})
+	router := gin.New()
+	router.Use(sessions.Sessions("session", cookie.NewStore([]byte("workbench-test-session-secret"))))
+	router.GET("/login", func(c *gin.Context) {
+		session := sessions.Default(c)
+		session.Set("username", "root")
+		session.Set("role", common.RoleRootUser)
+		session.Set("id", 42)
+		session.Set("status", common.UserStatusEnabled)
+		session.Set("group", "default")
+		session.Set(SecureVerificationSessionKey, time.Now().Unix())
+		session.Set(secureVerificationMethodSessionKey, secureVerificationMethodPasskey)
+		require.NoError(t, session.Save())
+		c.Status(http.StatusNoContent)
+	})
+	router.POST("/api/admin/workbench/step-up-ticket", func(c *gin.Context) {
+		c.Set("id", 42)
+		c.Next()
+	}, bridge.AdminStepUpTicket)
+
+	login := httptest.NewRecorder()
+	router.ServeHTTP(login, httptest.NewRequest(http.MethodGet, "/login", nil))
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/step-up-ticket", bytes.NewBufferString(`{"method":"secure_verification"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://example.com")
+	for _, sessionCookie := range login.Result().Cookies() {
+		request.AddCookie(sessionCookie)
+	}
+	first := httptest.NewRecorder()
+	router.ServeHTTP(first, request)
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+	assert.WithinDuration(t, time.Now(), tickets.request.AuthenticatedAt, 2*time.Second)
+	assert.Equal(t, []string{"webauthn"}, tickets.request.AMR)
+	assert.NotEmpty(t, tickets.request.ReauthNonce)
+
+	replay := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/step-up-ticket", bytes.NewBufferString(`{"method":"secure_verification"}`))
+	replay.Header.Set("Content-Type", "application/json")
+	replay.Header.Set("Origin", "http://example.com")
+	for _, sessionCookie := range first.Result().Cookies() {
+		replay.AddCookie(sessionCookie)
+	}
+	second := httptest.NewRecorder()
+	router.ServeHTTP(second, replay)
+	assert.Equal(t, http.StatusForbidden, second.Code)
+	assert.Contains(t, second.Body.String(), "recent 2FA or Passkey verification is required")
+}
+
+func TestAdminStepUpTicketRejectsExpiredSecureVerification(t *testing.T) {
+	bridge, tickets := newWorkbenchTestBridge(t, &model.User{
+		Id: 42, Username: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled,
+	})
+	recorder := httptest.NewRecorder()
+	store := cookie.NewStore([]byte("workbench-test-session-secret"))
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(sessions.Sessions("session", store))
+	router.GET("/login", func(c *gin.Context) {
+		session := sessions.Default(c)
+		session.Set("username", "root")
+		session.Set("role", common.RoleRootUser)
+		session.Set("id", 42)
+		session.Set("status", common.UserStatusEnabled)
+		session.Set("group", "default")
+		session.Set(SecureVerificationSessionKey, time.Now().Add(-time.Duration(SecureVerificationTimeout+1)*time.Second).Unix())
+		session.Set(secureVerificationMethodSessionKey, secureVerificationMethod2FA)
+		require.NoError(t, session.Save())
+		c.Status(http.StatusNoContent)
+	})
+	router.POST("/api/admin/workbench/step-up-ticket", func(c *gin.Context) {
+		c.Set("id", 42)
+		c.Next()
+	}, bridge.AdminStepUpTicket)
+	login := httptest.NewRecorder()
+	router.ServeHTTP(login, httptest.NewRequest(http.MethodGet, "/login", nil))
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/step-up-ticket", bytes.NewBufferString(`{"method":"secure_verification"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://example.com")
+	for _, sessionCookie := range login.Result().Cookies() {
+		request.AddCookie(sessionCookie)
+	}
+	router.ServeHTTP(recorder, request)
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Zero(t, tickets.request.UserID)
+}
+
+func TestAdminStepUpTicketVerifiesPasswordOnlyInsideNewAPI(t *testing.T) {
+	hashedPassword, err := common.Password2Hash("RootPassword@2026")
+	require.NoError(t, err)
+	bridge, tickets := newWorkbenchTestBridge(t, &model.User{
+		Id: 42, Username: "root", Password: hashedPassword, Role: common.RoleRootUser, Status: common.UserStatusEnabled,
+	})
+	router := gin.New()
+	router.Use(sessions.Sessions("session", cookie.NewStore([]byte("workbench-test-session-secret"))))
+	router.POST("/api/admin/workbench/step-up-ticket", func(c *gin.Context) {
+		c.Set("id", 42)
+		c.Next()
+	}, bridge.AdminStepUpTicket)
+
+	wrong := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/step-up-ticket", bytes.NewBufferString(`{"method":"password","password":"wrong"}`))
+	wrong.Header.Set("Content-Type", "application/json")
+	wrong.Header.Set("Origin", "http://example.com")
+	wrongResult := httptest.NewRecorder()
+	router.ServeHTTP(wrongResult, wrong)
+	assert.Equal(t, http.StatusForbidden, wrongResult.Code)
+	assert.Zero(t, tickets.request.UserID)
+
+	correct := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/step-up-ticket", bytes.NewBufferString(`{"method":"password","password":"RootPassword@2026"}`))
+	correct.Header.Set("Content-Type", "application/json")
+	correct.Header.Set("Origin", "http://example.com")
+	correctResult := httptest.NewRecorder()
+	router.ServeHTTP(correctResult, correct)
+	require.Equal(t, http.StatusOK, correctResult.Code, correctResult.Body.String())
+	assert.Equal(t, []string{"pwd"}, tickets.request.AMR)
+	assert.NotEmpty(t, tickets.request.ReauthNonce)
+	assert.NotContains(t, fmt.Sprintf("%#v", tickets.request), "RootPassword@2026")
 }
 
 func TestSessionTicketRejectsUserDisabledAfterSessionWasCreated(t *testing.T) {

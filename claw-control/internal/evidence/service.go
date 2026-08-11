@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/claw-control/internal/domain"
 	"github.com/QuantumNous/new-api/claw-control/internal/jsonx"
 	"github.com/QuantumNous/new-api/claw-control/internal/model"
+	"github.com/QuantumNous/new-api/claw-control/internal/pagination"
 	"github.com/QuantumNous/new-api/claw-control/internal/support"
 	"gorm.io/gorm"
 )
@@ -299,22 +300,29 @@ func (s *Service) GetForAuthorizedDownload(evidenceRef, actor, requestID string)
 }
 
 func (s *Service) List(customerID *uint64, limit int) ([]Metadata, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
-	query := s.db.Where("status = ?", model.EvidenceStatusActive).Order("id desc").Limit(limit)
+	page, err := s.ListPage(customerID, 0, limit)
+	return page.Items, err
+}
+
+func (s *Service) ListPage(customerID *uint64, beforeID uint64, limit int) (pagination.Page[Metadata], error) {
+	limit = pagination.Limit(limit)
+	query := s.db.Where("status = ?", model.EvidenceStatusActive).Order("id desc").Limit(limit + 1)
 	if customerID != nil {
 		query = query.Where("customer_id = ?", *customerID)
 	}
+	if beforeID > 0 {
+		query = query.Where("id < ?", beforeID)
+	}
 	var objects []model.EvidenceObject
 	if err := query.Find(&objects).Error; err != nil {
-		return nil, err
+		return pagination.Page[Metadata]{}, err
 	}
-	result := make([]Metadata, 0, len(objects))
-	for index := range objects {
-		result = append(result, project(&objects[index]))
+	page := pagination.Trim(objects, limit, func(value model.EvidenceObject) uint64 { return value.ID })
+	result := make([]Metadata, 0, len(page.Items))
+	for index := range page.Items {
+		result = append(result, project(&page.Items[index]))
 	}
-	return result, nil
+	return pagination.Page[Metadata]{Items: result, NextBeforeID: page.NextBeforeID}, nil
 }
 
 func validateFilenameAndMIME(filename, declaredMIME string) (string, string, error) {

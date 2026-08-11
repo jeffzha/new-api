@@ -22,13 +22,13 @@ references, provider AppId/SpaceId, template AgentId, or raw provider payloads.
 Verification resolves the existing server-side references and trusts only the
 authenticated `DescribeApp` readback. AppMode 1, 2, 3, and 4 are accepted;
 `DescribeAgentDetail` is required only for AppMode 4 when
-`AppConfig.Mode.ClawAgentConfig.CustomConfig.Enabled` is true. Runtime profiles
-other than the production-accepted `claw_dynamic_v2` remain execution-disabled
-until their real Tencent E2E gate is complete.
+`AppConfig.Mode.ClawAgentConfig.CustomConfig.Enabled` is true. All five verified
+runtime profiles remain execution-disabled until an administrator explicitly
+enables the individual deployment after its real Tencent E2E gate is complete.
 
 Administrator routes are under
 `/api/admin/workbench/agent-store/items`; every mutation requires the existing
-super-admin session, CSRF header, authentication no older than 15 minutes,
+super-admin session, CSRF header, a new-api password/2FA/Passkey step-up no older than 15 minutes,
 `expected_version`, and an audit row. User routes are:
 
 ```text
@@ -149,7 +149,7 @@ Target verification atomically creates a generation-versioned rebuild job for
 all active identity bindings. Signed internal `claim` and `report` tuples carry
 the verified `provider_app_mode`, `runtime_profile`, and `execution_enabled`
 snapshot. ADP workers copy and read back per-user Agents only for
-`claw_dynamic_v2`; other profiles verify target App/profile readiness and report
+`claw_dynamic_v2`; non-dynamic profiles verify target App/profile readiness and report
 an empty AgentId. Approval request and
 execution both reject a stale App/config/credential/member-set fingerprint or
 any member without a successful readback. Replanning preserves the superseded
@@ -230,6 +230,8 @@ The complete first-phase ticket handoff deliberately keeps four credentials sepa
 An entry ticket can never authenticate ADP, an ADP ticket can never authenticate the browser control plane, and neither raw token is stored. A local `wt1.*` ticket stored only in new-api Redis is not part of this chain. new-api must fail closed if entry-ticket issue fails.
 
 For `surface=admin`, new-api uses its RootAuth-only `POST /api/admin/workbench/session-ticket` flow and sets `is_super_admin=true`. On entry, claw-control calls the dedicated `/api/internal/workbench/admin-identity-status` endpoint and requires the signed response to confirm `is_super_admin=true`; it then creates only `claw_admin_session` plus the CSRF cookie, never an ADP ticket. The admin session cookie is Secure/HttpOnly/Strict with `Path=/api/admin/workbench`; the non-HttpOnly random CSRF cookie is Secure/Strict with `Path=/` so UI code under `/workbench/admin/` can copy it into `X-CSRF-Token`.
+
+The ordinary admin entry is read-only. Before any mutation, the SPA redirects to the same-origin new-api step-up page. `POST /api/admin/workbench/step-up-ticket` accepts either a password that is verified only inside new-api, or a completed existing 2FA/Passkey secure-verification marker. The HMAC-authenticated internal entry-ticket request carries `authenticated_at`, a closed AMR (`pwd`, `otp`, or `webauthn`), and a 256-bit one-time reauthentication nonce. claw-control stores only the nonce hash, rejects replay/expiry, and bases the 15-minute mutation window on `authenticated_at`, never on admin-session creation time.
 
 Caddy must explicitly remove every `claw_*` cookie before proxying a request to new-api or an ordinary ADP route. The sole exception is `claw_sso_binding`, which is reconstructed as the only Cookie header sent to ADP on `/workbench/auth/sso`; the control session is still stripped. These cookies are control-plane credentials, not upstream login credentials. Access logs and APM must also redact the `ticket` query parameter on `/api/workbench/entry` and `/workbench/auth/sso`.
 

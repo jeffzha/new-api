@@ -14,7 +14,16 @@
       "scheduled.worker_failover": "file:/secure/evidence/${acceptance_run_id}/scheduled-worker-failover.json",
       "scheduled.provider_unknown_no_repost": "file:/secure/evidence/${acceptance_run_id}/scheduled-provider-submit.json",
       "byok.secret_leak_scan": "file:/secure/evidence/${acceptance_run_id}/byok-secret-scan.json",
-      "billing_import.coordinator_single_claim": "file:/secure/evidence/${acceptance_run_id}/billing-single-claim.json"
+      "billing_import.coordinator_single_claim": "file:/secure/evidence/${acceptance_run_id}/billing-single-claim.json",
+      "agent_store.non_dynamic_zero_copy": "file:/secure/evidence/${acceptance_run_id}/agent-store-non-dynamic-copy-count.json",
+      "agent_store.dynamic_copy_single_request": "file:/secure/evidence/${acceptance_run_id}/agent-store-dynamic-copy-count.json",
+      "agent_store.dynamic_binding_unique": "file:/secure/evidence/${acceptance_run_id}/agent-store-dynamic-binding.json",
+      "app_migration.lineage_single_activation": "file:/secure/evidence/${acceptance_run_id}/app-migration-lineage.json",
+      "retention.delivery_receipt_completed": "file:/secure/evidence/${acceptance_run_id}/retention-delivery-receipt.json",
+      "retention.adp_exact_deletion": "file:/secure/evidence/${acceptance_run_id}/retention-adp-deletion.json",
+      "retention.cos_exact_deletion": "file:/secure/evidence/${acceptance_run_id}/retention-cos-deletion.json",
+      "retention.provider_revoked": "file:/secure/evidence/${acceptance_run_id}/retention-provider-revoke.json",
+      "retention.control_records_preserved": "file:/secure/evidence/${acceptance_run_id}/retention-control-preservation.json"
     }
   },
   "secrets": {
@@ -87,7 +96,11 @@
   "limit_checks": [],
   "selector_checks": [],
   "oauth_checks": [],
+  "integration_execution_mode": "blocked",
+  "integration_execution_checks": [],
   "scheduled_task_checks": [],
+  "agent_store_checks": [],
+  "app_migration_checks": [],
   "sandbox_checks": [
     {
       "name": "managed sandbox exposes only approved capabilities",
@@ -365,6 +378,7 @@
   "billing_import_checks": [],
   "smoke_checks": [],
   "security_checks": [],
+  "retention_checks": [],
   "direct_adp_paths": ["/account/info", "/application/list", "/chat/messages"],
   "load": {
     "request_fixture": "file:/secure/fixtures/minimal-turn.json",

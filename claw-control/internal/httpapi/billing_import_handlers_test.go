@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/claw-control/internal/evidence"
 	"github.com/QuantumNous/new-api/claw-control/internal/httpapi"
 	"github.com/QuantumNous/new-api/claw-control/internal/jsonx"
+	"github.com/QuantumNous/new-api/claw-control/internal/secrets"
 	"github.com/QuantumNous/new-api/claw-control/internal/testutil"
 	"github.com/QuantumNous/new-api/claw-control/internal/usageaudit"
 	"github.com/stretchr/testify/assert"
@@ -40,12 +41,13 @@ func TestTencentBillingImportAdminEndpointsExposeOnlySafeAsyncState(t *testing.T
 	})
 	require.NoError(t, err)
 	const adminToken = "emergency-admin-token"
-	server := httpapi.New(httpapi.Services{DB: db, BillingImports: imports}, adminToken, httpapi.InternalAuth{}, httpapi.PublicConfig{})
+	accessService, sessionCookie, csrfToken := issueAdminSession(t, db, secrets.EnvironmentResolver{}, 79)
+	server := httpapi.New(httpapi.Services{DB: db, Access: accessService, BillingImports: imports}, adminToken, httpapi.InternalAuth{}, httpapi.PublicConfig{})
 	month := time.Now().UTC().Format("2006-01")
 	body, err := jsonx.Marshal(map[string]string{"month": month, "business_code": "p_adp"})
 	require.NoError(t, err)
 	create := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/tencent-billing-imports", bytes.NewReader(body))
-	authorizeEmergency(create, adminToken)
+	authorizeAdminRequest(create, sessionCookie, csrfToken)
 	createResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(createResponse, create)
 	require.Equal(t, http.StatusAccepted, createResponse.Code)
@@ -64,7 +66,7 @@ func TestTencentBillingImportAdminEndpointsExposeOnlySafeAsyncState(t *testing.T
 	require.NoError(t, err)
 	assert.True(t, processed)
 	get := httptest.NewRequest(http.MethodGet, "/api/admin/workbench/tencent-billing-imports/"+created.Data.ImportID, nil)
-	authorizeEmergency(get, adminToken)
+	get.AddCookie(sessionCookie)
 	getResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(getResponse, get)
 	assert.Equal(t, http.StatusOK, getResponse.Code)
@@ -73,21 +75,16 @@ func TestTencentBillingImportAdminEndpointsExposeOnlySafeAsyncState(t *testing.T
 	assert.NotContains(t, getResponse.Body.String(), "10001")
 
 	retry := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/tencent-billing-imports/"+created.Data.ImportID+"/retry", nil)
-	authorizeEmergency(retry, adminToken)
+	authorizeAdminRequest(retry, sessionCookie, csrfToken)
 	retryResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(retryResponse, retry)
 	assert.Equal(t, http.StatusAccepted, retryResponse.Code)
 	assert.Contains(t, retryResponse.Body.String(), `"status":"pending"`)
 
 	list := httptest.NewRequest(http.MethodGet, "/api/admin/workbench/tencent-billing-imports?limit=10", nil)
-	authorizeEmergency(list, adminToken)
+	list.AddCookie(sessionCookie)
 	listResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(listResponse, list)
 	assert.Equal(t, http.StatusOK, listResponse.Code)
 	assert.Contains(t, listResponse.Body.String(), created.Data.ImportID)
-}
-
-func authorizeEmergency(request *http.Request, token string) {
-	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set("X-Claw-Actor", "bootstrap-test-admin")
 }

@@ -122,7 +122,7 @@ flowchart TD
 - `AgentCatalogItem` 是商店商品身份，可面向一个或多个客户，但不保存 AppKey。
 - `CustomerAgentDeployment` 将商品绑定到一个客户已有的 `CustomerApp` 及其已验证 config version。
 - 同一商品需要跨客户销售时，每个客户仍配置自己的 ADP Application；不得因为商品相同而共享 CustomerApp、AppKey、shadow account、Conversation 或文件。
-- 首版允许商品仅有一个客户部署，未来增加客户只新增 deployment/entitlement，不复制目录元数据。
+- 一个商品可挂载多个相互独立的客户 deployment；增加客户时只新增 deployment/entitlement，不复制目录元数据。每个 deployment 独立使用 CAS 行版本完成验证、执行开关、授权替换和禁用。
 - 浏览器只看到 opaque item id/slug、展示元数据、能力标签和启动状态；不得看到 customer_app_id、AppId、SpaceId、AppKey、AgentId、credential profile 或 provider RequestId。
 
 #### 1.4.2 组件责任与低冲突约束
@@ -257,6 +257,10 @@ POST   /api/admin/workbench/agent-store/items
 GET    /api/admin/workbench/agent-store/items/{item_id}
 PATCH  /api/admin/workbench/agent-store/items/{item_id}
 POST   /api/admin/workbench/agent-store/items/{item_id}/verify
+POST   /api/admin/workbench/agent-store/items/{item_id}/deployments
+PATCH  /api/admin/workbench/agent-store/items/{item_id}/deployments/{deployment_id}
+POST   /api/admin/workbench/agent-store/items/{item_id}/deployments/{deployment_id}/verify
+POST   /api/admin/workbench/agent-store/items/{item_id}/deployments/{deployment_id}/disable
 POST   /api/admin/workbench/agent-store/items/{item_id}/publish
 POST   /api/admin/workbench/agent-store/items/{item_id}/unpublish
 POST   /api/admin/workbench/agent-store/items/{item_id}/disable
@@ -518,7 +522,7 @@ flowchart TD
 
 | 边界 | 接口 | 用途 |
 |---|---|---|
-| new-api core | `POST /api/workbench/session-ticket`、`POST /api/admin/workbench/session-ticket` | 从当前 new-api Web Session 复核用户；再用专用服务 HMAC 请求 claw-control 签发短期 opaque entry ticket。管理员入口必须再次校验平台超级管理员 |
+| new-api core | `POST /api/workbench/session-ticket`、`POST /api/admin/workbench/session-ticket`、`POST /api/admin/workbench/step-up-ticket` | 从当前 new-api Web Session 复核用户；再用专用服务 HMAC 请求 claw-control 签发短期 opaque entry ticket。管理员入口必须再次校验平台超级管理员；step-up 密码仅在 new-api 校验，或消费现有 2FA/Passkey 安全验证结果 |
 | new-api core internal | `POST /api/internal/workbench/identity-status` | 只返回用户存在/启用状态和身份版本，不返回密码、API Key、余额或分组 |
 | claw-control public | `GET /api/workbench/entry` | 验证并单次消费 new-api 入口断言，解析成员关系，建立 control session 后转入 ADP SSO |
 | claw-control public | `GET /api/workbench/config` | 基于 control session 返回当前用户的工作台状态、套餐摘要、公开限制 |
@@ -2313,8 +2317,8 @@ sequenceDiagram
 
 ```caddyfile
 # Existing material/API special routes remain above or are regression-tested.
-# Keep both POST /api/workbench/session-ticket and
-# POST /api/admin/workbench/session-ticket on the normal new-api catch-all.
+# Keep the user/admin session-ticket and admin step-up-ticket POST endpoints
+# on the normal new-api catch-all.
 @clawControlPublic path /api/workbench/entry /api/workbench/config /api/workbench/plan
 handle @clawControlPublic {
     reverse_proxy claw-control-active:8080
@@ -2322,7 +2326,7 @@ handle @clawControlPublic {
 
 @clawControlAdmin {
     path /api/admin/workbench/*
-    not path /api/admin/workbench/session-ticket
+    not path /api/admin/workbench/session-ticket /api/admin/workbench/step-up-ticket
 }
 handle @clawControlAdmin {
     request_header -Authorization
@@ -2368,7 +2372,7 @@ handle @workbench {
 }
 ```
 
-生产部署前按当前 Caddy 版本验证语法。`claw-control-active` 是独立服务的 Blue/Green 活动 upstream；它验证自己的 `claw_control_session`，并以短 TTL 调用 new-api `identity-status`，不读取 new-api Cookie/JWT/数据库。上述 claw-control public/admin 路由和 `/workbench/*` 必须位于 new-api catch-all 前；普通和管理员两个 session-ticket POST 均落到 new-api，`/api/internal/workbench/**` 只允许服务网络直连、不得通过公网 Caddy 暴露。部署后必须回归所有现有素材/API 特殊路由。权威可执行配置始终以 `deploy/claw-workbench/caddy/Caddyfile.public.snippet` 为准。
+生产部署前按当前 Caddy 版本验证语法。`claw-control-active` 是独立服务的 Blue/Green 活动 upstream；它验证自己的 `claw_control_session`，并以短 TTL 调用 new-api `identity-status`，不读取 new-api Cookie/JWT/数据库。上述 claw-control public/admin 路由和 `/workbench/*` 必须位于 new-api catch-all 前；普通/管理员 session-ticket 与管理员 step-up-ticket POST 均落到 new-api，`/api/internal/workbench/**` 只允许服务网络直连、不得通过公网 Caddy 暴露。部署后必须回归所有现有素材/API 特殊路由。权威可执行配置始终以 `deploy/claw-workbench/caddy/Caddyfile.public.snippet` 为准。
 
 ### 15.5 指标与告警
 
@@ -2542,23 +2546,31 @@ handle @workbench {
 ```json
 POST /api/admin/workbench/customers/42/app/verify
 {
-  "expected_version": 4,
-  "run_minimal_chat_test": false
+  "expected_version": 7,
+  "config_version": 4
 }
 ```
 
 ```json
 {
+  "id": 91,
   "verification_id": "verify_01...",
+  "customer_app_id": 12,
+  "app_config_version_id": 37,
   "result": "verified",
   "app_mode": 4,
   "release_status": "published",
   "template_agent_status": "available",
-  "provider_request_ids": ["..."]
+  "dynamic_agent_config": true,
+  "provider_request_ids_json": "[\"...\"]",
+  "sanitized_response_hash": "sha256:...",
+  "verified_by": "admin:1",
+  "verified_at": "2026-08-11T08:00:00Z",
+  "created_at": "2026-08-11T08:00:00Z"
 }
 ```
 
-启用接口再次检查最新 verification、活动套餐和时间边界，不能只相信前端按钮状态。
+`expected_version` 绑定稳定 App 行的 CAS 版本，`config_version` 绑定待验证的不可变配置版本；服务端只验证两者精确匹配的 pending config，并以 HTTP 201 返回持久化后的 `AppVerification` 安全投影。管理员不能提交 AppMode、发布状态、Agent 状态、provider request ID、响应哈希或验证结果；这些字段全部来自受信 provider verifier。当前实现为兼容数据库投影，provider request ID 以 `provider_request_ids_json` 字符串返回，调用方解析前必须按 JSON 数组校验。响应不含 AppKey、Secret 引用或解析后的凭据。启用接口再次检查最新 verification、活动套餐和时间边界，不能只相信前端按钮状态。
 
 #### 创建固定套餐周期
 

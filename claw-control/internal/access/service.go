@@ -37,12 +37,16 @@ type Service struct {
 }
 
 const SelectionNonceTTL = 2 * time.Minute
+const trustedReauthProofMaxAge = 5 * time.Minute
 
 type IssueEntryTicketCommand struct {
 	NewAPIUserID    int64
 	IdentityVersion string
 	Surface         string
 	IsSuperAdmin    bool
+	AuthenticatedAt time.Time
+	AMR             []string
+	ReauthNonce     string
 }
 
 type IssueEntryTicketResult struct {
@@ -220,11 +224,56 @@ func (s *Service) IssueEntryTicket(command IssueEntryTicketCommand) (*IssueEntry
 	if s.entryTicketTTL <= 0 {
 		return nil, fmt.Errorf("entry ticket TTL must be positive")
 	}
+	var authenticatedAt *time.Time
+	var authMethods string
+	var reauthNonceHash *string
+	hasReauthProof := !command.AuthenticatedAt.IsZero() || len(command.AMR) > 0 || strings.TrimSpace(command.ReauthNonce) != ""
+	if hasReauthProof {
+		if command.Surface != "admin" {
+			return nil, domain.Invalid("administrator step-up proof is valid only for the admin surface")
+		}
+		now := time.Now().UTC()
+		proofAt := command.AuthenticatedAt.UTC()
+		if proofAt.IsZero() || proofAt.After(now.Add(time.Minute)) || now.Sub(proofAt) >= trustedReauthProofMaxAge {
+			return nil, domain.Forbidden("trusted administrator step-up proof is expired or invalid")
+		}
+		methods := make([]string, 0, len(command.AMR))
+		seen := map[string]struct{}{}
+		for _, method := range command.AMR {
+			method = strings.ToLower(strings.TrimSpace(method))
+			if method != "otp" && method != "webauthn" && method != "pwd" {
+				return nil, domain.Invalid("administrator step-up amr is invalid")
+			}
+			if _, exists := seen[method]; !exists {
+				seen[method] = struct{}{}
+				methods = append(methods, method)
+			}
+		}
+		nonce, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(command.ReauthNonce))
+		if err != nil || len(nonce) != 32 || len(methods) == 0 {
+			return nil, domain.Invalid("administrator step-up proof is incomplete")
+		}
+		sort.Strings(methods)
+		authMethods = strings.Join(methods, " ")
+		nonceDigest := sha256.Sum256(nonce)
+		nonceHash := hex.EncodeToString(nonceDigest[:])
+		authenticatedAt = &proofAt
+		reauthNonceHash = &nonceHash
+	}
 	result := &IssueEntryTicketResult{}
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if command.Surface == "admin" {
 			if !command.IsSuperAdmin {
 				return domain.Forbidden("admin entry ticket requires a trusted super-admin assertion")
+			}
+			if reauthNonceHash != nil {
+				var count int64
+				if err := tx.Model(&model.EntryTicket{}).Where("reauth_nonce_hash = ?", *reauthNonceHash).Count(&count).Error; err != nil {
+					return err
+				}
+				if count > 0 {
+					return domain.Conflict("administrator step-up proof has already been used")
+				}
 			}
 			token, err := randomOpaqueToken()
 			if err != nil {
@@ -235,6 +284,7 @@ func (s *Service) IssueEntryTicket(command IssueEntryTicketCommand) (*IssueEntry
 			if err := tx.Create(&model.EntryTicket{
 				TokenHash: hex.EncodeToString(hash[:]), NewAPIUserID: command.NewAPIUserID,
 				IdentityVersion: command.IdentityVersion, Surface: "admin", IsSuperAdmin: true,
+				AuthenticatedAt: authenticatedAt, AuthMethods: authMethods, ReauthNonceHash: reauthNonceHash,
 				ExpiresAt: expiresAt,
 			}).Error; err != nil {
 				return err
@@ -292,6 +342,12 @@ func (s *Service) IssueEntryTicket(command IssueEntryTicketCommand) (*IssueEntry
 		result.ExpiresAt = expiresAt.Unix()
 		return nil
 	})
+	if err != nil && reauthNonceHash != nil {
+		var count int64
+		if queryErr := s.db.Model(&model.EntryTicket{}).Where("reauth_nonce_hash = ?", *reauthNonceHash).Count(&count).Error; queryErr == nil && count > 0 {
+			return nil, domain.Conflict("administrator step-up proof has already been used")
+		}
+	}
 	return result, err
 }
 
@@ -514,6 +570,7 @@ func (s *Service) createAdminSession(entry model.EntryTicket) (*EnterResult, err
 	session := &model.AdminSession{
 		TokenHash: hex.EncodeToString(sessionHash[:]), CSRFTokenHash: hex.EncodeToString(csrfHash[:]),
 		NewAPIUserID: entry.NewAPIUserID, IdentityVersion: entry.IdentityVersion,
+		AuthenticatedAt: entry.AuthenticatedAt, AuthMethods: entry.AuthMethods, ReauthNonceHash: entry.ReauthNonceHash,
 		ExpiresAt: now.Add(s.adminSessionTTL), LastSeenAt: now,
 	}
 	if err := s.db.Create(session).Error; err != nil {
@@ -843,7 +900,7 @@ func (s *Service) AuthorizeAdminSession(ctx context.Context, sessionToken, csrfT
 
 func (s *Service) AuthorizeRecentAdminSession(ctx context.Context, sessionToken string, maxAge time.Duration) (int64, error) {
 	if maxAge <= 0 {
-		return 0, domain.Forbidden("recent administrator authentication is required")
+		return 0, domain.RecentAuth("recent administrator authentication is required")
 	}
 	userID, err := s.AuthorizeAdminSession(ctx, sessionToken, "", false)
 	if err != nil {
@@ -854,8 +911,10 @@ func (s *Service) AuthorizeRecentAdminSession(ctx context.Context, sessionToken 
 	if err := s.db.Where("token_hash = ?", hex.EncodeToString(digest[:])).First(&session).Error; err != nil {
 		return 0, domain.Forbidden("admin session is invalid")
 	}
-	if time.Since(session.CreatedAt.UTC()) > maxAge || time.Now().UTC().Before(session.CreatedAt.UTC().Add(-time.Minute)) {
-		return 0, domain.Forbidden("recent administrator authentication is required")
+	now := time.Now().UTC()
+	if session.AuthenticatedAt == nil || session.ReauthNonceHash == nil || strings.TrimSpace(session.AuthMethods) == "" ||
+		now.Sub(session.AuthenticatedAt.UTC()) >= maxAge || session.AuthenticatedAt.UTC().After(now.Add(time.Minute)) {
+		return 0, domain.RecentAuth("recent administrator authentication is required")
 	}
 	return userID, nil
 }
@@ -997,13 +1056,34 @@ func (s *Service) AppContext(ctx context.Context, command AppContextCommand) (*A
 	}
 	appRecord := resolved.app
 	configRecord := resolved.config
+	var historicalLineage *model.AppMigrationLineage
 	if command.Purpose == "history_read" {
+		targetAppID := resolved.app.ID
+		targetConfigVersion := resolved.config.ConfigVersion
+		seenTargets := map[string]struct{}{}
 		var lineage model.AppMigrationLineage
-		if err := s.db.Where(
-			"customer_id = ? AND source_customer_app_id = ? AND source_config_version = ? AND target_customer_app_id = ? AND target_config_version = ?",
-			resolved.customer.ID, command.RequestedAppProfileID, command.RequestedConfigVersion,
-			resolved.app.ID, resolved.config.ConfigVersion,
-		).First(&lineage).Error; err != nil {
+		found := false
+		for depth := 0; depth < 32; depth++ {
+			key := fmt.Sprintf("%d:%d", targetAppID, targetConfigVersion)
+			if _, exists := seenTargets[key]; exists {
+				break
+			}
+			seenTargets[key] = struct{}{}
+			lineage = model.AppMigrationLineage{}
+			if err := s.db.Where(
+				"customer_id = ? AND target_customer_app_id = ? AND target_config_version = ?",
+				resolved.customer.ID, targetAppID, targetConfigVersion,
+			).Order("activated_at desc").Order("id desc").First(&lineage).Error; err != nil {
+				break
+			}
+			if lineage.SourceCustomerAppID == command.RequestedAppProfileID && lineage.SourceConfigVersion == command.RequestedConfigVersion {
+				found = true
+				break
+			}
+			targetAppID = lineage.SourceCustomerAppID
+			targetConfigVersion = lineage.SourceConfigVersion
+		}
+		if !found {
 			return nil, domain.NotFound("historical App context not found")
 		}
 		appRecord = model.CustomerApp{}
@@ -1017,6 +1097,7 @@ func (s *Service) AppContext(ctx context.Context, command AppContextCommand) (*A
 			configRecord.CustomerAppID != appRecord.ID || configRecord.ConfigVersion != lineage.SourceConfigVersion {
 			return nil, domain.NotFound("historical App context not found")
 		}
+		historicalLineage = &lineage
 	}
 	requiredCapability := ""
 	if command.Purpose == "scheduled_task" {
@@ -1068,7 +1149,22 @@ func (s *Service) AppContext(ctx context.Context, command AppContextCommand) (*A
 	var providerAppMode *int
 	var runtimeProfile *string
 	var executionEnabled *bool
-	if command.Purpose != "history_read" {
+	if command.Purpose == "history_read" {
+		mode := historicalLineage.SourceProviderAppMode
+		profile := strings.TrimSpace(historicalLineage.SourceRuntimeProfile)
+		if mode == 0 && profile == "" {
+			// Lineages created before the runtime snapshot migration came from the
+			// original dynamic-Claw-only contract. Keep history readable, but never executable.
+			mode = 4
+			profile = "claw_dynamic_v2"
+		} else if mode < 1 || mode > 4 || !validRuntimeProfile(profile, mode, profile == "claw_dynamic_v2") {
+			return nil, domain.NotFound("historical App runtime context not found")
+		}
+		disabled := false
+		providerAppMode = &mode
+		runtimeProfile = &profile
+		executionEnabled = &disabled
+	} else {
 		var deployment model.CustomerAgentDeployment
 		query := s.db.Where("customer_app_id = ?", appRecord.ID).First(&deployment)
 		if query.Error == nil {

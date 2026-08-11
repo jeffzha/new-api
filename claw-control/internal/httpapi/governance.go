@@ -267,15 +267,19 @@ func (s *Server) listNotifications(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	beforeID, ok := queryUint64(w, r, "before_id", false)
+	unreadOnly := r.URL.Query().Get("unread") == "true"
+	scope := "notifications:all:" + strconv.FormatBool(unreadOnly)
+	if customerID != nil {
+		scope = "notifications:" + strconv.FormatUint(*customerID, 10) + ":" + strconv.FormatBool(unreadOnly)
+	}
+	beforeID, limit, ok := adminPageRequest(w, r, scope)
 	if !ok {
 		return
 	}
-	result, err := s.services.Notifications.List(notification.ListQuery{
-		CustomerID: customerID, UnreadOnly: r.URL.Query().Get("unread") == "true",
-		BeforeID: beforeID, Limit: queryLimit(r),
+	page, err := s.services.Notifications.ListPage(notification.ListQuery{
+		CustomerID: customerID, UnreadOnly: unreadOnly, BeforeID: beforeID, Limit: limit,
 	})
-	writeResult(w, r, http.StatusOK, result, err)
+	writePageResult(w, r, page.Items, scope, page.NextBeforeID, err)
 }
 
 func (s *Server) readNotification(w http.ResponseWriter, r *http.Request) {
@@ -362,14 +366,19 @@ func (s *Server) listApprovals(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	beforeID, ok := queryUint64(w, r, "before_id", false)
+	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	scope := "approvals:all:" + status
+	if customerID != nil {
+		scope = "approvals:" + strconv.FormatUint(*customerID, 10) + ":" + status
+	}
+	beforeID, limit, ok := adminPageRequest(w, r, scope)
 	if !ok {
 		return
 	}
-	result, err := s.services.Approvals.List(approval.ListQuery{
-		CustomerID: customerID, Status: r.URL.Query().Get("status"), BeforeID: beforeID, Limit: queryLimit(r),
+	page, err := s.services.Approvals.ListPage(approval.ListQuery{
+		CustomerID: customerID, Status: status, BeforeID: beforeID, Limit: limit,
 	})
-	writeResult(w, r, http.StatusOK, result, err)
+	writePageResult(w, r, page.Items, scope, page.NextBeforeID, err)
 }
 
 func (s *Server) approveGovernance(w http.ResponseWriter, r *http.Request) {

@@ -20,7 +20,8 @@ func TestWorkbenchIdentityRoutesExposeOnlyTheMinimalBridgeEndpoints(t *testing.T
 	}
 	assert.Equal(t, http.MethodPost, registered["/api/workbench/session-ticket"])
 	assert.Equal(t, http.MethodPost, registered["/api/admin/workbench/session-ticket"])
+	assert.Equal(t, http.MethodPost, registered["/api/admin/workbench/step-up-ticket"])
 	assert.Equal(t, http.MethodPost, registered["/api/internal/workbench/identity-status"])
 	assert.Equal(t, http.MethodPost, registered["/api/internal/workbench/admin-identity-status"])
-	assert.Len(t, routes, 4)
+	assert.Len(t, routes, 5)
 }

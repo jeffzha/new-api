@@ -2,6 +2,8 @@ package access_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -252,6 +254,51 @@ func TestAppLifecycleTicketAndInternalContext(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "app-history", historyContext.ApplicationID)
 	assert.Equal(t, "history-space", historyContext.SpaceID)
+	require.NotNil(t, historyContext.ProviderAppMode)
+	require.NotNil(t, historyContext.RuntimeProfile)
+	require.NotNil(t, historyContext.ExecutionEnabled)
+	assert.Equal(t, 4, *historyContext.ProviderAppMode, "legacy lineages use the historical dynamic-Claw contract")
+	assert.Equal(t, "claw_dynamic_v2", *historyContext.RuntimeProfile)
+	assert.False(t, *historyContext.ExecutionEnabled, "history credentials must never enable provider execution")
+	oldestApp := model.CustomerApp{
+		CustomerID: createdCustomer.ID, Slot: "archived:998", ProviderEnvironment: model.ProviderChinaTencentCloud,
+		AppID: "app-oldest", DisplayName: "Oldest", Status: model.AppStatusArchived,
+		AuthEpoch: 2, RowVersion: 1, ArchivedAt: &now,
+	}
+	require.NoError(t, db.Create(&oldestApp).Error)
+	oldestConfig := model.AppConfigVersion{
+		CustomerAppID: oldestApp.ID, ConfigVersion: 3, Status: model.AppConfigStatusVerified,
+		Region: "ap-guangzhou", SpaceID: "oldest-space", CredentialProfileID: &credentialProfile.ID,
+		AppKeySecretRef:   "env://WORKBENCH_PROVIDER_TEST_ADP_APP_KEY",
+		AppKeyFingerprint: secrets.AppKeyFingerprint("app-key-secret"), AppKeyFingerprintVersion: 1,
+		LimitsJSON: `{}`, CapabilitiesJSON: `[]`, CreatedBy: "test", VerifiedAt: &now,
+	}
+	require.NoError(t, db.Create(&oldestConfig).Error)
+	oldestApp.CurrentConfigVersionID = &oldestConfig.ID
+	require.NoError(t, db.Save(&oldestApp).Error)
+	require.NoError(t, db.Create(&model.AppMigrationLineage{
+		PublicID: "lin_access_oldest", EventKey: "app-migration-cutover:oldest", CustomerID: createdCustomer.ID,
+		MigrationJobID: 998, SourceCustomerAppID: oldestApp.ID,
+		SourceAppConfigVersionID: oldestConfig.ID, SourceApplicationID: oldestApp.AppID,
+		SourceProviderAppID: oldestApp.AppID, SourceConfigVersion: oldestConfig.ConfigVersion,
+		SourceProviderAppMode: 1, SourceRuntimeProfile: "standard_v2",
+		TargetCustomerAppID: historicalApp.ID, TargetAppConfigVersionID: historicalConfig.ID,
+		TargetApplicationID: historicalApp.AppID, TargetProviderAppID: historicalApp.AppID,
+		TargetConfigVersion:        historicalConfig.ConfigVersion,
+		MigrationConfigFingerprint: "sha256:history", ActivatedAt: now.Add(-time.Minute),
+	}).Error)
+	oldestContext, err := accessService.AppContext(context.Background(), access.AppContextCommand{
+		BindingID: membership.Identity.PublicID, CanonicalSubject: membership.Identity.CanonicalSubject,
+		AuthEpoch: effectiveEpoch, RequestedAppProfileID: oldestApp.ID,
+		RequestedConfigVersion: oldestConfig.ConfigVersion,
+		CurrentAppProfileID:    stableAppPtr.ID, CurrentConfigVersion: saved.Version.ConfigVersion,
+		Purpose: "history_read",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "app-oldest", oldestContext.ApplicationID)
+	assert.Equal(t, 1, *oldestContext.ProviderAppMode)
+	assert.Equal(t, "standard_v2", *oldestContext.RuntimeProfile)
+	assert.False(t, *oldestContext.ExecutionEnabled)
 	_, err = accessService.AppContext(context.Background(), access.AppContextCommand{
 		BindingID: membership.Identity.PublicID, CanonicalSubject: membership.Identity.CanonicalSubject,
 		AuthEpoch: effectiveEpoch, RequestedAppProfileID: stableAppPtr.ID,
@@ -376,6 +423,28 @@ func TestAppLifecycleTicketAndInternalContext(t *testing.T) {
 	assert.Error(t, err)
 	_, err = accessService.AuthorizeAdminSession(context.Background(), adminSession.AdminSessionToken, adminSession.AdminCSRFToken, true)
 	require.NoError(t, err)
+	_, err = accessService.AuthorizeRecentAdminSession(context.Background(), adminSession.AdminSessionToken, 15*time.Minute)
+	assert.ErrorContains(t, err, "recent administrator authentication is required", "ordinary admin entry must not become a step-up")
+
+	reauthNonce := sha256.Sum256([]byte("fresh-admin-step-up"))
+	stepUpCommand := access.IssueEntryTicketCommand{
+		NewAPIUserID: 999, IdentityVersion: "v1.admin", Surface: "admin", IsSuperAdmin: true,
+		AuthenticatedAt: time.Now().UTC(), AMR: []string{"webauthn"},
+		ReauthNonce: base64.RawURLEncoding.EncodeToString(reauthNonce[:]),
+	}
+	stepUpEntry, err := accessService.IssueEntryTicket(stepUpCommand)
+	require.NoError(t, err)
+	stepUpSession, err := accessService.Enter(context.Background(), access.EnterCommand{Ticket: stepUpEntry.Ticket})
+	require.NoError(t, err)
+	_, err = accessService.AuthorizeRecentAdminSession(context.Background(), stepUpSession.AdminSessionToken, 15*time.Minute)
+	require.NoError(t, err)
+	_, err = accessService.IssueEntryTicket(stepUpCommand)
+	assert.ErrorContains(t, err, "already been used", "step-up nonces cannot mint a second entry ticket")
+	expiredNonce := sha256.Sum256([]byte("expired-admin-step-up"))
+	stepUpCommand.ReauthNonce = base64.RawURLEncoding.EncodeToString(expiredNonce[:])
+	stepUpCommand.AuthenticatedAt = time.Now().UTC().Add(-6 * time.Minute)
+	_, err = accessService.IssueEntryTicket(stepUpCommand)
+	assert.ErrorContains(t, err, "expired or invalid")
 
 	failClosed := access.New(
 		db, secrets.EnvironmentResolver{}, rejectingIdentityVerifier{},

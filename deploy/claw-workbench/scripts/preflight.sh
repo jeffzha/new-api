@@ -620,6 +620,8 @@ grep -Fq 'read_secret CLAW_TENCENT_BILLING_SECRET_KEY /run/workbench/billing-sec
   || fail "control entrypoint must inject Tencent Billing SecretKey from the server-side secret directory"
 
 public_caddy="$root/caddy/Caddyfile.public.snippet"
+grep -Fq '/api/admin/workbench/step-up-ticket' "$public_caddy" \
+  || fail "public Caddy snippet must keep the new-api administrator step-up endpoint outside the claw-control wildcard"
 if grep -Fq '/internal/metrics' "$public_caddy"; then
   fail "internal Prometheus endpoints must never be routed through public Caddy"
 fi

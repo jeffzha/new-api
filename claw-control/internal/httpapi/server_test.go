@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -23,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/claw-control/internal/customer"
 	"github.com/QuantumNous/new-api/claw-control/internal/httpapi"
 	"github.com/QuantumNous/new-api/claw-control/internal/identity"
+	"github.com/QuantumNous/new-api/claw-control/internal/jsonx"
 	"github.com/QuantumNous/new-api/claw-control/internal/model"
 	"github.com/QuantumNous/new-api/claw-control/internal/resourcebinding"
 	"github.com/QuantumNous/new-api/claw-control/internal/secretintegrity"
@@ -30,6 +33,7 @@ import (
 	"github.com/QuantumNous/new-api/claw-control/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 const (
@@ -162,6 +166,44 @@ func TestResourceBindingRouteRequiresADPHMACAndValidatesPayload(t *testing.T) {
 	assertSignedResponse(t, response, path, "resource-route", secret)
 }
 
+func TestInternalAdminStepUpProofRejectsReplayAndExpiry(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	const secret = "0123456789abcdef0123456789abcdef"
+	accessService := access.New(db, secrets.EnvironmentResolver{}, acceptingVerifier{}, time.Minute, time.Minute, time.Hour, time.Hour, time.Minute)
+	server := httpapi.New(httpapi.Services{DB: db, Access: accessService}, "admin-token", httpapi.InternalAuth{
+		ServiceKeys: map[string]string{"new-api-core": secret}, TimeSkew: time.Minute,
+		NewAPIServiceName: "new-api-core", ADPServiceName: "adp-backend",
+	}, httpapi.PublicConfig{})
+	const path = "/api/internal/workbench/entry-tickets/issue"
+	proofNonce := sha256.Sum256([]byte("http-step-up-proof"))
+	body := []byte(fmt.Sprintf(`{"new_api_user_id":99,"identity_version":"v1.admin","surface":"admin","is_super_admin":true,"authenticated_at":%d,"amr":["pwd"],"reauth_nonce":"%s"}`,
+		time.Now().UTC().Unix(), base64.RawURLEncoding.EncodeToString(proofNonce[:])))
+
+	first := signedRequest(t, path, body, strconv.FormatInt(time.Now().UTC().Unix(), 10), "step-up-first", secret)
+	first.Header.Set("X-Workbench-Service", "new-api-core")
+	firstResult := httptest.NewRecorder()
+	server.Handler().ServeHTTP(firstResult, first)
+	require.Equal(t, http.StatusCreated, firstResult.Code, firstResult.Body.String())
+
+	replayed := signedRequest(t, path, body, strconv.FormatInt(time.Now().UTC().Unix(), 10), "step-up-replayed", secret)
+	replayed.Header.Set("X-Workbench-Service", "new-api-core")
+	replayedResult := httptest.NewRecorder()
+	server.Handler().ServeHTTP(replayedResult, replayed)
+	assert.Equal(t, http.StatusConflict, replayedResult.Code)
+	assert.Contains(t, replayedResult.Body.String(), "already been used")
+
+	expiredNonce := sha256.Sum256([]byte("http-expired-step-up-proof"))
+	expiredBody := []byte(fmt.Sprintf(`{"new_api_user_id":99,"identity_version":"v1.admin","surface":"admin","is_super_admin":true,"authenticated_at":%d,"amr":["otp"],"reauth_nonce":"%s"}`,
+		time.Now().UTC().Add(-6*time.Minute).Unix(), base64.RawURLEncoding.EncodeToString(expiredNonce[:])))
+	expired := signedRequest(t, path, expiredBody, strconv.FormatInt(time.Now().UTC().Unix(), 10), "step-up-expired", secret)
+	expired.Header.Set("X-Workbench-Service", "new-api-core")
+	expiredResult := httptest.NewRecorder()
+	server.Handler().ServeHTTP(expiredResult, expired)
+	assert.Equal(t, http.StatusForbidden, expiredResult.Code)
+	assert.Contains(t, expiredResult.Body.String(), "expired or invalid")
+}
+
 func TestAppMigrationTaskRoutesRequireADPHMACAndNeverCache(t *testing.T) {
 	db, err := testutil.NewDatabase()
 	require.NoError(t, err)
@@ -199,8 +241,10 @@ func TestAdminEntryCookiesAndCSRFProtectMutations(t *testing.T) {
 		db, secrets.EnvironmentResolver{}, acceptingVerifier{},
 		time.Minute, time.Minute, time.Hour, time.Hour, time.Minute,
 	)
+	nonce := sha256.Sum256([]byte("admin-entry-csrf-step-up"))
 	entry, err := accessService.IssueEntryTicket(access.IssueEntryTicketCommand{
 		NewAPIUserID: 99, IdentityVersion: "v1.admin", Surface: "admin", IsSuperAdmin: true,
+		AuthenticatedAt: time.Now().UTC(), AMR: []string{"webauthn"}, ReauthNonce: base64.RawURLEncoding.EncodeToString(nonce[:]),
 	})
 	require.NoError(t, err)
 	server := httpapi.New(httpapi.Services{
@@ -265,7 +309,7 @@ func TestAdminEntryCookiesAndCSRFProtectMutations(t *testing.T) {
 	assert.Equal(t, "admin-session:99", sessionAudit.Actor)
 }
 
-func TestEmergencyBootstrapCannotForgeActorOrMutateApprovals(t *testing.T) {
+func TestEmergencyBootstrapCannotAccessPublicAdminAPI(t *testing.T) {
 	db, err := testutil.NewDatabase()
 	require.NoError(t, err)
 	server := httpapi.New(httpapi.Services{
@@ -276,10 +320,8 @@ func TestEmergencyBootstrapCannotForgeActorOrMutateApprovals(t *testing.T) {
 	create.Header.Set("X-Claw-Actor", "forged-super-admin")
 	created := httptest.NewRecorder()
 	server.Handler().ServeHTTP(created, create)
-	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
-	var audit model.AdminAudit
-	require.NoError(t, db.Where("action = ?", "customer.create").Order("id desc").First(&audit).Error)
-	assert.Equal(t, "emergency-bootstrap", audit.Actor)
+	require.Equal(t, http.StatusForbidden, created.Code, created.Body.String())
+	assert.Contains(t, created.Body.String(), "restricted to loopback maintenance")
 
 	for _, endpoint := range []string{
 		"/api/admin/workbench/approvals",
@@ -293,7 +335,7 @@ func TestEmergencyBootstrapCannotForgeActorOrMutateApprovals(t *testing.T) {
 		approvalResponse := httptest.NewRecorder()
 		server.Handler().ServeHTTP(approvalResponse, approvalRequest)
 		assert.Equal(t, http.StatusForbidden, approvalResponse.Code, endpoint)
-		assert.Contains(t, approvalResponse.Body.String(), "revocable administrator session", endpoint)
+		assert.Contains(t, approvalResponse.Body.String(), "restricted to loopback maintenance", endpoint)
 	}
 }
 
@@ -352,7 +394,8 @@ func TestFingerprintReenrollmentIsLoopbackBootstrapOnlyAndUsesFixedActor(t *test
 func TestUnknownCapabilityReturnsBadRequest(t *testing.T) {
 	db, err := testutil.NewDatabase()
 	require.NoError(t, err)
-	server := httpapi.New(httpapi.Services{DB: db, Apps: app.New(db, false)}, "emergency-admin-token", httpapi.InternalAuth{}, httpapi.PublicConfig{})
+	accessService, sessionCookie, csrfToken := issueAdminSession(t, db, secrets.EnvironmentResolver{}, 102)
+	server := httpapi.New(httpapi.Services{DB: db, Access: accessService, Apps: app.New(db, false)}, "emergency-admin-token", httpapi.InternalAuth{}, httpapi.PublicConfig{})
 	body := []byte(`{
 		"expected_version":0,
 		"provider_environment":"china_tencent_cloud",
@@ -368,8 +411,7 @@ func TestUnknownCapabilityReturnsBadRequest(t *testing.T) {
 		"capabilities":["chat","arbitrary_provider_action"]
 	}`)
 	request := httptest.NewRequest(http.MethodPut, "/api/admin/workbench/customers/1/app", bytes.NewReader(body))
-	request.Header.Set("Authorization", "Bearer emergency-admin-token")
-	request.Header.Set("X-Claw-Actor", "test-admin")
+	authorizeAdminRequest(request, sessionCookie, csrfToken)
 	response := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(response, request)
@@ -401,14 +443,14 @@ func TestWorkbenchSelectionRoutesRequireTheBoundControlSessionCookie(t *testing.
 func TestSelfReportedProviderVerificationRouteIsAbsentAndTrustedRouteRejectsExtraFields(t *testing.T) {
 	db, err := testutil.NewDatabase()
 	require.NoError(t, err)
-	server := httpapi.New(httpapi.Services{Apps: app.New(db, false)}, "emergency-admin-token", httpapi.InternalAuth{}, httpapi.PublicConfig{})
+	accessService, sessionCookie, csrfToken := issueAdminSession(t, db, secrets.EnvironmentResolver{}, 103)
+	server := httpapi.New(httpapi.Services{Access: accessService, Apps: app.New(db, false)}, "emergency-admin-token", httpapi.InternalAuth{}, httpapi.PublicConfig{})
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/api/admin/workbench/customers/1/app/verification-records",
 		bytes.NewReader([]byte(`{"result":"verified","app_mode":4,"release_status":"published"}`)),
 	)
-	request.Header.Set("Authorization", "Bearer emergency-admin-token")
-	request.Header.Set("X-Claw-Actor", "test-admin")
+	authorizeAdminRequest(request, sessionCookie, csrfToken)
 	response := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(response, request)
@@ -420,8 +462,7 @@ func TestSelfReportedProviderVerificationRouteIsAbsentAndTrustedRouteRejectsExtr
 		"/api/admin/workbench/customers/1/app/verify",
 		bytes.NewReader([]byte(`{"expected_version":1,"config_version":1,"result":"verified"}`)),
 	)
-	trustedRequest.Header.Set("Authorization", "Bearer emergency-admin-token")
-	trustedRequest.Header.Set("X-Claw-Actor", "test-admin")
+	authorizeAdminRequest(trustedRequest, sessionCookie, csrfToken)
 	trustedResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(trustedResponse, trustedRequest)
 	assert.Equal(t, http.StatusBadRequest, trustedResponse.Code)
@@ -436,8 +477,9 @@ func TestAdminReadProjectionsAreAvailableWithoutSecretReferences(t *testing.T) {
 		CustomerCode: "admin-projection", DisplayName: "Admin Projection", Actor: "fixture",
 	})
 	require.NoError(t, err)
+	accessService, sessionCookie, _ := issueAdminSession(t, db, secrets.EnvironmentResolver{}, 106)
 	server := httpapi.New(httpapi.Services{
-		DB: db, Customers: customers, AdminQueries: adminquery.New(db),
+		DB: db, Access: accessService, Customers: customers, AdminQueries: adminquery.New(db),
 	}, "emergency-admin-token", httpapi.InternalAuth{}, httpapi.PublicConfig{})
 
 	for _, target := range []string{
@@ -448,8 +490,7 @@ func TestAdminReadProjectionsAreAvailableWithoutSecretReferences(t *testing.T) {
 		"/api/admin/workbench/audits?limit=100",
 	} {
 		request := httptest.NewRequest(http.MethodGet, target, nil)
-		request.Header.Set("Authorization", "Bearer emergency-admin-token")
-		request.Header.Set("X-Claw-Actor", "test-admin")
+		request.AddCookie(sessionCookie)
 		response := httptest.NewRecorder()
 		server.Handler().ServeHTTP(response, request)
 		assert.Equal(t, http.StatusOK, response.Code, target)
@@ -479,8 +520,9 @@ func TestAdminMutationResponsesNeverEchoSecretReferences(t *testing.T) {
 		Fingerprint: secrets.CredentialPairFingerprint("fixture-id", "fixture-key"), Actor: "fixture",
 	})
 	require.NoError(t, err)
+	accessService, sessionCookie, csrfToken := issueAdminSession(t, db, resolver, 104)
 	server := httpapi.New(httpapi.Services{
-		DB: db, Customers: customers, Credentials: credentials, Apps: app.New(db, false, resolver),
+		DB: db, Access: accessService, Customers: customers, Credentials: credentials, Apps: app.New(db, false, resolver),
 		AdminQueries: adminquery.New(db),
 	}, "emergency-admin-token", httpapi.InternalAuth{}, httpapi.PublicConfig{})
 
@@ -490,8 +532,7 @@ func TestAdminMutationResponsesNeverEchoSecretReferences(t *testing.T) {
 		"secret_id_ref":"env://WORKBENCH_PROVIDER_HTTP_ID","secret_key_ref":"env://WORKBENCH_PROVIDER_HTTP_KEY",
 		"fingerprint":"%s"
 	}`, created.ID, created.ID, secrets.CredentialPairFingerprint("http-id", "http-key")))))
-	credentialRequest.Header.Set("Authorization", "Bearer emergency-admin-token")
-	credentialRequest.Header.Set("X-Claw-Actor", "test-admin")
+	authorizeAdminRequest(credentialRequest, sessionCookie, csrfToken)
 	credentialResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(credentialResponse, credentialRequest)
 	require.Equal(t, http.StatusCreated, credentialResponse.Code)
@@ -504,8 +545,7 @@ func TestAdminMutationResponsesNeverEchoSecretReferences(t *testing.T) {
 		"expected_version":%d,"secret_id_ref":"env://WORKBENCH_PROVIDER_ROTATE_ID",
 		"secret_key_ref":"env://WORKBENCH_PROVIDER_ROTATE_KEY","fingerprint":"%s"
 	}`, profile.RowVersion, secrets.CredentialPairFingerprint("rotate-id", "rotate-key")))))
-	rotationRequest.Header.Set("Authorization", "Bearer emergency-admin-token")
-	rotationRequest.Header.Set("X-Claw-Actor", "test-admin")
+	authorizeAdminRequest(rotationRequest, sessionCookie, csrfToken)
 	rotationResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rotationResponse, rotationRequest)
 	require.Equal(t, http.StatusCreated, rotationResponse.Code, rotationResponse.Body.String())
@@ -514,8 +554,7 @@ func TestAdminMutationResponsesNeverEchoSecretReferences(t *testing.T) {
 	assert.Contains(t, rotationResponse.Body.String(), `"owner_scope":"platform"`)
 
 	listRequest := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/admin/workbench/credential-profiles?customer_id=%d", created.ID), nil)
-	listRequest.Header.Set("Authorization", "Bearer emergency-admin-token")
-	listRequest.Header.Set("X-Claw-Actor", "test-admin")
+	listRequest.AddCookie(sessionCookie)
 	listResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(listResponse, listRequest)
 	require.Equal(t, http.StatusOK, listResponse.Code, listResponse.Body.String())
@@ -530,13 +569,151 @@ func TestAdminMutationResponsesNeverEchoSecretReferences(t *testing.T) {
 		"display_name":"Workbench","limits":{"customer_concurrency":2,"user_concurrency":1,"max_runtime_seconds":600,
 		"max_reasoning_rounds":20,"max_output_tokens":4096,"web_search_per_turn":0,"max_file_bytes":1048576},"capabilities":["chat"]
 	}`, profile.ID, secrets.AppKeyFingerprint("http-app-key")))))
-	appRequest.Header.Set("Authorization", "Bearer emergency-admin-token")
-	appRequest.Header.Set("X-Claw-Actor", "test-admin")
+	authorizeAdminRequest(appRequest, sessionCookie, csrfToken)
 	appResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(appResponse, appRequest)
 	require.Equal(t, http.StatusOK, appResponse.Code, appResponse.Body.String())
 	assert.NotContains(t, appResponse.Body.String(), "WORKBENCH_PROVIDER_")
 	assert.Contains(t, appResponse.Body.String(), secrets.AppKeyFingerprint("http-app-key"))
+}
+
+func TestSensitiveAdminMutationsRequireRecentAuthentication(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	accessService, sessionCookie, csrfToken := issueAdminSession(t, db, secrets.EnvironmentResolver{}, 105)
+	digest := sha256.Sum256([]byte(sessionCookie.Value))
+	require.NoError(t, db.Model(&model.AdminSession{}).
+		Where("token_hash = ?", hex.EncodeToString(digest[:])).
+		Update("authenticated_at", time.Now().UTC().Add(-20*time.Minute)).Error)
+	server := httpapi.New(httpapi.Services{DB: db, Access: accessService, AdminQueries: adminquery.New(db)}, "emergency-admin-token", httpapi.InternalAuth{}, httpapi.PublicConfig{})
+
+	for _, testCase := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPut, "/api/admin/workbench/customers/1/app"},
+		{http.MethodPost, "/api/admin/workbench/credential-profiles"},
+		{http.MethodPost, "/api/admin/workbench/plan-periods/1/confirm-payment"},
+		{http.MethodPost, "/api/admin/workbench/retention-runs/run-1/execute"},
+		{http.MethodPost, "/api/admin/workbench/approvals/apr-1/approve"},
+		{http.MethodPost, "/api/admin/workbench/customers"},
+		{http.MethodPost, "/api/admin/workbench/customers/1/members"},
+		{http.MethodPost, "/api/admin/workbench/plan-catalog"},
+		{http.MethodPost, "/api/admin/workbench/customers/1/plan-periods"},
+		{http.MethodPost, "/api/admin/workbench/usage-audits"},
+		{http.MethodPost, "/api/admin/workbench/evidence"},
+		{http.MethodPost, "/api/admin/workbench/tencent-billing-imports"},
+		{http.MethodPut, "/api/admin/workbench/customers/1/retention-policy"},
+		{http.MethodPost, "/api/admin/workbench/customers/1/retention-runs"},
+	} {
+		request := httptest.NewRequest(testCase.method, testCase.path, bytes.NewReader([]byte(`{}`)))
+		authorizeAdminRequest(request, sessionCookie, csrfToken)
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		assert.Equal(t, http.StatusForbidden, response.Code, testCase.path)
+		assert.Contains(t, response.Body.String(), "recent administrator authentication is required", testCase.path)
+	}
+	readRequest := httptest.NewRequest(http.MethodGet, "/api/admin/workbench/dashboard", nil)
+	readRequest.AddCookie(sessionCookie)
+	readResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(readResponse, readRequest)
+	assert.Equal(t, http.StatusOK, readResponse.Code, "recent-auth expiry must not block read-only admin projections")
+
+	bootstrap := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/credential-profiles", bytes.NewReader([]byte(`{}`)))
+	bootstrap.Header.Set("Authorization", "Bearer emergency-admin-token")
+	bootstrapResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(bootstrapResponse, bootstrap)
+	assert.Equal(t, http.StatusForbidden, bootstrapResponse.Code)
+	assert.Contains(t, bootstrapResponse.Body.String(), "restricted to loopback maintenance")
+}
+
+func TestAdminListCursorIsStableScopedAndPreservesArrayDataShape(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	for index := 1; index <= 4; index++ {
+		require.NoError(t, db.Create(&model.Customer{
+			CustomerCode: fmt.Sprintf("cursor-%d", index), DisplayName: fmt.Sprintf("Customer %d", index),
+			Status: model.CustomerStatusActive, RowVersion: 1,
+		}).Error)
+	}
+	accessService, sessionCookie, _ := issueAdminSession(t, db, secrets.EnvironmentResolver{}, 107)
+	server := httpapi.New(httpapi.Services{
+		DB: db, Access: accessService, Customers: customer.New(db, "prod", testutil.NewIdentityVerifier("v1.test")),
+	}, "emergency-admin-token", httpapi.InternalAuth{}, httpapi.PublicConfig{})
+
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/workbench/customers?limit=2", nil)
+	request.AddCookie(sessionCookie)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var first struct {
+		Success bool             `json:"success"`
+		Data    []model.Customer `json:"data"`
+		Meta    struct {
+			NextCursor string `json:"next_cursor"`
+		} `json:"meta"`
+	}
+	require.NoError(t, jsonx.Unmarshal(response.Body.Bytes(), &first))
+	require.True(t, first.Success)
+	require.Len(t, first.Data, 2)
+	assert.Greater(t, first.Data[0].ID, first.Data[1].ID)
+	require.NotEmpty(t, first.Meta.NextCursor)
+
+	newest := model.Customer{CustomerCode: "cursor-newest", DisplayName: "Newest", Status: model.CustomerStatusActive, RowVersion: 1}
+	require.NoError(t, db.Create(&newest).Error)
+	nextRequest := httptest.NewRequest(http.MethodGet, "/api/admin/workbench/customers?limit=2&cursor="+url.QueryEscape(first.Meta.NextCursor), nil)
+	nextRequest.AddCookie(sessionCookie)
+	nextResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(nextResponse, nextRequest)
+	require.Equal(t, http.StatusOK, nextResponse.Code, nextResponse.Body.String())
+	var second struct {
+		Data []model.Customer `json:"data"`
+	}
+	require.NoError(t, jsonx.Unmarshal(nextResponse.Body.Bytes(), &second))
+	require.Len(t, second.Data, 2)
+	assert.Less(t, second.Data[0].ID, first.Data[1].ID, "rows inserted after page one must not shift the keyset window")
+	assert.NotEqual(t, newest.ID, second.Data[0].ID)
+
+	wrongScope := httptest.NewRequest(http.MethodGet, "/api/admin/workbench/credential-profiles?cursor="+url.QueryEscape(first.Meta.NextCursor), nil)
+	wrongScope.AddCookie(sessionCookie)
+	wrongScopeResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(wrongScopeResponse, wrongScope)
+	assert.Equal(t, http.StatusBadRequest, wrongScopeResponse.Code)
+	assert.Contains(t, wrongScopeResponse.Body.String(), "invalid for this list")
+
+	ambiguous := httptest.NewRequest(http.MethodGet, "/api/admin/workbench/customers?before_id=2&cursor="+url.QueryEscape(first.Meta.NextCursor), nil)
+	ambiguous.AddCookie(sessionCookie)
+	ambiguousResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(ambiguousResponse, ambiguous)
+	assert.Equal(t, http.StatusBadRequest, ambiguousResponse.Code)
+	assert.Contains(t, ambiguousResponse.Body.String(), "cannot be combined")
+
+	unknownFieldCursor := base64.RawURLEncoding.EncodeToString([]byte(`{"v":1,"scope":"customers","before_id":2,"extra":true}`))
+	unknownField := httptest.NewRequest(http.MethodGet, "/api/admin/workbench/customers?cursor="+url.QueryEscape(unknownFieldCursor), nil)
+	unknownField.AddCookie(sessionCookie)
+	unknownFieldResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(unknownFieldResponse, unknownField)
+	assert.Equal(t, http.StatusBadRequest, unknownFieldResponse.Code)
+	assert.Contains(t, unknownFieldResponse.Body.String(), "invalid for this list")
+}
+
+func issueAdminSession(t *testing.T, db *gorm.DB, resolver secrets.Resolver, userID int64) (*access.Service, *http.Cookie, string) {
+	t.Helper()
+	accessService := access.New(db, resolver, acceptingVerifier{}, time.Minute, time.Minute, time.Hour, time.Hour, time.Minute)
+	nonce := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", t.Name(), userID)))
+	entry, err := accessService.IssueEntryTicket(access.IssueEntryTicketCommand{
+		NewAPIUserID: userID, IdentityVersion: fmt.Sprintf("v1.admin.%d", userID), Surface: "admin", IsSuperAdmin: true,
+		AuthenticatedAt: time.Now().UTC(), AMR: []string{"otp"}, ReauthNonce: base64.RawURLEncoding.EncodeToString(nonce[:]),
+	})
+	require.NoError(t, err)
+	entered, err := accessService.Enter(context.Background(), access.EnterCommand{Ticket: entry.Ticket})
+	require.NoError(t, err)
+	return accessService, &http.Cookie{Name: "claw_admin_session", Value: entered.AdminSessionToken}, entered.AdminCSRFToken
+}
+
+func authorizeAdminRequest(request *http.Request, sessionCookie *http.Cookie, csrfToken string) {
+	request.AddCookie(sessionCookie)
+	request.Header.Set("X-CSRF-Token", csrfToken)
 }
 
 func assertSignedResponse(t *testing.T, response *httptest.ResponseRecorder, path, requestNonce, secret string) {

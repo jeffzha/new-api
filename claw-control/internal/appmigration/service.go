@@ -29,14 +29,17 @@ type Service struct {
 }
 
 type ProviderContext struct {
-	Vendor          string `json:"vendor"`
-	ServiceVendor   string `json:"service_vendor"`
-	AppID           string `json:"app_id"`
-	AppKey          string `json:"app_key"`
-	SpaceID         string `json:"space_id"`
-	TemplateAgentID string `json:"template_agent_id"`
-	SecretID        string `json:"secret_id"`
-	SecretKey       string `json:"secret_key"`
+	Vendor           string `json:"vendor"`
+	ServiceVendor    string `json:"service_vendor"`
+	AppID            string `json:"app_id"`
+	AppKey           string `json:"app_key"`
+	SpaceID          string `json:"space_id"`
+	TemplateAgentID  string `json:"template_agent_id"`
+	SecretID         string `json:"secret_id"`
+	SecretKey        string `json:"secret_key"`
+	ProviderAppMode  int    `json:"provider_app_mode"`
+	RuntimeProfile   string `json:"runtime_profile"`
+	ExecutionEnabled bool   `json:"execution_enabled"`
 }
 
 type ClaimedTask struct {
@@ -406,7 +409,9 @@ func (s *Service) Claim(ctx context.Context, workerID string, lease time.Duratio
 			Mode:             member.RecoveryMode, KnownTargetAgentID: member.TargetAgentID,
 			Provider: ProviderContext{Vendor: "Tencent", ServiceVendor: "ChinaTencentADP", AppID: target.AppID,
 				AppKey: appKey, SpaceID: version.SpaceID, TemplateAgentID: version.TemplateAgentID,
-				SecretID: pair.SecretID, SecretKey: pair.SecretKey},
+				SecretID: pair.SecretID, SecretKey: pair.SecretKey,
+				ProviderAppMode: job.TargetProviderAppMode, RuntimeProfile: job.TargetRuntimeProfile,
+				ExecutionEnabled: job.TargetExecutionEnabled},
 		}
 		return nil
 	})
@@ -427,10 +432,15 @@ func (s *Service) Report(ctx context.Context, command ReportCommand, now time.Ti
 		return nil, domain.Invalid("migration member, attempt, lease token, and terminal status are required")
 	}
 	if command.Status == model.AppMigrationMemberStatusSucceeded {
+		dynamicRuntime := command.RuntimeProfile == "claw_dynamic_v2"
 		if command.TargetAppProfileID == 0 || command.TargetConfigVersion <= 0 || command.TargetConfigFingerprint == "" ||
-			len(command.TargetAgentID) > 128 || !validSHA256(command.TargetReadbackHash) || command.ErrorCode != "" ||
+			len(command.TargetAgentID) > 128 || command.ErrorCode != "" ||
 			command.ProviderAppMode < 1 || command.ProviderAppMode > 4 || command.RuntimeProfile == "" || !command.ExecutionEnabled {
-			return nil, domain.Invalid("successful migration report requires the exact target and provider-runtime tuple plus a readback hash")
+			return nil, domain.Invalid("successful migration report requires the exact target and provider-runtime tuple")
+		}
+		if (dynamicRuntime && (command.TargetAgentID == "" || !validSHA256(command.TargetReadbackHash))) ||
+			(!dynamicRuntime && (command.TargetAgentID != "" || command.TargetReadbackHash != "")) {
+			return nil, domain.Invalid("migration readiness evidence must match the verified runtime profile")
 		}
 	} else if command.ErrorCode == "" || len(command.ErrorCode) > 80 || command.TargetReadbackHash != "" || len(command.TargetAgentID) > 128 ||
 		(command.TargetAgentID != "" && command.ErrorCode != "provider_outcome_unknown" && command.ErrorCode != "target_agent_readback_failed") {
@@ -653,9 +663,9 @@ func AssertReadyForCutover(tx *gorm.DB, source, target model.CustomerApp) (*mode
 		var readiness model.AppMigrationMember
 		if err := database.ForUpdate(tx).Where("job_id = ? AND identity_binding_id = ?", job.ID, identity.ID).First(&readiness).Error; err != nil ||
 			readiness.Status != model.AppMigrationMemberStatusSucceeded || readiness.BindingPublicID != identity.PublicID || readiness.ADPAccountID != identity.ADPAccountID ||
-			(job.TargetRuntimeProfile == "claw_dynamic_v2" && readiness.TargetAgentID == "") ||
-			(job.TargetRuntimeProfile != "claw_dynamic_v2" && readiness.TargetAgentID != "") ||
-			!validSHA256(readiness.TargetReadbackHash) || readiness.TargetConfigFingerprint != job.TargetConfigFingerprint {
+			(job.TargetRuntimeProfile == "claw_dynamic_v2" && (readiness.TargetAgentID == "" || !validSHA256(readiness.TargetReadbackHash))) ||
+			(job.TargetRuntimeProfile != "claw_dynamic_v2" && (readiness.TargetAgentID != "" || readiness.TargetReadbackHash != "")) ||
+			readiness.TargetConfigFingerprint != job.TargetConfigFingerprint {
 			return nil, domain.Conflict("an active binding has no verified target-App Agent rebuild")
 		}
 	}

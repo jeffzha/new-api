@@ -9,6 +9,7 @@ const (
 	KindNotFound    ErrorKind = "not_found"
 	KindConflict    ErrorKind = "conflict"
 	KindForbidden   ErrorKind = "forbidden"
+	KindRecentAuth  ErrorKind = "recent_auth_required"
 	KindUnavailable ErrorKind = "unavailable"
 )
 
@@ -35,6 +36,10 @@ func Conflict(format string, args ...any) error {
 
 func Forbidden(format string, args ...any) error {
 	return &Error{Kind: KindForbidden, Message: fmt.Sprintf(format, args...)}
+}
+
+func RecentAuth(format string, args ...any) error {
+	return &Error{Kind: KindRecentAuth, Message: fmt.Sprintf(format, args...)}
 }
 
 func Unavailable(format string, args ...any) error {

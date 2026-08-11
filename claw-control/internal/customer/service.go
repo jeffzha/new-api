@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/claw-control/internal/database"
 	"github.com/QuantumNous/new-api/claw-control/internal/domain"
 	"github.com/QuantumNous/new-api/claw-control/internal/model"
+	"github.com/QuantumNous/new-api/claw-control/internal/pagination"
 	"github.com/QuantumNous/new-api/claw-control/internal/support"
 	"gorm.io/gorm"
 )
@@ -109,12 +110,21 @@ func (s *Service) Create(command CreateCommand) (*model.Customer, error) {
 }
 
 func (s *Service) List(limit int) ([]model.Customer, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
+	page, err := s.ListPage(0, limit)
+	return page.Items, err
+}
+
+func (s *Service) ListPage(beforeID uint64, limit int) (pagination.Page[model.Customer], error) {
+	limit = pagination.Limit(limit)
 	var customers []model.Customer
-	err := s.db.Order("id desc").Limit(limit).Find(&customers).Error
-	return customers, err
+	query := s.db.Order("id desc").Limit(limit + 1)
+	if beforeID > 0 {
+		query = query.Where("id < ?", beforeID)
+	}
+	if err := query.Find(&customers).Error; err != nil {
+		return pagination.Page[model.Customer]{}, err
+	}
+	return pagination.Trim(customers, limit, func(value model.Customer) uint64 { return value.ID }), nil
 }
 
 func (s *Service) Update(command UpdateCommand) (*model.Customer, error) {

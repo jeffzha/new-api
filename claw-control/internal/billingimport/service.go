@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/claw-control/internal/evidence"
 	"github.com/QuantumNous/new-api/claw-control/internal/jsonx"
 	"github.com/QuantumNous/new-api/claw-control/internal/model"
+	"github.com/QuantumNous/new-api/claw-control/internal/pagination"
 	"github.com/QuantumNous/new-api/claw-control/internal/support"
 	"github.com/QuantumNous/new-api/claw-control/internal/usageaudit"
 	"github.com/shopspring/decimal"
@@ -166,18 +167,26 @@ func (s *Service) Create(command CreateCommand) (*View, error) {
 }
 
 func (s *Service) List(limit int) ([]View, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
+	page, err := s.ListPage(0, limit)
+	return page.Items, err
+}
+
+func (s *Service) ListPage(beforeID uint64, limit int) (pagination.Page[View], error) {
+	limit = pagination.Limit(limit)
 	var runs []model.TencentBillingImportRun
-	if err := s.db.Order("id desc").Limit(limit).Find(&runs).Error; err != nil {
-		return nil, err
+	query := s.db.Order("id desc").Limit(limit + 1)
+	if beforeID > 0 {
+		query = query.Where("id < ?", beforeID)
 	}
-	result := make([]View, 0, len(runs))
-	for index := range runs {
-		result = append(result, project(&runs[index]))
+	if err := query.Find(&runs).Error; err != nil {
+		return pagination.Page[View]{}, err
 	}
-	return result, nil
+	page := pagination.Trim(runs, limit, func(value model.TencentBillingImportRun) uint64 { return value.ID })
+	result := make([]View, 0, len(page.Items))
+	for index := range page.Items {
+		result = append(result, project(&page.Items[index]))
+	}
+	return pagination.Page[View]{Items: result, NextBeforeID: page.NextBeforeID}, nil
 }
 
 func (s *Service) Get(importID string) (*View, error) {

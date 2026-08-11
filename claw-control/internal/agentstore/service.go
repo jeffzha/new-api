@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/claw-control/internal/domain"
 	"github.com/QuantumNous/new-api/claw-control/internal/jsonx"
 	"github.com/QuantumNous/new-api/claw-control/internal/model"
+	"github.com/QuantumNous/new-api/claw-control/internal/pagination"
 	"github.com/QuantumNous/new-api/claw-control/internal/providerverify"
 	"github.com/QuantumNous/new-api/claw-control/internal/secrets"
 	"github.com/QuantumNous/new-api/claw-control/internal/support"
@@ -75,24 +76,39 @@ type CreateCommand struct {
 }
 
 type UpdateCommand struct {
-	ItemID           string
-	ExpectedVersion  int64
-	Metadata         Metadata
-	SortOrder        int
-	Featured         bool
-	ExecutionEnabled bool
-	Entitlements     []EntitlementInput
-	Actor            string
-	RequestID        string
+	ItemID          string
+	ExpectedVersion int64
+	Metadata        Metadata
+	SortOrder       int
+	Featured        bool
+	Actor           string
+	RequestID       string
 }
 
 type TransitionCommand struct {
-	ItemID          string
-	ExpectedVersion int64
-	Action          string
-	Reason          string
-	Actor           string
-	RequestID       string
+	ItemID                    string
+	DeploymentID              string
+	ExpectedVersion           int64
+	ExpectedDeploymentVersion int64
+	Action                    string
+	Reason                    string
+	Actor                     string
+	RequestID                 string
+}
+
+type DeploymentCommand struct {
+	ItemID                    string
+	DeploymentID              string
+	CustomerID                uint64
+	CustomerAppID             uint64
+	ExpectedItemVersion       int64
+	ExpectedDeploymentVersion int64
+	ExecutionEnabled          bool
+	Entitlements              []EntitlementInput
+	ReplaceEntitlements       bool
+	Reason                    string
+	Actor                     string
+	RequestID                 string
 }
 
 type AdminVersion struct {
@@ -107,21 +123,22 @@ type AdminVersion struct {
 }
 
 type AdminDeployment struct {
-	DeploymentID        string     `json:"deployment_id"`
-	CustomerID          uint64     `json:"customer_id"`
-	CustomerAppID       uint64     `json:"customer_app_id"`
-	Status              string     `json:"status"`
-	RowVersion          int64      `json:"row_version"`
-	ProviderAppMode     int        `json:"provider_app_mode"`
-	RuntimeProfile      string     `json:"runtime_profile"`
-	DynamicAgentConfig  bool       `json:"dynamic_agent_config"`
-	ExecutionEnabled    bool       `json:"execution_enabled"`
-	VerifiedConfig      int64      `json:"verified_config_version"`
-	VerifiedAt          *time.Time `json:"verified_at,omitempty"`
-	ProviderDisplayName string     `json:"provider_display_name,omitempty"`
-	ProviderDescription string     `json:"provider_description,omitempty"`
-	ProviderAvatarURL   string     `json:"provider_avatar_url,omitempty"`
-	Capabilities        []string   `json:"capabilities"`
+	DeploymentID        string                          `json:"deployment_id"`
+	CustomerID          uint64                          `json:"customer_id"`
+	CustomerAppID       uint64                          `json:"customer_app_id"`
+	Status              string                          `json:"status"`
+	RowVersion          int64                           `json:"row_version"`
+	ProviderAppMode     int                             `json:"provider_app_mode"`
+	RuntimeProfile      string                          `json:"runtime_profile"`
+	DynamicAgentConfig  bool                            `json:"dynamic_agent_config"`
+	ExecutionEnabled    bool                            `json:"execution_enabled"`
+	VerifiedConfig      int64                           `json:"verified_config_version"`
+	VerifiedAt          *time.Time                      `json:"verified_at,omitempty"`
+	ProviderDisplayName string                          `json:"provider_display_name,omitempty"`
+	ProviderDescription string                          `json:"provider_description,omitempty"`
+	ProviderAvatarURL   string                          `json:"provider_avatar_url,omitempty"`
+	Capabilities        []string                        `json:"capabilities"`
+	Entitlements        []model.AgentCatalogEntitlement `json:"entitlements"`
 }
 
 type AdminItem struct {
@@ -134,6 +151,7 @@ type AdminItem struct {
 	CurrentVersion *AdminVersion                   `json:"current_version,omitempty"`
 	DraftVersion   *AdminVersion                   `json:"draft_version,omitempty"`
 	Deployment     AdminDeployment                 `json:"deployment"`
+	Deployments    []AdminDeployment               `json:"deployments"`
 	Entitlements   []model.AgentCatalogEntitlement `json:"entitlements"`
 }
 
@@ -156,6 +174,26 @@ type Card struct {
 type CatalogPage struct {
 	Items      []Card `json:"items"`
 	NextCursor string `json:"next_cursor,omitempty"`
+}
+
+type AdminPage struct {
+	Items         []AdminItem
+	NextSortOrder int
+	NextItemID    string
+}
+
+type AuditPosition struct {
+	AdminBeforeID  uint64
+	AdminDone      bool
+	LaunchBefore   *time.Time
+	LaunchBeforeID string
+	LaunchDone     bool
+}
+
+type AuditPage struct {
+	AdminAudits  []model.AdminAudit
+	LaunchAudits []model.AgentLaunchAudit
+	Next         *AuditPosition
 }
 
 type LaunchGrant struct {
@@ -221,6 +259,138 @@ func (s *Service) Create(command CreateCommand) (*AdminItem, error) {
 	return s.AdminGet(itemID)
 }
 
+func (s *Service) AddDeployment(command DeploymentCommand) (*AdminItem, error) {
+	command.ItemID = strings.TrimSpace(command.ItemID)
+	if command.ItemID == "" || command.ExpectedItemVersion <= 0 || command.CustomerID == 0 || command.CustomerAppID == 0 {
+		return nil, domain.Invalid("item_id, expected_item_version, customer_id, and customer_app_id are required")
+	}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var item model.AgentCatalogItem
+		if err := database.ForUpdate(tx).First(&item, "id = ?", command.ItemID).Error; err != nil {
+			return domain.NotFound("Agent Store item not found")
+		}
+		if item.RowVersion != command.ExpectedItemVersion {
+			return domain.Conflict("Agent Store item row version changed")
+		}
+		if item.Status == model.AgentCatalogStatusArchived || item.Status == model.AgentCatalogStatusDisabled {
+			return domain.Conflict("Agent Store item cannot receive deployments in its current status")
+		}
+		var app model.CustomerApp
+		if err := tx.Where("id = ? AND customer_id = ?", command.CustomerAppID, command.CustomerID).First(&app).Error; err != nil {
+			return domain.NotFound("customer App not found")
+		}
+		if app.Status == model.AppStatusArchived {
+			return domain.Conflict("archived customer App cannot be deployed")
+		}
+		now := time.Now().UTC()
+		deployment := model.CustomerAgentDeployment{
+			ID: support.PublicID("agd"), ItemID: item.ID, CustomerID: command.CustomerID, CustomerAppID: app.ID,
+			Status: model.AgentDeploymentStatusDraft, RowVersion: 1, ExecutionEnabled: false,
+			CapabilitiesJSON: "[]", ProviderRequestIDsJSON: "[]", CreatedAt: now, UpdatedAt: now,
+		}
+		if err := tx.Create(&deployment).Error; err != nil {
+			return domain.Conflict("customer or customer App already has an Agent Store deployment")
+		}
+		if err := replaceEntitlements(tx, deployment.ID, command.CustomerID, command.Entitlements, now); err != nil {
+			return err
+		}
+		before := item
+		item.RowVersion++
+		item.UpdatedAt = now
+		if err := tx.Save(&item).Error; err != nil {
+			return err
+		}
+		return support.Audit(tx, &command.CustomerID, command.Actor, "agent_store.deployment.create", "agent_catalog_item", item.ID, &before, &deployment, "", command.RequestID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.AdminGet(command.ItemID)
+}
+
+func (s *Service) UpdateDeployment(command DeploymentCommand) (*AdminItem, error) {
+	command.ItemID = strings.TrimSpace(command.ItemID)
+	command.DeploymentID = strings.TrimSpace(command.DeploymentID)
+	if command.ItemID == "" || command.DeploymentID == "" || command.ExpectedDeploymentVersion <= 0 {
+		return nil, domain.Invalid("item_id, deployment_id, and expected_deployment_version are required")
+	}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var deployment model.CustomerAgentDeployment
+		if err := database.ForUpdate(tx).Where("id = ? AND item_id = ?", command.DeploymentID, command.ItemID).First(&deployment).Error; err != nil {
+			return domain.NotFound("Agent Store deployment not found")
+		}
+		if deployment.RowVersion != command.ExpectedDeploymentVersion {
+			return domain.Conflict("Agent Store deployment row version changed")
+		}
+		before := deployment
+		now := time.Now().UTC()
+		if command.ExecutionEnabled {
+			if deployment.Status != model.AgentDeploymentStatusVerified && deployment.Status != model.AgentDeploymentStatusActive {
+				return domain.Conflict("only a verified or active deployment can enable execution")
+			}
+			if !executionProfileAllowed(deployment.RuntimeProfile) {
+				return domain.Conflict("deployment runtime profile does not allow execution")
+			}
+			if err := validateDeploymentSnapshot(tx, &deployment); err != nil {
+				return err
+			}
+			deployment.ExecutionEnabled = true
+		} else {
+			deployment.ExecutionEnabled = false
+		}
+		deployment.RowVersion++
+		deployment.UpdatedAt = now
+		if err := tx.Save(&deployment).Error; err != nil {
+			return err
+		}
+		if command.ReplaceEntitlements {
+			if err := replaceEntitlements(tx, deployment.ID, deployment.CustomerID, command.Entitlements, now); err != nil {
+				return err
+			}
+		}
+		return support.Audit(tx, &deployment.CustomerID, command.Actor, "agent_store.deployment.update", "agent_catalog_item", command.ItemID, &before, &deployment, "", command.RequestID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.AdminGet(command.ItemID)
+}
+
+func (s *Service) DisableDeployment(command DeploymentCommand) (*AdminItem, error) {
+	command.ItemID = strings.TrimSpace(command.ItemID)
+	command.DeploymentID = strings.TrimSpace(command.DeploymentID)
+	command.Reason = strings.TrimSpace(command.Reason)
+	if command.ItemID == "" || command.DeploymentID == "" || command.ExpectedDeploymentVersion <= 0 || command.Reason == "" {
+		return nil, domain.Invalid("item_id, deployment_id, expected_deployment_version, and reason are required")
+	}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var deployment model.CustomerAgentDeployment
+		if err := database.ForUpdate(tx).Where("id = ? AND item_id = ?", command.DeploymentID, command.ItemID).First(&deployment).Error; err != nil {
+			return domain.NotFound("Agent Store deployment not found")
+		}
+		if deployment.RowVersion != command.ExpectedDeploymentVersion {
+			return domain.Conflict("Agent Store deployment row version changed")
+		}
+		before := deployment
+		now := time.Now().UTC()
+		deployment.Status = model.AgentDeploymentStatusDisabled
+		deployment.ExecutionEnabled = false
+		deployment.RowVersion++
+		deployment.UpdatedAt = now
+		if err := tx.Save(&deployment).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.ControlSession{}).Where("customer_app_id = ? AND revoked_at IS NULL", deployment.CustomerAppID).Update("revoked_at", now).Error; err != nil {
+			return err
+		}
+		return support.Audit(tx, &deployment.CustomerID, command.Actor, "agent_store.deployment.disable", "agent_catalog_item", command.ItemID, &before, &deployment, command.Reason, command.RequestID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.AdminGet(command.ItemID)
+}
+
 func (s *Service) Update(command UpdateCommand) (*AdminItem, error) {
 	command.ItemID = strings.TrimSpace(command.ItemID)
 	metadata, err := normalizeMetadata(command.Metadata)
@@ -266,22 +436,7 @@ func (s *Service) Update(command UpdateCommand) (*AdminItem, error) {
 		if err := tx.Save(&item).Error; err != nil {
 			return err
 		}
-		var deployment model.CustomerAgentDeployment
-		if err := database.ForUpdate(tx).Where("item_id = ?", item.ID).First(&deployment).Error; err != nil {
-			return err
-		}
-		deployment.ExecutionEnabled = command.ExecutionEnabled && executionProfileAllowed(deployment.RuntimeProfile)
-		deployment.RowVersion++
-		deployment.UpdatedAt = now
-		if err := tx.Save(&deployment).Error; err != nil {
-			return err
-		}
-		if command.Entitlements != nil {
-			if err := replaceEntitlements(tx, deployment.ID, deployment.CustomerID, command.Entitlements, now); err != nil {
-				return err
-			}
-		}
-		return support.Audit(tx, &deployment.CustomerID, command.Actor, "agent_store.update", "agent_catalog_item", item.ID, &before, &item, "", command.RequestID)
+		return support.Audit(tx, nil, command.Actor, "agent_store.update", "agent_catalog_item", item.ID, &before, &item, "", command.RequestID)
 	})
 	if err != nil {
 		return nil, err
@@ -294,11 +449,12 @@ func (s *Service) Verify(ctx context.Context, command TransitionCommand) (*Admin
 		return nil, domain.Unavailable("trusted Agent Store provider verification is unavailable")
 	}
 	type snapshot struct {
-		item       model.AgentCatalogItem
-		deployment model.CustomerAgentDeployment
-		app        model.CustomerApp
-		config     model.AppConfigVersion
-		credential model.CredentialProfile
+		item               model.AgentCatalogItem
+		originalItemStatus string
+		deployment         model.CustomerAgentDeployment
+		app                model.CustomerApp
+		config             model.AppConfigVersion
+		credential         model.CredentialProfile
 	}
 	var state snapshot
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
@@ -309,6 +465,7 @@ func (s *Service) Verify(ctx context.Context, command TransitionCommand) (*Admin
 		if state.item.RowVersion != command.ExpectedVersion || state.item.Status == model.AgentCatalogStatusArchived {
 			return domain.Conflict("Agent Store item version or status does not allow verification")
 		}
+		state.originalItemStatus = state.item.Status
 		if state.item.Status == model.AgentCatalogStatusVerifying {
 			if !state.item.UpdatedAt.Before(now.Add(-verificationStaleAfter)) {
 				return domain.Conflict("Agent Store provider verification is already in progress")
@@ -320,8 +477,25 @@ func (s *Service) Verify(ctx context.Context, command TransitionCommand) (*Admin
 				return err
 			}
 		}
-		if err := database.ForUpdate(tx).Where("item_id = ?", state.item.ID).First(&state.deployment).Error; err != nil {
-			return domain.NotFound("Agent Store deployment not found")
+		if deploymentID := strings.TrimSpace(command.DeploymentID); deploymentID != "" {
+			if err := database.ForUpdate(tx).Where("item_id = ? AND id = ?", state.item.ID, deploymentID).First(&state.deployment).Error; err != nil {
+				return domain.NotFound("Agent Store deployment not found")
+			}
+		} else {
+			var deployments []model.CustomerAgentDeployment
+			if err := database.ForUpdate(tx).Where("item_id = ?", state.item.ID).Order("id asc").Limit(2).Find(&deployments).Error; err != nil {
+				return err
+			}
+			if len(deployments) == 0 {
+				return domain.NotFound("Agent Store deployment not found")
+			}
+			if len(deployments) > 1 {
+				return domain.Conflict("deployment_id is required when an Agent Store item has multiple deployments")
+			}
+			state.deployment = deployments[0]
+		}
+		if command.ExpectedDeploymentVersion > 0 && state.deployment.RowVersion != command.ExpectedDeploymentVersion {
+			return domain.Conflict("Agent Store deployment row version changed")
 		}
 		if err := tx.Where("id = ? AND customer_id = ?", state.deployment.CustomerAppID, state.deployment.CustomerID).First(&state.app).Error; err != nil || state.app.CurrentConfigVersionID == nil {
 			return domain.Conflict("customer App has no verified configuration")
@@ -335,7 +509,9 @@ func (s *Service) Verify(ctx context.Context, command TransitionCommand) (*Admin
 		if state.credential.Status != model.CredentialStatusActive || !credentialpkg.AvailableToCustomer(state.credential, state.deployment.CustomerID) {
 			return domain.Conflict("credential profile is unavailable to this customer")
 		}
-		state.item.Status = model.AgentCatalogStatusVerifying
+		if state.originalItemStatus != model.AgentCatalogStatusPublished {
+			state.item.Status = model.AgentCatalogStatusVerifying
+		}
 		state.item.RowVersion++
 		state.item.UpdatedAt = now
 		return tx.Save(&state.item).Error
@@ -374,7 +550,7 @@ func (s *Service) Verify(ctx context.Context, command TransitionCommand) (*Admin
 			return err
 		}
 		var deployment model.CustomerAgentDeployment
-		if err := database.ForUpdate(tx).Where("item_id = ?", item.ID).First(&deployment).Error; err != nil {
+		if err := database.ForUpdate(tx).Where("id = ? AND item_id = ?", state.deployment.ID, item.ID).First(&deployment).Error; err != nil {
 			return err
 		}
 		var app model.CustomerApp
@@ -413,11 +589,19 @@ func (s *Service) Verify(ctx context.Context, command TransitionCommand) (*Admin
 			deployment.VerifiedAppAuthEpoch = app.AuthEpoch
 			deployment.VerifiedCredentialHash = support.Hash(map[string]any{"app": state.config.AppKeyFingerprint, "credential": state.credential.Fingerprint})
 			deployment.VerifiedAt = &now
-			item.Status = model.AgentCatalogStatusVerified
+			if state.originalItemStatus == model.AgentCatalogStatusPublished {
+				item.Status = model.AgentCatalogStatusPublished
+			} else {
+				item.Status = model.AgentCatalogStatusVerified
+			}
 		} else {
 			deployment.Status = model.AgentDeploymentStatusDraft
 			deployment.ExecutionEnabled = false
-			item.Status = model.AgentCatalogStatusRejected
+			if state.originalItemStatus == model.AgentCatalogStatusPublished {
+				item.Status = model.AgentCatalogStatusPublished
+			} else {
+				item.Status = model.AgentCatalogStatusRejected
+			}
 		}
 		item.RowVersion++
 		item.UpdatedAt = now
@@ -455,9 +639,12 @@ func (s *Service) Transition(command TransitionCommand) (*AdminItem, error) {
 		if item.RowVersion != command.ExpectedVersion {
 			return domain.Conflict("Agent Store item row version changed")
 		}
-		var deployment model.CustomerAgentDeployment
-		if err := database.ForUpdate(tx).Where("item_id = ?", item.ID).First(&deployment).Error; err != nil {
+		var deployments []model.CustomerAgentDeployment
+		if err := database.ForUpdate(tx).Where("item_id = ?", item.ID).Order("id asc").Find(&deployments).Error; err != nil {
 			return err
+		}
+		if len(deployments) == 0 {
+			return domain.Conflict("Agent Store item has no deployment")
 		}
 		before := item
 		now := time.Now().UTC()
@@ -470,22 +657,32 @@ func (s *Service) Transition(command TransitionCommand) (*AdminItem, error) {
 				item.CurrentVersionID = item.DraftVersionID
 				item.DraftVersionID = nil
 			}
-			deploymentReady := deployment.Status == model.AgentDeploymentStatusVerified ||
-				(item.Status == model.AgentCatalogStatusPublished && deployment.Status == model.AgentDeploymentStatusActive)
-			if item.CurrentVersionID == nil || !deploymentReady {
+			readyCount := 0
+			for index := range deployments {
+				deploymentReady := deployments[index].Status == model.AgentDeploymentStatusVerified ||
+					(item.Status == model.AgentCatalogStatusPublished && deployments[index].Status == model.AgentDeploymentStatusActive)
+				if deploymentReady {
+					if err := validateDeploymentSnapshot(tx, &deployments[index]); err != nil {
+						return err
+					}
+					deployments[index].Status = model.AgentDeploymentStatusActive
+					readyCount++
+				}
+			}
+			if item.CurrentVersionID == nil || readyCount == 0 {
 				return domain.Conflict("verified catalog metadata and deployment are required")
 			}
-			if err := validateDeploymentSnapshot(tx, &deployment); err != nil {
-				return err
-			}
 			item.Status = model.AgentCatalogStatusPublished
-			deployment.Status = model.AgentDeploymentStatusActive
 		case "unpublish":
 			if item.Status != model.AgentCatalogStatusPublished {
 				return domain.Conflict("only a published item can be unpublished")
 			}
 			item.Status = model.AgentCatalogStatusUnpublished
-			deployment.Status = model.AgentDeploymentStatusVerified
+			for index := range deployments {
+				if deployments[index].Status == model.AgentDeploymentStatusActive {
+					deployments[index].Status = model.AgentDeploymentStatusVerified
+				}
+			}
 		case "disable":
 			if item.Status == model.AgentCatalogStatusArchived {
 				return domain.Conflict("archived item cannot be disabled")
@@ -494,10 +691,12 @@ func (s *Service) Transition(command TransitionCommand) (*AdminItem, error) {
 				return domain.Invalid("reason is required")
 			}
 			item.Status = model.AgentCatalogStatusDisabled
-			deployment.Status = model.AgentDeploymentStatusDisabled
-			deployment.ExecutionEnabled = false
-			if err := tx.Model(&model.ControlSession{}).Where("customer_app_id = ? AND revoked_at IS NULL", deployment.CustomerAppID).Update("revoked_at", now).Error; err != nil {
-				return err
+			for index := range deployments {
+				deployments[index].Status = model.AgentDeploymentStatusDisabled
+				deployments[index].ExecutionEnabled = false
+				if err := tx.Model(&model.ControlSession{}).Where("customer_app_id = ? AND revoked_at IS NULL", deployments[index].CustomerAppID).Update("revoked_at", now).Error; err != nil {
+					return err
+				}
 			}
 		case "archive":
 			if item.Status != model.AgentCatalogStatusDraft && item.Status != model.AgentCatalogStatusRejected && item.Status != model.AgentCatalogStatusUnpublished {
@@ -505,22 +704,26 @@ func (s *Service) Transition(command TransitionCommand) (*AdminItem, error) {
 			}
 			item.Status = model.AgentCatalogStatusArchived
 			item.ArchivedAt = &now
-			deployment.Status = model.AgentDeploymentStatusDisabled
-			deployment.ExecutionEnabled = false
+			for index := range deployments {
+				deployments[index].Status = model.AgentDeploymentStatusDisabled
+				deployments[index].ExecutionEnabled = false
+			}
 		default:
 			return domain.Invalid("unsupported Agent Store transition")
 		}
 		item.RowVersion++
 		item.UpdatedAt = now
-		deployment.RowVersion++
-		deployment.UpdatedAt = now
-		if err := tx.Save(&deployment).Error; err != nil {
-			return err
+		for index := range deployments {
+			deployments[index].RowVersion++
+			deployments[index].UpdatedAt = now
+			if err := tx.Save(&deployments[index]).Error; err != nil {
+				return err
+			}
 		}
 		if err := tx.Save(&item).Error; err != nil {
 			return err
 		}
-		return support.Audit(tx, &deployment.CustomerID, command.Actor, "agent_store."+command.Action, "agent_catalog_item", item.ID, &before, &item, command.Reason, command.RequestID)
+		return support.Audit(tx, nil, command.Actor, "agent_store."+command.Action, "agent_catalog_item", item.ID, &before, &item, command.Reason, command.RequestID)
 	})
 	if err != nil {
 		return nil, err
@@ -529,22 +732,38 @@ func (s *Service) Transition(command TransitionCommand) (*AdminItem, error) {
 }
 
 func (s *Service) AdminList(limit int) ([]AdminItem, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
+	page, err := s.AdminListPage(limit, nil, "")
+	return page.Items, err
+}
+
+func (s *Service) AdminListPage(limit int, afterSortOrder *int, afterItemID string) (AdminPage, error) {
+	limit = pagination.Limit(limit)
 	var items []model.AgentCatalogItem
-	if err := s.db.Order("sort_order asc, id asc").Limit(limit).Find(&items).Error; err != nil {
-		return nil, err
+	query := s.db.Order("sort_order asc, id asc").Limit(limit + 1)
+	if afterSortOrder != nil && strings.TrimSpace(afterItemID) != "" {
+		query = query.Where("sort_order > ? OR (sort_order = ? AND id > ?)", *afterSortOrder, *afterSortOrder, strings.TrimSpace(afterItemID))
+	}
+	if err := query.Find(&items).Error; err != nil {
+		return AdminPage{}, err
+	}
+	hasNext := len(items) > limit
+	if hasNext {
+		items = items[:limit]
 	}
 	result := make([]AdminItem, 0, len(items))
 	for index := range items {
 		item, err := s.AdminGet(items[index].ID)
 		if err != nil {
-			return nil, err
+			return AdminPage{}, err
 		}
 		result = append(result, *item)
 	}
-	return result, nil
+	page := AdminPage{Items: result}
+	if hasNext && len(items) > 0 {
+		page.NextSortOrder = items[len(items)-1].SortOrder
+		page.NextItemID = items[len(items)-1].ID
+	}
+	return page, nil
 }
 
 func (s *Service) AdminGet(itemID string) (*AdminItem, error) {
@@ -552,16 +771,26 @@ func (s *Service) AdminGet(itemID string) (*AdminItem, error) {
 	if err := s.db.First(&item, "id = ?", strings.TrimSpace(itemID)).Error; err != nil {
 		return nil, domain.NotFound("Agent Store item not found")
 	}
-	var deployment model.CustomerAgentDeployment
-	if err := s.db.Where("item_id = ?", item.ID).First(&deployment).Error; err != nil {
+	var deployments []model.CustomerAgentDeployment
+	if err := s.db.Where("item_id = ?", item.ID).Order("customer_id asc, id asc").Find(&deployments).Error; err != nil {
 		return nil, err
 	}
-	var entitlements []model.AgentCatalogEntitlement
-	if err := s.db.Where("deployment_id = ?", deployment.ID).Order("subject_type asc, subject_ref asc").Find(&entitlements).Error; err != nil {
-		return nil, err
+	if len(deployments) == 0 {
+		return nil, domain.Conflict("Agent Store item has no deployment")
 	}
-	result := &AdminItem{ItemID: item.ID, Slug: item.Slug, Status: item.Status, RowVersion: item.RowVersion, SortOrder: item.SortOrder, Featured: item.Featured, Entitlements: entitlements}
-	result.Deployment = projectDeployment(deployment)
+	result := &AdminItem{ItemID: item.ID, Slug: item.Slug, Status: item.Status, RowVersion: item.RowVersion, SortOrder: item.SortOrder, Featured: item.Featured}
+	result.Deployments = make([]AdminDeployment, 0, len(deployments))
+	for index := range deployments {
+		var entitlements []model.AgentCatalogEntitlement
+		if err := s.db.Where("deployment_id = ?", deployments[index].ID).Order("subject_type asc, subject_ref asc").Find(&entitlements).Error; err != nil {
+			return nil, err
+		}
+		projected := projectDeployment(deployments[index])
+		projected.Entitlements = entitlements
+		result.Deployments = append(result.Deployments, projected)
+	}
+	result.Deployment = result.Deployments[0]
+	result.Entitlements = result.Deployments[0].Entitlements
 	if item.CurrentVersionID != nil {
 		version, err := s.projectVersion(*item.CurrentVersionID)
 		if err != nil {
@@ -580,22 +809,69 @@ func (s *Service) AdminGet(itemID string) (*AdminItem, error) {
 }
 
 func (s *Service) Audits(itemID string, limit int) (map[string]any, error) {
-	var deployment model.CustomerAgentDeployment
-	if err := s.db.Where("item_id = ?", itemID).First(&deployment).Error; err != nil {
-		return nil, domain.NotFound("Agent Store item not found")
-	}
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-	var adminAudits []model.AdminAudit
-	if err := s.db.Where("resource_type = ? AND resource_id = ?", "agent_catalog_item", itemID).Order("id desc").Limit(limit).Find(&adminAudits).Error; err != nil {
+	page, err := s.AuditsPage(itemID, limit, AuditPosition{})
+	if err != nil {
 		return nil, err
 	}
-	var launchAudits []model.AgentLaunchAudit
-	if err := s.db.Where("deployment_id = ?", deployment.ID).Order("created_at desc").Limit(limit).Find(&launchAudits).Error; err != nil {
-		return nil, err
+	return map[string]any{"admin_audits": page.AdminAudits, "launch_audits": page.LaunchAudits}, nil
+}
+
+func (s *Service) AuditsPage(itemID string, limit int, position AuditPosition) (AuditPage, error) {
+	itemID = strings.TrimSpace(itemID)
+	var item model.AgentCatalogItem
+	if err := s.db.First(&item, "id = ?", itemID).Error; err != nil {
+		return AuditPage{}, domain.NotFound("Agent Store item not found")
 	}
-	return map[string]any{"admin_audits": adminAudits, "launch_audits": launchAudits}, nil
+	limit = pagination.Limit(limit)
+	page := AuditPage{AdminAudits: []model.AdminAudit{}, LaunchAudits: []model.AgentLaunchAudit{}}
+	next := position
+	if !position.AdminDone {
+		query := s.db.Where("resource_type = ? AND resource_id = ?", "agent_catalog_item", item.ID).Order("id desc").Limit(limit + 1)
+		if position.AdminBeforeID > 0 {
+			query = query.Where("id < ?", position.AdminBeforeID)
+		}
+		var rows []model.AdminAudit
+		if err := query.Find(&rows).Error; err != nil {
+			return AuditPage{}, err
+		}
+		adminPage := pagination.Trim(rows, limit, func(value model.AdminAudit) uint64 { return value.ID })
+		page.AdminAudits = adminPage.Items
+		next.AdminBeforeID = adminPage.NextBeforeID
+		next.AdminDone = adminPage.NextBeforeID == 0
+	}
+	var deploymentIDs []string
+	if err := s.db.Model(&model.CustomerAgentDeployment{}).Where("item_id = ?", item.ID).Order("id asc").Pluck("id", &deploymentIDs).Error; err != nil {
+		return AuditPage{}, err
+	}
+	if len(deploymentIDs) == 0 {
+		return AuditPage{}, domain.Conflict("Agent Store item has no deployment")
+	}
+	if !position.LaunchDone {
+		query := s.db.Where("deployment_id IN ?", deploymentIDs).Order("created_at desc, id desc").Limit(limit + 1)
+		if position.LaunchBefore != nil && strings.TrimSpace(position.LaunchBeforeID) != "" {
+			query = query.Where("created_at < ? OR (created_at = ? AND id < ?)", position.LaunchBefore.UTC(), position.LaunchBefore.UTC(), position.LaunchBeforeID)
+		}
+		var rows []model.AgentLaunchAudit
+		if err := query.Find(&rows).Error; err != nil {
+			return AuditPage{}, err
+		}
+		if len(rows) > limit {
+			rows = rows[:limit]
+			last := rows[len(rows)-1]
+			next.LaunchBefore = &last.CreatedAt
+			next.LaunchBeforeID = last.ID
+			next.LaunchDone = false
+		} else {
+			next.LaunchBefore = nil
+			next.LaunchBeforeID = ""
+			next.LaunchDone = true
+		}
+		page.LaunchAudits = rows
+	}
+	if !next.AdminDone || !next.LaunchDone {
+		page.Next = &next
+	}
+	return page, nil
 }
 
 func (s *Service) Catalog(principal access.SessionPrincipal, cursor, category, query string) (*CatalogPage, error) {
@@ -1013,7 +1289,14 @@ func runtimeProfile(mode int, dynamic bool) string {
 	}
 }
 
-func executionProfileAllowed(profile string) bool { return profile == "claw_dynamic_v2" }
+func executionProfileAllowed(profile string) bool {
+	switch profile {
+	case "standard_v2", "multi_agent_v2", "workflow_v2", "claw_static_v2", "claw_dynamic_v2":
+		return true
+	default:
+		return false
+	}
+}
 
 func profileCapabilities(profile string) []string {
 	switch profile {

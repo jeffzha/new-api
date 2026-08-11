@@ -94,8 +94,13 @@ func (s *Server) listCustomerApps(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	result, err := s.services.AdminQueries.Apps(customerID)
-	writeResult(w, r, http.StatusOK, result, err)
+	scope := "apps:" + strconv.FormatUint(customerID, 10)
+	beforeID, limit, ok := adminPageRequest(w, r, scope)
+	if !ok {
+		return
+	}
+	page, err := s.services.AdminQueries.AppsPage(customerID, beforeID, limit)
+	writePageResult(w, r, page.Items, scope, page.NextBeforeID, err)
 }
 
 func (s *Server) createCustomerApp(w http.ResponseWriter, r *http.Request) {
@@ -186,8 +191,13 @@ func (s *Server) setDefaultCustomerApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listPlanCatalog(w http.ResponseWriter, r *http.Request) {
-	result, err := s.services.AdminQueries.PlanCatalog(queryLimit(r))
-	writeResult(w, r, http.StatusOK, result, err)
+	const scope = "plan-catalog"
+	beforeID, limit, ok := adminPageRequest(w, r, scope)
+	if !ok {
+		return
+	}
+	page, err := s.services.AdminQueries.PlanCatalogPage(beforeID, limit)
+	writePageResult(w, r, page.Items, scope, page.NextBeforeID, err)
 }
 
 func (s *Server) listCredentialProfiles(w http.ResponseWriter, r *http.Request) {
@@ -195,8 +205,16 @@ func (s *Server) listCredentialProfiles(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	result, err := s.services.AdminQueries.CredentialProfiles(queryLimit(r), customerID)
-	writeResult(w, r, http.StatusOK, result, err)
+	scope := "credential-profiles:all"
+	if customerID != nil {
+		scope = "credential-profiles:" + strconv.FormatUint(*customerID, 10)
+	}
+	beforeID, limit, ok := adminPageRequest(w, r, scope)
+	if !ok {
+		return
+	}
+	page, err := s.services.AdminQueries.CredentialProfilesPage(beforeID, limit, customerID)
+	writePageResult(w, r, page.Items, scope, page.NextBeforeID, err)
 }
 
 func (s *Server) listAdminAudits(w http.ResponseWriter, r *http.Request) {
@@ -209,6 +227,14 @@ func (s *Server) listAdminAudits(w http.ResponseWriter, r *http.Request) {
 		}
 		customerID = &parsed
 	}
-	result, err := s.services.AdminQueries.Audits(queryLimit(r), customerID)
-	writeResult(w, r, http.StatusOK, result, err)
+	scope := "admin-audits:all"
+	if customerID != nil {
+		scope = "admin-audits:" + strconv.FormatUint(*customerID, 10)
+	}
+	beforeID, limit, ok := adminPageRequest(w, r, scope)
+	if !ok {
+		return
+	}
+	page, err := s.services.AdminQueries.AuditsPage(beforeID, limit, customerID)
+	writePageResult(w, r, page.Items, scope, page.NextBeforeID, err)
 }

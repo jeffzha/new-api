@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import re
 import sys
@@ -99,11 +100,114 @@ BILLING_IMPORT_REQUIREMENTS = {
     "account_only_unattributed", "multipage_adjustment", "failed_retry",
     "coordinator_single_claim",
 }
+AGENT_STORE_REQUIREMENTS = {
+    "profile_standard_v2", "profile_multi_agent_v2", "profile_workflow_v2",
+    "profile_claw_static_v2", "profile_claw_dynamic_v2",
+    "context_standard_v2", "context_multi_agent_v2", "context_workflow_v2",
+    "context_claw_static_v2", "context_claw_dynamic_v2", "cross_customer_hidden",
+    "disabled_deployment_launch_rejected",
+    "non_dynamic_zero_copy", "dynamic_copy_single_request", "dynamic_binding_unique",
+}
+APP_MIGRATION_REQUIREMENTS = {
+    "migration_prepared", "migration_verified", "cutover_approved",
+    "lineage_single_activation", "old_history_readable", "old_write_rejected",
+    "current_write_completed", "cross_scope_history_hidden",
+}
+RETENTION_REQUIREMENTS = {
+    "legal_hold_blocked", "policy_version_race_blocked", "delivery_enqueued",
+    "delivery_receipt_completed", "adp_exact_deletion", "cos_exact_deletion",
+    "provider_revoked", "control_records_preserved",
+}
+INTEGRATION_BLOCKED_REQUIREMENTS = {
+    "catalog_readback", "binding_readback", "dependent_turn_blocked",
+    "revocation_readback",
+}
+INTEGRATION_ENABLED_REQUIREMENTS = {
+    "catalog_readback", "binding_readback", "provider_binding_readback",
+    "dependent_turn_completed", "usage_limit_recorded", "revocation_readback",
+    "revocation_blocks_turn",
+}
 OBSERVER_FACTS = {
-    "scheduled.worker_failover": ("worker_claim_count", 1),
-    "scheduled.provider_unknown_no_repost": ("provider_submit_count", 1),
-    "byok.secret_leak_scan": ("secret_matches", 0),
-    "billing_import.coordinator_single_claim": ("worker_claim_count", 1),
+    "scheduled.worker_failover": {"worker_claim_count": 1},
+    "scheduled.provider_unknown_no_repost": {"provider_submit_count": 1},
+    "byok.secret_leak_scan": {"secret_matches": 0},
+    "billing_import.coordinator_single_claim": {"worker_claim_count": 1},
+    "agent_store.non_dynamic_zero_copy": {
+        "accepted_profile_count": 4, "copy_agent_request_count": 0,
+    },
+    "agent_store.dynamic_copy_single_request": {"copy_agent_request_count": 1},
+    "agent_store.dynamic_binding_unique": {"active_binding_count": 1},
+    "agent_store.context_standard_v2": {
+        "deployment_id": "${standard_v2_deployment_id}", "provider_app_mode": 1,
+        "runtime_profile": "standard_v2", "execution_enabled": True, "launch_context_count": 1,
+        "app_context_sha256": "${standard_v2_app_context_sha256}",
+    },
+    "agent_store.context_multi_agent_v2": {
+        "deployment_id": "${multi_agent_v2_deployment_id}", "provider_app_mode": 2,
+        "runtime_profile": "multi_agent_v2", "execution_enabled": True, "launch_context_count": 1,
+        "app_context_sha256": "${multi_agent_v2_app_context_sha256}",
+    },
+    "agent_store.context_workflow_v2": {
+        "deployment_id": "${workflow_v2_deployment_id}", "provider_app_mode": 3,
+        "runtime_profile": "workflow_v2", "execution_enabled": True, "launch_context_count": 1,
+        "app_context_sha256": "${workflow_v2_app_context_sha256}",
+    },
+    "agent_store.context_claw_static_v2": {
+        "deployment_id": "${claw_static_v2_deployment_id}", "provider_app_mode": 4,
+        "runtime_profile": "claw_static_v2", "execution_enabled": True, "launch_context_count": 1,
+        "app_context_sha256": "${claw_static_v2_app_context_sha256}",
+    },
+    "agent_store.context_claw_dynamic_v2": {
+        "deployment_id": "${claw_dynamic_v2_deployment_id}", "provider_app_mode": 4,
+        "runtime_profile": "claw_dynamic_v2", "execution_enabled": True, "launch_context_count": 1,
+        "app_context_sha256": "${claw_dynamic_v2_app_context_sha256}",
+    },
+    "app_migration.lineage_single_activation": {
+        "active_lineage_count": 1, "cutover_event_count": 1,
+    },
+    "retention.delivery_receipt_completed": {
+        "completed_receipt_count": 1, "pending_delivery_count": 0,
+    },
+    "retention.adp_exact_deletion": {
+        "remaining_conversation_count": 0, "remaining_turn_count": 0,
+        "remaining_workspace_count": 0, "remaining_scheduled_task_count": 0,
+        "remaining_sandbox_count": 0, "remaining_oauth_count": 0,
+    },
+    "retention.cos_exact_deletion": {"remaining_private_object_count": 0},
+    "retention.provider_revoked": {"provider_revoked": True},
+    "retention.control_records_preserved": {
+        "preserved_invoice_count": 1, "preserved_audit_count": 1,
+        "preserved_retention_receipt_count": 1,
+    },
+    "integration_execution.provider_binding_readback": {
+        "authorized_binding_count": 1, "provider_readback_match_count": 1,
+    },
+    "integration_execution.usage_limit_recorded": {
+        "completed_turn_count": 1, "usage_row_count": 1,
+        "limit_decision_count": 1,
+    },
+}
+OBSERVER_SOURCE_KINDS = {
+    "scheduled.worker_failover": {"postgresql", "prometheus"},
+    "scheduled.provider_unknown_no_repost": {"provider_audit"},
+    "byok.secret_leak_scan": {"artifact_scan"},
+    "billing_import.coordinator_single_claim": {"postgresql", "prometheus"},
+    "agent_store.non_dynamic_zero_copy": {"provider_audit"},
+    "agent_store.dynamic_copy_single_request": {"provider_audit"},
+    "agent_store.dynamic_binding_unique": {"postgresql"},
+    "agent_store.context_standard_v2": {"postgresql"},
+    "agent_store.context_multi_agent_v2": {"postgresql"},
+    "agent_store.context_workflow_v2": {"postgresql"},
+    "agent_store.context_claw_static_v2": {"postgresql"},
+    "agent_store.context_claw_dynamic_v2": {"postgresql"},
+    "app_migration.lineage_single_activation": {"postgresql"},
+    "retention.delivery_receipt_completed": {"postgresql"},
+    "retention.adp_exact_deletion": {"postgresql"},
+    "retention.cos_exact_deletion": {"object_inventory"},
+    "retention.provider_revoked": {"provider_audit"},
+    "retention.control_records_preserved": {"postgresql"},
+    "integration_execution.provider_binding_readback": {"provider_audit"},
+    "integration_execution.usage_limit_recorded": {"postgresql", "prometheus"},
 }
 PHASE_REQUIREMENTS = {
     "isolation_checks": {"same_customer_idor", "cross_customer_idor"},
@@ -153,6 +257,16 @@ CONTRACT_PATH_PREFIXES = {
         "/api/admin/workbench/usage-audits",
         "/api/admin/workbench/customers",
     ),
+    "agent_store": (
+        "/api/workbench/agent-store", "/api/admin/workbench/agent-store",
+        "/workbench/chat/", "/workbench/adp/",
+    ),
+    "app_migration": (
+        "/api/admin/workbench/customers/", "/api/admin/workbench/approvals/",
+        "/workbench/chat/", "/workbench/adp/",
+    ),
+    "retention": ("/api/admin/workbench/",),
+    "integration_execution": ("/workbench/integrations", "/workbench/chat/"),
 }
 
 
@@ -200,6 +314,73 @@ def read_structured_sse_event(response: Any) -> tuple[str, dict[str, Any] | None
     except json.JSONDecodeError:
         return event_id, None
     return event_id, payload if isinstance(payload, dict) else None
+
+
+def verify_structured_sse_terminal(
+    body: bytes,
+    expected_client_request_id: str,
+    expected_status: str = "completed",
+) -> tuple[bool, dict[str, Any]]:
+    """Bind a provider-cost response to one accepted Turn and its exact terminal frame."""
+
+    accepted_turn_id = ""
+    accepted_conversation_id = ""
+    event_count = 0
+    terminal_status = ""
+    stream = io.BytesIO(body)
+    while event_count < 10000:
+        event = read_structured_sse_event(stream)
+        if event is None:
+            break
+        event_count += 1
+        _, payload = event
+        if not isinstance(payload, dict):
+            continue
+        event_type = payload.get("Type")
+        if event_type == WORKBENCH_TURN_EVENT_TYPE:
+            client_request_id = payload.get("ClientRequestId")
+            turn_id = payload.get("TurnId")
+            if client_request_id != expected_client_request_id or not isinstance(turn_id, str) or not turn_id:
+                continue
+            if accepted_turn_id and accepted_turn_id != turn_id:
+                return False, {
+                    "sse_event_count": event_count,
+                    "accepted_turn_count": 2,
+                    "terminal_seen": False,
+                }
+            accepted_turn_id = turn_id
+            conversation_id = payload.get("ConversationId")
+            if isinstance(conversation_id, str) and conversation_id:
+                accepted_conversation_id = conversation_id
+            continue
+        if event_type != WORKBENCH_TERMINAL_EVENT_TYPE:
+            continue
+        if not accepted_turn_id or payload.get("TurnId") != accepted_turn_id:
+            continue
+        terminal_status = str(payload.get("Status", ""))
+        break
+    return (
+        bool(accepted_turn_id) and terminal_status == expected_status,
+        {
+            "sse_event_count": event_count,
+            "accepted_turn_count": 1 if accepted_turn_id else 0,
+            "terminal_seen": bool(terminal_status),
+            "terminal_status": terminal_status,
+            "_accepted_conversation_id": accepted_conversation_id,
+        },
+    )
+
+
+def canonical_app_context_sha256(response: Any) -> str:
+    if response.status != 200:
+        return ""
+    try:
+        payload = response.json()
+    except (ValueError, json.JSONDecodeError):
+        return ""
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _path_matches(spec: dict[str, Any], method: str, pattern: str) -> bool:
@@ -265,6 +446,7 @@ def _has_strong_assertion(spec: dict[str, Any]) -> bool:
                 "json_absent", "json_types", "header_equals", "poll",
                 "require_response_markers", "forbid_response_markers",
                 "assert_variables_equal", "assert_variables_not_equal",
+                "sse_terminal",
             )
         )
     )
@@ -293,6 +475,13 @@ def _exact_marker(spec: dict[str, Any], marker: str) -> bool:
     return marker in spec.get("require_response_markers", [])
 
 
+def _json_equals_suffix(spec: dict[str, Any], suffix: str, expected: Any) -> bool:
+    return any(
+        str(pointer).endswith(suffix) and value == expected
+        for pointer, value in spec.get("json_equals", {}).items()
+    )
+
+
 def _default_app_selector(spec: dict[str, Any]) -> str:
     match = re.fullmatch(
         r"/api/admin/workbench/customers/[^/]+/apps/([^/]+)/default",
@@ -306,6 +495,14 @@ def acceptance_preflight_errors(config: dict[str, Any]) -> list[str]:
 
     errors: list[str] = []
     sandbox_requirements = SANDBOX_ENABLED_REQUIREMENTS if config.get("sandbox_mode", "off") == "enabled" else SANDBOX_REQUIREMENTS
+    integration_mode = config.get("integration_execution_mode")
+    if integration_mode not in {"blocked", "enabled"}:
+        errors.append("integration_execution_mode: blocked or enabled is required")
+    integration_requirements = (
+        INTEGRATION_ENABLED_REQUIREMENTS
+        if integration_mode == "enabled"
+        else INTEGRATION_BLOCKED_REQUIREMENTS
+    )
     contracts = (
         ("selector", "selector_checks", SELECTOR_REQUIREMENTS),
         ("oauth", "oauth_checks", OAUTH_REQUIREMENTS),
@@ -313,6 +510,10 @@ def acceptance_preflight_errors(config: dict[str, Any]) -> list[str]:
         ("sandbox", "sandbox_checks", sandbox_requirements),
         ("byok", "byok_checks", BYOK_REQUIREMENTS),
         ("billing_import", "billing_import_checks", BILLING_IMPORT_REQUIREMENTS),
+        ("agent_store", "agent_store_checks", AGENT_STORE_REQUIREMENTS),
+        ("app_migration", "app_migration_checks", APP_MIGRATION_REQUIREMENTS),
+        ("retention", "retention_checks", RETENTION_REQUIREMENTS),
+        ("integration_execution", "integration_execution_checks", integration_requirements),
     )
     observer_keys = set(config.get("acceptance_observer", {}).get("evidence", {}))
     unknown_observer = sorted(observer_keys.difference(OBSERVER_FACTS))
@@ -728,6 +929,315 @@ def requirement_semantic_errors(
         need("failed_retry", "failed import retry", lambda spec: _path_matches(spec, "POST", r"^/api/admin/workbench/tencent-billing-imports/[^/]+/retry$") and bool(spec.get("capture") or spec.get("poll")))
         return errors
 
+    if contract == "agent_store":
+        profiles = {
+            "profile_standard_v2": (1, "standard_v2", True),
+            "profile_multi_agent_v2": (2, "multi_agent_v2", True),
+            "profile_workflow_v2": (3, "workflow_v2", True),
+            "profile_claw_static_v2": (4, "claw_static_v2", True),
+            "profile_claw_dynamic_v2": (4, "claw_dynamic_v2", True),
+        }
+        for requirement, (app_mode, runtime_profile, execution_enabled) in profiles.items():
+            if requirement not in requirements:
+                continue
+            prefix = runtime_profile
+            claimed = [(index, spec) for index, spec in enumerate(specs) if spec.get("requirement") == requirement]
+            details = []
+            for index, spec in claimed:
+                captures = spec.get("capture", {})
+                deployment_pointer = captures.get(f"{prefix}_deployment_id")
+                slug_pointer = captures.get(f"{prefix}_slug")
+                match = re.fullmatch(r"(/data/deployments/\d+)/deployment_id", str(deployment_pointer or ""))
+                if (
+                    spec.get("actor") in {"admin", "admin_requester", "admin_approver"}
+                    and _path_matches(spec, "GET", r"^/api/admin/workbench/agent-store/items/[^/?]+$")
+                    and _exact_status(spec, 200) and slug_pointer == "/data/slug" and match
+                ):
+                    deployment_base = match.group(1)
+                    equals = spec.get("json_equals", {})
+                    if (
+                        equals.get(deployment_base + "/provider_app_mode") == app_mode
+                        and equals.get(deployment_base + "/runtime_profile") == runtime_profile
+                        and equals.get(deployment_base + "/execution_enabled") is execution_enabled
+                    ):
+                        details.append(index)
+            launches = [
+                (index, spec) for index, spec in claimed
+                if spec.get("actor") == "user_a"
+                and spec.get("path") == f"/api/workbench/agent-store/${{{prefix}_slug}}/launch"
+                and spec.get("method") == "POST" and _exact_status(spec, 200)
+                and spec.get("consume_launch_redirect") is True
+                and spec.get("launch_context_sha256") == f"{prefix}_app_context_sha256"
+                and spec.get("json_equals", {}).get("/success") is True
+                and spec.get("json_types", {}).get("/data/redirect_url") == "string"
+                and {"/data/app_id", "/data/app_key", "/data/customer_id", "/data/selection_token"}.issubset(spec.get("json_absent", []))
+            ]
+            turns = [
+                (index, spec) for index, spec in claimed
+                if spec.get("actor") == "user_a" and _path_matches(spec, "POST", r"^/workbench/chat/message$")
+                and _exact_status(spec, 200) and spec.get("provider_cost") is True
+                and spec.get("sse_terminal", {}).get("status") == "completed"
+                and spec.get("sse_terminal", {}).get("capture_conversation_id") == f"{prefix}_conversation_id"
+                and spec.get("assert_current_app_context_sha256") == f"{prefix}_app_context_sha256"
+            ]
+            histories = [
+                (index, spec) for index, spec in claimed
+                if spec.get("actor") == "user_a" and _path_matches(spec, "GET", r"^/workbench/chat/messages(?:\?|$)")
+                and f"${{{prefix}_conversation_id}}" in str(spec.get("path", ""))
+                and spec.get("assert_current_app_context_sha256") == f"{prefix}_app_context_sha256"
+                and _exact_status(spec, 200)
+                and bool(spec.get("json_equals") or spec.get("require_response_markers"))
+            ]
+            if not details:
+                errors.append(f"{requirement}: deployment_id, AppMode, runtime and execution must come from one deployment array element")
+            if not launches:
+                errors.append(f"{requirement}: missing launch bound to the captured catalog slug and consumed SSO")
+            if not turns:
+                errors.append(f"{requirement}: missing completed provider-cost Turn with captured ConversationId")
+            if not histories:
+                errors.append(f"{requirement}: missing history readback bound to the captured ConversationId")
+            ordered = [
+                (detail, launch, turn, history)
+                for detail in details for launch, _ in launches for turn, _ in turns for history, _ in histories
+                if detail < launch < turn < history
+                and not any(
+                    launch < other_index < history and other_spec.get("consume_launch_redirect") is True
+                    for other_index, other_spec in enumerate(specs) if other_index != launch
+                )
+            ]
+            if details and launches and turns and histories and not ordered:
+                errors.append(f"{requirement}: deployment readback, launch/SSO, completed Turn and history must be one ordered capture chain")
+        disabled_specs = [spec for spec in specs if spec.get("requirement") == "disabled_deployment_launch_rejected"]
+        need(
+            "disabled_deployment_launch_rejected", "disabled deployment readback",
+            lambda spec: spec.get("actor") in {"admin", "admin_requester", "admin_approver"}
+            and _path_matches(spec, "GET", r"^/api/admin/workbench/agent-store/items/[^/?]+$")
+            and _exact_status(spec, 200)
+            and _json_equals_suffix(spec, "/execution_enabled", False)
+            and spec.get("capture", {}).get("disabled_profile_slug") == "/data/slug",
+        )
+        need(
+            "disabled_deployment_launch_rejected", "disabled deployment launch rejection",
+            lambda spec: spec.get("actor") == "user_a"
+            and spec.get("method") == "POST"
+            and spec.get("path") == "/api/workbench/agent-store/${disabled_profile_slug}/launch"
+            and bool(set(spec.get("expect_status", [])).intersection({403, 409})),
+        )
+        if len(disabled_specs) >= 2:
+            disabled_read = next((i for i, spec in enumerate(specs) if spec in disabled_specs and spec.get("capture", {}).get("disabled_profile_slug") == "/data/slug"), -1)
+            disabled_launch = next((i for i, spec in enumerate(specs) if spec in disabled_specs and spec.get("path") == "/api/workbench/agent-store/${disabled_profile_slug}/launch"), -1)
+            if disabled_read < 0 or disabled_launch <= disabled_read:
+                errors.append("disabled_deployment_launch_rejected: readback must precede the bound rejected launch")
+        need(
+            "cross_customer_hidden", "different-customer catalog item 404",
+            lambda spec: spec.get("actor") == "user_b_other"
+            and _path_matches(spec, "GET", r"^/api/workbench/agent-store/[^/?]+$")
+            and _exact_status(spec, 404),
+        )
+        return errors
+
+    if contract == "app_migration":
+        need(
+            "old_history_readable", "source Conversation creation before cutover",
+            lambda spec: spec.get("actor") == "user_a_context_1"
+            and _path_matches(spec, "POST", r"^/workbench/adp/CreateConversation$")
+            and _exact_status(spec, 200)
+            and spec.get("capture", {}).get("migration_source_conversation_id") == "/Response/ConversationId",
+        )
+        need(
+            "migration_prepared", "migration prepare with captured job",
+            lambda spec: spec.get("actor") in {"admin", "admin_requester"}
+            and _path_matches(spec, "POST", r"^/api/admin/workbench/customers/[^/]+/app-migrations$")
+            and _exact_status(spec, 201)
+            and any(str(variable).endswith("migration_id") for variable in spec.get("capture", {})),
+        )
+        need(
+            "migration_verified", "migration provider verification",
+            lambda spec: spec.get("actor") in {"admin", "admin_requester"}
+            and _path_matches(spec, "POST", r"^/api/admin/workbench/customers/[^/]+/app-migrations/\$\{[^}]*migration_id\}/verify$")
+            and _exact_status(spec, 200)
+            and bool(spec.get("json_equals") or spec.get("require_response_markers")),
+        )
+        need(
+            "cutover_approved", "two-person approval execution",
+            lambda spec: spec.get("actor") == "admin_approver"
+            and _path_matches(spec, "POST", r"^/api/admin/workbench/approvals/\$\{[^}]+\}/execute$")
+            and _exact_status(spec, 200)
+            and bool(spec.get("json_equals") or spec.get("require_response_markers")),
+        )
+        need(
+            "old_history_readable", "old Conversation exact history read",
+            lambda spec: spec.get("actor") == "user_a_context_1"
+            and _path_matches(spec, "GET", r"^/workbench/chat/messages\?[^#]*\$\{migration_source_conversation_id\}")
+            and _exact_status(spec, 200)
+            and bool(spec.get("json_equals") or spec.get("require_response_markers")),
+        )
+        need(
+            "old_write_rejected", "old App write rejection",
+            lambda spec: spec.get("actor") == "user_a_context_1"
+            and _path_matches(spec, "POST", r"^/workbench/chat/message$")
+            and _fixture_field(spec, "ConversationId") == "${migration_source_conversation_id}"
+            and bool(set(spec.get("expect_status", [])).intersection({403, 409})),
+        )
+        need(
+            "current_write_completed", "current App exact completed Turn",
+            lambda spec: spec.get("actor") == "user_a_context_2"
+            and _path_matches(spec, "POST", r"^/workbench/chat/message$")
+            and _exact_status(spec, 200)
+            and spec.get("sse_terminal", {}).get("status") == "completed",
+        )
+        need(
+            "cross_scope_history_hidden", "different-customer old history 404",
+            lambda spec: spec.get("actor") == "user_b_other"
+            and _path_matches(spec, "GET", r"^/workbench/chat/messages\?[^#]*\$\{migration_source_conversation_id\}")
+            and _exact_status(spec, 404),
+        )
+        source = [index for index, spec in enumerate(specs) if spec.get("requirement") == "old_history_readable" and _path_matches(spec, "POST", r"^/workbench/adp/CreateConversation$")]
+        prepared = [index for index, spec in enumerate(specs) if spec.get("requirement") == "migration_prepared"]
+        verified = [index for index, spec in enumerate(specs) if spec.get("requirement") == "migration_verified"]
+        cutover = [index for index, spec in enumerate(specs) if spec.get("requirement") == "cutover_approved"]
+        history = [index for index, spec in enumerate(specs) if spec.get("requirement") == "old_history_readable" and spec.get("method") == "GET"]
+        if source and prepared and verified and cutover and history and not any(
+            a < b < c < d < e
+            for a in source for b in prepared for c in verified for d in cutover for e in history
+        ):
+            errors.append("old_history_readable: source, prepare, verify, cutover, and history evidence are not ordered")
+        return errors
+
+    if contract == "retention":
+        need(
+            "legal_hold_blocked", "legal-hold dry-run rejection",
+            lambda spec: spec.get("actor") in {"admin", "admin_requester", "admin_approver"}
+            and _path_matches(spec, "POST", r"^/api/admin/workbench/customers/[^/]+/retention-runs$")
+            and _exact_status(spec, 409)
+            and any("legal hold" in marker.lower() for marker in spec.get("require_response_markers", [])),
+        )
+        need(
+            "policy_version_race_blocked", "stale-policy execute rejection",
+            lambda spec: spec.get("actor") in {"admin", "admin_requester", "admin_approver"}
+            and _path_matches(spec, "POST", r"^/api/admin/workbench/retention-runs/[^/]+/execute$")
+            and _exact_status(spec, 409)
+            and any("policy changed" in marker.lower() for marker in spec.get("require_response_markers", [])),
+        )
+        need(
+            "delivery_enqueued", "destructive dry-run with captured run",
+            lambda spec: spec.get("actor") in {"admin", "admin_requester"}
+            and _path_matches(spec, "POST", r"^/api/admin/workbench/customers/[^/]+/retention-runs$")
+            and _exact_status(spec, 201)
+            and any(str(variable).endswith("retention_run_id") for variable in spec.get("capture", {})),
+        )
+        need(
+            "delivery_enqueued", "captured run execution pending external receipt",
+            lambda spec: spec.get("actor") in {"admin", "admin_approver"}
+            and _path_matches(spec, "POST", r"^/api/admin/workbench/retention-runs/\$\{[^}]*retention_run_id\}/execute$")
+            and _exact_status(spec, 200)
+            and _json_equals_suffix(spec, "/status", "pending_external"),
+        )
+        return errors
+
+    if contract == "integration_execution":
+        need(
+            "catalog_readback", "bounded integration catalog read",
+            lambda spec: spec.get("actor") == "user_a"
+            and _path_matches(spec, "GET", r"^/workbench/integrations$")
+            and _exact_status(spec, 200)
+            and bool(spec.get("json_equals") or spec.get("require_response_markers")),
+        )
+        need(
+            "binding_readback", "allowlisted bind mutation",
+            lambda spec: spec.get("actor") == "user_a"
+            and _path_matches(spec, "POST", r"^/workbench/integrations/bindings$")
+            and _fixture_field(spec, "action") == "bind"
+            and _exact_status(spec, 200)
+            and bool(spec.get("json_equals") or spec.get("require_response_markers")),
+        )
+        need(
+            "binding_readback", "post-bind catalog readback",
+            lambda spec: spec.get("actor") == "user_a"
+            and _path_matches(spec, "GET", r"^/workbench/integrations$")
+            and _exact_status(spec, 200)
+            and bool(spec.get("json_equals") or spec.get("require_response_markers")),
+        )
+        need(
+            "revocation_readback", "allowlisted unbind cleanup",
+            lambda spec: spec.get("actor") == "user_a"
+            and _path_matches(spec, "POST", r"^/workbench/integrations/bindings$")
+            and _fixture_field(spec, "action") == "unbind"
+            and _exact_status(spec, 200)
+            and spec.get("cleanup") is True,
+        )
+        need(
+            "revocation_readback", "post-unbind catalog readback",
+            lambda spec: spec.get("actor") == "user_a"
+            and _path_matches(spec, "GET", r"^/workbench/integrations$")
+            and _exact_status(spec, 200)
+            and spec.get("cleanup") is True
+            and bool(spec.get("json_equals") or spec.get("require_response_markers")),
+        )
+        if "dependent_turn_blocked" in requirements:
+            need(
+                "dependent_turn_blocked", "integration-dependent Turn fail-closed",
+                lambda spec: spec.get("actor") == "user_a"
+                and _path_matches(spec, "POST", r"^/workbench/chat/message$")
+                and bool(set(spec.get("expect_status", [])).intersection({403, 409, 503}))
+                and any("execution" in marker.lower() and "block" in marker.lower() for marker in spec.get("require_response_markers", [])),
+            )
+        if "dependent_turn_completed" in requirements:
+            need(
+                "dependent_turn_completed", "integration-dependent exact completed Turn",
+                lambda spec: spec.get("actor") == "user_a"
+                and _path_matches(spec, "POST", r"^/workbench/chat/message$")
+                and _exact_status(spec, 200)
+                and spec.get("sse_terminal", {}).get("status") == "completed",
+            )
+            need(
+                "revocation_blocks_turn", "same dependent Turn rejected after unbind",
+                lambda spec: spec.get("actor") == "user_a"
+                and _path_matches(spec, "POST", r"^/workbench/chat/message$")
+                and bool(set(spec.get("expect_status", [])).intersection({403, 409, 503}))
+                and spec.get("cleanup") is True
+                and bool(spec.get("require_response_markers")),
+            )
+        bind_indices = [
+            index for index, spec in enumerate(specs)
+            if spec.get("requirement") == "binding_readback"
+            and spec.get("method") == "POST"
+            and _fixture_field(spec, "action") == "bind"
+        ]
+        bind_read_indices = [
+            index for index, spec in enumerate(specs)
+            if spec.get("requirement") == "binding_readback" and spec.get("method") == "GET"
+        ]
+        unbind_indices = [
+            index for index, spec in enumerate(specs)
+            if spec.get("requirement") == "revocation_readback"
+            and spec.get("method") == "POST"
+            and _fixture_field(spec, "action") == "unbind"
+        ]
+        revoke_read_indices = [
+            index for index, spec in enumerate(specs)
+            if spec.get("requirement") == "revocation_readback" and spec.get("method") == "GET"
+        ]
+        revoke_turn_indices = [
+            index for index, spec in enumerate(specs)
+            if spec.get("requirement") == "revocation_blocks_turn"
+        ]
+        if bind_indices and bind_read_indices and unbind_indices and revoke_read_indices:
+            ordered = any(
+                bind < bind_read < unbind < revoke_read
+                for bind in bind_indices for bind_read in bind_read_indices
+                for unbind in unbind_indices for revoke_read in revoke_read_indices
+            )
+            if not ordered:
+                errors.append("revocation_readback: bind, readback, unbind, and revoked readback are not ordered")
+        if revoke_turn_indices and not any(
+            unbind < revoke_read < revoke_turn
+            for unbind in unbind_indices for revoke_read in revoke_read_indices
+            for revoke_turn in revoke_turn_indices
+        ):
+            errors.append("revocation_blocks_turn: rejected Turn must follow unbind and revoked readback")
+        return errors
+
     if contract != "sandbox":
         return errors
 
@@ -1108,13 +1618,13 @@ class Runner:
                     raise ConfigError("observer evidence is stale or from the future")
                 source = value.get("source")
                 if (not isinstance(source, dict) or set(source) != {"kind", "query_sha256", "read_only", "row_count"}
-                        or source.get("kind") not in {"postgresql", "prometheus", "artifact_scan"}
+                        or source.get("kind") not in OBSERVER_SOURCE_KINDS[qualified]
                         or source.get("read_only") is not True
                         or not isinstance(source.get("row_count"), int) or source["row_count"] < 1
                         or not re.fullmatch(r"[0-9a-f]{64}", str(source.get("query_sha256", "")))):
                     raise ConfigError("observer evidence source is not a bounded read-only query")
-                fact_name, expected = OBSERVER_FACTS[qualified]
-                if value.get("facts") != {fact_name: expected}:
+                expected_facts = expand_variables(OBSERVER_FACTS[qualified], self.variables)
+                if value.get("facts") != expected_facts:
                     raise ConfigError("observer evidence fact is missing or not exact")
                 self.add(
                     phase, name, "pass", "independently signed read-only evidence verified",
@@ -1303,7 +1813,9 @@ class Runner:
                     "json_one_of", "json_absent", "json_types", "header_equals", "poll",
                     "require_response_markers", "forbid_response_markers",
                     "assert_variables_equal", "assert_variables_not_equal",
-                    "fixture_json_min_lengths",
+                    "fixture_json_min_lengths", "sse_terminal", "consume_launch_redirect",
+                    "launch_context_sha256",
+                    "assert_current_app_context_sha256",
                 )
                 if spec.get(key)
             ]
@@ -1342,6 +1854,7 @@ class Runner:
         try:
             path = expand_variables(str(spec["path"]), self.variables)
             body = None
+            fixture_payload: Any = None
             headers: dict[str, str] = {}
             if spec.get("body_fixture"):
                 fixture_payload = load_json_fixture(str(spec["body_fixture"]), self.variables)
@@ -1357,6 +1870,18 @@ class Runner:
                     raise ConfigError(
                         f"serialized request fixture is smaller than declared body_min_bytes={spec['body_min_bytes']}"
                     )
+            context_variable = spec.get("assert_current_app_context_sha256")
+            if context_variable:
+                expected_context_hash = self.variables.get(str(context_variable))
+                current_context_hash = canonical_app_context_sha256(
+                    client.request("GET", "/api/workbench/config")
+                )
+                if not expected_context_hash or current_context_hash != expected_context_hash:
+                    self.add(
+                        phase, name, "fail", "current AppContext does not match the captured launch context",
+                        evidence={**declared_evidence, "app_context_bound": False},
+                    )
+                    return False
             if spec.get("selection_token_source"):
                 token_actor = str(spec["selection_token_actor"])
                 if spec["selection_token_source"] == "consumed":
@@ -1505,7 +2030,80 @@ class Runner:
                 variable_mismatches += left not in self.variables or right not in self.variables or self.variables[left] != self.variables[right]
             for left, right in spec.get("assert_variables_not_equal", {}).items():
                 variable_mismatches += left not in self.variables or right not in self.variables or self.variables[left] == self.variables[right]
-            if missing or forbidden or json_mismatches or json_absence_mismatches or json_type_mismatches or header_mismatches or variable_mismatches or not poll_satisfied or poll_forbidden:
+            sse_ok = True
+            sse_evidence: dict[str, Any] = {}
+            if spec.get("sse_terminal"):
+                terminal = spec["sse_terminal"]
+                present, client_request_id = find_pointer_state(
+                    fixture_payload,
+                    str(terminal["client_request_id_pointer"]),
+                )
+                content_type = str(response.headers.get("Content-Type", "")).split(";", 1)[0].strip().lower()
+                if not present or not isinstance(client_request_id, str) or not client_request_id:
+                    raise ConfigError("sse_terminal client request ID is missing from the request fixture")
+                if content_type != "text/event-stream":
+                    sse_ok = False
+                    sse_evidence = {"content_type_valid": False, "terminal_seen": False}
+                else:
+                    sse_ok, sse_evidence = verify_structured_sse_terminal(
+                        response.body,
+                        client_request_id,
+                        str(terminal["status"]),
+                    )
+                    conversation_id = sse_evidence.pop("_accepted_conversation_id", "")
+                    capture_name = terminal.get("capture_conversation_id")
+                    if capture_name:
+                        if not conversation_id:
+                            sse_ok = False
+                        else:
+                            self.variables[str(capture_name)] = conversation_id
+                            self.redactor.add(conversation_id)
+                    sse_evidence["content_type_valid"] = True
+            launch_ok = True
+            launch_evidence: dict[str, Any] = {}
+            if (
+                spec.get("consume_launch_redirect")
+                and ok and not missing and not forbidden and not json_mismatches
+                and not json_absence_mismatches and not json_type_mismatches
+                and not header_mismatches and not variable_mismatches
+                and poll_satisfied and not poll_forbidden and sse_ok
+            ):
+                redirect_url = find_key(response.json(), "redirect_url")
+                if not isinstance(redirect_url, str) or not redirect_url:
+                    launch_ok = False
+                    launch_evidence = {"launch_redirect_present": False}
+                else:
+                    redirect_path = parse_location(self.config["base_url"], redirect_url)
+                    parsed_redirect = urlsplit(redirect_path)
+                    self.redactor.add(parsed_redirect.query)
+                    if parsed_redirect.path != "/workbench/auth/sso" or not parsed_redirect.query.startswith("ticket="):
+                        launch_ok = False
+                        launch_evidence = {"launch_redirect_present": True, "launch_redirect_contract": False}
+                    else:
+                        sso_response = client.request("GET", redirect_path)
+                        sso_ok = sso_response.status in {302, 303, 307, 308}
+                        replay_response = client.request("GET", redirect_path)
+                        replay_ok = replay_response.status in {400, 401, 403, 404, 409, 410}
+                        root_response = client.request("GET", self.paths["workbench_root"])
+                        root_ok = root_response.status == 200
+                        context_ok = True
+                        context_hash = ""
+                        if spec.get("launch_context_sha256"):
+                            context_response = client.request("GET", "/api/workbench/config")
+                            context_hash = canonical_app_context_sha256(context_response)
+                            context_ok = bool(context_hash)
+                            if context_ok:
+                                self.variables[str(spec["launch_context_sha256"])] = context_hash
+                        launch_ok = sso_ok and replay_ok and root_ok and context_ok
+                        launch_evidence = {
+                            "launch_redirect_present": True,
+                            "launch_redirect_contract": True,
+                            "launch_sso_status": sso_response.status,
+                            "launch_sso_replay_rejected": replay_ok,
+                            "launch_workbench_ready": root_ok,
+                            "launch_app_context_bound": context_ok,
+                        }
+            if missing or forbidden or json_mismatches or json_absence_mismatches or json_type_mismatches or header_mismatches or variable_mismatches or not poll_satisfied or poll_forbidden or not sse_ok or not launch_ok:
                 ok = False
             assertion_types = declared_assertions
             evidence = {
@@ -1536,6 +2134,8 @@ class Runner:
                 evidence["missing_required_marker_count"] = len(missing)
             if forbidden:
                 evidence["forbidden_marker_count"] = len(forbidden)
+            evidence.update(sse_evidence)
+            evidence.update(launch_evidence)
             if ok and spec.get("capture"):
                 payload = response.json()
                 for variable, pointer in spec["capture"].items():
@@ -2143,6 +2743,16 @@ class Runner:
             self.identity("user_a")
         self.minimal_turn()
         self.isolation()
+        self.fixture_phase(
+            "20.1 Agent Store",
+            "Agent Store catalog, launch and five runtime profiles",
+            self.config.get("agent_store_checks"),
+            mutations=True,
+            required=True,
+            provider_cost=True,
+            requirements=AGENT_STORE_REQUIREMENTS,
+            contract="agent_store",
+        )
         self.eicar()
         self.fixture_phase("19.3.10 allowlists", "model/Skill/Tool/connector allowlists", self.config.get("policy_checks"), required=True, requirements=PHASE_REQUIREMENTS["policy_checks"], semantic_key="policy_checks")
         self.fixture_phase("19.3.11 limits", "request/concurrency/storage/turn limits", self.config.get("limit_checks"), required=True, requirements=PHASE_REQUIREMENTS["limit_checks"], semantic_key="limit_checks")
@@ -2153,6 +2763,22 @@ class Runner:
             self.bootstrap("user_a_stale_context", selection_only=True)
         self.fixture_phase("20.3 selector", "multi-App and multi-customer selection invariants", self.config.get("selector_checks"), mutations=True, required=True, requirements=SELECTOR_REQUIREMENTS, contract="selector")
         self.fixture_phase("20.2 OAuth", "OAuth PKCE, replay, disconnect and execution-blocking invariants", self.config.get("oauth_checks"), mutations=True, required=True, requirements=OAUTH_REQUIREMENTS, contract="oauth")
+        integration_mode = self.config.get("integration_execution_mode")
+        integration_requirements = (
+            INTEGRATION_ENABLED_REQUIREMENTS
+            if integration_mode == "enabled"
+            else INTEGRATION_BLOCKED_REQUIREMENTS
+        )
+        self.fixture_phase(
+            "20.2 integration execution",
+            f"integration-dependent Turn ({integration_mode or 'mode-missing'})",
+            self.config.get("integration_execution_checks"),
+            mutations=True,
+            required=True,
+            provider_cost=integration_mode == "enabled",
+            requirements=integration_requirements,
+            contract="integration_execution",
+        )
         self.fixture_phase("20.3 scheduled tasks", "scheduled task lifecycle, idempotency and offline reauthorization", self.config.get("scheduled_task_checks"), mutations=True, required=True, provider_cost=True, requirements=SCHEDULED_REQUIREMENTS, contract="scheduled")
         self.fixture_phase(
             "19.3.11b managed sandbox",
@@ -2166,6 +2792,16 @@ class Runner:
         )
         self.gate_scenarios()
         self.fixture_phase("19.3.13 rotation", "credential and App rotation", self.config.get("rotation_checks"), mutations=True, required=True, requirements=PHASE_REQUIREMENTS["rotation_checks"], semantic_key="rotation_checks")
+        self.fixture_phase(
+            "20.3 App migration",
+            "App migration cutover, immutable lineage and old-history-only access",
+            self.config.get("app_migration_checks"),
+            mutations=True,
+            required=True,
+            provider_cost=True,
+            requirements=APP_MIGRATION_REQUIREMENTS,
+            contract="app_migration",
+        )
         self.admin_actor_separation()
         self.fixture_phase("20.3 BYOK", "BYOK scope, inheritance, two-person approval and rotation", self.config.get("byok_checks"), mutations=True, required=True, requirements=BYOK_REQUIREMENTS, contract="byok")
         self.fixture_phase("19.3.15 usage audit", "usage, audit and margin reconciliation", self.config.get("usage_audit_checks"), required=True, requirements=PHASE_REQUIREMENTS["usage_audit_checks"], semantic_key="usage_audit_checks")
@@ -2173,6 +2809,17 @@ class Runner:
         self.fixture_phase("19.3.16 regression smoke", "existing model and asset routing", self.config.get("smoke_checks"), required=True, provider_cost=True, requirements=PHASE_REQUIREMENTS["smoke_checks"], semantic_key="smoke_checks")
         self.edge_security()
         self.direct_adp()
+        # Retention is intentionally last: its successful delivery deletes the
+        # disposable acceptance customer's operational data across components.
+        self.fixture_phase(
+            "20.2 retention",
+            "retention legal hold, durable delivery and signed cross-component receipt",
+            self.config.get("retention_checks"),
+            mutations=True,
+            required=True,
+            requirements=RETENTION_REQUIREMENTS,
+            contract="retention",
+        )
         return self.results
 
 

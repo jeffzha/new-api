@@ -28,10 +28,10 @@ request_header @outsideWorkbenchControl Cookie "^;\\s*" ""
 request_header @outsideWorkbenchControl Cookie ";\\s*;" ";"
 request_header @outsideWorkbenchControl Cookie ";\\s*$" ""
 
-# These two POST endpoints belong to new-api, not claw-control. A browser may
+# These three POST endpoints belong to new-api, not claw-control. A browser may
 # already carry control/admin cookies, so remove them before the existing
 # new-api catch-all receives the request.
-@newApiWorkbenchTicket path /api/workbench/session-ticket /api/admin/workbench/session-ticket
+@newApiWorkbenchTicket path /api/workbench/session-ticket /api/admin/workbench/session-ticket /api/admin/workbench/step-up-ticket
 request_header @newApiWorkbenchTicket Cookie "claw_[^=;\\s]+=[^;]*(;\\s*)?" ""
 request_header @newApiWorkbenchTicket Cookie "^;\\s*" ""
 request_header @newApiWorkbenchTicket Cookie ";\\s*;" ";"
@@ -52,7 +52,7 @@ handle @workbenchFingerprintReenroll {
 
 @workbenchBootstrapAdmin {
 	path /api/admin/workbench/*
-	not path /api/admin/workbench/session-ticket
+	not path /api/admin/workbench/session-ticket /api/admin/workbench/step-up-ticket
 }
 handle @workbenchBootstrapAdmin {
 	# Public administration accepts only the short-lived admin session + CSRF

@@ -225,6 +225,12 @@ func TestVerifiedAppMigrationRequiresEvidenceAndTwoPersonCutover(t *testing.T) {
 	require.NoError(t, db.Create(&sourceConfig).Error)
 	source.CurrentConfigVersionID = &sourceConfig.ID
 	require.NoError(t, db.Save(&source).Error)
+	require.NoError(t, db.Create(&model.AppVerification{
+		PublicID: "verify-approval-source", CustomerAppID: source.ID, AppConfigVersionID: sourceConfig.ID,
+		Result: "verified", AppMode: 1, ReleaseStatus: "published", TemplateAgentStatus: "",
+		ProviderRequestIDsJSON: `["request-source"]`, SanitizedResponseHash: "sha256:" + strings.Repeat("c", 64),
+		VerifiedBy: "test", VerifiedAt: now,
+	}).Error)
 	target := model.CustomerApp{
 		CustomerID: customer.ID, Slot: "migration:target", ProviderEnvironment: model.ProviderChinaTencentADP,
 		AppID: "target-app", DisplayName: "Target", Status: model.AppStatusVerified, AuthEpoch: 2, RowVersion: 2,
@@ -317,6 +323,9 @@ func TestVerifiedAppMigrationRequiresEvidenceAndTwoPersonCutover(t *testing.T) {
 	assert.Equal(t, config.ID, lineage.TargetAppConfigVersionID)
 	assert.Equal(t, "source-app", lineage.SourceApplicationID)
 	assert.Equal(t, "target-app", lineage.TargetApplicationID)
+	assert.Equal(t, 1, lineage.SourceProviderAppMode)
+	assert.Equal(t, "standard_v2", lineage.SourceRuntimeProfile)
+	assert.False(t, lineage.SourceExecutionEnabled)
 	var cutoverEvent model.ControlOutbox
 	require.NoError(t, db.Where("event_key = ?", lineage.EventKey).First(&cutoverEvent).Error)
 	assert.Equal(t, "APP_MIGRATION_CUTOVER", cutoverEvent.EventType)

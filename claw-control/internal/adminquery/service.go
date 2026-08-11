@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/claw-control/internal/domain"
 	"github.com/QuantumNous/new-api/claw-control/internal/jsonx"
 	"github.com/QuantumNous/new-api/claw-control/internal/model"
+	"github.com/QuantumNous/new-api/claw-control/internal/pagination"
 	"github.com/QuantumNous/new-api/claw-control/internal/productpolicy"
 	"gorm.io/gorm"
 )
@@ -184,65 +185,94 @@ func (s *Service) CustomerDetail(customerID uint64) (*CustomerDetail, error) {
 }
 
 func (s *Service) PlanCatalog(limit int) ([]PlanVersionView, error) {
-	limit = normalizedLimit(limit, 100)
-	var plans []model.Plan
-	if err := s.db.Order("id desc").Limit(limit).Find(&plans).Error; err != nil {
-		return nil, err
+	page, err := s.PlanCatalogPage(0, limit)
+	return page.Items, err
+}
+
+func (s *Service) PlanCatalogPage(beforeID uint64, limit int) (pagination.Page[PlanVersionView], error) {
+	limit = pagination.Limit(limit)
+	query := s.db.Order("id desc").Limit(limit + 1)
+	if beforeID > 0 {
+		query = query.Where("id < ?", beforeID)
 	}
-	result := make([]PlanVersionView, 0)
-	for _, plan := range plans {
-		var versions []model.PlanVersion
-		if err := s.db.Where("plan_id = ?", plan.ID).Order("version desc").Find(&versions).Error; err != nil {
-			return nil, err
-		}
-		for _, version := range versions {
-			var capabilities []string
-			var limits productpolicy.Limits
-			if err := jsonx.Unmarshal([]byte(version.CapabilitiesJSON), &capabilities); err != nil {
-				return nil, err
-			}
-			if err := jsonx.Unmarshal([]byte(version.LimitsJSON), &limits); err != nil {
-				return nil, err
-			}
-			result = append(result, PlanVersionView{
-				ID: version.ID, PlanID: plan.ID, PlanCode: plan.PlanCode, DisplayName: version.Name,
-				Version: version.Version, MonthlyPriceCNY: version.MonthlyPriceCNY, Currency: version.Currency,
-				Capabilities: capabilities, Limits: limits, Status: version.Status,
-				ValidFrom: version.ValidFrom, ValidTo: version.ValidTo,
-			})
-		}
+	var versions []model.PlanVersion
+	if err := query.Find(&versions).Error; err != nil {
+		return pagination.Page[PlanVersionView]{}, err
 	}
-	return result, nil
+	page := pagination.Trim(versions, limit, func(value model.PlanVersion) uint64 { return value.ID })
+	result := make([]PlanVersionView, 0, len(page.Items))
+	for _, version := range page.Items {
+		var plan model.Plan
+		if err := s.db.First(&plan, version.PlanID).Error; err != nil {
+			return pagination.Page[PlanVersionView]{}, err
+		}
+		var capabilities []string
+		var limits productpolicy.Limits
+		if err := jsonx.Unmarshal([]byte(version.CapabilitiesJSON), &capabilities); err != nil {
+			return pagination.Page[PlanVersionView]{}, err
+		}
+		if err := jsonx.Unmarshal([]byte(version.LimitsJSON), &limits); err != nil {
+			return pagination.Page[PlanVersionView]{}, err
+		}
+		result = append(result, PlanVersionView{
+			ID: version.ID, PlanID: plan.ID, PlanCode: plan.PlanCode, DisplayName: version.Name,
+			Version: version.Version, MonthlyPriceCNY: version.MonthlyPriceCNY, Currency: version.Currency,
+			Capabilities: capabilities, Limits: limits, Status: version.Status,
+			ValidFrom: version.ValidFrom, ValidTo: version.ValidTo,
+		})
+	}
+	return pagination.Page[PlanVersionView]{Items: result, NextBeforeID: page.NextBeforeID}, nil
 }
 
 func (s *Service) CredentialProfiles(limit int, customerID *uint64) ([]CredentialView, error) {
-	limit = normalizedLimit(limit, 200)
+	page, err := s.CredentialProfilesPage(0, limit, customerID)
+	return page.Items, err
+}
+
+func (s *Service) CredentialProfilesPage(beforeID uint64, limit int, customerID *uint64) (pagination.Page[CredentialView], error) {
+	limit = pagination.Limit(limit)
 	var profiles []model.CredentialProfile
-	query := s.db.Order("id desc").Limit(limit)
+	query := s.db.Order("id desc").Limit(limit + 1)
 	if customerID != nil {
 		if *customerID == 0 {
-			return nil, domain.Invalid("customer_id must be positive")
+			return pagination.Page[CredentialView]{}, domain.Invalid("customer_id must be positive")
 		}
 		query = query.Where("owner_scope = ? OR (owner_scope = ? AND customer_id = ?)",
 			credentialpkg.PlatformOwnerScope, credentialpkg.CustomerOwnerScope(*customerID), *customerID)
 	}
-	if err := query.Find(&profiles).Error; err != nil {
-		return nil, err
+	if beforeID > 0 {
+		query = query.Where("id < ?", beforeID)
 	}
-	result := make([]CredentialView, 0, len(profiles))
-	for _, profile := range profiles {
+	if err := query.Find(&profiles).Error; err != nil {
+		return pagination.Page[CredentialView]{}, err
+	}
+	page := pagination.Trim(profiles, limit, func(value model.CredentialProfile) uint64 { return value.ID })
+	result := make([]CredentialView, 0, len(page.Items))
+	for _, profile := range page.Items {
 		result = append(result, ProjectCredential(profile))
 	}
-	return result, nil
+	return pagination.Page[CredentialView]{Items: result, NextBeforeID: page.NextBeforeID}, nil
 }
 
 func (s *Service) Apps(customerID uint64) ([]model.CustomerApp, error) {
+	page, err := s.AppsPage(customerID, 0, pagination.MaxLimit)
+	return page.Items, err
+}
+
+func (s *Service) AppsPage(customerID, beforeID uint64, limit int) (pagination.Page[model.CustomerApp], error) {
 	if customerID == 0 {
-		return nil, domain.Invalid("customer_id is required")
+		return pagination.Page[model.CustomerApp]{}, domain.Invalid("customer_id is required")
 	}
+	limit = pagination.Limit(limit)
 	var result []model.CustomerApp
-	err := s.db.Where("customer_id = ?", customerID).Order("id asc").Find(&result).Error
-	return result, err
+	query := s.db.Where("customer_id = ?", customerID).Order("id desc").Limit(limit + 1)
+	if beforeID > 0 {
+		query = query.Where("id < ?", beforeID)
+	}
+	if err := query.Find(&result).Error; err != nil {
+		return pagination.Page[model.CustomerApp]{}, err
+	}
+	return pagination.Trim(result, limit, func(value model.CustomerApp) uint64 { return value.ID }), nil
 }
 
 func ProjectAppDraft(stable *model.CustomerApp, configuration *model.AppConfigVersion) (*AppDraftResult, error) {
@@ -268,13 +298,24 @@ func ProjectCredential(profile model.CredentialProfile) CredentialView {
 }
 
 func (s *Service) Audits(limit int, customerID *uint64) ([]model.AdminAudit, error) {
-	limit = normalizedLimit(limit, 200)
-	query := s.db.Order("id desc").Limit(limit)
+	page, err := s.AuditsPage(0, limit, customerID)
+	return page.Items, err
+}
+
+func (s *Service) AuditsPage(beforeID uint64, limit int, customerID *uint64) (pagination.Page[model.AdminAudit], error) {
+	limit = pagination.Limit(limit)
+	query := s.db.Order("id desc").Limit(limit + 1)
 	if customerID != nil {
 		query = query.Where("customer_id = ?", *customerID)
 	}
+	if beforeID > 0 {
+		query = query.Where("id < ?", beforeID)
+	}
 	var audits []model.AdminAudit
-	return audits, query.Find(&audits).Error
+	if err := query.Find(&audits).Error; err != nil {
+		return pagination.Page[model.AdminAudit]{}, err
+	}
+	return pagination.Trim(audits, limit, func(value model.AdminAudit) uint64 { return value.ID }), nil
 }
 
 func projectAppConfig(configuration model.AppConfigVersion) (*AppConfigView, error) {

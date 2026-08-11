@@ -17,10 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { ErrorState } from '@/components/error-state'
 import { Main } from '@/components/layout'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
+import { SecureVerificationDialog } from '@/features/auth/secure-verification'
+import { useSecureVerification } from '@/features/auth/secure-verification/hooks/use-secure-verification'
 import { api } from '@/lib/api'
 
 interface AdminSessionTicketResponse {
@@ -53,19 +58,48 @@ function requestAdminSessionTicket(): Promise<string> {
   return pendingAdminSessionTicket
 }
 
+async function requestAdminStepUpTicket(
+  method: 'password' | 'secure_verification',
+  password?: string
+): Promise<string> {
+  const response = await api.post<AdminSessionTicketResponse>(
+    '/api/admin/workbench/step-up-ticket',
+    { method, password },
+    { skipBusinessError: true, skipErrorHandler: true }
+  )
+  const ticket = response.data.data?.ticket?.trim()
+  if (!response.data.success || ticket == null || ticket === '') {
+    throw new Error('Invalid workbench administrator step-up response')
+  }
+  return ticket
+}
+
+function enterWorkbenchAdmin(ticket: string) {
+  const target = new URL('/api/workbench/entry', window.location.origin)
+  target.searchParams.set('ticket', ticket)
+  window.location.replace(target.toString())
+}
+
 export function AdminWorkbenchEntry() {
+  const { t } = useTranslation()
   const [failed, setFailed] = useState(false)
   const [attempt, setAttempt] = useState(0)
+  const [password, setPassword] = useState('')
+  const [passwordPending, setPasswordPending] = useState(false)
+  const stepUpMode =
+    new URLSearchParams(window.location.search).get('step_up') === '1'
+  const verification = useSecureVerification({
+    onSuccess: (result) => enterWorkbenchAdmin(result as string),
+  })
 
   useEffect(() => {
+    if (stepUpMode) return
     let active = true
     setFailed(false)
     void requestAdminSessionTicket()
       .then((ticket) => {
         if (!active) return
-        const target = new URL('/api/workbench/entry', window.location.origin)
-        target.searchParams.set('ticket', ticket)
-        window.location.replace(target.toString())
+        enterWorkbenchAdmin(ticket)
       })
       .catch(() => {
         if (active) setFailed(true)
@@ -73,7 +107,83 @@ export function AdminWorkbenchEntry() {
     return () => {
       active = false
     }
-  }, [attempt])
+  }, [attempt, stepUpMode])
+
+  const verifyPassword = async () => {
+    setPasswordPending(true)
+    setFailed(false)
+    try {
+      enterWorkbenchAdmin(await requestAdminStepUpTicket('password', password))
+    } catch {
+      setFailed(true)
+    } finally {
+      setPasswordPending(false)
+    }
+  }
+
+  if (stepUpMode) {
+    return (
+      <Main>
+        <div className='mx-auto flex min-h-[360px] w-full max-w-md flex-col justify-center gap-4'>
+          <div>
+            <h1 className='text-xl font-semibold'>
+              {t('Security verification')}
+            </h1>
+            <p className='text-muted-foreground mt-1 text-sm'>
+              {t('Confirm your identity before changing Workbench settings.')}
+            </p>
+          </div>
+          <Input
+            type='password'
+            autoComplete='current-password'
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder={t('Password')}
+            disabled={passwordPending}
+          />
+          <Button
+            disabled={passwordPending || password === ''}
+            onClick={verifyPassword}
+          >
+            {passwordPending ? (
+              <Spinner className='size-4' />
+            ) : (
+              t('Verify with password')
+            )}
+          </Button>
+          <Button
+            variant='outline'
+            onClick={() =>
+              verification.startVerification(
+                () => requestAdminStepUpTicket('secure_verification'),
+                {
+                  title: t('Security verification'),
+                  description: t(
+                    'Confirm your identity before changing Workbench settings.'
+                  ),
+                }
+              )
+            }
+          >
+            {t('Verify with 2FA or Passkey')}
+          </Button>
+          {failed && <ErrorState onRetry={verifyPassword} />}
+        </div>
+        <SecureVerificationDialog
+          open={verification.open}
+          onOpenChange={verification.setOpen}
+          methods={verification.methods}
+          state={verification.state}
+          onVerify={async (method, code) => {
+            await verification.executeVerification(method, code)
+          }}
+          onCancel={verification.cancel}
+          onCodeChange={verification.setCode}
+          onMethodChange={verification.switchMethod}
+        />
+      </Main>
+    )
+  }
 
   return (
     <Main>

@@ -22,6 +22,8 @@ The executable migration registry lives in `internal/migration`. The current ver
 - `0018_app_migration_readiness`: adds generation-versioned AppId migration jobs and per-active-binding Agent rebuild/readback readiness with hashed worker leases and optimistic recovery versions.
 - `0021_agent_store`: adds immutable Agent/Application catalog versions, customer deployments, entitlements, launch audits, and control-session CSRF binding. All provider secrets remain referenced by existing customer App configuration.
 - `0022_agent_store_runtime_contract`: upgrades already-migrated context-selection nonces with purpose-bound Agent Store item/deployment/version snapshots and App migration jobs with the verified provider mode/runtime/execution tuple.
+- `0023_app_migration_source_runtime`: snapshots the verified source provider mode/runtime on immutable migration lineage rows so historical reads always carry an explicit read-only runtime contract; legacy zero-value lineages retain the original dynamic-Claw interpretation.
+- `0024_admin_recent_auth`: adds trusted authentication time, AMR, and one-time reauthentication nonce hashes to administrator entry tickets and sessions. Existing sessions remain read-only until an explicit new-api password, 2FA, or Passkey step-up succeeds.
 
 Versions use GORM migration primitives plus bounded data backfills so the same schema can be created on SQLite, MySQL 5.7.8+, and PostgreSQL 9.6+ without dialect-specific SQL.
 

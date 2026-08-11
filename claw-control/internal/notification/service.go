@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/claw-control/internal/database"
 	"github.com/QuantumNous/new-api/claw-control/internal/domain"
 	"github.com/QuantumNous/new-api/claw-control/internal/model"
+	"github.com/QuantumNous/new-api/claw-control/internal/pagination"
 	"github.com/QuantumNous/new-api/claw-control/internal/support"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -119,13 +120,16 @@ func (s *Service) create(item model.GovernanceNotification) error {
 }
 
 func (s *Service) List(query ListQuery) ([]model.GovernanceNotification, error) {
-	if query.Limit <= 0 || query.Limit > 200 {
-		query.Limit = 100
-	}
-	db := s.db.Order("id desc").Limit(query.Limit)
+	page, err := s.ListPage(query)
+	return page.Items, err
+}
+
+func (s *Service) ListPage(query ListQuery) (pagination.Page[model.GovernanceNotification], error) {
+	query.Limit = pagination.Limit(query.Limit)
+	db := s.db.Order("id desc").Limit(query.Limit + 1)
 	if query.CustomerID != nil {
 		if *query.CustomerID == 0 {
-			return nil, domain.Invalid("customer_id must be positive")
+			return pagination.Page[model.GovernanceNotification]{}, domain.Invalid("customer_id must be positive")
 		}
 		db = db.Where("customer_id = ?", *query.CustomerID)
 	}
@@ -136,7 +140,10 @@ func (s *Service) List(query ListQuery) ([]model.GovernanceNotification, error) 
 		db = db.Where("id < ?", query.BeforeID)
 	}
 	var result []model.GovernanceNotification
-	return result, db.Find(&result).Error
+	if err := db.Find(&result).Error; err != nil {
+		return pagination.Page[model.GovernanceNotification]{}, err
+	}
+	return pagination.Trim(result, query.Limit, func(value model.GovernanceNotification) uint64 { return value.ID }), nil
 }
 
 func (s *Service) MarkRead(publicID, actor, requestID string) (*model.GovernanceNotification, error) {

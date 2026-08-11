@@ -30,8 +30,13 @@ func (s *Server) listTencentBillingImports(w http.ResponseWriter, r *http.Reques
 		writeError(w, r, domain.Unavailable("Tencent Billing import is unavailable"))
 		return
 	}
-	result, err := s.services.BillingImports.List(queryLimit(r))
-	writeResult(w, r, http.StatusOK, result, err)
+	const scope = "tencent-billing-imports"
+	beforeID, limit, ok := adminPageRequest(w, r, scope)
+	if !ok {
+		return
+	}
+	page, err := s.services.BillingImports.ListPage(beforeID, limit)
+	writePageResult(w, r, page.Items, scope, page.NextBeforeID, err)
 }
 
 func (s *Server) getTencentBillingImport(w http.ResponseWriter, r *http.Request) {

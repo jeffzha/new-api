@@ -61,6 +61,11 @@ func TestMigrationsOnConfiguredServerDatabases(t *testing.T) {
 				assert.True(t, db.Migrator().HasTable(table))
 			}
 			assert.True(t, db.Migrator().HasIndex(&model.CustomerMember{}, "idx_claw_member_user_slot"))
+			for _, value := range []any{&model.EntryTicket{}, &model.AdminSession{}} {
+				for _, column := range []string{"AuthenticatedAt", "AuthMethods", "ReauthNonceHash"} {
+					assert.True(t, db.Migrator().HasColumn(value, column), column)
+				}
+			}
 
 			customer := model.Customer{
 				CustomerCode: "cross-db-" + testCase.name, DisplayName: "Cross DB " + testCase.name,

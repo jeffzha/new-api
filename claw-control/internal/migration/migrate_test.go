@@ -118,6 +118,68 @@ func TestAgentStoreRuntimeContractUpgradesAlreadyMigratedSchemas(t *testing.T) {
 	assert.True(t, storedJob.TargetExecutionEnabled)
 }
 
+func TestAdminRecentAuthUpgradesAlreadyMigratedSessionTables(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	for _, value := range []any{&model.EntryTicket{}, &model.AdminSession{}} {
+		for _, column := range []string{"AuthenticatedAt", "AuthMethods", "ReauthNonceHash"} {
+			require.NoError(t, db.Migrator().DropColumn(value, column), column)
+		}
+	}
+	require.NoError(t, db.Where("version = ?", migration.AdminRecentAuthVersion).Delete(&migration.SchemaMigration{}).Error)
+	require.NoError(t, migration.Migrate(db))
+
+	for _, value := range []any{&model.EntryTicket{}, &model.AdminSession{}} {
+		for _, column := range []string{"AuthenticatedAt", "AuthMethods", "ReauthNonceHash"} {
+			assert.True(t, db.Migrator().HasColumn(value, column), column)
+		}
+	}
+	now := time.Now().UTC()
+	nonceHash := strings.Repeat("e", 64)
+	entry := model.EntryTicket{
+		TokenHash: strings.Repeat("f", 64), NewAPIUserID: 1, IdentityVersion: "v1.admin", Surface: "admin", IsSuperAdmin: true,
+		AuthenticatedAt: &now, AuthMethods: "pwd", ReauthNonceHash: &nonceHash, ExpiresAt: now.Add(time.Minute),
+	}
+	require.NoError(t, db.Create(&entry).Error)
+	var stored model.EntryTicket
+	require.NoError(t, db.First(&stored, entry.ID).Error)
+	assert.Equal(t, "pwd", stored.AuthMethods)
+	assert.Equal(t, nonceHash, *stored.ReauthNonceHash)
+	duplicate := entry
+	duplicate.ID = 0
+	duplicate.TokenHash = strings.Repeat("a", 64)
+	require.Error(t, db.Create(&duplicate).Error, "the upgraded table must reject replayed step-up nonces")
+}
+
+func TestAppMigrationSourceRuntimeUpgradesAlreadyMigratedLineages(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	for _, column := range []string{"SourceProviderAppMode", "SourceRuntimeProfile", "SourceExecutionEnabled"} {
+		require.NoError(t, db.Migrator().DropColumn(&model.AppMigrationLineage{}, column), column)
+	}
+	require.NoError(t, db.Where("version = ?", migration.AppMigrationSourceRuntimeVersion).Delete(&migration.SchemaMigration{}).Error)
+	require.NoError(t, migration.Migrate(db))
+
+	for _, column := range []string{"SourceProviderAppMode", "SourceRuntimeProfile", "SourceExecutionEnabled"} {
+		assert.True(t, db.Migrator().HasColumn(&model.AppMigrationLineage{}, column), column)
+	}
+	lineage := model.AppMigrationLineage{
+		PublicID: "lin_runtime_upgrade", EventKey: "migration-runtime-upgrade", CustomerID: 1,
+		MigrationJobID: 1, SourceCustomerAppID: 1, SourceAppConfigVersionID: 1,
+		SourceApplicationID: "source", SourceProviderAppID: "source", SourceConfigVersion: 1,
+		SourceProviderAppMode: 2, SourceRuntimeProfile: "multi_agent_v2",
+		TargetCustomerAppID: 2, TargetAppConfigVersionID: 2, TargetApplicationID: "target",
+		TargetProviderAppID: "target", TargetConfigVersion: 1,
+		MigrationConfigFingerprint: "sha256:" + strings.Repeat("d", 64), ActivatedAt: time.Now().UTC(),
+	}
+	require.NoError(t, db.Create(&lineage).Error)
+	var stored model.AppMigrationLineage
+	require.NoError(t, db.First(&stored, lineage.ID).Error)
+	assert.Equal(t, 2, stored.SourceProviderAppMode)
+	assert.Equal(t, "multi_agent_v2", stored.SourceRuntimeProfile)
+	assert.False(t, stored.SourceExecutionEnabled)
+}
+
 func TestEncryptedEvidenceMigrationIsAppliedAndIdempotent(t *testing.T) {
 	db, err := testutil.NewDatabase()
 	require.NoError(t, err)

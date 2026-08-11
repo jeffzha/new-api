@@ -55,10 +55,7 @@ const (
 	workbenchContractVersion       = "1"
 )
 
-const (
-	bootstrapActor           = "emergency-bootstrap"
-	maintenanceReenrollActor = "emergency-bootstrap:provider-fingerprint-reenroll"
-)
+const maintenanceReenrollActor = "emergency-bootstrap:provider-fingerprint-reenroll"
 
 type internalServiceContextKey struct{}
 type adminSessionContextKey struct{}
@@ -179,12 +176,16 @@ func New(services Services, adminToken string, internalAuth InternalAuth, public
 	admin := http.NewServeMux()
 	admin.HandleFunc("GET /api/admin/workbench/dashboard", server.adminDashboard)
 	admin.Handle("GET /api/admin/workbench/agent-store/items", server.requireAdminSession(http.HandlerFunc(server.listAgentStoreItems)))
-	admin.Handle("POST /api/admin/workbench/agent-store/items", server.requireAdminSession(server.requireRecentAgentStoreAdmin(http.HandlerFunc(server.createAgentStoreItem))))
+	admin.Handle("POST /api/admin/workbench/agent-store/items", server.requireAdminSession(http.HandlerFunc(server.createAgentStoreItem)))
 	admin.Handle("GET /api/admin/workbench/agent-store/items/{item_id}", server.requireAdminSession(http.HandlerFunc(server.getAgentStoreItem)))
-	admin.Handle("PATCH /api/admin/workbench/agent-store/items/{item_id}", server.requireAdminSession(server.requireRecentAgentStoreAdmin(http.HandlerFunc(server.updateAgentStoreItem))))
-	admin.Handle("POST /api/admin/workbench/agent-store/items/{item_id}/verify", server.requireAdminSession(server.requireRecentAgentStoreAdmin(http.HandlerFunc(server.verifyAgentStoreItem))))
+	admin.Handle("PATCH /api/admin/workbench/agent-store/items/{item_id}", server.requireAdminSession(http.HandlerFunc(server.updateAgentStoreItem)))
+	admin.Handle("POST /api/admin/workbench/agent-store/items/{item_id}/verify", server.requireAdminSession(http.HandlerFunc(server.verifyAgentStoreItem)))
+	admin.Handle("POST /api/admin/workbench/agent-store/items/{item_id}/deployments", server.requireAdminSession(http.HandlerFunc(server.createAgentStoreDeployment)))
+	admin.Handle("PATCH /api/admin/workbench/agent-store/items/{item_id}/deployments/{deployment_id}", server.requireAdminSession(http.HandlerFunc(server.updateAgentStoreDeployment)))
+	admin.Handle("POST /api/admin/workbench/agent-store/items/{item_id}/deployments/{deployment_id}/verify", server.requireAdminSession(http.HandlerFunc(server.verifyAgentStoreDeployment)))
+	admin.Handle("POST /api/admin/workbench/agent-store/items/{item_id}/deployments/{deployment_id}/disable", server.requireAdminSession(http.HandlerFunc(server.disableAgentStoreDeployment)))
 	for _, action := range []string{"publish", "unpublish", "disable", "archive"} {
-		admin.Handle("POST /api/admin/workbench/agent-store/items/{item_id}/"+action, server.requireAdminSession(server.requireRecentAgentStoreAdmin(http.HandlerFunc(server.transitionAgentStoreItem))))
+		admin.Handle("POST /api/admin/workbench/agent-store/items/{item_id}/"+action, server.requireAdminSession(http.HandlerFunc(server.transitionAgentStoreItem)))
 	}
 	admin.Handle("GET /api/admin/workbench/agent-store/items/{item_id}/audits", server.requireAdminSession(http.HandlerFunc(server.agentStoreAudits)))
 	admin.HandleFunc("POST /api/admin/workbench/customers", server.createCustomer)
@@ -469,8 +470,13 @@ func (s *Server) createCustomer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listCustomers(w http.ResponseWriter, r *http.Request) {
-	result, err := s.services.Customers.List(queryLimit(r))
-	writeResult(w, r, http.StatusOK, result, err)
+	const scope = "customers"
+	beforeID, limit, ok := adminPageRequest(w, r, scope)
+	if !ok {
+		return
+	}
+	page, err := s.services.Customers.ListPage(beforeID, limit)
+	writePageResult(w, r, page.Items, scope, page.NextBeforeID, err)
 }
 
 func (s *Server) addMember(w http.ResponseWriter, r *http.Request) {
@@ -674,8 +680,13 @@ func (s *Server) listInvoices(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	result, err := s.services.Plans.ListInvoices(customerID, queryLimit(r))
-	writeResult(w, r, http.StatusOK, result, err)
+	scope := "invoices:" + strconv.FormatUint(customerID, 10)
+	beforeID, limit, ok := adminPageRequest(w, r, scope)
+	if !ok {
+		return
+	}
+	page, err := s.services.Plans.ListInvoicesPage(customerID, beforeID, limit)
+	writePageResult(w, r, page.Items, scope, page.NextBeforeID, err)
 }
 
 func (s *Server) voidInvoice(w http.ResponseWriter, r *http.Request) {
@@ -733,8 +744,16 @@ func (s *Server) listUsageAudits(w http.ResponseWriter, r *http.Request) {
 		}
 		customerID = &parsed
 	}
-	result, err := s.services.Usage.List(customerID, queryLimit(r))
-	writeResult(w, r, http.StatusOK, result, err)
+	scope := "usage-audits:all"
+	if customerID != nil {
+		scope = "usage-audits:" + strconv.FormatUint(*customerID, 10)
+	}
+	beforeID, limit, ok := adminPageRequest(w, r, scope)
+	if !ok {
+		return
+	}
+	page, err := s.services.Usage.ListPage(customerID, beforeID, limit)
+	writePageResult(w, r, page.Items, scope, page.NextBeforeID, err)
 }
 
 func (s *Server) reviewUsageAudit(w http.ResponseWriter, r *http.Request) {
@@ -843,17 +862,25 @@ func (s *Server) bindResource(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) issueEntryTicket(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		NewAPIUserID    int64  `json:"new_api_user_id"`
-		IdentityVersion string `json:"identity_version"`
-		Surface         string `json:"surface"`
-		IsSuperAdmin    bool   `json:"is_super_admin"`
+		NewAPIUserID    int64    `json:"new_api_user_id"`
+		IdentityVersion string   `json:"identity_version"`
+		Surface         string   `json:"surface"`
+		IsSuperAdmin    bool     `json:"is_super_admin"`
+		AuthenticatedAt int64    `json:"authenticated_at,omitempty"`
+		AMR             []string `json:"amr,omitempty"`
+		ReauthNonce     string   `json:"reauth_nonce,omitempty"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
+	var authenticatedAt time.Time
+	if body.AuthenticatedAt != 0 {
+		authenticatedAt = time.Unix(body.AuthenticatedAt, 0).UTC()
+	}
 	result, err := s.services.Access.IssueEntryTicket(access.IssueEntryTicketCommand{
 		NewAPIUserID: body.NewAPIUserID, IdentityVersion: body.IdentityVersion,
 		Surface: body.Surface, IsSuperAdmin: body.IsSuperAdmin,
+		AuthenticatedAt: authenticatedAt, AMR: body.AMR, ReauthNonce: body.ReauthNonce,
 	})
 	w.Header().Set("Cache-Control", "no-store")
 	writeResult(w, r, http.StatusCreated, result, err)
@@ -924,15 +951,17 @@ func (s *Server) appContext(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
-	expectedHash := sha256.Sum256([]byte(s.adminToken))
+	expectedBootstrapHash := sha256.Sum256([]byte(s.adminToken))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		token, bearer := bearerToken(r.Header.Get("Authorization"))
-		receivedHash := sha256.Sum256([]byte(token))
-		if bearer && subtle.ConstantTimeCompare(receivedHash[:], expectedHash[:]) == 1 {
-			r.Header.Set("X-Claw-Actor", bootstrapActor)
-			next.ServeHTTP(w, r)
-			return
+		if token, bearer := bearerToken(r.Header.Get("Authorization")); bearer {
+			receivedHash := sha256.Sum256([]byte(token))
+			if subtle.ConstantTimeCompare(receivedHash[:], expectedBootstrapHash[:]) == 1 {
+				writeJSON(w, http.StatusForbidden, errorResponse{Success: false, Error: apiError{
+					Code: "forbidden", Message: "emergency bootstrap authorization is restricted to loopback maintenance", RequestID: requestID(r),
+				}})
+				return
+			}
 		}
 		sessionCookie, err := r.Cookie("claw_admin_session")
 		if err != nil {
@@ -957,6 +986,12 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 		if err != nil {
 			writeError(w, r, err)
 			return
+		}
+		if mutation {
+			if _, err := s.services.Access.AuthorizeRecentAdminSession(r.Context(), sessionCookie.Value, recentAdminAuthAge); err != nil {
+				writeError(w, r, err)
+				return
+			}
 		}
 		r.Header.Set("X-Claw-Actor", fmt.Sprintf("admin-session:%d", userID))
 		ctx := context.WithValue(r.Context(), adminSessionContextKey{}, true)
@@ -1125,14 +1160,6 @@ func pathUint64(w http.ResponseWriter, r *http.Request, name string) (uint64, bo
 	return value, true
 }
 
-func queryLimit(r *http.Request) int {
-	value, err := strconv.Atoi(r.URL.Query().Get("limit"))
-	if err != nil {
-		return 100
-	}
-	return value
-}
-
 func actor(r *http.Request) string     { return strings.TrimSpace(r.Header.Get("X-Claw-Actor")) }
 func requestID(r *http.Request) string { return strings.TrimSpace(r.Header.Get("X-Request-ID")) }
 
@@ -1169,6 +1196,8 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		case domain.KindConflict:
 			status = http.StatusConflict
 		case domain.KindForbidden:
+			status = http.StatusForbidden
+		case domain.KindRecentAuth:
 			status = http.StatusForbidden
 		case domain.KindUnavailable:
 			status = http.StatusServiceUnavailable

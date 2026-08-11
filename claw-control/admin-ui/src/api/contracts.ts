@@ -420,6 +420,7 @@ export interface AgentStoreDeployment {
   provider_description?: string
   provider_avatar_url?: string
   capabilities: string[]
+  entitlements: AgentStoreEntitlement[]
 }
 
 export interface AgentStoreEntitlement {
@@ -441,8 +442,18 @@ export interface AgentStoreItem {
   featured: boolean
   current_version?: AgentStoreVersion
   draft_version?: AgentStoreVersion
+  deployments: AgentStoreDeployment[]
+  /** @deprecated First-deployment compatibility projection. */
   deployment: AgentStoreDeployment
+  /** @deprecated First-deployment compatibility projection. */
   entitlements: AgentStoreEntitlement[]
+}
+
+export interface AgentStoreEntitlementInput {
+  subject_type: AgentStoreEntitlement['subject_type']
+  subject_ref: string
+  valid_from?: string
+  valid_until?: string
 }
 
 export interface AgentStoreCreateInput {
@@ -473,5 +484,17 @@ export interface AgentStoreUpdateInput {
   tags: string[]
   sort_order: number
   featured: boolean
+}
+
+export interface AgentStoreDeploymentCreateInput {
+  expected_item_version: number
+  customer_id: number
+  customer_app_id: number
+  entitlements: AgentStoreEntitlementInput[]
+}
+
+export interface AgentStoreDeploymentUpdateInput {
+  expected_deployment_version: number
   execution_enabled: boolean
+  entitlements?: AgentStoreEntitlementInput[]
 }

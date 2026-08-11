@@ -18,6 +18,12 @@ export class ApiError extends Error {
   }
 }
 
+function redirectForRecentAuthentication(response: Response, envelope: ApiEnvelope<unknown>) {
+  if (response.status === 403 && envelope.error?.code === 'recent_auth_required') {
+    window.location.assign('/workbench-admin?step_up=1')
+  }
+}
+
 export function parseCookie(cookieHeader: string, name: string): string | undefined {
   for (const part of cookieHeader.split(';')) {
     const separator = part.indexOf('=')
@@ -73,6 +79,7 @@ export async function apiRequest<T>(
     throw new ApiError('The server returned an invalid response.', response.status, 'invalid_response')
   }
   if (!response.ok || !envelope.success || envelope.data === undefined) {
+	if (MUTATING_METHODS.has(method)) redirectForRecentAuthentication(response, envelope)
     throw new ApiError(
       envelope.error?.message ?? `Request failed (${response.status}).`,
       response.status,
@@ -100,6 +107,7 @@ async function apiFormRequest<T>(path: string, form: FormData): Promise<T> {
     throw new ApiError('The server returned an invalid response.', response.status, 'invalid_response')
   }
   if (!response.ok || !envelope.success || envelope.data === undefined) {
+	redirectForRecentAuthentication(response, envelope)
     throw new ApiError(envelope.error?.message ?? `Request failed (${response.status}).`, response.status, envelope.error?.code, envelope.error?.request_id)
   }
   return envelope.data
@@ -172,7 +180,11 @@ export const adminApi = {
   agentStoreItems: (signal?: AbortSignal) => apiRequest<import('./contracts').AgentStoreItem[]>('/agent-store/items?limit=100', { signal }),
   createAgentStoreItem: (body: import('./contracts').AgentStoreCreateInput) => apiRequest<import('./contracts').AgentStoreItem>('/agent-store/items', { method: 'POST', body }),
   updateAgentStoreItem: (itemId: string, body: import('./contracts').AgentStoreUpdateInput) => apiRequest<import('./contracts').AgentStoreItem>(`/agent-store/items/${encodeURIComponent(itemId)}`, { method: 'PATCH', body }),
-  transitionAgentStoreItem: (itemId: string, action: 'verify' | 'publish' | 'unpublish' | 'disable' | 'archive', expectedVersion: number, reason = '') => apiRequest<import('./contracts').AgentStoreItem>(`/agent-store/items/${encodeURIComponent(itemId)}/${action}`, { method: 'POST', body: { expected_version: expectedVersion, reason } }),
+  createAgentStoreDeployment: (itemId: string, body: import('./contracts').AgentStoreDeploymentCreateInput) => apiRequest<import('./contracts').AgentStoreItem>(`/agent-store/items/${encodeURIComponent(itemId)}/deployments`, { method: 'POST', body }),
+  updateAgentStoreDeployment: (itemId: string, deploymentId: string, body: import('./contracts').AgentStoreDeploymentUpdateInput) => apiRequest<import('./contracts').AgentStoreItem>(`/agent-store/items/${encodeURIComponent(itemId)}/deployments/${encodeURIComponent(deploymentId)}`, { method: 'PATCH', body }),
+  verifyAgentStoreDeployment: (itemId: string, deploymentId: string, expectedVersion: number, expectedDeploymentVersion: number) => apiRequest<import('./contracts').AgentStoreItem>(`/agent-store/items/${encodeURIComponent(itemId)}/deployments/${encodeURIComponent(deploymentId)}/verify`, { method: 'POST', body: { expected_version: expectedVersion, expected_deployment_version: expectedDeploymentVersion } }),
+  disableAgentStoreDeployment: (itemId: string, deploymentId: string, expectedDeploymentVersion: number, reason: string) => apiRequest<import('./contracts').AgentStoreItem>(`/agent-store/items/${encodeURIComponent(itemId)}/deployments/${encodeURIComponent(deploymentId)}/disable`, { method: 'POST', body: { expected_deployment_version: expectedDeploymentVersion, reason } }),
+  transitionAgentStoreItem: (itemId: string, action: 'publish' | 'unpublish' | 'disable' | 'archive', expectedVersion: number, reason = '') => apiRequest<import('./contracts').AgentStoreItem>(`/agent-store/items/${encodeURIComponent(itemId)}/${action}`, { method: 'POST', body: { expected_version: expectedVersion, reason } }),
   dashboard: (signal?: AbortSignal) => apiRequest<import('./contracts').Dashboard>('/dashboard', { signal }),
   customers: (signal?: AbortSignal) => apiRequest<import('./contracts').Customer[]>('/customers?limit=100', { signal }),
   customer: (id: number, signal?: AbortSignal) => apiRequest<import('./contracts').CustomerDetail>(`/customers/${id}`, { signal }),

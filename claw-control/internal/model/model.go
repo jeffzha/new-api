@@ -423,6 +423,9 @@ type AppMigrationLineage struct {
 	SourceApplicationID        string    `json:"source_application_id" gorm:"type:varchar(128);not null"`
 	SourceProviderAppID        string    `json:"source_provider_app_id" gorm:"type:varchar(128);not null"`
 	SourceConfigVersion        int64     `json:"source_config_version" gorm:"not null"`
+	SourceProviderAppMode      int       `json:"source_provider_app_mode"`
+	SourceRuntimeProfile       string    `json:"source_runtime_profile" gorm:"type:varchar(48)"`
+	SourceExecutionEnabled     bool      `json:"source_execution_enabled"`
 	TargetCustomerAppID        uint64    `json:"target_app_profile_id" gorm:"uniqueIndex:idx_claw_lineage_source_target,priority:2;index;not null"`
 	TargetAppConfigVersionID   uint64    `json:"target_app_config_version_id" gorm:"index;not null"`
 	TargetApplicationID        string    `json:"target_application_id" gorm:"type:varchar(128);not null"`
@@ -794,6 +797,9 @@ type EntryTicket struct {
 	IdentityVersion string     `json:"identity_version" gorm:"type:varchar(128);not null"`
 	Surface         string     `json:"surface" gorm:"type:varchar(24);index;not null"`
 	IsSuperAdmin    bool       `json:"is_super_admin" gorm:"not null"`
+	AuthenticatedAt *time.Time `json:"authenticated_at,omitempty" gorm:"index"`
+	AuthMethods     string     `json:"auth_methods,omitempty" gorm:"type:varchar(128)"`
+	ReauthNonceHash *string    `json:"-" gorm:"type:char(64);uniqueIndex:idx_claw_entry_reauth_nonce"`
 	ExpiresAt       time.Time  `json:"expires_at" gorm:"index;not null"`
 	ConsumedAt      *time.Time `json:"consumed_at,omitempty" gorm:"index"`
 	CreatedAt       time.Time  `json:"created_at"`
@@ -971,6 +977,9 @@ type AdminSession struct {
 	CSRFTokenHash   string     `json:"-" gorm:"type:varchar(128);not null"`
 	NewAPIUserID    int64      `json:"new_api_user_id" gorm:"index;not null"`
 	IdentityVersion string     `json:"identity_version" gorm:"type:varchar(128);not null"`
+	AuthenticatedAt *time.Time `json:"authenticated_at,omitempty" gorm:"index"`
+	AuthMethods     string     `json:"auth_methods,omitempty" gorm:"type:varchar(128)"`
+	ReauthNonceHash *string    `json:"-" gorm:"type:char(64);index"`
 	ExpiresAt       time.Time  `json:"expires_at" gorm:"index;not null"`
 	LastSeenAt      time.Time  `json:"last_seen_at" gorm:"index;not null"`
 	RevokedAt       *time.Time `json:"revoked_at,omitempty" gorm:"index"`

@@ -32,6 +32,7 @@ from run_e2e import (  # noqa: E402
     BILLING_IMPORT_REQUIREMENTS,
     BYOK_REQUIREMENTS,
     OAUTH_REQUIREMENTS,
+    RETENTION_REQUIREMENTS,
     SANDBOX_REQUIREMENTS,
     SANDBOX_ENABLED_REQUIREMENTS,
     SCHEDULED_REQUIREMENTS,
@@ -41,6 +42,7 @@ from run_e2e import (  # noqa: E402
     closed_phase_semantic_errors,
     requirement_semantic_errors,
     release_manifest_errors,
+    verify_structured_sse_terminal,
 )
 
 
@@ -98,6 +100,14 @@ class FakeHandler(BaseHTTPRequestHandler):
                 self.send_json(409, {"error": "selection already consumed"})
             else:
                 self.send_json(200, {"data": {"redirect_url": "/workbench/auth/sso?ticket=sso-secret-value"}})
+        elif parsed.path == "/api/workbench/agent-store/dynamic-claw/launch":
+            self.send_json(200, {
+                "success": True,
+                "data": {
+                    "redirect_url": "/workbench/auth/sso?ticket=agent-store-sso-secret",
+                    "expires_at": "2026-08-11T00:00:00Z",
+                },
+            })
         elif parsed.path == "/workbench/load/message":
             request = json.loads(body)
             request_id = request.get("ClientRequestId")
@@ -380,6 +390,28 @@ class E2ESelfTest(unittest.TestCase):
         result = next(item for item in runner.results if item.name == "one POST plus Last-Event-ID reconnect")
         self.assertEqual(result.status, "fail")
         self.assertFalse(result.evidence["terminal_seen"])
+
+    def test_agent_store_launch_consumes_same_origin_sso_and_rejects_replay(self):
+        args = argparse.Namespace(execute=True, allow_mutations=True, allow_eicar=False, allow_provider_cost=True)
+        runner = Runner(self.config(), args)
+        self.assertTrue(runner.bootstrap("user_a"))
+        FakeHandler.sso_used = False
+        passed = runner.generic_request("agent-store", {
+            "name": "launch dynamic Claw",
+            "requirement": "profile_claw_dynamic_v2",
+            "actor": "user_a",
+            "method": "POST",
+            "path": "/api/workbench/agent-store/dynamic-claw/launch",
+            "expect_status": [200],
+            "consume_launch_redirect": True,
+            "json_equals": {"/success": True},
+            "json_types": {"/data/redirect_url": "string"},
+            "json_absent": ["/data/app_id", "/data/app_key", "/data/customer_id", "/data/selection_token"],
+        })
+        self.assertTrue(passed)
+        evidence = runner.results[-1].evidence
+        self.assertTrue(evidence["launch_sso_replay_rejected"])
+        self.assertTrue(evidence["launch_workbench_ready"])
 
     def sandbox_checks(self):
         return [
@@ -819,7 +851,219 @@ class E2ESelfTest(unittest.TestCase):
         errors = acceptance_preflight_errors(self.config())
         self.assertTrue(any(error.startswith("selector_checks:") for error in errors))
         self.assertTrue(any(error.startswith("sandbox_checks:") for error in errors))
+        self.assertTrue(any(error.startswith("agent_store_checks:") for error in errors))
+        self.assertTrue(any(error.startswith("app_migration_checks:") for error in errors))
+        self.assertTrue(any(error.startswith("retention_checks:") for error in errors))
+        self.assertTrue(any(error.startswith("integration_execution_mode:") for error in errors))
         self.assertTrue(any("sandbox_acceptance_token" in error for error in errors))
+
+    def test_enabled_integration_mode_rejects_blocked_contract_masquerade(self):
+        config = self.config()
+        config["integration_execution_mode"] = "enabled"
+        config["integration_execution_checks"] = [{
+            "name": "blocked response cannot pass enabled mode",
+            "requirement": "dependent_turn_blocked",
+            "actor": "user_a",
+            "method": "POST",
+            "path": "/workbench/chat/message",
+            "body_fixture": f"file:{self.fixture}",
+            "expect_status": [503],
+            "require_response_markers": ["execution blocked"],
+        }]
+        errors = acceptance_preflight_errors(config)
+        integration_errors = [error for error in errors if error.startswith("integration_execution_checks:")]
+        self.assertTrue(any("dependent_turn_completed" in error for error in integration_errors))
+        self.assertTrue(any("unknown requirements dependent_turn_blocked" in error for error in integration_errors))
+
+    def test_structured_sse_terminal_requires_bound_turn_and_exact_terminal(self):
+        accepted = (
+            'data: {"Type":"workbench.turn","TurnId":"turn-1","ClientRequestId":"request-1"}\n\n'
+            'data: {"Type":"response.output_text.delta","Delta":"completed"}\n\n'
+            'data: {"Type":"workbench.turn_status","TurnId":"turn-1","Status":"completed"}\n\n'
+        ).encode()
+        ok, evidence = verify_structured_sse_terminal(accepted, "request-1")
+        self.assertTrue(ok)
+        self.assertTrue(evidence["terminal_seen"])
+        wrong_turn = accepted.replace(b'"TurnId":"turn-1","Status"', b'"TurnId":"turn-2","Status"')
+        ok, evidence = verify_structured_sse_terminal(wrong_turn, "request-1")
+        self.assertFalse(ok)
+        self.assertFalse(evidence["terminal_seen"])
+        model_text_only = (
+            'data: {"Type":"workbench.turn","TurnId":"turn-1","ClientRequestId":"request-1"}\n\n'
+            'data: {"Type":"response.output_text.delta","Delta":"completed"}\n\n'
+        ).encode()
+        self.assertFalse(verify_structured_sse_terminal(model_text_only, "request-1")[0])
+
+    def test_runtime_config_accepts_only_exact_completed_sse_contract(self):
+        base = f"http://127.0.0.1:{self.server.server_port}"
+        turn = self.root / "integration-turn.json"
+        turn.write_text('{"ClientRequestId":"request-1","Prompt":"hello"}', encoding="utf-8")
+        value = {
+            "version": 1,
+            "base_url": base,
+            "secrets": {"user_a_session": "env:CLAW_TEST_USER_COOKIE"},
+            "integration_execution_mode": "enabled",
+            "integration_execution_checks": [{
+                "name": "real dependent Turn",
+                "requirement": "dependent_turn_completed",
+                "actor": "user_a",
+                "method": "POST",
+                "path": "/workbench/chat/message",
+                "body_fixture": f"file:{turn}",
+                "expect_status": [200],
+                "sse_terminal": {"client_request_id_pointer": "/ClientRequestId", "status": "completed"},
+            }],
+        }
+        path = self.root / "sse-contract.json"
+        path.write_text(json.dumps(value), encoding="utf-8")
+        load_config(path, allow_http=True)
+        value["integration_execution_checks"][0]["sse_terminal"]["status"] = "failed_after_accept"
+        path.write_text(json.dumps(value), encoding="utf-8")
+        with self.assertRaisesRegex(ConfigError, "exact completed status"):
+            load_config(path, allow_http=True)
+
+    def test_new_non_http_requirements_can_only_be_satisfied_by_signed_observer_keys(self):
+        observer_keys = {
+            "agent_store.non_dynamic_zero_copy",
+            "agent_store.dynamic_copy_single_request",
+            "agent_store.dynamic_binding_unique",
+            "app_migration.lineage_single_activation",
+            "retention.delivery_receipt_completed",
+            "retention.adp_exact_deletion",
+            "retention.cos_exact_deletion",
+            "retention.provider_revoked",
+            "retention.control_records_preserved",
+            "integration_execution.provider_binding_readback",
+            "integration_execution.usage_limit_recorded",
+        }
+        for contract, requirements in (
+            ("agent_store", {"non_dynamic_zero_copy", "dynamic_copy_single_request", "dynamic_binding_unique"}),
+            ("app_migration", {"lineage_single_activation"}),
+            ("retention", RETENTION_REQUIREMENTS.difference({"legal_hold_blocked", "policy_version_race_blocked", "delivery_enqueued"})),
+            ("integration_execution", {"provider_binding_readback", "usage_limit_recorded"}),
+        ):
+            self.assertEqual(
+                requirement_semantic_errors(contract, [], requirements, observer_keys=observer_keys),
+                [],
+            )
+
+    def test_agent_store_profile_requires_one_ordered_launch_turn_history_chain(self):
+        detail = {
+            "name": "standard profile",
+            "requirement": "profile_standard_v2",
+            "actor": "admin",
+            "method": "GET",
+            "path": "/api/admin/workbench/agent-store/items/item-1",
+            "expect_status": [200],
+            "capture": {
+                "standard_v2_slug": "/data/slug",
+                "standard_v2_deployment_id": "/data/deployments/0/deployment_id",
+            },
+            "json_equals": {
+                "/data/deployments/0/provider_app_mode": 1,
+                "/data/deployments/0/runtime_profile": "standard_v2",
+                "/data/deployments/0/execution_enabled": True,
+            },
+        }
+        launch = {
+            "name": "launch standard", "requirement": "profile_standard_v2", "actor": "user_a",
+            "method": "POST", "path": "/api/workbench/agent-store/${standard_v2_slug}/launch",
+            "expect_status": [200], "consume_launch_redirect": True,
+            "launch_context_sha256": "standard_v2_app_context_sha256",
+            "json_equals": {"/success": True}, "json_types": {"/data/redirect_url": "string"},
+            "json_absent": ["/data/app_id", "/data/app_key", "/data/customer_id", "/data/selection_token"],
+        }
+        turn = {
+            "name": "standard turn", "requirement": "profile_standard_v2", "actor": "user_a",
+            "method": "POST", "path": "/workbench/chat/message", "expect_status": [200],
+            "provider_cost": True,
+            "assert_current_app_context_sha256": "standard_v2_app_context_sha256",
+            "sse_terminal": {"client_request_id_pointer": "/ClientRequestId", "status": "completed", "capture_conversation_id": "standard_v2_conversation_id"},
+        }
+        history = {
+            "name": "standard history", "requirement": "profile_standard_v2", "actor": "user_a",
+            "method": "GET", "path": "/workbench/chat/messages?conversation_id=${standard_v2_conversation_id}",
+            "expect_status": [200], "require_response_markers": ["completed"],
+            "assert_current_app_context_sha256": "standard_v2_app_context_sha256",
+        }
+        specs = [detail, launch, turn, history]
+        self.assertEqual(requirement_semantic_errors("agent_store", specs, {"profile_standard_v2"}), [])
+
+        split = dict(detail)
+        split["json_equals"] = dict(detail["json_equals"])
+        split["json_equals"]["/data/deployments/1/runtime_profile"] = split["json_equals"].pop("/data/deployments/0/runtime_profile")
+        errors = requirement_semantic_errors("agent_store", [split, launch, turn, history], {"profile_standard_v2"})
+        self.assertTrue(any("one deployment array element" in error for error in errors))
+
+        errors = requirement_semantic_errors("agent_store", [detail, turn, history], {"profile_standard_v2"})
+        self.assertTrue(any("missing launch bound" in error for error in errors))
+
+        interposed_launch = dict(launch)
+        interposed_launch["requirement"] = "profile_claw_dynamic_v2"
+        errors = requirement_semantic_errors(
+            "agent_store", [detail, launch, interposed_launch, turn, history], {"profile_standard_v2"}
+        )
+        self.assertTrue(any("one ordered capture chain" in error for error in errors))
+
+    def test_agent_store_disabled_deployment_must_reject_bound_launch(self):
+        readback = {
+            "name": "disabled readback", "requirement": "disabled_deployment_launch_rejected",
+            "actor": "admin", "method": "GET", "path": "/api/admin/workbench/agent-store/items/disabled",
+            "expect_status": [200], "capture": {"disabled_profile_slug": "/data/slug"},
+            "json_equals": {"/data/deployments/0/execution_enabled": False},
+        }
+        rejected = {
+            "name": "disabled launch", "requirement": "disabled_deployment_launch_rejected",
+            "actor": "user_a", "method": "POST",
+            "path": "/api/workbench/agent-store/${disabled_profile_slug}/launch", "expect_status": [409],
+        }
+        self.assertEqual(
+            requirement_semantic_errors(
+                "agent_store", [readback, rejected], {"disabled_deployment_launch_rejected"}
+            ), []
+        )
+
+    def test_integration_revocation_readback_must_run_in_cleanup_order(self):
+        unbind = self.root / "unbind.json"
+        unbind.write_text('{"action":"unbind","kind":"skill","resource_id":"skill-1"}', encoding="utf-8")
+        specs = [{
+            "name": "unbind",
+            "requirement": "revocation_readback",
+            "actor": "user_a",
+            "method": "POST",
+            "path": "/workbench/integrations/bindings",
+            "body_fixture": f"file:{unbind}",
+            "expect_status": [200],
+            "cleanup": True,
+        }, {
+            "name": "revoked readback",
+            "requirement": "revocation_readback",
+            "actor": "user_a",
+            "method": "GET",
+            "path": "/workbench/integrations",
+            "expect_status": [200],
+            "json_equals": {"/bindings/0/status": "revoked"},
+        }]
+        errors = requirement_semantic_errors("integration_execution", specs, {"revocation_readback"})
+        self.assertTrue(any("post-unbind" in error for error in errors))
+        specs[1]["cleanup"] = True
+        self.assertEqual(
+            requirement_semantic_errors("integration_execution", specs, {"revocation_readback"}),
+            [],
+        )
+
+    def test_app_migration_prepare_requires_real_created_job(self):
+        spec = {
+            "name": "label-only prepare",
+            "requirement": "migration_prepared",
+            "actor": "admin_requester",
+            "method": "POST",
+            "path": "/api/admin/workbench/customers/1/app-migrations",
+            "expect_status": [200],
+            "require_response_markers": ["created"],
+        }
+        errors = requirement_semantic_errors("app_migration", [spec], {"migration_prepared"})
+        self.assertTrue(any("captured job" in error for error in errors))
 
     def test_resource_bounds_evidence_requires_a_large_string_command(self):
         oversized = self.root / "oversized-list.json"
@@ -1396,6 +1640,27 @@ class E2ESelfTest(unittest.TestCase):
         runner.acceptance_observer_evidence("scheduled", "scheduled")
         self.assertEqual(runner.results[-1].status, "pass", runner.results[-1].message)
         self.assertIn("signed_observer_evidence", runner.results[-1].evidence["assertion_types"])
+
+        evidence.with_suffix(evidence.suffix + ".sig").unlink()
+        evidence.write_text(json.dumps({
+            "schema_version": 1,
+            "acceptance_run_id": "observer-run",
+            "release_manifest_sha256": digest,
+            "requirement": "agent_store.dynamic_binding_unique",
+            "observed_from": started,
+            "observed_until": now,
+            "collected_at": now,
+            "source": {"kind": "provider_audit", "query_sha256": "c" * 64, "read_only": True, "row_count": 1},
+            "facts": {"active_binding_count": 1},
+        }), encoding="utf-8")
+        subprocess.run(["ssh-keygen", "-Y", "sign", "-f", str(key), "-n", "claw-acceptance-observer-v1", str(evidence)], check=True, stdout=subprocess.DEVNULL)
+        config["acceptance_observer"]["evidence"] = {
+            "agent_store.dynamic_binding_unique": f"file:{evidence}",
+        }
+        runner = Runner(config, args, run_id="observer-run", started_at=started)
+        runner.acceptance_observer_evidence("agent-store", "agent_store")
+        self.assertEqual(runner.results[-1].status, "blocker")
+        self.assertIn("source is not", runner.results[-1].message)
 
 
 if __name__ == "__main__":

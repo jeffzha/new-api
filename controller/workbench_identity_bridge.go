@@ -118,6 +118,10 @@ func (bridge *WorkbenchIdentityBridge) AdminSessionTicket(c *gin.Context) {
 }
 
 func (bridge *WorkbenchIdentityBridge) issueSessionTicket(c *gin.Context, surface string) {
+	bridge.issueSessionTicketWithProof(c, surface, time.Time{}, nil, "")
+}
+
+func (bridge *WorkbenchIdentityBridge) issueSessionTicketWithProof(c *gin.Context, surface string, authenticatedAt time.Time, amr []string, reauthNonce string) {
 	if !bridge.config.Enabled {
 		respondWorkbenchError(c, http.StatusNotFound, "workbench is disabled")
 		return
@@ -165,6 +169,9 @@ func (bridge *WorkbenchIdentityBridge) issueSessionTicket(c *gin.Context, surfac
 		IdentityVersion: identityVersion,
 		Surface:         surface,
 		IsSuperAdmin:    user.Role == common.RoleRootUser,
+		AuthenticatedAt: authenticatedAt,
+		AMR:             amr,
+		ReauthNonce:     reauthNonce,
 	})
 	if err != nil {
 		common.SysError("failed to issue workbench session ticket: " + err.Error())

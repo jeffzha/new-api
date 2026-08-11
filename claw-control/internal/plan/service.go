@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/claw-control/internal/domain"
 	"github.com/QuantumNous/new-api/claw-control/internal/jsonx"
 	"github.com/QuantumNous/new-api/claw-control/internal/model"
+	"github.com/QuantumNous/new-api/claw-control/internal/pagination"
 	"github.com/QuantumNous/new-api/claw-control/internal/productpolicy"
 	"github.com/QuantumNous/new-api/claw-control/internal/support"
 	"github.com/shopspring/decimal"
@@ -419,15 +420,24 @@ func (s *Service) VoidInvoice(command VoidInvoiceCommand) (*model.CustomerInvoic
 }
 
 func (s *Service) ListInvoices(customerID uint64, limit int) ([]model.CustomerInvoice, error) {
+	page, err := s.ListInvoicesPage(customerID, 0, limit)
+	return page.Items, err
+}
+
+func (s *Service) ListInvoicesPage(customerID, beforeID uint64, limit int) (pagination.Page[model.CustomerInvoice], error) {
 	if customerID == 0 {
-		return nil, domain.Invalid("customer_id is required")
+		return pagination.Page[model.CustomerInvoice]{}, domain.Invalid("customer_id is required")
 	}
-	if limit <= 0 || limit > 200 {
-		limit = 100
+	limit = pagination.Limit(limit)
+	query := s.db.Where("customer_id = ?", customerID).Order("id desc").Limit(limit + 1)
+	if beforeID > 0 {
+		query = query.Where("id < ?", beforeID)
 	}
 	var invoices []model.CustomerInvoice
-	err := s.db.Where("customer_id = ?", customerID).Order("id desc").Limit(limit).Find(&invoices).Error
-	return invoices, err
+	if err := query.Find(&invoices).Error; err != nil {
+		return pagination.Page[model.CustomerInvoice]{}, err
+	}
+	return pagination.Trim(invoices, limit, func(value model.CustomerInvoice) uint64 { return value.ID }), nil
 }
 
 func (s *Service) ReconcilePeriods(now time.Time) error {

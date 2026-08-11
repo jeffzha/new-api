@@ -12,6 +12,7 @@ func registerWorkbenchIdentityRoutes(apiRouter *gin.RouterGroup) {
 
 	admin := apiRouter.Group("/admin/workbench")
 	admin.POST("/session-ticket", middleware.RootAuth(), middleware.CriticalRateLimit(), controller.IssueWorkbenchAdminSessionTicket)
+	admin.POST("/step-up-ticket", middleware.RootAuth(), middleware.CriticalRateLimit(), controller.IssueWorkbenchAdminStepUpTicket)
 
 	internal := apiRouter.Group("/internal/workbench")
 	internal.POST("/identity-status", controller.GetWorkbenchIdentityStatus)

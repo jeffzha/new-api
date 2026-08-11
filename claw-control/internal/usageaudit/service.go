@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/claw-control/internal/domain"
 	"github.com/QuantumNous/new-api/claw-control/internal/jsonx"
 	"github.com/QuantumNous/new-api/claw-control/internal/model"
+	"github.com/QuantumNous/new-api/claw-control/internal/pagination"
 	"github.com/QuantumNous/new-api/claw-control/internal/support"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -452,16 +453,24 @@ func (s *Service) Revise(command RevisionCommand) (*RevisionResult, error) {
 }
 
 func (s *Service) List(customerID *uint64, limit int) ([]model.UsageAudit, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
-	query := s.db.Order("id desc").Limit(limit)
+	page, err := s.ListPage(customerID, 0, limit)
+	return page.Items, err
+}
+
+func (s *Service) ListPage(customerID *uint64, beforeID uint64, limit int) (pagination.Page[model.UsageAudit], error) {
+	limit = pagination.Limit(limit)
+	query := s.db.Order("id desc").Limit(limit + 1)
 	if customerID != nil {
 		query = query.Where("customer_id = ?", *customerID)
 	}
+	if beforeID > 0 {
+		query = query.Where("id < ?", beforeID)
+	}
 	var audits []model.UsageAudit
-	err := query.Find(&audits).Error
-	return audits, err
+	if err := query.Find(&audits).Error; err != nil {
+		return pagination.Page[model.UsageAudit]{}, err
+	}
+	return pagination.Trim(audits, limit, func(value model.UsageAudit) uint64 { return value.ID }), nil
 }
 
 func normalizeAndValidateCreate(command *CreateCommand) error {

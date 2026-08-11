@@ -3,6 +3,8 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -34,8 +36,10 @@ func TestEvidenceUploadAndAuthorizedDownloadUseAdminSessionBoundary(t *testing.T
 	evidenceService, err := evidence.New(db, t.TempDir(), bytes.Repeat([]byte{0x71}, 32), 1024, evidence.ScannerFunc(func(context.Context, []byte) error { return nil }))
 	require.NoError(t, err)
 	accessService := access.New(db, secrets.EnvironmentResolver{}, evidenceIdentityVerifier{}, time.Minute, time.Minute, time.Hour, time.Hour, time.Minute)
+	nonce := sha256.Sum256([]byte("evidence-admin-step-up"))
 	entry, err := accessService.IssueEntryTicket(access.IssueEntryTicketCommand{
 		NewAPIUserID: 77, IdentityVersion: "admin.v1", Surface: "admin", IsSuperAdmin: true,
+		AuthenticatedAt: time.Now().UTC(), AMR: []string{"otp"}, ReauthNonce: base64.RawURLEncoding.EncodeToString(nonce[:]),
 	})
 	require.NoError(t, err)
 	server := httpapi.New(httpapi.Services{
@@ -117,10 +121,10 @@ func TestEvidenceUploadAndAuthorizedDownloadUseAdminSessionBoundary(t *testing.T
 func TestInternalMarginReportIsReadOnlyAndNoStore(t *testing.T) {
 	db, err := testutil.NewDatabase()
 	require.NoError(t, err)
-	server := httpapi.New(httpapi.Services{DB: db, Margins: marginreport.New(db)}, "emergency-admin-token", httpapi.InternalAuth{}, httpapi.PublicConfig{})
+	accessService, sessionCookie, _ := issueAdminSession(t, db, secrets.EnvironmentResolver{}, 78)
+	server := httpapi.New(httpapi.Services{DB: db, Access: accessService, Margins: marginreport.New(db)}, "emergency-admin-token", httpapi.InternalAuth{}, httpapi.PublicConfig{})
 	request := httptest.NewRequest(http.MethodGet, "/api/admin/workbench/margin-report", nil)
-	request.Header.Set("Authorization", "Bearer emergency-admin-token")
-	request.Header.Set("X-Claw-Actor", "test-admin")
+	request.AddCookie(sessionCookie)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 	assert.Equal(t, http.StatusOK, response.Code)

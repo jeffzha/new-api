@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/claw-control/internal/domain"
 	"github.com/QuantumNous/new-api/claw-control/internal/jsonx"
 	"github.com/QuantumNous/new-api/claw-control/internal/model"
+	"github.com/QuantumNous/new-api/claw-control/internal/pagination"
 	"github.com/QuantumNous/new-api/claw-control/internal/secrets"
 	"github.com/QuantumNous/new-api/claw-control/internal/support"
 	"gorm.io/gorm"
@@ -658,6 +659,43 @@ func executeAction(tx *gorm.DB, resolver secrets.Resolver, approval model.Govern
 		if err := tx.First(&targetConfig, *target.CurrentConfigVersionID).Error; err != nil || targetConfig.CustomerAppID != target.ID {
 			return domain.Conflict("target App config is unavailable at migration cutover")
 		}
+		sourceProviderAppMode := 4
+		sourceRuntimeProfile := "claw_dynamic_v2"
+		var sourceVerification model.AppVerification
+		verificationResult := tx.Where(
+			"customer_app_id = ? AND app_config_version_id = ? AND result = ?",
+			source.ID, sourceConfig.ID, "verified",
+		).Order("verified_at desc").Order("id desc").First(&sourceVerification)
+		if verificationResult.Error == nil {
+			sourceProviderAppMode = sourceVerification.AppMode
+			switch sourceVerification.AppMode {
+			case 1:
+				if sourceVerification.DynamicAgentConfig {
+					return domain.Conflict("source App verification has an invalid runtime profile")
+				}
+				sourceRuntimeProfile = "standard_v2"
+			case 2:
+				if sourceVerification.DynamicAgentConfig {
+					return domain.Conflict("source App verification has an invalid runtime profile")
+				}
+				sourceRuntimeProfile = "multi_agent_v2"
+			case 3:
+				if sourceVerification.DynamicAgentConfig {
+					return domain.Conflict("source App verification has an invalid runtime profile")
+				}
+				sourceRuntimeProfile = "workflow_v2"
+			case 4:
+				if sourceVerification.DynamicAgentConfig {
+					sourceRuntimeProfile = "claw_dynamic_v2"
+				} else {
+					sourceRuntimeProfile = "claw_static_v2"
+				}
+			default:
+				return domain.Conflict("source App verification has an unsupported provider mode")
+			}
+		} else if verificationResult.Error != gorm.ErrRecordNotFound {
+			return verificationResult.Error
+		}
 		var evidence model.EvidenceObject
 		if err := tx.Where("public_id = ? AND status = ?", payload.EvidenceRef, model.EvidenceStatusActive).First(&evidence).Error; err != nil || evidence.CustomerID == nil || *evidence.CustomerID != payload.CustomerID {
 			return domain.Conflict("migration evidence is unavailable at execution")
@@ -699,8 +737,10 @@ func executeAction(tx *gorm.DB, resolver secrets.Resolver, approval model.Govern
 			PublicID: support.PublicID("lin"), EventKey: eventKey, CustomerID: payload.CustomerID,
 			MigrationJobID: job.ID, SourceCustomerAppID: source.ID,
 			SourceAppConfigVersionID: sourceConfig.ID, SourceApplicationID: source.AppID,
-			SourceProviderAppID: source.AppID,
-			SourceConfigVersion: sourceConfig.ConfigVersion, TargetCustomerAppID: target.ID,
+			SourceProviderAppID:   source.AppID,
+			SourceConfigVersion:   sourceConfig.ConfigVersion,
+			SourceProviderAppMode: sourceProviderAppMode, SourceRuntimeProfile: sourceRuntimeProfile,
+			SourceExecutionEnabled: false, TargetCustomerAppID: target.ID,
 			TargetAppConfigVersionID: targetConfig.ID, TargetApplicationID: target.AppID,
 			TargetProviderAppID:        target.AppID,
 			TargetConfigVersion:        targetConfig.ConfigVersion,
@@ -734,13 +774,16 @@ func executeAction(tx *gorm.DB, resolver secrets.Resolver, approval model.Govern
 }
 
 func (s *Service) List(query ListQuery) ([]model.GovernanceApproval, error) {
-	if query.Limit <= 0 || query.Limit > 200 {
-		query.Limit = 100
-	}
-	db := s.db.Order("id desc").Limit(query.Limit)
+	page, err := s.ListPage(query)
+	return page.Items, err
+}
+
+func (s *Service) ListPage(query ListQuery) (pagination.Page[model.GovernanceApproval], error) {
+	query.Limit = pagination.Limit(query.Limit)
+	db := s.db.Order("id desc").Limit(query.Limit + 1)
 	if query.CustomerID != nil {
 		if *query.CustomerID == 0 {
-			return nil, domain.Invalid("customer_id must be positive")
+			return pagination.Page[model.GovernanceApproval]{}, domain.Invalid("customer_id must be positive")
 		}
 		db = db.Where("customer_id = ?", *query.CustomerID)
 	}
@@ -751,7 +794,10 @@ func (s *Service) List(query ListQuery) ([]model.GovernanceApproval, error) {
 		db = db.Where("id < ?", query.BeforeID)
 	}
 	var result []model.GovernanceApproval
-	return result, db.Find(&result).Error
+	if err := db.Find(&result).Error; err != nil {
+		return pagination.Page[model.GovernanceApproval]{}, err
+	}
+	return pagination.Trim(result, query.Limit, func(value model.GovernanceApproval) uint64 { return value.ID }), nil
 }
 
 func sameOptionalID(first, second *uint64) bool {

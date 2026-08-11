@@ -34,6 +34,8 @@ const CrossComponentRetentionVersion = "0019_cross_component_retention"
 const AppMigrationLineageVersion = "0020_app_migration_lineage"
 const AgentStoreVersion = "0021_agent_store"
 const AgentStoreRuntimeContractVersion = "0022_agent_store_runtime_contract"
+const AppMigrationSourceRuntimeVersion = "0023_app_migration_source_runtime"
+const AdminRecentAuthVersion = "0024_admin_recent_auth"
 
 type SchemaMigration struct {
 	Version   string    `gorm:"type:varchar(96);primaryKey"`
@@ -91,6 +93,8 @@ func Migrate(db *gorm.DB) error {
 		{version: AgentStoreRuntimeContractVersion, models: []any{
 			&model.ContextSelectionNonce{}, &model.AppMigrationJob{},
 		}},
+		{version: AppMigrationSourceRuntimeVersion, models: []any{&model.AppMigrationLineage{}}},
+		{version: AdminRecentAuthVersion},
 	}
 	for _, migration := range migrations {
 		var count int64
@@ -131,6 +135,11 @@ func Migrate(db *gorm.DB) error {
 				return err
 			}
 		}
+		if migration.version == AdminRecentAuthVersion {
+			if err := migrateAdminRecentAuth(db); err != nil {
+				return err
+			}
+		}
 		if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&SchemaMigration{
 			Version: migration.version, AppliedAt: time.Now().UTC(),
 		}).Error; err != nil {
@@ -138,6 +147,38 @@ func Migrate(db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+type entryTicketRecentAuthColumns struct {
+	ID              uint64     `gorm:"primaryKey"`
+	AuthenticatedAt *time.Time `gorm:"index"`
+	AuthMethods     string     `gorm:"type:varchar(128)"`
+	ReauthNonceHash *string    `gorm:"type:char(64)"`
+}
+
+func (entryTicketRecentAuthColumns) TableName() string { return model.EntryTicket{}.TableName() }
+
+type adminSessionRecentAuthColumns struct {
+	ID              uint64     `gorm:"primaryKey"`
+	AuthenticatedAt *time.Time `gorm:"index"`
+	AuthMethods     string     `gorm:"type:varchar(128)"`
+	ReauthNonceHash *string    `gorm:"type:char(64);index"`
+}
+
+func (adminSessionRecentAuthColumns) TableName() string { return model.AdminSession{}.TableName() }
+
+func migrateAdminRecentAuth(db *gorm.DB) error {
+	// SQLite cannot add a UNIQUE column to an existing table. Add the nullable
+	// proof columns first, then create the replay-prevention index separately;
+	// the same sequence is valid for MySQL and PostgreSQL upgrades.
+	if err := db.AutoMigrate(&entryTicketRecentAuthColumns{}, &adminSessionRecentAuthColumns{}); err != nil {
+		return err
+	}
+	const nonceIndex = "idx_claw_entry_reauth_nonce"
+	if db.Migrator().HasIndex(&model.EntryTicket{}, nonceIndex) {
+		return nil
+	}
+	return db.Exec("CREATE UNIQUE INDEX " + nonceIndex + " ON claw_entry_tickets (reauth_nonce_hash)").Error
 }
 
 func migrateMembershipScopes(db *gorm.DB) error {

@@ -50,7 +50,9 @@ TOP_LEVEL_CONFIG_KEYS = frozenset(
         "secrets", "variables", "selection_targets", "release_manifest", "paths",
         "lifecycle", "turn", "isolation_checks", "eicar", "policy_checks",
         "limit_checks", "selector_checks", "oauth_checks", "scheduled_task_checks",
-        "sandbox_checks", "gate_scenarios", "rotation_checks", "byok_checks",
+        "sandbox_checks", "agent_store_checks", "app_migration_checks",
+        "retention_checks", "integration_execution_checks",
+        "integration_execution_mode", "gate_scenarios", "rotation_checks", "byok_checks",
         "usage_audit_checks", "billing_import_checks", "smoke_checks",
         "security_checks", "direct_adp_paths", "load",
         "acceptance_observer", "sandbox_mode", "sandbox_pty",
@@ -60,7 +62,9 @@ REQUEST_LIST_KEYS = frozenset(
     {
         "isolation_checks", "policy_checks", "limit_checks", "selector_checks",
         "oauth_checks", "scheduled_task_checks", "sandbox_checks", "rotation_checks",
-        "byok_checks", "usage_audit_checks", "billing_import_checks", "smoke_checks",
+        "agent_store_checks", "app_migration_checks", "retention_checks",
+        "integration_execution_checks", "byok_checks", "usage_audit_checks",
+        "billing_import_checks", "smoke_checks",
         "security_checks",
     }
 )
@@ -73,7 +77,10 @@ REQUEST_KEYS = frozenset(
         "forbid_response_markers", "csrf_mode", "cleanup",
         "assert_variables_equal", "assert_variables_not_equal",
         "selection_token_source", "selection_token_actor", "selection_target",
-        "body_min_bytes", "fixture_json_min_lengths",
+        "body_min_bytes", "fixture_json_min_lengths", "sse_terminal",
+        "consume_launch_redirect",
+        "launch_context_sha256",
+        "assert_current_app_context_sha256",
     }
 )
 REQUEST_ACTORS = frozenset(
@@ -525,9 +532,39 @@ def _validate_request_spec(value: Any, label: str) -> None:
             raise ConfigError(
                 f"{label}.fixture_json_min_lengths must map JSON pointers to positive bounded lengths and requires a fixture"
             )
-    for key in ("provider_cost", "cleanup"):
+    for key in ("provider_cost", "cleanup", "consume_launch_redirect"):
         if key in value and not isinstance(value[key], bool):
             raise ConfigError(f"{label}.{key} must be a boolean")
+    if value.get("consume_launch_redirect") and (
+        value["actor"] not in REQUEST_ACTORS - {"admin", "admin_requester", "admin_approver", "api_key", "anonymous"}
+        or value["method"] != "POST"
+        or not re.fullmatch(r"/api/workbench/agent-store/[^/?]+/launch", value["path"])
+    ):
+        raise ConfigError(f"{label}.consume_launch_redirect is allowed only on a user Agent Store launch")
+    context_capture = value.get("launch_context_sha256")
+    if context_capture is not None and (
+        not value.get("consume_launch_redirect")
+        or not isinstance(context_capture, str)
+        or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", context_capture)
+    ):
+        raise ConfigError(f"{label}.launch_context_sha256 requires a launch and a valid capture variable")
+    context_assertion = value.get("assert_current_app_context_sha256")
+    if context_assertion is not None and (
+        value["actor"] in {"admin", "admin_requester", "admin_approver", "api_key", "anonymous"}
+        or not isinstance(context_assertion, str)
+        or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", context_assertion)
+    ):
+        raise ConfigError(f"{label}.assert_current_app_context_sha256 requires a user and a valid captured variable")
+    terminal = value.get("sse_terminal")
+    if terminal is not None:
+        if not isinstance(terminal, dict):
+            raise ConfigError(f"{label}.sse_terminal must be an object")
+        capture_name = terminal.get("capture_conversation_id")
+        if capture_name is not None and (
+            not isinstance(capture_name, str)
+            or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", capture_name)
+        ):
+            raise ConfigError(f"{label}.sse_terminal.capture_conversation_id is invalid")
     if value.get("csrf_mode", "auto") not in {"auto", "omit", "invalid"}:
         raise ConfigError(f"{label}.csrf_mode must be auto, omit, or invalid")
     token_source = value.get("selection_token_source")
@@ -602,6 +639,28 @@ def _validate_request_spec(value: Any, label: str) -> None:
             raise ConfigError(f"{label}.json_types is invalid")
     if "header_equals" in value:
         _validate_string_map(value["header_equals"], f"{label}.header_equals")
+    if "sse_terminal" in value:
+        terminal = value["sse_terminal"]
+        if not isinstance(terminal, dict):
+            raise ConfigError(f"{label}.sse_terminal must be an object")
+        _reject_unknown(
+            terminal,
+            {"client_request_id_pointer", "status", "capture_conversation_id"},
+            f"{label}.sse_terminal",
+        )
+        if not {"client_request_id_pointer", "status"}.issubset(terminal):
+            raise ConfigError(f"{label}.sse_terminal is incomplete")
+        pointer = terminal["client_request_id_pointer"]
+        if (
+            value["method"] != "POST"
+            or "body_fixture" not in value
+            or not isinstance(pointer, str)
+            or not pointer.startswith("/")
+            or terminal["status"] != "completed"
+        ):
+            raise ConfigError(
+                f"{label}.sse_terminal requires a POST JSON fixture pointer and exact completed status"
+            )
     for key in ("require_response_markers", "forbid_response_markers"):
         if key in value and (
             not isinstance(value[key], list)
@@ -769,6 +828,8 @@ def validate_config_contract(config: Any) -> None:
             _validate_path(path, f"direct_adp_paths[{index}]")
     if "sandbox_mode" in config and config["sandbox_mode"] not in {"off", "enabled"}:
         raise ConfigError("sandbox_mode must be off or enabled")
+    if "integration_execution_mode" in config and config["integration_execution_mode"] not in {"blocked", "enabled"}:
+        raise ConfigError("integration_execution_mode must be blocked or enabled")
     if "acceptance_observer" in config:
         observer = config["acceptance_observer"]
         if not isinstance(observer, dict):
@@ -781,7 +842,10 @@ def validate_config_contract(config: Any) -> None:
         if not isinstance(evidence, dict) or not evidence:
             raise ConfigError("acceptance_observer.evidence must be a non-empty object")
         for requirement, ref in evidence.items():
-            if not re.fullmatch(r"(?:scheduled|byok|billing_import)\.[a-z][a-z0-9_]{1,63}", str(requirement)):
+            if not re.fullmatch(
+                r"(?:scheduled|byok|billing_import|agent_store|app_migration|retention|integration_execution)\.[a-z][a-z0-9_]{1,63}",
+                str(requirement),
+            ):
                 raise ConfigError("acceptance_observer evidence keys must be qualified requirement IDs")
             _validate_file_ref(ref, f"acceptance_observer.evidence.{requirement}")
         for key, default, minimum, maximum in (("wait_seconds", 60, 1, 300), ("max_age_seconds", 900, 1, 3600)):
@@ -867,6 +931,31 @@ def validate_config_contract(config: Any) -> None:
                                 f"captured variable {variable} is declared more than once: {previous} and {location}"
                             )
                         captured_variables[variable] = location
+            terminal = value.get("sse_terminal")
+            if isinstance(terminal, dict) and terminal.get("capture_conversation_id"):
+                variable = str(terminal["capture_conversation_id"])
+                if variable in variables:
+                    raise ConfigError(
+                        f"variables.{variable} cannot pre-seed a value that must be captured from a live response"
+                    )
+                previous = captured_variables.get(variable)
+                if previous is not None:
+                    raise ConfigError(
+                        f"captured variable {variable} is declared more than once: {previous} and {location}"
+                    )
+                captured_variables[variable] = location
+            context_variable = value.get("launch_context_sha256")
+            if isinstance(context_variable, str):
+                if context_variable in variables:
+                    raise ConfigError(
+                        f"variables.{context_variable} cannot pre-seed a value that must be captured from a live response"
+                    )
+                previous = captured_variables.get(context_variable)
+                if previous is not None:
+                    raise ConfigError(
+                        f"captured variable {context_variable} is declared more than once: {previous} and {location}"
+                    )
+                captured_variables[context_variable] = location
             for key, item in value.items():
                 inspect_capture_specs(item, f"{location}.{key}")
         elif isinstance(value, list):

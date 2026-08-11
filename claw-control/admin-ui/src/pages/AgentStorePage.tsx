@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 
 import { adminApi } from '../api/client'
-import type { AgentStoreItem, AgentStoreVersion, Customer, CustomerApp } from '../api/contracts'
-import { Button, DataState, DialogForm, Field, PageHeader, Status, formatDate, toNumber } from '../components/ui'
+import type { AgentStoreItem, AgentStoreVersion } from '../api/contracts'
+import { Button, DataState, DialogForm, Field, PageHeader, Status, toNumber } from '../components/ui'
 import { useResource } from '../hooks/useResource'
 import { useI18n } from '../i18n'
+import { AgentStoreDeploymentFields } from './agent-store-deployment-fields'
+import { AddAgentStoreDeploymentDialog, AgentStoreDeployments } from './agent-store-deployments'
 
 export default function AgentStorePage() {
-  const { locale, t } = useI18n()
+  const { t } = useI18n()
   const load = useCallback((signal: AbortSignal) => adminApi.agentStoreItems(signal), [])
   const resource = useResource(load)
   const loadCustomers = useCallback((signal: AbortSignal) => adminApi.customers(signal), [])
@@ -48,12 +50,11 @@ export default function AgentStorePage() {
       tags: parseTags(form.get('tags')),
       sort_order: toNumber(form, 'sort_order', item.sort_order),
       featured: form.get('featured') === 'on',
-      execution_enabled: form.get('execution_enabled') === 'on',
     })
     resource.refresh()
   }
 
-  async function transition(item: AgentStoreItem, action: 'verify' | 'publish' | 'unpublish' | 'disable' | 'archive', reason = '') {
+  async function transition(item: AgentStoreItem, action: 'publish' | 'unpublish' | 'disable' | 'archive', reason = '') {
     setActionError(undefined)
     setPendingItem(item.item_id)
     try {
@@ -78,7 +79,7 @@ export default function AgentStorePage() {
         <Field label={t('agentStore.category')}><input name="category" required maxLength={96} /></Field>
         <Field label={t('agentStore.tags')} hint={t('agentStore.tagsHint')}><input name="tags" maxLength={512} /></Field>
         <Field label={t('agentStore.sortOrder')}><input name="sort_order" type="number" defaultValue="0" /></Field>
-        <AgentStoreCreateDeploymentFields customers={customers.data ?? []} />
+        <AgentStoreDeploymentFields customers={customers.data ?? []} />
         <label className="check-field"><input name="featured" type="checkbox" /> {t('agentStore.featured')}</label>
       </DialogForm>
     </>} />
@@ -93,12 +94,8 @@ export default function AgentStorePage() {
             <div className="section-title"><div><code>{item.slug}</code><h2>{metadata.display_name}</h2></div><Status value={item.status} /></div>
             <p>{metadata.summary}</p>
             <dl className="definition-grid">
-              <div><dt>{t('agentStore.appMode')}</dt><dd>{item.deployment.provider_app_mode || t('agentStore.unverified')}</dd></div>
-              <div><dt>{t('agentStore.runtime')}</dt><dd><code>{item.deployment.runtime_profile || t('agentStore.unverified')}</code></dd></div>
-              <div><dt>{t('agentStore.customerId')}</dt><dd>{item.deployment.customer_id}</dd></div>
-              <div><dt>{t('agentStore.customerAppId')}</dt><dd>{item.deployment.customer_app_id}</dd></div>
-              <div><dt>{t('agentStore.execution')}</dt><dd><Status value={item.deployment.execution_enabled ? 'enabled' : 'disabled'} /></dd></div>
-              <div><dt>{t('agentStore.verifiedAt')}</dt><dd>{formatDate(item.deployment.verified_at, locale)}</dd></div>
+              <div><dt>{t('agentStore.deployments')}</dt><dd>{item.deployments.length}</dd></div>
+              <div><dt>{t('agentStore.activeDeployments')}</dt><dd>{item.deployments.filter((deployment) => deployment.status === 'active').length}</dd></div>
             </dl>
             <div className="tag-list">{metadata.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
             <div className="agent-store-admin-actions">
@@ -111,66 +108,18 @@ export default function AgentStorePage() {
                 <Field label={t('agentStore.tags')}><input name="tags" defaultValue={metadata.tags.join(', ')} /></Field>
                 <Field label={t('agentStore.sortOrder')}><input name="sort_order" type="number" defaultValue={item.sort_order} /></Field>
                 <label className="check-field"><input name="featured" type="checkbox" defaultChecked={item.featured} /> {t('agentStore.featured')}</label>
-                <label className="check-field"><input name="execution_enabled" type="checkbox" defaultChecked={item.deployment.execution_enabled} /> {t('agentStore.execution')}</label>
               </DialogForm>
-              {canVerify(item) && <Button disabled={busy} onClick={() => void transition(item, 'verify')}>{t('action.verify')}</Button>}
+              {item.status !== 'disabled' && item.status !== 'archived' && <AddAgentStoreDeploymentDialog item={item} customers={customers.data ?? []} onChanged={resource.refresh} />}
               {canPublish(item) && <Button disabled={busy} onClick={() => void transition(item, 'publish')}>{t('agentStore.publish')}</Button>}
               {item.status === 'published' && <Button tone="secondary" disabled={busy} onClick={() => void transition(item, 'unpublish')}>{t('agentStore.unpublish')}</Button>}
               {canArchive(item) && <Button tone="secondary" disabled={busy} onClick={() => void transition(item, 'archive')}>{t('agentStore.archive')}</Button>}
               {item.status !== 'disabled' && item.status !== 'archived' && <DisableDialog item={item} disabled={busy} onDisable={(reason) => transition(item, 'disable', reason)} />}
             </div>
+            <AgentStoreDeployments item={item} onChanged={resource.refresh} />
           </article>
         })}
       </div>
     </DataState>
-  </>
-}
-
-function AgentStoreCreateDeploymentFields({ customers }: { customers: Customer[] }) {
-  const { t } = useI18n()
-  const [customerId, setCustomerId] = useState(0)
-  const [apps, setApps] = useState<CustomerApp[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string>()
-
-  useEffect(() => {
-    if (customerId !== 0 || customers.length === 0) return
-    const firstCustomer = customers[0]
-    if (firstCustomer != null) setCustomerId(firstCustomer.id)
-  }, [customerId, customers])
-
-  useEffect(() => {
-    if (customerId === 0) {
-      setApps([])
-      return
-    }
-    const controller = new AbortController()
-    setLoading(true)
-    setError(undefined)
-    void adminApi.customerApps(customerId, controller.signal)
-      .then(setApps)
-      .catch((caught: unknown) => {
-        if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : t('common.error'))
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
-      })
-    return () => controller.abort()
-  }, [customerId, t])
-
-  return <>
-    <Field label={t('agentStore.customerId')}>
-      <select name="customer_id" required value={customerId || ''} onChange={(event) => setCustomerId(Number(event.target.value))}>
-        <option value="" disabled>{t('agentStore.chooseCustomer')}</option>
-        {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.display_name} ({customer.customer_code})</option>)}
-      </select>
-    </Field>
-    <Field label={t('agentStore.customerAppId')} hint={error ?? t('agentStore.appHint')}>
-      <select name="customer_app_id" required disabled={loading || apps.length === 0}>
-        <option value="">{loading ? t('common.loading') : t('agentStore.chooseApp')}</option>
-        {apps.map((app) => <option key={app.id} value={app.id}>{app.display_name} · {app.app_id} · {app.status}</option>)}
-      </select>
-    </Field>
   </>
 }
 
@@ -191,10 +140,6 @@ function editableVersion(item: AgentStoreItem): AgentStoreVersion {
 
 function parseTags(value: FormDataEntryValue | null): string[] {
   return Array.from(new Set(String(value ?? '').split(',').map((tag) => tag.trim().toLowerCase()).filter(Boolean)))
-}
-
-function canVerify(item: AgentStoreItem): boolean {
-  return item.status !== 'archived'
 }
 
 function canPublish(item: AgentStoreItem): boolean {

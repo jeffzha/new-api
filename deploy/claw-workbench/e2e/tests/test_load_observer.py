@@ -49,6 +49,8 @@ def matrix(
 ) -> dict[str, object]:
     if finish is None:
         finish = start + len(values) - 1
+    if len(values) > 1 and finish <= start:
+        finish = start + len(values) - 1
     interval = (finish - start) / max(len(values) - 1, 1)
     return {
         "metric": metric,

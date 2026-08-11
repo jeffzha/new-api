@@ -29,6 +29,22 @@ describe('administrative request authentication', () => {
     expect(() => buildRequestInit('DELETE', undefined, 'theme=dark')).toThrow(ApiError)
   })
 
+  it('redirects a sensitive mutation to the same-origin administrator step-up flow', async () => {
+    const assign = vi.fn()
+    vi.stubGlobal('document', { cookie: 'claw_admin_csrf=csrf-token' })
+    vi.stubGlobal('window', { location: { assign } })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      success: false,
+      error: { code: 'recent_auth_required', message: 'recent administrator authentication is required' },
+    }), { status: 403, headers: { 'Content-Type': 'application/json' } })))
+
+    await expect(adminApi.createCustomer({ customer_code: 'test' })).rejects.toMatchObject({
+      status: 403,
+      code: 'recent_auth_required',
+    })
+    expect(assign).toHaveBeenCalledWith('/workbench-admin?step_up=1')
+  })
+
   it('submits only optimistic-lock versions to the trusted verifier endpoint', async () => {
     vi.stubGlobal('document', { cookie: 'claw_admin_csrf=csrf-token' })
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, data: { verification_id: 'verify_1' } }), {
@@ -45,6 +61,56 @@ describe('administrative request authentication', () => {
     expect(JSON.parse(String(init.body))).toEqual({ expected_version: 4, config_version: 2 })
     expect((init.headers as Headers).get('X-CSRF-Token')).toBe('csrf-token')
     expect((init.headers as Headers).get('Authorization')).toBeNull()
+  })
+
+  it('keeps Agent Store deployment and entitlement mutations scoped by CAS versions', async () => {
+    vi.stubGlobal('document', { cookie: 'claw_admin_csrf=csrf-token' })
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ success: true, data: { item_id: 'aci_1', deployments: [] } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await adminApi.createAgentStoreDeployment('aci_1', {
+      expected_item_version: 3,
+      customer_id: 42,
+      customer_app_id: 17,
+      entitlements: [{ subject_type: 'user', subject_ref: '101' }],
+    })
+    await adminApi.updateAgentStoreDeployment('aci_1', 'agd_2', {
+      expected_deployment_version: 5,
+      execution_enabled: true,
+      entitlements: [{ subject_type: 'role', subject_ref: 'member' }],
+    })
+    await adminApi.verifyAgentStoreDeployment('aci_1', 'agd_2', 4, 6)
+    await adminApi.disableAgentStoreDeployment('aci_1', 'agd_2', 7, 'customer offboarding')
+
+    const calls = fetchMock.mock.calls.map(([url, init]) => ({
+      url,
+      body: JSON.parse(String((init as RequestInit).body)),
+    }))
+    expect(calls).toEqual([
+      {
+        url: '/api/admin/workbench/agent-store/items/aci_1/deployments',
+        body: { expected_item_version: 3, customer_id: 42, customer_app_id: 17, entitlements: [{ subject_type: 'user', subject_ref: '101' }] },
+      },
+      {
+        url: '/api/admin/workbench/agent-store/items/aci_1/deployments/agd_2',
+        body: { expected_deployment_version: 5, execution_enabled: true, entitlements: [{ subject_type: 'role', subject_ref: 'member' }] },
+      },
+      {
+        url: '/api/admin/workbench/agent-store/items/aci_1/deployments/agd_2/verify',
+        body: { expected_version: 4, expected_deployment_version: 6 },
+      },
+      {
+        url: '/api/admin/workbench/agent-store/items/aci_1/deployments/agd_2/disable',
+        body: { expected_deployment_version: 7, reason: 'customer offboarding' },
+      },
+    ])
+    for (const [, init] of fetchMock.mock.calls as [string, RequestInit][]) {
+      expect((init.headers as Headers).get('X-CSRF-Token')).toBe('csrf-token')
+      expect((init.headers as Headers).get('Authorization')).toBeNull()
+    }
   })
 
   it('cancels a plan period with an optimistic lock and explicit reason', async () => {

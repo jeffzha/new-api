@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -33,9 +34,20 @@ func TestControlClientIssuesIdentityOnlyTicketAndVerifiesSignedResponse(t *testi
 		assert.Equal(t, signControlRequest(secret, http.MethodPost, controlTicketIssuePath, timestamp, nonce, body), request.Header.Get(controlSignatureHeader))
 		assert.Contains(t, string(body), `"new_api_user_id":42`)
 		assert.Contains(t, string(body), `"identity_version":"v1.identity"`)
-		assert.Contains(t, string(body), `"surface":"workbench"`)
+		var payload map[string]any
+		require.NoError(t, common.Unmarshal(body, &payload))
 		assert.NotContains(t, string(body), "username")
 		assert.NotContains(t, string(body), "role")
+		assert.NotContains(t, string(body), "password")
+		if payload["surface"] == SurfaceAdmin {
+			assert.EqualValues(t, now.Unix(), payload["authenticated_at"])
+			assert.Equal(t, []any{"webauthn"}, payload["amr"])
+			assert.NotEmpty(t, payload["reauth_nonce"])
+		} else {
+			assert.Equal(t, SurfaceWorkbench, payload["surface"])
+			assert.NotContains(t, payload, "authenticated_at")
+			assert.NotContains(t, payload, "reauth_nonce")
+		}
 
 		responseBody, err := common.Marshal(map[string]any{
 			"success": true,
@@ -68,6 +80,13 @@ func TestControlClientIssuesIdentityOnlyTicketAndVerifiesSignedResponse(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, "control-ticket", issued.Value)
 	assert.Equal(t, now.Add(time.Minute), issued.ExpiresAt)
+	proofNonce := sha256.Sum256([]byte("client-step-up-proof"))
+	issued, err = client.Issue(context.Background(), TicketIssueRequest{
+		UserID: 42, IdentityVersion: "v1.identity", Surface: SurfaceAdmin, IsSuperAdmin: true,
+		AuthenticatedAt: now, AMR: []string{"webauthn"}, ReauthNonce: base64.RawURLEncoding.EncodeToString(proofNonce[:]),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "control-ticket", issued.Value)
 }
 
 func TestControlClientRejectsTamperedResponse(t *testing.T) {

@@ -61,8 +61,14 @@ func TestCatalogLifecycleAuthorizationAndLaunchSnapshot(t *testing.T) {
 
 	updated, err := service.Update(agentstore.UpdateCommand{
 		ItemID: verified.ItemID, ExpectedVersion: verified.RowVersion,
-		Metadata:         agentstore.Metadata{DisplayName: "Data analyst", Summary: "Analyze business data", Description: "Detailed description", Category: "analytics", Tags: []string{"analytics", "data"}},
-		ExecutionEnabled: true, Actor: "admin:1", RequestID: "update-1",
+		Metadata: agentstore.Metadata{DisplayName: "Data analyst", Summary: "Analyze business data", Description: "Detailed description", Category: "analytics", Tags: []string{"analytics", "data"}},
+		Actor:    "admin:1", RequestID: "update-1",
+	})
+	require.NoError(t, err)
+	assert.False(t, updated.Deployment.ExecutionEnabled)
+	updated, err = service.UpdateDeployment(agentstore.DeploymentCommand{
+		ItemID: updated.ItemID, DeploymentID: updated.Deployment.DeploymentID,
+		ExpectedDeploymentVersion: updated.Deployment.RowVersion, ExecutionEnabled: true, Actor: "admin:1",
 	})
 	require.NoError(t, err)
 	assert.True(t, updated.Deployment.ExecutionEnabled)
@@ -84,11 +90,12 @@ func TestCatalogLifecycleAuthorizationAndLaunchSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	metadataOnly, err := service.Update(agentstore.UpdateCommand{
 		ItemID: published.ItemID, ExpectedVersion: published.RowVersion,
-		Metadata:         agentstore.Metadata{DisplayName: "Data 100%_! analyst v2", Summary: "Analyze business data", Description: "Detailed description", AvatarURL: "https://cdn.example/avatar.png", Category: "analytics", Tags: []string{"analytics"}},
-		ExecutionEnabled: true, Actor: "admin:1",
+		Metadata: agentstore.Metadata{DisplayName: "Data 100%_! analyst v2", Summary: "Analyze business data", Description: "Detailed description", AvatarURL: "https://cdn.example/avatar.png", Category: "analytics", Tags: []string{"analytics"}},
+		Actor:    "admin:1",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, model.AgentCatalogStatusPublished, metadataOnly.Status)
+	assert.True(t, metadataOnly.Deployment.ExecutionEnabled, "metadata-only edits must preserve deployment execution gates")
 	published, err = service.Transition(agentstore.TransitionCommand{
 		ItemID: metadataOnly.ItemID, ExpectedVersion: metadataOnly.RowVersion, Action: "publish", Actor: "admin:1",
 	})
@@ -200,6 +207,160 @@ func TestCatalogAvatarRequiresSafeAbsoluteHTTPSURL(t *testing.T) {
 	}
 }
 
+func TestOneCatalogItemSupportsIndependentCustomerDeploymentsAndEntitlements(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	fixture := createFixture(t, db)
+	service := agentstore.New(db, fixture.resolver, verifier{result: providerverify.Result{
+		Result: "verified", AppMode: 4, DynamicAgentConfig: true, ReleaseStatus: "published", TemplateAgentStatus: "available",
+		ProviderRequestIDs: []string{"provider-multi"}, SanitizedResponseHash: "sha256:" + strings.Repeat("e", 64),
+	}})
+	created, err := service.Create(agentstore.CreateCommand{
+		Slug: "shared-agent", Metadata: agentstore.Metadata{DisplayName: "Shared", Summary: "Shared agent", Category: "general"},
+		CustomerID: fixture.customer.ID, CustomerAppID: fixture.app.ID, Actor: "admin:1",
+	})
+	require.NoError(t, err)
+
+	secondCustomer := model.Customer{CustomerCode: "agent-store-second", DisplayName: "Second", Status: model.CustomerStatusActive, RowVersion: 1}
+	require.NoError(t, db.Create(&secondCustomer).Error)
+	var fixturePeriod model.PlanPeriod
+	require.NoError(t, db.Where("customer_id = ?", fixture.customer.ID).First(&fixturePeriod).Error)
+	fixturePeriod.ID = 0
+	fixturePeriod.CustomerID = secondCustomer.ID
+	require.NoError(t, db.Create(&fixturePeriod).Error)
+	secondApp := model.CustomerApp{
+		CustomerID: secondCustomer.ID, Slot: "primary", Selector: "aps_second", Alias: "primary",
+		ProviderEnvironment: fixture.app.ProviderEnvironment, AppID: "provider-app-second", DisplayName: "Second App",
+		Status: model.AppStatusActive, AuthEpoch: 1, RowVersion: 1,
+	}
+	require.NoError(t, db.Create(&secondApp).Error)
+	var secondCredential model.CredentialProfile
+	require.NoError(t, db.First(&secondCredential, *fixture.config.CredentialProfileID).Error)
+	secondCredential.ID = 0
+	secondCredential.OwnerScope = fmt.Sprintf("customer:%d", secondCustomer.ID)
+	secondCredential.CustomerID = &secondCustomer.ID
+	secondCredential.Name = "provider-second"
+	require.NoError(t, db.Create(&secondCredential).Error)
+	secondConfig := fixture.config
+	secondConfig.ID = 0
+	secondConfig.CustomerAppID = secondApp.ID
+	secondConfig.ConfigVersion = 1
+	secondConfig.CredentialProfileID = &secondCredential.ID
+	require.NoError(t, db.Create(&secondConfig).Error)
+	secondApp.CurrentConfigVersionID = &secondConfig.ID
+	require.NoError(t, db.Save(&secondApp).Error)
+
+	withSecond, err := service.AddDeployment(agentstore.DeploymentCommand{
+		ItemID: created.ItemID, ExpectedItemVersion: created.RowVersion,
+		CustomerID: secondCustomer.ID, CustomerAppID: secondApp.ID,
+		Entitlements: []agentstore.EntitlementInput{{SubjectType: "user", SubjectRef: "222"}}, Actor: "admin:1",
+	})
+	require.NoError(t, err)
+	require.Len(t, withSecond.Deployments, 2)
+	secondDeployment := withSecond.Deployments[1]
+	require.Len(t, secondDeployment.Entitlements, 1)
+	assert.Equal(t, "222", secondDeployment.Entitlements[0].SubjectRef)
+	_, err = service.UpdateDeployment(agentstore.DeploymentCommand{
+		ItemID: withSecond.ItemID, DeploymentID: withSecond.Deployments[0].DeploymentID,
+		ExpectedDeploymentVersion: withSecond.Deployments[0].RowVersion, ExecutionEnabled: true, Actor: "admin:1",
+	})
+	assert.ErrorContains(t, err, "verified or active", "draft deployments must never retain an enabled execution gate")
+	_, err = service.Verify(context.Background(), agentstore.TransitionCommand{
+		ItemID: withSecond.ItemID, ExpectedVersion: withSecond.RowVersion, Actor: "admin:1",
+	})
+	assert.ErrorContains(t, err, "deployment_id is required", "legacy item-level verification must be unambiguous")
+
+	firstVerified, err := service.Verify(context.Background(), agentstore.TransitionCommand{
+		ItemID: withSecond.ItemID, DeploymentID: withSecond.Deployments[0].DeploymentID,
+		ExpectedVersion: withSecond.RowVersion, ExpectedDeploymentVersion: withSecond.Deployments[0].RowVersion, Actor: "admin:1",
+	})
+	require.NoError(t, err)
+	secondVerified, err := service.Verify(context.Background(), agentstore.TransitionCommand{
+		ItemID: firstVerified.ItemID, DeploymentID: secondDeployment.DeploymentID,
+		ExpectedVersion: firstVerified.RowVersion, ExpectedDeploymentVersion: secondDeployment.RowVersion, Actor: "admin:1",
+	})
+	require.NoError(t, err)
+	published, err := service.Transition(agentstore.TransitionCommand{
+		ItemID: secondVerified.ItemID, ExpectedVersion: secondVerified.RowVersion, Action: "publish", Actor: "admin:1",
+	})
+	require.NoError(t, err)
+	require.Len(t, published.Deployments, 2)
+	assert.Equal(t, model.AgentDeploymentStatusActive, published.Deployments[0].Status)
+	assert.Equal(t, model.AgentDeploymentStatusActive, published.Deployments[1].Status)
+	for index := range published.Deployments {
+		published, err = service.UpdateDeployment(agentstore.DeploymentCommand{
+			ItemID: published.ItemID, DeploymentID: published.Deployments[index].DeploymentID,
+			ExpectedDeploymentVersion: published.Deployments[index].RowVersion, ExecutionEnabled: true, Actor: "admin:1",
+		})
+		require.NoError(t, err)
+	}
+	beforeMetadataDeployments := append([]agentstore.AdminDeployment(nil), published.Deployments...)
+	metadataUpdated, err := service.Update(agentstore.UpdateCommand{
+		ItemID: published.ItemID, ExpectedVersion: published.RowVersion,
+		Metadata: agentstore.Metadata{DisplayName: "Shared updated", Summary: "Shared agent", Category: "general"},
+		Actor:    "admin:1",
+	})
+	require.NoError(t, err)
+	for index := range metadataUpdated.Deployments {
+		assert.Equal(t, beforeMetadataDeployments[index].RowVersion, metadataUpdated.Deployments[index].RowVersion)
+		assert.Equal(t, beforeMetadataDeployments[index].ExecutionEnabled, metadataUpdated.Deployments[index].ExecutionEnabled)
+		assert.Equal(t, beforeMetadataDeployments[index].Entitlements, metadataUpdated.Deployments[index].Entitlements)
+	}
+	published = metadataUpdated
+	auditNow := time.Now().UTC()
+	require.NoError(t, db.Create(&model.AgentLaunchAudit{
+		ID: "ala_first", DeploymentID: published.Deployments[0].DeploymentID,
+		CustomerID: published.Deployments[0].CustomerID, NewAPIUserID: 101, Outcome: "launched", CreatedAt: auditNow,
+	}).Error)
+	require.NoError(t, db.Create(&model.AgentLaunchAudit{
+		ID: "ala_second", DeploymentID: published.Deployments[1].DeploymentID,
+		CustomerID: published.Deployments[1].CustomerID, NewAPIUserID: 222, Outcome: "launched", CreatedAt: auditNow.Add(-time.Second),
+	}).Error)
+	require.NoError(t, db.Create(&model.AgentLaunchAudit{
+		ID: "ala_foreign", DeploymentID: "agd_foreign", CustomerID: 999, NewAPIUserID: 999,
+		Outcome: "launched", CreatedAt: auditNow.Add(time.Second),
+	}).Error)
+	position := agentstore.AuditPosition{}
+	launchDeploymentIDs := map[string]bool{}
+	for pageNumber := 0; pageNumber < 4; pageNumber++ {
+		audits, auditErr := service.AuditsPage(published.ItemID, 1, position)
+		require.NoError(t, auditErr)
+		for _, launch := range audits.LaunchAudits {
+			launchDeploymentIDs[launch.DeploymentID] = true
+		}
+		if audits.Next == nil {
+			break
+		}
+		position = *audits.Next
+	}
+	assert.True(t, launchDeploymentIDs[published.Deployments[0].DeploymentID])
+	assert.True(t, launchDeploymentIDs[published.Deployments[1].DeploymentID])
+	assert.False(t, launchDeploymentIDs["agd_foreign"])
+
+	firstPrincipal := access.SessionPrincipal{CustomerID: fixture.customer.ID, NewAPIUserID: fixture.member.NewAPIUserID, Role: fixture.member.Role}
+	firstPage, err := service.Catalog(firstPrincipal, "", "", "")
+	require.NoError(t, err)
+	require.Len(t, firstPage.Items, 1)
+	secondPrincipal := access.SessionPrincipal{CustomerID: secondCustomer.ID, NewAPIUserID: 222, Role: "member"}
+	secondPage, err := service.Catalog(secondPrincipal, "", "", "")
+	require.NoError(t, err)
+	require.Len(t, secondPage.Items, 1)
+
+	disabled, err := service.DisableDeployment(agentstore.DeploymentCommand{
+		ItemID: published.ItemID, DeploymentID: published.Deployments[1].DeploymentID,
+		ExpectedDeploymentVersion: published.Deployments[1].RowVersion, Reason: "customer offboarding", Actor: "admin:1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, model.AgentDeploymentStatusActive, disabled.Deployments[0].Status)
+	assert.Equal(t, model.AgentDeploymentStatusDisabled, disabled.Deployments[1].Status)
+	firstPage, err = service.Catalog(firstPrincipal, "", "", "")
+	require.NoError(t, err)
+	require.Len(t, firstPage.Items, 1)
+	secondPage, err = service.Catalog(secondPrincipal, "", "", "")
+	require.NoError(t, err)
+	assert.Empty(t, secondPage.Items)
+}
+
 func TestVerificationRecoversOnlyStaleWorkAndRejectsUnsafeProviderMetadata(t *testing.T) {
 	db, err := testutil.NewDatabase()
 	require.NoError(t, err)
@@ -253,9 +414,38 @@ func TestProviderModePolicyDoesNotTrustAdministratorOrRequireNonClawTemplate(t *
 			verified, err := service.Verify(context.Background(), agentstore.TransitionCommand{ItemID: created.ItemID, ExpectedVersion: created.RowVersion})
 			require.NoError(t, err)
 			assert.Equal(t, profile, verified.Deployment.RuntimeProfile)
-			assert.False(t, verified.Deployment.ExecutionEnabled, "unaccepted runtime profiles must remain fail-closed")
+			assert.False(t, verified.Deployment.ExecutionEnabled, "verification never enables execution implicitly")
+			enabled, err := service.UpdateDeployment(agentstore.DeploymentCommand{
+				ItemID: verified.ItemID, DeploymentID: verified.Deployment.DeploymentID,
+				ExpectedDeploymentVersion: verified.Deployment.RowVersion, ExecutionEnabled: true,
+			})
+			require.NoError(t, err)
+			assert.True(t, enabled.Deployment.ExecutionEnabled)
 		})
 	}
+}
+
+func TestUnknownRuntimeProfileCannotEnableExecution(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	fixture := createFixture(t, db)
+	service := agentstore.New(db, fixture.resolver, verifier{result: providerverify.Result{
+		Result: "verified", AppMode: 4, DynamicAgentConfig: true, ReleaseStatus: "published", TemplateAgentStatus: "available",
+		ProviderRequestIDs: []string{"provider-request"}, SanitizedResponseHash: "sha256:" + strings.Repeat("b", 64),
+	}})
+	created, err := service.Create(agentstore.CreateCommand{
+		Slug: "unknown-runtime", Metadata: agentstore.Metadata{DisplayName: "Unknown", Summary: "Summary", Category: "general"},
+		CustomerID: fixture.customer.ID, CustomerAppID: fixture.app.ID,
+	})
+	require.NoError(t, err)
+	verified, err := service.Verify(context.Background(), agentstore.TransitionCommand{ItemID: created.ItemID, ExpectedVersion: created.RowVersion})
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&model.CustomerAgentDeployment{}).Where("id = ?", verified.Deployment.DeploymentID).Update("runtime_profile", "unknown_v2").Error)
+	_, err = service.UpdateDeployment(agentstore.DeploymentCommand{
+		ItemID: verified.ItemID, DeploymentID: verified.Deployment.DeploymentID,
+		ExpectedDeploymentVersion: verified.Deployment.RowVersion, ExecutionEnabled: true,
+	})
+	assert.ErrorContains(t, err, "does not allow execution")
 }
 
 type fixture struct {

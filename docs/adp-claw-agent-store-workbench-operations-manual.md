@@ -2,7 +2,7 @@
 
 > 适用环境：`https://gateway.nexus-reach.com`
 >
-> 适用版本：`v1.0.0-rc.21.claw.g29806a805c2a` 及后续兼容版本
+> 当前生产版本：`v1.0.0-rc.21.claw.g64da3592bfb6`；适用于该版本及后续兼容版本
 >
 > 管理入口：`https://gateway.nexus-reach.com/workbench-admin`
 >

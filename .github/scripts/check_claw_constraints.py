@@ -28,6 +28,7 @@ MAX_EXISTING_SOURCE_CHANGED_LINES = 100
 MIN_ADDITIVE_SOURCE_RATIO = 0.90
 
 SOURCE_SUFFIXES = {".go", ".js", ".jsx", ".py", ".sh", ".ts", ".tsx", ".vue"}
+GENERATED_SOURCE_PATHS = {"web/default/src/routeTree.gen.ts"}
 UPSTREAM_SOURCE_PREFIXES = (
     "common/",
     "constant/",
@@ -54,10 +55,12 @@ ALLOWED_PATH_PATTERNS = (
     "service/workbenchbridge/**",
     "router/api-router.go",
     "web/default/src/features/workbench-entry/**",
+    "web/default/src/features/agent-store/**",
     "web/default/src/hooks/use-sidebar-data.ts",
     "web/default/src/routes/_authenticated/playground/index.tsx",
     "web/default/src/routes/_authenticated/playground/legacy.tsx",
     "web/default/src/routes/_authenticated/playground/select.tsx",
+    "web/default/src/routes/_authenticated/agent-store/**",
     "web/default/src/routes/_authenticated/workbench-admin.tsx",
     "web/default/src/routeTree.gen.ts",
     "web/default/src/i18n/locales/en.json",
@@ -193,6 +196,8 @@ def is_allowed_path(path: str) -> bool:
 
 def is_source(path: str) -> bool:
     path = normalize(path)
+    if path in GENERATED_SOURCE_PATHS:
+        return False
     if Path(path).suffix.lower() not in SOURCE_SUFFIXES:
         return False
     if path.endswith("_test.go") or "/test/" in path or "/tests/" in path:
@@ -256,7 +261,9 @@ def dependency_findings(repo: Path, changed_paths: set[str]) -> list[Finding]:
             or path.startswith("router/workbench_")
             or path.startswith("service/workbenchbridge/")
             or path.startswith("web/default/src/features/workbench-entry/")
+            or path.startswith("web/default/src/features/agent-store/")
             or path.startswith("web/default/src/routes/_authenticated/playground/")
+            or path.startswith("web/default/src/routes/_authenticated/agent-store/")
             or path == "web/default/src/routes/_authenticated/workbench-admin.tsx"
         )
     )

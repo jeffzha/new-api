@@ -140,6 +140,36 @@ class ClawConstraintTests(unittest.TestCase):
 
         self.assertNotIn("PATH_ALLOWLIST", self.codes(report))
 
+    def test_agent_store_additive_frontend_surface_is_allowed(self) -> None:
+        baseline = self.repo.baseline()
+        self.repo.write(
+            "web/default/src/features/agent-store/index.tsx",
+            "export function AgentStore() { return null }\n",
+        )
+        self.repo.write(
+            "web/default/src/routes/_authenticated/agent-store/index.tsx",
+            "export const route = '/agent-store'\n",
+        )
+
+        report = gate.evaluate(self.repo.root, baseline, {})
+
+        self.assertNotIn("PATH_ALLOWLIST", self.codes(report))
+
+    def test_generated_route_tree_does_not_spend_manual_merge_budget(self) -> None:
+        route_tree = "\n".join(f"export const route{index} = {index}" for index in range(200))
+        baseline = self.repo.baseline(
+            {"web/default/src/routeTree.gen.ts": route_tree + "\n"}
+        )
+        self.repo.write(
+            "web/default/src/routeTree.gen.ts",
+            route_tree + "\nexport const generated = true\n",
+        )
+
+        report = gate.evaluate(self.repo.root, baseline, {})
+
+        self.assertTrue(report.passed)
+        self.assertEqual(0, report.existing_changed_lines)
+
     def test_adr_is_not_considered_without_explicit_switch(self) -> None:
         baseline = self.repo.baseline()
         self.repo.write("model/claw_customer.go", "package model\n")

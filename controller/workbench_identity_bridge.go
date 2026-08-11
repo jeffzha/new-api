@@ -74,9 +74,7 @@ func NewWorkbenchIdentityBridge(
 }
 
 func lookupWorkbenchAdministratorCredentials(userID int) (*model.User, error) {
-	var user model.User
-	err := model.DB.Select("id", "role", "status", "password").First(&user, "id = ?", userID).Error
-	return &user, err
+	return model.GetUserById(userID, true)
 }
 
 func IssueWorkbenchSessionTicket(c *gin.Context) {

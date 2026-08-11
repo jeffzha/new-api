@@ -30,6 +30,7 @@ param(
     [string]$PostgresUser = "newapi",
     [string]$PostgresDatabase = "newapi",
     [string]$ImageRepository = "new-api-seedance",
+    [string]$ExistingImageReference = "",
     [string]$ImageTag = "",
     [string]$ImageCommit = "",
     [string]$VersionNamespace = "gateway",
@@ -297,6 +298,12 @@ printf '\n'
     if ($UseExistingImage -and -not $ImageTag) {
         throw "UseExistingImage requires an explicit ImageTag."
     }
+    if ($ExistingImageReference -and -not $UseExistingImage) {
+        throw "ExistingImageReference can only be used with UseExistingImage."
+    }
+    if ($ExistingImageReference -and $ExistingImageReference -notmatch '^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}$') {
+        throw "ExistingImageReference must be an immutable registry sha256 digest."
+    }
     if (-not $ImageTag) {
         $baseVersion = Get-CommandOutput git describe --tags --abbrev=0 HEAD
         $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
@@ -320,7 +327,7 @@ printf '\n'
         }
         $releaseCommit = $ImageCommit.ToLowerInvariant()
     }
-    $image = "${ImageRepository}:${ImageTag}"
+    $image = if ($ExistingImageReference) { $ExistingImageReference } else { "${ImageRepository}:${ImageTag}" }
 
     if ($PreflightOnly) {
         Write-Host "Preflight OK. Inactive slot: $targetSlot. Planned image: $image"

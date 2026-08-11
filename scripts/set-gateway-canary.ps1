@@ -90,6 +90,7 @@ reverse_proxy $BlueUpstream $GreenUpstream {
 }
 # END NEW-API BLUE-GREEN
 "@.Trim()
+$managedBlock = $managedBlock -replace "`r`n", "`n"
 
 if ($DryRun) {
     Write-Host "Candidate: $CandidateSlot weight=$CandidateWeight"
@@ -187,7 +188,7 @@ function Wait-ForNextSshConnection {
 
 $currentCaddyfileBase64 = (Get-RemoteOutput "set -eu; test -f '$Caddyfile'; base64 -w 0 '$Caddyfile'").Trim()
 $currentCaddyfileBytes = [Convert]::FromBase64String($currentCaddyfileBase64)
-$currentCaddyfile = [Text.Encoding]::UTF8.GetString($currentCaddyfileBytes)
+$currentCaddyfile = [Text.Encoding]::UTF8.GetString($currentCaddyfileBytes) -replace "`r`n", "`n"
 $sha256 = [Security.Cryptography.SHA256]::Create()
 try {
     $currentHash = ([BitConverter]::ToString($sha256.ComputeHash($currentCaddyfileBytes))).Replace("-", "").ToLowerInvariant()

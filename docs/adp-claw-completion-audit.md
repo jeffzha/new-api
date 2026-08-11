@@ -6,7 +6,7 @@
 
 ### 已完成并有当前证据的范围
 
-- new-api 当前分支提交为 `f07f8d843`，ADP fork 当前提交为 `1d2c1c2`。new-api 机械边界门禁通过：既有源码文件 `3/10`、直接修改 `63/100` 行、Claw 源码新增比例 `99.78%`；ADP Workbench 边界门禁及其 `21/21` 自测通过。
+- new-api 当前生产运行时代码基线为 `f07f8d843`，ADP fork 当前生产运行时代码基线为 `1d2c1c2`；后续提交仅更新完成度审计和操作手册，不改变运行时。new-api 机械边界门禁通过：既有源码文件 `3/10`、直接修改 `63/100` 行、Claw 源码新增比例 `99.78%`；ADP Workbench 边界门禁及其 `21/21` 自测通过。
 - 生产 Gateway 当前运行 `v1.0.0-rc.21.claw.g64da3592bfb6`，保留上游版本 `v1.0.0-rc.21`；Gateway 流量在 Green，Workbench 流量在 Blue。活动镜像均绑定不可变 registry digest：new-api `sha256:9bb69a97d9544ec2fb67a4359b7496cbf7a8f7a45cce2481bc9971b89b496950`、claw-control `sha256:3fb04d3b01c957f5ca0dffb25a2befc6a849efe5315fb5219a72115359f82d6d`、ADP Workbench `sha256:a0426897d3a51b4dd140291582d6c80162c3d50c805ebb88b5b541845afab319`。
 - 生产公网连续 `10/10` 次 `/api/status` 返回上述版本；`/agent-store`、`/apidocs/` 和公网 IP `/api/status` 均为 `200`，Agent Store 状态为 enabled；未登录目录/管理 API 为 `401`，公网 internal API 为 `404`。
 - 生产 preflight 通过，发布后权威恢复点为 `/opt/new-api/deploy/claw-workbench/backups/20260811T132733Z`。Secret 子目录 owner/mode、内部 CA、服务证书、Blue/Green、Caddy 私有路由和 SSE flush 均通过部署门禁。

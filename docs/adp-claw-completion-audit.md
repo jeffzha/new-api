@@ -1,5 +1,35 @@
 # ADP Claw 智能工作台完成度审计
 
+## 2026-08-11 当前实施与生产验收状态
+
+本节是当前权威快照；与下方较早快照冲突时，以本节为准。
+
+### 已完成并有当前证据的范围
+
+- new-api 当前分支提交为 `f07f8d843`，ADP fork 当前提交为 `1d2c1c2`。new-api 机械边界门禁通过：既有源码文件 `3/10`、直接修改 `63/100` 行、Claw 源码新增比例 `99.78%`；ADP Workbench 边界门禁及其 `21/21` 自测通过。
+- 生产 Gateway 当前运行 `v1.0.0-rc.21.claw.g64da3592bfb6`，保留上游版本 `v1.0.0-rc.21`；Gateway 流量在 Green，Workbench 流量在 Blue。活动镜像均绑定不可变 registry digest：new-api `sha256:9bb69a97d9544ec2fb67a4359b7496cbf7a8f7a45cce2481bc9971b89b496950`、claw-control `sha256:3fb04d3b01c957f5ca0dffb25a2befc6a849efe5315fb5219a72115359f82d6d`、ADP Workbench `sha256:a0426897d3a51b4dd140291582d6c80162c3d50c805ebb88b5b541845afab319`。
+- 生产公网连续 `10/10` 次 `/api/status` 返回上述版本；`/agent-store`、`/apidocs/` 和公网 IP `/api/status` 均为 `200`，Agent Store 状态为 enabled；未登录目录/管理 API 为 `401`，公网 internal API 为 `404`。
+- 生产 preflight 通过，发布后权威恢复点为 `/opt/new-api/deploy/claw-workbench/backups/20260811T132733Z`。Secret 子目录 owner/mode、内部 CA、服务证书、Blue/Green、Caddy 私有路由和 SSE flush 均通过部署门禁。
+- 当前全量回归：new-api `go test -p 1 ./...` 通过；claw-control `go test -p 1 ./...` 通过；ADP Workbench `530 passed, 3 skipped`（仅 Windows POSIX 条件跳过）；新版前端 `59/59`、类型检查和生产构建通过；control admin UI `28/28`、类型检查和生产构建通过；部署脚本、E2E runner `49/49`、DR `5/5` 均通过。ADP 客户端 `vue-tsc` 通过，本机 Vite 生产构建在全部 4284 模块转换后仅因 Windows 对 esbuild 临时文件的删除锁失败；GitHub Linux 发布构建与当前不可变生产镜像已成功，不将该本机环境错误记作代码通过或代码失败。
+- 生产控制面当前已有 1 个 customer、1 个 member、1 个已验证 Customer App、1 个 plan 和 1 个 period；Agent Store 商品和 deployment 仍均为 0。也就是说，目录、验证、授权、launch 和五档 runtime 的代码合同已上线，但首个目录商品尚未执行管理员上架操作。
+
+### 当前必须继续保持关闭的能力
+
+生产仅开放已完成真实腾讯验收的 Chat 子集。以下开关当前均为 `false`，在各自真实 E2E 完成前不得打开：`WORKBENCH_FILES_ENABLED`、`WORKBENCH_SCHEDULED_TASKS_ENABLED`、`WORKBENCH_INTEGRATIONS_ENABLED`、`WORKBENCH_SANDBOX_ENABLED`、`WORKBENCH_SANDBOX_CODE_ENABLED`、`WORKBENCH_SANDBOX_PTY_ENABLED`。
+
+### 完成 P0+P1+P2 仍需的外部输入
+
+1. **首个 Agent Store 商品上架**：需要超级管理员在真实 step-up 后，按操作手册第 10～12 节为 `NEXUS-INTERNAL` 创建商品、绑定现有 Customer App、配置首轮 `user / 1` entitlement、验证 deployment、显式开启执行并发布。不得通过直接改数据库绕过审计。
+2. **其余四种 runtime profile**：分别提供已发布并运行中的 AppMode 1、AppMode 2、AppMode 3、静态 AppMode 4 Application；每个需要 AppId、AppKey Secret 文件值、SpaceId、Region。动态 Claw 才需要模板 AgentId。
+3. **AGSX**：Region、ToolId、ToolName、`ark_` API key、最小权限 CAM 授权和真实配额，用于生命周期、Shell、六语言 `run_code`、PTY、429、取消、撤权、洪泛、崩溃与回收验收。
+4. **私有 COS**：Bucket、Region、Endpoint、最小权限 SecretId/SecretKey 和生命周期策略，用于正常文件、EICAR、跨用户 IDOR、过期下载、禁用后访问、retention 和真实对象删除验收。
+5. **OAuth 与只读集成**：OAuth provider metadata、client id/secret、已登记 callback、测试账号；另需一个 `AuthType in {0,1,2}` 且 `ToolAccessMode=1` 的真实只读 Plugin/Tool 及 ID。使用者 OAuth 仍受公开 ADP token 关联合同缺失限制，不允许猜测性注入。
+6. **隔离验收主体**：同一客户的第二个 new-api 用户 ID；另一个客户的客户代码、显示名称、new-api 用户 ID，以及该客户独立的已发布 ADP Application。
+7. **性能与观测**：Prometheus 只读 API 地址、只读凭据、完整指标 series 和独立 observer 签名身份；用于 50/100 并发 SSE、连接数、内存、持久化事件和 DB 延迟证据。
+8. **异地 DR**：第二地域目标主机/仓库、加密备份存储、网络与 DNS/TLS 方案，以及 RPO/RTO 目标，用于隔离恢复和密钥恢复演练。
+
+在上述资料齐全并逐项真实验收前，准确结论仍是：**代码与离线安全合同已闭环，动态 Claw Chat 已生产验证；完整 P0+P1+P2 尚未完成真实环境验收。**
+
 ## 2026-08-11 Agent Store 与多 AppMode 增量审计
 
 本轮将“Agent Store 中的 Agent 是一个已发布的腾讯 ADP Application”固化为产品和运行时合同，不再把目录商品等同于动态 Claw 模板 Agent。控制面接受且只接受 provider 读回的 `AppMode in {1,2,3,4}`，并映射为 `standard_v2`、`multi_agent_v2`、`workflow_v2`、`claw_static_v2`、`claw_dynamic_v2` 五种闭集运行档案；只有动态 Claw 为每个 new-api 用户执行 `CopyAgentFromApp(Kind=1)`，其余档案创建无 `AgentId` 的会话并使用本地所有权主体，浏览器不能提交或覆盖 AppId、AppMode、AgentId、runtime profile 或 capability。

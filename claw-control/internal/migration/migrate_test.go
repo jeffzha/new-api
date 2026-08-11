@@ -2,6 +2,7 @@ package migration_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +50,72 @@ func TestSSOBrowserBindingMigrationIsAppliedAndIdempotent(t *testing.T) {
 	require.NoError(t, db.Model(&migration.SchemaMigration{}).
 		Where("version = ?", migration.SSOBrowserBindingVersion).Count(&count).Error)
 	assert.EqualValues(t, 1, count)
+}
+
+func TestAgentStoreMigrationCreatesPortableCatalogConstraints(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	require.NoError(t, migration.Migrate(db))
+	var count int64
+	require.NoError(t, db.Model(&migration.SchemaMigration{}).Where("version = ?", migration.AgentStoreVersion).Count(&count).Error)
+	assert.Equal(t, int64(1), count)
+	for _, value := range []any{
+		&model.AgentCatalogItem{}, &model.AgentCatalogVersion{}, &model.CustomerAgentDeployment{},
+		&model.AgentCatalogEntitlement{}, &model.AgentLaunchAudit{}, &model.AgentCatalogCursor{},
+	} {
+		assert.True(t, db.Migrator().HasTable(value))
+	}
+	first := model.AgentCatalogItem{ID: "agi_one", Slug: "unique-agent", Status: model.AgentCatalogStatusDraft, RowVersion: 1, CreatedBy: "test"}
+	second := model.AgentCatalogItem{ID: "agi_two", Slug: "unique-agent", Status: model.AgentCatalogStatusDraft, RowVersion: 1, CreatedBy: "test"}
+	require.NoError(t, db.Create(&first).Error)
+	assert.Error(t, db.Create(&second).Error)
+}
+
+func TestAgentStoreRuntimeContractUpgradesAlreadyMigratedSchemas(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	for _, column := range []string{"Purpose", "AgentCatalogItemID", "AgentDeploymentID", "CatalogVersionID", "CatalogRowVersion", "DeploymentVersion"} {
+		require.NoError(t, db.Migrator().DropColumn(&model.ContextSelectionNonce{}, column), column)
+	}
+	for _, column := range []string{"TargetProviderAppMode", "TargetRuntimeProfile", "TargetExecutionEnabled"} {
+		require.NoError(t, db.Migrator().DropColumn(&model.AppMigrationJob{}, column), column)
+	}
+	require.NoError(t, db.Where("version = ?", migration.AgentStoreRuntimeContractVersion).Delete(&migration.SchemaMigration{}).Error)
+	require.NoError(t, migration.Migrate(db))
+
+	for _, column := range []string{"Purpose", "AgentCatalogItemID", "AgentDeploymentID", "CatalogVersionID", "CatalogRowVersion", "DeploymentVersion"} {
+		assert.True(t, db.Migrator().HasColumn(&model.ContextSelectionNonce{}, column), column)
+	}
+	for _, column := range []string{"TargetProviderAppMode", "TargetRuntimeProfile", "TargetExecutionEnabled"} {
+		assert.True(t, db.Migrator().HasColumn(&model.AppMigrationJob{}, column), column)
+	}
+	nonce := model.ContextSelectionNonce{
+		TokenHash: strings.Repeat("a", 64), ControlSessionID: 1, NewAPIUserID: 1, IdentityBindingID: 1,
+		CustomerMemberID: 1, CustomerID: 1, CustomerAppID: 1, AppConfigVersionID: 1,
+		IdentityVersion: "v1", IdentityAuthEpoch: 1, MemberAuthEpoch: 1, AppAuthEpoch: 1,
+		Purpose: "agent_store_launch", AgentCatalogItemID: "agi_upgrade", AgentDeploymentID: "agd_upgrade",
+		CatalogVersionID: "agv_upgrade", CatalogRowVersion: 2, DeploymentVersion: 3, ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}
+	require.NoError(t, db.Create(&nonce).Error)
+	var storedNonce model.ContextSelectionNonce
+	require.NoError(t, db.First(&storedNonce, nonce.ID).Error)
+	assert.Equal(t, nonce.Purpose, storedNonce.Purpose)
+	assert.Equal(t, nonce.CatalogVersionID, storedNonce.CatalogVersionID)
+	assert.Equal(t, nonce.DeploymentVersion, storedNonce.DeploymentVersion)
+
+	job := model.AppMigrationJob{
+		PublicID: "amj_upgrade", CustomerID: 1, SourceCustomerAppID: 1, TargetCustomerAppID: 2, Generation: 1,
+		TargetAppConfigVersionID: 1, TargetConfigVersion: 1, TargetCredentialProfileID: 1,
+		TargetConfigFingerprint: "sha256:" + strings.Repeat("b", 64), MemberSetFingerprint: "sha256:" + strings.Repeat("c", 64),
+		TargetProviderAppMode: 4, TargetRuntimeProfile: "claw_dynamic_v2", TargetExecutionEnabled: true,
+		Status: model.AppMigrationJobStatusPending, RowVersion: 1,
+	}
+	require.NoError(t, db.Create(&job).Error)
+	var storedJob model.AppMigrationJob
+	require.NoError(t, db.First(&storedJob, job.ID).Error)
+	assert.Equal(t, 4, storedJob.TargetProviderAppMode)
+	assert.Equal(t, "claw_dynamic_v2", storedJob.TargetRuntimeProfile)
+	assert.True(t, storedJob.TargetExecutionEnabled)
 }
 
 func TestEncryptedEvidenceMigrationIsAppliedAndIdempotent(t *testing.T) {

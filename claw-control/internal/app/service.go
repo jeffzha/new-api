@@ -78,6 +78,7 @@ type RecordVerificationCommand struct {
 	AppMode               int
 	ReleaseStatus         string
 	TemplateAgentStatus   string
+	DynamicAgentConfig    bool
 	ProviderRequestIDs    []string
 	SanitizedResponseHash string
 	ErrorCode             string
@@ -200,7 +201,8 @@ func (s *Service) VerifyPending(ctx context.Context, command VerifyPendingComman
 		CustomerID: command.CustomerID, CustomerAppID: stable.ID,
 		ExpectedVersion: command.ExpectedVersion, ConfigVersion: command.ConfigVersion,
 		Result: providerResult.Result, AppMode: providerResult.AppMode, ReleaseStatus: providerResult.ReleaseStatus,
-		TemplateAgentStatus: providerResult.TemplateAgentStatus, ProviderRequestIDs: providerResult.ProviderRequestIDs,
+		TemplateAgentStatus: providerResult.TemplateAgentStatus, DynamicAgentConfig: providerResult.DynamicAgentConfig,
+		ProviderRequestIDs:    providerResult.ProviderRequestIDs,
 		SanitizedResponseHash: providerResult.SanitizedResponseHash, ErrorCode: providerResult.ErrorCode,
 		ErrorMessage: providerResult.ErrorMessage, Actor: command.Actor, RequestID: command.RequestID,
 	})
@@ -415,8 +417,10 @@ func (s *Service) RecordVerification(command RecordVerificationCommand) (*model.
 	if command.Result != "verified" && command.Result != "invalid" {
 		return nil, domain.Invalid("result must be verified or invalid")
 	}
-	if command.Result == "verified" && (command.AppMode != 4 || strings.ToLower(command.ReleaseStatus) != "published" || strings.ToLower(command.TemplateAgentStatus) != "available") {
-		return nil, domain.Invalid("verified result requires AppMode=4, published release, and available template Agent")
+	validMode := command.AppMode >= 1 && command.AppMode <= 4
+	templateValid := !command.DynamicAgentConfig || (command.AppMode == 4 && strings.EqualFold(command.TemplateAgentStatus, "available"))
+	if command.Result == "verified" && (!validMode || strings.ToLower(command.ReleaseStatus) != "published" || !templateValid) {
+		return nil, domain.Invalid("verified result requires provider AppMode 1-4, a published release, and a validated template Agent only for dynamic Claw")
 	}
 	command.SanitizedResponseHash = strings.ToLower(strings.TrimSpace(command.SanitizedResponseHash))
 	if len(command.ProviderRequestIDs) == 0 || !sha256Pattern.MatchString(command.SanitizedResponseHash) {
@@ -489,6 +493,7 @@ func (s *Service) RecordVerification(command RecordVerificationCommand) (*model.
 			AppMode:                command.AppMode,
 			ReleaseStatus:          strings.ToLower(strings.TrimSpace(command.ReleaseStatus)),
 			TemplateAgentStatus:    strings.ToLower(strings.TrimSpace(command.TemplateAgentStatus)),
+			DynamicAgentConfig:     command.DynamicAgentConfig,
 			ProviderRequestIDsJSON: string(requestIDsJSON),
 			SanitizedResponseHash:  strings.TrimSpace(command.SanitizedResponseHash),
 			ErrorCode:              strings.TrimSpace(command.ErrorCode),
@@ -798,8 +803,8 @@ func validateSaveConfig(command *SaveConfigCommand) error {
 	if command.ProviderEnvironment != model.ProviderChinaTencentCloud && command.ProviderEnvironment != model.ProviderChinaTencentADP {
 		return domain.Invalid("provider_environment must be china_tencent_cloud or china_tencent_adp")
 	}
-	if command.ProviderEnvironment == "" || command.Region == "" || command.SpaceID == "" || command.AppID == "" || command.TemplateAgentID == "" || command.CredentialProfileID == nil || !secrets.ValidProviderReference(command.AppKeySecretRef) || command.AppKeyFingerprint == "" || command.DisplayName == "" {
-		return domain.Invalid("provider environment, region, space, App, template Agent, secret reference, fingerprint, and display name are required")
+	if command.ProviderEnvironment == "" || command.Region == "" || command.SpaceID == "" || command.AppID == "" || command.CredentialProfileID == nil || !secrets.ValidProviderReference(command.AppKeySecretRef) || command.AppKeyFingerprint == "" || command.DisplayName == "" {
+		return domain.Invalid("provider environment, region, space, App, secret reference, fingerprint, and display name are required")
 	}
 	if len(command.AppID) > 128 {
 		return domain.Invalid("app_id must be at most 128 characters")

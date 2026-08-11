@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/claw-control/internal/model"
 	"github.com/QuantumNous/new-api/claw-control/internal/plan"
 	"github.com/QuantumNous/new-api/claw-control/internal/secrets"
+	"github.com/QuantumNous/new-api/claw-control/internal/support"
 	"github.com/QuantumNous/new-api/claw-control/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -178,6 +179,41 @@ func TestAppLifecycleTicketAndInternalContext(t *testing.T) {
 	assert.EqualValues(t, 300, contextResult.Limits.MaxRuntimeSeconds)
 	assert.EqualValues(t, 0, contextResult.Limits.WebSearchPerTurn)
 	assert.EqualValues(t, 5_000_000, contextResult.Limits.MaxFileBytes)
+	assert.Nil(t, contextResult.ProviderAppMode, "legacy App context omits the additive Agent Store tuple")
+	assert.Nil(t, contextResult.RuntimeProfile)
+	assert.Nil(t, contextResult.ExecutionEnabled)
+
+	catalogVersionID := "agv_access"
+	item := model.AgentCatalogItem{ID: "agi_access", Slug: "access-agent", Status: model.AgentCatalogStatusPublished, CurrentVersionID: &catalogVersionID, RowVersion: 1, CreatedBy: "test"}
+	require.NoError(t, db.Create(&item).Error)
+	require.NoError(t, db.Create(&model.AgentCatalogVersion{
+		ID: catalogVersionID, ItemID: item.ID, Generation: 1, DisplayName: "Access Agent", Summary: "Summary",
+		Category: "general", TagsJSON: `[]`, MetadataSHA256: "sha256:" + strings.Repeat("e", 64), CreatedBy: "test",
+	}).Error)
+	require.NoError(t, db.Create(&model.CustomerAgentDeployment{
+		ID: "agd_access", ItemID: item.ID, CustomerID: createdCustomer.ID, CustomerAppID: stableAppPtr.ID,
+		VerifiedConfigVersionID: &saved.Version.ID, VerifiedConfigVersion: saved.Version.ConfigVersion,
+		VerifiedAppAuthEpoch:   stableAppPtr.AuthEpoch,
+		VerifiedCredentialHash: support.Hash(map[string]any{"app": saved.Version.AppKeyFingerprint, "credential": credentialProfile.Fingerprint}),
+		ProviderAppMode:        4, RuntimeProfile: "claw_dynamic_v2", DynamicAgentConfig: true,
+		ExecutionEnabled: true, CapabilitiesJSON: `["chat","history","dynamic_agent"]`, ProviderRequestIDsJSON: `[]`,
+		Status: model.AgentDeploymentStatusActive, RowVersion: 1, VerifiedAt: &now,
+	}).Error)
+	storeContext, err := accessService.AppContext(context.Background(), access.AppContextCommand{
+		BindingID: membership.Identity.PublicID, CanonicalSubject: membership.Identity.CanonicalSubject,
+		AuthEpoch: effectiveEpoch, RequestedAppProfileID: stableAppPtr.ID,
+		RequestedConfigVersion: saved.Version.ConfigVersion, Purpose: "interactive",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, storeContext.ProviderAppMode)
+	require.NotNil(t, storeContext.RuntimeProfile)
+	require.NotNil(t, storeContext.ExecutionEnabled)
+	assert.Equal(t, 4, *storeContext.ProviderAppMode)
+	assert.Equal(t, "claw_dynamic_v2", *storeContext.RuntimeProfile)
+	assert.True(t, *storeContext.ExecutionEnabled)
+	require.NoError(t, db.Where("item_id = ?", item.ID).Delete(&model.CustomerAgentDeployment{}).Error)
+	require.NoError(t, db.Delete(&item).Error)
+	require.NoError(t, db.Where("id = ?", catalogVersionID).Delete(&model.AgentCatalogVersion{}).Error)
 	historicalApp := model.CustomerApp{
 		CustomerID: createdCustomer.ID, Slot: "archived:999", ProviderEnvironment: model.ProviderChinaTencentCloud,
 		AppID: "app-history", DisplayName: "Historical", Status: model.AppStatusArchived,
@@ -188,8 +224,8 @@ func TestAppLifecycleTicketAndInternalContext(t *testing.T) {
 		CustomerAppID: historicalApp.ID, ConfigVersion: 7, Status: model.AppConfigStatusVerified,
 		Region: "ap-guangzhou", SpaceID: "history-space", TemplateAgentID: "history-agent",
 		CredentialProfileID: &credentialProfile.ID,
-		AppKeySecretRef: "env://WORKBENCH_PROVIDER_TEST_ADP_APP_KEY",
-		AppKeyFingerprint: secrets.AppKeyFingerprint("app-key-secret"), AppKeyFingerprintVersion: 1,
+		AppKeySecretRef:     "env://WORKBENCH_PROVIDER_TEST_ADP_APP_KEY",
+		AppKeyFingerprint:   secrets.AppKeyFingerprint("app-key-secret"), AppKeyFingerprintVersion: 1,
 		LimitsJSON: `{}`, CapabilitiesJSON: `[]`, CreatedBy: "test", VerifiedAt: &now,
 	}
 	require.NoError(t, db.Create(&historicalConfig).Error)
@@ -202,15 +238,15 @@ func TestAppLifecycleTicketAndInternalContext(t *testing.T) {
 		SourceProviderAppID: historicalApp.AppID,
 		SourceConfigVersion: historicalConfig.ConfigVersion, TargetCustomerAppID: stableAppPtr.ID,
 		TargetAppConfigVersionID: saved.Version.ID, TargetApplicationID: stableAppPtr.AppID,
-		TargetProviderAppID: stableAppPtr.AppID,
-		TargetConfigVersion: saved.Version.ConfigVersion,
+		TargetProviderAppID:        stableAppPtr.AppID,
+		TargetConfigVersion:        saved.Version.ConfigVersion,
 		MigrationConfigFingerprint: "sha256:target", ActivatedAt: now,
 	}).Error)
 	historyContext, err := accessService.AppContext(context.Background(), access.AppContextCommand{
 		BindingID: membership.Identity.PublicID, CanonicalSubject: membership.Identity.CanonicalSubject,
 		AuthEpoch: effectiveEpoch, RequestedAppProfileID: historicalApp.ID,
 		RequestedConfigVersion: historicalConfig.ConfigVersion,
-		CurrentAppProfileID: stableAppPtr.ID, CurrentConfigVersion: saved.Version.ConfigVersion,
+		CurrentAppProfileID:    stableAppPtr.ID, CurrentConfigVersion: saved.Version.ConfigVersion,
 		Purpose: "history_read",
 	})
 	require.NoError(t, err)
@@ -220,7 +256,7 @@ func TestAppLifecycleTicketAndInternalContext(t *testing.T) {
 		BindingID: membership.Identity.PublicID, CanonicalSubject: membership.Identity.CanonicalSubject,
 		AuthEpoch: effectiveEpoch, RequestedAppProfileID: stableAppPtr.ID,
 		RequestedConfigVersion: saved.Version.ConfigVersion,
-		CurrentAppProfileID: stableAppPtr.ID, CurrentConfigVersion: saved.Version.ConfigVersion,
+		CurrentAppProfileID:    stableAppPtr.ID, CurrentConfigVersion: saved.Version.ConfigVersion,
 		Purpose: "history_read",
 	})
 	assert.ErrorContains(t, err, "historical App context not found")

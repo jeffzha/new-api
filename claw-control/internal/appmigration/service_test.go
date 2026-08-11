@@ -135,6 +135,33 @@ func TestProviderUnknownRetryIsReadbackOnlyAndNeverCopiesAgain(t *testing.T) {
 	assert.Equal(t, "known-target-agent", recovery.KnownTargetAgentID)
 }
 
+func TestNonDynamicRuntimeClaimAndReadinessNeverRequirePerUserAgent(t *testing.T) {
+	fixture := newMigrationFixture(t, 1)
+	require.NoError(t, fixture.db.Where("job_id = ?", fixture.job.ID).Delete(&model.AppMigrationMember{}).Error)
+	require.NoError(t, fixture.db.Delete(&model.AppMigrationJob{}, fixture.job.ID).Error)
+	require.NoError(t, fixture.db.Model(&model.AppConfigVersion{}).Where("id = ?", fixture.config.ID).Update("template_agent_id", "").Error)
+	require.NoError(t, fixture.db.Model(&model.AppVerification{}).Where("customer_app_id = ? AND app_config_version_id = ?", fixture.target.ID, fixture.config.ID).
+		Updates(map[string]any{"app_mode": 1, "dynamic_agent_config": false, "template_agent_status": "not_required"}).Error)
+	require.NoError(t, fixture.db.First(&fixture.config, fixture.config.ID).Error)
+	job, err := appmigration.EnsureJob(fixture.db, fixture.target, fixture.config)
+	require.NoError(t, err)
+	service := appmigration.New(fixture.db, fixture.resolver)
+	task, err := service.Claim(context.Background(), "worker-standard", 30*time.Second, time.Now().UTC())
+	require.NoError(t, err)
+	require.NotNil(t, task)
+	assert.Equal(t, 1, task.ProviderAppMode)
+	assert.Equal(t, "standard_v2", task.RuntimeProfile)
+	assert.True(t, task.ExecutionEnabled)
+	assert.Empty(t, task.Provider.TemplateAgentID)
+
+	report := successfulReport(task, "")
+	_, err = service.Report(context.Background(), report, time.Now().UTC().Add(time.Second))
+	require.NoError(t, err)
+	ready, err := appmigration.AssertReadyForCutover(fixture.db, fixture.source, fixture.target)
+	require.NoError(t, err)
+	assert.Equal(t, job.PublicID, ready.PublicID)
+}
+
 func TestReplanSupersedesOldMemberSetAndOnlyNewGenerationIsClaimable(t *testing.T) {
 	fixture := newMigrationFixture(t, 1)
 	service := appmigration.New(fixture.db, fixture.resolver)
@@ -168,6 +195,7 @@ func successfulReport(task *appmigration.ClaimedTask, agentID string) appmigrati
 		MigrationMemberID: task.MigrationMemberID, AttemptID: task.AttemptID, LeaseToken: task.LeaseToken,
 		Status: model.AppMigrationMemberStatusSucceeded, TargetAppProfileID: task.TargetAppProfileID,
 		TargetConfigVersion: task.TargetConfigVersion, TargetConfigFingerprint: task.TargetConfigFingerprint,
+		ProviderAppMode: task.ProviderAppMode, RuntimeProfile: task.RuntimeProfile, ExecutionEnabled: task.ExecutionEnabled,
 		TargetAgentID: agentID, TargetReadbackHash: "sha256:" + strings.Repeat("a", 64),
 	}
 }
@@ -222,6 +250,12 @@ func newMigrationFixture(t *testing.T, activeBindings int) migrationFixture {
 	require.NoError(t, db.Create(&config).Error)
 	target.CurrentConfigVersionID = &config.ID
 	require.NoError(t, db.Save(&target).Error)
+	require.NoError(t, db.Create(&model.AppVerification{
+		PublicID: "verify-migration-target", CustomerAppID: target.ID, AppConfigVersionID: config.ID,
+		Result: "verified", AppMode: 4, ReleaseStatus: "published", TemplateAgentStatus: "available",
+		DynamicAgentConfig: true, ProviderRequestIDsJSON: `["request-1"]`, SanitizedResponseHash: "sha256:" + strings.Repeat("b", 64),
+		VerifiedBy: "test", VerifiedAt: now,
+	}).Error)
 	for index := 1; index <= activeBindings; index++ {
 		identity := model.IdentityBinding{
 			PublicID: "binding-" + string(rune('0'+index)), CustomerID: customer.ID, NewAPIUserID: int64(index),

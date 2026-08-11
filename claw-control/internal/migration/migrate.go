@@ -32,6 +32,8 @@ const UsageAuditRevisionVersion = "0017_usage_audit_revisions"
 const AppMigrationReadinessVersion = "0018_app_migration_readiness"
 const CrossComponentRetentionVersion = "0019_cross_component_retention"
 const AppMigrationLineageVersion = "0020_app_migration_lineage"
+const AgentStoreVersion = "0021_agent_store"
+const AgentStoreRuntimeContractVersion = "0022_agent_store_runtime_contract"
 
 type SchemaMigration struct {
 	Version   string    `gorm:"type:varchar(96);primaryKey"`
@@ -81,6 +83,14 @@ func Migrate(db *gorm.DB) error {
 		{version: AppMigrationReadinessVersion, models: []any{&model.AppMigrationJob{}, &model.AppMigrationMember{}}},
 		{version: CrossComponentRetentionVersion, models: []any{&model.CustomerRetentionDelivery{}}},
 		{version: AppMigrationLineageVersion, models: []any{&model.AppMigrationLineage{}}},
+		{version: AgentStoreVersion, models: []any{
+			&model.AgentCatalogItem{}, &model.AgentCatalogVersion{},
+			&model.CustomerAgentDeployment{}, &model.AgentCatalogEntitlement{},
+			&model.AgentLaunchAudit{}, &model.AgentCatalogCursor{}, &model.ControlSession{}, &model.AppVerification{},
+		}},
+		{version: AgentStoreRuntimeContractVersion, models: []any{
+			&model.ContextSelectionNonce{}, &model.AppMigrationJob{},
+		}},
 	}
 	for _, migration := range migrations {
 		var count int64

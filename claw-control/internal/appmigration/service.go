@@ -53,6 +53,9 @@ type ClaimedTask struct {
 	TargetAppProfileID      uint64          `json:"target_app_profile_id"`
 	TargetConfigVersion     int64           `json:"target_config_version"`
 	TargetConfigFingerprint string          `json:"target_config_fingerprint"`
+	ProviderAppMode         int             `json:"provider_app_mode"`
+	RuntimeProfile          string          `json:"runtime_profile"`
+	ExecutionEnabled        bool            `json:"execution_enabled"`
 	Mode                    string          `json:"mode"`
 	KnownTargetAgentID      string          `json:"known_target_agent_id,omitempty"`
 	Provider                ProviderContext `json:"provider"`
@@ -66,6 +69,9 @@ type ReportCommand struct {
 	TargetAppProfileID      uint64
 	TargetConfigVersion     int64
 	TargetConfigFingerprint string
+	ProviderAppMode         int
+	RuntimeProfile          string
+	ExecutionEnabled        bool
 	TargetAgentID           string
 	TargetReadbackHash      string
 	ErrorCode               string
@@ -122,12 +128,21 @@ type configFingerprint struct {
 	AppKeyFingerprintVersion     int    `json:"app_key_fingerprint_version"`
 	LimitsJSON                   string `json:"limits_json"`
 	CapabilitiesJSON             string `json:"capabilities_json"`
+	ProviderAppMode              int    `json:"provider_app_mode"`
+	RuntimeProfile               string `json:"runtime_profile"`
+	ExecutionEnabled             bool   `json:"execution_enabled"`
 }
 
 type memberFingerprint struct {
 	IdentityBindingID uint64 `json:"identity_binding_id"`
 	BindingPublicID   string `json:"binding_id"`
 	ADPAccountID      string `json:"adp_account_id"`
+}
+
+type providerRuntime struct {
+	AppMode          int
+	RuntimeProfile   string
+	ExecutionEnabled bool
 }
 
 func New(db *gorm.DB, resolver secrets.Resolver) *Service {
@@ -155,7 +170,11 @@ func EnsureJob(tx *gorm.DB, target model.CustomerApp, version model.AppConfigVer
 	if err := tx.First(&credential, *version.CredentialProfileID).Error; err != nil {
 		return nil, domain.Conflict("target migration credential profile is unavailable")
 	}
-	fingerprint := targetFingerprint(target, version, credential)
+	runtime, err := loadVerifiedRuntime(tx, target, version)
+	if err != nil {
+		return nil, err
+	}
+	fingerprint := targetFingerprint(target, version, credential, runtime)
 
 	var identities []model.IdentityBinding
 	if err := database.ForUpdate(tx).Where("customer_id = ? AND status = ?", target.CustomerID, model.IdentityStatusActive).Order("id asc").Find(&identities).Error; err != nil {
@@ -168,10 +187,11 @@ func EnsureJob(tx *gorm.DB, target model.CustomerApp, version model.AppConfigVer
 	memberSetHash := support.Hash(members)
 
 	var existing model.AppMigrationJob
-	err := database.ForUpdate(tx).Where("target_customer_app_id = ?", target.ID).Order("generation desc").First(&existing).Error
+	err = database.ForUpdate(tx).Where("target_customer_app_id = ?", target.ID).Order("generation desc").First(&existing).Error
 	if err == nil {
 		if existing.CustomerID != target.CustomerID || existing.SourceCustomerAppID != source.ID || existing.TargetAppConfigVersionID != version.ID ||
 			existing.TargetConfigVersion != version.ConfigVersion || existing.TargetCredentialProfileID != credential.ID ||
+			existing.TargetProviderAppMode != runtime.AppMode || existing.TargetRuntimeProfile != runtime.RuntimeProfile || existing.TargetExecutionEnabled != runtime.ExecutionEnabled ||
 			existing.TargetConfigFingerprint != fingerprint || existing.MemberSetFingerprint != memberSetHash || existing.ExpectedMembers != len(identities) {
 			return nil, domain.Conflict("migration rebuild job no longer matches the verified target and active bindings")
 		}
@@ -181,11 +201,11 @@ func EnsureJob(tx *gorm.DB, target model.CustomerApp, version model.AppConfigVer
 		return nil, err
 	}
 
-	return createJobRows(tx, source, target, version, credential, identities, memberSetHash, 1)
+	return createJobRows(tx, source, target, version, credential, runtime, identities, memberSetHash, 1)
 }
 
-func createJobRows(tx *gorm.DB, source, target model.CustomerApp, version model.AppConfigVersion, credential model.CredentialProfile, identities []model.IdentityBinding, memberSetHash string, generation int64) (*model.AppMigrationJob, error) {
-	fingerprint := targetFingerprint(target, version, credential)
+func createJobRows(tx *gorm.DB, source, target model.CustomerApp, version model.AppConfigVersion, credential model.CredentialProfile, runtime providerRuntime, identities []model.IdentityBinding, memberSetHash string, generation int64) (*model.AppMigrationJob, error) {
+	fingerprint := targetFingerprint(target, version, credential, runtime)
 	jobStatus := model.AppMigrationJobStatusPending
 	readyAt := (*time.Time)(nil)
 	now := time.Now().UTC()
@@ -199,6 +219,7 @@ func createJobRows(tx *gorm.DB, source, target model.CustomerApp, version model.
 		Generation:               generation,
 		TargetAppConfigVersionID: version.ID, TargetConfigVersion: version.ConfigVersion,
 		TargetCredentialProfileID: credential.ID, TargetConfigFingerprint: fingerprint,
+		TargetProviderAppMode: runtime.AppMode, TargetRuntimeProfile: runtime.RuntimeProfile, TargetExecutionEnabled: runtime.ExecutionEnabled,
 		MemberSetFingerprint: memberSetHash, ExpectedMembers: len(identities), Status: jobStatus,
 		RowVersion: 1, ReadyAt: readyAt,
 	}
@@ -237,7 +258,7 @@ func createJobRows(tx *gorm.DB, source, target model.CustomerApp, version model.
 	return job, nil
 }
 
-func targetFingerprint(target model.CustomerApp, version model.AppConfigVersion, credential model.CredentialProfile) string {
+func targetFingerprint(target model.CustomerApp, version model.AppConfigVersion, credential model.CredentialProfile, runtime providerRuntime) string {
 	return support.Hash(configFingerprint{
 		CustomerID: target.CustomerID, TargetCustomerAppID: target.ID, TargetApplicationID: target.AppID,
 		ProviderEnvironment: target.ProviderEnvironment, TargetAppConfigVersionID: version.ID,
@@ -248,7 +269,37 @@ func targetFingerprint(target model.CustomerApp, version model.AppConfigVersion,
 		CredentialFingerprint: credential.Fingerprint, CredentialFingerprintVersion: credential.FingerprintVersion,
 		AppKeyFingerprint: version.AppKeyFingerprint, AppKeyFingerprintVersion: version.AppKeyFingerprintVersion,
 		LimitsJSON: version.LimitsJSON, CapabilitiesJSON: version.CapabilitiesJSON,
+		ProviderAppMode: runtime.AppMode, RuntimeProfile: runtime.RuntimeProfile, ExecutionEnabled: runtime.ExecutionEnabled,
 	})
+}
+
+func loadVerifiedRuntime(tx *gorm.DB, target model.CustomerApp, version model.AppConfigVersion) (providerRuntime, error) {
+	var verification model.AppVerification
+	if err := tx.Where("customer_app_id = ? AND app_config_version_id = ? AND result = ?", target.ID, version.ID, "verified").
+		Order("verified_at desc").Order("id desc").First(&verification).Error; err != nil {
+		return providerRuntime{}, domain.Conflict("migration target has no verified provider runtime snapshot")
+	}
+	runtime := providerRuntime{AppMode: verification.AppMode, ExecutionEnabled: true}
+	switch verification.AppMode {
+	case 1:
+		runtime.RuntimeProfile = "standard_v2"
+	case 2:
+		runtime.RuntimeProfile = "multi_agent_v2"
+	case 3:
+		runtime.RuntimeProfile = "workflow_v2"
+	case 4:
+		if verification.DynamicAgentConfig {
+			if strings.TrimSpace(version.TemplateAgentID) == "" {
+				return providerRuntime{}, domain.Conflict("dynamic Claw migration target has no verified template Agent")
+			}
+			runtime.RuntimeProfile = "claw_dynamic_v2"
+		} else {
+			runtime.RuntimeProfile = "claw_static_v2"
+		}
+	default:
+		return providerRuntime{}, domain.Conflict("migration target provider AppMode is unsupported")
+	}
+	return runtime, nil
 }
 
 func (s *Service) Claim(ctx context.Context, workerID string, lease time.Duration, now time.Time) (*ClaimedTask, error) {
@@ -350,7 +401,9 @@ func (s *Service) Claim(ctx context.Context, workerID string, lease time.Duratio
 			SourceApplicationID: source.AppID, TargetApplicationID: target.AppID,
 			TargetAppProfileID: target.ID, TargetConfigVersion: version.ConfigVersion,
 			TargetConfigFingerprint: job.TargetConfigFingerprint,
-			Mode:                    member.RecoveryMode, KnownTargetAgentID: member.TargetAgentID,
+			ProviderAppMode:         job.TargetProviderAppMode, RuntimeProfile: job.TargetRuntimeProfile,
+			ExecutionEnabled: job.TargetExecutionEnabled,
+			Mode:             member.RecoveryMode, KnownTargetAgentID: member.TargetAgentID,
 			Provider: ProviderContext{Vendor: "Tencent", ServiceVendor: "ChinaTencentADP", AppID: target.AppID,
 				AppKey: appKey, SpaceID: version.SpaceID, TemplateAgentID: version.TemplateAgentID,
 				SecretID: pair.SecretID, SecretKey: pair.SecretKey},
@@ -375,8 +428,9 @@ func (s *Service) Report(ctx context.Context, command ReportCommand, now time.Ti
 	}
 	if command.Status == model.AppMigrationMemberStatusSucceeded {
 		if command.TargetAppProfileID == 0 || command.TargetConfigVersion <= 0 || command.TargetConfigFingerprint == "" ||
-			command.TargetAgentID == "" || len(command.TargetAgentID) > 128 || !validSHA256(command.TargetReadbackHash) || command.ErrorCode != "" {
-			return nil, domain.Invalid("successful migration report requires the exact target tuple, AgentId, and readback hash")
+			len(command.TargetAgentID) > 128 || !validSHA256(command.TargetReadbackHash) || command.ErrorCode != "" ||
+			command.ProviderAppMode < 1 || command.ProviderAppMode > 4 || command.RuntimeProfile == "" || !command.ExecutionEnabled {
+			return nil, domain.Invalid("successful migration report requires the exact target and provider-runtime tuple plus a readback hash")
 		}
 	} else if command.ErrorCode == "" || len(command.ErrorCode) > 80 || command.TargetReadbackHash != "" || len(command.TargetAgentID) > 128 ||
 		(command.TargetAgentID != "" && command.ErrorCode != "provider_outcome_unknown" && command.ErrorCode != "target_agent_readback_failed") {
@@ -411,6 +465,12 @@ func (s *Service) Report(ctx context.Context, command ReportCommand, now time.Ti
 		if command.TargetAppProfileID != 0 && (command.TargetAppProfileID != job.TargetCustomerAppID || command.TargetConfigVersion != job.TargetConfigVersion ||
 			command.TargetConfigFingerprint != job.TargetConfigFingerprint || member.TargetConfigFingerprint != job.TargetConfigFingerprint) {
 			return domain.Conflict("migration report target tuple does not match the claimed job")
+		}
+		if command.Status == model.AppMigrationMemberStatusSucceeded && (command.ProviderAppMode != job.TargetProviderAppMode ||
+			command.RuntimeProfile != job.TargetRuntimeProfile || command.ExecutionEnabled != job.TargetExecutionEnabled ||
+			(job.TargetRuntimeProfile == "claw_dynamic_v2" && command.TargetAgentID == "") ||
+			(job.TargetRuntimeProfile != "claw_dynamic_v2" && command.TargetAgentID != "")) {
+			return domain.Conflict("migration report provider runtime or Agent readiness does not match the claimed job")
 		}
 		if _, _, _, err := loadAndValidateTarget(tx, job); err != nil {
 			return err
@@ -463,7 +523,12 @@ func (s *Service) Replan(ctx context.Context, command ReplanCommand) (*model.App
 		if err := database.ForUpdate(tx).First(&credential, *version.CredentialProfileID).Error; err != nil {
 			return domain.Conflict("migration target credential is unavailable")
 		}
-		if targetFingerprint(target, version, credential) != current.TargetConfigFingerprint {
+		runtime, err := loadVerifiedRuntime(tx, target, version)
+		if err != nil {
+			return err
+		}
+		if targetFingerprint(target, version, credential, runtime) != current.TargetConfigFingerprint || runtime.AppMode != current.TargetProviderAppMode ||
+			runtime.RuntimeProfile != current.TargetRuntimeProfile || runtime.ExecutionEnabled != current.TargetExecutionEnabled {
 			return domain.Conflict("migration target config changed before replan")
 		}
 		var source model.CustomerApp
@@ -484,7 +549,7 @@ func (s *Service) Replan(ctx context.Context, command ReplanCommand) (*model.App
 		if err := tx.Save(&current).Error; err != nil {
 			return err
 		}
-		created, err := createJobRows(tx, source, target, version, credential, identities, support.Hash(members), current.Generation+1)
+		created, err := createJobRows(tx, source, target, version, credential, runtime, identities, support.Hash(members), current.Generation+1)
 		if err != nil {
 			return err
 		}
@@ -588,7 +653,9 @@ func AssertReadyForCutover(tx *gorm.DB, source, target model.CustomerApp) (*mode
 		var readiness model.AppMigrationMember
 		if err := database.ForUpdate(tx).Where("job_id = ? AND identity_binding_id = ?", job.ID, identity.ID).First(&readiness).Error; err != nil ||
 			readiness.Status != model.AppMigrationMemberStatusSucceeded || readiness.BindingPublicID != identity.PublicID || readiness.ADPAccountID != identity.ADPAccountID ||
-			readiness.TargetAgentID == "" || !validSHA256(readiness.TargetReadbackHash) || readiness.TargetConfigFingerprint != job.TargetConfigFingerprint {
+			(job.TargetRuntimeProfile == "claw_dynamic_v2" && readiness.TargetAgentID == "") ||
+			(job.TargetRuntimeProfile != "claw_dynamic_v2" && readiness.TargetAgentID != "") ||
+			!validSHA256(readiness.TargetReadbackHash) || readiness.TargetConfigFingerprint != job.TargetConfigFingerprint {
 			return nil, domain.Conflict("an active binding has no verified target-App Agent rebuild")
 		}
 	}
@@ -611,10 +678,12 @@ func loadAndValidateTarget(tx *gorm.DB, job model.AppMigrationJob) (model.Custom
 	if err := database.ForUpdate(tx).First(&credential, job.TargetCredentialProfileID).Error; err != nil {
 		return target, version, credential, domain.Conflict("migration target credential profile is unavailable")
 	}
+	runtime, runtimeErr := loadVerifiedRuntime(tx, target, version)
 	if !strings.HasPrefix(target.Slot, "migration:") || target.Status != model.AppStatusVerified || target.CurrentConfigVersionID == nil ||
 		*target.CurrentConfigVersionID != version.ID || version.CustomerAppID != target.ID || version.Status != model.AppConfigStatusVerified ||
 		version.ConfigVersion != job.TargetConfigVersion || version.CredentialProfileID == nil || *version.CredentialProfileID != credential.ID ||
-		targetFingerprint(target, version, credential) != job.TargetConfigFingerprint {
+		runtimeErr != nil || runtime.AppMode != job.TargetProviderAppMode || runtime.RuntimeProfile != job.TargetRuntimeProfile ||
+		runtime.ExecutionEnabled != job.TargetExecutionEnabled || targetFingerprint(target, version, credential, runtime) != job.TargetConfigFingerprint {
 		return target, version, credential, domain.Conflict("migration target profile or config changed after rebuild preparation")
 	}
 	return target, version, credential, nil

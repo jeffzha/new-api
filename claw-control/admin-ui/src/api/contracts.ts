@@ -392,3 +392,86 @@ export interface CustomerUpdateInput {
   display_name: string
   billing_user_id: number | null
 }
+
+export interface AgentStoreVersion {
+  version_id: string
+  generation: number
+  display_name: string
+  summary: string
+  description: string
+  avatar_url?: string
+  category: string
+  tags: string[]
+}
+
+export interface AgentStoreDeployment {
+  deployment_id: string
+  customer_id: number
+  customer_app_id: number
+  status: string
+  row_version: number
+  provider_app_mode: number
+  runtime_profile: string
+  dynamic_agent_config: boolean
+  execution_enabled: boolean
+  verified_config_version: number
+  verified_at?: string
+  provider_display_name?: string
+  provider_description?: string
+  provider_avatar_url?: string
+  capabilities: string[]
+}
+
+export interface AgentStoreEntitlement {
+  entitlement_id: string
+  deployment_id: string
+  subject_type: 'customer' | 'user' | 'role' | 'plan'
+  subject_ref: string
+  status: string
+  valid_from: string
+  valid_until?: string
+}
+
+export interface AgentStoreItem {
+  item_id: string
+  slug: string
+  status: string
+  row_version: number
+  sort_order: number
+  featured: boolean
+  current_version?: AgentStoreVersion
+  draft_version?: AgentStoreVersion
+  deployment: AgentStoreDeployment
+  entitlements: AgentStoreEntitlement[]
+}
+
+export interface AgentStoreCreateInput {
+  slug: string
+  display_name: string
+  summary: string
+  description: string
+  avatar_url: string
+  category: string
+  tags: string[]
+  sort_order: number
+  featured: boolean
+  deployment: {
+    customer_id: number
+    customer_app_id: number
+    execution_enabled: false
+  }
+  entitlements: []
+}
+
+export interface AgentStoreUpdateInput {
+  expected_version: number
+  display_name: string
+  summary: string
+  description: string
+  avatar_url: string
+  category: string
+  tags: string[]
+  sort_order: number
+  featured: boolean
+  execution_enabled: boolean
+}

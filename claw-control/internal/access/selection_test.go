@@ -118,6 +118,31 @@ func TestMultiCustomerSelectionIsBoundOneTimeAndRevalidated(t *testing.T) {
 	assert.ErrorContains(t, err, "expired")
 }
 
+func TestAgentStoreEntryDefersSSOAndBindsDefaultCustomerContext(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	const identityVersion = "v1.agent-store"
+	verifier := testutil.NewIdentityVerifier(identityVersion)
+	service := access.New(db, secrets.EnvironmentResolver{}, verifier, time.Minute, time.Minute, time.Hour, time.Hour, time.Minute)
+	primary := createSelectableContext(t, db, 7101, identityVersion, "tenant-store", "app-primary", "primary", true)
+	_ = createAdditionalSelectableApp(t, db, primary.customer.ID, "app-secondary", "secondary")
+
+	ticket, err := service.IssueEntryTicket(access.IssueEntryTicketCommand{NewAPIUserID: 7101, IdentityVersion: identityVersion})
+	require.NoError(t, err)
+	entered, err := service.Enter(context.Background(), access.EnterCommand{Ticket: ticket.Ticket, DeferSSO: true})
+	require.NoError(t, err)
+	assert.False(t, entered.SelectionRequired)
+	assert.Empty(t, entered.ADPSSOTicket)
+	assert.NotEmpty(t, entered.ControlSessionToken)
+	assert.NotEmpty(t, entered.ControlCSRFToken)
+
+	principal, err := service.AuthorizeControlSession(context.Background(), entered.ControlSessionToken, entered.ControlCSRFToken, true)
+	require.NoError(t, err)
+	assert.Equal(t, primary.customer.ID, principal.CustomerID)
+	_, err = service.AuthorizeControlSession(context.Background(), entered.ControlSessionToken, "forged", true)
+	assert.ErrorContains(t, err, "CSRF")
+}
+
 func TestSelectionNonceConcurrentConsumptionHasSingleWinner(t *testing.T) {
 	db, err := testutil.NewDatabase()
 	require.NoError(t, err)

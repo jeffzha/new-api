@@ -1,3 +1,5 @@
+import { Store01Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -22,7 +24,6 @@ import {
   BriefcaseBusiness,
   CreditCard,
   FileText,
-  FlaskConical,
   Key,
   LayoutDashboard,
   ListTodo,
@@ -35,9 +36,11 @@ import {
   Users,
   Wallet,
 } from 'lucide-react'
+import { createElement } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { SidebarData } from '@/components/layout/types'
+import { useAgentStoreAvailability } from '@/features/agent-store/availability'
 import { ROLE } from '@/lib/roles'
 
 /**
@@ -48,6 +51,7 @@ import { ROLE } from '@/lib/roles'
  */
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
+  const agentStoreEnabled = useAgentStoreAvailability().data?.enabled === true
 
   return {
     navGroups: [
@@ -56,9 +60,10 @@ export function useSidebarData(): SidebarData {
         title: t('Chat'),
         items: [
           {
-            title: t('Playground'),
-            url: '/playground',
-            icon: FlaskConical,
+            title: agentStoreEnabled ? t('Agent Store') : t('Playground'),
+            url: agentStoreEnabled ? '/agent-store' : '/playground',
+            activeUrls: agentStoreEnabled ? ['/playground'] : ['/agent-store'],
+            icon: AgentStoreIcon,
           },
           {
             title: t('Chat'),
@@ -167,4 +172,12 @@ export function useSidebarData(): SidebarData {
       },
     ],
   }
+}
+
+function AgentStoreIcon({ className }: { className?: string }) {
+  return createElement(HugeiconsIcon, {
+    icon: Store01Icon,
+    strokeWidth: 2,
+    className,
+  })
 }

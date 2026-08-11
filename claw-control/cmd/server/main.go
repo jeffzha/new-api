@@ -14,6 +14,7 @@ import (
 
 	"github.com/QuantumNous/new-api/claw-control/internal/access"
 	"github.com/QuantumNous/new-api/claw-control/internal/adminquery"
+	"github.com/QuantumNous/new-api/claw-control/internal/agentstore"
 	"github.com/QuantumNous/new-api/claw-control/internal/app"
 	"github.com/QuantumNous/new-api/claw-control/internal/appmigration"
 	"github.com/QuantumNous/new-api/claw-control/internal/approval"
@@ -128,12 +129,14 @@ func main() {
 		Retention: retention.New(db), Approvals: approval.New(db, secretResolver), Metrics: metricRegistry,
 		BillingImports:  billingImportService,
 		SecretIntegrity: secretintegrity.New(db, secretResolver),
+		AgentStore:      agentstore.New(db, secretResolver, providerVerifier),
 	}, cfg.AdminToken, httpapi.InternalAuth{
 		ServiceKeys: cfg.InternalHMACKeys, TimeSkew: cfg.InternalHMACTimeSkew,
 		NewAPIServiceName: cfg.NewAPIServiceName, ADPServiceName: cfg.ADPServiceName,
 	}, httpapi.PublicConfig{
 		ADPSSORedirectPath: cfg.ADPSSORedirectPath, AdminRedirectPath: cfg.AdminRedirectPath,
-		AdminAssetDir: cfg.AdminAssetDir,
+		AdminAssetDir:     cfg.AdminAssetDir,
+		AgentStoreEnabled: cfg.AgentStoreEnabled,
 	})
 	server := &http.Server{
 		Addr:              cfg.Addr,

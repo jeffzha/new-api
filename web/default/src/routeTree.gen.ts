@@ -50,6 +50,7 @@ import { Route as AuthenticatedModelsIndexRouteImport } from './routes/_authenti
 import { Route as AuthenticatedKeysIndexRouteImport } from './routes/_authenticated/keys/index'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
+import { Route as AuthenticatedAgentStoreIndexRouteImport } from './routes/_authenticated/agent-store/index'
 import { Route as AuthenticatedUsageLogsSectionRouteImport } from './routes/_authenticated/usage-logs/$section'
 import { Route as AuthenticatedPlaygroundSelectRouteImport } from './routes/_authenticated/playground/select'
 import { Route as AuthenticatedPlaygroundLegacyRouteImport } from './routes/_authenticated/playground/legacy'
@@ -289,6 +290,12 @@ const AuthenticatedChannelsIndexRoute =
     path: '/channels/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedAgentStoreIndexRoute =
+  AuthenticatedAgentStoreIndexRouteImport.update({
+    id: '/agent-store/',
+    path: '/agent-store/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedUsageLogsSectionRoute =
   AuthenticatedUsageLogsSectionRouteImport.update({
     id: '/usage-logs/$section',
@@ -454,6 +461,7 @@ export interface FileRoutesByFullPath {
   '/playground/legacy': typeof AuthenticatedPlaygroundLegacyRoute
   '/playground/select': typeof AuthenticatedPlaygroundSelectRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
+  '/agent-store/': typeof AuthenticatedAgentStoreIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/keys/': typeof AuthenticatedKeysIndexRoute
@@ -516,6 +524,7 @@ export interface FileRoutesByTo {
   '/playground/legacy': typeof AuthenticatedPlaygroundLegacyRoute
   '/playground/select': typeof AuthenticatedPlaygroundSelectRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
+  '/agent-store': typeof AuthenticatedAgentStoreIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/keys': typeof AuthenticatedKeysIndexRoute
@@ -582,6 +591,7 @@ export interface FileRoutesById {
   '/_authenticated/playground/legacy': typeof AuthenticatedPlaygroundLegacyRoute
   '/_authenticated/playground/select': typeof AuthenticatedPlaygroundSelectRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
+  '/_authenticated/agent-store/': typeof AuthenticatedAgentStoreIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/keys/': typeof AuthenticatedKeysIndexRoute
@@ -647,6 +657,7 @@ export interface FileRouteTypes {
     | '/playground/legacy'
     | '/playground/select'
     | '/usage-logs/$section'
+    | '/agent-store/'
     | '/channels/'
     | '/dashboard/'
     | '/keys/'
@@ -709,6 +720,7 @@ export interface FileRouteTypes {
     | '/playground/legacy'
     | '/playground/select'
     | '/usage-logs/$section'
+    | '/agent-store'
     | '/channels'
     | '/dashboard'
     | '/keys'
@@ -774,6 +786,7 @@ export interface FileRouteTypes {
     | '/_authenticated/playground/legacy'
     | '/_authenticated/playground/select'
     | '/_authenticated/usage-logs/$section'
+    | '/_authenticated/agent-store/'
     | '/_authenticated/channels/'
     | '/_authenticated/dashboard/'
     | '/_authenticated/keys/'
@@ -1114,6 +1127,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedChannelsIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/agent-store/': {
+      id: '/_authenticated/agent-store/'
+      path: '/agent-store'
+      fullPath: '/agent-store/'
+      preLoaderRoute: typeof AuthenticatedAgentStoreIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/usage-logs/$section': {
       id: '/_authenticated/usage-logs/$section'
       path: '/usage-logs/$section'
@@ -1365,6 +1385,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedPlaygroundLegacyRoute: typeof AuthenticatedPlaygroundLegacyRoute
   AuthenticatedPlaygroundSelectRoute: typeof AuthenticatedPlaygroundSelectRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
+  AuthenticatedAgentStoreIndexRoute: typeof AuthenticatedAgentStoreIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedKeysIndexRoute: typeof AuthenticatedKeysIndexRoute
@@ -1391,6 +1412,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedPlaygroundLegacyRoute: AuthenticatedPlaygroundLegacyRoute,
   AuthenticatedPlaygroundSelectRoute: AuthenticatedPlaygroundSelectRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
+  AuthenticatedAgentStoreIndexRoute: AuthenticatedAgentStoreIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedKeysIndexRoute: AuthenticatedKeysIndexRoute,

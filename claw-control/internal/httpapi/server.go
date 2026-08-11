@@ -20,6 +20,7 @@ import (
 
 	"github.com/QuantumNous/new-api/claw-control/internal/access"
 	"github.com/QuantumNous/new-api/claw-control/internal/adminquery"
+	"github.com/QuantumNous/new-api/claw-control/internal/agentstore"
 	"github.com/QuantumNous/new-api/claw-control/internal/app"
 	"github.com/QuantumNous/new-api/claw-control/internal/appmigration"
 	"github.com/QuantumNous/new-api/claw-control/internal/approval"
@@ -117,6 +118,7 @@ type Services struct {
 	Metrics          *metrics.Registry
 	BillingImports   *billingimport.Service
 	SecretIntegrity  *secretintegrity.Service
+	AgentStore       *agentstore.Service
 }
 
 type InternalAuth struct {
@@ -130,6 +132,7 @@ type PublicConfig struct {
 	ADPSSORedirectPath string
 	AdminRedirectPath  string
 	AdminAssetDir      string
+	AgentStoreEnabled  bool
 }
 
 type Server struct {
@@ -163,6 +166,10 @@ func New(services Services, adminToken string, internalAuth InternalAuth, public
 	mux.HandleFunc("GET /api/workbench/plan", server.workbenchPlan)
 	mux.HandleFunc("GET /api/workbench/selections", server.listWorkbenchSelections)
 	mux.HandleFunc("POST /api/workbench/selections/choose", server.chooseWorkbenchSelection)
+	mux.HandleFunc("GET /api/workbench/agent-store/status", server.agentStoreStatus)
+	mux.HandleFunc("GET /api/workbench/agent-store", server.agentStoreCatalog)
+	mux.HandleFunc("GET /api/workbench/agent-store/{slug}", server.agentStoreDetail)
+	mux.HandleFunc("POST /api/workbench/agent-store/{slug}/launch", server.launchAgentStoreItem)
 	if strings.TrimSpace(publicConfig.AdminAssetDir) != "" {
 		adminAssets := adminSPAHandler(publicConfig.AdminAssetDir, publicConfig.AdminRedirectPath)
 		mux.Handle(publicConfig.AdminRedirectPath, adminAssets)
@@ -171,6 +178,15 @@ func New(services Services, adminToken string, internalAuth InternalAuth, public
 
 	admin := http.NewServeMux()
 	admin.HandleFunc("GET /api/admin/workbench/dashboard", server.adminDashboard)
+	admin.Handle("GET /api/admin/workbench/agent-store/items", server.requireAdminSession(http.HandlerFunc(server.listAgentStoreItems)))
+	admin.Handle("POST /api/admin/workbench/agent-store/items", server.requireAdminSession(server.requireRecentAgentStoreAdmin(http.HandlerFunc(server.createAgentStoreItem))))
+	admin.Handle("GET /api/admin/workbench/agent-store/items/{item_id}", server.requireAdminSession(http.HandlerFunc(server.getAgentStoreItem)))
+	admin.Handle("PATCH /api/admin/workbench/agent-store/items/{item_id}", server.requireAdminSession(server.requireRecentAgentStoreAdmin(http.HandlerFunc(server.updateAgentStoreItem))))
+	admin.Handle("POST /api/admin/workbench/agent-store/items/{item_id}/verify", server.requireAdminSession(server.requireRecentAgentStoreAdmin(http.HandlerFunc(server.verifyAgentStoreItem))))
+	for _, action := range []string{"publish", "unpublish", "disable", "archive"} {
+		admin.Handle("POST /api/admin/workbench/agent-store/items/{item_id}/"+action, server.requireAdminSession(server.requireRecentAgentStoreAdmin(http.HandlerFunc(server.transitionAgentStoreItem))))
+	}
+	admin.Handle("GET /api/admin/workbench/agent-store/items/{item_id}/audits", server.requireAdminSession(http.HandlerFunc(server.agentStoreAudits)))
 	admin.HandleFunc("POST /api/admin/workbench/customers", server.createCustomer)
 	admin.HandleFunc("GET /api/admin/workbench/customers", server.listCustomers)
 	admin.HandleFunc("GET /api/admin/workbench/customers/{customer_id}", server.customerDetail)
@@ -291,7 +307,9 @@ func (s *Server) reenrollSecretFingerprints(w http.ResponseWriter, r *http.Reque
 func (s *Server) enterWorkbench(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	result, err := s.services.Access.Enter(r.Context(), access.EnterCommand{Ticket: r.URL.Query().Get("ticket")})
+	result, err := s.services.Access.Enter(r.Context(), access.EnterCommand{
+		Ticket: r.URL.Query().Get("ticket"), DeferSSO: s.publicConfig.AgentStoreEnabled,
+	})
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -326,6 +344,15 @@ func (s *Server) enterWorkbench(w http.ResponseWriter, r *http.Request) {
 		Path: "/", Expires: result.ControlSessionExpiresAt, MaxAge: maxAge,
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode,
 	})
+	if s.publicConfig.AgentStoreEnabled {
+		http.SetCookie(w, &http.Cookie{
+			Name: "claw_control_csrf", Value: result.ControlCSRFToken,
+			Path: "/agent-store", Expires: result.ControlSessionExpiresAt, MaxAge: maxAge,
+			HttpOnly: false, Secure: true, SameSite: http.SameSiteStrictMode,
+		})
+		http.Redirect(w, r, "/agent-store", http.StatusSeeOther)
+		return
+	}
 	if result.SelectionRequired {
 		http.Redirect(w, r, "/playground/select", http.StatusSeeOther)
 		return

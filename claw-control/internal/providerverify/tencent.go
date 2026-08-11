@@ -40,8 +40,12 @@ type Target struct {
 type Result struct {
 	Result                string
 	AppMode               int
+	DynamicAgentConfig    bool
 	ReleaseStatus         string
 	TemplateAgentStatus   string
+	DisplayName           string
+	Description           string
+	AvatarURL             string
 	ProviderRequestIDs    []string
 	SanitizedResponseHash string
 	ErrorCode             string
@@ -92,7 +96,7 @@ func (v *TencentVerifier) Verify(ctx context.Context, target Target) (Result, er
 		return Result{}, fmt.Errorf("unsupported provider environment")
 	}
 	if strings.TrimSpace(target.Region) == "" || strings.TrimSpace(target.SpaceID) == "" || strings.TrimSpace(target.AppID) == "" ||
-		strings.TrimSpace(target.TemplateAgentID) == "" || target.AppKey == "" || target.SecretID == "" || target.SecretKey == "" {
+		target.AppKey == "" || target.SecretID == "" || target.SecretKey == "" {
 		return Result{}, fmt.Errorf("incomplete Tencent ADP verification target")
 	}
 
@@ -103,15 +107,27 @@ func (v *TencentVerifier) Verify(ctx context.Context, target Target) (Result, er
 			Paths []string `json:"Paths"`
 		} `json:"FieldMask"`
 	}{AppID: target.AppID, Domain: 2}
-	appRequest.FieldMask.Paths = []string{"AppConfig", "SecretInfo"}
+	appRequest.FieldMask.Paths = []string{"Metadata", "Status", "AppConfig", "SecretInfo"}
 	var appResponse struct {
 		Response struct {
 			App struct {
 				Metadata struct {
-					AppID   string `json:"AppId"`
-					AppMode int    `json:"AppMode"`
-					SpaceID string `json:"SpaceId"`
+					AppID       string `json:"AppId"`
+					AppMode     int    `json:"AppMode"`
+					SpaceID     string `json:"SpaceId"`
+					Name        string `json:"Name"`
+					Description string `json:"Description"`
+					AvatarURL   string `json:"Avatar"`
 				} `json:"Metadata"`
+				Config struct {
+					Mode struct {
+						ClawAgentConfig *struct {
+							CustomConfig *struct {
+								Enabled bool `json:"Enabled"`
+							} `json:"CustomConfig"`
+						} `json:"ClawAgentConfig"`
+					} `json:"Mode"`
+				} `json:"Config"`
 				SecretInfo struct {
 					AppKey string `json:"AppKey"`
 				} `json:"SecretInfo"`
@@ -135,42 +151,53 @@ func (v *TencentVerifier) Verify(ctx context.Context, target Target) (Result, er
 		return Result{}, fmt.Errorf("Tencent ADP DescribeApp response is missing RequestId")
 	}
 
-	agentRequest := struct {
-		AppID   string `json:"AppId"`
-		AgentID string `json:"AgentId"`
-	}{AppID: target.AppID, AgentID: target.TemplateAgentID}
-	var agentResponse struct {
-		Response struct {
-			Agent struct {
-				AgentID string `json:"AgentId"`
-			} `json:"Agent"`
-			RequestID string `json:"RequestId"`
-			Error     *struct {
-				Code string `json:"Code"`
-			} `json:"Error,omitempty"`
-		} `json:"Response"`
+	appMode := appResponse.Response.App.Metadata.AppMode
+	dynamicAgentConfig := appMode == 4 && appResponse.Response.App.Config.Mode.ClawAgentConfig != nil &&
+		appResponse.Response.App.Config.Mode.ClawAgentConfig.CustomConfig != nil &&
+		appResponse.Response.App.Config.Mode.ClawAgentConfig.CustomConfig.Enabled
+	templateAgentStatus := "not_required"
+	providerRequestIDs := []string{appResponse.Response.RequestID}
+	if dynamicAgentConfig && strings.TrimSpace(target.TemplateAgentID) == "" {
+		templateAgentStatus = "missing"
 	}
-	if err := v.call(ctx, "DescribeAgentDetail", target.Region, target.SecretID, target.SecretKey, agentRequest, &agentResponse); err != nil {
-		return Result{}, err
-	}
-	if agentResponse.Response.Error != nil {
-		return Result{}, fmt.Errorf("Tencent ADP DescribeAgentDetail failed with code %s", safeProviderCode(agentResponse.Response.Error.Code))
-	}
-	if agentResponse.Response.RequestID == "" {
-		return Result{}, fmt.Errorf("Tencent ADP DescribeAgentDetail response is missing RequestId")
+	if dynamicAgentConfig && strings.TrimSpace(target.TemplateAgentID) != "" {
+		agentRequest := struct {
+			AppID   string `json:"AppId"`
+			AgentID string `json:"AgentId"`
+		}{AppID: target.AppID, AgentID: target.TemplateAgentID}
+		var agentResponse struct {
+			Response struct {
+				Agent struct {
+					AgentID string `json:"AgentId"`
+				} `json:"Agent"`
+				RequestID string `json:"RequestId"`
+				Error     *struct {
+					Code string `json:"Code"`
+				} `json:"Error,omitempty"`
+			} `json:"Response"`
+		}
+		if err := v.call(ctx, "DescribeAgentDetail", target.Region, target.SecretID, target.SecretKey, agentRequest, &agentResponse); err != nil {
+			return Result{}, err
+		}
+		if agentResponse.Response.Error != nil {
+			return Result{}, fmt.Errorf("Tencent ADP DescribeAgentDetail failed with code %s", safeProviderCode(agentResponse.Response.Error.Code))
+		}
+		if agentResponse.Response.RequestID == "" {
+			return Result{}, fmt.Errorf("Tencent ADP DescribeAgentDetail response is missing RequestId")
+		}
+		providerRequestIDs = append(providerRequestIDs, agentResponse.Response.RequestID)
+		templateAgentStatus = "unavailable"
+		if agentResponse.Response.Agent.AgentID == target.TemplateAgentID {
+			templateAgentStatus = "available"
+		}
 	}
 
 	appIDMatches := appResponse.Response.App.Metadata.AppID == target.AppID
 	spaceMatches := appResponse.Response.App.Metadata.SpaceID == target.SpaceID
 	appKeyMatches := subtle.ConstantTimeCompare([]byte(appResponse.Response.App.SecretInfo.AppKey), []byte(target.AppKey)) == 1
-	appMode := appResponse.Response.App.Metadata.AppMode
 	releaseStatus := "not_published"
 	if appResponse.Response.App.Status.Status == 2 {
 		releaseStatus = "published"
-	}
-	templateAgentStatus := "unavailable"
-	if agentResponse.Response.Agent.AgentID == target.TemplateAgentID {
-		templateAgentStatus = "available"
 	}
 	summary := struct {
 		AppIDMatches        bool   `json:"app_id_matches"`
@@ -179,7 +206,8 @@ func (v *TencentVerifier) Verify(ctx context.Context, target Target) (Result, er
 		ReleaseStatus       string `json:"release_status"`
 		SpaceMatches        bool   `json:"space_matches"`
 		TemplateAgentStatus string `json:"template_agent_status"`
-	}{appIDMatches, appKeyMatches, appMode, releaseStatus, spaceMatches, templateAgentStatus}
+		DynamicAgentConfig  bool   `json:"dynamic_agent_config"`
+	}{appIDMatches, appKeyMatches, appMode, releaseStatus, spaceMatches, templateAgentStatus, dynamicAgentConfig}
 	summaryBytes, err := jsonx.Marshal(summary)
 	if err != nil {
 		return Result{}, err
@@ -187,13 +215,19 @@ func (v *TencentVerifier) Verify(ctx context.Context, target Target) (Result, er
 	summaryHash := sha256.Sum256(summaryBytes)
 	result := Result{
 		Result: "verified", AppMode: appMode, ReleaseStatus: releaseStatus,
+		DynamicAgentConfig:    dynamicAgentConfig,
 		TemplateAgentStatus:   templateAgentStatus,
-		ProviderRequestIDs:    []string{appResponse.Response.RequestID, agentResponse.Response.RequestID},
+		DisplayName:           appResponse.Response.App.Metadata.Name,
+		Description:           appResponse.Response.App.Metadata.Description,
+		AvatarURL:             appResponse.Response.App.Metadata.AvatarURL,
+		ProviderRequestIDs:    providerRequestIDs,
 		SanitizedResponseHash: "sha256:" + hex.EncodeToString(summaryHash[:]),
 	}
-	if !appIDMatches || !spaceMatches || !appKeyMatches || appMode != 4 || releaseStatus != "published" || templateAgentStatus != "available" {
+	validMode := appMode >= 1 && appMode <= 4
+	templateValid := !dynamicAgentConfig || templateAgentStatus == "available"
+	if !appIDMatches || !spaceMatches || !appKeyMatches || !validMode || releaseStatus != "published" || !templateValid {
 		result.Result = "invalid"
-		result.ErrorCode = verificationMismatchCode(appIDMatches, spaceMatches, appKeyMatches, appMode, releaseStatus, templateAgentStatus)
+		result.ErrorCode = verificationMismatchCode(appIDMatches, spaceMatches, appKeyMatches, appMode, releaseStatus, templateAgentStatus, dynamicAgentConfig)
 		result.ErrorMessage = "Tencent ADP resources do not match the pending workbench configuration"
 	}
 	return result, nil
@@ -259,7 +293,7 @@ func hmacSHA256(key []byte, value string) []byte {
 	return mac.Sum(nil)
 }
 
-func verificationMismatchCode(appIDMatches, spaceMatches, appKeyMatches bool, appMode int, releaseStatus, templateStatus string) string {
+func verificationMismatchCode(appIDMatches, spaceMatches, appKeyMatches bool, appMode int, releaseStatus, templateStatus string, dynamicAgentConfig bool) string {
 	switch {
 	case !appIDMatches:
 		return "app_id_mismatch"
@@ -267,11 +301,11 @@ func verificationMismatchCode(appIDMatches, spaceMatches, appKeyMatches bool, ap
 		return "space_id_mismatch"
 	case !appKeyMatches:
 		return "app_key_mismatch"
-	case appMode != 4:
+	case appMode < 1 || appMode > 4:
 		return "app_mode_mismatch"
 	case releaseStatus != "published":
 		return "app_not_published"
-	case templateStatus != "available":
+	case dynamicAgentConfig && templateStatus != "available":
 		return "template_agent_mismatch"
 	default:
 		return "provider_mismatch"

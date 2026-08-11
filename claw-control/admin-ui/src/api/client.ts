@@ -169,6 +169,10 @@ async function downloadAuditExport(input: import('./contracts').AuditExportInput
 }
 
 export const adminApi = {
+  agentStoreItems: (signal?: AbortSignal) => apiRequest<import('./contracts').AgentStoreItem[]>('/agent-store/items?limit=100', { signal }),
+  createAgentStoreItem: (body: import('./contracts').AgentStoreCreateInput) => apiRequest<import('./contracts').AgentStoreItem>('/agent-store/items', { method: 'POST', body }),
+  updateAgentStoreItem: (itemId: string, body: import('./contracts').AgentStoreUpdateInput) => apiRequest<import('./contracts').AgentStoreItem>(`/agent-store/items/${encodeURIComponent(itemId)}`, { method: 'PATCH', body }),
+  transitionAgentStoreItem: (itemId: string, action: 'verify' | 'publish' | 'unpublish' | 'disable' | 'archive', expectedVersion: number, reason = '') => apiRequest<import('./contracts').AgentStoreItem>(`/agent-store/items/${encodeURIComponent(itemId)}/${action}`, { method: 'POST', body: { expected_version: expectedVersion, reason } }),
   dashboard: (signal?: AbortSignal) => apiRequest<import('./contracts').Dashboard>('/dashboard', { signal }),
   customers: (signal?: AbortSignal) => apiRequest<import('./contracts').Customer[]>('/customers?limit=100', { signal }),
   customer: (id: number, signal?: AbortSignal) => apiRequest<import('./contracts').CustomerDetail>(`/customers/${id}`, { signal }),

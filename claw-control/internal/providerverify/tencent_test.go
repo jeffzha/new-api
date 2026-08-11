@@ -23,7 +23,7 @@ func TestTencentVerifierUsesSignedOfficialContracts(t *testing.T) {
 		assert.True(t, strings.HasPrefix(r.Header.Get("Authorization"), "TC3-HMAC-SHA256 Credential=secret-id/2026-08-09/adp/tc3_request"))
 		w.Header().Set("Content-Type", "application/json")
 		if action == "DescribeApp" {
-			_, _ = w.Write([]byte(`{"Response":{"App":{"Metadata":{"AppId":"app-1","AppMode":4,"SpaceId":"space-1"},"SecretInfo":{"AppKey":"app-key"},"Status":{"Status":2}},"RequestId":"request-app"}}`))
+			_, _ = w.Write([]byte(`{"Response":{"App":{"Metadata":{"AppId":"app-1","AppMode":4,"SpaceId":"space-1","Name":"Provider App","Avatar":"https://cdn.example/provider.png"},"Config":{"Mode":{"ClawAgentConfig":{"CustomConfig":{"Enabled":true}}}},"SecretInfo":{"AppKey":"app-key"},"Status":{"Status":2}},"RequestId":"request-app"}}`))
 			return
 		}
 		if action == "DescribeAgentDetail" {
@@ -41,9 +41,49 @@ func TestTencentVerifierUsesSignedOfficialContracts(t *testing.T) {
 	result, err := verifier.Verify(context.Background(), validTarget())
 	require.NoError(t, err)
 	assert.Equal(t, "verified", result.Result)
+	assert.True(t, result.DynamicAgentConfig)
+	assert.Equal(t, "Provider App", result.DisplayName)
+	assert.Equal(t, "https://cdn.example/provider.png", result.AvatarURL)
 	assert.Equal(t, []string{"request-app", "request-agent"}, result.ProviderRequestIDs)
 	assert.Regexp(t, `^sha256:[0-9a-f]{64}$`, result.SanitizedResponseHash)
 	assert.Equal(t, []string{"DescribeApp", "DescribeAgentDetail"}, actions)
+}
+
+func TestTencentVerifierAcceptsAllPublishedApplicationModesWithoutClawAgentProbe(t *testing.T) {
+	for mode := 1; mode <= 4; mode++ {
+		t.Run(string(rune('0'+mode)), func(t *testing.T) {
+			actions := []string{}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				actions = append(actions, r.Header.Get("X-TC-Action"))
+				_, _ = w.Write([]byte(`{"Response":{"App":{"Metadata":{"AppId":"app-1","AppMode":` + string(rune('0'+mode)) + `,"SpaceId":"space-1"},"SecretInfo":{"AppKey":"app-key"},"Status":{"Status":2}},"RequestId":"request-app"}}`))
+			}))
+			defer server.Close()
+			verifier, err := newTencentVerifier(server.URL, time.Second, time.Now)
+			require.NoError(t, err)
+			target := validTarget()
+			target.TemplateAgentID = ""
+			result, err := verifier.Verify(context.Background(), target)
+			require.NoError(t, err)
+			assert.Equal(t, "verified", result.Result)
+			assert.Equal(t, "not_required", result.TemplateAgentStatus)
+			assert.Equal(t, []string{"DescribeApp"}, actions)
+		})
+	}
+}
+
+func TestTencentVerifierRejectsDynamicClawWithoutTemplateAgent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"Response":{"App":{"Metadata":{"AppId":"app-1","AppMode":4,"SpaceId":"space-1"},"Config":{"Mode":{"ClawAgentConfig":{"CustomConfig":{"Enabled":true}}}},"SecretInfo":{"AppKey":"app-key"},"Status":{"Status":2}},"RequestId":"request-app"}}`))
+	}))
+	defer server.Close()
+	verifier, err := newTencentVerifier(server.URL, time.Second, time.Now)
+	require.NoError(t, err)
+	target := validTarget()
+	target.TemplateAgentID = ""
+	result, err := verifier.Verify(context.Background(), target)
+	require.NoError(t, err)
+	assert.Equal(t, "invalid", result.Result)
+	assert.Equal(t, "template_agent_mismatch", result.ErrorCode)
 }
 
 func TestTencentVerifierFailsClosedOnResourceMismatch(t *testing.T) {

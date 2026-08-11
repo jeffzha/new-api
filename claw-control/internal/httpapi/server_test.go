@@ -43,6 +43,18 @@ func (acceptingVerifier) Verify(_ context.Context, _ int64, _ string) error     
 func (acceptingVerifier) VerifyFresh(_ context.Context, _ int64, _ string) error { return nil }
 func (acceptingVerifier) VerifyAdmin(_ context.Context, _ int64, _ string) error { return nil }
 
+func TestAgentStoreStatusIsPublicAndReturnsOnlyFeatureState(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		server := httpapi.New(httpapi.Services{}, "", httpapi.InternalAuth{}, httpapi.PublicConfig{AgentStoreEnabled: enabled})
+		request := httptest.NewRequest(http.MethodGet, "/api/workbench/agent-store/status", nil)
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code)
+		assert.JSONEq(t, fmt.Sprintf(`{"success":true,"data":{"enabled":%t}}`, enabled), response.Body.String())
+		assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	}
+}
+
 func TestReadyFailsClosedOnProviderSecretIntegrity(t *testing.T) {
 	db, err := testutil.NewDatabase()
 	require.NoError(t, err)

@@ -67,6 +67,7 @@ ALLOWED_KEYS = frozenset(
         "CLAW_REDIS_EVENT_CHANNEL",
         "CLAW_SSO_TICKET_TTL",
         "CLAW_TENCENT_BILLING_IMPORT_ENABLED",
+        "WORKBENCH_AGENT_STORE_ENABLED",
         "CLAW_TENCENT_BILLING_IMPORT_INTERVAL",
         "CLAW_TENCENT_BILLING_LEASE_DURATION",
         "CLAW_TENCENT_BILLING_MAX_ATTEMPTS",
@@ -236,6 +237,8 @@ def parse_dotenv_text(text: str) -> dict[str, str]:
 
 
 def validate_deployment_values(values: dict[str, str]) -> None:
+    if values.get("WORKBENCH_AGENT_STORE_ENABLED", "false").lower() not in {"true", "false"}:
+        raise DotenvError("WORKBENCH_AGENT_STORE_ENABLED must be true or false")
     canonical = values.get("WORKBENCH_CANONICAL_ORIGIN")
     if canonical is not None:
         try:

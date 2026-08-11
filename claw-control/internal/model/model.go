@@ -115,6 +115,24 @@ const (
 	ControlSessionStateSelectionPending = "selection_pending"
 	ControlSessionStateSelected         = "selected"
 
+	AgentCatalogStatusDraft       = "draft"
+	AgentCatalogStatusVerifying   = "verifying"
+	AgentCatalogStatusRejected    = "rejected"
+	AgentCatalogStatusVerified    = "verified"
+	AgentCatalogStatusPublished   = "published"
+	AgentCatalogStatusUnpublished = "unpublished"
+	AgentCatalogStatusDisabled    = "disabled"
+	AgentCatalogStatusArchived    = "archived"
+
+	AgentDeploymentStatusDraft     = "draft"
+	AgentDeploymentStatusVerified  = "verified"
+	AgentDeploymentStatusActive    = "active"
+	AgentDeploymentStatusSuspended = "suspended"
+	AgentDeploymentStatusDisabled  = "disabled"
+
+	AgentEntitlementStatusActive   = "active"
+	AgentEntitlementStatusDisabled = "disabled"
+
 	ProviderChinaTencentCloud = "china_tencent_cloud"
 	ProviderChinaTencentADP   = "china_tencent_adp"
 )
@@ -320,6 +338,7 @@ type AppVerification struct {
 	AppMode                int       `json:"app_mode" gorm:"not null"`
 	ReleaseStatus          string    `json:"release_status" gorm:"type:varchar(48);not null"`
 	TemplateAgentStatus    string    `json:"template_agent_status" gorm:"type:varchar(48);not null"`
+	DynamicAgentConfig     bool      `json:"dynamic_agent_config"`
 	ProviderRequestIDsJSON string    `json:"provider_request_ids_json" gorm:"type:text;not null"`
 	SanitizedResponseHash  string    `json:"sanitized_response_hash" gorm:"type:varchar(128);not null"`
 	ErrorCode              string    `json:"error_code,omitempty" gorm:"type:varchar(80)"`
@@ -345,6 +364,9 @@ type AppMigrationJob struct {
 	TargetConfigVersion       int64      `json:"target_config_version" gorm:"not null"`
 	TargetCredentialProfileID uint64     `json:"target_credential_profile_id" gorm:"index;not null"`
 	TargetConfigFingerprint   string     `json:"target_config_fingerprint" gorm:"type:varchar(80);not null"`
+	TargetProviderAppMode     int        `json:"target_provider_app_mode"`
+	TargetRuntimeProfile      string     `json:"target_runtime_profile" gorm:"type:varchar(48)"`
+	TargetExecutionEnabled    bool       `json:"target_execution_enabled"`
 	MemberSetFingerprint      string     `json:"member_set_fingerprint" gorm:"type:varchar(80);not null"`
 	ExpectedMembers           int        `json:"expected_members" gorm:"not null"`
 	SucceededMembers          int        `json:"succeeded_members" gorm:"not null"`
@@ -782,6 +804,7 @@ func (EntryTicket) TableName() string { return "claw_entry_tickets" }
 type ControlSession struct {
 	ID                 uint64     `json:"id" gorm:"primaryKey"`
 	TokenHash          string     `json:"-" gorm:"type:varchar(128);uniqueIndex;not null"`
+	CSRFTokenHash      string     `json:"-" gorm:"type:varchar(128)"`
 	SelectionState     string     `json:"selection_state" gorm:"type:varchar(32);index"`
 	IdentityBindingID  uint64     `json:"identity_binding_id" gorm:"index;not null"`
 	CustomerID         uint64     `json:"customer_id" gorm:"index;not null"`
@@ -807,6 +830,114 @@ func (session *ControlSession) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
+// AgentCatalogItem is the stable product identity. Provider configuration and
+// credentials live on the customer-specific CustomerApp, never on this row.
+type AgentCatalogItem struct {
+	ID               string     `json:"item_id" gorm:"type:varchar(64);primaryKey"`
+	Slug             string     `json:"slug" gorm:"type:varchar(96);uniqueIndex;not null"`
+	Status           string     `json:"status" gorm:"type:varchar(24);index;not null"`
+	CurrentVersionID *string    `json:"current_version_id,omitempty" gorm:"type:varchar(64);index"`
+	DraftVersionID   *string    `json:"draft_version_id,omitempty" gorm:"type:varchar(64);index"`
+	SortOrder        int        `json:"sort_order" gorm:"index;not null"`
+	Featured         bool       `json:"featured" gorm:"index;not null"`
+	RowVersion       int64      `json:"row_version" gorm:"not null"`
+	CreatedBy        string     `json:"created_by" gorm:"type:varchar(128);not null"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	ArchivedAt       *time.Time `json:"archived_at,omitempty" gorm:"index"`
+}
+
+func (AgentCatalogItem) TableName() string { return "claw_agent_catalog_items" }
+
+// AgentCatalogVersion is immutable after creation. Publishing only changes
+// the parent item's CurrentVersionID pointer.
+type AgentCatalogVersion struct {
+	ID             string    `json:"version_id" gorm:"type:varchar(64);primaryKey"`
+	ItemID         string    `json:"item_id" gorm:"type:varchar(64);uniqueIndex:idx_claw_catalog_generation,priority:1;index;not null"`
+	Generation     int64     `json:"generation" gorm:"uniqueIndex:idx_claw_catalog_generation,priority:2;not null"`
+	DisplayName    string    `json:"display_name" gorm:"type:varchar(160);not null"`
+	Summary        string    `json:"summary" gorm:"type:varchar(500);not null"`
+	Description    string    `json:"description" gorm:"type:text;not null"`
+	AvatarURL      string    `json:"avatar_url,omitempty" gorm:"type:varchar(1024)"`
+	Category       string    `json:"category" gorm:"type:varchar(96);index;not null"`
+	TagsJSON       string    `json:"-" gorm:"type:text;not null"`
+	MetadataSHA256 string    `json:"metadata_sha256" gorm:"type:varchar(71);not null"`
+	CreatedBy      string    `json:"created_by" gorm:"type:varchar(128);not null"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+func (AgentCatalogVersion) TableName() string { return "claw_agent_catalog_versions" }
+
+type CustomerAgentDeployment struct {
+	ID                      string     `json:"deployment_id" gorm:"type:varchar(64);primaryKey"`
+	ItemID                  string     `json:"item_id" gorm:"type:varchar(64);uniqueIndex:idx_claw_agent_deployment_customer,priority:1;index;not null"`
+	CustomerID              uint64     `json:"customer_id" gorm:"uniqueIndex:idx_claw_agent_deployment_customer,priority:2;index;not null"`
+	CustomerAppID           uint64     `json:"customer_app_id" gorm:"uniqueIndex:idx_claw_agent_deployment_app;index;not null"`
+	VerifiedConfigVersionID *uint64    `json:"verified_config_version_id,omitempty" gorm:"index"`
+	VerifiedConfigVersion   int64      `json:"verified_config_version" gorm:"not null"`
+	VerifiedAppAuthEpoch    int64      `json:"verified_app_auth_epoch" gorm:"not null"`
+	VerifiedCredentialHash  string     `json:"-" gorm:"type:varchar(128)"`
+	ProviderAppMode         int        `json:"provider_app_mode" gorm:"index;not null"`
+	RuntimeProfile          string     `json:"runtime_profile" gorm:"type:varchar(48);index;not null"`
+	DynamicAgentConfig      bool       `json:"dynamic_agent_config" gorm:"not null"`
+	ExecutionEnabled        bool       `json:"execution_enabled" gorm:"index;not null"`
+	CapabilitiesJSON        string     `json:"-" gorm:"type:text;not null"`
+	ProviderRequestIDsJSON  string     `json:"-" gorm:"type:text;not null"`
+	SanitizedResponseHash   string     `json:"sanitized_response_hash,omitempty" gorm:"type:varchar(71)"`
+	ProviderDisplayName     string     `json:"provider_display_name,omitempty" gorm:"type:varchar(160)"`
+	ProviderDescription     string     `json:"provider_description,omitempty" gorm:"type:text"`
+	ProviderAvatarURL       string     `json:"provider_avatar_url,omitempty" gorm:"type:varchar(1024)"`
+	Status                  string     `json:"status" gorm:"type:varchar(24);index;not null"`
+	RowVersion              int64      `json:"row_version" gorm:"not null"`
+	VerifiedAt              *time.Time `json:"verified_at,omitempty" gorm:"index"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
+}
+
+func (CustomerAgentDeployment) TableName() string { return "claw_customer_agent_deployments" }
+
+type AgentCatalogEntitlement struct {
+	ID           string     `json:"entitlement_id" gorm:"type:varchar(64);primaryKey"`
+	DeploymentID string     `json:"deployment_id" gorm:"type:varchar(64);uniqueIndex:idx_claw_agent_entitlement_subject,priority:1;index;not null"`
+	SubjectType  string     `json:"subject_type" gorm:"type:varchar(24);uniqueIndex:idx_claw_agent_entitlement_subject,priority:2;index;not null"`
+	SubjectRef   string     `json:"subject_ref" gorm:"type:varchar(191);uniqueIndex:idx_claw_agent_entitlement_subject,priority:3;index;not null"`
+	Status       string     `json:"status" gorm:"type:varchar(24);index;not null"`
+	ValidFrom    time.Time  `json:"valid_from" gorm:"index;not null"`
+	ValidUntil   *time.Time `json:"valid_until,omitempty" gorm:"index"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+func (AgentCatalogEntitlement) TableName() string { return "claw_agent_catalog_entitlements" }
+
+type AgentLaunchAudit struct {
+	ID           string    `json:"launch_audit_id" gorm:"type:varchar(64);primaryKey"`
+	DeploymentID string    `json:"deployment_id" gorm:"type:varchar(64);index;not null"`
+	CustomerID   uint64    `json:"customer_id" gorm:"index;not null"`
+	NewAPIUserID int64     `json:"new_api_user_id" gorm:"index;not null"`
+	Outcome      string    `json:"outcome" gorm:"type:varchar(24);index;not null"`
+	ReasonCode   string    `json:"reason_code,omitempty" gorm:"type:varchar(80);index"`
+	RequestID    string    `json:"request_id,omitempty" gorm:"type:varchar(128);index"`
+	CreatedAt    time.Time `json:"created_at" gorm:"index"`
+}
+
+func (AgentLaunchAudit) TableName() string { return "claw_agent_launch_audits" }
+
+type AgentCatalogCursor struct {
+	ID               uint64    `json:"-" gorm:"primaryKey"`
+	TokenHash        string    `json:"-" gorm:"type:char(64);uniqueIndex;not null"`
+	ControlSessionID uint64    `json:"-" gorm:"index;not null"`
+	CustomerID       uint64    `json:"-" gorm:"index;not null"`
+	NewAPIUserID     int64     `json:"-" gorm:"index;not null"`
+	QueryHash        string    `json:"-" gorm:"type:char(64);not null"`
+	LastSortOrder    int       `json:"-" gorm:"not null"`
+	LastItemID       string    `json:"-" gorm:"type:varchar(64);not null"`
+	ExpiresAt        time.Time `json:"-" gorm:"index;not null"`
+	CreatedAt        time.Time `json:"-"`
+}
+
+func (AgentCatalogCursor) TableName() string { return "claw_agent_catalog_cursors" }
+
 type ContextSelectionNonce struct {
 	ID                 uint64     `json:"id" gorm:"primaryKey"`
 	TokenHash          string     `json:"-" gorm:"type:varchar(128);uniqueIndex;not null"`
@@ -821,6 +952,12 @@ type ContextSelectionNonce struct {
 	IdentityAuthEpoch  int64      `json:"identity_auth_epoch" gorm:"not null"`
 	MemberAuthEpoch    int64      `json:"member_auth_epoch" gorm:"not null"`
 	AppAuthEpoch       int64      `json:"app_auth_epoch" gorm:"not null"`
+	Purpose            string     `json:"-" gorm:"type:varchar(32);index"`
+	AgentCatalogItemID string     `json:"-" gorm:"type:varchar(64);index"`
+	AgentDeploymentID  string     `json:"-" gorm:"type:varchar(64);index"`
+	CatalogVersionID   string     `json:"-" gorm:"type:varchar(64);index"`
+	CatalogRowVersion  int64      `json:"-"`
+	DeploymentVersion  int64      `json:"-"`
 	ExpiresAt          time.Time  `json:"expires_at" gorm:"index;not null"`
 	ConsumedAt         *time.Time `json:"consumed_at,omitempty" gorm:"index"`
 	CreatedAt          time.Time  `json:"created_at"`

@@ -1,5 +1,62 @@
 # claw-control
 
+## Agent Store control plane
+
+`WORKBENCH_AGENT_STORE_ENABLED=false` is the rollback-safe default. When it is
+enabled, workbench entry consumes the existing new-api session ticket, creates
+the revocable `claw_control_session` plus its hashed CSRF binding, and redirects
+to `/agent-store` without minting an ADP SSO ticket. An SSO ticket is created
+only after an authorized catalog item is launched.
+
+The store models a logical product separately from its customer deployment:
+
+- `AgentCatalogItem` and immutable `AgentCatalogVersion` contain presentation
+  metadata only;
+- `CustomerAgentDeployment` binds the item to an existing customer-owned
+  `CustomerApp` and its exact verified config/auth/fingerprint snapshot;
+- `AgentCatalogEntitlement` grants a paid customer, user, role, or plan access;
+- `AgentLaunchAudit` records authorization and terminal launch outcomes.
+
+No table or response stores or returns AppKey, SecretId, SecretKey, credential
+references, provider AppId/SpaceId, template AgentId, or raw provider payloads.
+Verification resolves the existing server-side references and trusts only the
+authenticated `DescribeApp` readback. AppMode 1, 2, 3, and 4 are accepted;
+`DescribeAgentDetail` is required only for AppMode 4 when
+`AppConfig.Mode.ClawAgentConfig.CustomConfig.Enabled` is true. Runtime profiles
+other than the production-accepted `claw_dynamic_v2` remain execution-disabled
+until their real Tencent E2E gate is complete.
+
+Administrator routes are under
+`/api/admin/workbench/agent-store/items`; every mutation requires the existing
+super-admin session, CSRF header, authentication no older than 15 minutes,
+`expected_version`, and an audit row. User routes are:
+
+```text
+GET  /api/workbench/agent-store/status
+GET  /api/workbench/agent-store
+GET  /api/workbench/agent-store/{slug}
+POST /api/workbench/agent-store/{slug}/launch
+```
+
+`status` is intentionally unauthenticated and always returns only
+`{"success":true,"data":{"enabled":<bool>}}`; catalog routes still return 404
+when the feature flag is disabled.
+
+The launch body must be empty. The service resolves customer, Application,
+AppMode, runtime profile, config and entitlement from the bound control session,
+creates a 60-second single-use selection nonce bound to the item, deployment,
+published catalog version and their row versions, and immediately consumes it
+through the established selection/SSO chain. Consumption locks and revalidates
+publication, deployment, paid-plan and entitlement state before signing SSO, so
+an intervening unpublish fails closed. Cross-customer and unauthorized lookups
+deliberately return 404.
+
+For a store deployment, the signed app-context contract adds the following
+all-or-none fields: `provider_app_mode`, `runtime_profile`, and
+`execution_enabled`. A legacy customer App without a deployment omits all three
+for backward compatibility. Dynamic Claw requires a non-empty server-owned
+template Agent; the other four runtime profiles do not.
+
 `claw-control` is the standalone control-plane service for the first phase of the ADP Claw workbench. It owns its own Go module and database and does not import or connect to the new-api database.
 
 Implemented in this phase:
@@ -89,8 +146,11 @@ its first config must use the primary App's exact current credential. A later
 credential change uses the same `app_credential_change` flow. Migration targets
 remain governed by the separate AppId migration approval before cutover.
 Target verification atomically creates a generation-versioned rebuild job for
-all active identity bindings. ADP workers use signed internal `claim` and
-`report` endpoints to copy and read back target-App Agents. Approval request and
+all active identity bindings. Signed internal `claim` and `report` tuples carry
+the verified `provider_app_mode`, `runtime_profile`, and `execution_enabled`
+snapshot. ADP workers copy and read back per-user Agents only for
+`claw_dynamic_v2`; other profiles verify target App/profile readiness and report
+an empty AgentId. Approval request and
 execution both reject a stale App/config/credential/member-set fingerprint or
 any member without a successful readback. Replanning preserves the superseded
 generation; safe retry uses optimistic job/member versions. A provider-unknown

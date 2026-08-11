@@ -97,6 +97,16 @@ def validate(root: Path) -> None:
         "request_header @newApiWorkbenchTicket Cookie \"claw_",
         "control-cookie removal before new-api ticket endpoints",
     )
+    _require(
+        public,
+        "/api/workbench/agent-store/status /api/workbench/agent-store /api/workbench/agent-store/*",
+        "exact public Agent Store control routes",
+    )
+    _require(
+        public,
+        "path /api/admin/workbench/*",
+        "Agent Store administrator route envelope",
+    )
     _require(switch, "https://workbench-control.internal:8443", "internal control TLS")
     _require(
         switch,

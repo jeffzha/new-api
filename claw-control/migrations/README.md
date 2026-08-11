@@ -20,6 +20,8 @@ The executable migration registry lives in `internal/migration`. The current ver
 - `0016_customer_membership_scope`: backfills legacy active `primary`/empty membership slots to `customer:<customer_id>` (disabled rows to `historical:<id>`), rejects duplicate `(new_api_user_id,membership_slot)` assignments, and creates the portable composite unique index required for multi-customer membership isolation.
 - `0017_usage_audit_revisions`: adds immutable links from a locked cost audit to its atomically applied replacement, preserving the original evidence while excluding the superseded row from effective margin totals.
 - `0018_app_migration_readiness`: adds generation-versioned AppId migration jobs and per-active-binding Agent rebuild/readback readiness with hashed worker leases and optimistic recovery versions.
+- `0021_agent_store`: adds immutable Agent/Application catalog versions, customer deployments, entitlements, launch audits, and control-session CSRF binding. All provider secrets remain referenced by existing customer App configuration.
+- `0022_agent_store_runtime_contract`: upgrades already-migrated context-selection nonces with purpose-bound Agent Store item/deployment/version snapshots and App migration jobs with the verified provider mode/runtime/execution tuple.
 
 Versions use GORM migration primitives plus bounded data backfills so the same schema can be created on SQLite, MySQL 5.7.8+, and PostgreSQL 9.6+ without dialect-specific SQL.
 

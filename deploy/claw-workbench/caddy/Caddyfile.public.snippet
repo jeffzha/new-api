@@ -21,7 +21,7 @@ request_header -X-Workbench-Auth-Signature
 # claw-control currently scopes its browser cookie to Path=/; strip every
 # claw_* cookie before any non-control request can fall through to new-api.
 @outsideWorkbenchControl {
-	not path /api/workbench/entry /api/workbench/config /api/workbench/plan /api/workbench/selections /api/workbench/selections/choose /api/admin/workbench/* /workbench /workbench/*
+	not path /api/workbench/entry /api/workbench/config /api/workbench/plan /api/workbench/selections /api/workbench/selections/choose /api/workbench/agent-store/status /api/workbench/agent-store /api/workbench/agent-store/* /api/admin/workbench/* /workbench /workbench/*
 }
 request_header @outsideWorkbenchControl Cookie "claw_[^=;\\s]+=[^;]*(;\\s*)?" ""
 request_header @outsideWorkbenchControl Cookie "^;\\s*" ""
@@ -62,7 +62,7 @@ handle @workbenchBootstrapAdmin {
 	reverse_proxy claw-control-active:8080
 }
 
-@clawControlPublic path /api/workbench/entry /api/workbench/config /api/workbench/plan /api/workbench/selections /api/workbench/selections/choose
+@clawControlPublic path /api/workbench/entry /api/workbench/config /api/workbench/plan /api/workbench/selections /api/workbench/selections/choose /api/workbench/agent-store/status /api/workbench/agent-store /api/workbench/agent-store/*
 handle @clawControlPublic {
 	reverse_proxy claw-control-active:8080
 }

@@ -10,6 +10,7 @@ const CredentialsPage = lazy(() => import('./pages/CredentialsPage'))
 const UsagePage = lazy(() => import('./pages/UsagePage'))
 const AuditsPage = lazy(() => import('./pages/AuditsPage'))
 const GovernancePage = lazy(() => import('./pages/GovernancePage'))
+const AgentStorePage = lazy(() => import('./pages/AgentStorePage'))
 
 type Route = { section: string; customerId?: number }
 
@@ -31,6 +32,7 @@ export function App() {
     ['usage', t('nav.usage')],
     ['audits', t('nav.audits')],
     ['governance', t('nav.governance')],
+    ['agent-store', t('nav.agentStore')],
   ] as const
 
   useEffect(() => {
@@ -48,6 +50,7 @@ export function App() {
     case 'usage': page = <UsagePage />; break
     case 'audits': page = <AuditsPage />; break
     case 'governance': page = <GovernancePage />; break
+    case 'agent-store': page = <AgentStorePage />; break
     default: page = <DashboardPage />
   }
 

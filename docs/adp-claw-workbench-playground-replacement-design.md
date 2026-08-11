@@ -1,9 +1,9 @@
-# ADP Claw 智能工作台替代 Playground：固定月度套餐实施设计
+# ADP Agent Store 与智能工作台替代 Playground：固定月度套餐实施设计
 
 > 文档状态：可实施设计基线
-> 适用项目：new-api（当前仓库）与独立维护的 `TencentCloudADP/adp-chat-client` fork
-> 商业模式：每客户独立 ADP App、固定月度套餐、人工核查腾讯用量
-> 最后复核：2026-08-10
+> 适用项目：new-api（当前仓库）与独立维护的 [`jeffzha/adp-chat-client`](https://github.com/jeffzha/adp-chat-client) fork
+> 商业模式：每客户独立授权的 ADP Application、固定月度套餐、人工核查腾讯用量
+> 最后复核：2026-08-11
 > 架构边界：项目负责人已确认“独立扩展域 + new-api 最薄桥接”为强制约束；不得在实施中自行放宽
 
 ## 1. 文档用途与最终决策
@@ -13,18 +13,18 @@
 最终决策如下：
 
 1. 产品侧继续统一呈现客户、成员、套餐、权限、入口、审计和启停能力；其中 new-api 核心只承担身份入口，其他控制面能力由独立 `claw-control` 扩展服务承载，不把完整 Claw 业务并入 new-api 上游核心进程。
-2. 使用经过安全加固的 `adp-chat-client` fork 替换新版前端 `/playground`；旧 Playground 保留在 `/playground/legacy` 作为回退。
-3. 每个客户配置一个独立腾讯 ADP Claw App；客户内部每个 new-api 用户复制一个独立 Kind=1 User Agent。
+2. 新版前端以 `/agent-store` 作为 ADP Application 商店入口，`/playground` 保持兼容跳转；用户启动应用后进入经过安全加固的 `adp-chat-client` fork，旧 Playground 永久保留在 `/playground/legacy` 作为回退。
+3. 商店中的“Agent”是产品展示名，底层一条商品绑定一个腾讯 ADP Application。允许 `AppMode=1/2/3/4`；只有 `AppMode=4` 且应用开启用户动态配置时，才为客户内部每个 new-api 用户复制独立 Kind=1 User Agent。
 4. new-api `users.id` 是唯一登录身份真值；工作台用户是按 `(customer_id,new_api_user_id)` 创建的不可独立登录影子账号。
 5. 客户、App、影子账号、Agent、Conversation、Workspace 和文件形成不可跨越的所有权链。
 6. 客户按固定月度套餐收费，不进行逐 Turn 预授权、Token 计价、工具计价或终态差额结算。
 7. 首版由超级管理员确认付款并开通套餐；P1 只有在存在稳定固定扣款扩展接口或最小桥接 ADR 获批时，才可每月从指定 new-api 付款用户余额一次性扣除固定套餐费，但绝不按 Turn 扣费。
 8. 腾讯 ADP/费用中心用量先由管理员人工查询和登记，只用于内部成本、毛利、异常和套餐升级分析，不反向修改已出具的客户固定月费账单。
-9. 超级管理员配置客户的 SpaceId、AppId、AppKey、模板 Agent、凭据配置、套餐、能力和限制，并能启用、暂停、禁用和归档客户应用。
+9. 超级管理员配置客户 Application 的 Region、SpaceId、AppId、AppKey、条件化模板 Agent、凭据配置、套餐、能力和限制，并管理 Agent Store 草稿、验证、上架、下架、停用和归档。
 10. 即使不逐请求计费，也必须限制并发、运行时间、推理轮数、输出 Token、工具次数、文件和高风险能力，防止上游成本失控。
 11. 尽量通过新增独立服务和独立模块实现；不修改现有 relay/channel 和普通 Chat 计费链路。
 12. new-api 核心只新增“工作台入口 + 一次性身份票据/状态校验”最小桥接；客户 App、固定套餐、人工成本核查、Claw 管理 API 和后台任务放入独立 `claw-control` 服务及其数据库。
-13. 首版验收时，对 **new-api upstream 已存在源码文件** 的修改不得超过 10 个，直接修改总量原则上不得超过 100 行，且 new-api 侧至少 90% 的 Claw 功能代码必须是新增文件或独立服务代码；ADP fork 的必要加固单独按第 18.5 节维护补丁清单，不纳入这两个 new-api 阈值。任一侧超出各自基线都必须先提交架构决策记录并由项目负责人明确批准。
+13. 首版验收时，对 **new-api upstream 已存在手写业务源码文件** 的修改不得超过 10 个，直接修改总量原则上不得超过 100 行，且 new-api 侧至少 90% 的 Claw 功能代码必须是新增文件或独立服务代码；由构建器生成的 `routeTree.gen.ts` 与由 i18n 同步脚本生成的 locale 资源单独列入重放审计，不计入手写源码文件数，但仍必须执行 upstream 合并回归。ADP fork 的必要加固单独按第 18.5 节维护补丁清单，不纳入这两个 new-api 阈值。任一侧超出各自基线都必须先提交架构决策记录并由项目负责人明确批准。
 14. 必须保留功能开关和 `/playground/legacy` 回退路径；关闭 Claw 功能后，new-api 原有登录、API 转发、渠道、计费、日志和旧 Playground 均应恢复为与未接入前一致的行为。
 15. **可持续同步 upstream 是发布级约束，而不是事后优化。** 每次同步应先在不携带 Claw 业务改动的情况下完成 new-api upstream 合并，再重放最薄身份/入口桥接并执行边界门禁；预期冲突只允许集中在路由聚合、`/playground` 入口和生成式前端路由。`claw-control` 与 ADP fork 必须能够独立演进，不能为了减少部署组件而把其业务状态、后台任务或供应商调用迁回 new-api。若冲突扩散到用户生命周期、relay、渠道、模型映射、计费、quota 或使用日志语义，发布必须停止并先完成 ADR、替代方案及回退评审。
 
@@ -49,25 +49,28 @@
 flowchart TD
   P["new-api platform"] --> C1["Customer A"]
   P --> C2["Customer B"]
-  C1 --> A1["Dedicated ADP App A<br/>SpaceId + AppId + AppKey"]
-  C2 --> A2["Dedicated ADP App B<br/>SpaceId + AppId + AppKey"]
-  A1 --> U11["User 1 / Kind=1 Agent"]
-  A1 --> U12["User 2 / Kind=1 Agent"]
-  A2 --> U21["User 3 / Kind=1 Agent"]
-  U11 --> V11["Conversations + Workspace + Files"]
-  U12 --> V12["Conversations + Workspace + Files"]
-  U21 --> V21["Conversations + Workspace + Files"]
+  C1 --> A1["Authorized ADP Application A<br/>AppMode 1/2/3/4"]
+  C1 --> A2["Authorized ADP Application B<br/>AppMode 1/2/3/4"]
+  C2 --> A3["Authorized ADP Application C<br/>AppMode 1/2/3/4"]
+  A1 --> U11["User 1 runtime<br/>optional Kind=1 Agent"]
+  A1 --> U12["User 2 runtime<br/>optional Kind=1 Agent"]
+  A2 --> U13["User 1 second Application runtime"]
+  A3 --> U21["User 3 runtime<br/>optional Kind=1 Agent"]
+  U11 --> V11["Conversations + mode capabilities"]
+  U12 --> V12["Conversations + mode capabilities"]
+  U13 --> V13["Conversations + mode capabilities"]
+  U21 --> V21["Conversations + mode capabilities"]
 ```
 
-一个客户可以包含多个 new-api 用户；同一 new-api 用户可以同时属于多个客户，但同一 `(customer_id,new_api_user_id)` 只能有一条成员关系。每个客户分别产生 IdentityBinding、Canonical Subject 和 ADP shadow account，任何 ADP Account 都不得跨客户复用。一个客户首版只有一个 `slot=primary` 的活动 App 配置；未来多 App 通过新增 slot 扩展，不能复用价格分组表达。多客户或多 App 选择只能由 claw-control 签发的一次性 selection token 完成，浏览器提交的 customer/App 标识不具有可信作用域语义。
+一个客户可以包含多个 new-api 用户和多个已授权 ADP Application；同一 new-api 用户可以同时属于多个客户，但同一 `(customer_id,new_api_user_id)` 只能有一条成员关系。每个客户分别产生 IdentityBinding、Canonical Subject 和 ADP shadow account，任何 ADP Account 都不得跨客户复用。现有 `slot=primary` 保留为兼容默认 App，不再限制客户只能拥有一个 App；Agent Store deployment/entitlement 决定可见 Application。多客户或多 App 选择只能由 claw-control 签发的一次性 selection/launch token 完成，浏览器提交的 customer/App 标识不具有可信作用域语义。
 
 ### 1.3 十二个实施模块
 
 | 模块 | 目标 | 主要交付物 |
 |---|---|---|
 | 1. 客户与成员 | 建立真实租户边界 | customer/member 表、角色与成员解析 |
-| 2. 客户 ADP App | 每客户独立 App、版本和生命周期 | App 配置、验证、启停、密钥轮换 |
-| 3. 工作台前端 | 替换 Playground 并显示套餐/状态 | 同域顶层路由外壳、桌面/移动线框、legacy 回退 |
+| 2. 客户 ADP App | 每客户独立授权的 Application、版本和生命周期 | App 配置、AppMode 验证、启停、密钥轮换 |
+| 3. Agent Store 与工作台前端 | 用 Application 商店替换 Playground，并按模式进入运行界面 | 商店目录、同域顶层路由、桌面/移动线框、legacy 回退 |
 | 4. 用户映射、SSO 与持续鉴权 | new-api User 是唯一身份源，ADP 只建影子账号 | identity binding、一次性 ticket、forward-auth、撤销 |
 | 5. 每用户 Agent | App 内用户隔离 | ensure-agent、唯一映射、配置策略 |
 | 6. 会话与任务 | Conversation/SSE/历史可靠 | 后台 Turn task、断线重连、终态 |
@@ -78,6 +81,306 @@ flowchart TD
 | 11. 安全代理 | 防 IDOR、任意 Action 和秘密泄漏 | Action policy、字段覆盖、响应裁剪 |
 | 12. 部署与可观测性 | 同域、蓝绿、告警和恢复 | Caddy、Compose、指标、回滚 |
 
+### 1.4 Agent Store 扩展目标（2026-08-11 最终决策）
+
+本节是对全文“一个客户只有一个 Claw App、`/playground` 直接进入工作台”假设的正式扩展；与后文旧描述冲突时，以本节为准。产品界面中的“Agent”对应腾讯 ADP 的 **Application**，不是可由浏览器选择的任意 AgentId。目录层允许腾讯公开的四种 Application 模式：
+
+| AppMode | 产品模式 | 可上架 | 用户级 Agent | 首发运行能力 |
+|---:|---|---:|---|---|
+| 1 | 标准模式 | 是 | 不复制；使用发布态默认配置 | 对话、历史、引用及经模式验收的输入类型 |
+| 2 | Agent / Multi-Agent 模式 | 是 | 不复制；使用发布态入口 Agent | 对话、历史、过程事件及经模式验收的输入类型 |
+| 3 | 单工作流模式 | 是 | 不复制；使用发布态工作流 | 对话、历史、工作流事件；同步/异步能力分别验收 |
+| 4 | Claw 模式 | 是 | 仅在动态配置开启时 `CopyAgentFromApp(Kind=1)` | 现有 Claw 对话；Workspace、文件、Sandbox、PTY 仍受各自门禁 |
+
+`AppMode`、SpaceId、运行状态和发布状态必须来自 `DescribeApp` 的受信任读回，不能由管理员请求或浏览器字段决定；腾讯返回的应用名称、描述和头像作为 provider snapshot 在管理端展示与审计，商店卡片允许超级管理员另行维护版本化的展示名称、简介、说明和头像，但不得反向覆盖腾讯 Application。腾讯新版 `/adp/v2/chat` 使用已发布 Application 的 AppKey、ConversationId、VisitorId 和 Contents；AgentId 是可选字段。`CreateConversation.AgentId` 仅在 Claw 模式开启“允许在对话中动态修改配置”时使用。因此，删除 `AppMode=4` 校验而继续复用 Claw provisioning 是错误实现；必须按读回的模式选择运行策略。
+
+官方合同基线：
+
+- [ADP Application/Agent 概念与 `/adp/v2/chat`](https://cloud.tencent.com/document/product/1759/133868)
+- [新版 HTTP SSE 合同](https://cloud.tencent.com/document/product/1759/129202)
+- [CreateConversation 与条件化 AgentId](https://cloud.tencent.com/document/api/1759/132523)
+- [AppMetadata/AppStatusInfo/AppMode](https://cloud.tencent.com/document/api/1759/132545)
+- [CopyAgentFromApp](https://cloud.tencent.com/document/product/1759/133460)
+
+#### 1.4.1 商品、客户部署与腾讯资源的关系
+
+目录使用“逻辑商品 + 客户部署”两层模型，不能把全局商品直接等同为一个跨客户共用 AppKey：
+
+```mermaid
+flowchart TD
+  Catalog["AgentCatalogItem<br/>名称、介绍、分类、排序"] --> V["AgentCatalogVersion<br/>不可变展示快照"]
+  Catalog --> D1["CustomerAgentDeployment A"]
+  Catalog --> D2["CustomerAgentDeployment B"]
+  D1 --> CA1["CustomerApp A<br/>ADP Application A"]
+  D2 --> CA2["CustomerApp B<br/>ADP Application B"]
+  CA1 --> R1["AppMode runtime profile"]
+  CA2 --> R2["AppMode runtime profile"]
+  R1 --> U1["Customer A users / isolated conversations"]
+  R2 --> U2["Customer B users / isolated conversations"]
+```
+
+- `AgentCatalogItem` 是商店商品身份，可面向一个或多个客户，但不保存 AppKey。
+- `CustomerAgentDeployment` 将商品绑定到一个客户已有的 `CustomerApp` 及其已验证 config version。
+- 同一商品需要跨客户销售时，每个客户仍配置自己的 ADP Application；不得因为商品相同而共享 CustomerApp、AppKey、shadow account、Conversation 或文件。
+- 首版允许商品仅有一个客户部署，未来增加客户只新增 deployment/entitlement，不复制目录元数据。
+- 浏览器只看到 opaque item id/slug、展示元数据、能力标签和启动状态；不得看到 customer_app_id、AppId、SpaceId、AppKey、AgentId、credential profile 或 provider RequestId。
+
+#### 1.4.2 组件责任与低冲突约束
+
+| 组件 | Agent Store 新职责 | 明确禁止 |
+|---|---|---|
+| new-api | 菜单文案、`/agent-store` 目录展示、`/playground` 兼容入口、现有 session-ticket；目录接口 404 时只执行 feature-off 兼容回退 | 新增目录业务表、读取 AppKey、决定 entitlement、修改 relay/计费/quota |
+| claw-control | 商品、版本、客户部署、entitlement、验证、上架状态、启动票据、审计 | 保存明文 AppKey、创建 Conversation、执行 Turn |
+| ADP fork | launch 后的智能工作台、按 AppMode 选择 runtime、Conversation/Turn/历史及 Claw 用户 Agent | 决定客户/套餐真值、接受浏览器 AppId/AppMode/AgentId |
+| Tencent ADP | Application/发布态/Agent/Conversation/对话执行 | 决定平台商店可见性或客户套餐 |
+
+new-api upstream 既有文件仍受 `10 files / 100 lines / 90% 新增` 门禁；Agent Store 业务不得迁入 new-api model/controller。`claw-control` 和 ADP fork 通过现有版本化 HMAC 合同扩展最小 DTO，必须兼容当前版和前一版。
+
+#### 1.4.3 数据模型
+
+```mermaid
+classDiagram
+  class AgentCatalogItem {
+    +uuid id
+    +string slug
+    +string status
+    +uuid current_version_id
+    +int sort_order
+    +bool featured
+    +bigint version
+  }
+  class AgentCatalogVersion {
+    +uuid id
+    +uuid item_id
+    +bigint generation
+    +string display_name
+    +string summary
+    +string description
+    +string avatar_url
+    +string category
+    +json tags
+    +string metadata_sha256
+  }
+  class CustomerAgentDeployment {
+    +uuid id
+    +uuid item_id
+    +bigint customer_id
+    +bigint customer_app_id
+    +bigint verified_config_version
+    +int provider_app_mode
+    +string runtime_profile
+    +string status
+    +bigint version
+  }
+  class AgentCatalogEntitlement {
+    +uuid id
+    +uuid deployment_id
+    +string subject_type
+    +string subject_ref
+    +string status
+    +datetime valid_from
+    +datetime valid_until
+  }
+  class AgentLaunchAudit {
+    +uuid id
+    +uuid deployment_id
+    +bigint customer_id
+    +bigint new_api_user_id
+    +string outcome
+    +string reason_code
+    +string request_id
+  }
+  AgentCatalogItem "1" --> "many" AgentCatalogVersion
+  AgentCatalogItem "1" --> "many" CustomerAgentDeployment
+  CustomerAgentDeployment "many" --> "1" ClawCustomerApp
+  CustomerAgentDeployment "1" --> "many" AgentCatalogEntitlement
+  CustomerAgentDeployment "1" --> "many" AgentLaunchAudit
+```
+
+数据库字段继续使用跨 SQLite/MySQL/PostgreSQL 的普通类型；JSON 列按 claw-control 既有 TEXT+`jsonx` 合同保存。`slug` 全局唯一且发布后不可复用；删除采用归档，不物理复用历史 id。目录版本不可变，编辑已发布商品时创建新 draft version，发布时通过行锁和 expected version 原子切换 current version。
+
+#### 1.4.4 生命周期与语义
+
+商品展示生命周期和客户 Application 执行生命周期必须分离：
+
+```mermaid
+stateDiagram-v2
+  [*] --> draft
+  draft --> verifying
+  verifying --> rejected
+  rejected --> draft
+  verifying --> verified
+  verified --> published
+  published --> unpublished
+  unpublished --> published
+  draft --> archived
+  rejected --> archived
+  unpublished --> archived
+  published --> disabled
+  disabled --> verified: re-verify and explicit enable
+```
+
+- `unpublished`：从商店隐藏并禁止新启动；已经创建的会话按 entitlement 策略继续，默认只允许历史读取，不允许创建新 Turn。
+- `deployment suspended`：立即禁止新启动和新 Turn；provider 已接受的 Turn 继续隐藏 drain 到终态。
+- `disabled`：隐藏商品、撤销 deployment 和浏览器会话、阻止新 Turn；不删除 Conversation/历史。
+- `archived`：终态，只读保留目录版本、验证证据和审计；不得直接删除腾讯 Application。
+- CustomerApp 被暂停、禁用、迁移或 config/auth epoch 改变时，deployment 即使仍标为 published 也必须 fail-closed；目录展示可返回“暂不可用”，但不能签发启动票据。
+
+#### 1.4.5 管理员录入、验证与上架
+
+管理员创建商品时分为展示配置和客户部署配置：
+
+1. 展示配置：名称、短介绍、详细介绍、分类、标签、排序、推荐、可选头像覆盖。
+2. 客户部署：客户、现有 CustomerApp 或新 App draft、Region、SpaceId、AppId、AppKey Secret 引用、credential profile、套餐 capability/limits。
+3. 模板 AgentId 是条件字段：
+   - AppMode 4 且读回动态配置开启：必填并验证；
+   - AppMode 4 且不使用动态配置：可选；
+   - AppMode 1/2/3：不得作为启动所需字段。
+
+验证必须由 claw-control 使用服务端凭据执行，至少完成：
+
+1. `DescribeApp(Domain=2)` 读回 Metadata/Status/AppConfig/SecretInfo 所需字段；其中 provider 名称、说明和头像保存为只读验证快照，目录展示副本仍走独立版本和管理审计。
+2. 精确确认 AppId、SpaceId、Region、AppKey canonical fingerprint、运行状态和发布态。
+3. 接受且只接受 `AppMode in {1,2,3,4}`，保存 provider-derived mode；未知/null 值 fail-closed。
+4. AppMode 4 动态模式用 `DescribeAgentDetail` 验证模板主 Agent 归属、状态和配置；其他模式不执行 `CopyAgentFromApp` 探测。
+5. 根据 mode 和读回配置计算 `runtime_profile`、能力标签和受限功能，不接受管理员自行声明更多能力。
+6. 保存脱敏 RequestId、响应字段 hash、配置 fingerprint 和验证时间；不保存 provider 原始响应或 Secret。
+7. 只有验证证据仍绑定当前 CustomerApp config version、credential fingerprint 和 auth epoch 时才能发布。
+
+管理员不能直接提交 `verified/published`、AppMode、运行状态、RequestId 或响应 hash。Region/Space/App/Secret/模板 Agent/credential 任何字段变化都使旧验证失效；仅修改展示文字、标签和排序不触发 provider 验证，但仍创建目录版本并保留审计。
+
+管理端 API：
+
+```http
+GET    /api/admin/workbench/agent-store/items
+POST   /api/admin/workbench/agent-store/items
+GET    /api/admin/workbench/agent-store/items/{item_id}
+PATCH  /api/admin/workbench/agent-store/items/{item_id}
+POST   /api/admin/workbench/agent-store/items/{item_id}/verify
+POST   /api/admin/workbench/agent-store/items/{item_id}/publish
+POST   /api/admin/workbench/agent-store/items/{item_id}/unpublish
+POST   /api/admin/workbench/agent-store/items/{item_id}/disable
+POST   /api/admin/workbench/agent-store/items/{item_id}/archive
+GET    /api/admin/workbench/agent-store/items/{item_id}/audits
+```
+
+所有写接口要求管理员 Session、CSRF、recent-auth、expected version 和审计。Provider 配置/Secret 变化继续遵守现有 BYOK 与双人审批边界，不能借“上架”绕过凭据变更审批。
+
+#### 1.4.6 用户目录与启动合同
+
+用户 API：
+
+```http
+GET  /api/workbench/agent-store?cursor={opaque}&category={value}&query={value}
+GET  /api/workbench/agent-store/{slug}
+POST /api/workbench/agent-store/{slug}/launch
+```
+
+- 列表查询从当前 claw-control Session 取得 customer/user/App 作用域，只返回 published、deployment active、entitlement active、套餐有效且当前用户有权使用的交集。
+- 搜索和分类只作用于服务端裁剪后的目录；cursor 不透明并绑定查询摘要，禁止用 offset 推断隐藏商品数量。
+- `launch` body 首版为空；不得接受 customer_id、AppId、AppMode、AgentId、SpaceId、AppKey 或 capability 覆盖。
+- 浏览器第一次进入 `/agent-store` 且尚无 `claw_control_session` 时，目录 GET 返回 401；前端通过现有 `POST /api/workbench/session-ticket` 获取一次性入口票据，完整导航到 `/api/workbench/entry?ticket=...`。claw-control 消费票据后同时设置 HttpOnly `claw_control_session` 与 Path=`/agent-store` 的非 HttpOnly `claw_control_csrf`，再以 303 返回 `/agent-store`。前端不得把控制面 401 交给 new-api Axios 全局拦截器，以免把“缺少控制面 Session”误判为 new-api 登录失效。
+- 服务端在行锁内重验 membership、plan、CustomerApp、deployment、catalog version、config version、auth epoch 和 entitlement，签发 60 秒单次 opaque launch token。
+- launch token 绑定 browser session digest、customer、user、item、deployment、application profile/config、purpose 和 nonce；消费后沿用现有 selection/ADP SSO 票据链，不能变成通用 bearer token。
+
+```mermaid
+sequenceDiagram
+  actor U as User
+  participant S as Agent Store UI
+  participant C as claw-control
+  participant A as ADP fork
+  participant T as Tencent ADP
+  U->>S: 打开 /agent-store
+  S->>C: GET catalog（尚无控制面 Session）
+  C-->>S: 401
+  S->>C: new-api session-ticket -> /api/workbench/entry
+  C-->>S: Set-Cookie session + CSRF; 303 /agent-store
+  S->>C: GET authorized catalog
+  C-->>S: 裁剪后的 Agent cards
+  U->>S: 点击开始使用
+  S->>C: POST /{slug}/launch + CSRF
+  C->>C: 重验 membership/plan/deployment/app/config/epoch
+  C-->>S: one-time same-origin redirect
+  S->>A: consume ADP SSO ticket
+  A->>C: signed app-context resolve
+  C-->>A: mode-derived immutable runtime profile
+  alt AppMode=4 and dynamic Agent enabled
+    A->>T: ensure CopyAgentFromApp(Kind=1)
+    T-->>A: user ParentAgentId
+  else AppMode=1/2/3 or non-dynamic Claw
+    A->>A: no user Agent copy
+  end
+  A->>T: CreateConversation(Type=5, canonical UserId, optional AgentId)
+  A-->>U: Workbench conversation
+```
+
+#### 1.4.7 AppMode 运行策略
+
+ADP 内部新增稳定 `runtime_profile`，值只能由 provider-derived AppMode 与读回配置计算：
+
+| runtime profile | Agent provisioning | Conversation | UI capability |
+|---|---|---|---|
+| `standard_v2` | 无 | Type=5、AppKey、canonical UserId，不传 AgentId | chat/history/references；隐藏 Claw 专属配置 |
+| `multi_agent_v2` | 无用户复制 | 同上，使用应用发布态入口 Agent | chat/history/procedure；不开放任意 AgentId |
+| `workflow_v2` | 无 | 同上；同步/异步按验证 capability | workflow events/options；隐藏 Claw Workspace |
+| `claw_static_v2` | 无 | 同上，不传 AgentId | Claw chat；动态配置入口关闭 |
+| `claw_dynamic_v2` | 每 `(binding,app)` 唯一 Kind=1 Agent | 同上并传服务端绑定 AgentId | 经门禁的动态配置；Sandbox/文件各自独立控制 |
+
+所有模式共用 canonical VisitorId、Conversation 所有权、持久 Turn/SSE、断线续流、hidden drain、历史隔离和 provider evidence。能力差异使用服务端 capability 投影控制，不能只隐藏前端按钮。每个 runtime profile 在真实腾讯 Application 上完成最小 Turn、历史、错误、限流和撤权 E2E 前保持 `execution_enabled=false`；当前生产只放行已验收的 `claw_dynamic_v2` Chat 子集。
+
+#### 1.4.8 前端信息架构与线框
+
+桌面端：
+
+```text
+┌────────────────────────────────────────────────────────────────────┐
+│ Agent Store                    [搜索 Agent]  [分类]      [我的会话] │
+├────────────────────────────────────────────────────────────────────┤
+│ 推荐                                                               │
+│ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐                 │
+│ │ 图标  数据分析│ │ 图标  知识问答│ │ 图标  审批工作流│                 │
+│ │ Claw         │ │ 标准模式      │ │ 单工作流      │                 │
+│ │ 简短介绍……   │ │ 简短介绍……   │ │ 简短介绍……   │                 │
+│ │ [查看] [使用]│ │ [查看] [使用]│ │ [查看] [使用]│                 │
+│ └──────────────┘ └──────────────┘ └──────────────┘                 │
+├────────────────────────────────────────────────────────────────────┤
+│ 全部 Agent：分页/游标列表；不可用条目只显示受控状态，不泄漏原因细节 │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+管理员端：
+
+```text
+┌────────────────────────────────────────────────────────────────────┐
+│ Agent Store 管理                                      [+ 新建商品] │
+├────────────────────────────────────────────────────────────────────┤
+│ 名称     客户部署   AppMode   验证       上架状态       操作        │
+│ 数据分析 NEXUS      Claw      verified   published     查看/下架   │
+├────────────────────────────────────────────────────────────────────┤
+│ 编辑抽屉：展示信息 | 客户 Application | 套餐权限 | 验证证据 | 审计 │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+`/agent-store` 路由按需懒加载，列表使用 React Query 去重；图片懒加载并限制允许的 HTTPS host，首版无法安全代理的头像使用本地默认图标。所有用户文案进入六语言 i18n，卡片、筛选、抽屉和对话框满足键盘导航、焦点管理与 WCAG 2.1 AA。
+
+#### 1.4.9 迁移、回退与验收
+
+1. 新增 `WORKBENCH_AGENT_STORE_ENABLED=false`，关闭时 `/playground` 沿用当前行为、`/agent-store` 返回 404，不影响 `/playground/legacy`。
+2. 现有 `NEXUS-INTERNAL` App 以一个 mode=4 deployment 导入 draft；使用既有配置重新验证后才能作为首个商品发布，不复制或打印 Secret。
+3. 发布顺序为数据库迁移 → claw-control API（feature off）→ ADP runtime profile（仅既有 Claw enabled）→ 新版前端 → Caddy → 目录 E2E → 开启商店入口。
+4. `/playground` 只做 302/前端 typed redirect 到 `/agent-store`；已有 `/workbench` 会话、历史 URL 和旧 SSO 票据合同保持兼容。
+5. 回滚仅关闭 Agent Store flag 并恢复 `/playground` 当前入口；不回滚数据库迁移、不删除目录或历史、不改变现有 Claw Application。
+
+必须覆盖的测试：
+
+- 数据库：三种数据库 migration、slug/版本/deployment/entitlement 唯一约束、行锁与 expected version。
+- 验证：AppMode 1/2/3/4 接受；0/null/未知拒绝；模式由 provider readback 覆盖；非 Claw 不要求模板 Agent；动态 Claw 缺模板 Agent 拒绝。
+- 管理：未验证不能发布，provider config 变化使验证失效，展示元数据修改生成新版本，CSRF/recent-auth/角色/审计完整。
+- 用户：只看授权交集；跨客户/隐藏/过期 entitlement 均 404；launch token 单次、短时、绑定 Session 和完整 App 快照。
+- 运行：五个 runtime profile 的请求字段闭集；模式 1/2/3 不调用 CopyAgent；动态 Claw 并发 ensure 只生成一个绑定；浏览器注入 AppMode/AppId/AgentId 无效。
+- 前端：搜索/分类/空态/错误/不可用/键盘/移动端；菜单与 `/playground` 兼容跳转；flag off 和 legacy 回归。
+- 真实腾讯 E2E：每个拟开放 AppMode 至少一个已发布 Application，验证 DescribeApp、CreateConversation、V2 SSE 完成、历史一致、撤权和上游错误裁剪。缺少某模式真实应用时，只能完成代码并保持该 runtime profile 关闭。
+
 ## 2. 官方语义、计费边界与设计假设
 
 ### 2.1 腾讯资源语义
@@ -85,11 +388,11 @@ flowchart TD
 | 资源 | 官方/目标作用域 | 本方案约束 |
 |---|---|---|
 | Space | 腾讯资源空间 | App 配置保存应用实际 SpaceId；内置 `default_space` 本身合法，但不得无条件假定所有 App 都使用它 |
-| Claw App | 应用级载体 | 每客户一个独立 App；AppMode=4，配置完成并发布 |
+| ADP Application | 商店商品的实际运行载体 | 每个客户部署绑定独立 App；AppMode 接受 1/2/3/4，配置完成、已发布且运行中 |
 | AppKey | 对话端鉴权 | claw-control 独占 Secret 引用、fingerprint、验证、轮换和解析；ADP 只通过签名内部接口临时接收运行所需明文并短期驻留内存，禁止落库、回显或记录日志 |
-| Kind=0 Agent | 配置端模板 Agent | 客户 App 内的模板，不直接绑定普通用户 |
-| Kind=1 Agent | 用户级动态 Agent | 每个客户成员、每个 App 唯一一个活动映射 |
-| Conversation | 会话与 Workspace 句柄 | 绑定 customer+app+user+agent，Type=5 |
+| Kind=0 Agent | 配置端模板 Agent | 仅在需要验证 Agent 配置的模式中使用，不直接绑定普通用户 |
+| Kind=1 Agent | 用户级动态 Agent | 仅用于动态 Claw；每个客户成员、每个 App 唯一一个活动映射 |
+| Conversation | 会话句柄；Claw 时同时关联 Workspace | 绑定 customer+app+user+可选 agent，API 接入 Type=5 |
 | UserId/VisitorId | 腾讯终端身份 | 使用不可变 canonical subject，不使用用户名 |
 | 长期记忆 | AppId + UserId 相关 | 客户之间因 App 不同而隔离，客户内部按 UserId 隔离 |
 
@@ -333,7 +636,7 @@ sequenceDiagram
 
 ### 5.1 配置模型
 
-每个客户首版配置一个 `slot=primary` App。App 配置分为公开元数据、受控标识和 Secret：
+每个客户可以配置多个 Application；`slot=primary` 只保留为旧入口兼容默认值，Agent Store 通过 deployment/entitlement 选择实际 App。App 配置分为公开元数据、受控标识和 Secret：
 
 | 类型 | 字段 |
 |---|---|
@@ -436,9 +739,9 @@ stateDiagram-v2
 flowchart TD
   A["超级管理员点击验证"] --> B["校验必填字段、URL、Region 和 credential profile"]
   B --> C["服务端解密凭据调用 DescribeApp"]
-  C --> D{"AppMode=4 且 AppId/SpaceId 匹配?"}
+  C --> D{"AppMode 属于 1/2/3/4 且 AppId/SpaceId 匹配?"}
   D -- 否 --> E["记录失败 RequestId，不启用"]
-  D -- 是 --> F["验证发布状态和模板 Agent"]
+  D -- 是 --> F["验证发布状态；仅动态 Claw 验证模板 Agent"]
   F --> G{"全部通过?"}
   G -- 否 --> E
   G -- 是 --> H["保存 VERIFIED + verification evidence"]
@@ -2890,10 +3193,12 @@ sequenceDiagram
 
 - [ ] customer/member/identity binding 与影子账号单向映射。
 - [ ] 每客户独立 App draft、验证、启用、暂停、禁用。
+- [ ] Agent Store 商品/版本/客户 deployment/entitlement、管理员验证上架和用户一次性 launch；AppMode 1/2/3/4 目录合同完整。
+- [ ] `/agent-store` 替代新版 Playground 入口，`/playground` 兼容跳转且 `/playground/legacy` 永久可回退。
 - [ ] AppKey/credential profile 安全保存、轮换和不回显。
 - [ ] 固定套餐目录、周期、人工付款确认和客户账单。
 - [ ] 同域顶层路由、SSO、持续 authz、legacy 回退。
-- [ ] 每用户唯一 Agent、Conversation/Workspace/历史隔离。
+- [ ] 动态 Claw 每用户唯一 Agent；所有模式的 Conversation/历史隔离，Workspace 仅按模式和独立能力门禁开放。
 - [ ] Action allowlist、可信字段注入、响应裁剪。
 - [ ] 并发/时长/轮数/Token/工具/文件限制。
 - [ ] 人工腾讯用量/成本登记和证据审计。
@@ -2913,7 +3218,7 @@ sequenceDiagram
 
 ### 20.3 P2：高级能力
 
-- [ ] 一个客户多 App/Space 与明确 selector。
+- [ ] Agent Store 跨客户逻辑商品复用、多个独立客户 deployment 与复杂 entitlement/附加套餐。
 - [ ] 一个 new-api 用户多客户 membership：new-api 只证明身份，由 claw-control 列出授权 membership、签发选择 nonce 并安全切换上下文。
 - [ ] 定时任务离线身份、重复执行和套餐限制。
 - [ ] 独立代码执行/终端沙箱。
@@ -2924,22 +3229,23 @@ sequenceDiagram
 
 ## 21. 上线前必须验证的事实
 
-1. 每个客户真实 App 都是 AppMode=4、已经发布，AppId/AppKey/SpaceId/模板 Agent 正确。
-2. `CopyAgentFromApp` 在客户 App 中的限流、重试和并发幂等行为。
-3. `Type=5` 在 CreateConversation 及所有接收 Type 的 Conversation 云 API 中保持一致；`POST /adp/v2/chat` 实测确认不发送 Type，并保持 ConversationId、AppKey、canonical VisitorId 和服务端 AgentId 的身份链一致。
-4. App 禁用后腾讯是否仍允许已建立上游流继续；本地撤销必须独立有效。
-5. 浏览器断开和 ADP 进程重启时的官方恢复/停止能力；没有时使用 provider_unknown。
-6. AppKey 轮换对已有 Conversation 和活跃 Turn 的影响。
-7. App 重新发布后既有 Kind=1 Agent 是否继承；默认按不继承并显式升级处理。
-8. 腾讯控制台/费用中心能否按 AppId 或等价 ResourceId 查询使用量和费用。
-9. 如果只能看到账号汇总，人工记录必须使用 account_only，不能伪造单客户成本。
-10. 实际可设置的最大运行时长、推理轮数、output token、搜索和工具限制；不能控制的高成本能力首发关闭。
-11. 使用者 OAuth 凭证与 UserId/AgentId/App 的真实绑定语义和撤销行为。
-12. 私有 COS、扫描器、产物归档与下载所有权在真实生产路径通过。
-13. active Turn 期间 `ModifyAgent` 的官方并发语义；确认前继续强制 409/排队，不声称“只影响后续 Turn”。
-14. 新版 SSE 是否存在可跨重连稳定使用的 procedure/usage id，以及缓存 Token 的正式字段；确认前保存原始证据并标记 provisional/unknown。
-15. 生产 Caddy 版本对 `forward_auth`、Cookie 正则删除和 SSE flush 配置的语法/行为；必须用真实 Cookie 组合和长连接回归。
-16. P1 `wallet_monthly` 所需的 new-api 幂等固定扣款扩展接口是否已稳定存在；不存在且无获批 ADR 时只保留 `offline_manual`。
+1. 每个拟上架 Application 都已发布且运行中，AppId/AppKey/SpaceId 与 provider-derived AppMode 正确；未知模式不得上架。
+2. AppMode 1/2/3、静态 Claw 和动态 Claw 分别完成真实 Conversation/V2 SSE/历史 E2E；未验收 profile 保持关闭。
+3. 只有动态 Claw 调用 `CopyAgentFromApp`，并验证其限流、重试和并发幂等；其他模式必须证明零 CopyAgent 调用。
+4. `Type=5` 在 CreateConversation 及所有接收 Type 的 Conversation 云 API 中保持一致；`POST /adp/v2/chat` 实测确认不发送 Type，并保持 ConversationId、AppKey、canonical VisitorId 和服务端可选 AgentId 的身份链一致。
+5. App 禁用后腾讯是否仍允许已建立上游流继续；本地撤销必须独立有效。
+6. 浏览器断开和 ADP 进程重启时的官方恢复/停止能力；没有时使用 provider_unknown。
+7. AppKey 轮换对已有 Conversation 和活跃 Turn 的影响。
+8. App 重新发布后既有 Kind=1 Agent 是否继承；默认按不继承并显式升级处理。
+9. 腾讯控制台/费用中心能否按 AppId 或等价 ResourceId 查询使用量和费用。
+10. 如果只能看到账号汇总，人工记录必须使用 account_only，不能伪造单客户成本。
+11. 实际可设置的最大运行时长、推理轮数、output token、搜索和工具限制；不能控制的高成本能力首发关闭。
+12. 使用者 OAuth 凭证与 UserId/AgentId/App 的真实绑定语义和撤销行为。
+13. 私有 COS、扫描器、产物归档与下载所有权在真实生产路径通过。
+14. active Turn 期间 `ModifyAgent` 的官方并发语义；确认前继续强制 409/排队，不声称“只影响后续 Turn”。
+15. 新版 SSE 是否存在可跨重连稳定使用的 procedure/usage id，以及缓存 Token 的正式字段；确认前保存原始证据并标记 provisional/unknown。
+16. 生产 Caddy 版本对 `forward_auth`、Cookie 正则删除和 SSE flush 配置的语法/行为；必须用真实 Cookie 组合和长连接回归。
+17. P1 `wallet_monthly` 所需的 new-api 幂等固定扣款扩展接口是否已稳定存在；不存在且无获批 ADR 时只保留 `offline_manual`。
 
 ## 22. 配置与界面操作建议
 
@@ -2975,11 +3281,11 @@ sequenceDiagram
 
 ### 22.2 超级管理员开通客户的操作顺序
 
-1. 腾讯侧为客户创建/准备独立 Claw App，配置 Kind=0 模板 Agent 并发布。
+1. 腾讯侧为客户创建/准备独立 Application 并发布；只有动态 Claw 需要配置 Kind=0 模板 Agent 和动态修改开关。
 2. 从 new-api 的超级管理员入口换取受信任 `surface=admin` 的 opaque entry ticket，进入同域 claw-control“Claw 客户应用 → 新建客户”，填写不可变客户编码和显示名称。
 3. 添加 new-api 用户为客户成员；系统生成待 provisioning identity binding。
-4. 在 App 配置中填写环境、Region、SpaceId、AppId、AppKey、模板 Agent 和 credential profile。
-5. 保存 draft，点击“验证”；确认 AppMode、发布、模板 Agent 和官方 RequestId。
+4. 在 App 配置中填写环境、Region、SpaceId、AppId、AppKey、条件化模板 Agent 和 credential profile，并创建 Agent Store 商品/deployment 草稿。
+5. 保存 draft，点击“验证”；确认 provider-derived AppMode、发布状态、条件化模板 Agent 和官方 RequestId，随后显式上架。
 6. 创建固定月度套餐周期，确认人工收款并生成客户账单。
 7. 配置能力和成本保护限制。
 8. 点击“启用”；由系统再次检查 verified App 和 active plan。

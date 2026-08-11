@@ -58,6 +58,7 @@ type Config struct {
 	EvidenceClamAVAddress              string
 	EvidenceClamAVTimeout              time.Duration
 	BillingImportEnabled               bool
+	AgentStoreEnabled                  bool
 	TencentBillingSecretID             string
 	TencentBillingSecretKey            string
 	TencentBillingPayerUIN             string
@@ -76,6 +77,10 @@ func Load() (Config, error) {
 	billingEnabledValue := strings.ToLower(strings.TrimSpace(os.Getenv("CLAW_TENCENT_BILLING_IMPORT_ENABLED")))
 	if billingEnabledValue != "" && billingEnabledValue != "true" && billingEnabledValue != "false" {
 		return Config{}, errors.New("CLAW_TENCENT_BILLING_IMPORT_ENABLED must be true or false")
+	}
+	agentStoreEnabledValue := strings.ToLower(strings.TrimSpace(os.Getenv("WORKBENCH_AGENT_STORE_ENABLED")))
+	if agentStoreEnabledValue != "" && agentStoreEnabledValue != "true" && agentStoreEnabledValue != "false" {
+		return Config{}, errors.New("WORKBENCH_AGENT_STORE_ENABLED must be true or false")
 	}
 	cfg := Config{
 		Addr:                               env("CLAW_CONTROL_ADDR", ":8090"),
@@ -123,6 +128,7 @@ func Load() (Config, error) {
 		EvidenceClamAVAddress:              env("CLAW_EVIDENCE_CLAMAV_ADDR", "127.0.0.1:3310"),
 		EvidenceClamAVTimeout:              envDuration("CLAW_EVIDENCE_CLAMAV_TIMEOUT", 15*time.Second),
 		BillingImportEnabled:               billingEnabledValue == "true",
+		AgentStoreEnabled:                  agentStoreEnabledValue == "true",
 		TencentBillingSecretID:             strings.TrimSpace(os.Getenv("CLAW_TENCENT_BILLING_SECRET_ID")),
 		TencentBillingSecretKey:            strings.TrimSpace(os.Getenv("CLAW_TENCENT_BILLING_SECRET_KEY")),
 		TencentBillingPayerUIN:             strings.TrimSpace(os.Getenv("CLAW_TENCENT_BILLING_PAYER_UIN")),

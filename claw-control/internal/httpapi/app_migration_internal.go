@@ -38,6 +38,9 @@ func (s *Server) reportAppMigrationTask(w http.ResponseWriter, r *http.Request) 
 		TargetAppProfileID      uint64 `json:"target_app_profile_id"`
 		TargetConfigVersion     int64  `json:"target_config_version"`
 		TargetConfigFingerprint string `json:"target_config_fingerprint"`
+		ProviderAppMode         int    `json:"provider_app_mode"`
+		RuntimeProfile          string `json:"runtime_profile"`
+		ExecutionEnabled        bool   `json:"execution_enabled"`
 		TargetAgentID           string `json:"target_agent_id"`
 		TargetReadbackHash      string `json:"target_readback_hash"`
 		ErrorCode               string `json:"error_code"`
@@ -49,6 +52,7 @@ func (s *Server) reportAppMigrationTask(w http.ResponseWriter, r *http.Request) 
 		MigrationMemberID: body.MigrationMemberID, AttemptID: body.AttemptID, LeaseToken: body.LeaseToken,
 		Status: body.Status, TargetAppProfileID: body.TargetAppProfileID,
 		TargetConfigVersion: body.TargetConfigVersion, TargetConfigFingerprint: body.TargetConfigFingerprint,
+		ProviderAppMode: body.ProviderAppMode, RuntimeProfile: body.RuntimeProfile, ExecutionEnabled: body.ExecutionEnabled,
 		TargetAgentID: body.TargetAgentID, TargetReadbackHash: body.TargetReadbackHash, ErrorCode: body.ErrorCode,
 	}, time.Now().UTC())
 	w.Header().Set("Cache-Control", "no-store")

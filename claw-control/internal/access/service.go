@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,7 +51,8 @@ type IssueEntryTicketResult struct {
 }
 
 type EnterCommand struct {
-	Ticket string
+	Ticket   string
+	DeferSSO bool
 }
 
 type EnterResult struct {
@@ -58,6 +60,7 @@ type EnterResult struct {
 	SelectionRequired       bool              `json:"selection_required,omitempty"`
 	Selections              []SelectionOption `json:"selections,omitempty"`
 	ControlSessionToken     string            `json:"-"`
+	ControlCSRFToken        string            `json:"-"`
 	ControlSessionExpiresAt time.Time         `json:"control_session_expires_at,omitempty"`
 	ADPSSOTicket            string            `json:"-"`
 	ADPSSOTicketExpiresAt   time.Time         `json:"adp_sso_ticket_expires_at,omitempty"`
@@ -145,6 +148,9 @@ type AppContext struct {
 	AppKey              string               `json:"app_key"`
 	SpaceID             string               `json:"space_id"`
 	TemplateAgentID     string               `json:"template_agent_id"`
+	ProviderAppMode     *int                 `json:"provider_app_mode,omitempty"`
+	RuntimeProfile      *string              `json:"runtime_profile,omitempty"`
+	ExecutionEnabled    *bool                `json:"execution_enabled,omitempty"`
 	SecretID            string               `json:"secret_id"`
 	SecretKey           string               `json:"secret_key"`
 	Capabilities        []string             `json:"capabilities"`
@@ -343,18 +349,23 @@ func (s *Service) Enter(ctx context.Context, command EnterCommand) (*EnterResult
 		if err != nil {
 			return err
 		}
+		csrfToken, err := randomOpaqueToken()
+		if err != nil {
+			return err
+		}
 		now := time.Now().UTC()
 		sessionHash := sha256.Sum256([]byte(sessionToken))
+		csrfHash := sha256.Sum256([]byte(csrfToken))
 		session := &model.ControlSession{
-			TokenHash: hex.EncodeToString(sessionHash[:]), NewAPIUserID: entry.NewAPIUserID,
+			TokenHash: hex.EncodeToString(sessionHash[:]), CSRFTokenHash: hex.EncodeToString(csrfHash[:]), NewAPIUserID: entry.NewAPIUserID,
 			IdentityVersion: entry.IdentityVersion,
 			ExpiresAt:       now.Add(s.sessionTTL), LastSeenAt: now,
 		}
-		if len(candidates) == 1 {
-			if candidates[0].app.Slot != "primary" {
+		if command.DeferSSO || len(candidates) == 1 {
+			selected := &candidates[0]
+			if selected.app.Slot != "primary" {
 				return domain.Conflict("customer has no explicit default App")
 			}
-			selected := &candidates[0]
 			session.SelectionState = model.ControlSessionStateSelected
 			applyResolvedSession(session, selected)
 		} else {
@@ -365,6 +376,7 @@ func (s *Service) Enter(ctx context.Context, command EnterCommand) (*EnterResult
 			return err
 		}
 		result.ControlSessionToken = sessionToken
+		result.ControlCSRFToken = csrfToken
 		result.ControlSessionExpiresAt = session.ExpiresAt
 		result.Surface = "workbench"
 		if session.SelectionState == model.ControlSessionStateSelectionPending {
@@ -376,6 +388,9 @@ func (s *Service) Enter(ctx context.Context, command EnterCommand) (*EnterResult
 			result.Selections = options
 			return nil
 		}
+		if command.DeferSSO {
+			return nil
+		}
 		sso, err := s.createSSOTicket(tx, session, &candidates[0], now)
 		if err != nil {
 			return err
@@ -384,6 +399,102 @@ func (s *Service) Enter(ctx context.Context, command EnterCommand) (*EnterResult
 		result.ADPSSOTicketExpiresAt = sso.ADPSSOTicketExpiresAt
 		result.SSOBrowserBinding = sso.SSOBrowserBinding
 		return nil
+	})
+	return result, err
+}
+
+type SessionPrincipal struct {
+	ControlSessionID  uint64
+	CustomerID        uint64
+	NewAPIUserID      int64
+	IdentityBindingID uint64
+	IdentityVersion   string
+	Role              string
+}
+
+// AuthorizeControlSession returns only the server-side authorization scope.
+// It never exposes provider identifiers and optionally enforces the hashed
+// double-submit CSRF token created with the browser session.
+func (s *Service) AuthorizeControlSession(ctx context.Context, token, csrfToken string, requireCSRF bool) (*SessionPrincipal, error) {
+	resolved, session, err := s.resolveSession(token, false)
+	if err != nil {
+		return nil, err
+	}
+	if requireCSRF {
+		csrfToken = strings.TrimSpace(csrfToken)
+		if csrfToken == "" || session.CSRFTokenHash == "" {
+			return nil, domain.Forbidden("control session CSRF token is required")
+		}
+		digest := sha256.Sum256([]byte(csrfToken))
+		expected, decodeErr := hex.DecodeString(session.CSRFTokenHash)
+		if decodeErr != nil || subtle.ConstantTimeCompare(expected, digest[:]) != 1 {
+			return nil, domain.Forbidden("control session CSRF token is invalid")
+		}
+	}
+	if s.identityVerifier == nil {
+		return nil, fmt.Errorf("new-api identity verifier is unavailable")
+	}
+	if err := s.identityVerifier.Verify(ctx, resolved.identity.NewAPIUserID, resolved.identity.IdentityVersion); err != nil {
+		return nil, err
+	}
+	return &SessionPrincipal{
+		ControlSessionID: session.ID, CustomerID: resolved.customer.ID,
+		NewAPIUserID: resolved.identity.NewAPIUserID, IdentityBindingID: resolved.identity.ID,
+		IdentityVersion: resolved.identity.IdentityVersion, Role: resolved.member.Role,
+	}, nil
+}
+
+// IssueAppSelection creates the same single-use nonce used by the existing
+// context selector, but only after Agent Store authorization has selected the
+// server-owned CustomerApp. The browser never supplies the provider AppId.
+func (s *Service) IssueAppSelection(ctx context.Context, sessionToken string, customerAppID uint64, ttl time.Duration) (string, error) {
+	if customerAppID == 0 || ttl <= 0 || ttl > time.Minute {
+		return "", domain.Invalid("customer App and a launch TTL of at most 60 seconds are required")
+	}
+	principal, err := s.AuthorizeControlSession(ctx, sessionToken, "", false)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256([]byte(strings.TrimSpace(sessionToken)))
+	var result string
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		var session model.ControlSession
+		if err := database.ForUpdate(tx).Where("token_hash = ?", hex.EncodeToString(hash[:])).First(&session).Error; err != nil {
+			return domain.Forbidden("control session is invalid")
+		}
+		now := time.Now().UTC()
+		if session.ID != principal.ControlSessionID || session.RevokedAt != nil || !now.Before(session.ExpiresAt) {
+			return domain.Forbidden("control session is stale")
+		}
+		var identity model.IdentityBinding
+		if err := tx.First(&identity, principal.IdentityBindingID).Error; err != nil {
+			return domain.Forbidden("control session identity is unavailable")
+		}
+		resolved, err := s.resolveExact(tx, identity.PublicID, customerAppID, true)
+		if err != nil {
+			return err
+		}
+		if resolved.customer.ID != principal.CustomerID || resolved.identity.NewAPIUserID != principal.NewAPIUserID || (resolved.mode != "active" && resolved.mode != "readonly") {
+			return domain.Forbidden("Agent Store application context is unavailable")
+		}
+		result, err = randomOpaqueToken()
+		if err != nil {
+			return err
+		}
+		digest := sha256.Sum256([]byte(result))
+		expiresAt := now.Add(ttl)
+		if expiresAt.After(session.ExpiresAt) {
+			expiresAt = session.ExpiresAt
+		}
+		return tx.Create(&model.ContextSelectionNonce{
+			TokenHash: hex.EncodeToString(digest[:]), ControlSessionID: session.ID,
+			NewAPIUserID: resolved.identity.NewAPIUserID, IdentityBindingID: resolved.identity.ID,
+			CustomerMemberID: resolved.member.ID, CustomerID: resolved.customer.ID,
+			CustomerAppID: resolved.app.ID, AppConfigVersionID: resolved.config.ID,
+			IdentityVersion: resolved.identity.IdentityVersion, IdentityAuthEpoch: resolved.identity.AuthEpoch,
+			MemberAuthEpoch: resolved.member.AuthEpoch, AppAuthEpoch: resolved.app.AuthEpoch,
+			ExpiresAt: expiresAt,
+		}).Error
 	})
 	return result, err
 }
@@ -495,6 +606,24 @@ func (s *Service) SelectContext(ctx context.Context, sessionToken, selectionToke
 		if nonce.ControlSessionID != session.ID || nonce.NewAPIUserID != session.NewAPIUserID || nonce.IdentityVersion != session.IdentityVersion {
 			return domain.Forbidden("selection token is bound to a different session or identity")
 		}
+		var agentStoreDeployment *model.CustomerAgentDeployment
+		if nonce.Purpose == "agent_store_launch" {
+			var item model.AgentCatalogItem
+			if err := database.ForUpdate(tx).Where("id = ?", nonce.AgentCatalogItemID).First(&item).Error; err != nil ||
+				item.Status != model.AgentCatalogStatusPublished || item.CurrentVersionID == nil ||
+				*item.CurrentVersionID != nonce.CatalogVersionID || item.RowVersion != nonce.CatalogRowVersion {
+				return domain.Forbidden("Agent Store catalog selection is stale")
+			}
+			var deployment model.CustomerAgentDeployment
+			if err := database.ForUpdate(tx).Where("id = ? AND item_id = ? AND customer_id = ?", nonce.AgentDeploymentID, item.ID, nonce.CustomerID).First(&deployment).Error; err != nil ||
+				deployment.Status != model.AgentDeploymentStatusActive || !deployment.ExecutionEnabled ||
+				deployment.RowVersion != nonce.DeploymentVersion || deployment.CustomerAppID != nonce.CustomerAppID ||
+				deployment.VerifiedConfigVersionID == nil || *deployment.VerifiedConfigVersionID != nonce.AppConfigVersionID ||
+				deployment.VerifiedAppAuthEpoch != nonce.AppAuthEpoch || deployment.ProviderAppMode < 1 || deployment.ProviderAppMode > 4 || deployment.RuntimeProfile == "" {
+				return domain.Forbidden("Agent Store deployment selection is stale")
+			}
+			agentStoreDeployment = &deployment
+		}
 		var identity model.IdentityBinding
 		if err := tx.First(&identity, nonce.IdentityBindingID).Error; err != nil {
 			return domain.Forbidden("selected identity is unavailable")
@@ -509,6 +638,36 @@ func (s *Service) SelectContext(ctx context.Context, sessionToken, selectionToke
 			resolved.app.AuthEpoch != nonce.AppAuthEpoch || resolved.identity.IdentityVersion != nonce.IdentityVersion ||
 			(resolved.mode != "active" && resolved.mode != "readonly") {
 			return domain.Forbidden("selection token context is stale")
+		}
+		if nonce.Purpose == "agent_store_launch" {
+			var period model.PlanPeriod
+			if err := tx.Where("customer_id = ? AND status = ? AND payment_status = ? AND start_at <= ? AND end_at > ?", nonce.CustomerID, model.PeriodStatusActive, model.PaymentStatusPaid, now, now).
+				Order("start_at desc").First(&period).Error; err != nil {
+				return domain.Forbidden("Agent Store paid plan is unavailable")
+			}
+			var entitlements []model.AgentCatalogEntitlement
+			if err := tx.Where("deployment_id = ? AND status = ? AND valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)", agentStoreDeployment.ID, model.AgentEntitlementStatusActive, now, now).Find(&entitlements).Error; err != nil {
+				return err
+			}
+			authorized := false
+			for _, entitlement := range entitlements {
+				switch entitlement.SubjectType {
+				case "customer":
+					authorized = entitlement.SubjectRef == strconv.FormatUint(nonce.CustomerID, 10)
+				case "user":
+					authorized = entitlement.SubjectRef == strconv.FormatInt(nonce.NewAPIUserID, 10)
+				case "role":
+					authorized = entitlement.SubjectRef == resolved.member.Role
+				case "plan":
+					authorized = entitlement.SubjectRef == strconv.FormatUint(period.PlanVersionID, 10)
+				}
+				if authorized {
+					break
+				}
+			}
+			if !authorized {
+				return domain.Forbidden("Agent Store entitlement is unavailable")
+			}
 		}
 		consumed := tx.Model(&model.ContextSelectionNonce{}).Where("id = ? AND consumed_at IS NULL", nonce.ID).Update("consumed_at", now)
 		if consumed.Error != nil {
@@ -680,6 +839,25 @@ func (s *Service) AuthorizeAdminSession(ctx context.Context, sessionToken, csrfT
 		return 0, err
 	}
 	return session.NewAPIUserID, nil
+}
+
+func (s *Service) AuthorizeRecentAdminSession(ctx context.Context, sessionToken string, maxAge time.Duration) (int64, error) {
+	if maxAge <= 0 {
+		return 0, domain.Forbidden("recent administrator authentication is required")
+	}
+	userID, err := s.AuthorizeAdminSession(ctx, sessionToken, "", false)
+	if err != nil {
+		return 0, err
+	}
+	digest := sha256.Sum256([]byte(strings.TrimSpace(sessionToken)))
+	var session model.AdminSession
+	if err := s.db.Where("token_hash = ?", hex.EncodeToString(digest[:])).First(&session).Error; err != nil {
+		return 0, domain.Forbidden("admin session is invalid")
+	}
+	if time.Since(session.CreatedAt.UTC()) > maxAge || time.Now().UTC().Before(session.CreatedAt.UTC().Add(-time.Minute)) {
+		return 0, domain.Forbidden("recent administrator authentication is required")
+	}
+	return userID, nil
 }
 
 func (s *Service) ConsumeTicket(command ConsumeTicketCommand) (*IdentityContext, error) {
@@ -887,6 +1065,34 @@ func (s *Service) AppContext(ctx context.Context, command AppContextCommand) (*A
 	if !supported {
 		return nil, domain.Forbidden("App provider environment is unsupported")
 	}
+	var providerAppMode *int
+	var runtimeProfile *string
+	var executionEnabled *bool
+	if command.Purpose != "history_read" {
+		var deployment model.CustomerAgentDeployment
+		query := s.db.Where("customer_app_id = ?", appRecord.ID).First(&deployment)
+		if query.Error == nil {
+			var item model.AgentCatalogItem
+			if err := s.db.First(&item, "id = ?", deployment.ItemID).Error; err != nil ||
+				item.Status != model.AgentCatalogStatusPublished || deployment.Status != model.AgentDeploymentStatusActive ||
+				deployment.VerifiedConfigVersionID == nil || *deployment.VerifiedConfigVersionID != configRecord.ID ||
+				deployment.VerifiedConfigVersion != configRecord.ConfigVersion || deployment.VerifiedAppAuthEpoch != appRecord.AuthEpoch ||
+				deployment.ProviderAppMode < 1 || deployment.ProviderAppMode > 4 || !validRuntimeProfile(deployment.RuntimeProfile, deployment.ProviderAppMode, deployment.DynamicAgentConfig) {
+				return nil, domain.Forbidden("Agent Store deployment is stale or unavailable")
+			}
+			if deployment.RuntimeProfile == "claw_dynamic_v2" && strings.TrimSpace(configRecord.TemplateAgentID) == "" {
+				return nil, domain.Forbidden("dynamic Claw deployment has no verified template Agent")
+			}
+			providerAppMode = &deployment.ProviderAppMode
+			runtimeProfile = &deployment.RuntimeProfile
+			executionEnabled = &deployment.ExecutionEnabled
+			if !deployment.ExecutionEnabled && command.Purpose != "history_read" {
+				return nil, domain.Forbidden("Agent Store runtime profile is not enabled")
+			}
+		} else if query.Error != gorm.ErrRecordNotFound {
+			return nil, query.Error
+		}
+	}
 	return &AppContext{
 		CustomerID:    resolved.customer.ID,
 		ApplicationID: appRecord.AppID, AppProfileID: appRecord.ID,
@@ -895,8 +1101,24 @@ func (s *Service) AppContext(ctx context.Context, command AppContextCommand) (*A
 		ProviderEnvironment: appRecord.ProviderEnvironment, Region: configRecord.Region,
 		AppID: appRecord.AppID, AppKey: appKey, SpaceID: configRecord.SpaceID,
 		TemplateAgentID: configRecord.TemplateAgentID, SecretID: pair.SecretID, SecretKey: pair.SecretKey,
+		ProviderAppMode: providerAppMode, RuntimeProfile: runtimeProfile, ExecutionEnabled: executionEnabled,
 		Capabilities: resolved.capabilities, Limits: resolved.limits, ExpiresAt: time.Now().UTC().Add(s.contextTTL).Unix(),
 	}, nil
+}
+
+func validRuntimeProfile(profile string, mode int, dynamic bool) bool {
+	switch mode {
+	case 1:
+		return profile == "standard_v2" && !dynamic
+	case 2:
+		return profile == "multi_agent_v2" && !dynamic
+	case 3:
+		return profile == "workflow_v2" && !dynamic
+	case 4:
+		return (!dynamic && profile == "claw_static_v2") || (dynamic && profile == "claw_dynamic_v2")
+	default:
+		return false
+	}
 }
 
 func (s *Service) ConfigForSession(ctx context.Context, token string) (*BrowserConfig, error) {

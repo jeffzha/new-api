@@ -205,7 +205,7 @@ function AppConfigFields({ app, config, credentials }: { app?: CustomerDetail['a
     <Field label={t('app.region')}><input name="region" required defaultValue={config?.region ?? 'ap-guangzhou'} /></Field>
     <Field label={t('app.spaceId')}><input name="space_id" required defaultValue={config?.space_id ?? ''} /></Field>
     <Field label={t('app.appId')}><input name="app_id" required defaultValue={app?.app_id ?? ''} /></Field>
-    <Field label={t('app.templateAgentId')}><input name="template_agent_id" required defaultValue={config?.template_agent_id ?? ''} /></Field>
+    <Field label={t('app.templateAgentId')} hint={t('app.templateAgentHint')}><input name="template_agent_id" defaultValue={config?.template_agent_id ?? ''} /></Field>
     <Field label={t('app.credentialProfile')}><select name="credential_profile_id" required defaultValue={config?.credential_profile_id}>{credentials.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.owner_scope} · {profile.provider_environment}</option>)}</select></Field>
     <p className="form-wide security-note">{t('app.additionalCredentialConstraint')}</p>
     <Field label={t('app.secretRef')}><input name="app_key_secret_ref" required pattern="env://WORKBENCH_PROVIDER_[A-Z0-9_]+" placeholder="env://WORKBENCH_PROVIDER_CUSTOMER_APP_KEY" autoComplete="off" /></Field>

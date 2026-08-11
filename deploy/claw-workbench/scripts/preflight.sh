@@ -116,11 +116,21 @@ require_secure_top_level_file() {
 require_secure_secret_dir() {
   path="$1"
   label="$2"
+  required_owner="${3:-root-or-container}"
   [ -d "$path" ] && [ ! -L "$path" ] \
     || fail "$label must be a non-symlink directory"
   owner_uid="$(stat -c '%u' "$path")"
   mode="$(stat -c '%a' "$path")"
-  case "$owner_uid" in 0|10001) ;; *) fail "$label must be owned by root or container UID 10001" ;; esac
+  case "$required_owner" in
+    container)
+      [ "$owner_uid" = "10001" ] \
+        || fail "$label must be owned by container UID 10001 so the bind-mounted directory is searchable"
+      ;;
+    root-or-container)
+      case "$owner_uid" in 0|10001) ;; *) fail "$label must be owned by root or container UID 10001" ;; esac
+      ;;
+    *) fail "internal error: unsupported secret directory owner policy" ;;
+  esac
   [ $((0$mode & 077)) -eq 0 ] \
     || fail "$label must not be accessible by group/other"
   [ $((0$mode & 0500)) -eq $((0500)) ] \
@@ -129,7 +139,7 @@ require_secure_secret_dir() {
 
 require_secure_secret_dir "$root/secrets" "secrets/"
 for directory in provider oauth billing files sandbox; do
-  require_secure_secret_dir "$root/secrets/$directory" "secrets/$directory/"
+  require_secure_secret_dir "$root/secrets/$directory" "secrets/$directory/" container
 done
 
 for name in $required_secrets; do

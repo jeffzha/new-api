@@ -1,5 +1,7 @@
 # ADP Claw 工作台独立部署 Overlay
 
+生产管理员和客户使用流程见 [`Agent Store 与腾讯 ADP 智能工作台操作手册`](../../docs/agent-store-workbench-operations-manual.md)。
+
 > Security note: `.env` is data, never shell code. Keep it owned by the current
 > deployment user with mode `0600`; strict parsing rejects unknown keys,
 > expansion, command substitution, quoting and duplicate assignments. Preflight

@@ -75,7 +75,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Verify exact new-api source revision
         shell: bash
@@ -84,6 +84,20 @@ jobs:
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
           git diff --quiet
           git diff --cached --quiet
+
+      - name: Resolve upstream new-api version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          upstream_version="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD)"
+          if [[ ! "${upstream_version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Cannot resolve a valid upstream semantic version tag for the release revision." >&2
+            exit 1
+          fi
+          release_version="${upstream_version}.claw.g${GITHUB_SHA:0:12}"
+          echo "upstream=${upstream_version}" >> "${GITHUB_OUTPUT}"
+          echo "release=${release_version}" >> "${GITHUB_OUTPUT}"
 
       - name: Resolve immutable image names
         id: names
@@ -122,7 +136,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
           build-args: |
-            BUILD_VERSION=claw-${{ github.sha }}
+            BUILD_VERSION=${{ steps.version.outputs.release }}
             BUN_REGISTRY=https://registry.npmmirror.com
             GO_PROXY=https://goproxy.cn,direct
           cache-from: type=gha,scope=new-api-workbench
@@ -231,6 +245,8 @@ jobs:
           ADP_IMAGE: ${{ steps.names.outputs.adp }}
           ADP_DIGEST: ${{ steps.adp.outputs.digest }}
           CLAMAV_IMAGE: ${{ env.CLAMAV_IMAGE }}
+          NEW_API_UPSTREAM_VERSION: ${{ steps.version.outputs.upstream }}
+          NEW_API_RELEASE_VERSION: ${{ steps.version.outputs.release }}
         run: |
           set -euo pipefail
           mkdir -p .release/output
@@ -241,6 +257,8 @@ jobs:
 
           payload = {
               "schema_version": 1,
+              "new_api_upstream_version": os.environ["NEW_API_UPSTREAM_VERSION"],
+              "new_api_release_version": os.environ["NEW_API_RELEASE_VERSION"],
               "new_api_revision": os.environ["GITHUB_SHA"],
               "claw_control_revision": os.environ["GITHUB_SHA"],
               "adp_revision": os.environ["ADP_REVISION"],

@@ -5,6 +5,18 @@ workflow `.github/workflows/claw-workbench-release-images.yml` builds the
 new-api, claw-control, and ADP Workbench candidates, publishes them to GHCR,
 scans the immutable digests, and emits a small release candidate manifest.
 
+The new-api runtime version keeps the nearest reachable upstream semantic
+version tag and appends the Workbench revision, for example
+`v1.0.0-rc.21.claw.g2b7499e85bfe`. Operational release tags such as
+`claw-workbench-release-*` never replace the upstream version shown by
+`/new-api --version`.
+
+For a source-based Gateway candidate deployment, use
+`scripts/deploy-gateway-release.ps1` from this overlay instead of calling the
+generic repository script directly. The wrapper passes an explicit version in
+the same upstream-preserving form, such as
+`v1.0.0-rc.21.gateway.20260811T120000Z.g2b7499e85bfe`.
+
 ## One-time repository configuration
 
 1. Push the hardened ADP branch to the pinned trusted fork
@@ -30,8 +42,9 @@ vulnerability or an embedded secret.
 All three images are built for `linux/amd64`, carry an
 `org.opencontainers.image.revision` label for their own source repository, and
 publish BuildKit provenance plus an SBOM. The release candidate artifact
-contains only revisions and immutable `repository@sha256:...` references; it
-contains no registry credential or provider secret.
+contains only the upstream/release versions, source revisions, and immutable
+`repository@sha256:...` references; it contains no registry credential or
+provider secret.
 
 The ADP runtime is installed from its frozen `uv.lock` into a dedicated virtual
 environment. Build-time Python package installers are removed from the final

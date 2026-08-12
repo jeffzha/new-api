@@ -99,7 +99,7 @@ func (s *Server) listCustomerApps(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	page, err := s.services.AdminQueries.AppsPage(customerID, beforeID, limit)
+	page, err := s.services.AdminQueries.AppViewsPage(customerID, beforeID, limit)
 	writePageResult(w, r, page.Items, scope, page.NextBeforeID, err)
 }
 
@@ -187,6 +187,31 @@ func (s *Server) setDefaultCustomerApp(w http.ResponseWriter, r *http.Request) {
 		ExpectedTargetVersion:         body.ExpectedTargetVersion,
 		ExpectedCurrentDefaultVersion: body.ExpectedCurrentDefaultVersion,
 		Actor:                         actor(r), RequestID: requestID(r),
+	})
+	writeResult(w, r, http.StatusOK, result, err)
+}
+
+func (s *Server) transitionCustomerApp(w http.ResponseWriter, r *http.Request) {
+	customerID, ok := pathUint64(w, r, "customer_id")
+	if !ok {
+		return
+	}
+	application, err := s.services.Apps.BySelector(customerID, r.PathValue("selector"))
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	var body struct {
+		ExpectedVersion int64  `json:"expected_version"`
+		Reason          string `json:"reason,omitempty"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	result, err := s.services.Apps.Transition(app.TransitionCommand{
+		CustomerID: customerID, CustomerAppID: application.ID,
+		ExpectedVersion: body.ExpectedVersion, Action: r.PathValue("action"), Reason: body.Reason,
+		Actor: actor(r), RequestID: requestID(r),
 	})
 	writeResult(w, r, http.StatusOK, result, err)
 }

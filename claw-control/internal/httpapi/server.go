@@ -202,6 +202,7 @@ func New(services Services, adminToken string, internalAuth InternalAuth, public
 	admin.HandleFunc("POST /api/admin/workbench/customers/{customer_id}/apps", server.createCustomerApp)
 	admin.HandleFunc("POST /api/admin/workbench/customers/{customer_id}/apps/{selector}/verify", server.verifyCustomerApp)
 	admin.HandleFunc("POST /api/admin/workbench/customers/{customer_id}/apps/{selector}/default", server.setDefaultCustomerApp)
+	admin.HandleFunc("POST /api/admin/workbench/customers/{customer_id}/apps/{selector}/{action}", server.transitionCustomerApp)
 	admin.HandleFunc("POST /api/admin/workbench/customers/{customer_id}/app-migrations", server.prepareAppMigration)
 	admin.HandleFunc("POST /api/admin/workbench/customers/{customer_id}/app-migrations/{app_id}/verify", server.verifyAppMigration)
 	admin.Handle("POST /api/admin/workbench/customers/{customer_id}/app-migrations/{app_id}/replan", server.requireAdminSession(http.HandlerFunc(server.replanAppMigration)))

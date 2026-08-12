@@ -180,6 +180,32 @@ func TestAppEnableRequiresAnActivePaidPlanPeriod(t *testing.T) {
 	assert.Equal(t, model.AppStatusActive, enabled.Status)
 }
 
+func TestAdditionalAppCanBeEnabledWithoutReplacingPrimaryApp(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	customerRecord := model.Customer{CustomerCode: "multi-app-enable", DisplayName: "Multi App", Status: model.CustomerStatusActive, RowVersion: 1}
+	require.NoError(t, db.Create(&customerRecord).Error)
+	primary := model.CustomerApp{CustomerID: customerRecord.ID, Slot: "primary", ProviderEnvironment: model.ProviderChinaTencentADP, AppID: "primary-app", DisplayName: "Primary", Status: model.AppStatusActive, AuthEpoch: 1, RowVersion: 3}
+	require.NoError(t, db.Create(&primary).Error)
+	additional := model.CustomerApp{CustomerID: customerRecord.ID, Slot: "app:additional", Alias: "additional", ProviderEnvironment: model.ProviderChinaTencentADP, AppID: "additional-app", DisplayName: "Additional", Status: model.AppStatusVerified, AuthEpoch: 1, RowVersion: 2}
+	require.NoError(t, db.Create(&additional).Error)
+	config := model.AppConfigVersion{CustomerAppID: additional.ID, ConfigVersion: 1, Status: model.AppConfigStatusVerified, Region: "ap-guangzhou", SpaceID: "default_space", AppKeySecretRef: "sealed://additional", AppKeyFingerprint: "sha256:additional", AppKeyFingerprintVersion: 1, RowVersion: 1, LimitsJSON: `{}`, CapabilitiesJSON: `[]`, CreatedBy: "test"}
+	require.NoError(t, db.Create(&config).Error)
+	require.NoError(t, db.Model(&additional).Update("current_config_version_id", config.ID).Error)
+	now := time.Now().UTC()
+	period := model.PlanPeriod{CustomerID: customerRecord.ID, PlanVersionID: 1, StartAt: now.Add(-time.Hour), EndAt: now.Add(time.Hour), AmountCNY: "99.00", PaymentMode: model.PaymentModeOfflineManual, PaymentStatus: model.PaymentStatusPaid, Status: model.PeriodStatusActive, SnapshotJSON: `{}`, RowVersion: 1}
+	require.NoError(t, db.Create(&period).Error)
+
+	enabled, err := app.New(db, false).Transition(app.TransitionCommand{CustomerID: customerRecord.ID, CustomerAppID: additional.ID, ExpectedVersion: additional.RowVersion, Action: "enable", Actor: "root:1"})
+	require.NoError(t, err)
+	assert.Equal(t, model.AppStatusActive, enabled.Status)
+
+	var persistedPrimary model.CustomerApp
+	require.NoError(t, db.First(&persistedPrimary, primary.ID).Error)
+	assert.Equal(t, "primary", persistedPrimary.Slot)
+	assert.Equal(t, model.AppStatusActive, persistedPrimary.Status)
+}
+
 func TestProductionPolicyRejectsDirectAppDisable(t *testing.T) {
 	db, err := testutil.NewDatabase()
 	require.NoError(t, err)

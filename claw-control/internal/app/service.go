@@ -90,6 +90,7 @@ type RecordVerificationCommand struct {
 
 type TransitionCommand struct {
 	CustomerID      uint64
+	CustomerAppID   uint64
 	ExpectedVersion int64
 	Action          string
 	Reason          string
@@ -725,7 +726,13 @@ func (s *Service) Transition(command TransitionCommand) (*model.CustomerApp, err
 	}
 	var result model.CustomerApp
 	err := s.db.Transaction(func(tx *gorm.DB) error {
-		if err := database.ForUpdate(tx).Where("customer_id = ? AND slot = ?", command.CustomerID, "primary").First(&result).Error; err != nil {
+		query := database.ForUpdate(tx).Where("customer_id = ?", command.CustomerID)
+		if command.CustomerAppID > 0 {
+			query = query.Where("id = ?", command.CustomerAppID)
+		} else {
+			query = query.Where("slot = ?", "primary")
+		}
+		if err := query.First(&result).Error; err != nil {
 			return domain.NotFound("customer App not found")
 		}
 		if result.RowVersion != command.ExpectedVersion {

@@ -46,6 +46,8 @@ export interface CustomerApp {
   row_version: number
   current_config_version_id?: number
   pending_config_version_id?: number
+  current_config_version?: number
+  pending_config_version?: number
   verified_at?: string
   created_at?: string
 }
@@ -382,6 +384,10 @@ export interface AppConfigInput {
   display_name: string
   limits: Limits
   capabilities: string[]
+}
+
+export interface AdditionalAppInput extends Omit<AppConfigInput, 'expected_version'> {
+  alias: string
 }
 
 export interface CustomerUpdateInput {

@@ -86,7 +86,9 @@ and approval `before_id` requests remain accepted for compatibility.
 
 - `GET /api/admin/workbench/customers/{id}/apps` returns all App profiles with
   stable `selector`, customer-unique `alias`, `slot`, lifecycle status, and row
-  version. It never returns AppKey or credential secret references.
+  version. It also projects the numeric `current_config_version` and
+  `pending_config_version` needed by read-only verification forms. It never
+  returns AppKey or credential secret references.
 - `POST /api/admin/workbench/customers/{id}/apps` creates a non-default App and
   its first immutable draft. It accepts the normal App configuration fields
   plus a lowercase `alias`; the server generates the selector. The credential
@@ -94,6 +96,9 @@ and approval `before_id` requests remain accepted for compatibility.
   first draft from bypassing credential-change approval.
 - `POST /api/admin/workbench/customers/{id}/apps/{selector}/verify` accepts only
   `expected_version` and `config_version` and runs trusted verification.
+- `POST /api/admin/workbench/customers/{id}/apps/{selector}/{enable|suspend|disable|prepare}`
+  applies the lifecycle transition to that exact App record. It does not change
+  the primary slot or mutate another App.
 - `POST /api/admin/workbench/customers/{id}/apps/{selector}/default` accepts
   `expected_target_version` and `expected_current_default_version`. It swaps the
   `primary` slot, bumps both App authorization epochs, invalidates cached
@@ -188,6 +193,7 @@ only a restricted `claw_control_session` cookie and returns:
 | POST | `/api/admin/workbench/customers/{id}/app/verify` | request trusted Tencent verification using only `expected_version` and `config_version` |
 | GET/POST | `/api/admin/workbench/customers/{id}/apps` | list or add stable selectable App/Space profiles |
 | POST | `/api/admin/workbench/customers/{id}/apps/{selector}/verify` | verify a non-default App draft |
+| POST | `/api/admin/workbench/customers/{id}/apps/{selector}/{enable\|suspend\|disable\|prepare}` | lifecycle transition for one exact additional App |
 | POST | `/api/admin/workbench/customers/{id}/apps/{selector}/default` | atomically set the explicit default App |
 | POST | `/api/admin/workbench/customers/{id}/app/{enable\|suspend\|disable\|prepare}` | App lifecycle |
 | GET/POST | `/api/admin/workbench/plan-catalog` | list/publish immutable plan versions |
@@ -248,8 +254,7 @@ credential lifecycle status and permits two-person activation/rollback approval
 for already staged or activated rotations, but does not guess the row version or
 substitute the immutable credential `version` when staging a new rotation.
 
-Likewise, the App list exposes migration-candidate lifecycle state but not the
-immutable draft `config_version`. The SPA can verify a draft returned in the
-current preparation session and can request cutover approval for any verified
-candidate, but it will not reconstruct or guess a missing configuration version
-after a reload.
+The customer App list exposes each selectable App's current and pending numeric
+configuration versions without exposing secret fields. The SPA therefore uses
+server-projected versions for verification after a reload and never guesses a
+configuration version from a database ID.

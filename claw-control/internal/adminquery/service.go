@@ -92,6 +92,12 @@ type AppDraftResult struct {
 	Version *AppConfigView     `json:"config_version"`
 }
 
+type CustomerAppListView struct {
+	model.CustomerApp
+	CurrentConfigVersion *int64 `json:"current_config_version,omitempty"`
+	PendingConfigVersion *int64 `json:"pending_config_version,omitempty"`
+}
+
 func New(db *gorm.DB) *Service { return &Service{db: db} }
 
 func (s *Service) Dashboard(limit int) (*Dashboard, error) {
@@ -271,6 +277,52 @@ func (s *Service) AppsPage(customerID, beforeID uint64, limit int) (pagination.P
 		return pagination.Page[model.CustomerApp]{}, err
 	}
 	return pagination.Trim(result, limit, func(value model.CustomerApp) uint64 { return value.ID }), nil
+}
+
+func (s *Service) AppViewsPage(customerID, beforeID uint64, limit int) (pagination.Page[CustomerAppListView], error) {
+	apps, err := s.AppsPage(customerID, beforeID, limit)
+	if err != nil {
+		return pagination.Page[CustomerAppListView]{}, err
+	}
+	versionIDs := make([]uint64, 0, len(apps.Items)*2)
+	for index := range apps.Items {
+		if apps.Items[index].CurrentConfigVersionID != nil {
+			versionIDs = append(versionIDs, *apps.Items[index].CurrentConfigVersionID)
+		}
+		if apps.Items[index].PendingConfigVersionID != nil {
+			versionIDs = append(versionIDs, *apps.Items[index].PendingConfigVersionID)
+		}
+	}
+	versions := make(map[uint64]int64, len(versionIDs))
+	if len(versionIDs) > 0 {
+		var configurations []model.AppConfigVersion
+		if err := s.db.Where("id IN ?", versionIDs).Find(&configurations).Error; err != nil {
+			return pagination.Page[CustomerAppListView]{}, err
+		}
+		for index := range configurations {
+			versions[configurations[index].ID] = configurations[index].ConfigVersion
+		}
+	}
+	items := make([]CustomerAppListView, 0, len(apps.Items))
+	for index := range apps.Items {
+		view := CustomerAppListView{CustomerApp: apps.Items[index]}
+		if apps.Items[index].CurrentConfigVersionID != nil {
+			value, ok := versions[*apps.Items[index].CurrentConfigVersionID]
+			if !ok {
+				return pagination.Page[CustomerAppListView]{}, domain.Conflict("current App configuration is unavailable")
+			}
+			view.CurrentConfigVersion = &value
+		}
+		if apps.Items[index].PendingConfigVersionID != nil {
+			value, ok := versions[*apps.Items[index].PendingConfigVersionID]
+			if !ok {
+				return pagination.Page[CustomerAppListView]{}, domain.Conflict("pending App configuration is unavailable")
+			}
+			view.PendingConfigVersion = &value
+		}
+		items = append(items, view)
+	}
+	return pagination.Page[CustomerAppListView]{Items: items, NextBeforeID: apps.NextBeforeID}, nil
 }
 
 func ProjectAppDraft(stable *model.CustomerApp, configuration *model.AppConfigVersion) (*AppDraftResult, error) {

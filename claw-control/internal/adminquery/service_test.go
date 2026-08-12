@@ -57,3 +57,34 @@ func TestCustomerDetailProjectsSecretReferencesOutOfAdminResponses(t *testing.T)
 	require.NoError(t, err)
 	assert.False(t, strings.Contains(string(encoded), "WORKBENCH_PROVIDER_"))
 }
+
+func TestAppViewsPageReturnsEachAppsOwnConfigurationNumbers(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	created, err := customer.New(db, "prod", testutil.NewIdentityVerifier("v1.test")).Create(customer.CreateCommand{CustomerCode: "customer-app-list", DisplayName: "Customer App List", Actor: "test"})
+	require.NoError(t, err)
+	primary := model.CustomerApp{CustomerID: created.ID, Slot: "primary", Alias: "primary", ProviderEnvironment: model.ProviderChinaTencentADP, AppID: "app-primary", DisplayName: "Primary", Status: model.AppStatusActive, AuthEpoch: 1, RowVersion: 2}
+	require.NoError(t, db.Create(&primary).Error)
+	additional := model.CustomerApp{CustomerID: created.ID, Slot: "app:additional", Alias: "additional", ProviderEnvironment: model.ProviderChinaTencentADP, AppID: "app-additional", DisplayName: "Additional", Status: model.AppStatusDraft, AuthEpoch: 1, RowVersion: 1}
+	require.NoError(t, db.Create(&additional).Error)
+	current := model.AppConfigVersion{CustomerAppID: primary.ID, ConfigVersion: 4, Status: model.AppConfigStatusVerified, Region: "ap-guangzhou", SpaceID: "default_space", AppKeySecretRef: "sealed://primary", AppKeyFingerprint: "sha256:primary", AppKeyFingerprintVersion: 1, RowVersion: 1, LimitsJSON: `{}`, CapabilitiesJSON: `[]`, CreatedBy: "test"}
+	require.NoError(t, db.Create(&current).Error)
+	pending := model.AppConfigVersion{CustomerAppID: additional.ID, ConfigVersion: 1, Status: model.AppConfigStatusDraft, Region: "ap-guangzhou", SpaceID: "default_space", AppKeySecretRef: "sealed://additional", AppKeyFingerprint: "sha256:additional", AppKeyFingerprintVersion: 1, RowVersion: 1, LimitsJSON: `{}`, CapabilitiesJSON: `[]`, CreatedBy: "test"}
+	require.NoError(t, db.Create(&pending).Error)
+	require.NoError(t, db.Model(&primary).Updates(map[string]any{"current_config_version_id": current.ID}).Error)
+	require.NoError(t, db.Model(&additional).Updates(map[string]any{"pending_config_version_id": pending.ID}).Error)
+
+	page, err := adminquery.New(db).AppViewsPage(created.ID, 0, 100)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 2)
+	byID := map[uint64]adminquery.CustomerAppListView{}
+	for _, item := range page.Items {
+		byID[item.ID] = item
+	}
+	require.NotNil(t, byID[primary.ID].CurrentConfigVersion)
+	assert.Equal(t, int64(4), *byID[primary.ID].CurrentConfigVersion)
+	assert.Nil(t, byID[primary.ID].PendingConfigVersion)
+	require.NotNil(t, byID[additional.ID].PendingConfigVersion)
+	assert.Equal(t, int64(1), *byID[additional.ID].PendingConfigVersion)
+	assert.Nil(t, byID[additional.ID].CurrentConfigVersion)
+}

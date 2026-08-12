@@ -63,6 +63,52 @@ describe('administrative request authentication', () => {
     expect((init.headers as Headers).get('Authorization')).toBeNull()
   })
 
+  it('creates and verifies a distinct customer App without mutating the primary App endpoint', async () => {
+    vi.stubGlobal('document', { cookie: 'claw_admin_csrf=csrf-token' })
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ success: true, data: { app: { id: 18 }, config_version: { config_version: 1 } } }), {
+      status: 201,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await adminApi.createCustomerApp(42, {
+      alias: 'gaokao-zhiyuan-wuyou',
+      provider_environment: 'china_tencent_adp',
+      region: 'ap-guangzhou',
+      space_id: 'default_space',
+      app_id: '2048342527164967296',
+      template_agent_id: '',
+      credential_profile_id: 5,
+      app_key: 'fixture-app-key-value',
+      display_name: 'Gaokao application',
+      limits: { customer_concurrency: 10, user_concurrency: 2, max_runtime_seconds: 300, max_reasoning_rounds: 20, max_output_tokens: 8192, web_search_per_turn: 0, max_file_bytes: 0 },
+      capabilities: ['chat'],
+    })
+    await adminApi.verifyCustomerApp(42, 'aps_public', { expected_version: 1, config_version: 1 })
+    await adminApi.transitionCustomerApp(42, 'aps_public', 'enable', { expected_version: 2, reason: '' })
+    await adminApi.setDefaultCustomerApp(42, 'aps_public', { expected_target_version: 2, expected_current_default_version: 7 })
+
+    const calls = fetchMock.mock.calls.map(([url, init]) => ({
+      url,
+      body: JSON.parse(String((init as RequestInit).body)),
+    }))
+    expect(calls[0]?.url).toBe('/api/admin/workbench/customers/42/apps')
+    expect(calls[0]?.body).toMatchObject({ alias: 'gaokao-zhiyuan-wuyou', app_id: '2048342527164967296' })
+    expect(calls[1]).toEqual({
+      url: '/api/admin/workbench/customers/42/apps/aps_public/verify',
+      body: { expected_version: 1, config_version: 1 },
+    })
+    expect(calls[2]).toEqual({
+      url: '/api/admin/workbench/customers/42/apps/aps_public/enable',
+      body: { expected_version: 2, reason: '' },
+    })
+    expect(calls[3]).toEqual({
+      url: '/api/admin/workbench/customers/42/apps/aps_public/default',
+      body: { expected_target_version: 2, expected_current_default_version: 7 },
+    })
+    expect(calls.some(({ url }) => url === '/api/admin/workbench/customers/42/app')).toBe(false)
+  })
+
   it('keeps Agent Store deployment and entitlement mutations scoped by CAS versions', async () => {
     vi.stubGlobal('document', { cookie: 'claw_admin_csrf=csrf-token' })
     const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ success: true, data: { item_id: 'aci_1', deployments: [] } }), {

@@ -27,6 +27,7 @@ class SecretKeyValidationTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         values = {
             "evidence_master_key": encoded(1),
+            "provider_vault_master_key": encoded(16),
             "adp_usage_evidence_key": encoded(2),
             "adp_file_locator_key": encoded(3),
             "adp_workspace_locator_key": encoded(4),

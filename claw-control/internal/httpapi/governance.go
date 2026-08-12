@@ -51,6 +51,7 @@ func (s *Server) prepareAppMigration(w http.ResponseWriter, r *http.Request) {
 		AppID               string     `json:"app_id"`
 		TemplateAgentID     string     `json:"template_agent_id"`
 		CredentialProfileID *uint64    `json:"credential_profile_id"`
+		AppKey              string     `json:"app_key,omitempty"`
 		AppKeySecretRef     string     `json:"app_key_secret_ref"`
 		AppKeyFingerprint   string     `json:"app_key_fingerprint"`
 		DisplayName         string     `json:"display_name"`
@@ -64,7 +65,7 @@ func (s *Server) prepareAppMigration(w http.ResponseWriter, r *http.Request) {
 		CustomerID: customerID, ExpectedVersion: body.ExpectedVersion,
 		ProviderEnvironment: body.ProviderEnvironment, Region: body.Region,
 		SpaceID: body.SpaceID, AppID: body.AppID, TemplateAgentID: body.TemplateAgentID,
-		CredentialProfileID: body.CredentialProfileID, AppKeySecretRef: body.AppKeySecretRef,
+		CredentialProfileID: body.CredentialProfileID, AppKey: body.AppKey, AppKeySecretRef: body.AppKeySecretRef,
 		AppKeyFingerprint: body.AppKeyFingerprint, DisplayName: body.DisplayName,
 		Limits: body.Limits, Capabilities: body.Capabilities,
 		Actor: actor(r), RequestID: requestID(r),

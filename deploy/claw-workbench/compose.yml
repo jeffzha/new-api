@@ -325,6 +325,7 @@ services:
       - adp_control_hmac
       - new_api_identity_hmac
       - evidence_master_key
+      - provider_vault_master_key
       - internal_ca
     volumes:
       - ./secrets/provider:/run/workbench/provider-secrets:ro
@@ -599,6 +600,8 @@ secrets:
     file: ./secrets/new_api_identity_hmac
   evidence_master_key:
     file: ./secrets/evidence_master_key
+  provider_vault_master_key:
+    file: ./secrets/provider_vault_master_key
   adp_usage_evidence_key:
     file: ./secrets/adp_usage_evidence_key
   adp_file_locator_key:

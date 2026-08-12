@@ -12,6 +12,7 @@ new_api_control_hmac
 adp_control_hmac
 new_api_identity_hmac
 evidence_master_key
+provider_vault_master_key
 adp_usage_evidence_key
 adp_file_locator_key
 adp_file_locator_previous_keys.json
@@ -624,6 +625,8 @@ billing_mount_count="$(grep -Fxc '      - ./secrets/billing:/run/workbench/billi
 [ "$billing_mount_count" -eq 2 ] || fail "both claw-control colors must mount the same read-only Billing credential directory"
 grep -Fq 'read_secret CLAW_EVIDENCE_MASTER_KEY /run/secrets/evidence_master_key' "$root/docker/entrypoint-control.sh" \
   || fail "control entrypoint must load the independent evidence master key"
+grep -Fq 'read_secret CLAW_PROVIDER_VAULT_MASTER_KEY /run/secrets/provider_vault_master_key' "$root/docker/entrypoint-control.sh" \
+  || fail "control entrypoint must load the provider vault master key"
 grep -Fq 'read_secret CLAW_TENCENT_BILLING_SECRET_ID /run/workbench/billing-secrets/tencent_secret_id' "$root/docker/entrypoint-control.sh" \
   || fail "control entrypoint must inject Tencent Billing SecretId from the server-side secret directory"
 grep -Fq 'read_secret CLAW_TENCENT_BILLING_SECRET_KEY /run/workbench/billing-secrets/tencent_secret_key' "$root/docker/entrypoint-control.sh" \

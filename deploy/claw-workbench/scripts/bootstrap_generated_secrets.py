@@ -41,6 +41,7 @@ GENERATED_SECRETS = (
     GeneratedSecret("adp_control_hmac", lambda: _random_base64(48)),
     GeneratedSecret("new_api_identity_hmac", lambda: _random_base64(48)),
     GeneratedSecret("evidence_master_key", lambda: _random_base64(32)),
+    GeneratedSecret("provider_vault_master_key", lambda: _random_base64(32)),
     GeneratedSecret("adp_usage_evidence_key", lambda: _random_base64(32)),
     GeneratedSecret("adp_file_locator_key", lambda: _random_base64(32)),
     GeneratedSecret("adp_file_locator_previous_keys.json", lambda: b"{}\n"),

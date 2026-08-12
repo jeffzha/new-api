@@ -237,8 +237,7 @@ function MigrationPanel({ customers, credentials, evidence, onChanged }: {
       app_id: String(form.get('app_id') ?? '').trim(),
       template_agent_id: String(form.get('template_agent_id') ?? '').trim(),
       credential_profile_id: toNumber(form, 'credential_profile_id'),
-      app_key_secret_ref: String(form.get('app_key_secret_ref') ?? '').trim(),
-      app_key_fingerprint: String(form.get('app_key_fingerprint') ?? '').trim(),
+      app_key: String(form.get('app_key') ?? ''),
       display_name: String(form.get('display_name') ?? '').trim(),
       limits: limitsFromForm(form),
       capabilities: capabilities.filter((capability) => form.getAll('capabilities').includes(capability)),
@@ -276,8 +275,7 @@ function MigrationConfigFields({ primary, credentials, customerId }: { primary: 
     <Field label={t('app.appId')}><input name="app_id" required /></Field>
     <Field label={t('app.templateAgentId')}><input name="template_agent_id" required /></Field>
     <Field label={t('app.credentialProfile')}><select name="credential_profile_id" required>{credentials.filter((item) => item.status === 'active' && (item.owner_scope === 'platform' || item.customer_id === customerId)).map((item) => <option key={item.id} value={item.id}>{item.name} v{item.version} · {item.owner_scope}</option>)}</select></Field>
-    <Field label={t('app.secretRef')}><input name="app_key_secret_ref" required pattern="env://WORKBENCH_PROVIDER_[A-Z0-9_]+" autoComplete="off" placeholder="env://WORKBENCH_PROVIDER_CUSTOMER_APP_KEY" /></Field>
-    <Field label={t('app.fingerprint')}><input name="app_key_fingerprint" required pattern="sha256:[a-f0-9]{64}" placeholder="sha256:…" /></Field>
+    <Field label={t('app.appKey')} hint={t('app.appKeyCreateHint')}><input name="app_key" type="password" required minLength={16} maxLength={4096} autoComplete="new-password" /></Field>
     <Field label={t('app.displayName')}><input name="display_name" required maxLength={160} /></Field>
     <fieldset className="form-section"><legend>{t('app.capabilities')}</legend><div className="checkbox-grid">{capabilities.map((capability) => <label key={capability}><input type="checkbox" name="capabilities" value={capability} defaultChecked={['chat', 'files', 'catalog_models', 'catalog_skills', 'catalog_plugins'].includes(capability)} /> {capability}</label>)}</div></fieldset>
     <LimitsFields />

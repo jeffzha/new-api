@@ -34,8 +34,6 @@ type AppConfigView struct {
 	SpaceID                    string               `json:"space_id"`
 	TemplateAgentID            string               `json:"template_agent_id"`
 	CredentialProfileID        *uint64              `json:"credential_profile_id,omitempty"`
-	AppKeyFingerprint          string               `json:"app_key_fingerprint"`
-	AppKeyFingerprintVersion   int                  `json:"app_key_fingerprint_version"`
 	CredentialChangeApprovalID *uint64              `json:"credential_change_approval_id,omitempty"`
 	RowVersion                 int64                `json:"row_version"`
 	Limits                     productpolicy.Limits `json:"limits"`
@@ -330,8 +328,7 @@ func projectAppConfig(configuration model.AppConfigVersion) (*AppConfigView, err
 	return &AppConfigView{
 		ID: configuration.ID, ConfigVersion: configuration.ConfigVersion, Status: configuration.Status,
 		Region: configuration.Region, SpaceID: configuration.SpaceID, TemplateAgentID: configuration.TemplateAgentID,
-		CredentialProfileID: configuration.CredentialProfileID, AppKeyFingerprint: configuration.AppKeyFingerprint,
-		AppKeyFingerprintVersion:   configuration.AppKeyFingerprintVersion,
+		CredentialProfileID:        configuration.CredentialProfileID,
 		CredentialChangeApprovalID: configuration.CredentialChangeApprovalID, RowVersion: configuration.RowVersion,
 		Limits: limits, Capabilities: capabilities, CreatedBy: configuration.CreatedBy,
 		VerifiedAt: configuration.VerifiedAt, CreatedAt: configuration.CreatedAt,

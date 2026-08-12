@@ -63,9 +63,15 @@ func main() {
 		}
 	}
 
+	providerVault, err := secrets.NewVaultResolver(db, cfg.ProviderVaultMasterKey)
+	clear(cfg.ProviderVaultMasterKey)
+	_ = os.Unsetenv("CLAW_PROVIDER_VAULT_MASTER_KEY")
+	if err != nil {
+		log.Fatalf("configure provider secret vault: %v", err)
+	}
 	planService := plan.New(db)
 	notificationService := notification.New(db)
-	secretResolver := secrets.EnvironmentResolver{}
+	secretResolver := secrets.NewCompositeResolver(secrets.EnvironmentResolver{}, providerVault)
 	providerVerifier, err := providerverify.NewTencentVerifier(cfg.ProviderVerificationTimeout)
 	if err != nil {
 		log.Fatalf("configure Tencent ADP verifier: %v", err)

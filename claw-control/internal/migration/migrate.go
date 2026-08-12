@@ -36,6 +36,7 @@ const AgentStoreVersion = "0021_agent_store"
 const AgentStoreRuntimeContractVersion = "0022_agent_store_runtime_contract"
 const AppMigrationSourceRuntimeVersion = "0023_app_migration_source_runtime"
 const AdminRecentAuthVersion = "0024_admin_recent_auth"
+const ProviderSecretVaultVersion = "0025_provider_secret_vault"
 
 type SchemaMigration struct {
 	Version   string    `gorm:"type:varchar(96);primaryKey"`
@@ -95,6 +96,7 @@ func Migrate(db *gorm.DB) error {
 		}},
 		{version: AppMigrationSourceRuntimeVersion, models: []any{&model.AppMigrationLineage{}}},
 		{version: AdminRecentAuthVersion},
+		{version: ProviderSecretVaultVersion, models: []any{&model.ProviderSecret{}}},
 	}
 	for _, migration := range migrations {
 		var count int64

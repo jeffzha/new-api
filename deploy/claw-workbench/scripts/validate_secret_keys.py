@@ -155,6 +155,7 @@ def validate(
     materials: list[SecretMaterial] = []
     encoded_keys = (
         ("control evidence key", "evidence_master_key"),
+        ("provider vault key", "provider_vault_master_key"),
         ("ADP usage evidence key", "adp_usage_evidence_key"),
         ("file locator active key", "adp_file_locator_key"),
         ("workspace locator active key", "adp_workspace_locator_key"),

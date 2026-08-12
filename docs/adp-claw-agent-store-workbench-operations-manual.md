@@ -2,13 +2,13 @@
 
 > 适用环境：`https://gateway.nexus-reach.com`
 >
-> 当前生产版本：`v1.0.0-rc.21.claw.g64da3592bfb6`；适用于该版本及后续兼容版本
+> 当前生产版本：以系统信息页显示的 `v1.0.0-rc.21.claw.*` 为准
 >
 > 管理入口：`https://gateway.nexus-reach.com/workbench-admin`
 >
 > 客户入口：`https://gateway.nexus-reach.com/agent-store`
 
-本手册说明如何把一个已经在腾讯 ADP 中开发并发布的 Application 配置到平台、加入固定月度套餐、上架到 Agent Store，并让被授权的 new-api 用户启动独立的智能工作台。文中的 Secret、AppKey、密码和指纹均为占位符；不要把真实值写入文档、聊天、工单、浏览器表单或命令历史。
+本手册说明如何把一个已经在腾讯 ADP 中开发并发布的 Application 配置到平台、加入固定月度套餐、上架到 Agent Store，并让被授权的 new-api 用户启动独立的智能工作台。文中的 Secret、AppKey 和密码均为占位符；不要把真实值写入文档、聊天、工单或命令历史。AppKey 只允许在 HTTPS 管理界面的专用密码输入框中提交一次。
 
 ## 1. 先理解四个对象
 
@@ -23,7 +23,7 @@ flowchart LR
 ```
 
 - **客户**：计费、成员、Application 和套餐的隔离边界，例如 `NEXUS-INTERNAL`。
-- **Customer App**：客户授权给平台使用的一套腾讯 ADP Application 配置。AppKey、AK/SK 只以服务器 Secret 引用保存。
+- **Customer App**：客户授权给平台使用的一套腾讯 ADP Application 配置。AppKey 由管理界面一次性写入数据库加密保险库；界面只提示是否已经配置，不展示内部引用或指纹。AK/SK 继续由平台运维人员管理。
 - **Agent Store 商品**：用户看到的名称、简介、头像、分类和标签。一个逻辑商品可以关联多个客户部署。
 - **客户部署**：商品与某个客户的某个 Customer App 之间的绑定，独立管理验证状态、执行开关和使用授权。
 
@@ -56,7 +56,7 @@ flowchart LR
 | Region | 腾讯 ADP 应用所在地域 | `ap-guangzhou` |
 | SpaceId | ADP 空间信息 | `default_space` |
 | AppId | ADP Application 详情 | `2085927381516339648` |
-| AppKey | ADP Application 调用配置 | 只放入服务器 Secret 文件 |
+| AppKey | ADP Application 调用配置 | 在 HTTPS 管理界面一次性输入；之后不回显 |
 | SecretId / SecretKey | 腾讯云访问密钥管理 | 只放入服务器 Secret 文件 |
 | 模板 AgentId | 仅动态 Claw Application 需要 | `4959df3a-1f38-4906-be51-c8e2cd65eab0` |
 
@@ -74,7 +74,7 @@ Application 必须已经发布且处于可运行状态。平台会通过腾讯�
 
 不要为了通过表单给 AppMode 1/2/3 填写虚假 AgentId。平台会按腾讯读回结果选择运行策略；未知 AppMode 会拒绝验证。
 
-## 4. 首次安装服务器 Secret
+## 4. 首次安装腾讯云访问密钥
 
 本节只需由服务器运维执行一次。已经配置完成的客户可以直接跳到第 5 节。
 
@@ -85,7 +85,6 @@ Application 必须已经发布且处于可运行状态。平台会通过腾讯�
 ```text
 WORKBENCH_PROVIDER_NEXUS_INTERNAL_TENCENT_SECRET_ID
 WORKBENCH_PROVIDER_NEXUS_INTERNAL_TENCENT_SECRET_KEY
-WORKBENCH_PROVIDER_NEXUS_INTERNAL_ADP_APP_KEY
 ```
 
 对应的管理界面引用为：
@@ -93,7 +92,6 @@ WORKBENCH_PROVIDER_NEXUS_INTERNAL_ADP_APP_KEY
 ```text
 env://WORKBENCH_PROVIDER_NEXUS_INTERNAL_TENCENT_SECRET_ID
 env://WORKBENCH_PROVIDER_NEXUS_INTERNAL_TENCENT_SECRET_KEY
-env://WORKBENCH_PROVIDER_NEXUS_INTERNAL_ADP_APP_KEY
 ```
 
 ### 4.2 安全写入文件
@@ -106,7 +104,6 @@ install -d -o 10001 -g 10001 -m 0700 secrets/provider
 
 read -rsp 'Tencent SecretId: ' VALUE; printf '%s' "$VALUE" > secrets/provider/WORKBENCH_PROVIDER_NEXUS_INTERNAL_TENCENT_SECRET_ID; unset VALUE; echo
 read -rsp 'Tencent SecretKey: ' VALUE; printf '%s' "$VALUE" > secrets/provider/WORKBENCH_PROVIDER_NEXUS_INTERNAL_TENCENT_SECRET_KEY; unset VALUE; echo
-read -rsp 'ADP AppKey: ' VALUE; printf '%s' "$VALUE" > secrets/provider/WORKBENCH_PROVIDER_NEXUS_INTERNAL_ADP_APP_KEY; unset VALUE; echo
 
 chown 10001:10001 secrets/provider/WORKBENCH_PROVIDER_NEXUS_INTERNAL_*
 chmod 0600 secrets/provider/WORKBENCH_PROVIDER_NEXUS_INTERNAL_*
@@ -125,13 +122,10 @@ python3 scripts/provider_fingerprint.py credential \
   WORKBENCH_PROVIDER_NEXUS_INTERNAL_TENCENT_SECRET_ID \
   WORKBENCH_PROVIDER_NEXUS_INTERNAL_TENCENT_SECRET_KEY
 
-python3 scripts/provider_fingerprint.py app-key \
-  WORKBENCH_PROVIDER_NEXUS_INTERNAL_ADP_APP_KEY
-
 sh scripts/preflight.sh
 ```
 
-分别记录两条形如 `sha256:<64位小写十六进制>` 的结果。指纹可以填写到管理界面；Secret 本身不能填写。
+记录凭据脚本输出的 `sha256:<64位小写十六进制>` 结果。SecretId 和 SecretKey 本身不能填写到浏览器；AppKey 则在第 8 节的专用密码输入框中提交。
 
 ## 5. 进入新版管理控制面
 
@@ -199,11 +193,12 @@ sh scripts/preflight.sh
 | App ID | `2085927381516339648` |
 | 模板 Agent ID | `4959df3a-1f38-4906-be51-c8e2cd65eab0` |
 | 凭据配置 ID | 选择 `nexus-internal-primary` |
-| AppKey Secret 引用 | `env://WORKBENCH_PROVIDER_NEXUS_INTERNAL_ADP_APP_KEY` |
-| AppKey 指纹 | `sha256:<app-key-fingerprint>` |
+| AppKey | 粘贴腾讯 ADP 提供的 AppKey；保存后立即清空且不回显 |
 | 应用显示名称 | `REACH NEXUS Claw Workbench` |
 
 如果配置的是 AppMode 1/2/3 或静态 Claw，模板 Agent ID 留空。
+
+首次配置必须填写 AppKey。已经存在已验证配置时，该字段留空表示继续使用现有 AppKey；输入新值表示创建新的加密版本并替换。界面和管理 API 都不会返回明文、Secret 引用或指纹，普通超级管理员无需登录服务器。
 
 ### 8.2 推荐能力和限制
 
@@ -517,7 +512,7 @@ published/unpublished/draft/rejected -> disabled（按允许的管理动作）
 
 - [ ] 腾讯 Application 已发布且可运行。
 - [ ] Region、SpaceId、AppId、条件化模板 Agent 已确认。
-- [ ] AppKey、AK/SK 只存在于服务器 Secret 文件。
+- [ ] AppKey 已通过 HTTPS 管理界面写入加密保险库；AK/SK 已由平台运维人员安全配置。
 - [ ] Secret 目录和文件 owner/mode 正确，preflight 通过。
 - [ ] credential profile 为 active、fingerprint version 为 1。
 - [ ] 客户 active，new-api 用户成员关系 active。

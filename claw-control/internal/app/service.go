@@ -41,6 +41,7 @@ type SaveConfigCommand struct {
 	AppID               string
 	TemplateAgentID     string
 	CredentialProfileID *uint64
+	AppKey              string
 	AppKeySecretRef     string
 	AppKeyFingerprint   string
 	DisplayName         string
@@ -212,9 +213,6 @@ func (s *Service) PrepareMigration(command SaveConfigCommand) (*SaveConfigResult
 	if err := validateSaveConfig(&command); err != nil {
 		return nil, err
 	}
-	if err := validateAppKeyFingerprint(s.resolver, command.AppKeySecretRef, command.AppKeyFingerprint); err != nil {
-		return nil, err
-	}
 	if command.ExpectedVersion <= 0 {
 		return nil, domain.Invalid("expected_version of the source primary App is required")
 	}
@@ -234,6 +232,9 @@ func (s *Service) PrepareMigration(command SaveConfigCommand) (*SaveConfigResult
 		}
 		if customer.Status != model.CustomerStatusActive {
 			return domain.Conflict("only an active customer can prepare App migration")
+		}
+		if err := s.prepareAppKey(tx, &command, nil); err != nil {
+			return err
 		}
 		var source model.CustomerApp
 		if err := database.ForUpdate(tx).Where("customer_id = ? AND slot = ?", command.CustomerID, "primary").First(&source).Error; err != nil {
@@ -298,9 +299,6 @@ func (s *Service) SaveConfig(command SaveConfigCommand) (*SaveConfigResult, erro
 	if err := validateSaveConfig(&command); err != nil {
 		return nil, err
 	}
-	if err := validateAppKeyFingerprint(s.resolver, command.AppKeySecretRef, command.AppKeyFingerprint); err != nil {
-		return nil, err
-	}
 	capabilitiesJSON, err := jsonx.Marshal(command.Capabilities)
 	if err != nil {
 		return nil, err
@@ -333,6 +331,7 @@ func (s *Service) SaveConfig(command SaveConfigCommand) (*SaveConfigResult, erro
 			return find.Error
 		}
 		var before any
+		var fallbackConfig *model.AppConfigVersion
 		if isNew {
 			if command.ExpectedVersion != 0 {
 				return domain.Conflict("expected_version must be 0 when creating the first App")
@@ -367,10 +366,20 @@ func (s *Service) SaveConfig(command SaveConfigCommand) (*SaveConfigResult, erro
 			if stable.CurrentConfigVersionID != nil && (stable.AppID != command.AppID || stable.ProviderEnvironment != command.ProviderEnvironment) {
 				return domain.Conflict("verified AppId/provider cannot be changed in place; create a migration App")
 			}
+			if stable.CurrentConfigVersionID != nil {
+				var current model.AppConfigVersion
+				if err := tx.First(&current, *stable.CurrentConfigVersionID).Error; err != nil {
+					return domain.Conflict("current App config is unavailable")
+				}
+				fallbackConfig = &current
+			}
 			stable.AppID = command.AppID
 			stable.ProviderEnvironment = command.ProviderEnvironment
 			stable.DisplayName = command.DisplayName
 			stable.RowVersion++
+		}
+		if err := s.prepareAppKey(tx, &command, fallbackConfig); err != nil {
+			return err
 		}
 		var maxVersion int64
 		if err := tx.Model(&model.AppConfigVersion{}).Where("customer_app_id = ?", stable.ID).Select("COALESCE(MAX(config_version), 0)").Scan(&maxVersion).Error; err != nil {
@@ -560,9 +569,6 @@ func (s *Service) CreateAdditional(command CreateAdditionalCommand) (*SaveConfig
 	if err := validateSaveConfig(&command.Config); err != nil {
 		return nil, err
 	}
-	if err := validateAppKeyFingerprint(s.resolver, command.Config.AppKeySecretRef, command.Config.AppKeyFingerprint); err != nil {
-		return nil, err
-	}
 	if command.Config.ExpectedVersion != 0 {
 		return nil, domain.Invalid("expected_version must be 0 when adding an App")
 	}
@@ -582,6 +588,9 @@ func (s *Service) CreateAdditional(command CreateAdditionalCommand) (*SaveConfig
 		}
 		if customer.Status != model.CustomerStatusActive {
 			return domain.Conflict("only an active customer can add an App")
+		}
+		if err := s.prepareAppKey(tx, &command.Config, nil); err != nil {
+			return err
 		}
 		var primary model.CustomerApp
 		if err := database.ForUpdate(tx).Where("customer_id = ? AND slot = ?", customer.ID, "primary").First(&primary).Error; err != nil {
@@ -803,8 +812,20 @@ func validateSaveConfig(command *SaveConfigCommand) error {
 	if command.ProviderEnvironment != model.ProviderChinaTencentCloud && command.ProviderEnvironment != model.ProviderChinaTencentADP {
 		return domain.Invalid("provider_environment must be china_tencent_cloud or china_tencent_adp")
 	}
-	if command.ProviderEnvironment == "" || command.Region == "" || command.SpaceID == "" || command.AppID == "" || command.CredentialProfileID == nil || !secrets.ValidProviderReference(command.AppKeySecretRef) || command.AppKeyFingerprint == "" || command.DisplayName == "" {
-		return domain.Invalid("provider environment, region, space, App, secret reference, fingerprint, and display name are required")
+	if command.ProviderEnvironment == "" || command.Region == "" || command.SpaceID == "" || command.AppID == "" || command.CredentialProfileID == nil || command.DisplayName == "" {
+		return domain.Invalid("provider environment, region, space, App, credential profile, and display name are required")
+	}
+	if command.AppKey != "" && (len(command.AppKey) < 16 || len(command.AppKey) > 4096 || strings.TrimSpace(command.AppKey) != command.AppKey || strings.ContainsRune(command.AppKey, '\x00')) {
+		return domain.Invalid("AppKey must contain 16-4096 non-NUL characters without surrounding whitespace")
+	}
+	if command.AppKey != "" && (command.AppKeySecretRef != "" || command.AppKeyFingerprint != "") {
+		return domain.Invalid("provide AppKey or a server secret reference, not both")
+	}
+	if (command.AppKeySecretRef == "") != (command.AppKeyFingerprint == "") {
+		return domain.Invalid("AppKey secret reference and fingerprint must be provided together")
+	}
+	if command.AppKeySecretRef != "" && !secrets.ValidProviderReference(command.AppKeySecretRef) {
+		return domain.Invalid("AppKey secret reference is invalid")
 	}
 	if len(command.AppID) > 128 {
 		return domain.Invalid("app_id must be at most 128 characters")
@@ -818,6 +839,29 @@ func validateSaveConfig(command *SaveConfigCommand) error {
 	}
 	command.Capabilities = normalizedCapabilities
 	return nil
+}
+
+func (s *Service) prepareAppKey(tx *gorm.DB, command *SaveConfigCommand, fallback *model.AppConfigVersion) error {
+	if command.AppKey != "" {
+		writer, ok := s.resolver.(secrets.AppKeyWriter)
+		if !ok {
+			return domain.Unavailable("write-only provider secret storage is unavailable")
+		}
+		reference, fingerprint, err := writer.StoreAppKey(tx, command.CustomerID, command.AppKey, command.Actor)
+		command.AppKey = ""
+		if err != nil {
+			return domain.Unavailable("failed to store provider AppKey")
+		}
+		command.AppKeySecretRef, command.AppKeyFingerprint = reference, fingerprint
+		return nil
+	} else if command.AppKeySecretRef == "" && fallback != nil {
+		command.AppKeySecretRef = fallback.AppKeySecretRef
+		command.AppKeyFingerprint = fallback.AppKeyFingerprint
+	}
+	if command.AppKeySecretRef == "" || command.AppKeyFingerprint == "" {
+		return domain.Invalid("AppKey is required when an App has no existing secret")
+	}
+	return validateAppKeyFingerprint(s.resolver, command.AppKeySecretRef, command.AppKeyFingerprint)
 }
 
 func validateAppKeyFingerprint(resolver secrets.Resolver, reference, fingerprint string) error {

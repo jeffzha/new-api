@@ -46,7 +46,7 @@ All mutations also require a recent new-api step-up. A missing or expired proof 
 }
 ```
 
-`app`, `current_config`, `pending_config`, and `verifications` must not expose Secret values. Config `limits` is the typed seven-field object and `capabilities` is a string array. `current_config` is the active verified version; `pending_config` is the draft eligible for verification. They must never be conflated.
+`app`, `current_config`, `pending_config`, and `verifications` must not expose Secret values, internal Secret references, or fingerprints. App configuration mutations accept a write-only `app_key`; an empty value on an existing App preserves its current key, while a non-empty value creates a new encrypted vault version. The SPA must never render a field for an existing reference. Config `limits` is the typed seven-field object and `capabilities` is a string array. `current_config` is the active verified version; `pending_config` is the draft eligible for verification. They must never be conflated.
 
 ### Collection projections
 

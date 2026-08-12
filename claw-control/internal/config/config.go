@@ -54,6 +54,7 @@ type Config struct {
 	AllowUntrustedProviderVerification bool
 	EvidenceRoot                       string
 	EvidenceMasterKey                  []byte
+	ProviderVaultMasterKey             []byte
 	EvidenceMaxBytes                   int64
 	EvidenceClamAVAddress              string
 	EvidenceClamAVTimeout              time.Duration
@@ -74,6 +75,7 @@ type Config struct {
 
 func Load() (Config, error) {
 	evidenceKey, evidenceKeyErr := base64.StdEncoding.Strict().DecodeString(strings.TrimSpace(os.Getenv("CLAW_EVIDENCE_MASTER_KEY")))
+	providerVaultKey, providerVaultKeyErr := base64.StdEncoding.Strict().DecodeString(strings.TrimSpace(os.Getenv("CLAW_PROVIDER_VAULT_MASTER_KEY")))
 	billingEnabledValue := strings.ToLower(strings.TrimSpace(os.Getenv("CLAW_TENCENT_BILLING_IMPORT_ENABLED")))
 	if billingEnabledValue != "" && billingEnabledValue != "true" && billingEnabledValue != "false" {
 		return Config{}, errors.New("CLAW_TENCENT_BILLING_IMPORT_ENABLED must be true or false")
@@ -124,6 +126,7 @@ func Load() (Config, error) {
 		AllowUntrustedProviderVerification: strings.EqualFold(strings.TrimSpace(os.Getenv("CLAW_ALLOW_UNTRUSTED_PROVIDER_VERIFICATION")), "true"),
 		EvidenceRoot:                       env("CLAW_EVIDENCE_ROOT", "/var/lib/claw-control/evidence"),
 		EvidenceMasterKey:                  evidenceKey,
+		ProviderVaultMasterKey:             providerVaultKey,
 		EvidenceMaxBytes:                   int64(envInt("CLAW_EVIDENCE_MAX_BYTES", 10<<20)),
 		EvidenceClamAVAddress:              env("CLAW_EVIDENCE_CLAMAV_ADDR", "127.0.0.1:3310"),
 		EvidenceClamAVTimeout:              envDuration("CLAW_EVIDENCE_CLAMAV_TIMEOUT", 15*time.Second),
@@ -150,7 +153,14 @@ func Load() (Config, error) {
 	if evidenceKeyErr != nil || len(cfg.EvidenceMasterKey) != 32 {
 		return Config{}, errors.New("CLAW_EVIDENCE_MASTER_KEY must be standard base64 encoding of exactly 32 random bytes")
 	}
+	if providerVaultKeyErr != nil || len(cfg.ProviderVaultMasterKey) != 32 {
+		return Config{}, errors.New("CLAW_PROVIDER_VAULT_MASTER_KEY must be standard base64 encoding of exactly 32 random bytes")
+	}
+	if string(cfg.ProviderVaultMasterKey) == string(cfg.EvidenceMasterKey) {
+		return Config{}, errors.New("provider vault and evidence encryption keys must be independent")
+	}
 	decodedEvidenceKey := string(cfg.EvidenceMasterKey)
+	decodedProviderVaultKey := string(cfg.ProviderVaultMasterKey)
 	if cfg.EvidenceRoot == "" || cfg.EvidenceMaxBytes <= 0 || cfg.EvidenceMaxBytes > 100<<20 {
 		return Config{}, errors.New("CLAW_EVIDENCE_ROOT is required and CLAW_EVIDENCE_MAX_BYTES must be between 1 and 104857600")
 	}
@@ -187,12 +197,12 @@ func Load() (Config, error) {
 	if _, _, err := net.SplitHostPort(cfg.EvidenceClamAVAddress); err != nil || cfg.EvidenceClamAVTimeout <= 0 || cfg.EvidenceClamAVTimeout > time.Minute {
 		return Config{}, errors.New("CLAW_EVIDENCE_CLAMAV_ADDR must include host:port and CLAW_EVIDENCE_CLAMAV_TIMEOUT must be positive and at most 1m")
 	}
-	if decodedEvidenceKey == cfg.AdminToken || decodedEvidenceKey == cfg.NewAPIIdentitySecret {
-		return Config{}, errors.New("evidence master key must be independent from administrative and identity secrets")
+	if decodedEvidenceKey == cfg.AdminToken || decodedEvidenceKey == cfg.NewAPIIdentitySecret || decodedProviderVaultKey == cfg.AdminToken || decodedProviderVaultKey == cfg.NewAPIIdentitySecret {
+		return Config{}, errors.New("encryption keys must be independent from administrative and identity secrets")
 	}
 	seenServiceSecrets := make(map[string]string, len(cfg.InternalHMACKeys))
 	for service, secret := range cfg.InternalHMACKeys {
-		if len(service) > 48 || len(secret) < 32 || secret == cfg.AdminToken || secret == decodedEvidenceKey {
+		if len(service) > 48 || len(secret) < 32 || secret == cfg.AdminToken || secret == decodedEvidenceKey || secret == decodedProviderVaultKey {
 			return Config{}, errors.New("internal HMAC service names must be at most 48 characters and secrets must be distinct values of at least 32 characters")
 		}
 		if otherService, duplicate := seenServiceSecrets[secret]; duplicate {

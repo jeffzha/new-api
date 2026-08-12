@@ -49,7 +49,7 @@ func TestCustomerDetailProjectsSecretReferencesOutOfAdminResponses(t *testing.T)
 	response := string(encoded)
 	assert.NotContains(t, response, "WORKBENCH_PROVIDER_APP_KEY")
 	assert.NotContains(t, response, "WORKBENCH_PROVIDER_SECRET_ID")
-	assert.Contains(t, response, secrets.AppKeyFingerprint("app-key"))
+	assert.NotContains(t, response, secrets.AppKeyFingerprint("app-key"))
 
 	profiles, err := adminquery.New(db).CredentialProfiles(10, nil)
 	require.NoError(t, err)

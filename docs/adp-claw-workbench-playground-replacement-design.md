@@ -231,7 +231,7 @@ stateDiagram-v2
 管理员创建商品时分为展示配置和客户部署配置：
 
 1. 展示配置：名称、短介绍、详细介绍、分类、标签、排序、推荐、可选头像覆盖。
-2. 客户部署：客户、现有 CustomerApp 或新 App draft、Region、SpaceId、AppId、AppKey Secret 引用、credential profile、套餐 capability/limits。
+2. 客户部署：客户、现有 CustomerApp 或新 App draft、Region、SpaceId、AppId、一次性写入的 AppKey、credential profile、套餐 capability/limits。管理界面不得显示内部 Secret 引用或指纹。
 3. 模板 AgentId 是条件字段：
    - AppMode 4 且读回动态配置开启：必填并验证；
    - AppMode 4 且不使用动态配置：可选；
@@ -393,7 +393,7 @@ ADP 内部新增稳定 `runtime_profile`，值只能由 provider-derived AppMode
 |---|---|---|
 | Space | 腾讯资源空间 | App 配置保存应用实际 SpaceId；内置 `default_space` 本身合法，但不得无条件假定所有 App 都使用它 |
 | ADP Application | 商店商品的实际运行载体 | 每个客户部署绑定独立 App；AppMode 接受 1/2/3/4，配置完成、已发布且运行中 |
-| AppKey | 对话端鉴权 | claw-control 独占 Secret 引用、fingerprint、验证、轮换和解析；ADP 只通过签名内部接口临时接收运行所需明文并短期驻留内存，禁止落库、回显或记录日志 |
+| AppKey | 对话端鉴权 | 超级管理员通过 HTTPS 管理界面一次性写入，claw-control 使用独立主密钥加密保存、验证、轮换和解析；内部 vault 引用和 fingerprint 不向管理界面或 API 响应投影。ADP 只通过签名内部接口临时接收运行所需明文并短期驻留内存，禁止落库、回显或记录日志 |
 | Kind=0 Agent | 配置端模板 Agent | 仅在需要验证 Agent 配置的模式中使用，不直接绑定普通用户 |
 | Kind=1 Agent | 用户级动态 Agent | 仅用于动态 Claw；每个客户成员、每个 App 唯一一个活动映射 |
 | Conversation | 会话句柄；Claw 时同时关联 Workspace | 绑定 customer+app+user+可选 agent，API 接入 Type=5 |
@@ -2507,8 +2507,7 @@ handle @workbench {
   "region": "ap-guangzhou",
   "space_id": "space-...",
   "app_id": "app-...",
-  "app_key_secret_ref": "env://WORKBENCH_PROVIDER_CUSTOMER_ZHANGYUE_ADP_APP_KEY",
-  "app_key_fingerprint": "sha256:12ab...",
+  "app_key": "<write-only ADP AppKey>",
   "template_agent_id": "agent-...",
   "credential_profile_id": 1,
   "display_name": "张悦 Claw 工作台",
@@ -2533,13 +2532,11 @@ handle @workbench {
   "config_version": 4,
   "status": "draft",
   "app_id_masked": "app-***9f21",
-  "app_key_configured": true,
-  "app_key_fingerprint": "sha256:12ab...",
   "verified_at": null
 }
 ```
 
-真实 AppKey 只存在于受限 Secret provider；API 仅接受符合 allowlist 的 `app_key_secret_ref` 和不可逆 fingerprint，响应不得回显引用解析值。`expected_version` 防止两个管理员相互覆盖。
+`app_key` 是只写字段：首次创建必须填写；更新既有 App 时留空表示保留当前密钥，填写新值表示创建新的加密版本。claw-control 在同一数据库事务中使用 AES-256-GCM 保存密文，响应、审计、日志和前端状态均不得包含明文、内部 vault 引用或 fingerprint。旧 `env://` 引用只作为服务端升级兼容路径存在，不出现在管理界面。`expected_version` 防止两个管理员相互覆盖。
 
 #### 验证与启用
 
@@ -2748,7 +2745,7 @@ erDiagram
     bigint config_version
     varchar space_id
     varchar template_agent_id
-    varchar app_key_secret_ref
+    varchar app_key_vault_ref
   }
   CLAW_PLAN_PERIOD {
     bigint id PK
@@ -2805,7 +2802,7 @@ erDiagram
 
 #### `claw_app_config_versions`
 
-- customer_app_id、config_version、region、space_id、template_agent_id、credential_profile_id、app_key_secret_ref/fingerprint。
+- customer_app_id、config_version、region、space_id、template_agent_id、credential_profile_id、内部 app_key_vault_ref/fingerprint；后两者不进入管理 API 安全投影。
 - limits_json/capabilities_json 使用 TEXT，通过 claw-control 自有 `jsonx` wrapper；业务代码不直接调用 `encoding/json`，独立服务不反向依赖 new-api 运行时包。
 - 每一版创建后不可修改 Secret/资源字段；验证通过后由稳定 App 行原子切换 `current_config_version_id`。
 - `UNIQUE(customer_app_id,config_version)`；provider AppId 的跨客户唯一性由稳定 App 行保证。
@@ -3278,7 +3275,8 @@ sequenceDiagram
 | `CLAW_NEW_API_IDENTITY_STATUS_HMAC_SECRET` | claw-control→new-api identity-status 专用 HMAC；与 ADP 链路分离。当前部署使用内部 TLS + 独立 HMAC，不存在伪造的 `*_MTLS_*` 环境变量 |
 | `CLAW_INTERNAL_HMAC_KEYS` + ADP `WORKBENCH_SERVICE_HMAC_SECRET` | ADP→claw-control ticket/app-context/resource/authz 内部 API 鉴权 |
 | `CLAW_CONTROL_SESSION_TTL` | control session 短 TTL；数据库只保存 opaque token hash |
-| `env://WORKBENCH_PROVIDER_*` | 当前 AppKey/credential secret resolver 的生产真值引用；Secret 仅由 claw-control 容器读取，数据库只保存引用和 fingerprint，不存在尚未实现的 `WORKBENCH_SECRET_MASTER_KEY` |
+| `CLAW_PROVIDER_VAULT_MASTER_KEY` | AppKey 数据库密文的独立 AES-256-GCM 主密钥，由 Docker Secret 注入，不存数据库、不进入管理 API；管理界面仅提供只写 AppKey 输入框 |
+| `env://WORKBENCH_PROVIDER_*` | 仅保留 AK/SK credential 与旧 AppKey 数据的服务端兼容解析；引用和 fingerprint 不向普通超级管理员界面投影 |
 | `CLAW_EVIDENCE_MASTER_KEY` | claw-control 人工用量/付款证据对象的独立 AES-256-GCM 主密钥；与 provider Secret 不是同一概念 |
 | ADP `WORKBENCH_USAGE_EVIDENCE_KEY` / `WORKBENCH_USAGE_EVIDENCE_KEY_ID` | Turn `response.completed` 原始 JSON 的独立 JWE 加密密钥及非敏感 key id；密钥由 `adp_usage_evidence_key` Docker secret 注入 |
 | `AUTO_CREATE_ACCOUNT` | false |

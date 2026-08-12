@@ -507,12 +507,15 @@ func TestAdminMutationResponsesNeverEchoSecretReferences(t *testing.T) {
 		CustomerCode: "secret-projection", DisplayName: "Secret Projection", Actor: "fixture",
 	})
 	require.NoError(t, err)
-	resolver := testutil.SecretResolver{
+	environmentResolver := testutil.SecretResolver{
 		"env://WORKBENCH_PROVIDER_FIXTURE_ID": "fixture-id", "env://WORKBENCH_PROVIDER_FIXTURE_KEY": "fixture-key",
 		"env://WORKBENCH_PROVIDER_HTTP_ID": "http-id", "env://WORKBENCH_PROVIDER_HTTP_KEY": "http-key",
 		"env://WORKBENCH_PROVIDER_ROTATE_ID": "rotate-id", "env://WORKBENCH_PROVIDER_ROTATE_KEY": "rotate-key",
 		"env://WORKBENCH_PROVIDER_HTTP_APP_KEY": "http-app-key",
 	}
+	vault, err := secrets.NewVaultResolver(db, []byte("0123456789abcdef0123456789abcdef"))
+	require.NoError(t, err)
+	resolver := secrets.NewCompositeResolver(environmentResolver, vault)
 	credentials := credential.New(db, resolver)
 	profile, err := credentials.Create(credential.CreateCommand{
 		ProviderEnvironment: "china_tencent_cloud", Name: "fixture",
@@ -565,16 +568,20 @@ func TestAdminMutationResponsesNeverEchoSecretReferences(t *testing.T) {
 	appRequest := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/admin/workbench/customers/%d/app", created.ID), bytes.NewReader([]byte(fmt.Sprintf(`{
 		"expected_version":0,"provider_environment":"china_tencent_cloud","region":"ap-guangzhou",
 		"space_id":"space-1","app_id":"app-1","template_agent_id":"agent-1","credential_profile_id":%d,
-		"app_key_secret_ref":"env://WORKBENCH_PROVIDER_HTTP_APP_KEY","app_key_fingerprint":"%s",
+		"app_key":"write-only-http-app-key",
 		"display_name":"Workbench","limits":{"customer_concurrency":2,"user_concurrency":1,"max_runtime_seconds":600,
 		"max_reasoning_rounds":20,"max_output_tokens":4096,"web_search_per_turn":0,"max_file_bytes":1048576},"capabilities":["chat"]
-	}`, profile.ID, secrets.AppKeyFingerprint("http-app-key")))))
+	}`, profile.ID))))
 	authorizeAdminRequest(appRequest, sessionCookie, csrfToken)
 	appResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(appResponse, appRequest)
 	require.Equal(t, http.StatusOK, appResponse.Code, appResponse.Body.String())
 	assert.NotContains(t, appResponse.Body.String(), "WORKBENCH_PROVIDER_")
-	assert.Contains(t, appResponse.Body.String(), secrets.AppKeyFingerprint("http-app-key"))
+	assert.NotContains(t, appResponse.Body.String(), "write-only-http-app-key")
+	assert.NotContains(t, appResponse.Body.String(), "app_key_fingerprint")
+	var storedSecret model.ProviderSecret
+	require.NoError(t, db.First(&storedSecret).Error)
+	assert.NotContains(t, storedSecret.Ciphertext, "write-only-http-app-key")
 }
 
 func TestSensitiveAdminMutationsRequireRecentAuthentication(t *testing.T) {

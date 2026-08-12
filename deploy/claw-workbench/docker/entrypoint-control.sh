@@ -23,6 +23,7 @@ read_secret WORKBENCH_CONTROL_HMAC_SECRET /run/secrets/new_api_control_hmac
 read_secret WORKBENCH_ADP_HMAC_SECRET /run/secrets/adp_control_hmac
 read_secret WORKBENCH_SERVICE_HMAC_SECRET /run/secrets/new_api_identity_hmac
 read_secret CLAW_EVIDENCE_MASTER_KEY /run/secrets/evidence_master_key
+read_secret CLAW_PROVIDER_VAULT_MASTER_KEY /run/secrets/provider_vault_master_key
 
 case "${CLAW_TENCENT_BILLING_IMPORT_ENABLED:-false}" in
   true)

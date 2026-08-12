@@ -258,6 +258,26 @@ type CredentialProfile struct {
 
 func (CredentialProfile) TableName() string { return "claw_credential_profiles" }
 
+// ProviderSecret stores write-only provider material encrypted by the
+// deployment-owned provider vault key. PublicID is the only value referenced
+// by application configuration; ciphertext and its nonce are never projected
+// through an HTTP response or audit payload.
+type ProviderSecret struct {
+	ID          uint64     `json:"-" gorm:"primaryKey"`
+	PublicID    string     `json:"-" gorm:"type:varchar(64);uniqueIndex;not null"`
+	CustomerID  uint64     `json:"-" gorm:"index;not null"`
+	Kind        string     `json:"-" gorm:"type:varchar(32);index;not null"`
+	Ciphertext  string     `json:"-" gorm:"type:text;not null"`
+	Fingerprint string     `json:"-" gorm:"type:varchar(128);not null"`
+	KeyVersion  int        `json:"-" gorm:"not null"`
+	CreatedBy   string     `json:"-" gorm:"type:varchar(128);not null"`
+	RevokedAt   *time.Time `json:"-" gorm:"index"`
+	CreatedAt   time.Time  `json:"-"`
+	UpdatedAt   time.Time  `json:"-"`
+}
+
+func (ProviderSecret) TableName() string { return "claw_provider_secrets" }
+
 type CustomerApp struct {
 	ID                     uint64     `json:"id" gorm:"primaryKey"`
 	CustomerID             uint64     `json:"customer_id" gorm:"uniqueIndex:idx_claw_app_customer_slot,priority:1;uniqueIndex:idx_claw_app_customer_alias,priority:1;index;not null"`

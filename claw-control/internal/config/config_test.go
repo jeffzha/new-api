@@ -168,6 +168,7 @@ func setValidEnvironment(t *testing.T) {
 	t.Setenv("CLAW_NEW_API_ADMIN_IDENTITY_STATUS_URL", "https://gateway.example.com/api/internal/workbench/admin-identity-status")
 	t.Setenv("CLAW_NEW_API_IDENTITY_STATUS_HMAC_SECRET", "fedcba9876543210fedcba9876543210")
 	t.Setenv("CLAW_EVIDENCE_MASTER_KEY", "cXdlcnR5dWlvcGFzZGZnaGprbHp4Y3Zibm0xMjM0NTY=")
+	t.Setenv("CLAW_PROVIDER_VAULT_MASTER_KEY", "cHJvdmlkZXItdmF1bHQta2V5LTAxMjM0NTY3ODlBQkM=")
 	t.Setenv("CLAW_REDIS_ADDR", "127.0.0.1:6379")
 	t.Setenv("CLAW_REDIS_PASSWORD", "redis-test-password")
 }

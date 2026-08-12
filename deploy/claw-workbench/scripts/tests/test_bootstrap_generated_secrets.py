@@ -49,6 +49,7 @@ class GeneratedSecretBootstrapTest(unittest.TestCase):
         )
         for name in (
             "evidence_master_key",
+            "provider_vault_master_key",
             "adp_usage_evidence_key",
             "adp_file_locator_key",
             "adp_workspace_locator_key",

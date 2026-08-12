@@ -47,6 +47,7 @@ type Counts struct {
 	AppVerifications   int64 `json:"app_verifications"`
 	AppConfigurations  int64 `json:"app_configurations"`
 	CustomerApps       int64 `json:"customer_apps"`
+	ProviderSecrets    int64 `json:"provider_secrets"`
 	DeliveredOutbox    int64 `json:"delivered_outbox"`
 	PendingOutbox      int64 `json:"pending_outbox"`
 	PreservedEvidence  int64 `json:"preserved_evidence"`
@@ -261,6 +262,7 @@ func countCustomerData(tx *gorm.DB, customerID uint64) (Counts, error) {
 		{&model.IdentityBinding{}, "customer_id = ?", []any{customerID}, &counts.IdentityBindings},
 		{&model.CustomerMember{}, "customer_id = ?", []any{customerID}, &counts.CustomerMembers},
 		{&model.CustomerApp{}, "customer_id = ?", []any{customerID}, &counts.CustomerApps},
+		{&model.ProviderSecret{}, "customer_id = ?", []any{customerID}, &counts.ProviderSecrets},
 		{&model.ControlOutbox{}, "customer_id = ? AND status = ?", []any{customerID, model.OutboxStatusDelivered}, &counts.DeliveredOutbox},
 		{&model.ControlOutbox{}, "customer_id = ? AND status = ?", []any{customerID, model.OutboxStatusPending}, &counts.PendingOutbox},
 		{&model.EvidenceObject{}, "customer_id = ?", []any{customerID}, &counts.PreservedEvidence},
@@ -320,6 +322,11 @@ func deleteCustomerOperationalData(tx *gorm.DB, customerID uint64) error {
 		)
 	}
 	operations = append(operations,
+		struct {
+			model any
+			where string
+			args  []any
+		}{&model.ProviderSecret{}, "customer_id = ?", []any{customerID}},
 		struct {
 			model any
 			where string

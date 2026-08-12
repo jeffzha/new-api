@@ -102,6 +102,45 @@ func TestVerifyPendingLeavesDraftRetryableOnProviderTransportFailure(t *testing.
 	assert.Equal(t, created.PendingConfigVersionID, persisted.PendingConfigVersionID)
 }
 
+func TestSaveConfigAcceptsWriteOnlyAppKeyAndPersistsOnlyVaultReference(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	vault, err := secrets.NewVaultResolver(db, []byte("0123456789abcdef0123456789abcdef"))
+	require.NoError(t, err)
+	resolver := secrets.NewCompositeResolver(providerSecrets(), vault)
+	createdCustomer, err := customer.New(db, "prod", testutil.NewIdentityVerifier("v1.vault")).Create(customer.CreateCommand{
+		CustomerCode: "vault-customer", DisplayName: "Vault Customer", Actor: "root:1",
+	})
+	require.NoError(t, err)
+	profile, err := credential.New(db, resolver).Create(credential.CreateCommand{
+		ProviderEnvironment: model.ProviderChinaTencentCloud, Name: "vault-primary",
+		SecretIDRef: "env://WORKBENCH_PROVIDER_SECRET_ID", SecretKeyRef: "env://WORKBENCH_PROVIDER_SECRET_KEY",
+		Fingerprint: secrets.CredentialPairFingerprint("resolved-secret-id", "resolved-secret-key"), Actor: "root:1",
+	})
+	require.NoError(t, err)
+	apps := app.New(db, false, resolver)
+	result, err := apps.SaveConfig(app.SaveConfigCommand{
+		CustomerID: createdCustomer.ID, ProviderEnvironment: model.ProviderChinaTencentCloud,
+		Region: "ap-guangzhou", SpaceID: "default_space", AppID: "provider-app-vault",
+		CredentialProfileID: &profile.ID, AppKey: "write-only-provider-app-key", DisplayName: "Vault App",
+		Capabilities: []string{productpolicy.CapabilityChat}, Limits: productpolicy.Limits{
+			CustomerConcurrency: 2, UserConcurrency: 1, MaxRuntimeSeconds: 300,
+			MaxReasoningRounds: 5, MaxOutputTokens: 1024,
+		}, Actor: "root:1", RequestID: "vault-save",
+	})
+	require.NoError(t, err)
+	assert.True(t, secrets.ValidVaultReference(result.Version.AppKeySecretRef))
+	assert.NotContains(t, result.Version.AppKeySecretRef, "write-only-provider-app-key")
+	resolved, err := secrets.ResolveAppKey(resolver, result.Version.AppKeySecretRef, result.Version.AppKeyFingerprint, result.Version.AppKeyFingerprintVersion)
+	require.NoError(t, err)
+	assert.Equal(t, "write-only-provider-app-key", resolved)
+
+	var record model.ProviderSecret
+	require.NoError(t, db.First(&record).Error)
+	assert.Equal(t, createdCustomer.ID, record.CustomerID)
+	assert.NotContains(t, record.Ciphertext, "write-only-provider-app-key")
+}
+
 func TestAppEnableRequiresAnActivePaidPlanPeriod(t *testing.T) {
 	db, err := testutil.NewDatabase()
 	require.NoError(t, err)

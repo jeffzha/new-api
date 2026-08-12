@@ -58,8 +58,6 @@ export interface AppConfigVersion {
   space_id: string
   template_agent_id: string
   credential_profile_id?: number
-  app_key_fingerprint: string
-  app_key_fingerprint_version: number
   credential_change_approval_id?: number
   row_version: number
   limits?: Limits
@@ -380,8 +378,7 @@ export interface AppConfigInput {
   app_id: string
   template_agent_id: string
   credential_profile_id: number
-  app_key_secret_ref: string
-  app_key_fingerprint: string
+  app_key?: string
   display_name: string
   limits: Limits
   capabilities: string[]

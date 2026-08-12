@@ -28,5 +28,6 @@ func (EnvironmentResolver) Resolve(reference string) (string, error) {
 }
 
 func ValidProviderReference(reference string) bool {
-	return providerReferencePattern.MatchString(strings.TrimSpace(reference))
+	normalized := strings.TrimSpace(reference)
+	return providerReferencePattern.MatchString(normalized) || ValidVaultReference(normalized)
 }

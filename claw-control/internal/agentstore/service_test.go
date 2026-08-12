@@ -78,6 +78,15 @@ func TestCatalogLifecycleAuthorizationAndLaunchSnapshot(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, model.AgentCatalogStatusPublished, published.Status)
+	published, err = service.Verify(context.Background(), agentstore.TransitionCommand{
+		ItemID: published.ItemID, DeploymentID: published.Deployment.DeploymentID,
+		ExpectedVersion: published.RowVersion, ExpectedDeploymentVersion: published.Deployment.RowVersion,
+		Actor: "admin:1", RequestID: "verify-after-publish-1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, model.AgentCatalogStatusPublished, published.Status)
+	assert.Equal(t, model.AgentDeploymentStatusActive, published.Deployment.Status,
+		"provider verification must not remove a published deployment from the customer catalog")
 	unpublished, err := service.Transition(agentstore.TransitionCommand{
 		ItemID: published.ItemID, ExpectedVersion: published.RowVersion, Action: "unpublish", Actor: "admin:1",
 	})

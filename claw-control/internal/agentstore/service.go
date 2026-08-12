@@ -584,6 +584,9 @@ func (s *Service) Verify(ctx context.Context, command TransitionCommand) (*Admin
 		deployment.UpdatedAt = now
 		if providerResult.Result == "verified" && deployment.RuntimeProfile != "" {
 			deployment.Status = model.AgentDeploymentStatusVerified
+			if state.originalItemStatus == model.AgentCatalogStatusPublished {
+				deployment.Status = model.AgentDeploymentStatusActive
+			}
 			deployment.VerifiedConfigVersionID = &state.config.ID
 			deployment.VerifiedConfigVersion = state.config.ConfigVersion
 			deployment.VerifiedAppAuthEpoch = app.AuthEpoch

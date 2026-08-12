@@ -176,11 +176,11 @@ function Get-GatewayCanaryState {
     }
 
     $managedBlock = $managedMatches[0].Value
-    $weightMatches = [regex]::Matches($managedBlock, '(?m)^[\t ]*# weights blue=(\d+) green=(\d+)[\t ]*$')
-    $proxyPattern = "(?m)^[\t ]*reverse_proxy[\t ]+$([regex]::Escape($BlueUpstream))[\t ]+$([regex]::Escape($GreenUpstream))[\t ]*\{[\t ]*$"
+    $weightMatches = [regex]::Matches($managedBlock, '(?m)^[\t ]*# weights blue=(\d+) green=(\d+)[\t ]*\r?$')
+    $proxyPattern = "(?m)^[\t ]*reverse_proxy[\t ]+$([regex]::Escape($BlueUpstream))[\t ]+$([regex]::Escape($GreenUpstream))[\t ]*\{[\t ]*\r?$"
     $proxyMatches = [regex]::Matches($managedBlock, $proxyPattern)
-    $fallbackMatches = [regex]::Matches($managedBlock, '(?m)^[\t ]*fallback[\t ]+weighted_round_robin[\t ]+(\d+)[\t ]+(\d+)[\t ]*$')
-    $cookieMatches = [regex]::Matches($managedBlock, '(?m)^[\t ]*lb_policy[\t ]+cookie[\t ]+new_api_slot[\t ]+[0-9a-f]{64}[\t ]*\{[\t ]*$')
+    $fallbackMatches = [regex]::Matches($managedBlock, '(?m)^[\t ]*fallback[\t ]+weighted_round_robin[\t ]+(\d+)[\t ]+(\d+)[\t ]*\r?$')
+    $cookieMatches = [regex]::Matches($managedBlock, '(?m)^[\t ]*lb_policy[\t ]+cookie[\t ]+new_api_slot[\t ]+[0-9a-f]{64}[\t ]*\{[\t ]*\r?$')
     if ($weightMatches.Count -ne 1 -or $proxyMatches.Count -ne 1 -or $fallbackMatches.Count -ne 1 -or $cookieMatches.Count -ne 1) {
         throw "The managed Gateway blue/green block does not match the expected upstream and weight structure."
     }

@@ -205,11 +205,11 @@ if ($managedMatches.Count -gt 1) {
 
 if ($managedMatch) {
     $currentManagedBlock = $managedMatch.Value
-    $currentWeightMatches = [regex]::Matches($currentManagedBlock, '(?m)^[\t ]*# weights blue=(\d+) green=(\d+)[\t ]*$')
-    $currentProxyPattern = "(?m)^[\t ]*reverse_proxy[\t ]+$([regex]::Escape($BlueUpstream))[\t ]+$([regex]::Escape($GreenUpstream))[\t ]*\{[\t ]*$"
+    $currentWeightMatches = [regex]::Matches($currentManagedBlock, '(?m)^[\t ]*# weights blue=(\d+) green=(\d+)[\t ]*\r?$')
+    $currentProxyPattern = "(?m)^[\t ]*reverse_proxy[\t ]+$([regex]::Escape($BlueUpstream))[\t ]+$([regex]::Escape($GreenUpstream))[\t ]*\{[\t ]*\r?$"
     $currentProxyMatches = [regex]::Matches($currentManagedBlock, $currentProxyPattern)
-    $currentCookieMatches = [regex]::Matches($currentManagedBlock, '(?m)^[\t ]*lb_policy[\t ]+cookie[\t ]+new_api_slot[\t ]+[0-9a-f]{64}[\t ]*\{[\t ]*$')
-    $currentFallbackMatches = [regex]::Matches($currentManagedBlock, '(?m)^[\t ]*fallback[\t ]+weighted_round_robin[\t ]+(\d+)[\t ]+(\d+)[\t ]*$')
+    $currentCookieMatches = [regex]::Matches($currentManagedBlock, '(?m)^[\t ]*lb_policy[\t ]+cookie[\t ]+new_api_slot[\t ]+[0-9a-f]{64}[\t ]*\{[\t ]*\r?$')
+    $currentFallbackMatches = [regex]::Matches($currentManagedBlock, '(?m)^[\t ]*fallback[\t ]+weighted_round_robin[\t ]+(\d+)[\t ]+(\d+)[\t ]*\r?$')
     if ($currentWeightMatches.Count -ne 1 -or $currentProxyMatches.Count -ne 1 -or $currentCookieMatches.Count -ne 1 -or $currentFallbackMatches.Count -ne 1) {
         throw "The existing managed Gateway block is malformed or uses an unexpected load-balancing policy."
     }

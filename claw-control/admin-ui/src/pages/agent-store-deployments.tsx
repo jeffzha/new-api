@@ -146,6 +146,7 @@ function DisableDeploymentDialog(props: { deployment: AgentStoreDeployment; disa
 
 function subjectTypeMessage(subjectType: AgentStoreDeployment['entitlements'][number]['subject_type']) {
   switch (subjectType) {
+    case 'all_customers': return 'agentStore.allCustomers' as const
     case 'user': return 'agentStore.subjectUser' as const
     case 'role': return 'agentStore.subjectRole' as const
     case 'plan': return 'agentStore.subjectPlan' as const

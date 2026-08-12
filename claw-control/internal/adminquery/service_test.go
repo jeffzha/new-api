@@ -3,6 +3,7 @@ package adminquery_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/claw-control/internal/adminquery"
 	"github.com/QuantumNous/new-api/claw-control/internal/app"
@@ -71,6 +72,14 @@ func TestAppViewsPageReturnsEachAppsOwnConfigurationNumbers(t *testing.T) {
 	require.NoError(t, db.Create(&current).Error)
 	pending := model.AppConfigVersion{CustomerAppID: additional.ID, ConfigVersion: 1, Status: model.AppConfigStatusDraft, Region: "ap-guangzhou", SpaceID: "default_space", AppKeySecretRef: "sealed://additional", AppKeyFingerprint: "sha256:additional", AppKeyFingerprintVersion: 1, RowVersion: 1, LimitsJSON: `{}`, CapabilitiesJSON: `[]`, CreatedBy: "test"}
 	require.NoError(t, db.Create(&pending).Error)
+	verification := model.AppVerification{
+		PublicID: "verify-additional", CustomerAppID: additional.ID, AppConfigVersionID: pending.ID,
+		Result: "invalid", AppMode: 2, ReleaseStatus: "published", TemplateAgentStatus: "not_required",
+		ProviderRequestIDsJSON: `["provider-request-secret"]`, SanitizedResponseHash: "sha256:internal",
+		ErrorCode: "app_key_mismatch", ErrorMessage: "Tencent ADP resources do not match the pending workbench configuration",
+		VerifiedBy: "test", VerifiedAt: time.Now().UTC(),
+	}
+	require.NoError(t, db.Create(&verification).Error)
 	require.NoError(t, db.Model(&primary).Updates(map[string]any{"current_config_version_id": current.ID}).Error)
 	require.NoError(t, db.Model(&additional).Updates(map[string]any{"pending_config_version_id": pending.ID}).Error)
 
@@ -87,4 +96,13 @@ func TestAppViewsPageReturnsEachAppsOwnConfigurationNumbers(t *testing.T) {
 	require.NotNil(t, byID[additional.ID].PendingConfigVersion)
 	assert.Equal(t, int64(1), *byID[additional.ID].PendingConfigVersion)
 	assert.Nil(t, byID[additional.ID].CurrentConfigVersion)
+	require.NotNil(t, byID[additional.ID].LatestConfig)
+	assert.Equal(t, "default_space", byID[additional.ID].LatestConfig.SpaceID)
+	require.NotNil(t, byID[additional.ID].LatestVerification)
+	assert.Equal(t, "app_key_mismatch", byID[additional.ID].LatestVerification.ErrorCode)
+	encoded, err := jsonx.Marshal(byID[additional.ID])
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "sealed://additional")
+	assert.NotContains(t, string(encoded), "provider-request-secret")
+	assert.NotContains(t, string(encoded), "sha256:internal")
 }

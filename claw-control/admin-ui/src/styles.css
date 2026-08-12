@@ -91,6 +91,9 @@ tbody tr:hover { background: #fbfcfe; }
 .state { padding: 2rem; border: 1px dashed #aab7ca; border-radius: .8rem; color: var(--muted); text-align: center; background: rgb(255 255 255 / 60%); }
 .state--error { color: var(--danger); border-color: #f3b4ae; background: #fff7f6; }
 .dialog { width: min(52rem, calc(100% - 2rem)); max-height: calc(100vh - 2rem); padding: 0; overflow: auto; border: 1px solid var(--border); border-radius: .9rem; color: inherit; background: #fff; box-shadow: 0 20px 60px rgb(16 24 40 / 25%); }
+.dialog--wide { width: min(70rem, calc(100% - 2rem)); }
+.verification-preview { border-color: var(--brand); }
+.listing-inputs { margin: 0; padding: 0; border: 0; }
 .dialog::backdrop { background: rgb(16 24 40 / 55%); backdrop-filter: blur(2px); }
 .dialog form > header, .dialog form > footer { position: sticky; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.25rem; background: #fff; }
 .dialog form > header { top: 0; border-bottom: 1px solid var(--border); }
@@ -108,6 +111,9 @@ tbody tr:hover { background: #fbfcfe; }
 .checkbox-grid label { font-size: .85rem; }
 .form-error { display: block; min-height: 1.5rem; padding: 0 1.25rem; color: var(--danger); }
 .security-note { padding: .7rem; border-left: 4px solid #fdb022; background: #fffaeb; }
+.verification-result { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem; margin: .7rem 0; }
+.verification-result--error { color: #b42318; }
+.verification-result .definition-grid { flex-basis: 100%; margin-top: .35rem; }
 .inline-form { display: flex; flex-wrap: wrap; align-items: end; gap: .8rem; margin-bottom: 1rem; }
 .inline-form > .field { flex: 1 1 11rem; }
 .inline-form > .button { min-height: 2.55rem; }
@@ -169,6 +175,7 @@ tbody tr:hover { background: #fbfcfe; }
   .field input, .field select, .field textarea, .language select { color: #edf2fb; background: #111a29; border-color: #526078; }
   .state { background: rgb(21 30 46 / 70%); }
   .security-note { color: #fef0c7; background: #4e350b; }
+  .verification-result--error { color: #fda29b; }
   .inline-error { background: #471712; }
   .inline-success { color: #abefc6; background: #074d31; }
 }

@@ -67,6 +67,11 @@ export default function CustomerPage({ customerId }: { customerId: number }) {
     resource.refresh()
   }
 
+  async function editAdditionalApp(form: FormData) {
+    await adminApi.saveCustomerApp(customerId, String(form.get('selector') ?? ''), appConfigInputFromForm(form))
+    resource.refresh()
+  }
+
   async function verify(form: FormData) {
     await adminApi.verifyApp(customerId, {
       expected_version: toNumber(form, 'expected_version'),
@@ -157,7 +162,7 @@ export default function CustomerPage({ customerId }: { customerId: number }) {
 		apps={resource.data?.apps ?? []}
 		margin={resource.data?.margin}
         locale={locale}
-        handlers={{ updateCustomer, addMember, updateMember, disableMember, saveApp, createAdditionalApp, requestCredentialChange, verify, verifyAdditionalApp, setDefaultApp, transition, transitionAdditionalApp, createPeriod, confirmPayment, cancelPeriod, voidInvoice }}
+        handlers={{ updateCustomer, addMember, updateMember, disableMember, saveApp, createAdditionalApp, editAdditionalApp, requestCredentialChange, verify, verifyAdditionalApp, setDefaultApp, transition, transitionAdditionalApp, createPeriod, confirmPayment, cancelPeriod, voidInvoice }}
       />}
     </DataState>
   </>
@@ -178,6 +183,7 @@ interface SectionsProps {
     disableMember: (form: FormData) => Promise<void>
     saveApp: (form: FormData) => Promise<void>
     createAdditionalApp: (form: FormData) => Promise<void>
+    editAdditionalApp: (form: FormData) => Promise<void>
     requestCredentialChange: (form: FormData) => Promise<void>
     verify: (form: FormData) => Promise<void>
     verifyAdditionalApp: (form: FormData) => Promise<void>
@@ -211,7 +217,8 @@ function CustomerSections({ detail, credentials, plans, invoices, apps, margin, 
       {!app && <p>{t('app.none')}</p>}
       {app && <dl className="definition-grid"><div><dt>{t('app.appId')}</dt><dd><code>{app.app_id}</code></dd></div><div><dt>{t('app.expectedVersion')}</dt><dd>{app.row_version}</dd></div><div><dt>{t('app.currentConfig')}</dt><dd>{config?.config_version ?? '—'}</dd></div><div><dt>{t('app.pendingConfig')}</dt><dd>{pendingConfig?.config_version ?? '—'}</dd></div></dl>}
       <div className="actions section-actions"><DialogForm title={app ? t('app.editPrimary') : t('app.createPrimary')} trigger={app ? t('action.edit') : t('action.create')} submitLabel={t('action.save')} onSubmit={handlers.saveApp}><AppConfigFields app={app} config={config} credentials={credentials} /></DialogForm>{app && config && <DialogForm title={t('app.add')} trigger={t('app.add')} submitLabel={t('action.create')} onSubmit={handlers.createAdditionalApp}><Field label={t('app.alias')} hint={t('app.aliasHint')}><input name="alias" required minLength={3} maxLength={80} pattern="[a-z0-9][a-z0-9-]*[a-z0-9]" /></Field><AppConfigFields credentials={credentials} defaultCredentialProfileId={config.credential_profile_id} defaultProviderEnvironment={app.provider_environment} /></DialogForm>}{credentialChange && pendingConfig && <DialogForm title={t('app.credentialChangeApproval')} trigger={t('app.requestCredentialChangeApproval')} submitLabel={t('governance.request')} onSubmit={handlers.requestCredentialChange}><p className="form-wide security-note">{t('app.credentialChangeApprovalHelp')}</p><input type="hidden" name="pending_config_id" value={pendingConfig.id} /><Field label={t('governance.requestKey')}><input name="request_key" required maxLength={128} /></Field><Field label={t('governance.reason')}><input name="reason" required maxLength={1000} /></Field><Field label={t('governance.ttl')}><input name="ttl_seconds" type="number" min="300" max="86400" required defaultValue="3600" /></Field></DialogForm>}{pendingConfig && <DialogForm title={t('app.verification')} trigger={t('action.verify')} submitLabel={t('action.verify')} onSubmit={handlers.verify}><VerificationFields app={app} pendingConfig={pendingConfig} /></DialogForm>}{app && <DialogForm title={t('common.actions')} trigger={t('common.actions')} submitLabel={t('action.save')} onSubmit={handlers.transition}><Field label={t('common.actions')}><select name="action" defaultValue="enable"><option value="enable">{t('action.enable')}</option><option value="suspend">{t('action.suspend')}</option><option value="disable">{t('action.disable')}</option><option value="prepare">{t('action.prepare')}</option></select></Field><Field label={t('app.expectedVersion')}><input name="expected_version" type="number" min="1" required defaultValue={app.row_version} /></Field><Field label={t('app.transitionReason')}><input name="reason" maxLength={300} /></Field></DialogForm>}</div>
-      {app && <AdditionalApps apps={apps.filter((candidate) => candidate.id !== app.id)} primary={app} onVerify={handlers.verifyAdditionalApp} onSetDefault={handlers.setDefaultApp} onTransition={handlers.transitionAdditionalApp} />}
+      {detail.verifications?.[0] && <VerificationSummary verification={detail.verifications[0]} />}
+      {app && <AdditionalApps apps={apps.filter((candidate) => candidate.id !== app.id)} primary={app} credentials={credentials} onEdit={handlers.editAdditionalApp} onVerify={handlers.verifyAdditionalApp} onSetDefault={handlers.setDefaultApp} onTransition={handlers.transitionAdditionalApp} />}
     </section>
 
     <section className="panel"><div className="section-title"><h2>{t('periods.title')}</h2><div className="actions"><DialogForm title={t('periods.create')} trigger={t('periods.create')} submitLabel={t('action.create')} onSubmit={handlers.createPeriod}><Field label={t('periods.planVersion')}><select name="plan_version_id" required>{plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.display_name} · ¥{plan.monthly_price_cny}</option>)}</select></Field><Field label={t('periods.start')} hint={t('common.beijingTime')}><input name="period_start" type="datetime-local" required /></Field><Field label={t('periods.end')} hint={t('common.beijingTime')}><input name="period_end" type="datetime-local" required /></Field></DialogForm><DialogForm title={t('action.confirmPayment')} trigger={t('action.confirmPayment')} submitLabel={t('action.confirmPayment')} onSubmit={handlers.confirmPayment}><PaymentFields periods={detail.plan_periods.filter((period) => period.payment_status !== 'paid' && period.status !== 'canceled')} /></DialogForm><DialogForm title={t('periods.cancel')} trigger={t('periods.cancel')} submitLabel={t('action.cancel')} onSubmit={handlers.cancelPeriod}><CancelPeriodFields periods={detail.plan_periods.filter((period) => period.status !== 'canceled' && period.status !== 'expired')} /></DialogForm></div></div>
@@ -223,9 +230,11 @@ function CustomerSections({ detail, credentials, plans, invoices, apps, margin, 
   </div>
 }
 
-function AdditionalApps({ apps, primary, onVerify, onSetDefault, onTransition }: {
+function AdditionalApps({ apps, primary, credentials, onEdit, onVerify, onSetDefault, onTransition }: {
   apps: CustomerApp[]
   primary: CustomerApp
+  credentials: SectionsProps['credentials']
+  onEdit: (form: FormData) => Promise<void>
   onVerify: (form: FormData) => Promise<void>
   onSetDefault: (form: FormData) => Promise<void>
   onTransition: (form: FormData) => Promise<void>
@@ -239,9 +248,33 @@ function AdditionalApps({ apps, primary, onVerify, onSetDefault, onTransition }:
       {apps.length > 0 && <DialogForm title={t('app.additionalActions')} trigger={t('app.additionalActions')} submitLabel={t('action.save')} onSubmit={onTransition}><AdditionalAppActionFields apps={apps} /></DialogForm>}
       {selectable.length > 0 && <DialogForm title={t('app.setDefault')} trigger={t('app.setDefault')} submitLabel={t('app.setDefault')} onSubmit={onSetDefault}><SetDefaultAppFields apps={selectable} primary={primary} /></DialogForm>}
     </div></div>
-    {apps.length === 0 ? <p>{t('app.noAdditionalApps')}</p> : <div className="table-wrap"><table><thead><tr><th>{t('app.alias')}</th><th>{t('app.appId')}</th><th>{t('app.displayName')}</th><th>{t('common.status')}</th><th>{t('app.currentConfig')}</th><th>{t('app.pendingConfig')}</th></tr></thead><tbody>{apps.map((app) => <tr key={app.id}><td><code>{app.alias}</code></td><td><code>{app.app_id}</code></td><td>{app.display_name}</td><td><Status value={app.status} /></td><td>{app.current_config_version ?? '—'}</td><td>{app.pending_config_version ?? '—'}</td></tr>)}</tbody></table></div>}
+    {apps.length === 0 ? <p>{t('app.noAdditionalApps')}</p> : <div className="table-wrap"><table><thead><tr><th>{t('app.alias')}</th><th>{t('app.appId')}</th><th>{t('app.displayName')}</th><th>{t('common.status')}</th><th>{t('app.currentConfig')}</th><th>{t('app.pendingConfig')}</th><th>{t('app.lastVerification')}</th><th>{t('common.actions')}</th></tr></thead><tbody>{apps.map((application) => <tr key={application.id}><td><code>{application.alias}</code></td><td><code>{application.app_id}</code></td><td>{application.display_name}</td><td><Status value={application.status} /></td><td>{application.current_config_version ?? '—'}</td><td>{application.pending_config_version ?? '—'}</td><td>{application.latest_verification ? <VerificationSummary verification={application.latest_verification} compact /> : '—'}</td><td><DialogForm title={t('app.editAdditional')} trigger={t('action.edit')} submitLabel={t('action.save')} onSubmit={onEdit}><input type="hidden" name="selector" value={application.selector} /><AppConfigFields app={application} config={application.latest_config} credentials={credentials} appKeyRequired={!application.current_config_version_id} /></DialogForm></td></tr>)}</tbody></table></div>}
     <p className="security-note">{t('app.additionalAppsHelp')}</p>
   </div>
+}
+
+function VerificationSummary({ verification, compact = false }: { verification: NonNullable<CustomerApp['latest_verification']>; compact?: boolean }) {
+  const { t } = useI18n()
+  const invalid = verification.result === 'invalid'
+  const explanation = invalid ? verificationErrorText(verification.error_code, verification.error_message, t) : t('app.verificationSucceeded')
+  return <div className={invalid ? 'verification-result verification-result--error' : 'verification-result'} role={invalid ? 'alert' : undefined}>
+    <Status value={verification.result} />
+    <span>{explanation}</span>
+    {!compact && <dl className="definition-grid"><div><dt>{t('app.appMode')}</dt><dd>{verification.app_mode ?? '—'}</dd></div><div><dt>{t('app.releaseStatus')}</dt><dd>{verification.release_status ?? '—'}</dd></div><div><dt>{t('app.templateStatus')}</dt><dd>{verification.template_agent_status ?? '—'}</dd></div>{verification.error_code && <div><dt>{t('app.errorCode')}</dt><dd><code>{verification.error_code}</code></dd></div>}</dl>}
+  </div>
+}
+
+function verificationErrorText(code: string | undefined, fallback: string | undefined, t: ReturnType<typeof useI18n>['t']): string {
+  switch (code) {
+    case 'app_id_mismatch': return t('app.verificationError.appIdMismatch')
+    case 'space_id_mismatch': return t('app.verificationError.spaceIdMismatch')
+    case 'app_key_mismatch': return t('app.verificationError.appKeyMismatch')
+    case 'app_mode_mismatch': return t('app.verificationError.appModeMismatch')
+    case 'app_not_published': return t('app.verificationError.notPublished')
+    case 'template_agent_mismatch': return t('app.verificationError.templateAgentMismatch')
+    case 'invalid_provider_metadata': return t('app.verificationError.invalidMetadata')
+    default: return fallback || t('app.verificationFailed')
+  }
 }
 
 function AdditionalAppActionFields({ apps }: { apps: CustomerApp[] }) {
@@ -280,17 +313,18 @@ function SetDefaultAppFields({ apps, primary }: { apps: CustomerApp[]; primary: 
   </>
 }
 
-function AppConfigFields({ app, config, credentials, defaultCredentialProfileId, defaultProviderEnvironment }: {
+function AppConfigFields({ app, config, credentials, defaultCredentialProfileId, defaultProviderEnvironment, appKeyRequired }: {
   app?: CustomerDetail['app']
   config?: CustomerDetail['current_config']
   credentials: SectionsProps['credentials']
   defaultCredentialProfileId?: number
   defaultProviderEnvironment?: string
+  appKeyRequired?: boolean
 }) {
   const { t } = useI18n()
   const configuredCapabilities = config?.capabilities ?? ['chat', 'files']
   return <>
-    <Field label={t('app.expectedVersion')}><input name="expected_version" type="number" min="0" required defaultValue={app?.row_version ?? 0} /></Field>
+    <Field label={t('app.expectedVersion')}><input name="expected_version" type="number" min="0" required readOnly value={app?.row_version ?? 0} /></Field>
     <Field label={t('app.provider')}><select name="provider_environment" defaultValue={app?.provider_environment ?? defaultProviderEnvironment ?? 'china_tencent_cloud'}><option value="china_tencent_cloud">china_tencent_cloud</option><option value="china_tencent_adp">china_tencent_adp</option></select></Field>
     <Field label={t('app.region')}><input name="region" required defaultValue={config?.region ?? 'ap-guangzhou'} /></Field>
     <Field label={t('app.spaceId')}><input name="space_id" required defaultValue={config?.space_id ?? ''} /></Field>
@@ -298,7 +332,7 @@ function AppConfigFields({ app, config, credentials, defaultCredentialProfileId,
     <Field label={t('app.templateAgentId')} hint={t('app.templateAgentHint')}><input name="template_agent_id" defaultValue={config?.template_agent_id ?? ''} /></Field>
     <Field label={t('app.credentialProfile')}><select name="credential_profile_id" required defaultValue={config?.credential_profile_id ?? defaultCredentialProfileId}>{credentials.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.owner_scope} · {profile.provider_environment}</option>)}</select></Field>
     <p className="form-wide security-note">{t('app.additionalCredentialConstraint')}</p>
-    <Field label={t('app.appKey')} hint={config ? t('app.appKeyReplaceHint') : t('app.appKeyCreateHint')}><input name="app_key" type="password" required={!config} minLength={16} maxLength={4096} autoComplete="new-password" /></Field>
+    <Field label={t('app.appKey')} hint={config ? t('app.appKeyReplaceHint') : t('app.appKeyCreateHint')}><input name="app_key" type="password" required={appKeyRequired ?? !config} minLength={16} maxLength={4096} autoComplete="new-password" /></Field>
     <Field label={t('app.displayName')}><input name="display_name" required defaultValue={app?.display_name ?? ''} /></Field>
     <fieldset className="form-section"><legend>{t('app.capabilities')}</legend><div className="checkbox-grid">{capabilities.map((capability) => <label key={capability}><input type="checkbox" name="capabilities" value={capability} defaultChecked={configuredCapabilities.includes(capability)} /> {capability}</label>)}</div></fieldset>
     <LimitsFields values={config?.limits ?? defaultLimits} />

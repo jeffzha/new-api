@@ -92,10 +92,25 @@ type AppDraftResult struct {
 	Version *AppConfigView     `json:"config_version"`
 }
 
+type AppVerificationView struct {
+	VerificationID      string    `json:"verification_id"`
+	AppConfigVersionID  uint64    `json:"app_config_version_id"`
+	Result              string    `json:"result"`
+	AppMode             int       `json:"app_mode"`
+	ReleaseStatus       string    `json:"release_status"`
+	TemplateAgentStatus string    `json:"template_agent_status"`
+	DynamicAgentConfig  bool      `json:"dynamic_agent_config"`
+	ErrorCode           string    `json:"error_code,omitempty"`
+	ErrorMessage        string    `json:"error_message,omitempty"`
+	VerifiedAt          time.Time `json:"verified_at"`
+}
+
 type CustomerAppListView struct {
 	model.CustomerApp
-	CurrentConfigVersion *int64 `json:"current_config_version,omitempty"`
-	PendingConfigVersion *int64 `json:"pending_config_version,omitempty"`
+	CurrentConfigVersion *int64               `json:"current_config_version,omitempty"`
+	PendingConfigVersion *int64               `json:"pending_config_version,omitempty"`
+	LatestConfig         *AppConfigView       `json:"latest_config,omitempty"`
+	LatestVerification   *AppVerificationView `json:"latest_verification,omitempty"`
 }
 
 func New(db *gorm.DB) *Service { return &Service{db: db} }
@@ -284,40 +299,65 @@ func (s *Service) AppViewsPage(customerID, beforeID uint64, limit int) (paginati
 	if err != nil {
 		return pagination.Page[CustomerAppListView]{}, err
 	}
-	versionIDs := make([]uint64, 0, len(apps.Items)*2)
+	appIDs := make([]uint64, 0, len(apps.Items))
 	for index := range apps.Items {
-		if apps.Items[index].CurrentConfigVersionID != nil {
-			versionIDs = append(versionIDs, *apps.Items[index].CurrentConfigVersionID)
-		}
-		if apps.Items[index].PendingConfigVersionID != nil {
-			versionIDs = append(versionIDs, *apps.Items[index].PendingConfigVersionID)
-		}
+		appIDs = append(appIDs, apps.Items[index].ID)
 	}
-	versions := make(map[uint64]int64, len(versionIDs))
-	if len(versionIDs) > 0 {
+	versions := make(map[uint64]model.AppConfigVersion)
+	latestConfigs := make(map[uint64]*AppConfigView)
+	latestVerifications := make(map[uint64]*AppVerificationView)
+	if len(appIDs) > 0 {
 		var configurations []model.AppConfigVersion
-		if err := s.db.Where("id IN ?", versionIDs).Find(&configurations).Error; err != nil {
+		if err := s.db.Where("customer_app_id IN ?", appIDs).Order("customer_app_id asc, config_version desc").Find(&configurations).Error; err != nil {
 			return pagination.Page[CustomerAppListView]{}, err
 		}
 		for index := range configurations {
-			versions[configurations[index].ID] = configurations[index].ConfigVersion
+			configuration := configurations[index]
+			versions[configuration.ID] = configuration
+			if latestConfigs[configuration.CustomerAppID] == nil {
+				view, err := projectAppConfig(configuration)
+				if err != nil {
+					return pagination.Page[CustomerAppListView]{}, err
+				}
+				latestConfigs[configuration.CustomerAppID] = view
+			}
+		}
+		var verifications []model.AppVerification
+		if err := s.db.Where("customer_app_id IN ?", appIDs).Order("customer_app_id asc, id desc").Find(&verifications).Error; err != nil {
+			return pagination.Page[CustomerAppListView]{}, err
+		}
+		for index := range verifications {
+			verification := verifications[index]
+			if latestVerifications[verification.CustomerAppID] == nil {
+				latestVerifications[verification.CustomerAppID] = &AppVerificationView{
+					VerificationID: verification.PublicID, AppConfigVersionID: verification.AppConfigVersionID,
+					Result: verification.Result, AppMode: verification.AppMode, ReleaseStatus: verification.ReleaseStatus,
+					TemplateAgentStatus: verification.TemplateAgentStatus, DynamicAgentConfig: verification.DynamicAgentConfig,
+					ErrorCode: verification.ErrorCode, ErrorMessage: verification.ErrorMessage, VerifiedAt: verification.VerifiedAt,
+				}
+			}
 		}
 	}
 	items := make([]CustomerAppListView, 0, len(apps.Items))
 	for index := range apps.Items {
-		view := CustomerAppListView{CustomerApp: apps.Items[index]}
+		view := CustomerAppListView{
+			CustomerApp: apps.Items[index], LatestConfig: latestConfigs[apps.Items[index].ID],
+			LatestVerification: latestVerifications[apps.Items[index].ID],
+		}
 		if apps.Items[index].CurrentConfigVersionID != nil {
-			value, ok := versions[*apps.Items[index].CurrentConfigVersionID]
+			configuration, ok := versions[*apps.Items[index].CurrentConfigVersionID]
 			if !ok {
 				return pagination.Page[CustomerAppListView]{}, domain.Conflict("current App configuration is unavailable")
 			}
+			value := configuration.ConfigVersion
 			view.CurrentConfigVersion = &value
 		}
 		if apps.Items[index].PendingConfigVersionID != nil {
-			value, ok := versions[*apps.Items[index].PendingConfigVersionID]
+			configuration, ok := versions[*apps.Items[index].PendingConfigVersionID]
 			if !ok {
 				return pagination.Page[CustomerAppListView]{}, domain.Conflict("pending App configuration is unavailable")
 			}
+			value := configuration.ConfigVersion
 			view.PendingConfigVersion = &value
 		}
 		items = append(items, view)

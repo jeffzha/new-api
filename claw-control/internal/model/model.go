@@ -130,6 +130,9 @@ const (
 	AgentDeploymentStatusSuspended = "suspended"
 	AgentDeploymentStatusDisabled  = "disabled"
 
+	AgentAudienceSelectedCustomers = "selected_customers"
+	AgentAudienceAllCustomers      = "all_customers"
+
 	AgentEntitlementStatusActive   = "active"
 	AgentEntitlementStatusDisabled = "disabled"
 
@@ -899,6 +902,7 @@ type CustomerAgentDeployment struct {
 	ItemID                  string     `json:"item_id" gorm:"type:varchar(64);uniqueIndex:idx_claw_agent_deployment_customer,priority:1;index;not null"`
 	CustomerID              uint64     `json:"customer_id" gorm:"uniqueIndex:idx_claw_agent_deployment_customer,priority:2;index;not null"`
 	CustomerAppID           uint64     `json:"customer_app_id" gorm:"uniqueIndex:idx_claw_agent_deployment_app;index;not null"`
+	AudienceScope           string     `json:"audience_scope" gorm:"type:varchar(32);index;not null;default:selected_customers"`
 	VerifiedConfigVersionID *uint64    `json:"verified_config_version_id,omitempty" gorm:"index"`
 	VerifiedConfigVersion   int64      `json:"verified_config_version" gorm:"not null"`
 	VerifiedAppAuthEpoch    int64      `json:"verified_app_auth_epoch" gorm:"not null"`
@@ -965,28 +969,29 @@ type AgentCatalogCursor struct {
 func (AgentCatalogCursor) TableName() string { return "claw_agent_catalog_cursors" }
 
 type ContextSelectionNonce struct {
-	ID                 uint64     `json:"id" gorm:"primaryKey"`
-	TokenHash          string     `json:"-" gorm:"type:varchar(128);uniqueIndex;not null"`
-	ControlSessionID   uint64     `json:"control_session_id" gorm:"index;not null"`
-	NewAPIUserID       int64      `json:"new_api_user_id" gorm:"index;not null"`
-	IdentityBindingID  uint64     `json:"identity_binding_id" gorm:"index;not null"`
-	CustomerMemberID   uint64     `json:"customer_member_id" gorm:"index;not null"`
-	CustomerID         uint64     `json:"customer_id" gorm:"index;not null"`
-	CustomerAppID      uint64     `json:"customer_app_id" gorm:"index;not null"`
-	AppConfigVersionID uint64     `json:"app_config_version_id" gorm:"index;not null"`
-	IdentityVersion    string     `json:"identity_version" gorm:"type:varchar(128);not null"`
-	IdentityAuthEpoch  int64      `json:"identity_auth_epoch" gorm:"not null"`
-	MemberAuthEpoch    int64      `json:"member_auth_epoch" gorm:"not null"`
-	AppAuthEpoch       int64      `json:"app_auth_epoch" gorm:"not null"`
-	Purpose            string     `json:"-" gorm:"type:varchar(32);index"`
-	AgentCatalogItemID string     `json:"-" gorm:"type:varchar(64);index"`
-	AgentDeploymentID  string     `json:"-" gorm:"type:varchar(64);index"`
-	CatalogVersionID   string     `json:"-" gorm:"type:varchar(64);index"`
-	CatalogRowVersion  int64      `json:"-"`
-	DeploymentVersion  int64      `json:"-"`
-	ExpiresAt          time.Time  `json:"expires_at" gorm:"index;not null"`
-	ConsumedAt         *time.Time `json:"consumed_at,omitempty" gorm:"index"`
-	CreatedAt          time.Time  `json:"created_at"`
+	ID                  uint64     `json:"id" gorm:"primaryKey"`
+	TokenHash           string     `json:"-" gorm:"type:varchar(128);uniqueIndex;not null"`
+	ControlSessionID    uint64     `json:"control_session_id" gorm:"index;not null"`
+	NewAPIUserID        int64      `json:"new_api_user_id" gorm:"index;not null"`
+	IdentityBindingID   uint64     `json:"identity_binding_id" gorm:"index;not null"`
+	CustomerMemberID    uint64     `json:"customer_member_id" gorm:"index;not null"`
+	CustomerID          uint64     `json:"customer_id" gorm:"index;not null"`
+	CustomerAppID       uint64     `json:"customer_app_id" gorm:"index;not null"`
+	AppConfigVersionID  uint64     `json:"app_config_version_id" gorm:"index;not null"`
+	IdentityVersion     string     `json:"identity_version" gorm:"type:varchar(128);not null"`
+	IdentityAuthEpoch   int64      `json:"identity_auth_epoch" gorm:"not null"`
+	MemberAuthEpoch     int64      `json:"member_auth_epoch" gorm:"not null"`
+	AppAuthEpoch        int64      `json:"app_auth_epoch" gorm:"not null"`
+	PrincipalCustomerID uint64     `json:"-" gorm:"index"`
+	Purpose             string     `json:"-" gorm:"type:varchar(32);index"`
+	AgentCatalogItemID  string     `json:"-" gorm:"type:varchar(64);index"`
+	AgentDeploymentID   string     `json:"-" gorm:"type:varchar(64);index"`
+	CatalogVersionID    string     `json:"-" gorm:"type:varchar(64);index"`
+	CatalogRowVersion   int64      `json:"-"`
+	DeploymentVersion   int64      `json:"-"`
+	ExpiresAt           time.Time  `json:"expires_at" gorm:"index;not null"`
+	ConsumedAt          *time.Time `json:"consumed_at,omitempty" gorm:"index"`
+	CreatedAt           time.Time  `json:"created_at"`
 }
 
 func (ContextSelectionNonce) TableName() string { return "claw_context_selection_nonces" }

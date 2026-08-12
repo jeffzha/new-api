@@ -187,16 +187,17 @@ type BrowserPlan struct {
 }
 
 type resolvedAccess struct {
-	identity     model.IdentityBinding
-	member       model.CustomerMember
-	customer     model.Customer
-	app          model.CustomerApp
-	config       model.AppConfigVersion
-	period       *model.PlanPeriod
-	capabilities []string
-	limits       productpolicy.Limits
-	mode         string
-	epoch        int64
+	identity            model.IdentityBinding
+	member              model.CustomerMember
+	customer            model.Customer
+	app                 model.CustomerApp
+	config              model.AppConfigVersion
+	period              *model.PlanPeriod
+	capabilities        []string
+	limits              productpolicy.Limits
+	mode                string
+	epoch               int64
+	principalCustomerID uint64
 }
 
 type planPolicySnapshot struct {
@@ -672,7 +673,7 @@ func (s *Service) SelectContext(ctx context.Context, sessionToken, selectionToke
 				return domain.Forbidden("Agent Store catalog selection is stale")
 			}
 			var deployment model.CustomerAgentDeployment
-			if err := database.ForUpdate(tx).Where("id = ? AND item_id = ? AND customer_id = ?", nonce.AgentDeploymentID, item.ID, nonce.CustomerID).First(&deployment).Error; err != nil ||
+			if err := database.ForUpdate(tx).Where("id = ? AND item_id = ?", nonce.AgentDeploymentID, item.ID).First(&deployment).Error; err != nil ||
 				deployment.Status != model.AgentDeploymentStatusActive || !deployment.ExecutionEnabled ||
 				deployment.RowVersion != nonce.DeploymentVersion || deployment.CustomerAppID != nonce.CustomerAppID ||
 				deployment.VerifiedConfigVersionID == nil || *deployment.VerifiedConfigVersionID != nonce.AppConfigVersionID ||
@@ -689,7 +690,11 @@ func (s *Service) SelectContext(ctx context.Context, sessionToken, selectionToke
 		if err != nil {
 			return err
 		}
-		if resolved.customer.ID != nonce.CustomerID || resolved.member.ID != nonce.CustomerMemberID ||
+		expectedPrincipalCustomerID := nonce.CustomerID
+		if nonce.Purpose == "agent_store_launch" && nonce.PrincipalCustomerID > 0 {
+			expectedPrincipalCustomerID = nonce.PrincipalCustomerID
+		}
+		if resolved.customer.ID != expectedPrincipalCustomerID || resolved.member.ID != nonce.CustomerMemberID ||
 			resolved.config.ID != nonce.AppConfigVersionID || resolved.identity.NewAPIUserID != nonce.NewAPIUserID ||
 			resolved.identity.AuthEpoch != nonce.IdentityAuthEpoch || resolved.member.AuthEpoch != nonce.MemberAuthEpoch ||
 			resolved.app.AuthEpoch != nonce.AppAuthEpoch || resolved.identity.IdentityVersion != nonce.IdentityVersion ||
@@ -709,6 +714,8 @@ func (s *Service) SelectContext(ctx context.Context, sessionToken, selectionToke
 			authorized := false
 			for _, entitlement := range entitlements {
 				switch entitlement.SubjectType {
+				case "all_customers":
+					authorized = entitlement.SubjectRef == "*"
 				case "customer":
 					authorized = entitlement.SubjectRef == strconv.FormatUint(nonce.CustomerID, 10)
 				case "user":
@@ -741,6 +748,10 @@ func (s *Service) SelectContext(ctx context.Context, sessionToken, selectionToke
 		before := session
 		session.SelectionState = model.ControlSessionStateSelected
 		applyResolvedSession(&session, resolved)
+		if nonce.Purpose == "agent_store_launch" && nonce.PrincipalCustomerID > 0 {
+			resolved.principalCustomerID = nonce.PrincipalCustomerID
+			session.CustomerID = nonce.PrincipalCustomerID
+		}
 		session.LastSeenAt = now
 		if err := tx.Save(&session).Error; err != nil {
 			return err
@@ -845,7 +856,7 @@ func (s *Service) createSSOTicket(tx *gorm.DB, session *model.ControlSession, re
 	ticket := &model.SSOTicket{
 		TokenHash: hex.EncodeToString(ssoHash[:]), BrowserBindingHash: hex.EncodeToString(browserBindingHash[:]),
 		ControlSessionID: session.ID, IdentityBindingID: resolved.identity.ID,
-		CustomerID: resolved.customer.ID, NewAPIUserID: resolved.identity.NewAPIUserID,
+		CustomerID: session.CustomerID, NewAPIUserID: resolved.identity.NewAPIUserID,
 		CustomerAppID: resolved.app.ID, AppConfigVersionID: resolved.config.ID,
 		AccessMode: resolved.mode, AuthEpoch: resolved.epoch, IdentityVersion: resolved.identity.IdentityVersion,
 		ExpiresAt: expiresAt,
@@ -953,7 +964,7 @@ func (s *Service) ConsumeTicket(command ConsumeTicketCommand) (*IdentityContext,
 		if err != nil {
 			return err
 		}
-		if resolved.epoch != ticket.AuthEpoch || resolved.identity.IdentityVersion != ticket.IdentityVersion || resolved.customer.ID != ticket.CustomerID || resolved.app.ID != ticket.CustomerAppID || resolved.config.ID != ticket.AppConfigVersionID || resolved.mode != ticket.AccessMode {
+		if resolved.epoch != ticket.AuthEpoch || resolved.identity.IdentityVersion != ticket.IdentityVersion || resolved.principalCustomerID != ticket.CustomerID || resolved.app.ID != ticket.CustomerAppID || resolved.config.ID != ticket.AppConfigVersionID || resolved.mode != ticket.AccessMode {
 			return domain.Forbidden("SSO ticket context is stale")
 		}
 		if ticket.ControlSessionID > 0 {
@@ -977,6 +988,7 @@ func (s *Service) ConsumeTicket(command ConsumeTicketCommand) (*IdentityContext,
 			return domain.Conflict("SSO ticket has already been consumed")
 		}
 		result = identityContext(resolved)
+		result.CustomerID = ticket.CustomerID
 		result.ExpiresAt = ticket.ExpiresAt.Unix()
 		return nil
 	})
@@ -1355,10 +1367,16 @@ func (s *Service) resolveExact(db *gorm.DB, bindingID string, appProfileID uint6
 	if result.customer.Status != model.CustomerStatusActive {
 		return nil, domain.Forbidden("customer is not active")
 	}
-	if err := db.Where("id = ? AND customer_id = ?", appProfileID, result.customer.ID).First(&result.app).Error; err != nil {
+	if err := db.First(&result.app, appProfileID).Error; err != nil {
 		return nil, domain.NotFound("customer App not found")
 	}
-	if result.app.Slot != "primary" && !strings.HasPrefix(result.app.Slot, "app:") {
+	sharedAgentStoreApp := result.app.CustomerID != result.customer.ID
+	catalogAgentStoreApp := strings.HasPrefix(result.app.Slot, "catalog:")
+	if sharedAgentStoreApp {
+		if !catalogAgentStoreApp {
+			return nil, domain.NotFound("customer App not found")
+		}
+	} else if result.app.Slot != "primary" && !strings.HasPrefix(result.app.Slot, "app:") && !catalogAgentStoreApp {
 		return nil, domain.Forbidden("customer App is not selectable")
 	}
 	if result.app.CurrentConfigVersionID == nil {
@@ -1389,6 +1407,18 @@ func (s *Service) resolveExact(db *gorm.DB, bindingID string, appProfileID uint6
 	} else {
 		result.period = &policyPeriod
 	}
+	if catalogAgentStoreApp {
+		if !hasCurrentPeriod || result.app.Status != model.AppStatusActive {
+			return nil, domain.Forbidden("Agent Store App is unavailable")
+		}
+		allowed, err := sharedAgentStoreEntitled(db, result.app.ID, result.customer.ID, result.identity.NewAPIUserID, result.member.Role, policyPeriod.PlanVersionID, now)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			return nil, domain.Forbidden("Agent Store entitlement is unavailable")
+		}
+	}
 	result.mode = effectiveAccessMode(result.app.Status, result.member.Role, hasCurrentPeriod)
 	if result.period != nil && result.mode != "disabled" {
 		var appCapabilities []string
@@ -1413,7 +1443,32 @@ func (s *Service) resolveExact(db *gorm.DB, bindingID string, appProfileID uint6
 		result.limits = productpolicy.MinimumLimits(appLimits, planSnapshot.Limits)
 	}
 	result.epoch = result.identity.AuthEpoch + result.member.AuthEpoch + result.app.AuthEpoch
+	result.principalCustomerID = result.customer.ID
 	return &result, nil
+}
+
+func sharedAgentStoreEntitled(db *gorm.DB, appID, customerID uint64, userID int64, role string, planVersionID uint64, now time.Time) (bool, error) {
+	var deployment model.CustomerAgentDeployment
+	if err := db.Table("claw_customer_agent_deployments AS deployment").
+		Joins("JOIN claw_agent_catalog_items AS item ON item.id = deployment.item_id").
+		Where("deployment.customer_app_id = ? AND deployment.status = ? AND deployment.execution_enabled = ? AND item.status = ?", appID, model.AgentDeploymentStatusActive, true, model.AgentCatalogStatusPublished).
+		First(&deployment).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	var count int64
+	err := db.Model(&model.AgentCatalogEntitlement{}).
+		Where("deployment_id = ? AND status = ? AND valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)", deployment.ID, model.AgentEntitlementStatusActive, now, now).
+		Where("(subject_type = ? AND subject_ref = ?) OR (subject_type = ? AND subject_ref = ?) OR (subject_type = ? AND subject_ref = ?) OR (subject_type = ? AND subject_ref = ?) OR (subject_type = ? AND subject_ref = ?)",
+			"all_customers", "*",
+			"customer", strconv.FormatUint(customerID, 10),
+			"user", strconv.FormatInt(userID, 10),
+			"role", role,
+			"plan", strconv.FormatUint(planVersionID, 10)).
+		Count(&count).Error
+	return count > 0, err
 }
 
 func effectiveAccessMode(appStatus, memberRole string, hasCurrentPeriod bool) string {
@@ -1432,7 +1487,7 @@ func effectiveAccessMode(appStatus, memberRole string, hasCurrentPeriod bool) st
 func identityContext(resolved *resolvedAccess) IdentityContext {
 	return IdentityContext{
 		BindingID: resolved.identity.PublicID, CanonicalSubject: resolved.identity.CanonicalSubject,
-		CustomerID: resolved.customer.ID, NewAPIUserID: resolved.identity.NewAPIUserID,
+		CustomerID: resolved.principalCustomerID, NewAPIUserID: resolved.identity.NewAPIUserID,
 		AuthEpoch: resolved.epoch, DisplayName: resolved.customer.DisplayName,
 		ApplicationID: resolved.app.AppID, AppProfileID: resolved.app.ID,
 		ConfigVersion: resolved.config.ConfigVersion, Role: resolved.member.Role,

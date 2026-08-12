@@ -70,6 +70,7 @@ type CreateCommand struct {
 	CustomerID       uint64
 	CustomerAppID    uint64
 	ExecutionEnabled bool
+	AudienceScope    string
 	Entitlements     []EntitlementInput
 	Actor            string
 	RequestID        string
@@ -104,6 +105,7 @@ type DeploymentCommand struct {
 	ExpectedItemVersion       int64
 	ExpectedDeploymentVersion int64
 	ExecutionEnabled          bool
+	AudienceScope             string
 	Entitlements              []EntitlementInput
 	ReplaceEntitlements       bool
 	Reason                    string
@@ -126,6 +128,7 @@ type AdminDeployment struct {
 	DeploymentID        string                          `json:"deployment_id"`
 	CustomerID          uint64                          `json:"customer_id"`
 	CustomerAppID       uint64                          `json:"customer_app_id"`
+	AudienceScope       string                          `json:"audience_scope"`
 	Status              string                          `json:"status"`
 	RowVersion          int64                           `json:"row_version"`
 	ProviderAppMode     int                             `json:"provider_app_mode"`
@@ -213,6 +216,10 @@ func (s *Service) Create(command CreateCommand) (*AdminItem, error) {
 		return nil, domain.Invalid("valid slug, customer_id, and customer_app_id are required")
 	}
 	command.Metadata = metadata
+	command.AudienceScope = normalizeAudienceScope(command.AudienceScope)
+	if command.AudienceScope == "" {
+		return nil, domain.Invalid("audience_scope must be all_customers or selected_customers")
+	}
 	now := time.Now().UTC()
 	itemID := support.PublicID("agi")
 	versionID := support.PublicID("agv")
@@ -242,7 +249,8 @@ func (s *Service) Create(command CreateCommand) (*AdminItem, error) {
 		}
 		deployment := model.CustomerAgentDeployment{
 			ID: deploymentID, ItemID: item.ID, CustomerID: command.CustomerID, CustomerAppID: app.ID,
-			Status: model.AgentDeploymentStatusDraft, RowVersion: 1, ExecutionEnabled: false,
+			AudienceScope: command.AudienceScope,
+			Status:        model.AgentDeploymentStatusDraft, RowVersion: 1, ExecutionEnabled: false,
 			CapabilitiesJSON: "[]", ProviderRequestIDsJSON: "[]", CreatedAt: now, UpdatedAt: now,
 		}
 		if err := tx.Create(&deployment).Error; err != nil {
@@ -285,7 +293,8 @@ func (s *Service) AddDeployment(command DeploymentCommand) (*AdminItem, error) {
 		now := time.Now().UTC()
 		deployment := model.CustomerAgentDeployment{
 			ID: support.PublicID("agd"), ItemID: item.ID, CustomerID: command.CustomerID, CustomerAppID: app.ID,
-			Status: model.AgentDeploymentStatusDraft, RowVersion: 1, ExecutionEnabled: false,
+			AudienceScope: normalizeAudienceScope(command.AudienceScope),
+			Status:        model.AgentDeploymentStatusDraft, RowVersion: 1, ExecutionEnabled: false,
 			CapabilitiesJSON: "[]", ProviderRequestIDsJSON: "[]", CreatedAt: now, UpdatedAt: now,
 		}
 		if err := tx.Create(&deployment).Error; err != nil {
@@ -344,6 +353,12 @@ func (s *Service) UpdateDeployment(command DeploymentCommand) (*AdminItem, error
 			return err
 		}
 		if command.ReplaceEntitlements {
+			if scope := normalizeAudienceScope(command.AudienceScope); scope != "" {
+				deployment.AudienceScope = scope
+				if err := tx.Save(&deployment).Error; err != nil {
+					return err
+				}
+			}
 			if err := replaceEntitlements(tx, deployment.ID, deployment.CustomerID, command.Entitlements, now); err != nil {
 				return err
 			}
@@ -907,7 +922,7 @@ func (s *Service) Catalog(principal access.SessionPrincipal, cursor, category, q
 		Joins("JOIN claw_agent_catalog_versions AS version ON version.id = item.current_version_id").
 		Joins("JOIN claw_customer_agent_deployments AS deployment ON deployment.item_id = item.id").
 		Joins("LEFT JOIN claw_customer_apps AS customer_app ON customer_app.id = deployment.customer_app_id").
-		Where("item.status = ? AND deployment.status = ? AND deployment.customer_id = ?", model.AgentCatalogStatusPublished, model.AgentDeploymentStatusActive, principal.CustomerID).
+		Where("item.status = ? AND deployment.status = ?", model.AgentCatalogStatusPublished, model.AgentDeploymentStatusActive).
 		Where(`EXISTS (
 			SELECT 1 FROM claw_agent_catalog_entitlements AS entitlement
 			WHERE entitlement.deployment_id = deployment.id
@@ -917,8 +932,10 @@ func (s *Service) Catalog(principal access.SessionPrincipal, cursor, category, q
 			  AND ((entitlement.subject_type = ? AND entitlement.subject_ref = ?)
 			    OR (entitlement.subject_type = ? AND entitlement.subject_ref = ?)
 			    OR (entitlement.subject_type = ? AND entitlement.subject_ref = ?)
+			    OR (entitlement.subject_type = ? AND entitlement.subject_ref = ?)
 			    OR (entitlement.subject_type = ? AND entitlement.subject_ref = ?))
 		)`, model.AgentEntitlementStatusActive, now, now,
+			"all_customers", "*",
 			"customer", strconv.FormatUint(principal.CustomerID, 10),
 			"user", strconv.FormatInt(principal.NewAPIUserID, 10),
 			"role", principal.Role,
@@ -991,7 +1008,7 @@ func (s *Service) Launch(principal access.SessionPrincipal, sessionToken, slug, 
 			return domain.Forbidden("Agent Store catalog version is unavailable")
 		}
 		var deployment model.CustomerAgentDeployment
-		if err := database.ForUpdate(tx).Where("id = ? AND customer_id = ? AND status = ?", row.DeploymentID, principal.CustomerID, model.AgentDeploymentStatusActive).First(&deployment).Error; err != nil {
+		if err := database.ForUpdate(tx).Where("id = ? AND status = ?", row.DeploymentID, model.AgentDeploymentStatusActive).First(&deployment).Error; err != nil {
 			return domain.NotFound("Agent Store item not found")
 		}
 		if !deployment.ExecutionEnabled || deployment.VerifiedConfigVersionID == nil {
@@ -1010,7 +1027,7 @@ func (s *Service) Launch(principal access.SessionPrincipal, sessionToken, slug, 
 			return domain.Forbidden("customer membership is unavailable")
 		}
 		var app model.CustomerApp
-		if err := tx.Where("id = ? AND customer_id = ?", deployment.CustomerAppID, principal.CustomerID).First(&app).Error; err != nil || app.Status != model.AppStatusActive || app.CurrentConfigVersionID == nil || *app.CurrentConfigVersionID != *deployment.VerifiedConfigVersionID || app.AuthEpoch != deployment.VerifiedAppAuthEpoch {
+		if err := tx.Where("id = ? AND customer_id = ?", deployment.CustomerAppID, deployment.CustomerID).First(&app).Error; err != nil || app.Status != model.AppStatusActive || app.CurrentConfigVersionID == nil || *app.CurrentConfigVersionID != *deployment.VerifiedConfigVersionID || app.AuthEpoch != deployment.VerifiedAppAuthEpoch {
 			return domain.Forbidden("customer App deployment is stale")
 		}
 		var config model.AppConfigVersion
@@ -1026,7 +1043,8 @@ func (s *Service) Launch(principal access.SessionPrincipal, sessionToken, slug, 
 			CustomerID: principal.CustomerID, CustomerAppID: app.ID, AppConfigVersionID: config.ID,
 			IdentityVersion: identity.IdentityVersion, IdentityAuthEpoch: identity.AuthEpoch,
 			MemberAuthEpoch: member.AuthEpoch, AppAuthEpoch: app.AuthEpoch, ExpiresAt: expiresAt,
-			Purpose: "agent_store_launch", AgentCatalogItemID: item.ID, AgentDeploymentID: deployment.ID,
+			PrincipalCustomerID: principal.CustomerID,
+			Purpose:             "agent_store_launch", AgentCatalogItemID: item.ID, AgentDeploymentID: deployment.ID,
 			CatalogVersionID: *item.CurrentVersionID, CatalogRowVersion: item.RowVersion, DeploymentVersion: deployment.RowVersion,
 		}).Error; err != nil {
 			return err
@@ -1085,7 +1103,7 @@ func (s *Service) authorizedRow(principal access.SessionPrincipal, slug string) 
 		Joins("JOIN claw_agent_catalog_versions AS version ON version.id = item.current_version_id").
 		Joins("JOIN claw_customer_agent_deployments AS deployment ON deployment.item_id = item.id").
 		Joins("LEFT JOIN claw_customer_apps AS customer_app ON customer_app.id = deployment.customer_app_id").
-		Where("item.slug = ? AND item.status = ? AND deployment.status = ? AND deployment.customer_id = ?", strings.ToLower(strings.TrimSpace(slug)), model.AgentCatalogStatusPublished, model.AgentDeploymentStatusActive, principal.CustomerID).
+		Where("item.slug = ? AND item.status = ? AND deployment.status = ?", strings.ToLower(strings.TrimSpace(slug)), model.AgentCatalogStatusPublished, model.AgentDeploymentStatusActive).
 		First(&row).Error
 	if err != nil {
 		return nil, domain.NotFound("Agent Store item not found")
@@ -1116,6 +1134,10 @@ func authorizedWithDB(db *gorm.DB, deploymentID string, principal access.Session
 	}
 	for _, entitlement := range entitlements {
 		switch entitlement.SubjectType {
+		case "all_customers":
+			if entitlement.SubjectRef == "*" {
+				return true, nil
+			}
 		case "customer":
 			if entitlement.SubjectRef == strconv.FormatUint(principal.CustomerID, 10) {
 				return true, nil
@@ -1244,14 +1266,20 @@ func replaceEntitlements(tx *gorm.DB, deploymentID string, customerID uint64, in
 	for _, input := range inputs {
 		input.SubjectType = strings.ToLower(strings.TrimSpace(input.SubjectType))
 		input.SubjectRef = strings.TrimSpace(input.SubjectRef)
-		if input.SubjectType != "customer" && input.SubjectType != "user" && input.SubjectType != "role" && input.SubjectType != "plan" {
-			return domain.Invalid("entitlement subject_type must be customer, user, role, or plan")
+		if input.SubjectType != "all_customers" && input.SubjectType != "customer" && input.SubjectType != "user" && input.SubjectType != "role" && input.SubjectType != "plan" {
+			return domain.Invalid("entitlement subject_type must be all_customers, customer, user, role, or plan")
 		}
 		if input.SubjectRef == "" || len(input.SubjectRef) > 191 || (input.ValidUntil != nil && input.ValidFrom != nil && !input.ValidUntil.After(*input.ValidFrom)) {
 			return domain.Invalid("entitlement subject and validity window are invalid")
 		}
 		if input.SubjectType == "customer" && input.SubjectRef != strconv.FormatUint(customerID, 10) {
-			return domain.Invalid("customer entitlement must match the deployment customer")
+			var customer model.Customer
+			if err := tx.First(&customer, input.SubjectRef).Error; err != nil || customer.Status != model.CustomerStatusActive {
+				return domain.Invalid("customer entitlement must reference an active customer")
+			}
+		}
+		if input.SubjectType == "all_customers" && input.SubjectRef != "*" {
+			return domain.Invalid("all_customers entitlement must use '*' as subject_ref")
 		}
 		key := input.SubjectType + "\x00" + input.SubjectRef
 		if _, duplicate := seen[key]; duplicate {
@@ -1272,6 +1300,17 @@ func replaceEntitlements(tx *gorm.DB, deploymentID string, customerID uint64, in
 		}
 	}
 	return nil
+}
+
+func normalizeAudienceScope(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case model.AgentAudienceAllCustomers:
+		return model.AgentAudienceAllCustomers
+	case model.AgentAudienceSelectedCustomers, "":
+		return model.AgentAudienceSelectedCustomers
+	default:
+		return ""
+	}
 }
 
 func runtimeProfile(mode int, dynamic bool) string {
@@ -1323,7 +1362,8 @@ func projectDeployment(deployment model.CustomerAgentDeployment) AdminDeployment
 	_ = jsonx.Unmarshal([]byte(deployment.CapabilitiesJSON), &capabilities)
 	return AdminDeployment{
 		DeploymentID: deployment.ID, CustomerID: deployment.CustomerID, CustomerAppID: deployment.CustomerAppID,
-		Status: deployment.Status, RowVersion: deployment.RowVersion, ProviderAppMode: deployment.ProviderAppMode,
+		AudienceScope: deployment.AudienceScope,
+		Status:        deployment.Status, RowVersion: deployment.RowVersion, ProviderAppMode: deployment.ProviderAppMode,
 		RuntimeProfile: deployment.RuntimeProfile, DynamicAgentConfig: deployment.DynamicAgentConfig,
 		ExecutionEnabled: deployment.ExecutionEnabled, VerifiedConfig: deployment.VerifiedConfigVersion,
 		VerifiedAt: deployment.VerifiedAt, ProviderDisplayName: deployment.ProviderDisplayName,

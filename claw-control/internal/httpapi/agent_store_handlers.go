@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/claw-control/internal/agentstore"
 	"github.com/QuantumNous/new-api/claw-control/internal/domain"
 	"github.com/QuantumNous/new-api/claw-control/internal/jsonx"
+	"github.com/QuantumNous/new-api/claw-control/internal/productpolicy"
 )
 
 func (s *Server) agentStoreStatus(w http.ResponseWriter, r *http.Request) {
@@ -24,6 +25,7 @@ type agentStoreDeploymentInput struct {
 	CustomerID       uint64 `json:"customer_id"`
 	CustomerAppID    uint64 `json:"customer_app_id"`
 	ExecutionEnabled bool   `json:"execution_enabled"`
+	AudienceScope    string `json:"audience_scope"`
 }
 
 type createAgentStoreItemBody struct {
@@ -73,10 +75,71 @@ func (s *Server) createAgentStoreItem(w http.ResponseWriter, r *http.Request) {
 		Metadata:  agentstore.Metadata{DisplayName: body.DisplayName, Summary: body.Summary, Description: body.Description, AvatarURL: body.AvatarURL, Category: body.Category, Tags: body.Tags},
 		SortOrder: body.SortOrder, Featured: body.Featured,
 		CustomerID: body.Deployment.CustomerID, CustomerAppID: body.Deployment.CustomerAppID,
-		ExecutionEnabled: body.Deployment.ExecutionEnabled, Entitlements: body.Entitlements,
+		ExecutionEnabled: body.Deployment.ExecutionEnabled, AudienceScope: body.Deployment.AudienceScope, Entitlements: body.Entitlements,
 		Actor: actor(r), RequestID: requestID(r),
 	})
 	writeResult(w, r, http.StatusCreated, result, err)
+}
+
+type unifiedAgentStoreListingBody struct {
+	Slug                string               `json:"slug"`
+	DisplayName         string               `json:"display_name"`
+	Summary             string               `json:"summary"`
+	Description         string               `json:"description"`
+	AvatarURL           string               `json:"avatar_url"`
+	Category            string               `json:"category"`
+	Tags                []string             `json:"tags"`
+	SortOrder           int                  `json:"sort_order"`
+	Featured            bool                 `json:"featured"`
+	AudienceScope       string               `json:"audience_scope"`
+	SelectedCustomerIDs []uint64             `json:"selected_customer_ids"`
+	ProviderEnvironment string               `json:"provider_environment"`
+	Region              string               `json:"region"`
+	SpaceID             string               `json:"space_id"`
+	AppID               string               `json:"app_id"`
+	AppKey              string               `json:"app_key"`
+	TemplateAgentID     string               `json:"template_agent_id"`
+	CredentialProfileID uint64               `json:"credential_profile_id"`
+	Limits              productpolicy.Limits `json:"limits"`
+	Capabilities        []string             `json:"capabilities"`
+}
+
+func (s *Server) verifyUnifiedAgentStoreListing(w http.ResponseWriter, r *http.Request) {
+	if !s.agentStoreAvailable(w, r) {
+		return
+	}
+	var body unifiedAgentStoreListingBody
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	result, err := s.services.AgentStore.PrepareListing(r.Context(), agentstore.PrepareListingCommand{
+		Slug:      body.Slug,
+		Metadata:  agentstore.Metadata{DisplayName: body.DisplayName, Summary: body.Summary, Description: body.Description, AvatarURL: body.AvatarURL, Category: body.Category, Tags: body.Tags},
+		SortOrder: body.SortOrder, Featured: body.Featured, AudienceScope: body.AudienceScope,
+		SelectedCustomerIDs: body.SelectedCustomerIDs,
+		Config: agentstore.ListingConfig{
+			ProviderEnvironment: body.ProviderEnvironment, Region: body.Region, SpaceID: body.SpaceID,
+			AppID: body.AppID, AppKey: body.AppKey, TemplateAgentID: body.TemplateAgentID,
+			CredentialProfileID: body.CredentialProfileID, Limits: body.Limits, Capabilities: body.Capabilities,
+		},
+		Actor: actor(r), RequestID: requestID(r),
+	})
+	writeResult(w, r, http.StatusOK, result, err)
+}
+
+func (s *Server) publishUnifiedAgentStoreListing(w http.ResponseWriter, r *http.Request) {
+	if !s.agentStoreAvailable(w, r) {
+		return
+	}
+	var body struct {
+		ExpectedVersion           int64 `json:"expected_version"`
+		ExpectedDeploymentVersion int64 `json:"expected_deployment_version"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	result, err := s.services.AgentStore.PublishListing(r.PathValue("item_id"), body.ExpectedVersion, body.ExpectedDeploymentVersion, actor(r), requestID(r))
+	writeResult(w, r, http.StatusOK, result, err)
 }
 
 func (s *Server) getAgentStoreItem(w http.ResponseWriter, r *http.Request) {

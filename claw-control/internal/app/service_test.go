@@ -342,6 +342,87 @@ func TestCreateAdditionalAppUsesServerGeneratedSelectorAndCustomerAlias(t *testi
 	assert.NotEqual(t, primary.Selector, result.App.Selector)
 }
 
+func TestAdditionalAppCanReplaceAnInvalidConfigurationWithoutChangingPrimary(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	resolver := providerSecrets()
+	resolver["env://WORKBENCH_PROVIDER_BAD_ADDITIONAL_APP_KEY"] = "bad-additional-app-key"
+	resolver["env://WORKBENCH_PROVIDER_GOOD_ADDITIONAL_APP_KEY"] = "good-additional-app-key"
+	apps := app.New(db, false, resolver)
+	primary, primaryVersion, profile := createPendingConfig(t, db, apps)
+	_, err = apps.RecordVerification(app.RecordVerificationCommand{
+		CustomerID: primary.CustomerID, ExpectedVersion: primary.RowVersion, ConfigVersion: primaryVersion.ConfigVersion,
+		Result: "verified", AppMode: 4, ReleaseStatus: "published", TemplateAgentStatus: "available",
+		ProviderRequestIDs: []string{"primary-verify"}, SanitizedResponseHash: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+		Actor: "root:1",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.First(primary, primary.ID).Error)
+	additional, err := apps.CreateAdditional(app.CreateAdditionalCommand{
+		Alias: "replace-invalid",
+		Config: app.SaveConfigCommand{
+			CustomerID: primary.CustomerID, ProviderEnvironment: model.ProviderChinaTencentCloud,
+			Region: "ap-guangzhou", SpaceID: "default_space", AppID: "additional-app", TemplateAgentID: "",
+			CredentialProfileID: &profile.ID, AppKeySecretRef: "env://WORKBENCH_PROVIDER_BAD_ADDITIONAL_APP_KEY",
+			AppKeyFingerprint: secrets.AppKeyFingerprint("bad-additional-app-key"), DisplayName: "Additional",
+			Capabilities: []string{productpolicy.CapabilityChat}, Limits: productpolicy.Limits{
+				CustomerConcurrency: 2, UserConcurrency: 1, MaxRuntimeSeconds: 600, MaxReasoningRounds: 10, MaxOutputTokens: 4096,
+			}, Actor: "root:1",
+		},
+	})
+	require.NoError(t, err)
+	_, err = apps.RecordVerification(app.RecordVerificationCommand{
+		CustomerID: primary.CustomerID, CustomerAppID: additional.App.ID,
+		ExpectedVersion: additional.App.RowVersion, ConfigVersion: additional.Version.ConfigVersion,
+		Result: "invalid", AppMode: 2, ReleaseStatus: "published", TemplateAgentStatus: "not_required",
+		ProviderRequestIDs: []string{"invalid-verify"}, SanitizedResponseHash: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		ErrorCode: "app_key_mismatch", ErrorMessage: "Tencent ADP resources do not match the pending workbench configuration",
+		Actor: "root:1",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.First(additional.App, additional.App.ID).Error)
+	assert.Nil(t, additional.App.PendingConfigVersionID)
+
+	replacement, err := apps.SaveConfig(app.SaveConfigCommand{
+		CustomerID: primary.CustomerID, CustomerAppID: additional.App.ID, ExpectedVersion: additional.App.RowVersion,
+		ProviderEnvironment: additional.App.ProviderEnvironment, Region: "ap-guangzhou", SpaceID: "default_space",
+		AppID: additional.App.AppID, CredentialProfileID: &profile.ID,
+		AppKeySecretRef:   "env://WORKBENCH_PROVIDER_GOOD_ADDITIONAL_APP_KEY",
+		AppKeyFingerprint: secrets.AppKeyFingerprint("good-additional-app-key"), DisplayName: "Additional corrected",
+		Capabilities: []string{productpolicy.CapabilityChat}, Limits: productpolicy.Limits{
+			CustomerConcurrency: 2, UserConcurrency: 1, MaxRuntimeSeconds: 600, MaxReasoningRounds: 10, MaxOutputTokens: 4096,
+		}, Actor: "root:1", RequestID: "replace-invalid",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), replacement.Version.ConfigVersion)
+	assert.Equal(t, model.AppConfigStatusDraft, replacement.Version.Status)
+	assert.Equal(t, "Additional corrected", replacement.App.DisplayName)
+	assert.Equal(t, secrets.AppKeyFingerprint("good-additional-app-key"), replacement.Version.AppKeyFingerprint)
+
+	var persistedPrimary model.CustomerApp
+	require.NoError(t, db.First(&persistedPrimary, primary.ID).Error)
+	assert.Equal(t, "primary", persistedPrimary.Slot)
+	assert.Equal(t, primary.AppID, persistedPrimary.AppID)
+}
+
+func TestAdditionalAppEditRouteCannotTargetPrimaryApp(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	resolver := providerSecrets()
+	apps := app.New(db, false, resolver)
+	primary, _, profile := createPendingConfig(t, db, apps)
+	_, err = apps.SaveConfig(app.SaveConfigCommand{
+		CustomerID: primary.CustomerID, CustomerAppID: primary.ID, ExpectedVersion: primary.RowVersion,
+		ProviderEnvironment: primary.ProviderEnvironment, Region: "ap-guangzhou", SpaceID: "default_space",
+		AppID: primary.AppID, TemplateAgentID: "agent-1", CredentialProfileID: &profile.ID,
+		AppKeySecretRef: "env://WORKBENCH_PROVIDER_APP_KEY", AppKeyFingerprint: secrets.AppKeyFingerprint("resolved-app-key"),
+		DisplayName: primary.DisplayName, Capabilities: []string{productpolicy.CapabilityChat}, Limits: productpolicy.Limits{
+			CustomerConcurrency: 2, UserConcurrency: 1, MaxRuntimeSeconds: 600, MaxReasoningRounds: 10, MaxOutputTokens: 4096,
+		}, Actor: "root:1",
+	})
+	assert.ErrorContains(t, err, "only an additional App")
+}
+
 func TestCreateAdditionalCannotBypassCredentialChangeApproval(t *testing.T) {
 	db, err := testutil.NewDatabase()
 	require.NoError(t, err)

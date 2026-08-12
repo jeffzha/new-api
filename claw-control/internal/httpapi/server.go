@@ -177,6 +177,7 @@ func New(services Services, adminToken string, internalAuth InternalAuth, public
 	admin.HandleFunc("GET /api/admin/workbench/dashboard", server.adminDashboard)
 	admin.Handle("GET /api/admin/workbench/agent-store/items", server.requireAdminSession(http.HandlerFunc(server.listAgentStoreItems)))
 	admin.Handle("POST /api/admin/workbench/agent-store/items", server.requireAdminSession(http.HandlerFunc(server.createAgentStoreItem)))
+	admin.Handle("POST /api/admin/workbench/agent-store/listings/verify", server.requireAdminSession(http.HandlerFunc(server.verifyUnifiedAgentStoreListing)))
 	admin.Handle("GET /api/admin/workbench/agent-store/items/{item_id}", server.requireAdminSession(http.HandlerFunc(server.getAgentStoreItem)))
 	admin.Handle("PATCH /api/admin/workbench/agent-store/items/{item_id}", server.requireAdminSession(http.HandlerFunc(server.updateAgentStoreItem)))
 	admin.Handle("POST /api/admin/workbench/agent-store/items/{item_id}/verify", server.requireAdminSession(http.HandlerFunc(server.verifyAgentStoreItem)))
@@ -184,6 +185,7 @@ func New(services Services, adminToken string, internalAuth InternalAuth, public
 	admin.Handle("PATCH /api/admin/workbench/agent-store/items/{item_id}/deployments/{deployment_id}", server.requireAdminSession(http.HandlerFunc(server.updateAgentStoreDeployment)))
 	admin.Handle("POST /api/admin/workbench/agent-store/items/{item_id}/deployments/{deployment_id}/verify", server.requireAdminSession(http.HandlerFunc(server.verifyAgentStoreDeployment)))
 	admin.Handle("POST /api/admin/workbench/agent-store/items/{item_id}/deployments/{deployment_id}/disable", server.requireAdminSession(http.HandlerFunc(server.disableAgentStoreDeployment)))
+	admin.Handle("POST /api/admin/workbench/agent-store/items/{item_id}/listing/publish", server.requireAdminSession(http.HandlerFunc(server.publishUnifiedAgentStoreListing)))
 	for _, action := range []string{"publish", "unpublish", "disable", "archive"} {
 		admin.Handle("POST /api/admin/workbench/agent-store/items/{item_id}/"+action, server.requireAdminSession(http.HandlerFunc(server.transitionAgentStoreItem)))
 	}
@@ -200,6 +202,7 @@ func New(services Services, adminToken string, internalAuth InternalAuth, public
 	admin.HandleFunc("POST /api/admin/workbench/customers/{customer_id}/app/verify", server.verifyApp)
 	admin.HandleFunc("GET /api/admin/workbench/customers/{customer_id}/apps", server.listCustomerApps)
 	admin.HandleFunc("POST /api/admin/workbench/customers/{customer_id}/apps", server.createCustomerApp)
+	admin.HandleFunc("PUT /api/admin/workbench/customers/{customer_id}/apps/{selector}", server.saveCustomerAppConfig)
 	admin.HandleFunc("POST /api/admin/workbench/customers/{customer_id}/apps/{selector}/verify", server.verifyCustomerApp)
 	admin.HandleFunc("POST /api/admin/workbench/customers/{customer_id}/apps/{selector}/default", server.setDefaultCustomerApp)
 	admin.HandleFunc("POST /api/admin/workbench/customers/{customer_id}/apps/{selector}/{action}", server.transitionCustomerApp)
@@ -514,31 +517,50 @@ func (s *Server) disableMember(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, r, http.StatusOK, map[string]any{"disabled": err == nil}, err)
 }
 
+type saveAppConfigBody struct {
+	ExpectedVersion     int64      `json:"expected_version"`
+	ProviderEnvironment string     `json:"provider_environment"`
+	Region              string     `json:"region"`
+	SpaceID             string     `json:"space_id"`
+	AppID               string     `json:"app_id"`
+	TemplateAgentID     string     `json:"template_agent_id"`
+	CredentialProfileID *uint64    `json:"credential_profile_id,omitempty"`
+	AppKey              string     `json:"app_key,omitempty"`
+	AppKeySecretRef     string     `json:"app_key_secret_ref"`
+	AppKeyFingerprint   string     `json:"app_key_fingerprint"`
+	DisplayName         string     `json:"display_name"`
+	Limits              app.Limits `json:"limits"`
+	Capabilities        []string   `json:"capabilities"`
+}
+
 func (s *Server) saveAppConfig(w http.ResponseWriter, r *http.Request) {
 	customerID, ok := pathUint64(w, r, "customer_id")
 	if !ok {
 		return
 	}
-	var body struct {
-		ExpectedVersion     int64      `json:"expected_version"`
-		ProviderEnvironment string     `json:"provider_environment"`
-		Region              string     `json:"region"`
-		SpaceID             string     `json:"space_id"`
-		AppID               string     `json:"app_id"`
-		TemplateAgentID     string     `json:"template_agent_id"`
-		CredentialProfileID *uint64    `json:"credential_profile_id,omitempty"`
-		AppKey              string     `json:"app_key,omitempty"`
-		AppKeySecretRef     string     `json:"app_key_secret_ref"`
-		AppKeyFingerprint   string     `json:"app_key_fingerprint"`
-		DisplayName         string     `json:"display_name"`
-		Limits              app.Limits `json:"limits"`
-		Capabilities        []string   `json:"capabilities"`
+	s.saveAppConfiguration(w, r, customerID, 0)
+}
+
+func (s *Server) saveCustomerAppConfig(w http.ResponseWriter, r *http.Request) {
+	customerID, ok := pathUint64(w, r, "customer_id")
+	if !ok {
+		return
 	}
+	application, err := s.services.Apps.BySelector(customerID, r.PathValue("selector"))
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	s.saveAppConfiguration(w, r, customerID, application.ID)
+}
+
+func (s *Server) saveAppConfiguration(w http.ResponseWriter, r *http.Request, customerID, customerAppID uint64) {
+	var body saveAppConfigBody
 	if !decodeBody(w, r, &body) {
 		return
 	}
 	result, err := s.services.Apps.SaveConfig(app.SaveConfigCommand{
-		CustomerID: customerID, ExpectedVersion: body.ExpectedVersion,
+		CustomerID: customerID, CustomerAppID: customerAppID, ExpectedVersion: body.ExpectedVersion,
 		ProviderEnvironment: body.ProviderEnvironment, Region: body.Region, SpaceID: body.SpaceID,
 		AppID: body.AppID, TemplateAgentID: body.TemplateAgentID, CredentialProfileID: body.CredentialProfileID,
 		AppKey: body.AppKey, AppKeySecretRef: body.AppKeySecretRef, AppKeyFingerprint: body.AppKeyFingerprint,

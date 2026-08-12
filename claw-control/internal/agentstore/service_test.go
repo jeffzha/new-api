@@ -11,7 +11,9 @@ import (
 
 	"github.com/QuantumNous/new-api/claw-control/internal/access"
 	"github.com/QuantumNous/new-api/claw-control/internal/agentstore"
+	credentialpkg "github.com/QuantumNous/new-api/claw-control/internal/credential"
 	"github.com/QuantumNous/new-api/claw-control/internal/model"
+	"github.com/QuantumNous/new-api/claw-control/internal/productpolicy"
 	"github.com/QuantumNous/new-api/claw-control/internal/providerverify"
 	"github.com/QuantumNous/new-api/claw-control/internal/secrets"
 	"github.com/QuantumNous/new-api/claw-control/internal/testutil"
@@ -455,6 +457,128 @@ func TestUnknownRuntimeProfileCannotEnableExecution(t *testing.T) {
 		ExpectedDeploymentVersion: verified.Deployment.RowVersion, ExecutionEnabled: true,
 	})
 	assert.ErrorContains(t, err, "does not allow execution")
+}
+
+func TestUnifiedListingVerifiesAndPublishesOnceForAllCustomers(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(4)
+	sqlDB.SetMaxIdleConns(4)
+	fixture := createFixture(t, db)
+	platformCredential := model.CredentialProfile{
+		OwnerScope: credentialpkg.PlatformOwnerScope, ProviderEnvironment: model.ProviderChinaTencentCloud,
+		Name: "agent-store-platform", Status: model.CredentialStatusActive,
+		SecretIDRef: "env://WORKBENCH_PROVIDER_SECRET_ID", SecretKeyRef: "env://WORKBENCH_PROVIDER_SECRET_KEY",
+		Fingerprint: secrets.CredentialPairFingerprint("secret-id", "secret-key"), FingerprintVersion: secrets.CanonicalFingerprintVersion,
+		Version: 1, RowVersion: 1,
+	}
+	require.NoError(t, db.Create(&platformCredential).Error)
+	vault, err := secrets.NewVaultResolver(db, []byte("0123456789abcdef0123456789abcdef"))
+	require.NoError(t, err)
+	resolver := secrets.NewCompositeResolver(fixture.resolver, vault)
+	service := agentstore.New(db, resolver, verifier{result: providerverify.Result{
+		Result: "verified", AppMode: 1, ReleaseStatus: "published", TemplateAgentStatus: "not_required",
+		DisplayName: "Provider application", ProviderRequestIDs: []string{"provider-listing"},
+		SanitizedResponseHash: "sha256:" + strings.Repeat("a", 64),
+	}})
+	preview, err := service.PrepareListing(context.Background(), agentstore.PrepareListingCommand{
+		Slug: "unified-application", Metadata: agentstore.Metadata{DisplayName: "Unified application", Summary: "One listing flow", Category: "general"},
+		AudienceScope: model.AgentAudienceAllCustomers,
+		Config: agentstore.ListingConfig{
+			ProviderEnvironment: model.ProviderChinaTencentCloud, Region: "ap-guangzhou", SpaceID: "default_space",
+			AppID: "provider-unified-app", AppKey: "write-only-app-key-value", CredentialProfileID: platformCredential.ID,
+			Capabilities: []string{productpolicy.CapabilityChat}, Limits: productpolicy.Limits{
+				CustomerConcurrency: 10, UserConcurrency: 1, MaxRuntimeSeconds: 900,
+				MaxReasoningRounds: 20, MaxOutputTokens: 4096,
+			},
+		}, Actor: "admin:1", RequestID: "listing-verify",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "verified", preview.Verification.Result)
+	require.Equal(t, model.AgentCatalogStatusVerified, preview.Item.Status)
+	require.Len(t, preview.Item.Deployments, 1)
+	assert.Equal(t, model.AgentAudienceAllCustomers, preview.Item.Deployments[0].AudienceScope)
+	assert.False(t, preview.Item.Deployments[0].ExecutionEnabled)
+
+	published, err := service.PublishListing(preview.Item.ItemID, preview.Item.RowVersion, preview.Item.Deployments[0].RowVersion, "admin:1", "listing-publish")
+	require.NoError(t, err)
+	assert.Equal(t, model.AgentCatalogStatusPublished, published.Status)
+	assert.Equal(t, model.AgentDeploymentStatusActive, published.Deployments[0].Status)
+	assert.True(t, published.Deployments[0].ExecutionEnabled)
+	var runtimeApp model.CustomerApp
+	require.NoError(t, db.First(&runtimeApp, published.Deployments[0].CustomerAppID).Error)
+	assert.Equal(t, model.AppStatusActive, runtimeApp.Status)
+	var storedDeployment model.CustomerAgentDeployment
+	require.NoError(t, db.First(&storedDeployment, "id = ?", published.Deployments[0].DeploymentID).Error)
+	assert.Equal(t, runtimeApp.AuthEpoch, storedDeployment.VerifiedAppAuthEpoch)
+	assert.True(t, strings.HasPrefix(runtimeApp.Slot, "catalog:"))
+	var storedSecret model.ProviderSecret
+	require.NoError(t, db.Where("customer_id = ?", runtimeApp.CustomerID).First(&storedSecret).Error)
+	assert.NotContains(t, fmt.Sprintf("%#v", published), "write-only-app-key-value")
+
+	secondCustomer := model.Customer{CustomerCode: "customer-b", DisplayName: "Customer B", Status: model.CustomerStatusActive, RowVersion: 1}
+	require.NoError(t, db.Create(&secondCustomer).Error)
+	secondMember := model.CustomerMember{CustomerID: secondCustomer.ID, NewAPIUserID: 202, Role: "member", Status: model.MemberStatusActive, MembershipSlot: model.MembershipSlot(secondCustomer.ID), AuthEpoch: 1}
+	require.NoError(t, db.Create(&secondMember).Error)
+	secondIdentity := model.IdentityBinding{PublicID: "binding-b", CustomerID: secondCustomer.ID, NewAPIUserID: secondMember.NewAPIUserID, CanonicalSubject: "customer-b:user:202", IdentityVersion: "identity-v2", Status: model.IdentityStatusActive, AuthEpoch: 1, RowVersion: 1}
+	require.NoError(t, db.Create(&secondIdentity).Error)
+	var planVersion model.PlanVersion
+	require.NoError(t, db.First(&planVersion).Error)
+	limitsJSON := `{"capabilities":["chat"],"limits":{"customer_concurrency":10,"user_concurrency":1,"max_runtime_seconds":900,"max_reasoning_rounds":20,"max_output_tokens":4096,"web_search_per_turn":0,"max_file_bytes":0}}`
+	period := model.PlanPeriod{CustomerID: secondCustomer.ID, PlanVersionID: planVersion.ID, StartAt: time.Now().UTC().Add(-time.Hour), EndAt: time.Now().UTC().Add(time.Hour), AmountCNY: "100", PaymentMode: model.PaymentModeOfflineManual, PaymentStatus: model.PaymentStatusPaid, Status: model.PeriodStatusActive, SnapshotJSON: limitsJSON, RowVersion: 1}
+	require.NoError(t, db.Create(&period).Error)
+	sessionToken := "second-control-session"
+	sessionDigest := sha256.Sum256([]byte(sessionToken))
+	secondSession := model.ControlSession{TokenHash: hex.EncodeToString(sessionDigest[:]), SelectionState: model.ControlSessionStateSelected, IdentityBindingID: secondIdentity.ID, CustomerID: secondCustomer.ID, NewAPIUserID: secondIdentity.NewAPIUserID, CustomerAppID: fixture.app.ID, AppConfigVersionID: fixture.config.ID, AccessMode: "active", AuthEpoch: 2, IdentityVersion: secondIdentity.IdentityVersion, ExpiresAt: time.Now().UTC().Add(time.Hour), LastSeenAt: time.Now().UTC()}
+	require.NoError(t, db.Create(&secondSession).Error)
+	principal := access.SessionPrincipal{ControlSessionID: secondSession.ID, CustomerID: secondCustomer.ID, NewAPIUserID: secondIdentity.NewAPIUserID, IdentityBindingID: secondIdentity.ID, IdentityVersion: secondIdentity.IdentityVersion, Role: secondMember.Role}
+	page, err := service.Catalog(principal, "", "", "")
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	grant, err := service.Launch(principal, sessionToken, "unified-application", "launch-shared")
+	require.NoError(t, err)
+	accessService := access.New(db, resolver, testutil.NewIdentityVerifier(secondIdentity.IdentityVersion), time.Minute, time.Minute, time.Hour, time.Hour, time.Minute)
+	selection, err := accessService.SelectContext(context.Background(), sessionToken, grant.SelectionToken)
+	require.NoError(t, err)
+	assert.NotEmpty(t, selection.ADPSSOTicket)
+	var selectedSession model.ControlSession
+	require.NoError(t, db.First(&selectedSession, secondSession.ID).Error)
+	assert.Equal(t, secondCustomer.ID, selectedSession.CustomerID)
+	assert.Equal(t, runtimeApp.ID, selectedSession.CustomerAppID)
+	consumed, err := accessService.ConsumeTicket(access.ConsumeTicketCommand{Ticket: selection.ADPSSOTicket, BrowserBinding: selection.SSOBrowserBinding, ConsumerService: "adp-backend"})
+	require.NoError(t, err)
+	assert.Equal(t, secondCustomer.ID, consumed.CustomerID)
+	assert.Equal(t, runtimeApp.ID, consumed.AppProfileID)
+}
+
+func TestRejectedUnifiedListingLeavesNoBlockingDraftOrSecret(t *testing.T) {
+	db, err := testutil.NewDatabase()
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(4)
+	sqlDB.SetMaxIdleConns(4)
+	fixture := createFixture(t, db)
+	credential := model.CredentialProfile{OwnerScope: credentialpkg.PlatformOwnerScope, ProviderEnvironment: model.ProviderChinaTencentCloud, Name: "listing-platform", Status: model.CredentialStatusActive, SecretIDRef: "env://WORKBENCH_PROVIDER_SECRET_ID", SecretKeyRef: "env://WORKBENCH_PROVIDER_SECRET_KEY", Fingerprint: secrets.CredentialPairFingerprint("secret-id", "secret-key"), FingerprintVersion: secrets.CanonicalFingerprintVersion, Version: 1, RowVersion: 1}
+	require.NoError(t, db.Create(&credential).Error)
+	vault, err := secrets.NewVaultResolver(db, []byte("0123456789abcdef0123456789abcdef"))
+	require.NoError(t, err)
+	service := agentstore.New(db, secrets.NewCompositeResolver(fixture.resolver, vault), verifier{result: providerverify.Result{Result: "invalid", AppMode: 1, ReleaseStatus: "draft", ProviderRequestIDs: []string{"rejected"}, SanitizedResponseHash: "sha256:" + strings.Repeat("b", 64), ErrorCode: "not_published", ErrorMessage: "application is not published"}})
+	command := agentstore.PrepareListingCommand{Slug: "retryable-listing", Metadata: agentstore.Metadata{DisplayName: "Retryable", Summary: "Summary", Category: "general"}, AudienceScope: model.AgentAudienceAllCustomers, Config: agentstore.ListingConfig{ProviderEnvironment: model.ProviderChinaTencentCloud, Region: "ap-guangzhou", SpaceID: "default_space", AppID: "retryable-provider-app", AppKey: "write-only-app-key-value", CredentialProfileID: credential.ID, Capabilities: []string{productpolicy.CapabilityChat}, Limits: productpolicy.Limits{CustomerConcurrency: 10, UserConcurrency: 1, MaxRuntimeSeconds: 900, MaxReasoningRounds: 20, MaxOutputTokens: 4096}}, Actor: "admin:1"}
+	preview, err := service.PrepareListing(context.Background(), command)
+	require.NoError(t, err)
+	assert.Nil(t, preview.Item)
+	assert.Equal(t, "invalid", preview.Verification.Result)
+	var itemCount, appCount int64
+	require.NoError(t, db.Model(&model.AgentCatalogItem{}).Where("slug = ?", command.Slug).Count(&itemCount).Error)
+	require.NoError(t, db.Model(&model.CustomerApp{}).Where("app_id = ?", command.Config.AppID).Count(&appCount).Error)
+	assert.Zero(t, itemCount)
+	assert.Zero(t, appCount)
+	var secret model.ProviderSecret
+	require.NoError(t, db.Order("id desc").First(&secret).Error)
+	assert.NotNil(t, secret.RevokedAt)
 }
 
 type fixture struct {

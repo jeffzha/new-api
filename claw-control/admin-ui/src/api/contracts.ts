@@ -48,6 +48,8 @@ export interface CustomerApp {
   pending_config_version_id?: number
   current_config_version?: number
   pending_config_version?: number
+  latest_config?: AppConfigVersion
+  latest_verification?: AppVerification
   verified_at?: string
   created_at?: string
 }
@@ -68,7 +70,14 @@ export interface AppConfigVersion {
 
 export interface AppVerification {
   verification_id: string
-  status?: string
+  app_config_version_id?: number
+  result: string
+  app_mode?: number
+  release_status?: string
+  template_agent_status?: string
+  dynamic_agent_config?: boolean
+  error_code?: string
+  error_message?: string
   verified_at?: string
 }
 
@@ -411,6 +420,7 @@ export interface AgentStoreDeployment {
   deployment_id: string
   customer_id: number
   customer_app_id: number
+  audience_scope: 'all_customers' | 'selected_customers'
   status: string
   row_version: number
   provider_app_mode: number
@@ -429,7 +439,7 @@ export interface AgentStoreDeployment {
 export interface AgentStoreEntitlement {
   entitlement_id: string
   deployment_id: string
-  subject_type: 'customer' | 'user' | 'role' | 'plan'
+  subject_type: 'all_customers' | 'customer' | 'user' | 'role' | 'plan'
   subject_ref: string
   status: string
   valid_from: string
@@ -500,4 +510,32 @@ export interface AgentStoreDeploymentUpdateInput {
   expected_deployment_version: number
   execution_enabled: boolean
   entitlements?: AgentStoreEntitlementInput[]
+}
+
+export interface UnifiedAgentStoreListingInput {
+  slug: string
+  display_name: string
+  summary: string
+  description: string
+  avatar_url: string
+  category: string
+  tags: string[]
+  sort_order: number
+  featured: boolean
+  audience_scope: 'all_customers' | 'selected_customers'
+  selected_customer_ids: number[]
+  provider_environment: 'china_tencent_cloud' | 'china_tencent_adp'
+  region: string
+  space_id: string
+  app_id: string
+  app_key: string
+  template_agent_id: string
+  credential_profile_id: number
+  limits: Limits
+  capabilities: string[]
+}
+
+export interface UnifiedAgentStoreListingPreview {
+  item?: AgentStoreItem
+  verification: AppVerification
 }

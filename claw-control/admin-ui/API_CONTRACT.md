@@ -106,6 +106,14 @@ and approval `before_id` requests remain accepted for compatibility.
 
 ### Agent Store deployments and entitlements
 
+The primary administrator workflow is the unified listing contract:
+
+- `POST /api/admin/workbench/agent-store/listings/verify` accepts catalog metadata, write-only Tencent AppKey, AppId/Region/SpaceId/template Agent, a platform credential profile ID, capabilities/limits, and `audience_scope` (`all_customers` or `selected_customers`). It returns only a sanitized provider verification preview. Invalid results are discarded so the same Slug/AppId can be corrected and retried.
+- `POST /api/admin/workbench/agent-store/items/{item_id}/listing/publish` accepts verified item/deployment row versions and atomically activates the runtime App, refreshes the verified AuthEpoch snapshot, enables execution, and publishes the catalog version. The UI has no separate deployment-enable step.
+- `all_customers` dynamically covers every active customer with an active paid Workbench period, including future customers. `selected_customers` is an exact customer-ID allowlist. Both modes still require an active member and paid plan.
+- A shared provider application does not share customer data. Launch SSO and AppContext keep the requesting customer and canonical user identity while separately binding the server-owned provider App profile.
+- AppKey is write-only and encrypted in the provider vault. Responses never include AppKey, SecretId, SecretKey, secret references, fingerprints, provider RequestIds, or ciphertext.
+
 `GET /api/admin/workbench/agent-store/items?limit=100` returns logical catalog
 items. Each item has `deployments: AgentStoreDeployment[]`, and each deployment
 has its own `entitlements: AgentStoreEntitlement[]`. The legacy top-level

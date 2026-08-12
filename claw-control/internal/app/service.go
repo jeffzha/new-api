@@ -34,6 +34,7 @@ type Limits = productpolicy.Limits
 
 type SaveConfigCommand struct {
 	CustomerID          uint64
+	CustomerAppID       uint64
 	ExpectedVersion     int64
 	ProviderEnvironment string
 	Region              string
@@ -59,6 +60,11 @@ type SaveConfigResult struct {
 type CreateAdditionalCommand struct {
 	Config SaveConfigCommand
 	Alias  string
+}
+
+type CreateCatalogCommand struct {
+	Config SaveConfigCommand
+	Slug   string
 }
 
 type SetDefaultCommand struct {
@@ -326,10 +332,19 @@ func (s *Service) SaveConfig(command SaveConfigCommand) (*SaveConfigResult, erro
 			return domain.Conflict("credential profile is inactive, provider-mismatched, or unavailable to this customer")
 		}
 		var stable model.CustomerApp
-		find := database.ForUpdate(tx).Where("customer_id = ? AND slot = ?", command.CustomerID, "primary").First(&stable)
+		find := database.ForUpdate(tx).Where("customer_id = ?", command.CustomerID)
+		if command.CustomerAppID > 0 {
+			find = find.Where("id = ?", command.CustomerAppID)
+		} else {
+			find = find.Where("slot = ?", "primary")
+		}
+		find = find.First(&stable)
 		isNew := find.Error == gorm.ErrRecordNotFound
 		if find.Error != nil && !isNew {
 			return find.Error
+		}
+		if isNew && command.CustomerAppID > 0 {
+			return domain.NotFound("customer App not found")
 		}
 		var before any
 		var fallbackConfig *model.AppConfigVersion
@@ -355,6 +370,9 @@ func (s *Service) SaveConfig(command SaveConfigCommand) (*SaveConfigResult, erro
 		} else {
 			beforeCopy := stable
 			before = &beforeCopy
+			if command.CustomerAppID > 0 && !strings.HasPrefix(stable.Slot, "app:") && !strings.HasPrefix(stable.Slot, "catalog:") {
+				return domain.Conflict("only an additional App or Agent Store App can be edited through this route")
+			}
 			if stable.RowVersion != command.ExpectedVersion {
 				return domain.Conflict("App row version changed; expected %d, current %d", command.ExpectedVersion, stable.RowVersion)
 			}
@@ -649,6 +667,77 @@ func (s *Service) CreateAdditional(command CreateAdditionalCommand) (*SaveConfig
 	return result, err
 }
 
+// CreateCatalog creates the provider runtime profile owned by an Agent Store
+// listing. Catalog profiles are never offered by the ordinary App selector;
+// access is granted only through an Agent Store launch nonce.
+func (s *Service) CreateCatalog(command CreateCatalogCommand) (*SaveConfigResult, error) {
+	command.Slug = strings.ToLower(strings.TrimSpace(command.Slug))
+	if !appAliasPattern.MatchString(command.Slug) {
+		return nil, domain.Invalid("catalog slug must be 3-80 lowercase letters, digits, or hyphens")
+	}
+	if err := validateSaveConfig(&command.Config); err != nil {
+		return nil, err
+	}
+	if command.Config.ExpectedVersion != 0 {
+		return nil, domain.Invalid("expected_version must be 0 when creating a catalog App")
+	}
+	capabilitiesJSON, err := jsonx.Marshal(command.Config.Capabilities)
+	if err != nil {
+		return nil, err
+	}
+	limitsJSON, err := jsonx.Marshal(command.Config.Limits)
+	if err != nil {
+		return nil, err
+	}
+	result := &SaveConfigResult{}
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		var owner model.Customer
+		if err := database.ForUpdate(tx).First(&owner, command.Config.CustomerID).Error; err != nil || owner.Status != model.CustomerStatusActive {
+			return domain.Conflict("Agent Store runtime owner customer must be active")
+		}
+		var credential model.CredentialProfile
+		if command.Config.CredentialProfileID == nil || tx.First(&credential, *command.Config.CredentialProfileID).Error != nil {
+			return domain.NotFound("credential profile not found")
+		}
+		if credential.Status != model.CredentialStatusActive || credential.ProviderEnvironment != command.Config.ProviderEnvironment || credential.OwnerScope != credentialpkg.PlatformOwnerScope {
+			return domain.Conflict("Agent Store requires an active platform-scoped credential")
+		}
+		if err := s.prepareAppKey(tx, &command.Config, nil); err != nil {
+			return err
+		}
+		selector := support.PublicID("aps")
+		application := &model.CustomerApp{
+			CustomerID: owner.ID, Slot: "catalog:" + selector, Selector: selector, Alias: "catalog-" + command.Slug,
+			ProviderEnvironment: command.Config.ProviderEnvironment, AppID: command.Config.AppID,
+			DisplayName: command.Config.DisplayName, Status: model.AppStatusDraft, AuthEpoch: 1, RowVersion: 1,
+		}
+		if err := tx.Create(application).Error; err != nil {
+			return domain.Conflict("Agent Store slug or provider AppId is already assigned")
+		}
+		version := &model.AppConfigVersion{
+			CustomerAppID: application.ID, ConfigVersion: 1, Status: model.AppConfigStatusDraft,
+			Region: command.Config.Region, SpaceID: command.Config.SpaceID, TemplateAgentID: command.Config.TemplateAgentID,
+			CredentialProfileID: command.Config.CredentialProfileID,
+			AppKeySecretRef:     command.Config.AppKeySecretRef, AppKeyFingerprint: command.Config.AppKeyFingerprint,
+			AppKeyFingerprintVersion: secrets.CanonicalFingerprintVersion, RowVersion: 1,
+			LimitsJSON: string(limitsJSON), CapabilitiesJSON: string(capabilitiesJSON), CreatedBy: command.Config.Actor,
+		}
+		if err := tx.Create(version).Error; err != nil {
+			return err
+		}
+		application.PendingConfigVersionID = &version.ID
+		if err := tx.Save(application).Error; err != nil {
+			return err
+		}
+		if err := support.Audit(tx, &owner.ID, command.Config.Actor, "agent_store.app.create", "customer_app", application.Selector, nil, application, "", command.Config.RequestID); err != nil {
+			return err
+		}
+		result.App, result.Version = application, version
+		return nil
+	})
+	return result, err
+}
+
 func (s *Service) SetDefault(command SetDefaultCommand) (*model.CustomerApp, error) {
 	command.Selector = strings.TrimSpace(command.Selector)
 	if command.CustomerID == 0 || command.Selector == "" || command.ExpectedTargetVersion <= 0 || command.ExpectedCurrentDefaultVersion <= 0 {
@@ -713,7 +802,7 @@ func (s *Service) BySelector(customerID uint64, selector string) (*model.Custome
 }
 
 func selectableOrMigrationSlot(slot string) bool {
-	return slot == "primary" || strings.HasPrefix(slot, "app:") || strings.HasPrefix(slot, "migration:")
+	return slot == "primary" || strings.HasPrefix(slot, "app:") || strings.HasPrefix(slot, "migration:") || strings.HasPrefix(slot, "catalog:")
 }
 
 func (s *Service) Transition(command TransitionCommand) (*model.CustomerApp, error) {

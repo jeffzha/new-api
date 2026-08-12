@@ -84,6 +84,19 @@ describe('administrative request authentication', () => {
       limits: { customer_concurrency: 10, user_concurrency: 2, max_runtime_seconds: 300, max_reasoning_rounds: 20, max_output_tokens: 8192, web_search_per_turn: 0, max_file_bytes: 0 },
       capabilities: ['chat'],
     })
+    await adminApi.saveCustomerApp(42, 'aps_public', {
+      expected_version: 2,
+      provider_environment: 'china_tencent_adp',
+      region: 'ap-guangzhou',
+      space_id: 'default_space',
+      app_id: '2048342527164967296',
+      template_agent_id: '',
+      credential_profile_id: 5,
+      app_key: 'corrected-app-key-value',
+      display_name: 'Gaokao application',
+      limits: { customer_concurrency: 10, user_concurrency: 2, max_runtime_seconds: 300, max_reasoning_rounds: 20, max_output_tokens: 8192, web_search_per_turn: 0, max_file_bytes: 0 },
+      capabilities: ['chat'],
+    })
     await adminApi.verifyCustomerApp(42, 'aps_public', { expected_version: 1, config_version: 1 })
     await adminApi.transitionCustomerApp(42, 'aps_public', 'enable', { expected_version: 2, reason: '' })
     await adminApi.setDefaultCustomerApp(42, 'aps_public', { expected_target_version: 2, expected_current_default_version: 7 })
@@ -95,14 +108,18 @@ describe('administrative request authentication', () => {
     expect(calls[0]?.url).toBe('/api/admin/workbench/customers/42/apps')
     expect(calls[0]?.body).toMatchObject({ alias: 'gaokao-zhiyuan-wuyou', app_id: '2048342527164967296' })
     expect(calls[1]).toEqual({
+      url: '/api/admin/workbench/customers/42/apps/aps_public',
+      body: expect.objectContaining({ expected_version: 2, app_key: 'corrected-app-key-value' }),
+    })
+    expect(calls[2]).toEqual({
       url: '/api/admin/workbench/customers/42/apps/aps_public/verify',
       body: { expected_version: 1, config_version: 1 },
     })
-    expect(calls[2]).toEqual({
+    expect(calls[3]).toEqual({
       url: '/api/admin/workbench/customers/42/apps/aps_public/enable',
       body: { expected_version: 2, reason: '' },
     })
-    expect(calls[3]).toEqual({
+    expect(calls[4]).toEqual({
       url: '/api/admin/workbench/customers/42/apps/aps_public/default',
       body: { expected_target_version: 2, expected_current_default_version: 7 },
     })
@@ -329,5 +346,30 @@ describe('administrative request authentication', () => {
     const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit]
     expect(url).toBe('/api/admin/workbench/credential-profiles')
     expect(JSON.parse(String(init.body))).toMatchObject({ owner_scope: 'customer:42', customer_id: 42 })
+  })
+
+  it('uses the unified Agent Store verify and atomic publish contracts', async () => {
+    vi.stubGlobal('document', { cookie: 'claw_admin_csrf=csrf-token' })
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, data: { verification: { result: 'verified' } } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await adminApi.verifyUnifiedAgentStoreListing({
+      slug: 'gaokao-zhiyuan-wuyou', display_name: '高考志愿无忧', summary: 'summary', description: '', avatar_url: '', category: '教育', tags: ['高考'], sort_order: 20, featured: false,
+      audience_scope: 'all_customers', selected_customer_ids: [], provider_environment: 'china_tencent_adp', region: 'ap-guangzhou', space_id: 'default_space', app_id: '2048342527164967296', app_key: 'write-only-app-key', template_agent_id: '', credential_profile_id: 3,
+      capabilities: ['chat'], limits: { customer_concurrency: 10, user_concurrency: 1, max_runtime_seconds: 900, max_reasoning_rounds: 20, max_output_tokens: 8192, web_search_per_turn: 0, max_file_bytes: 0 },
+    })
+    const [verifyURL, verifyInit] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(verifyURL).toBe('/api/admin/workbench/agent-store/listings/verify')
+    expect(JSON.parse(String(verifyInit.body))).toMatchObject({ audience_scope: 'all_customers', app_id: '2048342527164967296', app_key: 'write-only-app-key' })
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: { item_id: 'agi_1' } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    await adminApi.publishUnifiedAgentStoreListing('agi_1', 4, 2)
+    const [publishURL, publishInit] = fetchMock.mock.calls[1] as [string, RequestInit]
+    expect(publishURL).toBe('/api/admin/workbench/agent-store/items/agi_1/listing/publish')
+    expect(JSON.parse(String(publishInit.body))).toEqual({ expected_version: 4, expected_deployment_version: 2 })
+    expect(String(publishInit.body)).not.toMatch(/app_key|secret/i)
   })
 })

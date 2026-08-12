@@ -104,25 +104,24 @@ flowchart TD
 
 #### 1.4.1 商品、客户部署与腾讯资源的关系
 
-目录使用“逻辑商品 + 客户部署”两层模型，不能把全局商品直接等同为一个跨客户共用 AppKey：
+2026-08-12 产品决策改为“一个目录 Application 运行配置 + 动态客户使用范围”。平台可以让多个客户共用同一个已发布腾讯 Application/AppKey，但客户身份和业务数据必须继续隔离：
 
 ```mermaid
 flowchart TD
   Catalog["AgentCatalogItem<br/>名称、介绍、分类、排序"] --> V["AgentCatalogVersion<br/>不可变展示快照"]
-  Catalog --> D1["CustomerAgentDeployment A"]
-  Catalog --> D2["CustomerAgentDeployment B"]
-  D1 --> CA1["CustomerApp A<br/>ADP Application A"]
-  D2 --> CA2["CustomerApp B<br/>ADP Application B"]
-  CA1 --> R1["AppMode runtime profile"]
-  CA2 --> R2["AppMode runtime profile"]
-  R1 --> U1["Customer A users / isolated conversations"]
-  R2 --> U2["Customer B users / isolated conversations"]
+  Catalog --> D["Provider Deployment<br/>verified AppMode/runtime"]
+  D --> CA["Catalog CustomerApp<br/>shared ADP Application/AppKey"]
+  D --> A["Audience<br/>all_customers / selected_customers"]
+  A --> U1["Customer A users<br/>isolated conversations"]
+  A --> U2["Customer B users<br/>isolated conversations"]
 ```
 
-- `AgentCatalogItem` 是商店商品身份，可面向一个或多个客户，但不保存 AppKey。
-- `CustomerAgentDeployment` 将商品绑定到一个客户已有的 `CustomerApp` 及其已验证 config version。
-- 同一商品需要跨客户销售时，每个客户仍配置自己的 ADP Application；不得因为商品相同而共享 CustomerApp、AppKey、shadow account、Conversation 或文件。
-- 一个商品可挂载多个相互独立的客户 deployment；增加客户时只新增 deployment/entitlement，不复制目录元数据。每个 deployment 独立使用 CAS 行版本完成验证、执行开关、授权替换和禁用。
+- `AgentCatalogItem` 是商店商品身份，不保存明文 AppKey。
+- 每个新增商品由统一上架向导创建一个 server-owned catalog App 和一个 verified deployment；AppKey 只写入 provider vault。
+- `all_customers` 动态授权所有当前和未来具有有效付费 Workbench 套餐的活跃客户；`selected_customers` 保存精确客户 allowlist。
+- 共享 provider App 只共享腾讯 Application 定义和腾讯侧计费归属，不共享 CustomerID、IdentityBinding、shadow account、canonical VisitorId、Conversation、Turn、Workspace、文件、OAuth 或审计。SSO/AppContext 的 CustomerID 永远取当前登录主体，provider App profile 单独由服务端 launch nonce 绑定。
+- catalog App 使用 `catalog:` slot，不进入普通客户 App 选择器；跨客户使用只能从 Agent Store entitlement + 一次性 launch token 进入，不能通过猜测 app_profile_id 访问。
+- 统一发布事务同时激活 catalog App、刷新 verified AuthEpoch、启用 deployment 并发布目录版本，禁止出现两次“启用”操作和半完成状态。
 - 浏览器只看到 opaque item id/slug、展示元数据、能力标签和启动状态；不得看到 customer_app_id、AppId、SpaceId、AppKey、AgentId、credential profile 或 provider RequestId。
 
 #### 1.4.2 组件责任与低冲突约束
@@ -356,10 +355,10 @@ ADP 内部新增稳定 `runtime_profile`，值只能由 provider-derived AppMode
 
 ```text
 ┌────────────────────────────────────────────────────────────────────┐
-│ Agent Store 管理                                      [+ 新建商品] │
+│ Agent Store 管理                                      [上架应用]   │
 ├────────────────────────────────────────────────────────────────────┤
-│ 名称     客户部署   AppMode   验证       上架状态       操作        │
-│ 数据分析 NEXUS      Claw      verified   published     查看/下架   │
+│ 名称     客户范围   AppMode   验证       上架状态       操作        │
+│ 数据分析 所有客户   Claw      verified   published     查看/下架   │
 ├────────────────────────────────────────────────────────────────────┤
 │ 编辑抽屉：展示信息 | 客户 Application | 套餐权限 | 验证证据 | 审计 │
 └────────────────────────────────────────────────────────────────────┘
@@ -3201,8 +3200,8 @@ sequenceDiagram
 ### 20.1 P0：固定套餐白名单上线
 
 - [ ] customer/member/identity binding 与影子账号单向映射。
-- [ ] 每客户独立 App draft、验证、启用、暂停、禁用。
-- [ ] Agent Store 商品/版本/客户 deployment/entitlement、管理员验证上架和用户一次性 launch；AppMode 1/2/3/4 目录合同完整。
+- [ ] Agent Store 统一上架向导完成 server-owned App draft、可信验证预览和一次确认发布；不再要求每客户预建独立 App。
+- [ ] Agent Store 商品/版本/provider deployment/audience、管理员验证上架和用户一次性 launch；AppMode 1/2/3/4 目录合同完整。
 - [ ] `/agent-store` 替代新版 Playground 入口，`/playground` 兼容跳转且 `/playground/legacy` 永久可回退。
 - [ ] AppKey/credential profile 安全保存、轮换和不回显。
 - [ ] 固定套餐目录、周期、人工付款确认和客户账单。
@@ -3227,7 +3226,7 @@ sequenceDiagram
 
 ### 20.3 P2：高级能力
 
-- [ ] Agent Store 跨客户逻辑商品复用、多个独立客户 deployment 与复杂 entitlement/附加套餐。
+- [ ] Agent Store 更细粒度 user/role/plan/time-window entitlement、附加套餐和可选每客户独立腾讯 Application 高级模式。
 - [ ] 一个 new-api 用户多客户 membership：new-api 只证明身份，由 claw-control 列出授权 membership、签发选择 nonce 并安全切换上下文。
 - [ ] 定时任务离线身份、重复执行和套餐限制。
 - [ ] 独立代码执行/终端沙箱。
@@ -3291,14 +3290,14 @@ sequenceDiagram
 
 ### 22.2 超级管理员开通客户的操作顺序
 
-1. 腾讯侧为客户创建/准备独立 Application 并发布；只有动态 Claw 需要配置 Kind=0 模板 Agent 和动态修改开关。
+1. 腾讯侧创建/准备 Application 并发布；只有动态 Claw 需要配置 Kind=0 模板 Agent 和动态修改开关。
 2. 从 new-api 的超级管理员入口换取受信任 `surface=admin` 的 opaque entry ticket，进入同域 claw-control“Claw 客户应用 → 新建客户”，填写不可变客户编码和显示名称。
 3. 添加 new-api 用户为客户成员；系统生成待 provisioning identity binding。
-4. 在 App 配置中填写环境、Region、SpaceId、AppId、AppKey、条件化模板 Agent 和 credential profile，并创建 Agent Store 商品/deployment 草稿。
-5. 保存 draft，点击“验证”；确认 provider-derived AppMode、发布状态、条件化模板 Agent 和官方 RequestId，随后显式上架。
+4. 在 **智能体商店 → 上架应用** 的同一向导中填写目录资料、环境、Region、SpaceId、AppId、只写 AppKey、条件化模板 Agent、platform credential、能力限制和客户使用范围。
+5. 点击“验证配置”，确认 provider-derived AppMode、发布状态、条件化模板 Agent 和安全预览；随后点击一次“确认并上架”。服务端原子激活 App、启用 execution 并发布目录。
 6. 创建固定月度套餐周期，确认人工收款并生成客户账单。
 7. 配置能力和成本保护限制。
-8. 点击“启用”；由系统再次检查 verified App 和 active plan。
+8. 无需再次点击“启用”；客户目录和 launch 时由系统实时检查 active customer/member/paid plan/audience 和 verified provider snapshot。
 9. 使用客户成员账号执行首次 SSO/Agent/Conversation 最小 E2E。
 10. 定期在腾讯后台查询用量，在“用量核查”登记成本、证据和置信度。
 

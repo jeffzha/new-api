@@ -50,6 +50,7 @@ ALLOWED_PATH_PATTERNS = (
     "claw-control/**",
     "deploy/claw-workbench/**",
     "docs/adp-claw-*.md",
+    "docs/adp-agent-store-*.md",
     "controller/workbench_*.go",
     "router/workbench_*.go",
     "service/workbenchbridge/**",

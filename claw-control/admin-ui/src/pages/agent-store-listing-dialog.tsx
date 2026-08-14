@@ -11,6 +11,8 @@ const capabilities = ['chat', 'files', 'web_search', 'tools', 'connectors', 'oau
 export function AgentStoreListingDialog(props: {
   customers: Customer[]
   credentials: CredentialProfile[]
+  credentialsLoading: boolean
+  credentialsError?: unknown
   onPublished: (item: AgentStoreItem) => void
 }) {
   const { t } = useI18n()
@@ -19,7 +21,8 @@ export function AgentStoreListingDialog(props: {
   const [preview, setPreview] = useState<UnifiedAgentStoreListingPreview>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
-  const platformCredentials = useMemo(() => props.credentials.filter((profile) => profile.owner_scope === 'platform' && profile.status === 'active'), [props.credentials])
+  const platformCredentials = useMemo(() => activePlatformCredentials(props.credentials), [props.credentials])
+  const credentialsUnavailable = props.credentialsLoading || props.credentialsError !== undefined || platformCredentials.length === 0
 
   function open() {
     setPreview(undefined)
@@ -113,9 +116,12 @@ export function AgentStoreListingDialog(props: {
             <Field label={t('app.spaceId')}><input name="space_id" required defaultValue="default_space" /></Field>
             <Field label={t('app.appId')}><input name="app_id" required maxLength={128} /></Field>
             <Field label={t('app.templateAgentId')} hint={t('app.templateAgentHint')}><input name="template_agent_id" /></Field>
-            <Field label={t('app.credentialProfile')} hint={t('agentStore.platformCredentialHint')}><select name="credential_profile_id" required defaultValue=""><option value="" disabled>{t('agentStore.choosePlatformCredential')}</option>{platformCredentials.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.provider_environment}</option>)}</select></Field>
+            <Field label={t('app.credentialProfile')} hint={t('agentStore.platformCredentialHint')}><select name="credential_profile_id" required defaultValue="" disabled={credentialsUnavailable}><option value="" disabled>{props.credentialsLoading ? t('common.loading') : t('agentStore.choosePlatformCredential')}</option>{platformCredentials.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.provider_environment}</option>)}</select></Field>
             <Field label={t('app.appKey')} hint={t('agentStore.appKeyWriteOnlyHint')}><input name="app_key" type="password" required minLength={16} maxLength={4096} autoComplete="new-password" /></Field>
           </div></fieldset>
+          {props.credentialsLoading && <p className="form-wide security-note" role="status">{t('agentStore.loadingPlatformCredentials')}</p>}
+          {props.credentialsError !== undefined && <p className="form-wide inline-error" role="alert">{t('agentStore.platformCredentialLoadFailed')} <a href="#/credentials">{t('agentStore.openCredentialSettings')}</a></p>}
+          {!props.credentialsLoading && props.credentialsError === undefined && platformCredentials.length === 0 && <p className="form-wide inline-error" role="alert">{t('agentStore.platformCredentialRequired')} <a href="#/credentials">{t('agentStore.openCredentialSettings')}</a></p>}
           <fieldset className="form-section form-wide"><legend>{t('agentStore.audience')}</legend>
             <label className="check-field"><input type="radio" name="audience_scope" checked={audience === 'all_customers'} onChange={() => setAudience('all_customers')} /> {t('agentStore.allCustomers')}</label>
             <p className="security-note">{t('agentStore.allCustomersHint')}</p>
@@ -134,8 +140,12 @@ export function AgentStoreListingDialog(props: {
           </dl></section>}
         </div>
         {error && <output className="form-error" aria-live="polite">{error}</output>}
-        <footer><Button type="button" tone="secondary" onClick={() => dialogRef.current?.close()}>{t('action.cancel')}</Button>{!preview || preview.verification.result !== 'verified' ? <Button type="submit" disabled={busy || platformCredentials.length === 0}>{busy ? t('common.loading') : t('agentStore.verifyConfiguration')}</Button> : <Button type="button" disabled={busy} onClick={() => void publish()}>{busy ? t('common.loading') : t('agentStore.confirmListing')}</Button>}</footer>
+        <footer><Button type="button" tone="secondary" onClick={() => dialogRef.current?.close()}>{t('action.cancel')}</Button>{!preview || preview.verification.result !== 'verified' ? <Button type="submit" disabled={busy || credentialsUnavailable} aria-busy={busy || props.credentialsLoading}>{busy || props.credentialsLoading ? t('common.loading') : t('agentStore.verifyConfiguration')}</Button> : <Button type="button" disabled={busy} aria-busy={busy} onClick={() => void publish()}>{busy ? t('common.loading') : t('agentStore.confirmListing')}</Button>}</footer>
       </form>
     </dialog>
   </>
+}
+
+export function activePlatformCredentials(credentials: CredentialProfile[]): CredentialProfile[] {
+  return credentials.filter((profile) => profile.owner_scope === 'platform' && profile.status === 'active')
 }

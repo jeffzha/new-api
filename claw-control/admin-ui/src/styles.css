@@ -47,7 +47,8 @@ main { min-width: 0; padding: clamp(1.25rem, 3vw, 2.5rem); }
 .stack { display: grid; gap: 1rem; }
 
 .button { display: inline-flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: .5rem; padding: .55rem .85rem; font-weight: 650; line-height: 1.2; text-decoration: none; cursor: pointer; }
-.button:disabled { cursor: wait; opacity: .55; }
+.button:disabled { cursor: not-allowed; opacity: .55; }
+.button[aria-busy="true"] { cursor: wait; }
 .button--primary { color: #fff; background: var(--brand); }
 .button--primary:hover { background: var(--brand-dark); }
 .button--secondary { color: #25324a; border-color: var(--border); background: #fff; }

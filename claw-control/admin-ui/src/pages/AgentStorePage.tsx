@@ -50,7 +50,13 @@ export default function AgentStorePage() {
   return <>
     <PageHeader title={t('agentStore.title')} actions={<>
       <Button tone="secondary" onClick={resource.refresh}>{t('action.refresh')}</Button>
-      <AgentStoreListingDialog customers={customers.data ?? []} credentials={credentials.data ?? []} onPublished={() => resource.refresh()} />
+      <AgentStoreListingDialog
+        customers={customers.data ?? []}
+        credentials={credentials.data ?? []}
+        credentialsLoading={credentials.loading}
+        credentialsError={credentials.error}
+        onPublished={() => resource.refresh()}
+      />
     </>} />
     <p className="security-note">{t('agentStore.boundary')}</p>
     {actionError && <p className="inline-error" role="alert">{actionError}</p>}

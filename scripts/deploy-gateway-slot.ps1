@@ -415,7 +415,7 @@ read_canary_weights() {
     begin_count="`$(grep -Ec '^[[:space:]]*# BEGIN NEW-API BLUE-GREEN[[:space:]]*`$' "`$caddyfile" || true)"
     end_count="`$(grep -Ec '^[[:space:]]*# END NEW-API BLUE-GREEN[[:space:]]*`$' "`$caddyfile" || true)"
     weight_count="`$(grep -Ec '^[[:space:]]*# weights blue=[0-9]+ green=[0-9]+[[:space:]]*`$' "`$caddyfile" || true)"
-    proxy_count="`$(grep -Fxc "reverse_proxy `$blue_upstream `$green_upstream {" < <(sed -E 's/^[[:space:]]+//' "`$caddyfile") || true)"
+    proxy_count="`$(grep -Fxc "reverse_proxy `$blue_upstream `$green_upstream {" < <(sed -E 's/^[[:space:]]+//; s/\r`$//' "`$caddyfile") || true)"
     fallback_count="`$(grep -Ec '^[[:space:]]*fallback[[:space:]]+weighted_round_robin[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]*`$' "`$caddyfile" || true)"
     cookie_count="`$(grep -Ec '^[[:space:]]*lb_policy[[:space:]]+cookie[[:space:]]+new_api_slot[[:space:]]+[0-9a-f]{64}[[:space:]]*\{[[:space:]]*`$' "`$caddyfile" || true)"
     if [ "`$begin_count" -ne 1 ] || [ "`$end_count" -ne 1 ] || [ "`$weight_count" -ne 1 ] || [ "`$proxy_count" -ne 1 ] || [ "`$fallback_count" -ne 1 ] || [ "`$cookie_count" -ne 1 ]; then

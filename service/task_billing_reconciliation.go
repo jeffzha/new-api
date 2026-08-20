@@ -151,6 +151,7 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 		if settlement.Applied {
 			if cacheErr := model.SyncTaskBillingReconciliationCaches(
 				settlement.Task.UserId,
+				settlement.Task.PrivateData.TokenId,
 				tokenKey,
 				settlement.QuotaDelta,
 				settlement.WalletAdjusted,

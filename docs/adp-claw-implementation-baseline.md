@@ -45,7 +45,7 @@ git status --short
 git diff --name-status $baseline -- .
 git diff --numstat $baseline -- .
 git diff --check $baseline -- .
-git diff $baseline -- relay constant service controller model router web/default/src/routes
+git diff $baseline -- relay constant service controller model router web/src/routes
 ```
 
 Run from the ADP fork worktree:

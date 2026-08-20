@@ -129,10 +129,10 @@ class ClawConstraintTests(unittest.TestCase):
 
     def test_exact_super_admin_sidebar_entry_is_an_approved_surface(self) -> None:
         baseline = self.repo.baseline(
-            {"web/default/src/hooks/use-sidebar-data.ts": "export const items = []\n"}
+            {"web/src/hooks/use-sidebar-data.ts": "export const items = []\n"}
         )
         self.repo.write(
-            "web/default/src/hooks/use-sidebar-data.ts",
+            "web/src/hooks/use-sidebar-data.ts",
             "export const items = [{ path: '/workbench-admin' }]\n",
         )
 
@@ -143,11 +143,11 @@ class ClawConstraintTests(unittest.TestCase):
     def test_agent_store_additive_frontend_surface_is_allowed(self) -> None:
         baseline = self.repo.baseline()
         self.repo.write(
-            "web/default/src/features/agent-store/index.tsx",
+            "web/src/features/agent-store/index.tsx",
             "export function AgentStore() { return null }\n",
         )
         self.repo.write(
-            "web/default/src/routes/_authenticated/agent-store/index.tsx",
+            "web/src/routes/_authenticated/agent-store/index.tsx",
             "export const route = '/agent-store'\n",
         )
 
@@ -158,10 +158,10 @@ class ClawConstraintTests(unittest.TestCase):
     def test_generated_route_tree_does_not_spend_manual_merge_budget(self) -> None:
         route_tree = "\n".join(f"export const route{index} = {index}" for index in range(200))
         baseline = self.repo.baseline(
-            {"web/default/src/routeTree.gen.ts": route_tree + "\n"}
+            {"web/src/routeTree.gen.ts": route_tree + "\n"}
         )
         self.repo.write(
-            "web/default/src/routeTree.gen.ts",
+            "web/src/routeTree.gen.ts",
             route_tree + "\nexport const generated = true\n",
         )
 

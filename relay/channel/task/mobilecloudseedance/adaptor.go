@@ -11,10 +11,11 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
+	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relaydto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -37,7 +38,7 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	}
 }
 
-func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *taskdto.TaskError {
 	if c.Request == nil || c.Request.Method != http.MethodPost || c.Request.URL.Path != "/v1/video/generations" {
 		return service.TaskErrorWrapperLocal(
 			fmt.Errorf("Mobile Cloud Seedance only supports POST /v1/video/generations"),
@@ -127,7 +128,7 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, _ *relaycommon.RelayInfo, reques
 	return jsonResponse(http.StatusOK, createTaskResponse{ID: taskID})
 }
 
-func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (string, []byte, *dto.TaskError) {
+func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (string, []byte, *taskdto.TaskError) {
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
@@ -150,7 +151,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		)
 	}
 
-	video := dto.NewOpenAIVideo()
+	video := relaydto.NewOpenAIVideo()
 	video.ID = info.PublicTaskID
 	video.TaskID = info.PublicTaskID
 	video.CreatedAt = time.Now().Unix()

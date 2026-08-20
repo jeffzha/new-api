@@ -1,6 +1,6 @@
 package mobilecloudseedance
 
-import "github.com/QuantumNous/new-api/dto"
+import "github.com/QuantumNous/new-api/relaykit/dto"
 
 type mediaURL struct {
 	URL string `json:"url"`

@@ -7,37 +7,16 @@ ENV BUN_CONFIG_REGISTRY=${BUN_REGISTRY} BUN_CONFIG_MAX_HTTP_REQUESTS=${BUN_MAX_H
 
 WORKDIR /build/web
 COPY web/package.json web/bun.lock ./
-COPY web/default/package.json ./default/package.json
-COPY web/classic/package.json ./classic/package.json
-RUN bun install --filter ./default --frozen-lockfile
-COPY ./web/default ./default
+RUN bun install --frozen-lockfile
+COPY ./web ./
 COPY ./VERSION /build/VERSION
 RUN version="${BUILD_VERSION:-$(cat /build/VERSION)}" \
-    && cd default \
     && DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION="$version" bun run build
 
-FROM oven/bun:1@sha256:0733e50325078969732ebe3b15ce4c4be5082f18c4ac1a0f0ca4839c2e4e42a7 AS builder-classic
-
-ARG BUILD_VERSION
-ARG BUN_REGISTRY=https://registry.npmjs.org
-ARG BUN_MAX_HTTP_REQUESTS=48
-ENV BUN_CONFIG_REGISTRY=${BUN_REGISTRY} BUN_CONFIG_MAX_HTTP_REQUESTS=${BUN_MAX_HTTP_REQUESTS}
-
-WORKDIR /build/web
-COPY web/package.json web/bun.lock ./
-COPY web/default/package.json ./default/package.json
-COPY web/classic/package.json ./classic/package.json
-RUN bun install --filter ./classic --frozen-lockfile
-COPY ./web/classic ./classic
-COPY ./VERSION /build/VERSION
-RUN version="${BUILD_VERSION:-$(cat /build/VERSION)}" \
-    && cd classic \
-    && VITE_REACT_APP_VERSION="$version" bun run build
-
-FROM golang:1.26.1-alpine@sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039 AS builder2
+FROM golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df AS builder2
 ARG BUILD_VERSION
 ARG GO_PROXY=https://proxy.golang.org,direct
-ENV GO111MODULE=on CGO_ENABLED=0 GOPROXY=${GO_PROXY}
+ENV GO111MODULE=on CGO_ENABLED=0 GOWORK=off GOPROXY=${GO_PROXY}
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -47,11 +26,13 @@ ENV GOEXPERIMENT=greenteagc
 WORKDIR /build
 
 ADD go.mod go.sum ./
+# relaykit is a local submodule referenced via replace; its go.mod must be
+# present for go mod download to resolve the main module graph.
+ADD relaykit/go.mod ./relaykit/go.mod
 RUN go mod download
 
 COPY . .
-COPY --from=builder /build/web/default/dist ./web/default/dist
-COPY --from=builder-classic /build/web/classic/dist ./web/classic/dist
+COPY --from=builder /build/web/dist ./web/dist
 RUN version="${BUILD_VERSION:-$(cat VERSION)}" \
     && go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${version}'" -o new-api \
     && go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${version}'" -o hwdrama-proxy ./cmd/hwdrama-proxy \

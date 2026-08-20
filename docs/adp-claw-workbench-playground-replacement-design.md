@@ -918,10 +918,10 @@ sequenceDiagram
 
 ### 6.7 前端代码落点
 
-- 新增 `web/default/src/features/workbench/`，包含 frame、套餐状态、只读横幅和错误态。
-- 少量修改 `web/default/src/routes/_authenticated/playground/index.tsx` 做入口切换。
+- 新增 `web/src/features/workbench/`，包含 frame、套餐状态、只读横幅和错误态。
+- 少量修改 `web/src/routes/_authenticated/playground/index.tsx` 做入口切换。
 - 旧 Playground 主组件不重写。
-- 所有新增文案进入 `web/default/src/i18n/locales/{lang}.json` 并按项目 i18n 规则同步。
+- 所有新增文案进入 `web/src/i18n/locales/{lang}.json` 并按项目 i18n 规则同步。
 
 ## 7. 模块四：new-api 身份桥接、claw-control 映射、SSO 与持续鉴权
 
@@ -2997,7 +2997,7 @@ router/
 service/workbenchticket/
   control_client.go              # 新增：复核后以独立 HMAC 请求 control 签发 opaque entry ticket并验签响应
   status.go                      # 新增：只读用户状态复核
-web/default/src/features/workbench-entry/
+web/src/features/workbench-entry/
   index.tsx                      # 新增：功能开关、跳转和 legacy 回退
 ```
 
@@ -3021,7 +3021,7 @@ claw-control/
   web/admin/
 ```
 
-超级管理员 UI 优先由 `claw-control` 在同域路径下提供，new-api 只增加入口，不把完整管理页面复制进 `web/default`。这样仍保持统一站点和 new-api 身份体验，同时减少前端路由、状态管理和 i18n 热点冲突。
+超级管理员 UI 优先由 `claw-control` 在同域路径下提供，new-api 只增加入口，不把完整管理页面复制进 `web`。这样仍保持统一站点和 new-api 身份体验，同时减少前端路由、状态管理和 i18n 热点冲突。
 
 ### 18.3 ADP fork 建议新增模块
 
@@ -3364,8 +3364,8 @@ sequenceDiagram
 - `model/option.go` 与 setting 包：管理配置模式。
 - `model/system_task.go`、`controller/system_task_handlers.go`：多实例 worker lease 模式。
 - `service/log_info_generate.go`：审计/使用日志边界参考。
-- `web/default/src/routes/_authenticated/playground/index.tsx`：Playground 入口。
-- `web/default/src/i18n/`：新版前端国际化。
+- `web/src/routes/_authenticated/playground/index.tsx`：Playground 入口。
+- `web/src/i18n/`：新版前端国际化。
 
 ### 24.3 结论
 

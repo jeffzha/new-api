@@ -965,7 +965,7 @@ middleware/auth.go
 middleware/distributor.go
 relay/*
 controller/relay*
-web/default/*
+web/*
 ```
 
 `model/token.go`、`model/token_cache.go` 和 `service/task_billing.go` 是例外：前两者只维护 `InvalidateTokenCache`、`UpdateTokenCacheAfterExternalWrite` 两个稳定接口；任务计费只增加把既有 `PublicTaskID` 写入预扣日志 `other.task_id` 的字段赋值，不增加 I/O。Hub 由此可以把异步预扣与最终结算关联起来。

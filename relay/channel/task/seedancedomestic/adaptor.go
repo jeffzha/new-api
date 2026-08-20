@@ -12,11 +12,12 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
+	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relaydto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -51,7 +52,7 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.proxy = info.ChannelSetting.Proxy
 }
 
-func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *taskdto.TaskError {
 	var request relaycommon.TaskSubmitReq
 	if err := common.UnmarshalBodyReusable(c, &request); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
@@ -236,7 +237,7 @@ func contentMediaURL(item map[string]interface{}, field string) string {
 	return strings.TrimSpace(value)
 }
 
-func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.RelayInfo) (*channel.TaskBillingEstimate, *dto.TaskError) {
+func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.RelayInfo) (*channel.TaskBillingEstimate, *taskdto.TaskError) {
 	request, err := getNormalizedRequest(c)
 	if err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "model_price_error", http.StatusBadRequest)
@@ -321,7 +322,7 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	return channel.DoTaskApiRequest(a, c, info, requestBody)
 }
 
-func (a *TaskAdaptor) DoResponse(c *gin.Context, response *http.Response, info *relaycommon.RelayInfo) (string, []byte, *dto.TaskError) {
+func (a *TaskAdaptor) DoResponse(c *gin.Context, response *http.Response, info *relaycommon.RelayInfo) (string, []byte, *taskdto.TaskError) {
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		return "", nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
@@ -342,7 +343,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, response *http.Response, info *
 	if err != nil {
 		return "", body, service.TaskErrorWrapper(err, "sanitize_response_failed", http.StatusBadGateway)
 	}
-	video := dto.NewOpenAIVideo()
+	video := relaydto.NewOpenAIVideo()
 	video.ID = info.PublicTaskID
 	video.TaskID = info.PublicTaskID
 	video.CreatedAt = time.Now().Unix()
@@ -403,7 +404,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	video := task.ToOpenAIVideo()
 	video.TaskID = task.TaskID
 	if task.Status == model.TaskStatusFailure {
-		video.Error = &dto.OpenAIVideoError{
+		video.Error = &relaydto.OpenAIVideoError{
 			Code:    "generation_failed",
 			Message: task.FailReason,
 		}

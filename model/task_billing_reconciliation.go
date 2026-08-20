@@ -291,7 +291,7 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 
 // SyncTaskBillingReconciliationCaches mirrors a committed quota delta into
 // Redis. Database correctness does not depend on this cache update.
-func SyncTaskBillingReconciliationCaches(userID int, tokenKey string, quotaDelta int, walletAdjusted bool) error {
+func SyncTaskBillingReconciliationCaches(userID int, tokenID int, tokenKey string, quotaDelta int, walletAdjusted bool) error {
 	if quotaDelta == 0 || !common.RedisEnabled {
 		return nil
 	}
@@ -301,8 +301,8 @@ func SyncTaskBillingReconciliationCaches(userID int, tokenKey string, quotaDelta
 			cacheErrors = append(cacheErrors, err)
 		}
 	}
-	if tokenKey != "" {
-		if err := cacheIncrTokenQuota(tokenKey, -int64(quotaDelta)); err != nil {
+	if tokenID > 0 && tokenKey != "" {
+		if _, err := cacheApplyTokenQuotaDelta(tokenID, tokenKey, -int64(quotaDelta)); err != nil {
 			cacheErrors = append(cacheErrors, err)
 		}
 	}

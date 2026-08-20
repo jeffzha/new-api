@@ -2,14 +2,16 @@ package controller
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/workbenchbridge"
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -62,54 +64,27 @@ func (bridge *WorkbenchIdentityBridge) AdminStepUpTicket(c *gin.Context) {
 		authenticatedAt, amr = time.Now().UTC(), "pwd"
 		reauthNonce = base64.RawURLEncoding.EncodeToString(nonce)
 	case "secure_verification":
-		var ok bool
-		var err error
-		authenticatedAt, amr, reauthNonce, ok, err = consumeWorkbenchSecureVerification(c)
-		if err != nil {
-			respondWorkbenchError(c, http.StatusInternalServerError, "failed to consume secure verification")
-			return
-		}
-		if !ok {
+		identity, ok := middleware.GetSessionAuthIdentity(c)
+		rawProof := strings.TrimSpace(c.GetHeader("X-Security-Proof"))
+		if !ok || rawProof == "" {
 			respondWorkbenchError(c, http.StatusForbidden, "recent 2FA or Passkey verification is required")
 			return
 		}
+		details, err := service.VerifySecurityProofDetails(rawProof, identity, securityProofScopeWorkbenchStepUp, []string{secureVerificationMethod2FA, secureVerificationMethodPasskey})
+		if err != nil {
+			respondWorkbenchError(c, http.StatusForbidden, "recent 2FA or Passkey verification is required")
+			return
+		}
+		digest := sha256.Sum256([]byte(rawProof))
+		authenticatedAt = details.IssuedAt.UTC()
+		amr = map[string]string{
+			secureVerificationMethod2FA:     "otp",
+			secureVerificationMethodPasskey: "webauthn",
+		}[details.Method]
+		reauthNonce = base64.RawURLEncoding.EncodeToString(digest[:])
 	default:
 		respondWorkbenchError(c, http.StatusBadRequest, "method must be password or secure_verification")
 		return
 	}
 	bridge.issueSessionTicketWithProof(c, workbenchbridge.SurfaceAdmin, authenticatedAt, []string{amr}, reauthNonce)
-}
-
-func consumeWorkbenchSecureVerification(c *gin.Context) (time.Time, string, string, bool, error) {
-	session := sessions.Default(c)
-	verifiedAtRaw := session.Get(SecureVerificationSessionKey)
-	methodRaw := session.Get(secureVerificationMethodSessionKey)
-	session.Delete(SecureVerificationSessionKey)
-	session.Delete(secureVerificationMethodSessionKey)
-	if err := session.Save(); err != nil {
-		return time.Time{}, "", "", false, err
-	}
-	verifiedAt, ok := verifiedAtRaw.(int64)
-	method, methodOK := methodRaw.(string)
-	if !ok || !methodOK {
-		return time.Time{}, "", "", false, nil
-	}
-	now := time.Now().UTC()
-	authenticatedAt := time.Unix(verifiedAt, 0).UTC()
-	if authenticatedAt.After(now.Add(time.Minute)) || now.Sub(authenticatedAt) >= time.Duration(SecureVerificationTimeout)*time.Second {
-		return time.Time{}, "", "", false, nil
-	}
-	nonceBytes := make([]byte, 32)
-	if _, err := rand.Read(nonceBytes); err != nil {
-		return time.Time{}, "", "", false, err
-	}
-	nonce := base64.RawURLEncoding.EncodeToString(nonceBytes)
-	switch strings.ToLower(strings.TrimSpace(method)) {
-	case secureVerificationMethod2FA:
-		return authenticatedAt, "otp", nonce, true, nil
-	case secureVerificationMethodPasskey:
-		return authenticatedAt, "webauthn", nonce, true, nil
-	default:
-		return time.Time{}, "", "", false, nil
-	}
 }

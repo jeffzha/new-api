@@ -13,11 +13,9 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/workbenchbridge"
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -71,38 +69,21 @@ func newWorkbenchTestBridge(t *testing.T, user *model.User) (*WorkbenchIdentityB
 func newWorkbenchSessionRouter(bridge *WorkbenchIdentityBridge, sessionStatus int) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(sessions.Sessions("session", cookie.NewStore([]byte("workbench-test-session-secret"))))
-	router.GET("/login", func(c *gin.Context) {
-		session := sessions.Default(c)
-		session.Set("username", "alice")
-		session.Set("role", common.RoleCommonUser)
-		session.Set("id", 42)
-		session.Set("status", sessionStatus)
-		session.Set("group", "default")
-		if err := session.Save(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"success": false})
-			return
-		}
-		c.Status(http.StatusNoContent)
+	router.Use(func(c *gin.Context) {
+		c.Set("id", 42)
+		c.Set("status", sessionStatus)
+		c.Set("use_access_token", false)
+		c.Next()
 	})
-	router.POST("/api/workbench/session-ticket", middleware.UserAuth(), bridge.SessionTicket)
+	router.POST("/api/workbench/session-ticket", bridge.SessionTicket)
 	return router
 }
 
 func authenticatedWorkbenchRequest(t *testing.T, router *gin.Engine) *httptest.ResponseRecorder {
 	t.Helper()
-	loginRecorder := httptest.NewRecorder()
-	loginRequest := httptest.NewRequest(http.MethodGet, "/login", nil)
-	router.ServeHTTP(loginRecorder, loginRequest)
-	require.Equal(t, http.StatusNoContent, loginRecorder.Code)
-
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/workbench/session-ticket", nil)
 	request.Header.Set("Origin", "http://example.com")
-	request.Header.Set("New-Api-User", "42")
-	for _, sessionCookie := range loginRecorder.Result().Cookies() {
-		request.AddCookie(sessionCookie)
-	}
 	router.ServeHTTP(recorder, request)
 	return recorder
 }
@@ -110,28 +91,17 @@ func authenticatedWorkbenchRequest(t *testing.T, router *gin.Engine) *httptest.R
 func authenticatedWorkbenchAdminRequest(t *testing.T, bridge *WorkbenchIdentityBridge, sessionRole int) *httptest.ResponseRecorder {
 	t.Helper()
 	router := gin.New()
-	router.Use(sessions.Sessions("session", cookie.NewStore([]byte("workbench-test-session-secret"))))
-	router.GET("/login", func(c *gin.Context) {
-		session := sessions.Default(c)
-		session.Set("username", "root")
-		session.Set("role", sessionRole)
-		session.Set("id", 42)
-		session.Set("status", common.UserStatusEnabled)
-		session.Set("group", "default")
-		require.NoError(t, session.Save())
-		c.Status(http.StatusNoContent)
+	router.Use(func(c *gin.Context) {
+		c.Set("id", 42)
+		c.Set("role", sessionRole)
+		c.Set("use_access_token", false)
+		c.Next()
 	})
-	router.POST("/api/admin/workbench/session-ticket", middleware.RootAuth(), bridge.AdminSessionTicket)
+	router.POST("/api/admin/workbench/session-ticket", bridge.AdminSessionTicket)
 
-	loginRecorder := httptest.NewRecorder()
-	router.ServeHTTP(loginRecorder, httptest.NewRequest(http.MethodGet, "/login", nil))
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/session-ticket", nil)
-	request.Header.Set("New-Api-User", "42")
 	request.Header.Set("Origin", "http://example.com")
-	for _, sessionCookie := range loginRecorder.Result().Cookies() {
-		request.AddCookie(sessionCookie)
-	}
 	router.ServeHTTP(recorder, request)
 	return recorder
 }
@@ -202,89 +172,62 @@ func TestAdminSessionTicketRequiresAndRecordsSuperAdministratorSurface(t *testin
 	assert.True(t, tickets.request.IsSuperAdmin)
 }
 
-func TestAdminStepUpTicketConsumesTrustedSecureVerificationOnce(t *testing.T) {
+func TestAdminStepUpTicketBindsTrustedSecureVerificationToDeterministicNonce(t *testing.T) {
 	bridge, tickets := newWorkbenchTestBridge(t, &model.User{
 		Id: 42, Username: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled,
 	})
 	router := gin.New()
-	router.Use(sessions.Sessions("session", cookie.NewStore([]byte("workbench-test-session-secret"))))
-	router.GET("/login", func(c *gin.Context) {
-		session := sessions.Default(c)
-		session.Set("username", "root")
-		session.Set("role", common.RoleRootUser)
-		session.Set("id", 42)
-		session.Set("status", common.UserStatusEnabled)
-		session.Set("group", "default")
-		session.Set(SecureVerificationSessionKey, time.Now().Unix())
-		session.Set(secureVerificationMethodSessionKey, secureVerificationMethodPasskey)
-		require.NoError(t, session.Save())
-		c.Status(http.StatusNoContent)
-	})
+	identity := service.AuthIdentity{UserID: 42, SessionID: "session-42", UserAuthVersion: 1, SessionVersion: 1}
+	proof, _, err := service.IssueSecurityProof(identity, secureVerificationMethodPasskey, []string{securityProofScopeWorkbenchStepUp})
+	require.NoError(t, err)
 	router.POST("/api/admin/workbench/step-up-ticket", func(c *gin.Context) {
 		c.Set("id", 42)
+		c.Set("session_id", identity.SessionID)
+		c.Set("auth_version", identity.UserAuthVersion)
+		c.Set("session_version", identity.SessionVersion)
 		c.Next()
 	}, bridge.AdminStepUpTicket)
 
-	login := httptest.NewRecorder()
-	router.ServeHTTP(login, httptest.NewRequest(http.MethodGet, "/login", nil))
 	request := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/step-up-ticket", bytes.NewBufferString(`{"method":"secure_verification"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", "http://example.com")
-	for _, sessionCookie := range login.Result().Cookies() {
-		request.AddCookie(sessionCookie)
-	}
+	request.Header.Set("X-Security-Proof", proof)
 	first := httptest.NewRecorder()
 	router.ServeHTTP(first, request)
 	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
 	assert.WithinDuration(t, time.Now(), tickets.request.AuthenticatedAt, 2*time.Second)
 	assert.Equal(t, []string{"webauthn"}, tickets.request.AMR)
 	assert.NotEmpty(t, tickets.request.ReauthNonce)
+	firstNonce := tickets.request.ReauthNonce
 
 	replay := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/step-up-ticket", bytes.NewBufferString(`{"method":"secure_verification"}`))
 	replay.Header.Set("Content-Type", "application/json")
 	replay.Header.Set("Origin", "http://example.com")
-	for _, sessionCookie := range first.Result().Cookies() {
-		replay.AddCookie(sessionCookie)
-	}
+	replay.Header.Set("X-Security-Proof", proof)
 	second := httptest.NewRecorder()
 	router.ServeHTTP(second, replay)
-	assert.Equal(t, http.StatusForbidden, second.Code)
-	assert.Contains(t, second.Body.String(), "recent 2FA or Passkey verification is required")
+	require.Equal(t, http.StatusOK, second.Code, second.Body.String())
+	assert.Equal(t, firstNonce, tickets.request.ReauthNonce)
 }
 
-func TestAdminStepUpTicketRejectsExpiredSecureVerification(t *testing.T) {
+func TestAdminStepUpTicketRejectsInvalidSecureVerification(t *testing.T) {
 	bridge, tickets := newWorkbenchTestBridge(t, &model.User{
 		Id: 42, Username: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled,
 	})
 	recorder := httptest.NewRecorder()
-	store := cookie.NewStore([]byte("workbench-test-session-secret"))
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(sessions.Sessions("session", store))
-	router.GET("/login", func(c *gin.Context) {
-		session := sessions.Default(c)
-		session.Set("username", "root")
-		session.Set("role", common.RoleRootUser)
-		session.Set("id", 42)
-		session.Set("status", common.UserStatusEnabled)
-		session.Set("group", "default")
-		session.Set(SecureVerificationSessionKey, time.Now().Add(-time.Duration(SecureVerificationTimeout+1)*time.Second).Unix())
-		session.Set(secureVerificationMethodSessionKey, secureVerificationMethod2FA)
-		require.NoError(t, session.Save())
-		c.Status(http.StatusNoContent)
-	})
 	router.POST("/api/admin/workbench/step-up-ticket", func(c *gin.Context) {
 		c.Set("id", 42)
+		c.Set("session_id", "session-42")
+		c.Set("auth_version", int64(1))
+		c.Set("session_version", int64(1))
 		c.Next()
 	}, bridge.AdminStepUpTicket)
-	login := httptest.NewRecorder()
-	router.ServeHTTP(login, httptest.NewRequest(http.MethodGet, "/login", nil))
 	request := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/step-up-ticket", bytes.NewBufferString(`{"method":"secure_verification"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", "http://example.com")
-	for _, sessionCookie := range login.Result().Cookies() {
-		request.AddCookie(sessionCookie)
-	}
+	request.Header.Set("X-Security-Proof", "invalid")
 	router.ServeHTTP(recorder, request)
 	assert.Equal(t, http.StatusForbidden, recorder.Code)
 	assert.Zero(t, tickets.request.UserID)
@@ -297,7 +240,6 @@ func TestAdminStepUpTicketVerifiesPasswordOnlyInsideNewAPI(t *testing.T) {
 		Id: 42, Username: "root", Password: hashedPassword, Role: common.RoleRootUser, Status: common.UserStatusEnabled,
 	})
 	router := gin.New()
-	router.Use(sessions.Sessions("session", cookie.NewStore([]byte("workbench-test-session-secret"))))
 	router.POST("/api/admin/workbench/step-up-ticket", func(c *gin.Context) {
 		c.Set("id", 42)
 		c.Next()

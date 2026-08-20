@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
+	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relaydto "github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/ops_monitor_setting"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -232,7 +233,7 @@ func ObserveRelay(c *gin.Context, info *relaycommon.RelayInfo) {
 
 // ObserveUsage normalizes provider usage into disjoint total-input, output,
 // cache-read and cache-creation counters.
-func ObserveUsage(c *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage) {
+func ObserveUsage(c *gin.Context, info *relaycommon.RelayInfo, usage *relaydto.Usage) {
 	ObserveRelay(c, info)
 	observation := getObservation(c)
 	if observation == nil || usage == nil {
@@ -265,7 +266,7 @@ func ObserveError(c *gin.Context, info *relaycommon.RelayInfo, relayFormat types
 	observation.mu.Unlock()
 }
 
-func ObserveTaskError(c *gin.Context, info *relaycommon.RelayInfo, err *dto.TaskError) {
+func ObserveTaskError(c *gin.Context, info *relaycommon.RelayInfo, err *taskdto.TaskError) {
 	ObserveRelay(c, info)
 	observation := getObservation(c)
 	if observation == nil || err == nil {
@@ -285,27 +286,27 @@ func ObserveTaskError(c *gin.Context, info *relaycommon.RelayInfo, err *dto.Task
 	observation.mu.Unlock()
 }
 
-func normalizedUsage(usage *dto.Usage) (int64, int64, int64, int64) {
+func normalizedUsage(usage *relaydto.Usage) (int64, int64, int64, int64) {
 	if usage.BillingUsage != nil {
 		billing := usage.BillingUsage
-		if billing.ClaudeUsage != nil && strings.EqualFold(billing.Semantic, dto.BillingUsageSemanticAnthropic) {
+		if billing.ClaudeUsage != nil && strings.EqualFold(billing.Semantic, relaydto.BillingUsageSemanticAnthropic) {
 			claude := billing.ClaudeUsage
 			cacheCreation := claude.GetCacheCreationTotalTokens()
 			return nonNegativeInt(claude.InputTokens), nonNegativeInt(claude.OutputTokens), nonNegativeInt(claude.CacheReadInputTokens), nonNegativeInt(cacheCreation)
 		}
-		if billing.GeminiUsageMetadata != nil && strings.EqualFold(billing.Semantic, dto.BillingUsageSemanticGemini) {
+		if billing.GeminiUsageMetadata != nil && strings.EqualFold(billing.Semantic, relaydto.BillingUsageSemanticGemini) {
 			gemini := billing.GeminiUsageMetadata
 			input := gemini.PromptTokenCount - gemini.CachedContentTokenCount
 			return nonNegativeInt(input), nonNegativeInt(gemini.CandidatesTokenCount), nonNegativeInt(gemini.CachedContentTokenCount), 0
 		}
-		if billing.OpenAIUsage != nil && strings.EqualFold(billing.Semantic, dto.BillingUsageSemanticOpenAI) {
+		if billing.OpenAIUsage != nil && strings.EqualFold(billing.Semantic, relaydto.BillingUsageSemanticOpenAI) {
 			return usageValues(billing.OpenAIUsage)
 		}
 	}
 	return usageValues(usage)
 }
 
-func usageValues(usage *dto.Usage) (int64, int64, int64, int64) {
+func usageValues(usage *relaydto.Usage) (int64, int64, int64, int64) {
 	input := usage.InputTokens
 	if input == 0 {
 		input = usage.PromptTokens

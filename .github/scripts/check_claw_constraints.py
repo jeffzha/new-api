@@ -28,7 +28,7 @@ MAX_EXISTING_SOURCE_CHANGED_LINES = 100
 MIN_ADDITIVE_SOURCE_RATIO = 0.90
 
 SOURCE_SUFFIXES = {".go", ".js", ".jsx", ".py", ".sh", ".ts", ".tsx", ".vue"}
-GENERATED_SOURCE_PATHS = {"web/default/src/routeTree.gen.ts"}
+GENERATED_SOURCE_PATHS = {"web/src/routeTree.gen.ts"}
 UPSTREAM_SOURCE_PREFIXES = (
     "common/",
     "constant/",
@@ -41,11 +41,11 @@ UPSTREAM_SOURCE_PREFIXES = (
     "service/",
     "setting/",
     "types/",
-    "web/default/src/",
+    "web/src/",
 )
 
 # This is intentionally a closed list.  Additions need an architecture review;
-# a broad directory such as controller/** or web/default/src/** is never valid.
+# a broad directory such as controller/** or web/src/** is never valid.
 ALLOWED_PATH_PATTERNS = (
     "claw-control/**",
     "deploy/claw-workbench/**",
@@ -55,22 +55,22 @@ ALLOWED_PATH_PATTERNS = (
     "router/workbench_*.go",
     "service/workbenchbridge/**",
     "router/api-router.go",
-    "web/default/src/features/workbench-entry/**",
-    "web/default/src/features/agent-store/**",
-    "web/default/src/hooks/use-sidebar-data.ts",
-    "web/default/src/routes/_authenticated/playground/index.tsx",
-    "web/default/src/routes/_authenticated/playground/legacy.tsx",
-    "web/default/src/routes/_authenticated/playground/select.tsx",
-    "web/default/src/routes/_authenticated/agent-store/**",
-    "web/default/src/routes/_authenticated/workbench-admin.tsx",
-    "web/default/src/routeTree.gen.ts",
-    "web/default/src/i18n/locales/en.json",
-    "web/default/src/i18n/locales/fr.json",
-    "web/default/src/i18n/locales/ja.json",
-    "web/default/src/i18n/locales/ru.json",
-    "web/default/src/i18n/locales/vi.json",
-    "web/default/src/i18n/locales/zh.json",
-    "web/default/src/i18n/locales/zh-TW.json",
+    "web/src/features/workbench-entry/**",
+    "web/src/features/agent-store/**",
+    "web/src/hooks/use-sidebar-data.ts",
+    "web/src/routes/_authenticated/playground/index.tsx",
+    "web/src/routes/_authenticated/playground/legacy.tsx",
+    "web/src/routes/_authenticated/playground/select.tsx",
+    "web/src/routes/_authenticated/agent-store/**",
+    "web/src/routes/_authenticated/workbench-admin.tsx",
+    "web/src/routeTree.gen.ts",
+    "web/src/i18n/locales/en.json",
+    "web/src/i18n/locales/fr.json",
+    "web/src/i18n/locales/ja.json",
+    "web/src/i18n/locales/ru.json",
+    "web/src/i18n/locales/vi.json",
+    "web/src/i18n/locales/zh.json",
+    "web/src/i18n/locales/zh-TW.json",
     ".github/scripts/check_claw_constraints.py",
     ".github/scripts/tests/test_check_claw_constraints.py",
     ".github/workflows/claw-control.yml",
@@ -261,11 +261,11 @@ def dependency_findings(repo: Path, changed_paths: set[str]) -> list[Finding]:
             or path.startswith("controller/workbench_")
             or path.startswith("router/workbench_")
             or path.startswith("service/workbenchbridge/")
-            or path.startswith("web/default/src/features/workbench-entry/")
-            or path.startswith("web/default/src/features/agent-store/")
-            or path.startswith("web/default/src/routes/_authenticated/playground/")
-            or path.startswith("web/default/src/routes/_authenticated/agent-store/")
-            or path == "web/default/src/routes/_authenticated/workbench-admin.tsx"
+            or path.startswith("web/src/features/workbench-entry/")
+            or path.startswith("web/src/features/agent-store/")
+            or path.startswith("web/src/routes/_authenticated/playground/")
+            or path.startswith("web/src/routes/_authenticated/agent-store/")
+            or path == "web/src/routes/_authenticated/workbench-admin.tsx"
         )
     )
     for path in source_paths:

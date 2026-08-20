@@ -4,10 +4,12 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/QuantumNous/new-api/dto"
+	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -34,7 +36,7 @@ type Adaptor interface {
 type TaskAdaptor interface {
 	Init(info *relaycommon.RelayInfo)
 
-	ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
+	ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *taskdto.TaskError
 
 	// ── Billing ──────────────────────────────────────────────────────
 
@@ -67,7 +69,7 @@ type TaskAdaptor interface {
 	BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error)
 
 	DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error)
-	DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, err *dto.TaskError)
+	DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, err *taskdto.TaskError)
 
 	GetModelList() []string
 	GetChannelName() string
@@ -90,11 +92,11 @@ type TaskEndpointSnapshotProvider interface {
 // used when the provider's billing currency or unit cannot be represented by
 // the generic model-price plus OtherRatios flow.
 type TaskBillingEstimate struct {
-	PriceData types.PriceData
+	PriceData hosttypes.PriceData
 	Snapshot  *model.TaskProviderBillingSnapshot
 }
 
 type TaskBillingEstimator interface {
 	SupportsTaskBilling(channelType int, modelName string) bool
-	EstimateTaskBilling(c *gin.Context, info *relaycommon.RelayInfo) (*TaskBillingEstimate, *dto.TaskError)
+	EstimateTaskBilling(c *gin.Context, info *relaycommon.RelayInfo) (*TaskBillingEstimate, *taskdto.TaskError)
 }

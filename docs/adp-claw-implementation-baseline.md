@@ -1,6 +1,7 @@
 # ADP Claw implementation baseline
 
-Recorded at: 2026-08-09 (Asia/Shanghai)
+Recorded at: 2026-08-09; release gate rebased after upstream rc.25 integration
+on 2026-08-21 (Asia/Shanghai)
 
 This file fixes the comparison points used by the upstream-compatibility gates in the implementation design. It contains no credentials or deployment secrets.
 
@@ -28,19 +29,25 @@ preference:
 | Component | Baseline revision | Purpose |
 |---|---|---|
 | new-api feature start | `91f6b455dbd36858a7cff9d65b87e1d5a3fb4861` | Measure only Claw-related changes made after implementation started |
-| current new-api upstream/main | `823e26304a396854ace30b52b98ec497c2dd9c36` | Upstream synchronization reference at start time |
+| post-rc.25 integration gate | `2676c981ce0b485d4fccc96a8e30e83dd353514f` | Current release gate after accepting the one-time upstream frontend, RelayKit, auth, channel-ID and deployment integration |
+| new-api upstream/main at rc.25 integration | `f116414284162ad15d8925f7bca494c109b83e93` | Exact official upstream revision merged into the integration baseline |
 | new-api merge base | `7c28993f6bd9e92616f3f578212577f8b7c40b45` | Distinguish pre-existing fork changes from this feature |
 | TencentCloudADP/adp-chat-client | `186084bfddc42cc369c722cced95842dd83c305f` | Audited ADP fork base |
 | claw-control | new component | All files are additive; no upstream code is copied into the service |
 
-The new-api limits of at most 10 modified upstream-existing source files, approximately 100 directly changed lines, and at least 90% additive Claw code are measured against the **new-api feature start** revision. They are not measured against upstream/main, because this fork already contained unrelated Seedance, monitoring, documentation, and deployment work before Claw implementation began.
+The historical implementation audit remains reproducible against the
+**new-api feature start** revision. After the accepted rc.25 integration moved
+the official frontend root and RelayKit contracts, the automated release gate
+measures new changes against the **post-rc.25 integration gate** revision. This
+prevents official upstream restructuring from being misclassified as new Claw
+surface while retaining the older revision for replay audits.
 
 ## Required audit commands
 
 Run from the new-api worktree before every Claw release:
 
 ```powershell
-$baseline = '91f6b455dbd36858a7cff9d65b87e1d5a3fb4861'
+$baseline = '2676c981ce0b485d4fccc96a8e30e83dd353514f'
 git status --short
 git diff --name-status $baseline -- .
 git diff --numstat $baseline -- .

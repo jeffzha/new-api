@@ -14,10 +14,12 @@ python .github/scripts/check_claw_constraints.py --repo .
 python -m unittest discover -s .github/scripts/tests -p 'test_*.py' -v
 ```
 
-The comparison point defaults to feature-start revision
-`91f6b455dbd36858a7cff9d65b87e1d5a3fb4861`. `--baseline` exists for fixture
-and replay audits; changing it for a release must first update the approved
-baseline document.
+After the accepted one-time upstream rc.25 integration, the comparison point
+defaults to integration revision
+`2676c981ce0b485d4fccc96a8e30e83dd353514f`. The historical feature-start
+revision remains recorded in the implementation baseline for replay audits.
+`--baseline` exists for fixtures and audits; changing the release baseline must
+first update the approved baseline document.
 
 The allowlist accepts only:
 

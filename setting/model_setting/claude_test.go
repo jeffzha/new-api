@@ -90,3 +90,12 @@ func TestValidateClaudeDefaultMaxTokens(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateClaudePromptCacheTTL(t *testing.T) {
+	for _, value := range []string{"5m", "1h", " 5m "} {
+		require.NoError(t, ValidateClaudePromptCacheTTL(value))
+	}
+	for _, value := range []string{"", "10m", "1d"} {
+		require.Error(t, ValidateClaudePromptCacheTTL(value))
+	}
+}

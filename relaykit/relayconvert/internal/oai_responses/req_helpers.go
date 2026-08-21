@@ -1,6 +1,7 @@
 package oairesponses
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -8,6 +9,17 @@ import (
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
+
+func rawJSONValue(value any) json.RawMessage {
+	if value == nil {
+		return nil
+	}
+	encoded, err := kitutil.Marshal(value)
+	if err != nil || string(encoded) == "null" {
+		return nil
+	}
+	return encoded
+}
 
 func openAIResponsesRequestFromAny(request any) (*dto.OpenAIResponsesRequest, error) {
 	responsesRequest, ok := request.(*dto.OpenAIResponsesRequest)
@@ -116,9 +128,10 @@ func responsesRequestFunctionDeclarations(raw []byte) ([]dto.FunctionRequest, er
 			continue
 		}
 		functions = append(functions, dto.FunctionRequest{
-			Name:        name,
-			Description: kitutil.Interface2String(tool["description"]),
-			Parameters:  tool["parameters"],
+			Name:         name,
+			Description:  kitutil.Interface2String(tool["description"]),
+			Parameters:   tool["parameters"],
+			CacheControl: rawJSONValue(tool["cache_control"]),
 		})
 	}
 	return functions, nil

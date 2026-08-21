@@ -822,6 +822,15 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
 			ThinkingAdapterEnabled:                claudeSettings.ThinkingAdapterEnabled,
 			ThinkingAdapterBudgetTokensPercentage: claudeSettings.ThinkingAdapterBudgetTokensPercentage,
 			DefaultMaxTokens:                      claudeSettings.GetDefaultMaxTokens,
+			PromptCache: convmeta.ClaudePromptCachePolicy{
+				Enabled: info != nil &&
+					info.ChannelMeta != nil &&
+					claudeSettings.PromptCacheEnabled &&
+					info.GetChannelType() == constant.ChannelTypeAnthropic &&
+					!info.ChannelSetting.PassThroughBodyEnabled &&
+					(info.RelayFormat == types.RelayFormatOpenAI || info.RelayFormat == types.RelayFormatOpenAIResponses),
+				TTL: claudeSettings.PromptCacheTTL,
+			},
 		},
 		Gemini: convmeta.GeminiOptions{
 			ThinkingAdapterEnabled:                geminiSettings.ThinkingAdapterEnabled,

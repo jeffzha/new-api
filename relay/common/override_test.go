@@ -2307,6 +2307,28 @@ func TestApplyParamOverrideWithRelayInfoRecordsOnlyKeyOperationsWhenDebugDisable
 	}
 }
 
+func TestApplyParamOverrideWithRelayInfoPreservesEarlierCompatibilityAudit(t *testing.T) {
+	originalDebugEnabled := common2.DebugEnabled
+	common2.DebugEnabled = false
+	t.Cleanup(func() { common2.DebugEnabled = originalDebugEnabled })
+
+	info := &RelayInfo{
+		ParamOverrideAudit: []string{"model_compatibility version=v1 profile=p action=map path=reasoning_effort"},
+		ChannelMeta: &ChannelMeta{ParamOverride: map[string]interface{}{
+			"operations": []interface{}{map[string]interface{}{
+				"mode": "copy", "from": "metadata.target_model", "to": "model",
+			}},
+		}},
+	}
+
+	_, err := ApplyParamOverrideWithRelayInfo([]byte(`{"model":"m","metadata":{"target_model":"m2"}}`), info)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"model_compatibility version=v1 profile=p action=map path=reasoning_effort",
+		"copy metadata.target_model -> model",
+	}, info.ParamOverrideAudit)
+}
+
 func TestApplyParamOverrideWithRelayInfoRecordsConversationBodyOperationsWhenDebugDisabled(t *testing.T) {
 	originalDebugEnabled := common2.DebugEnabled
 	common2.DebugEnabled = false

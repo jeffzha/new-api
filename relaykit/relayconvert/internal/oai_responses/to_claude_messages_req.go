@@ -32,10 +32,11 @@ func OpenAIResponsesRequestToClaudeMessages(c context.Context, info convmeta.Met
 	}
 
 	claudeRequest := &dto.ClaudeRequest{
-		Model:       req.Model,
-		Temperature: req.Temperature,
-		TopP:        req.TopP,
-		Stream:      req.Stream,
+		Model:        req.Model,
+		Temperature:  req.Temperature,
+		TopP:         req.TopP,
+		Stream:       req.Stream,
+		CacheControl: req.CacheControl,
 	}
 	if req.MaxOutputTokens != nil && *req.MaxOutputTokens > 0 {
 		claudeRequest.MaxTokens = kitutil.GetPointer(*req.MaxOutputTokens)
@@ -120,6 +121,9 @@ func OpenAIResponsesRequestToClaudeMessages(c context.Context, info convmeta.Met
 		claudeRequest.System = systemMessages
 	}
 	claudeRequest.Messages = ensureClaudeMessagesStartWithUser(claudeRequest.Messages)
+	if err := sharedclaude.ApplyPromptCachePolicy(claudeRequest, convmeta.OptionsOf(info).Claude.PromptCache); err != nil {
+		return nil, err
+	}
 	// Checked last so every injection path has had its chance to satisfy the
 	// required field.
 	if claudeRequest.MaxTokens == nil {
@@ -132,9 +136,10 @@ func responsesFunctionDeclarationsToClaudeTools(functions []dto.FunctionRequest)
 	tools := make([]any, 0, len(functions))
 	for _, function := range functions {
 		tools = append(tools, &dto.Tool{
-			Name:        function.Name,
-			Description: function.Description,
-			InputSchema: sharedclaude.FunctionParametersToInputSchema(function.Parameters),
+			Name:         function.Name,
+			Description:  function.Description,
+			InputSchema:  sharedclaude.FunctionParametersToInputSchema(function.Parameters),
+			CacheControl: function.CacheControl,
 		})
 	}
 	return tools
@@ -175,8 +180,9 @@ func responsesInputContentToClaudeMediaMessages(c context.Context, content any) 
 			text := kitutil.Interface2String(contentPart["text"])
 			if text != "" {
 				parts = append(parts, dto.ClaudeMediaMessage{
-					Type: "text",
-					Text: kitutil.GetPointer(text),
+					Type:         "text",
+					Text:         kitutil.GetPointer(text),
+					CacheControl: rawJSONValue(contentPart["cache_control"]),
 				})
 			}
 		case "input_image", "input_file", "input_audio", "input_video":
@@ -189,6 +195,7 @@ func responsesInputContentToClaudeMediaMessages(c context.Context, content any) 
 				return nil, fmt.Errorf("get file data failed: %s", err.Error())
 			}
 			claudePart := dto.ClaudeMediaMessage{
+				CacheControl: rawJSONValue(contentPart["cache_control"]),
 				Source: &dto.ClaudeMessageSource{
 					Type:      "base64",
 					MediaType: mimeType,
@@ -208,18 +215,20 @@ func responsesInputContentToClaudeMediaMessages(c context.Context, content any) 
 
 func responsesFunctionCallItemToClaudeToolUse(item map[string]any, inputKey string) dto.ClaudeMediaMessage {
 	return dto.ClaudeMediaMessage{
-		Type:  "tool_use",
-		Id:    CallID(item),
-		Name:  strings.TrimSpace(kitutil.Interface2String(item["name"])),
-		Input: ObjectValue(item[inputKey], inputKey),
+		Type:         "tool_use",
+		Id:           CallID(item),
+		Name:         strings.TrimSpace(kitutil.Interface2String(item["name"])),
+		Input:        ObjectValue(item[inputKey], inputKey),
+		CacheControl: rawJSONValue(item["cache_control"]),
 	}
 }
 
 func responsesFunctionOutputItemToClaudeToolResult(item map[string]any) dto.ClaudeMediaMessage {
 	return dto.ClaudeMediaMessage{
-		Type:      "tool_result",
-		ToolUseId: CallID(item),
-		Content:   responsesToolOutputValue(item["output"]),
+		Type:         "tool_result",
+		ToolUseId:    CallID(item),
+		Content:      responsesToolOutputValue(item["output"]),
+		CacheControl: rawJSONValue(item["cache_control"]),
 	}
 }
 

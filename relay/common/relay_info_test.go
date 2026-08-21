@@ -5,9 +5,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,6 +23,44 @@ func TestRelayInfoGetFinalRequestRelayFormatPrefersExplicitFinal(t *testing.T) {
 	}
 
 	require.Equal(t, types.RelayFormat(types.RelayFormatOpenAIResponses), info.GetFinalRequestRelayFormat())
+}
+
+func TestRelayInfoClaudePromptCachePlatformGate(t *testing.T) {
+	settings := model_setting.GetClaudeSettings()
+	previous := *settings
+	settings.PromptCacheEnabled = true
+	settings.PromptCacheTTL = "1h"
+	defer func() { *settings = previous }()
+
+	tests := []struct {
+		name        string
+		channelType int
+		format      types.RelayFormat
+		passThrough bool
+		wantEnabled bool
+	}{
+		{name: "native anthropic chat conversion", channelType: constant.ChannelTypeAnthropic, format: types.RelayFormatOpenAI, wantEnabled: true},
+		{name: "native anthropic responses conversion", channelType: constant.ChannelTypeAnthropic, format: types.RelayFormatOpenAIResponses, wantEnabled: true},
+		{name: "native claude request preserves client only", channelType: constant.ChannelTypeAnthropic, format: types.RelayFormatClaude},
+		{name: "bedrock is not assumed compatible", channelType: constant.ChannelTypeAws, format: types.RelayFormatOpenAI},
+		{name: "pass through body is untouched", channelType: constant.ChannelTypeAnthropic, format: types.RelayFormatOpenAI, passThrough: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			info := &RelayInfo{
+				RelayFormat: test.format,
+				ChannelMeta: &ChannelMeta{
+					ChannelType: test.channelType,
+					ChannelSetting: dto.ChannelSettings{
+						PassThroughBodyEnabled: test.passThrough,
+					},
+				},
+			}
+			policy := info.ConvOptions().Claude.PromptCache
+			assert.Equal(t, test.wantEnabled, policy.Enabled)
+			assert.Equal(t, "1h", policy.TTL)
+		})
+	}
 }
 
 func TestRelayInfoGetFinalRequestRelayFormatFallsBackToConversionChain(t *testing.T) {

@@ -24,6 +24,7 @@ import { ClaudeSettingsCard } from './claude-settings-card'
 import { GeminiSettingsCard } from './gemini-settings-card'
 import { GlobalSettingsCard } from './global-settings-card'
 import { GrokSettingsCard } from './grok-settings-card'
+import { ModelCompatibilitySettingsCard } from './model-compatibility-settings-card'
 import { RoutingReliabilitySection } from './routing-reliability-section'
 import { SeedanceVideoPricingCard } from './seedance-video-pricing-card'
 
@@ -129,8 +130,20 @@ const MODELS_SECTIONS = [
               settings['claude.thinking_adapter_enabled'],
             thinking_adapter_budget_tokens_percentage:
               settings['claude.thinking_adapter_budget_tokens_percentage'],
+            prompt_cache_enabled:
+              settings['claude.prompt_cache_enabled'] ?? false,
+            prompt_cache_ttl: settings['claude.prompt_cache_ttl'] ?? '5m',
           },
         }}
+      />
+    ),
+  },
+  {
+    id: 'model-compatibility',
+    titleKey: 'Model Compatibility Registry',
+    build: (settings: ModelSettings) => (
+      <ModelCompatibilitySettingsCard
+        defaultValue={settings['model_compatibility.registry'] ?? '{}'}
       />
     ),
   },

@@ -36,6 +36,16 @@ type ClaudeOptions struct {
 	// standalone relaykit users must supply one or guarantee max_tokens on
 	// every request.
 	DefaultMaxTokens func(modelName string) int
+	// PromptCache controls automatic top-level prompt caching after an OpenAI
+	// request has been converted to the native Claude Messages shape. The host
+	// must only enable this for upstream platforms that support automatic
+	// caching. Explicit block-level cache controls are preserved regardless.
+	PromptCache ClaudePromptCachePolicy
+}
+
+type ClaudePromptCachePolicy struct {
+	Enabled bool
+	TTL     string
 }
 
 type GeminiOptions struct {

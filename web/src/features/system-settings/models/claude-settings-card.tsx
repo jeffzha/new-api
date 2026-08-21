@@ -34,6 +34,13 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 
 import {
@@ -76,6 +83,8 @@ const schema = z.object({
       .number()
       .min(0.1, { message: 'Must be at least 0.1' })
       .max(1, { message: 'Must be 1 or less' }),
+    prompt_cache_enabled: z.boolean(),
+    prompt_cache_ttl: z.enum(['5m', '1h']),
   }),
 })
 
@@ -87,6 +96,8 @@ type FlatClaudeSettings = {
   'claude.default_max_tokens': string
   'claude.thinking_adapter_enabled': boolean
   'claude.thinking_adapter_budget_tokens_percentage': number
+  'claude.prompt_cache_enabled': boolean
+  'claude.prompt_cache_ttl': '5m' | '1h'
 }
 
 type ClaudeSettingsCardProps = {
@@ -108,6 +119,8 @@ export function ClaudeSettingsCard({ defaultValues }: ClaudeSettingsCardProps) {
     'claude.thinking_adapter_budget_tokens_percentage': Number(
       defaultValues.claude.thinking_adapter_budget_tokens_percentage
     ),
+    'claude.prompt_cache_enabled': defaultValues.claude.prompt_cache_enabled,
+    'claude.prompt_cache_ttl': defaultValues.claude.prompt_cache_ttl,
   })
 
   const buildFormDefaults = (
@@ -123,6 +136,8 @@ export function ClaudeSettingsCard({ defaultValues }: ClaudeSettingsCardProps) {
       thinking_adapter_enabled: values.claude.thinking_adapter_enabled,
       thinking_adapter_budget_tokens_percentage:
         values.claude.thinking_adapter_budget_tokens_percentage,
+      prompt_cache_enabled: values.claude.prompt_cache_enabled,
+      prompt_cache_ttl: values.claude.prompt_cache_ttl,
     },
   })
 
@@ -148,6 +163,8 @@ export function ClaudeSettingsCard({ defaultValues }: ClaudeSettingsCardProps) {
       'claude.thinking_adapter_budget_tokens_percentage': Number(
         defaultValues.claude.thinking_adapter_budget_tokens_percentage
       ),
+      'claude.prompt_cache_enabled': defaultValues.claude.prompt_cache_enabled,
+      'claude.prompt_cache_ttl': defaultValues.claude.prompt_cache_ttl,
     }
 
     form.reset(buildFormDefaults(defaultValues))
@@ -164,6 +181,8 @@ export function ClaudeSettingsCard({ defaultValues }: ClaudeSettingsCardProps) {
       'claude.thinking_adapter_enabled': values.claude.thinking_adapter_enabled,
       'claude.thinking_adapter_budget_tokens_percentage':
         values.claude.thinking_adapter_budget_tokens_percentage,
+      'claude.prompt_cache_enabled': values.claude.prompt_cache_enabled,
+      'claude.prompt_cache_ttl': values.claude.prompt_cache_ttl,
     }
 
     const updates = (
@@ -245,6 +264,62 @@ export function ClaudeSettingsCard({ defaultValues }: ClaudeSettingsCardProps) {
           />
 
           <SettingsControlGroup>
+            <FormField
+              control={form.control}
+              name='claude.prompt_cache_enabled'
+              render={({ field }) => (
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>
+                      {t('Automatic Claude Prompt Caching')}
+                    </FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Add native top-level Claude prompt caching after OpenAI Chat or Responses requests are converted. Explicit client cache controls are preserved.'
+                      )}
+                    </FormDescription>
+                  </SettingsSwitchContent>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </SettingsSwitchItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='claude.prompt_cache_ttl'
+              render={({ field }) => (
+                <FormItem className='max-w-xs'>
+                  <FormLabel>{t('Prompt Cache TTL')}</FormLabel>
+                  <Select
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    disabled={!form.watch('claude.prompt_cache_enabled')}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value='5m'>{t('5 minutes')}</SelectItem>
+                      <SelectItem value='1h'>{t('1 hour')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>
+                    {t(
+                      'The 1-hour cache has a higher write price. Automatic caching is only sent to native Anthropic channels.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
             <FormField
               control={form.control}
               name='claude.thinking_adapter_enabled'

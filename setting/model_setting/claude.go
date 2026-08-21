@@ -21,6 +21,8 @@ type ClaudeSettings struct {
 	DefaultMaxTokens                      map[string]int                 `json:"default_max_tokens"`
 	ThinkingAdapterEnabled                bool                           `json:"thinking_adapter_enabled"`
 	ThinkingAdapterBudgetTokensPercentage float64                        `json:"thinking_adapter_budget_tokens_percentage"`
+	PromptCacheEnabled                    bool                           `json:"prompt_cache_enabled"`
+	PromptCacheTTL                        string                         `json:"prompt_cache_ttl"`
 }
 
 // 默认配置
@@ -31,6 +33,8 @@ var defaultClaudeSettings = ClaudeSettings{
 		"default": 8192,
 	},
 	ThinkingAdapterBudgetTokensPercentage: 0.8,
+	PromptCacheEnabled:                    false,
+	PromptCacheTTL:                        "5m",
 }
 
 // 全局实例
@@ -108,4 +112,13 @@ func ValidateClaudeDefaultMaxTokens(value string) error {
 		}
 	}
 	return nil
+}
+
+func ValidateClaudePromptCacheTTL(value string) error {
+	switch strings.TrimSpace(value) {
+	case "5m", "1h":
+		return nil
+	default:
+		return fmt.Errorf("Claude prompt cache TTL must be 5m or 1h")
+	}
 }

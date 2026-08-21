@@ -200,8 +200,8 @@ func ApplyParamOverrideWithRelayInfo(jsonData []byte, info *RelayInfo) ([]byte, 
 	syncRuntimeHeaderOverrideFromContext(info, overrideCtx)
 	if info != nil {
 		if recorder != nil {
-			info.ParamOverrideAudit = recorder.lines
-		} else {
+			info.ParamOverrideAudit = append(info.ParamOverrideAudit, recorder.lines...)
+		} else if len(info.ParamOverrideAudit) == 0 {
 			info.ParamOverrideAudit = nil
 		}
 	}

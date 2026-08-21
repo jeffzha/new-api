@@ -36,9 +36,10 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 			continue
 		}
 		claudeTools = append(claudeTools, &dto.Tool{
-			Name:        tool.Function.Name,
-			Description: tool.Function.Description,
-			InputSchema: sharedclaude.FunctionParametersToInputSchema(tool.Function.Parameters),
+			Name:         tool.Function.Name,
+			Description:  tool.Function.Description,
+			InputSchema:  sharedclaude.FunctionParametersToInputSchema(tool.Function.Parameters),
+			CacheControl: tool.CacheControl,
 		})
 	}
 
@@ -90,6 +91,7 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 		Model:         textRequest.Model,
 		StopSequences: nil,
 		Temperature:   textRequest.Temperature,
+		CacheControl:  textRequest.CacheControl,
 	}
 	if len(claudeTools) > 0 {
 		claudeRequest.Tools = claudeTools
@@ -252,7 +254,7 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 	var systemMessages []dto.ClaudeMediaMessage
 
 	for _, message := range formatMessages {
-		if message.Role == "system" {
+		if message.Role == "system" || message.Role == "developer" {
 			if message.IsStringContent() {
 				if text := message.StringContent(); text != "" {
 					systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
@@ -264,8 +266,9 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 				for _, ctx := range message.ParseContent() {
 					if ctx.Type == "text" && ctx.Text != "" {
 						systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
-							Type: "text",
-							Text: kitutil.GetPointer[string](ctx.Text),
+							Type:         "text",
+							Text:         kitutil.GetPointer[string](ctx.Text),
+							CacheControl: ctx.CacheControl,
 						})
 					}
 				}
@@ -333,8 +336,9 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 				case "text":
 					if mediaMessage.Text != "" {
 						claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
-							Type: "text",
-							Text: kitutil.GetPointer[string](mediaMessage.Text),
+							Type:         "text",
+							Text:         kitutil.GetPointer[string](mediaMessage.Text),
+							CacheControl: mediaMessage.CacheControl,
 						})
 					}
 				default:
@@ -347,6 +351,7 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 						return nil, fmt.Errorf("get file data failed: %s", err.Error())
 					}
 					claudeMediaMessage := dto.ClaudeMediaMessage{
+						CacheControl: mediaMessage.CacheControl,
 						Source: &dto.ClaudeMessageSource{
 							Type: "base64",
 						},
@@ -391,6 +396,9 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 
 	claudeRequest.Prompt = ""
 	claudeRequest.Messages = claudeMessages
+	if err := sharedclaude.ApplyPromptCachePolicy(&claudeRequest, opts.Claude.PromptCache); err != nil {
+		return nil, err
+	}
 	// Checked last so every injection path (default hook, thinking adapter
 	// floor) has had its chance to satisfy the required field.
 	if claudeRequest.MaxTokens == nil {

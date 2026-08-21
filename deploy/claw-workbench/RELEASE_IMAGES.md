@@ -16,6 +16,12 @@ For a source-based Gateway candidate deployment, use
 generic repository script directly. The wrapper passes an explicit version in
 the same upstream-preserving form, such as
 `v1.0.0-rc.21.gateway.20260811T120000Z.g2b7499e85bfe`.
+It also pins the build to `deploy/claw-workbench/docker/Dockerfile.new-api`.
+That image starts through `entrypoint-new-api.sh`, which reads the two mounted
+new-api/Control HMAC files before launching new-api. Building this release with
+the repository root `Dockerfile` leaves those files mounted but never exports
+them to the process, so both Workbench session-ticket endpoints fail closed
+with HTTP 503.
 
 ## One-time repository configuration
 

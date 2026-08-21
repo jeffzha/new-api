@@ -34,6 +34,7 @@ param(
     [string]$ImageCommit = "",
     [string]$VersionNamespace = "gateway",
     [string]$Platform = "linux/amd64",
+    [string]$DockerfilePath = "Dockerfile",
     [string]$BunRegistry = "https://registry.npmmirror.com",
     [ValidateRange(1, 64)][int]$BunMaxHttpRequests = 8,
     [ValidateRange(1, 5)][int]$DockerBuildAttempts = 3,
@@ -56,6 +57,15 @@ $ErrorActionPreference = "Stop"
 
 if (-not (Test-Path -LiteralPath $SshKeyPath -PathType Leaf)) {
     throw "SSH key not found: $SshKeyPath"
+}
+
+$DockerfilePath = $DockerfilePath.Replace("\", "/")
+if (
+    $DockerfilePath -notmatch '^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$' -or
+    $DockerfilePath -match '(^|/)\.\.?(/|$)' -or
+    $DockerfilePath.EndsWith("/")
+) {
+    throw "DockerfilePath must be a safe repository-relative file path."
 }
 
 $sshArguments = @(
@@ -208,6 +218,10 @@ Push-Location $repoRoot
 try {
     $branch = Get-CommandOutput git rev-parse --abbrev-ref HEAD
     $sha = Get-CommandOutput git rev-parse --short=12 HEAD
+    $localDockerfile = Join-Path $repoRoot $DockerfilePath
+    if (-not (Test-Path -LiteralPath $localDockerfile -PathType Leaf)) {
+        throw "Dockerfile not found in the repository: $DockerfilePath"
+    }
     $workingTreeDirty = Get-CommandOutput git status --porcelain
     if ($workingTreeDirty -and -not $AllowDirty) {
         throw "The working tree has uncommitted or untracked changes. Commit first, or use -AllowDirty only for preflight."
@@ -323,7 +337,7 @@ printf '\n'
     $image = "${ImageRepository}:${ImageTag}"
 
     if ($PreflightOnly) {
-        Write-Host "Preflight OK. Inactive slot: $targetSlot. Planned image: $image"
+        Write-Host "Preflight OK. Inactive slot: $targetSlot. Planned image: $image. Dockerfile: $DockerfilePath"
         return
     }
 
@@ -336,6 +350,7 @@ printf '\n'
         Write-Host "Commit: $sha"
         Write-Host "Image/version: $image"
         Write-Host "Image source commit: $releaseCommit"
+        Write-Host "Dockerfile: $DockerfilePath"
         if ($UseExistingImage) {
             Write-Host "Image source: existing immutable server image (verified before deployment)"
         } else {
@@ -388,6 +403,7 @@ source_tar="$remoteSourceTar"
 build_dir="$remoteBuildDir"
 override_file="$overrideFile"
 platform="$Platform"
+dockerfile_path="$DockerfilePath"
 bun_registry="$BunRegistry"
 bun_max_http_requests="$BunMaxHttpRequests"
 docker_build_attempts="$DockerBuildAttempts"
@@ -455,12 +471,17 @@ else
     rm -rf "`$build_dir"
     mkdir -p "`$build_dir"
     tar -xf "`$source_tar" -C "`$build_dir"
+    if [ ! -f "`$build_dir/`$dockerfile_path" ]; then
+        echo "Dockerfile is missing from the release source: `$dockerfile_path" >&2
+        exit 1
+    fi
     build_log="`$(mktemp "`$remote_dir/builds/.docker-build-`$target_slot.XXXXXX.log")"
     build_attempt=1
     while true; do
         : > "`$build_log"
         if docker build \
             --platform "`$platform" \
+            -f "`$build_dir/`$dockerfile_path" \
             --build-arg "BUILD_VERSION=`$image_tag" \
             --build-arg "BUN_REGISTRY=`$bun_registry" \
             --build-arg "BUN_MAX_HTTP_REQUESTS=`$bun_max_http_requests" \

@@ -26,8 +26,12 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 $gatewayScript = Join-Path $repoRoot "scripts\deploy-gateway-slot.ps1"
+$workbenchDockerfile = "deploy/claw-workbench/docker/Dockerfile.new-api"
 if (-not (Test-Path -LiteralPath $gatewayScript -PathType Leaf)) {
     throw "Gateway deployment script is missing: $gatewayScript"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $workbenchDockerfile) -PathType Leaf)) {
+    throw "Workbench new-api Dockerfile is missing: $workbenchDockerfile"
 }
 
 $upstreamVersion = ((& git -C $repoRoot describe --tags --abbrev=0 "--match=v[0-9]*" HEAD) -join "`n").Trim()
@@ -51,6 +55,7 @@ $parameters = @{
     SshKeyPath                   = $SshKeyPath
     SshConnectionCooldownSeconds = $SshConnectionCooldownSeconds
     ImageTag                     = $imageTag
+    DockerfilePath               = $workbenchDockerfile
 }
 if ($ShowFailureLogs) {
     $parameters.ShowFailureLogs = $true

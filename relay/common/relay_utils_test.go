@@ -140,3 +140,27 @@ func TestTaskDurationBounds(t *testing.T) {
 		})
 	}
 }
+
+func TestBasicTaskRequestAllowsAutoDurationOnlyForConfiguredModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	newContext := func(body string) (*gin.Context, *RelayInfo) {
+		request := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Request = request
+		return context, &RelayInfo{TaskRelayInfo: &TaskRelayInfo{}}
+	}
+
+	context, info := newContext(`{"model":"dreamina-seedance-2-5-filter-off","prompt":"edit the video","duration":-1}`)
+	taskErr := ValidateBasicTaskRequest(context, info, constant.TaskActionGenerate, "dreamina-seedance-2-5-filter-off")
+	require.Nil(t, taskErr)
+	storedReq, err := GetTaskRequest(context)
+	require.NoError(t, err)
+	assert.Equal(t, -1, storedReq.Duration)
+
+	context, info = newContext(`{"model":"doubao-seedance-2-0-260128","prompt":"a cat","duration":-1}`)
+	taskErr = ValidateBasicTaskRequest(context, info, constant.TaskActionGenerate, "dreamina-seedance-2-5-filter-off")
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_seconds", taskErr.Code)
+}

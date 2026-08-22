@@ -92,6 +92,33 @@ func TestGetVideoInputRatioSeedanceAliases(t *testing.T) {
 	}
 }
 
+func TestSeedance25PricingUsesPublishedRates(t *testing.T) {
+	tests := []struct {
+		name       string
+		resolution string
+		hasVideo   bool
+		wantPrice  float64
+	}{
+		{name: "720p without video", resolution: "720p", wantPrice: 10.70},
+		{name: "720p with video", resolution: "720p", hasVideo: true, wantPrice: 6.40},
+		{name: "1080p without video", resolution: "1080p", wantPrice: 11.70},
+		{name: "1080p with video", resolution: "1080p", hasVideo: true, wantPrice: 7.00},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ratio, ok := GetVideoInputRatio(seedance25Model, tt.resolution, tt.hasVideo)
+			require.True(t, ok)
+			basePrice := videoPriceTable[seedance25Model][videoPriceKey{}]
+			assert.InDelta(t, tt.wantPrice, basePrice*ratio, 0.000001)
+		})
+	}
+
+	assert.Contains(t, ModelList, seedance25Model)
+	assert.Contains(t, ModelList, "doubao-seedance-2-0-260128")
+	assert.Contains(t, ModelList, "doubao-seedance-2-0-filter-off")
+}
+
 func TestGetVideoInputRatioOfficialSeedanceModelsUnchanged(t *testing.T) {
 	tests := []struct {
 		name       string

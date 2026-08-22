@@ -2,6 +2,8 @@ package doubao
 
 import "strings"
 
+const seedance25Model = "dreamina-seedance-2-5-filter-off"
+
 var ModelList = []string{
 	"doubao-seedance-1-0-pro-250528",
 	"doubao-seedance-1-0-lite-t2v",
@@ -12,6 +14,7 @@ var ModelList = []string{
 	"doubao-seedance-2-0-filter-off",
 	"doubao-seedance-2-0-fast-filter-off",
 	"dreamina-seedance-2-0-mini-filter-off",
+	seedance25Model,
 }
 
 var ChannelName = "doubao-video"
@@ -24,13 +27,14 @@ type videoPriceKey struct {
 	hasVideo bool
 }
 
-// These overseas Seedance 2.0 models are billed from the USD/M-token table
-// when the async task completes. Legacy 260128 models keep the old ratio-only
+// Selected overseas Seedance models are billed from the USD/M-token table when
+// the async task completes. Legacy 260128 models keep the old ratio-only
 // behavior because their table values use a different pricing basis.
 var videoCompletionPriceModels = map[string]struct{}{
 	"doubao-seedance-2-0-filter-off":        {},
 	"doubao-seedance-2-0-fast-filter-off":   {},
 	"dreamina-seedance-2-0-mini-filter-off": {},
+	seedance25Model:                         {},
 }
 
 // videoPriceTable stores USD per 1M tokens for each output tier and whether
@@ -64,6 +68,12 @@ var videoPriceTable = map[string]map[videoPriceKey]float64{
 	"dreamina-seedance-2-0-mini-filter-off": {
 		{hasVideo: false}: 3.5,
 		{hasVideo: true}:  2.1,
+	},
+	seedance25Model: {
+		{hasVideo: false}:                10.70,
+		{hasVideo: true}:                 6.40,
+		{is1080p: true, hasVideo: false}: 11.70,
+		{is1080p: true, hasVideo: true}:  7.00,
 	},
 }
 

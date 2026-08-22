@@ -53,6 +53,30 @@ func TestAdjustBillingOnCompleteAppliesGroupRatio(t *testing.T) {
 	assert.Equal(t, 1_400_000, got)
 }
 
+func TestAdjustBillingOnCompleteUsesSeedance25Published1080pPrice(t *testing.T) {
+	oldQuotaPerUnit := appcommon.QuotaPerUnit
+	appcommon.QuotaPerUnit = 500_000
+	t.Cleanup(func() {
+		appcommon.QuotaPerUnit = oldQuotaPerUnit
+	})
+
+	ratio, ok := GetVideoInputRatio(seedance25Model, "1080p", true)
+	require.True(t, ok)
+	task := &model.Task{}
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		OriginModelName: seedance25Model,
+		GroupRatio:      1,
+		OtherRatios: map[string]float64{
+			videoInputRatioKey: ratio,
+		},
+	}
+	taskResult := &relaycommon.TaskInfo{TotalTokens: 1_000_000}
+
+	got := (&TaskAdaptor{}).AdjustBillingOnComplete(task, taskResult)
+
+	assert.Equal(t, appcommon.QuotaRound(7.00*500_000), got)
+}
+
 func TestAdjustBillingOnCompleteRoundsSupplierUsageExactly(t *testing.T) {
 	oldQuotaPerUnit := appcommon.QuotaPerUnit
 	appcommon.QuotaPerUnit = 500_000

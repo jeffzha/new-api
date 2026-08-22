@@ -54,15 +54,17 @@ type requestPayload struct {
 	Tools                 []struct {
 		Type string `json:"type,omitempty"`
 	} `json:"tools,omitempty"`
-	SafetyIdentifier string         `json:"safety_identifier,omitempty"`
-	Priority         *dto.IntValue  `json:"priority,omitempty"`
-	Resolution       string         `json:"resolution,omitempty"`
-	Ratio            string         `json:"ratio,omitempty"`
-	Duration         *dto.IntValue  `json:"duration,omitempty"`
-	Frames           *dto.IntValue  `json:"frames,omitempty"`
-	Seed             *dto.IntValue  `json:"seed,omitempty"`
-	CameraFixed      *dto.BoolValue `json:"camera_fixed,omitempty"`
-	Watermark        *dto.BoolValue `json:"watermark,omitempty"`
+	SafetyIdentifier      string         `json:"safety_identifier,omitempty"`
+	Priority              *dto.IntValue  `json:"priority,omitempty"`
+	Resolution            string         `json:"resolution,omitempty"`
+	Ratio                 string         `json:"ratio,omitempty"`
+	OmniReferenceTaskType *string        `json:"omni_reference_task_type,omitempty"`
+	OutputFormat          *string        `json:"output_format,omitempty"`
+	Duration              *dto.IntValue  `json:"duration,omitempty"`
+	Frames                *dto.IntValue  `json:"frames,omitempty"`
+	Seed                  *dto.IntValue  `json:"seed,omitempty"`
+	CameraFixed           *dto.BoolValue `json:"camera_fixed,omitempty"`
+	Watermark             *dto.BoolValue `json:"watermark,omitempty"`
 }
 
 type responsePayload struct {
@@ -126,7 +128,7 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
 	// Accept only POST /v1/video/generations as "generate" action.
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate, seedance25Model)
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -352,10 +354,10 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	if r.Resolution == "" {
 		r.Resolution = req.Resolution
 	}
-	if r.Duration == nil && req.Duration > 0 {
+	if r.Duration == nil && (req.Duration > 0 || (req.Model == seedance25Model && req.Duration == -1)) {
 		r.Duration = lo.ToPtr(dto.IntValue(req.Duration))
 	}
-	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
+	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 || (req.Model == seedance25Model && sec == -1) {
 		r.Duration = lo.ToPtr(dto.IntValue(sec))
 	}
 

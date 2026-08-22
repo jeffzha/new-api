@@ -267,6 +267,7 @@ var defaultModelRatio = map[string]float64{
 	"deepseek-ai/DeepSeek-R1":                 0.8,
 	"deepseek-ai/DeepSeek-V3-0324":            0.8,
 	"deepseek-ai/DeepSeek-V3.1":               0.8,
+	"dreamina-seedance-2-5-filter-off":         5.35, // $10.70 / 1M video tokens; exact tier settles on completion
 }
 
 var defaultModelPrice = map[string]float64{

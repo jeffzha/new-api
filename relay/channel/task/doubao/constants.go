@@ -9,6 +9,7 @@ var ModelList = []string{
 	"doubao-seedance-1-5-pro-251215",
 	"doubao-seedance-2-0-260128",
 	"doubao-seedance-2-0-fast-260128",
+	"doubao-seedance-2-5-260628",
 	"doubao-seedance-2-0-filter-off",
 	"doubao-seedance-2-0-fast-filter-off",
 	"dreamina-seedance-2-0-mini-filter-off",

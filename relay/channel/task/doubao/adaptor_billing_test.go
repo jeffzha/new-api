@@ -1,6 +1,9 @@
 package doubao
 
 import (
+	"bytes"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -93,7 +96,7 @@ func TestEstimateTaskBillingUsesConfiguredCNYMatrix(t *testing.T) {
 		model          string
 		resolution     string
 		hasVideo       bool
-		priceCNY       int64
+		priceCNY       float64
 		tokens         int64
 		wantResolution string
 	}{
@@ -105,6 +108,11 @@ func TestEstimateTaskBillingUsesConfiguredCNYMatrix(t *testing.T) {
 		{name: "standard 4k with video", model: seedancepricing.StandardSeedanceModel, resolution: "4K", hasVideo: true, priceCNY: 16, tokens: 3_888_000, wantResolution: "4k"},
 		{name: "fast default", model: seedancepricing.FastSeedanceModel, resolution: "1080p", priceCNY: 37, tokens: 243_000, wantResolution: "1080p"},
 		{name: "fast default with video", model: seedancepricing.FastSeedanceModel, resolution: "4K", hasVideo: true, priceCNY: 22, tokens: 3_888_000, wantResolution: "4k"},
+		{name: "2.5 480p", model: seedancepricing.Seedance25Model, resolution: "480p", priceCNY: 70, tokens: 48_038, wantResolution: "480p"},
+		{name: "2.5 720p", model: seedancepricing.Seedance25Model, resolution: "720p", priceCNY: 70, tokens: 108_000, wantResolution: "720p"},
+		{name: "2.5 720p with video", model: seedancepricing.Seedance25Model, resolution: "720p", hasVideo: true, priceCNY: 42, tokens: 756_000, wantResolution: "720p"},
+		{name: "2.5 1080p list price", model: seedancepricing.Seedance25Model, resolution: "1080p", priceCNY: 77, tokens: 243_000, wantResolution: "1080p"},
+		{name: "2.5 1080p with video list price", model: seedancepricing.Seedance25Model, resolution: "1080p", hasVideo: true, priceCNY: 46, tokens: 1_701_000, wantResolution: "1080p"},
 	}
 
 	for _, tt := range tests {
@@ -114,13 +122,13 @@ func TestEstimateTaskBillingUsesConfiguredCNYMatrix(t *testing.T) {
 			require.NotNil(t, snapshot)
 			assert.Equal(t, model.TaskBillingProviderDoubaoVideoCNY, snapshot.Provider)
 			assert.Equal(t, "CNY", snapshot.Currency)
-			assert.Equal(t, decimal.NewFromInt(tt.priceCNY).String(), snapshot.UnitPricePerMillionTokens)
+			assert.Equal(t, decimal.NewFromFloat(tt.priceCNY).String(), snapshot.UnitPricePerMillionTokens)
 			assert.Equal(t, tt.hasVideo, snapshot.HasVideoInput)
 			assert.Equal(t, tt.tokens, snapshot.EstimatedTokens)
 			assert.Equal(t, tt.wantResolution, snapshot.Resolution)
 			expected := decimal.NewFromInt(tt.tokens).
 				Div(decimal.NewFromInt(1_000_000)).
-				Mul(decimal.NewFromInt(tt.priceCNY)).
+				Mul(decimal.NewFromFloat(tt.priceCNY)).
 				Div(decimal.NewFromFloat(7.3)).
 				Mul(decimal.NewFromFloat(appcommon.QuotaPerUnit))
 			assert.Equal(t, appcommon.QuotaFromDecimal(expected), estimate.PriceData.Quota)
@@ -354,9 +362,167 @@ func TestSupportsTaskBillingIsModelAndChannelScoped(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	assert.True(t, adaptor.SupportsTaskBilling(constant.ChannelTypeDoubaoVideo, seedancepricing.StandardSeedanceModel))
 	assert.True(t, adaptor.SupportsTaskBilling(constant.ChannelTypeDoubaoVideo, seedancepricing.FastSeedanceModel))
+	assert.True(t, adaptor.SupportsTaskBilling(constant.ChannelTypeDoubaoVideo, seedancepricing.Seedance25Model))
 	assert.False(t, adaptor.SupportsTaskBilling(constant.ChannelTypeVolcEngine, seedancepricing.StandardSeedanceModel))
 	assert.False(t, adaptor.SupportsTaskBilling(constant.ChannelTypeDoubaoVideo, "doubao-seedance-2-0-filter-off"))
 	assert.False(t, adaptor.SupportsTaskBilling(constant.ChannelTypeDoubaoVideo, "dreamina-seedance-2-0-mini-filter-off"))
+}
+
+func TestSeedance25SupportsAutoDurationAndKeepsSeedance20Validation(t *testing.T) {
+	tests := []struct {
+		model   string
+		wantErr bool
+	}{
+		{model: seedancepricing.Seedance25Model},
+		{model: seedancepricing.StandardSeedanceModel, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			body := []byte(fmt.Sprintf(`{"model":%q,"prompt":"test","duration":-1}`, tt.model))
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", bytes.NewReader(body))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+
+			taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(ctx, info)
+			if tt.wantErr {
+				require.NotNil(t, taskErr)
+				assert.Equal(t, "invalid_seconds", taskErr.Code)
+				return
+			}
+			require.Nil(t, taskErr)
+			request, err := relaycommon.GetTaskRequest(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, -1, request.Duration)
+		})
+	}
+}
+
+func TestSeedance25RequestPayloadSupportsOfficialReferenceFields(t *testing.T) {
+	req := relaycommon.TaskSubmitReq{
+		Model:  seedancepricing.Seedance25Model,
+		Prompt: "edit this clip",
+		Content: []map[string]interface{}{
+			{
+				"type": "video_url",
+				"role": "reference_video",
+				"video_url": map[string]interface{}{
+					"url": "https://example.com/reference.mp4",
+				},
+			},
+		},
+		Metadata: map[string]interface{}{
+			"omni_reference_task_type": "edit",
+			"output_format":            "mov",
+			"duration":                 -1,
+		},
+	}
+
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&req)
+	require.NoError(t, err)
+	assert.Equal(t, "edit", payload.OmniReferenceTaskType)
+	assert.Equal(t, "mov", payload.OutputFormat)
+	require.NotNil(t, payload.Duration)
+	assert.Equal(t, -1, int(*payload.Duration))
+	require.Len(t, payload.Content, 2)
+	require.NotNil(t, payload.Content[0].VideoURL)
+	assert.Equal(t, "https://example.com/reference.mp4", payload.Content[0].VideoURL.URL)
+	assert.Equal(t, "edit this clip", payload.Content[1].Text)
+}
+
+func TestSeedance25ReferenceLimitsDoNotChangeSeedance20Limits(t *testing.T) {
+	oldExchangeRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 7.3
+	t.Cleanup(func() {
+		operation_setting.USDExchangeRate = oldExchangeRate
+	})
+
+	tests := []struct {
+		name       string
+		model      string
+		videoCount int
+		wantErr    bool
+	}{
+		{name: "2.5 accepts ten videos", model: seedancepricing.Seedance25Model, videoCount: 10},
+		{name: "2.5 rejects eleven videos", model: seedancepricing.Seedance25Model, videoCount: 11, wantErr: true},
+		{name: "2.0 still rejects four videos", model: seedancepricing.StandardSeedanceModel, videoCount: 4, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content := make([]interface{}, 0, tt.videoCount)
+			for i := 0; i < tt.videoCount; i++ {
+				content = append(content, map[string]interface{}{
+					"type": "video_url",
+					"video_url": map[string]interface{}{
+						"url": fmt.Sprintf("https://example.com/reference-%d.mp4", i),
+					},
+				})
+			}
+			gin.SetMode(gin.TestMode)
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			request := relaycommon.TaskSubmitReq{
+				Prompt:     "test",
+				Model:      tt.model,
+				Resolution: "720p",
+				Duration:   5,
+				Metadata:   map[string]interface{}{"content": content},
+			}
+			info := &relaycommon.RelayInfo{
+				ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeDoubaoVideo},
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+				OriginModelName: tt.model,
+				PriceData: types.PriceData{
+					GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+				},
+			}
+			relaycommon.StoreTaskRequest(ctx, info, constant.TaskActionGenerate, request)
+
+			estimate, taskErr := (&TaskAdaptor{}).EstimateTaskBilling(ctx, info)
+			if tt.wantErr {
+				assert.Nil(t, estimate)
+				require.NotNil(t, taskErr)
+				return
+			}
+			require.Nil(t, taskErr)
+			require.NotNil(t, estimate)
+			assert.Equal(t, int64(756_000), estimate.Snapshot.EstimatedTokens)
+		})
+	}
+}
+
+func TestSeedance25AutoDurationUsesMaximumForPrecharge(t *testing.T) {
+	oldExchangeRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 7.3
+	t.Cleanup(func() {
+		operation_setting.USDExchangeRate = oldExchangeRate
+	})
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	request := relaycommon.TaskSubmitReq{
+		Prompt:     "test",
+		Model:      seedancepricing.Seedance25Model,
+		Resolution: "720p",
+		Duration:   -1,
+	}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeDoubaoVideo},
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+		OriginModelName: seedancepricing.Seedance25Model,
+		PriceData: types.PriceData{
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	relaycommon.StoreTaskRequest(ctx, info, constant.TaskActionGenerate, request)
+
+	estimate, taskErr := (&TaskAdaptor{}).EstimateTaskBilling(ctx, info)
+	require.Nil(t, taskErr)
+	require.NotNil(t, estimate)
+	assert.Equal(t, int64(648_000), estimate.Snapshot.EstimatedTokens)
 }
 
 func TestAdjustBillingOnCompleteUsesOfficialPriceTable(t *testing.T) {

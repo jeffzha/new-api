@@ -64,6 +64,7 @@ import {
   buildSeedancePricingFormValues,
   MAX_SEEDANCE_VIDEO_PRICE_CNY,
   parseSeedanceVideoPrices,
+  SEEDANCE_25_MODEL,
   SEEDANCE_FAST_MODEL,
   SEEDANCE_PRICE_ROWS,
   SEEDANCE_STANDARD_MODEL,
@@ -93,7 +94,11 @@ function createSeedancePricingSchema(t: TFunction) {
   })
 }
 
-const modelGroups = [SEEDANCE_STANDARD_MODEL, SEEDANCE_FAST_MODEL] as const
+const modelGroups = [
+  SEEDANCE_STANDARD_MODEL,
+  SEEDANCE_FAST_MODEL,
+  SEEDANCE_25_MODEL,
+] as const
 
 type Props = {
   defaultValue: string
@@ -210,11 +215,7 @@ export function SeedanceVideoPricingCard({ defaultValue }: Props) {
                     >
                       <FieldLegend className='w-full'>
                         <span className='flex min-w-0 flex-col gap-0.5'>
-                          <span>
-                            {model === SEEDANCE_STANDARD_MODEL
-                              ? t('Seedance 2.0 Standard')
-                              : t('Seedance 2.0 Fast')}
-                          </span>
+                          <span>{t(rows[0].modelLabelKey)}</span>
                           <code className='text-muted-foreground text-xs font-normal break-all'>
                             {model}
                           </code>

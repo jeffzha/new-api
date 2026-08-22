@@ -21,6 +21,7 @@ export const SEEDANCE_VIDEO_PRICING_OPTION_KEY =
 
 export const SEEDANCE_STANDARD_MODEL = 'doubao-seedance-2-0-260128'
 export const SEEDANCE_FAST_MODEL = 'doubao-seedance-2-0-fast-260128'
+export const SEEDANCE_25_MODEL = 'doubao-seedance-2-5-260628'
 export const MAX_SEEDANCE_VIDEO_PRICE_CNY = 1_000_000
 
 export type SeedanceVideoPrice = {
@@ -58,6 +59,16 @@ export const SEEDANCE_PRICE_ROWS = [
     resolution: 'default',
     modelLabelKey: 'Seedance 2.0 Fast',
   },
+  {
+    model: SEEDANCE_25_MODEL,
+    resolution: '720p',
+    modelLabelKey: 'Seedance 2.5',
+  },
+  {
+    model: SEEDANCE_25_MODEL,
+    resolution: '1080p',
+    modelLabelKey: 'Seedance 2.5',
+  },
 ] as const
 
 export const DEFAULT_SEEDANCE_VIDEO_PRICES_CNY: SeedanceVideoPrices = {
@@ -79,6 +90,16 @@ export const DEFAULT_SEEDANCE_VIDEO_PRICES_CNY: SeedanceVideoPrices = {
     default: {
       without_video: 37,
       with_video: 22,
+    },
+  },
+  [SEEDANCE_25_MODEL]: {
+    '720p': {
+      without_video: 70,
+      with_video: 42,
+    },
+    '1080p': {
+      without_video: 77,
+      with_video: 46,
     },
   },
 }

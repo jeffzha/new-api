@@ -28,6 +28,10 @@ func TestDefaultPricesCNYAreComplete(t *testing.T) {
 		{name: "standard 4k video", model: StandardSeedanceModel, resolution: "4k", hasVideo: true, want: 16},
 		{name: "fast default", model: FastSeedanceModel, resolution: "720p", want: 37},
 		{name: "fast default video", model: FastSeedanceModel, resolution: "1080p", hasVideo: true, want: 22},
+		{name: "2.5 480p uses 720p tier", model: Seedance25Model, resolution: "480p", want: 70},
+		{name: "2.5 720p video", model: Seedance25Model, resolution: "720p", hasVideo: true, want: 42},
+		{name: "2.5 1080p list price", model: Seedance25Model, resolution: "1080p", want: 77},
+		{name: "2.5 1080p video list price", model: Seedance25Model, resolution: "1080p", hasVideo: true, want: 46},
 	}
 
 	for _, tt := range tests {
@@ -37,6 +41,38 @@ func TestDefaultPricesCNYAreComplete(t *testing.T) {
 			assert.Equal(t, tt.want, price.InexactFloat64())
 		})
 	}
+}
+
+func TestSeedance25RejectsUnsupportedResolutionWithoutChangingSeedance20Fallback(t *testing.T) {
+	_, ok := GetUnitPriceCNY(Seedance25Model, "4k", false)
+	assert.False(t, ok)
+	_, ok = GetUnitPriceCNY(Seedance25Model, "future-resolution", false)
+	assert.False(t, ok)
+
+	price, ok := GetUnitPriceCNY(StandardSeedanceModel, "future-resolution", false)
+	require.True(t, ok)
+	assert.Equal(t, 46.0, price.InexactFloat64())
+}
+
+func TestRebuildPriceIndexMigratesLegacySeedance20Matrix(t *testing.T) {
+	original := clonePrices(seedanceVideoPricing.PricesCNY)
+	t.Cleanup(func() {
+		seedanceVideoPricing.PricesCNY = original
+		require.NoError(t, RebuildPriceIndex())
+	})
+
+	legacy := DefaultPricesCNY()
+	delete(legacy, Seedance25Model)
+	legacy[StandardSeedanceModel]["720p"][WithoutVideoKey] = 49.5
+	seedanceVideoPricing.PricesCNY = legacy
+
+	require.NoError(t, RebuildPriceIndex())
+	standardPrice, ok := GetUnitPriceCNY(StandardSeedanceModel, "720p", false)
+	require.True(t, ok)
+	assert.Equal(t, 49.5, standardPrice.InexactFloat64())
+	seedance25Price, ok := GetUnitPriceCNY(Seedance25Model, "1080p", false)
+	require.True(t, ok)
+	assert.Equal(t, 77.0, seedance25Price.InexactFloat64())
 }
 
 func TestValidatePricesCNYRejectsIncompleteOrUnsafeMatrices(t *testing.T) {

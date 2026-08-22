@@ -51,7 +51,7 @@ func TestUpdateOptionRejectsIncompleteSeedanceVideoCNYPrices(t *testing.T) {
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.False(t, response.Success)
-	assert.Contains(t, response.Message, "exactly 2 supported models")
+	assert.Contains(t, response.Message, "exactly 3 supported models")
 	var count int64
 	require.NoError(t, db.Model(&model.Option{}).Where("key = ?", seedancepricing.OptionKey).Count(&count).Error)
 	assert.Zero(t, count)

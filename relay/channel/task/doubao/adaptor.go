@@ -60,15 +60,17 @@ type requestPayload struct {
 	Tools                 []struct {
 		Type string `json:"type,omitempty"`
 	} `json:"tools,omitempty"`
-	SafetyIdentifier string         `json:"safety_identifier,omitempty"`
-	Priority         *dto.IntValue  `json:"priority,omitempty"`
-	Resolution       string         `json:"resolution,omitempty"`
-	Ratio            string         `json:"ratio,omitempty"`
-	Duration         *dto.IntValue  `json:"duration,omitempty"`
-	Frames           *dto.IntValue  `json:"frames,omitempty"`
-	Seed             *dto.IntValue  `json:"seed,omitempty"`
-	CameraFixed      *dto.BoolValue `json:"camera_fixed,omitempty"`
-	Watermark        *dto.BoolValue `json:"watermark,omitempty"`
+	SafetyIdentifier      string         `json:"safety_identifier,omitempty"`
+	Priority              *dto.IntValue  `json:"priority,omitempty"`
+	OmniReferenceTaskType string         `json:"omni_reference_task_type,omitempty"`
+	OutputFormat          string         `json:"output_format,omitempty"`
+	Resolution            string         `json:"resolution,omitempty"`
+	Ratio                 string         `json:"ratio,omitempty"`
+	Duration              *dto.IntValue  `json:"duration,omitempty"`
+	Frames                *dto.IntValue  `json:"frames,omitempty"`
+	Seed                  *dto.IntValue  `json:"seed,omitempty"`
+	CameraFixed           *dto.BoolValue `json:"camera_fixed,omitempty"`
+	Watermark             *dto.BoolValue `json:"watermark,omitempty"`
 }
 
 type responsePayload struct {
@@ -142,16 +144,31 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 	if err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "model_price_error", http.StatusBadRequest)
 	}
+	imageCount := int64(0)
 	videoCount := int64(0)
+	audioCount := int64(0)
 	for _, item := range payload.Content {
-		if item.Type == "video_url" || item.VideoURL != nil {
+		switch {
+		case item.Type == "image_url" || item.ImageURL != nil:
+			imageCount++
+		case item.Type == "video_url" || item.VideoURL != nil:
 			videoCount++
+		case item.Type == "audio_url" || item.AudioURL != nil:
+			audioCount++
 		}
 	}
 	hasVideo := videoCount > 0
-	if videoCount > 3 {
+	isSeedance25 := strings.TrimSpace(info.OriginModelName) == seedancepricing.Seedance25Model
+	if !isSeedance25 && videoCount > 3 {
 		return nil, service.TaskErrorWrapperLocal(
 			fmt.Errorf("content supports at most 3 video inputs"),
+			"model_price_error",
+			http.StatusBadRequest,
+		)
+	}
+	if isSeedance25 && (imageCount > 30 || videoCount > 10 || audioCount > 10 || imageCount+videoCount+audioCount > 50) {
+		return nil, service.TaskErrorWrapperLocal(
+			fmt.Errorf("Seedance 2.5 content supports at most 30 images, 10 videos, 10 audios, and 50 references in total"),
 			"model_price_error",
 			http.StatusBadRequest,
 		)
@@ -167,7 +184,7 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 	}
 	effectiveResolution := strings.ToLower(strings.TrimSpace(resolution))
 	switch effectiveResolution {
-	case "1080p", "4k":
+	case "480p", "1080p", "4k":
 	default:
 		effectiveResolution = "720p"
 	}
@@ -200,7 +217,17 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 	if payload.Duration != nil {
 		duration = int64(*payload.Duration)
 	}
-	if duration <= 0 || duration > relaycommon.MaxTaskDurationSeconds {
+	if isSeedance25 && duration == -1 {
+		// Auto-duration is finalized by the provider and reconciled from the
+		// returned usage. Reserve the documented maximum output duration.
+		duration = 30
+	} else if isSeedance25 && (duration < 4 || duration > 30) {
+		return nil, service.TaskErrorWrapperLocal(
+			fmt.Errorf("Seedance 2.5 duration must be -1 (auto) or between 4 and 30 seconds"),
+			"model_price_error",
+			http.StatusBadRequest,
+		)
+	} else if !isSeedance25 && (duration <= 0 || duration > relaycommon.MaxTaskDurationSeconds) {
 		return nil, service.TaskErrorWrapperLocal(
 			fmt.Errorf("duration must be between 1 and %d seconds", relaycommon.MaxTaskDurationSeconds),
 			"model_price_error",
@@ -223,12 +250,19 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 		}
 	}
 	if hasVideo {
-		// Match the established Seedance domestic estimate without trusting
-		// media metadata: reserve 15 seconds for each bounded video input.
-		duration += videoCount * 15
+		if isSeedance25 {
+			// Seedance 2.5 accepts at most 30 seconds of aggregate reference
+			// video. The final charge is reconciled from upstream usage.
+			duration += 30
+		} else {
+			// Preserve the established Seedance 2.0 pre-charge behavior.
+			duration += videoCount * 15
+		}
 	}
 	pixels := int64(1280 * 720)
 	switch effectiveResolution {
+	case "480p":
+		pixels = 854 * 480
 	case "1080p":
 		pixels = 1920 * 1080
 	case "4k":
@@ -272,7 +306,7 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *taskdto.TaskError) {
 	// Accept only POST /v1/video/generations as "generate" action.
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	return relaycommon.ValidateTaskRequestWithAutoDuration(c, info, constant.TaskActionGenerate, seedancepricing.Seedance25Model)
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -496,6 +530,17 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		Model:   req.Model,
 		Content: []ContentItem{},
 	}
+	for _, item := range req.Content {
+		encoded, err := common.Marshal(item)
+		if err != nil {
+			return nil, errors.Wrap(err, "marshal content item failed")
+		}
+		var contentItem ContentItem
+		if err := common.Unmarshal(encoded, &contentItem); err != nil {
+			return nil, errors.Wrap(err, "unmarshal content item failed")
+		}
+		r.Content = append(r.Content, contentItem)
+	}
 
 	// Add images if present
 	if req.HasImage() {
@@ -517,10 +562,10 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	if r.Resolution == "" {
 		r.Resolution = req.Resolution
 	}
-	if r.Duration == nil && req.Duration > 0 {
+	if r.Duration == nil && req.Duration != 0 {
 		r.Duration = lo.ToPtr(dto.IntValue(req.Duration))
 	}
-	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
+	if sec, _ := strconv.Atoi(req.Seconds); sec != 0 {
 		r.Duration = lo.ToPtr(dto.IntValue(sec))
 	}
 

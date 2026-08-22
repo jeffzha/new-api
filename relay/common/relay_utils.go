@@ -286,6 +286,17 @@ func isKnownTaskField(field string) bool {
 }
 
 func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *dto.TaskError {
+	return validateBasicTaskRequest(c, info, action, "")
+}
+
+// ValidateTaskRequestWithAutoDuration keeps the common task contract while
+// permitting providers that document duration=-1 to validate that sentinel in
+// their own adapter. All existing adapters continue to use the strict helper.
+func ValidateTaskRequestWithAutoDuration(c *gin.Context, info *RelayInfo, action string, autoDurationModel string) *dto.TaskError {
+	return validateBasicTaskRequest(c, info, action, autoDurationModel)
+}
+
+func validateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string, autoDurationModel string) *dto.TaskError {
 	var err error
 	contentType := c.GetHeader("Content-Type")
 	var req TaskSubmitReq
@@ -304,8 +315,10 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 		return taskErr
 	}
 
-	if taskErr := validateTaskDurationBounds(req); taskErr != nil {
-		return taskErr
+	if !(req.Duration == -1 && req.Model == autoDurationModel) {
+		if taskErr := validateTaskDurationBounds(req); taskErr != nil {
+			return taskErr
+		}
 	}
 
 	if len(req.Images) == 0 && strings.TrimSpace(req.Image) != "" {

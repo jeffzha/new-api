@@ -15,6 +15,7 @@ const (
 	OptionKey             = "seedance_video_pricing.prices_cny"
 	StandardSeedanceModel = "doubao-seedance-2-0-260128"
 	FastSeedanceModel     = "doubao-seedance-2-0-fast-260128"
+	Seedance25Model       = "doubao-seedance-2-5-260628"
 	MaxPriceCNYPerMillion = 1_000_000.0
 
 	WithoutVideoKey = "without_video"
@@ -30,6 +31,7 @@ type Setting struct {
 var requiredResolutions = map[string][]string{
 	StandardSeedanceModel: {"720p", "1080p", "4k"},
 	FastSeedanceModel:     {"default"},
+	Seedance25Model:       {"720p", "1080p"},
 }
 
 var defaultPricesCNY = PricesCNY{
@@ -51,6 +53,21 @@ var defaultPricesCNY = PricesCNY{
 		"default": {
 			WithoutVideoKey: 37,
 			WithVideoKey:    22,
+		},
+	},
+	Seedance25Model: {
+		// The official 480P and 720P tiers have the same list price, so
+		// 480P is normalized to this tier during billing.
+		"720p": {
+			WithoutVideoKey: 70,
+			WithVideoKey:    42,
+		},
+		// The console's temporary 72%-discounted prices are 55.44/33.12.
+		// Store the restored official list prices: 55.44/0.72=77 and
+		// 33.12/0.72=46 CNY per million tokens.
+		"1080p": {
+			WithoutVideoKey: 77,
+			WithVideoKey:    46,
 		},
 	},
 }
@@ -120,6 +137,19 @@ func ValidatePricesCNY(prices PricesCNY) error {
 }
 
 func RebuildPriceIndex() error {
+	// Deployments upgraded from the Seedance 2.0-only schema must retain all
+	// customized 2.0 prices. Add only the new 2.5 defaults in memory; future
+	// saves from the settings page write the complete three-model matrix.
+	if len(seedanceVideoPricing.PricesCNY) == 2 {
+		_, hasStandard := seedanceVideoPricing.PricesCNY[StandardSeedanceModel]
+		_, hasFast := seedanceVideoPricing.PricesCNY[FastSeedanceModel]
+		_, hasSeedance25 := seedanceVideoPricing.PricesCNY[Seedance25Model]
+		if hasStandard && hasFast && !hasSeedance25 {
+			prices := clonePrices(seedanceVideoPricing.PricesCNY)
+			prices[Seedance25Model] = clonePrices(defaultPricesCNY)[Seedance25Model]
+			seedanceVideoPricing.PricesCNY = prices
+		}
+	}
 	if err := ValidatePricesCNY(seedanceVideoPricing.PricesCNY); err != nil {
 		return err
 	}
@@ -165,6 +195,16 @@ func NormalizeResolution(modelName string, resolution string) (string, bool) {
 	}
 	if modelName == FastSeedanceModel {
 		return "default", true
+	}
+	if modelName == Seedance25Model {
+		switch strings.ToLower(strings.TrimSpace(resolution)) {
+		case "", "480p", "720p":
+			return "720p", true
+		case "1080p":
+			return "1080p", true
+		default:
+			return "", false
+		}
 	}
 	switch strings.ToLower(strings.TrimSpace(resolution)) {
 	case "1080p":

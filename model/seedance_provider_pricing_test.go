@@ -20,6 +20,7 @@ func TestSeedanceProviderPricingMatrixByPublicModel(t *testing.T) {
 		seedancepricing.StandardSeedanceModel,
 		mobileCloudSeedanceModel,
 		seedancepricing.FastSeedanceModel,
+		seedancepricing.Seedance25Model,
 		"gpt-4o",
 	} {
 		insertPricingEndpointAbility(t, 601, modelName)
@@ -50,6 +51,11 @@ func TestSeedanceProviderPricingMatrixByPublicModel(t *testing.T) {
 			model:           seedancepricing.FastSeedanceModel,
 			wantResolutions: []string{"default"},
 		},
+		{
+			name:            "Seedance 2.5 exposes only official resolutions",
+			model:           seedancepricing.Seedance25Model,
+			wantResolutions: []string{"480p", "720p", "1080p"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -73,6 +79,14 @@ func TestSeedanceProviderPricingMatrixByPublicModel(t *testing.T) {
 					WithoutVideo: 37,
 					WithVideo:    22,
 				}, providerPricing.Tiers[0])
+			} else if tt.model == seedancepricing.Seedance25Model {
+				assert.Equal(t, VideoTokenPricingTier{
+					Resolution:   "480p",
+					WithoutVideo: 70,
+					WithVideo:    42,
+				}, providerPricing.Tiers[0])
+				assert.Equal(t, 77.0, providerPricing.Tiers[2].WithoutVideo)
+				assert.Equal(t, 46.0, providerPricing.Tiers[2].WithVideo)
 			} else {
 				assert.Equal(t, VideoTokenPricingTier{
 					Resolution:   tt.wantResolutions[0],

@@ -90,6 +90,7 @@ routes:
         - doubao-seedance-2-0-filter-off
         - dreamina-seedance-2-0-mini
         - dreamina-seedance-2-0-mini-filter-off
+        - dreamina-seedance-2-5-filter-off
       upstream_base_url: https://asset.wetoken.ai
       upstream_api_key_env: HWD_WETOKEN_API_KEY
       asset_namespace_id: wetoken-oversea
@@ -112,6 +113,7 @@ routes:
         - doubao-seedance-2-0-fast-filter-off
         - doubao-seedance-2-0-filter-off
         - dreamina-seedance-2-0-mini-filter-off
+        - dreamina-seedance-2-5-filter-off
       upstream_base_url: https://foxtoken.linkomobile.com
       upstream_api_key_env: HWD_HWDRAMA_API_KEY
       asset_namespace_id: hwdrama-oversea
@@ -126,6 +128,7 @@ routes:
         - doubao-seedance-2-0-fast-filter-off
         - doubao-seedance-2-0-filter-off
         - dreamina-seedance-2-0-mini-filter-off
+        - dreamina-seedance-2-5-filter-off
       upstream_base_url: https://foxtoken.linkomobile.com
       upstream_api_key_env: HWD_FISSIONFORMAL_API_KEY
       asset_namespace_id: hwdrama-oversea

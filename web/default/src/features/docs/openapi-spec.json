@@ -25,7 +25,8 @@
       "name": "图片生成/Qwen千问"
     },
     {
-      "name": "视频生成"
+      "name": "视频生成",
+      "description": "统一视频生成接口。Seedance 2.5 支持文本、图片、视频和音频组合参考；多模态表示组合输入，最终输出仍为视频。"
     },
     {
       "name": "视频生成/Sora兼容格式"
@@ -70,7 +71,8 @@
       "name": "未实现/Files"
     },
     {
-      "name": "视频生成/火山原生v3"
+      "name": "视频生成/火山原生v3",
+      "description": "使用 content 数组提交文本、图片、视频和音频参考素材。Seedance 2.5 支持普通多模态生成、视频编辑和视频延长。"
     },
     {
       "name": "火山虚拟人像库"
@@ -79,7 +81,8 @@
       "name": "火山真人人像库"
     },
     {
-      "name": "Seedance 海外素材库"
+      "name": "Seedance 海外素材库",
+      "description": "创建和查询 Seedance 海外素材。素材状态变为 Active 后，可通过 asset://asset-id 在视频生成请求中引用。"
     },
     {
       "name": "Seedance 海外全套 API",
@@ -1205,7 +1208,7 @@
       "post": {
         "summary": "创建视频生成任务",
         "deprecated": false,
-        "description": "提交 Seedance 海外视频生成任务，支持文生视频和图生视频。返回的是网关生成的下游任务 ID，可通过 GET /v1/video/generations/{task_id} 查询。\n\n使用素材库时，将已处于 Active 状态的素材 ID 写成 asset://asset-xxx，放入 metadata.content[].image_url.url。输出比例必须传 metadata.ratio；不要只传顶层 ratio 或 aspect_ratio。每个参考素材必须显式填写 role，例如首帧图片使用 first_frame，多图参考使用 reference_image，参考视频使用 reference_video，参考音频使用 reference_audio。",
+        "description": "提交视频生成任务，返回的任务 ID 可通过 GET /v1/video/generations/{task_id} 查询。\n\nSeedance 2.5 使用模型 dreamina-seedance-2-5-filter-off，支持文本、图片、视频和音频组合参考，也支持只输入参考音频。多模态表示组合输入，最终输出仍为视频。普通生成支持 4~30 秒；视频编辑使用 metadata.omni_reference_task_type=edit，并硬性要求 metadata.ratio=adaptive、duration=-1、至少一个 role=reference_video 的参考视频，提示词应明确包含修改、替换、删除或编辑意图；视频延长使用 metadata.omni_reference_task_type=extend，并要求 metadata.ratio=adaptive，duration 可为 4~30 或 -1，提示词应明确包含延长或续写意图。\n\n不传 metadata.generate_audio 或传 false 时输出无音频轨道；传 true 时进行音视频联合生成，支持唇形同步及音效与画面对齐。reference_audio 是输入参考音频，与 generate_audio 的输出控制不是同一个参数。\n\n使用素材库时，将已处于 Active 状态的素材 ID 写成 asset://asset-xxx，放入 metadata.content 对应媒体对象的 url。输出比例必须传 metadata.ratio；不要只传顶层 ratio 或 aspect_ratio。每个参考素材必须显式填写 role：首帧图片为 first_frame、尾帧图片为 last_frame、普通参考图为 reference_image、参考视频为 reference_video、参考音频为 reference_audio。Seedance 2.5 当前输出支持 480p 和 720p，多模态参考最多支持 30 张图片。",
         "operationId": "createVideoGeneration",
         "tags": [
           "视频生成"
@@ -1217,23 +1220,50 @@
               "schema": {
                 "$ref": "#/components/schemas/VideoGenerationRequest"
               },
-              "example": {
-                "model": "doubao-seedance-2-0-filter-off",
-                "prompt": "A calm spring landscape with subtle natural movement, stable camera, no text, no audio.",
-                "duration": 4,
-                "resolution": "480p",
-                "metadata": {
-                  "ratio": "1:1",
-                  "generate_audio": false,
-                  "content": [
-                    {
-                      "type": "image_url",
-                      "role": "first_frame",
-                      "image_url": {
-                        "url": "asset://asset-20260721105649-44xzr"
-                      }
+              "examples": {
+                "seedance25Edit": {
+                  "value": {
+                    "model": "dreamina-seedance-2-5-filter-off",
+                    "prompt": "修改参考视频，将画面整体调整为温暖的电影质感，保留人物动作和原有运镜。",
+                    "duration": -1,
+                    "resolution": "480p",
+                    "metadata": {
+                      "omni_reference_task_type": "edit",
+                      "ratio": "adaptive",
+                      "generate_audio": false,
+                      "content": [
+                        {
+                          "type": "video_url",
+                          "role": "reference_video",
+                          "video_url": {
+                            "url": "https://example.com/reference.mp4"
+                          }
+                        }
+                      ]
                     }
-                  ]
+                  }
+                },
+                "seedance25Extend": {
+                  "value": {
+                    "model": "dreamina-seedance-2-5-filter-off",
+                    "prompt": "延长参考视频，续写人物继续向前行走并自然停下的镜头。",
+                    "duration": 4,
+                    "resolution": "480p",
+                    "metadata": {
+                      "omni_reference_task_type": "extend",
+                      "ratio": "adaptive",
+                      "generate_audio": false,
+                      "content": [
+                        {
+                          "type": "video_url",
+                          "role": "reference_video",
+                          "video_url": {
+                            "url": "https://example.com/reference.mp4"
+                          }
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             }
@@ -1252,7 +1282,7 @@
                   "id": "task_V4AazTTN1IkGG5S5YHROjFzqdSy6C2XW",
                   "task_id": "task_V4AazTTN1IkGG5S5YHROjFzqdSy6C2XW",
                   "object": "video",
-                  "model": "doubao-seedance-2-0-filter-off",
+                  "model": "dreamina-seedance-2-5-filter-off",
                   "status": "queued",
                   "progress": 0,
                   "created_at": 1784602637
@@ -2423,7 +2453,7 @@
       "post": {
         "summary": "创建火山原生 v3 视频任务",
         "deprecated": false,
-        "description": "透传火山官方格式，业务 body 与成功响应字段与火山保持一致。",
+        "description": "按原生 v3 结构创建视频任务，参数直接放在请求顶层，文本、图片、视频和音频参考素材通过 content 传入。\n\nSeedance 2.5 使用模型 dreamina-seedance-2-5-filter-off，支持只输入参考音频。普通生成支持 4~30 秒；edit 模式硬性要求 omni_reference_task_type=edit、ratio=adaptive、duration=-1、至少一个 role=reference_video 的参考视频，并在文本提示词中明确修改、替换、删除或编辑意图；extend 模式要求 omni_reference_task_type=extend、ratio=adaptive，duration 支持 4~30 或 -1，并在提示词中明确延长或续写意图。\n\ngenerate_audio 默认为 false，输出无音频轨道；设置为 true 时进行音视频联合生成，支持唇形同步及音效与画面对齐。reference_audio 表示输入参考音频，与 generate_audio 的输出控制不同。Seedance 2.5 当前输出支持 480p 和 720p，多模态参考最多支持 30 张图片。",
         "operationId": "createVolcNativeV3VideoTask",
         "tags": [
           "视频生成/火山原生v3"
@@ -2435,33 +2465,55 @@
               "schema": {
                 "$ref": "#/components/schemas/VolcNativeV3VideoTaskRequest"
               },
-              "example": {
-                "model": "doubao-seedance-2-0-fast-260128",
-                "content": [
-                  {
-                    "type": "text",
-                    "text": "让人物面向镜头自然挥手"
-                  },
-                  {
-                    "type": "image_url",
-                    "image_url": {
-                      "url": "https://example.com/first-frame.png"
-                    },
-                    "role": "first_frame"
-                  },
-                  {
-                    "type": "image_url",
-                    "image_url": {
-                      "url": "https://example.com/reference.png"
-                    },
-                    "role": "reference_image"
+              "examples": {
+                "seedance25Edit": {
+                  "value": {
+                    "model": "dreamina-seedance-2-5-filter-off",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "修改参考视频，将画面整体调整为温暖的电影质感，保留人物动作和原有运镜。"
+                      },
+                      {
+                        "type": "video_url",
+                        "video_url": {
+                          "url": "https://example.com/reference.mp4"
+                        },
+                        "role": "reference_video"
+                      }
+                    ],
+                    "omni_reference_task_type": "edit",
+                    "resolution": "480p",
+                    "ratio": "adaptive",
+                    "duration": -1,
+                    "generate_audio": false,
+                    "watermark": false
                   }
-                ],
-                "resolution": "720p",
-                "ratio": "16:9",
-                "duration": 5,
-                "generate_audio": true,
-                "watermark": false
+                },
+                "seedance25Extend": {
+                  "value": {
+                    "model": "dreamina-seedance-2-5-filter-off",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "延长参考视频，续写人物继续向前行走并自然停下的镜头。"
+                      },
+                      {
+                        "type": "video_url",
+                        "video_url": {
+                          "url": "https://example.com/reference.mp4"
+                        },
+                        "role": "reference_video"
+                      }
+                    ],
+                    "omni_reference_task_type": "extend",
+                    "resolution": "480p",
+                    "ratio": "adaptive",
+                    "duration": 4,
+                    "generate_audio": false,
+                    "watermark": false
+                  }
+                }
               }
             }
           },
@@ -2511,9 +2563,9 @@
           {
             "name": "task_id",
             "in": "path",
-            "description": "火山任务 ID",
+            "description": "创建接口返回的任务 ID",
             "required": true,
-            "example": "cgt-20260629155408-q79sw",
+            "example": "task_V4AazTTN1IkGG5S5YHROjFzqdSy6C2XW",
             "schema": {
               "type": "string"
             }
@@ -3094,7 +3146,7 @@
       "post": {
         "summary": "CreateAsset",
         "deprecated": false,
-        "description": "Seedance 海外素材库显式创建素材接口。请求按海外素材接口风格提交，成功后返回可在生成接口使用的 asset id，不转换为 mat_xxx。",
+        "description": "创建 Seedance 海外素材。Seedance 2.5 的 model 必须填写 dreamina-seedance-2-5-filter-off。创建成功返回 asset id，但素材只有在 GetAsset 查询到 Status=Active 后才可用于视频生成。创建、查询和视频生成应使用相同的 model 与 API Key。素材 URL 必须能通过公网直接访问，不应依赖登录状态或额外请求头，并应在素材处理完成前保持有效。",
         "operationId": "createSeedanceOverseasAsset",
         "tags": [
           "Seedance 海外素材库"
@@ -3107,7 +3159,7 @@
                 "$ref": "#/components/schemas/SeedanceOverseasCreateAssetRequest"
               },
               "example": {
-                "model": "doubao-seedance-2-0-filter-off",
+                "model": "dreamina-seedance-2-5-filter-off",
                 "url": "https://example.com/person.png",
                 "name": "reference-image",
                 "AssetType": "Image"
@@ -3165,7 +3217,7 @@
       "post": {
         "summary": "GetAsset",
         "deprecated": false,
-        "description": "Seedance 海外素材库显式查询素材接口。仅允许查询当前用户/API Key 创建或可访问的素材，响应返回素材详情。",
+        "description": "查询 Seedance 海外素材状态和详情。Seedance 2.5 的 model 必须填写 dreamina-seedance-2-5-filter-off，并与创建素材时保持一致。Status=Processing 表示仍在处理，Status=Active 表示可在视频生成 content 中按 asset://asset-id 使用，Status=Failed 表示处理失败。",
         "operationId": "getSeedanceOverseasAsset",
         "tags": [
           "Seedance 海外素材库"
@@ -3178,7 +3230,7 @@
                 "$ref": "#/components/schemas/SeedanceOverseasGetAssetRequest"
               },
               "example": {
-                "model": "doubao-seedance-2-0-filter-off",
+                "model": "dreamina-seedance-2-5-filter-off",
                 "Id": "asset-xxx"
               }
             }
@@ -6291,12 +6343,12 @@
       },
       "VideoGenerationRequest": {
         "type": "object",
-        "description": "统一视频生成任务请求。JSON 请求按统一视频任务参数解析；Seedance 等模型的随机种子请放在 metadata.seed，顶层 seed 不会被解析。Seedance 输出比例请传 metadata.ratio；图片、视频、音频参考素材请通过 metadata.content 传入并显式填写 role。素材库素材请在 metadata.content[].image_url.url 中传 asset://asset-xxx。",
+        "description": "统一视频生成任务请求。Seedance 2.5 使用 dreamina-seedance-2-5-filter-off，支持普通多模态生成、视频编辑和视频延长。随机种子请放在 metadata.seed，顶层 seed 不会被解析；输出比例请传 metadata.ratio；图片、视频、音频参考素材请通过 metadata.content 传入并显式填写 role。素材库素材请使用 asset://asset-xxx。",
         "properties": {
           "model": {
             "type": "string",
             "description": "模型 ID",
-            "example": "doubao-seedance-2-0-filter-off"
+            "example": "dreamina-seedance-2-5-filter-off"
           },
           "prompt": {
             "type": "string",
@@ -6362,7 +6414,7 @@
           },
           "duration": {
             "type": "integer",
-            "description": "视频时长（秒），当前建议传整数秒，例如 5。",
+            "description": "视频时长（秒）。Seedance 2.5 普通生成支持 4~30；edit 模式必须为 -1；extend 模式支持 4~30 或 -1。",
             "example": 5
           },
           "seconds": {
@@ -6372,9 +6424,32 @@
           },
           "metadata": {
             "type": "object",
-            "description": "模型扩展参数。Seedance 输出比例请传 metadata.ratio；随机种子请传 metadata.seed；参考图片、视频、音频请传 metadata.content，并为每个素材显式填写 role。海外 Seedance 图片参考仅支持公网 HTTP(S) 图片 URL 或已创建素材的 asset://asset-xxx。",
+            "description": "模型扩展参数。Seedance 2.5 的任务模式、输出比例、音频开关、随机种子和多模态素材均通过 metadata 传入。",
             "additionalProperties": true,
             "properties": {
+              "omni_reference_task_type": {
+                "type": "string",
+                "enum": [
+                  "edit",
+                  "extend"
+                ],
+                "description": "Seedance 2.5 多模态任务类型。edit 表示视频编辑，extend 表示视频延长；普通多模态生成不传。",
+                "example": "edit"
+              },
+              "ratio": {
+                "type": "string",
+                "enum": [
+                  "16:9",
+                  "4:3",
+                  "1:1",
+                  "3:4",
+                  "9:16",
+                  "21:9",
+                  "adaptive"
+                ],
+                "description": "输出画面比例。edit 和 extend 模式必须填写 adaptive。",
+                "example": "adaptive"
+              },
               "seed": {
                 "type": "integer",
                 "description": "Seedance 随机种子；JSON 请求不要放在顶层 seed。",
@@ -6382,15 +6457,57 @@
               },
               "generate_audio": {
                 "type": "boolean",
-                "description": "是否生成音频",
-                "example": true
+                "default": false,
+                "description": "是否进行音视频联合生成。默认 false，输出没有音频轨道；true 支持唇形同步及音效与画面对齐。reference_audio 是输入参考音频，与本字段作用不同。",
+                "example": false
+              },
+              "watermark": {
+                "type": "boolean",
+                "default": false,
+                "description": "是否添加水印。",
+                "example": false
               },
               "content": {
                 "type": "array",
-                "description": "provider-specific 多模态参考内容，如 image_url、video_url、audio_url。Seedance 必须为素材显式填写 role：单图首帧用 first_frame，多图参考用 reference_image，参考视频用 reference_video，参考音频用 reference_audio。海外 Seedance 图片参考的 image_url.url 支持公网图片 URL 或已创建素材的 asset://asset-xxx。",
+                "description": "多模态参考内容。Seedance 2.5 最多支持 30 张参考图片；素材 URL 必须能直接访问，素材库素材可使用 asset://asset-id。每项都必须填写与用途匹配的 role。",
                 "items": {
                   "type": "object",
-                  "additionalProperties": true
+                  "additionalProperties": true,
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "image_url",
+                        "video_url",
+                        "audio_url"
+                      ],
+                      "description": "素材类型。"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "first_frame",
+                        "last_frame",
+                        "reference_image",
+                        "reference_video",
+                        "reference_audio"
+                      ],
+                      "description": "素材角色：首帧、尾帧、普通参考图、参考视频或参考音频。"
+                    },
+                    "image_url": {
+                      "$ref": "#/components/schemas/VolcNativeV3URLObject"
+                    },
+                    "video_url": {
+                      "$ref": "#/components/schemas/VolcNativeV3URLObject"
+                    },
+                    "audio_url": {
+                      "$ref": "#/components/schemas/VolcNativeV3URLObject"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "role"
+                  ]
                 }
               }
             }
@@ -6497,7 +6614,7 @@
           "model": {
             "type": "string",
             "description": "下游请求使用的模型名称。",
-            "example": "doubao-seedance-2-0-filter-off"
+            "example": "dreamina-seedance-2-5-filter-off"
           },
           "status": {
             "type": "string",
@@ -7159,7 +7276,7 @@
       },
       "VolcNativeV3ContentItem": {
         "type": "object",
-        "description": "火山 content 元素，按 type 使用 text、image_url、video_url、audio_url 或 draft_task。",
+        "description": "原生 v3 content 元素，按 type 使用 text、image_url、video_url、audio_url 或 draft_task。每个媒体素材必须填写 role。Seedance 2.5 最多支持 30 张多模态参考图片。",
         "properties": {
           "type": {
             "type": "string",
@@ -7189,6 +7306,7 @@
           },
           "role": {
             "type": "string",
+            "description": "媒体素材角色：first_frame 首帧、last_frame 尾帧、reference_image 普通参考图、reference_video 参考视频、reference_audio 参考音频。",
             "enum": [
               "first_frame",
               "last_frame",
@@ -7205,7 +7323,7 @@
       },
       "VolcNativeV3VideoTaskRequest": {
         "type": "object",
-        "description": "火山原生 v3 视频任务请求，业务 body 按火山官方格式透传。",
+        "description": "原生 v3 视频任务请求。Seedance 2.5 的参数直接放在请求顶层，多模态输入放在 content 中。",
         "required": [
           "model",
           "content"
@@ -7214,8 +7332,8 @@
         "properties": {
           "model": {
             "type": "string",
-            "description": "火山模型 ID",
-            "example": "doubao-seedance-2-0-fast-260128"
+            "description": "平台提供的视频模型名称。Seedance 2.5 使用 dreamina-seedance-2-5-filter-off。",
+            "example": "dreamina-seedance-2-5-filter-off"
           },
           "content": {
             "type": "array",
@@ -7241,7 +7359,8 @@
           },
           "generate_audio": {
             "type": "boolean",
-            "description": "是否生成音频"
+            "default": false,
+            "description": "是否进行音视频联合生成。默认 false，输出没有音频轨道；true 支持唇形同步及音效与画面对齐。reference_audio 是输入参考音频，与本字段作用不同。"
           },
           "draft": {
             "type": "object",
@@ -7266,18 +7385,36 @@
           },
           "resolution": {
             "type": "string",
-            "description": "输出分辨率",
-            "example": "720p"
+            "description": "输出分辨率。Seedance 2.5 当前支持 480p 和 720p。",
+            "example": "480p"
           },
           "ratio": {
             "type": "string",
-            "description": "画面比例",
-            "example": "16:9"
+            "description": "画面比例。Seedance 2.5 的 edit 和 extend 模式必须为 adaptive。",
+            "enum": [
+              "16:9",
+              "4:3",
+              "1:1",
+              "3:4",
+              "9:16",
+              "21:9",
+              "adaptive"
+            ],
+            "example": "adaptive"
+          },
+          "omni_reference_task_type": {
+            "type": "string",
+            "enum": [
+              "edit",
+              "extend"
+            ],
+            "description": "Seedance 2.5 多模态任务类型。edit 表示视频编辑，extend 表示视频延长；普通多模态生成不传。",
+            "example": "edit"
           },
           "duration": {
             "type": "integer",
-            "description": "视频时长，单位秒",
-            "example": 5
+            "description": "视频时长，单位秒。Seedance 2.5 普通生成支持 4~30；edit 模式必须为 -1；extend 模式支持 4~30 或 -1。",
+            "example": -1
           },
           "frames": {
             "type": "integer",
@@ -7303,8 +7440,8 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "火山任务 ID",
-            "example": "cgt-20260629155408-q79sw"
+            "description": "创建接口返回的任务 ID",
+            "example": "task_V4AazTTN1IkGG5S5YHROjFzqdSy6C2XW"
           }
         }
       },
@@ -7315,10 +7452,11 @@
         "properties": {
           "id": {
             "type": "string",
-            "example": "cgt-20260629155408-q79sw"
+            "example": "task_V4AazTTN1IkGG5S5YHROjFzqdSy6C2XW"
           },
           "model": {
-            "type": "string"
+            "type": "string",
+            "example": "dreamina-seedance-2-5-filter-off"
           },
           "status": {
             "type": "string",
@@ -7674,7 +7812,7 @@
       },
       "SeedanceOverseasCreateAssetRequest": {
         "type": "object",
-        "description": "Seedance 海外素材库 CreateAsset 请求。url/URL 二选一，name/Name 二选一。",
+        "description": "Seedance 海外素材库 CreateAsset 请求。url/URL 二选一，name/Name 二选一。Seedance 2.5 使用 dreamina-seedance-2-5-filter-off；创建、查询和视频生成应使用相同的 model 与 API Key。",
         "required": [
           "model",
           "AssetType"
@@ -7694,20 +7832,22 @@
         "properties": {
           "model": {
             "type": "string",
-            "description": "Seedance 海外素材模型",
+            "description": "Seedance 海外素材模型。Seedance 2.5 固定使用 dreamina-seedance-2-5-filter-off。",
             "enum": [
               "doubao-seedance-2-0-filter-off",
               "doubao-seedance-2-0-fast-filter-off",
-              "dreamina-seedance-2-0-mini-filter-off"
-            ]
+              "dreamina-seedance-2-0-mini-filter-off",
+              "dreamina-seedance-2-5-filter-off"
+            ],
+            "example": "dreamina-seedance-2-5-filter-off"
           },
           "url": {
             "type": "string",
-            "description": "可公网访问的素材 URL"
+            "description": "可公网直接访问的素材 URL，不应依赖登录状态或额外请求头，并应在素材处理完成前保持有效。"
           },
           "URL": {
             "type": "string",
-            "description": "可公网访问的素材 URL"
+            "description": "url 的兼容字段。可公网直接访问，不应依赖登录状态或额外请求头，并应在素材处理完成前保持有效。"
           },
           "name": {
             "type": "string",
@@ -7746,7 +7886,7 @@
       },
       "SeedanceOverseasGetAssetRequest": {
         "type": "object",
-        "description": "Seedance 海外素材库 GetAsset 请求。",
+        "description": "Seedance 海外素材库 GetAsset 请求。model 必须与创建素材时一致；Seedance 2.5 使用 dreamina-seedance-2-5-filter-off。",
         "required": [
           "model",
           "Id"
@@ -7754,12 +7894,14 @@
         "properties": {
           "model": {
             "type": "string",
-            "description": "Seedance 海外素材模型",
+            "description": "Seedance 海外素材模型。Seedance 2.5 固定使用 dreamina-seedance-2-5-filter-off。",
             "enum": [
               "doubao-seedance-2-0-filter-off",
               "doubao-seedance-2-0-fast-filter-off",
-              "dreamina-seedance-2-0-mini-filter-off"
-            ]
+              "dreamina-seedance-2-0-mini-filter-off",
+              "dreamina-seedance-2-5-filter-off"
+            ],
+            "example": "dreamina-seedance-2-5-filter-off"
           },
           "Id": {
             "type": "string",
@@ -7795,7 +7937,7 @@
           },
           "Status": {
             "type": "string",
-            "description": "素材状态",
+            "description": "素材状态。Processing 表示处理中；Active 表示可按 asset://asset-id 用于视频生成；Failed 表示处理失败。",
             "example": "Active"
           },
           "URL": {

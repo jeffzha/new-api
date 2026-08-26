@@ -1208,7 +1208,7 @@
       "post": {
         "summary": "创建视频生成任务",
         "deprecated": false,
-        "description": "提交视频生成任务，返回的任务 ID 可通过 GET /v1/video/generations/{task_id} 查询。\n\nSeedance 2.5 使用模型 dreamina-seedance-2-5-filter-off，支持文本、图片、视频和音频组合参考，也支持只输入参考音频。多模态表示组合输入，最终输出仍为视频。普通生成支持 4~30 秒；视频编辑使用 metadata.omni_reference_task_type=edit，并硬性要求 metadata.ratio=adaptive、duration=-1、至少一个 role=reference_video 且时长为 4~30 秒的参考视频，提示词应明确包含修改、替换、删除或编辑意图；视频延长使用 metadata.omni_reference_task_type=extend，并要求 metadata.ratio=adaptive，duration 可为 4~30 或 -1，提示词应明确包含延长或续写意图。\n\n不传 metadata.generate_audio 或传 false 时输出无音频轨道；传 true 时进行音视频联合生成，支持唇形同步及音效与画面对齐。reference_audio 是输入参考音频，与 generate_audio 的输出控制不是同一个参数。\n\n使用素材库时，将已处于 Active 状态的素材 ID 写成 asset://asset-xxx，放入 metadata.content 对应媒体对象的 url。输出比例必须传 metadata.ratio；不要只传顶层 ratio 或 aspect_ratio。每个参考素材必须显式填写 role：首帧图片为 first_frame、尾帧图片为 last_frame、普通参考图为 reference_image、参考视频为 reference_video、参考音频为 reference_audio。Seedance 2.5 当前输出支持 480p 和 720p，多模态参考最多支持 30 张图片。",
+        "description": "提交视频生成任务，返回的任务 ID 可通过 GET /v1/video/generations/{task_id} 查询。\n\nSeedance 2.5 使用模型 dreamina-seedance-2-5-filter-off，支持文本、图片、视频和音频组合参考，也支持只输入参考音频。多模态表示组合输入，最终输出仍为视频。普通生成支持 4～30 秒；视频编辑使用 metadata.omni_reference_task_type=edit，并硬性要求 metadata.ratio=adaptive、duration=-1、至少一个 role=reference_video 且时长为 4～30 秒的参考视频，提示词应明确包含修改、替换、删除或编辑意图；视频延长使用 metadata.omni_reference_task_type=extend，并要求 metadata.ratio=adaptive，duration 可为 4～30 或 -1，提示词应明确包含延长或续写意图。\n\n不传 metadata.generate_audio 或传 false 时输出无音频轨道；传 true 时进行音视频联合生成，支持唇形同步及音效与画面对齐。reference_audio 是输入参考音频，与 generate_audio 的输出控制不是同一个参数。\n\n使用素材库时，将已处于 Active 状态的素材 ID 写成 asset://asset-xxx，放入 metadata.content 对应媒体对象的 url。输出比例必须传 metadata.ratio；不要只传顶层 ratio 或 aspect_ratio。每个参考素材必须显式填写 role：首帧图片为 first_frame、尾帧图片为 last_frame、普通参考图为 reference_image、参考视频为 reference_video、参考音频为 reference_audio。Seedance 2.5 当前输出支持 480p 和 720p，多模态参考最多支持 30 张图片。",
         "operationId": "createVideoGeneration",
         "tags": [
           "视频生成"
@@ -2453,7 +2453,7 @@
       "post": {
         "summary": "创建火山原生 v3 视频任务",
         "deprecated": false,
-        "description": "按原生 v3 结构创建视频任务，参数直接放在请求顶层，文本、图片、视频和音频参考素材通过 content 传入。\n\nSeedance 2.5 使用模型 dreamina-seedance-2-5-filter-off，支持只输入参考音频。普通生成支持 4~30 秒；edit 模式硬性要求 omni_reference_task_type=edit、ratio=adaptive、duration=-1、至少一个 role=reference_video 且时长为 4~30 秒的参考视频，并在文本提示词中明确修改、替换、删除或编辑意图；extend 模式要求 omni_reference_task_type=extend、ratio=adaptive，duration 支持 4~30 或 -1，并在提示词中明确延长或续写意图。\n\ngenerate_audio 默认为 false，输出无音频轨道；设置为 true 时进行音视频联合生成，支持唇形同步及音效与画面对齐。reference_audio 表示输入参考音频，与 generate_audio 的输出控制不同。Seedance 2.5 当前输出支持 480p 和 720p，多模态参考最多支持 30 张图片。",
+        "description": "按原生 v3 结构创建视频任务，参数直接放在请求顶层，文本、图片、视频和音频参考素材通过 content 传入。\n\nSeedance 2.5 使用模型 dreamina-seedance-2-5-filter-off，支持只输入参考音频。普通生成支持 4～30 秒；edit 模式硬性要求 omni_reference_task_type=edit、ratio=adaptive、duration=-1、至少一个 role=reference_video 且时长为 4～30 秒的参考视频，并在文本提示词中明确修改、替换、删除或编辑意图；extend 模式要求 omni_reference_task_type=extend、ratio=adaptive，duration 支持 4～30 或 -1，并在提示词中明确延长或续写意图。\n\ngenerate_audio 默认为 false，输出无音频轨道；设置为 true 时进行音视频联合生成，支持唇形同步及音效与画面对齐。reference_audio 表示输入参考音频，与 generate_audio 的输出控制不同。Seedance 2.5 当前输出支持 480p 和 720p，多模态参考最多支持 30 张图片。",
         "operationId": "createVolcNativeV3VideoTask",
         "tags": [
           "视频生成/火山原生v3"
@@ -6414,7 +6414,7 @@
           },
           "duration": {
             "type": "integer",
-            "description": "视频时长（秒）。Seedance 2.5 普通生成支持 4~30；edit 模式必须为 -1；extend 模式支持 4~30 或 -1。",
+            "description": "视频时长（秒）。Seedance 2.5 普通生成支持 4～30；edit 模式必须为 -1；extend 模式支持 4～30 或 -1。",
             "example": 5
           },
           "seconds": {
@@ -6433,7 +6433,7 @@
                   "edit",
                   "extend"
                 ],
-                "description": "Seedance 2.5 多模态任务类型。edit 表示视频编辑，必须提供时长为 4~30 秒的 reference_video；extend 表示视频延长；普通多模态生成不传。",
+                "description": "Seedance 2.5 多模态任务类型。edit 表示视频编辑，必须提供时长为 4～30 秒的 reference_video；extend 表示视频延长；普通多模态生成不传。",
                 "example": "edit"
               },
               "ratio": {
@@ -7408,12 +7408,12 @@
               "edit",
               "extend"
             ],
-            "description": "Seedance 2.5 多模态任务类型。edit 表示视频编辑，必须提供时长为 4~30 秒的 reference_video；extend 表示视频延长；普通多模态生成不传。",
+            "description": "Seedance 2.5 多模态任务类型。edit 表示视频编辑，必须提供时长为 4～30 秒的 reference_video；extend 表示视频延长；普通多模态生成不传。",
             "example": "edit"
           },
           "duration": {
             "type": "integer",
-            "description": "视频时长，单位秒。Seedance 2.5 普通生成支持 4~30；edit 模式必须为 -1；extend 模式支持 4~30 或 -1。",
+            "description": "视频时长，单位秒。Seedance 2.5 普通生成支持 4～30；edit 模式必须为 -1；extend 模式支持 4～30 或 -1。",
             "example": -1
           },
           "frames": {

@@ -2727,7 +2727,7 @@
             "name": "GroupId",
             "in": "query",
             "description": "素材组 ID",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }

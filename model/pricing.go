@@ -9,7 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -36,6 +36,7 @@ type Pricing struct {
 	BillingMode            string                  `json:"billing_mode,omitempty"`
 	BillingExpr            string                  `json:"billing_expr,omitempty"`
 	PricingVersion         string                  `json:"pricing_version,omitempty"`
+	ProviderPricing        *ProviderPricing        `json:"provider_pricing,omitempty"`
 }
 
 type PricingVendor struct {
@@ -406,6 +407,7 @@ func updatePricing() {
 				pricing.BillingExpr = expr
 			}
 		}
+		pricing.ProviderPricing = getProviderPricing(model)
 		pricingMap = append(pricingMap, pricing)
 	}
 

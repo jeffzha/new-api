@@ -134,6 +134,8 @@ func runActionAdd(args []string) error {
 	path := fs.String("path", "", "downstream path")
 	upstreamMethod := fs.String("upstream-method", "", "default upstream method")
 	upstreamPath := fs.String("upstream-path", "", "default upstream path")
+	affinityResponseField := fs.String("affinity-response-field", "", "JSON field containing an asset ID to bind to this route")
+	affinityPathParam := fs.String("affinity-path-param", "", "downstream path parameter containing an asset ID to bind to this route")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -162,6 +164,8 @@ func runActionAdd(args []string) error {
 		DownstreamPath:        *path,
 		DefaultUpstreamMethod: *upstreamMethod,
 		DefaultUpstreamPath:   *upstreamPath,
+		AffinityResponseField: *affinityResponseField,
+		AffinityPathParam:     *affinityPathParam,
 	}
 	if err := writeValidatedConfig(*configPath, "", config); err != nil {
 		return err
@@ -216,8 +220,25 @@ func runConfigWizard(args []string) error {
 	modelsDefault := strings.Join(channel.GetModels(), ",")
 	models := promptStringList(reader, "Models (comma-separated, or *)", modelsDefault)
 	upstreamBaseURL := promptString(reader, "Upstream base URL", channel.GetBaseURL())
-	upstreamAPIKeyEnv := promptString(reader, "Upstream API key env", "HWD_"+strings.ToUpper(sanitizeEnvName(routeName))+"_API_KEY")
+	upstreamAuthType := promptString(reader, "Upstream auth type (header or mobile_cloud_aksk)", hwdramaproxy.UpstreamAuthTypeHeader)
+	upstreamAPIKeyEnv := ""
+	upstreamAuthHeader := ""
+	upstreamAuthPrefix := ""
+	upstreamAccessKeyEnv := ""
+	upstreamSecretKeyEnv := ""
+	if strings.EqualFold(upstreamAuthType, hwdramaproxy.UpstreamAuthTypeMobileCloudAKSK) {
+		upstreamAccessKeyEnv = promptString(reader, "Mobile Cloud access key env", "MOBILE_CLOUD_MAAS_ACCESS_KEY")
+		upstreamSecretKeyEnv = promptString(reader, "Mobile Cloud secret key env", "MOBILE_CLOUD_MAAS_SECRET_KEY")
+	} else {
+		upstreamAPIKeyEnv = promptString(reader, "Upstream API key env", "HWD_"+strings.ToUpper(sanitizeEnvName(routeName))+"_API_KEY")
+		upstreamAuthHeader = promptString(reader, "Upstream auth header", "Authorization")
+		upstreamAuthPrefix = promptString(reader, "Upstream auth prefix (empty for a raw key)", map[bool]string{true: "Bearer", false: ""}[strings.EqualFold(upstreamAuthHeader, "Authorization")])
+	}
 	assetNamespaceID := promptString(reader, "Asset namespace ID", slug(channel.Name))
+	assetScopeID := ""
+	if strings.EqualFold(upstreamAuthType, hwdramaproxy.UpstreamAuthTypeMobileCloudAKSK) {
+		assetScopeID = promptString(reader, "Asset scope ID (share one value across one customer's API keys)", slug(routeName))
+	}
 
 	for {
 		if len(config.Actions) > 0 {
@@ -234,11 +255,19 @@ func runConfigWizard(args []string) error {
 		downstreamPath := promptString(reader, "Downstream path", "")
 		defaultUpstreamMethod := promptString(reader, "Default upstream method", downstreamMethod)
 		defaultUpstreamPath := promptString(reader, "Default upstream path", downstreamPath)
+		affinityResponseField := promptString(reader, "Affinity response field (empty to disable)", "")
+		affinityPathParam := promptString(reader, "Affinity path parameter (empty to disable)", "")
+		scopeOperation := promptString(reader, "Asset scope operation (required for Mobile Cloud actions)", "")
+		scopePathParam := promptString(reader, "Asset scope path parameter (required for get/update/delete actions)", "")
 		config.Actions[actionKey] = hwdramaproxy.ActionConfig{
 			DownstreamMethod:      downstreamMethod,
 			DownstreamPath:        downstreamPath,
 			DefaultUpstreamMethod: defaultUpstreamMethod,
 			DefaultUpstreamPath:   defaultUpstreamPath,
+			AffinityResponseField: affinityResponseField,
+			AffinityPathParam:     affinityPathParam,
+			ScopeOperation:        scopeOperation,
+			ScopePathParam:        scopePathParam,
 		}
 	}
 
@@ -264,8 +293,14 @@ func runConfigWizard(args []string) error {
 		ChannelID:               channelID,
 		Models:                  models,
 		UpstreamBaseURL:         upstreamBaseURL,
+		UpstreamAuthType:        upstreamAuthType,
 		UpstreamAPIKeyEnv:       upstreamAPIKeyEnv,
+		UpstreamAuthHeader:      upstreamAuthHeader,
+		UpstreamAuthPrefix:      upstreamAuthPrefix,
+		UpstreamAccessKeyEnv:    upstreamAccessKeyEnv,
+		UpstreamSecretKeyEnv:    upstreamSecretKeyEnv,
 		AssetNamespaceID:        assetNamespaceID,
+		AssetScopeID:            assetScopeID,
 		EnabledActions:          enabledActions,
 		UpstreamActionOverrides: overrides,
 	})

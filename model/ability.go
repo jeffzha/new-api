@@ -8,7 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -36,6 +36,23 @@ func GetAllEnableAbilityWithChannels() ([]AbilityWithChannel, error) {
 		Select("abilities.*, channels.type as channel_type").
 		Joins("left join channels on abilities.channel_id = channels.id").
 		Where("abilities.enabled = ?", true).
+		Scan(&abilities).Error
+	return abilities, err
+}
+
+// GetEnabledAbilitiesWithChannelsByGroups returns routable model/channel pairs
+// for the groups that may own a request.
+func GetEnabledAbilitiesWithChannelsByGroups(groups []string) ([]AbilityWithChannel, error) {
+	if len(groups) == 0 {
+		return []AbilityWithChannel{}, nil
+	}
+	var abilities []AbilityWithChannel
+	err := DB.Table("abilities").
+		Select("abilities.*, channels.type as channel_type").
+		Joins("join channels on abilities.channel_id = channels.id").
+		Where("abilities.enabled = ?", true).
+		Where("channels.status = ?", common.ChannelStatusEnabled).
+		Where("abilities."+commonGroupCol+" IN ?", groups).
 		Scan(&abilities).Error
 	return abilities, err
 }

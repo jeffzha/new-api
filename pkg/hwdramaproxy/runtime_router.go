@@ -20,12 +20,18 @@ type compiledAction struct {
 }
 
 type compiledRoute struct {
-	name             string
-	channelID        int
-	upstreamBaseURL  *url.URL
-	upstreamAPIKey   string
-	assetNamespaceID string
-	actions          map[string]compiledRouteAction
+	name               string
+	channelID          int
+	upstreamBaseURL    *url.URL
+	upstreamAuthType   string
+	upstreamAPIKey     string
+	upstreamAccessKey  string
+	upstreamSecretKey  string
+	upstreamAuthHeader string
+	upstreamAuthPrefix string
+	assetNamespaceID   string
+	assetScopeID       string
+	actions            map[string]compiledRouteAction
 }
 
 type compiledRouteAction struct {
@@ -46,13 +52,19 @@ type ActionMatch struct {
 }
 
 type RouteMatch struct {
-	RouteName        string
-	ChannelID        int
-	UpstreamBaseURL  *url.URL
-	UpstreamAPIKey   string
-	UpstreamMethod   string
-	UpstreamPath     string
-	AssetNamespaceID string
+	RouteName          string
+	ChannelID          int
+	UpstreamBaseURL    *url.URL
+	UpstreamAuthType   string
+	UpstreamAPIKey     string
+	UpstreamAccessKey  string
+	UpstreamSecretKey  string
+	UpstreamMethod     string
+	UpstreamPath       string
+	AssetNamespaceID   string
+	AssetScopeID       string
+	UpstreamAuthHeader string
+	UpstreamAuthPrefix string
 }
 
 func BuildRuntimeRouter(config *RoutesConfig, secretLookup func(string) string) (*RuntimeRouter, error) {
@@ -92,9 +104,21 @@ func BuildRuntimeRouter(config *RoutesConfig, secretLookup func(string) string) 
 		if err != nil {
 			return nil, fmt.Errorf("route %s upstream_base_url: %w", route.Name, err)
 		}
-		upstreamAPIKey := strings.TrimSpace(secretLookup(route.UpstreamAPIKeyEnv))
-		if upstreamAPIKey == "" {
-			return nil, fmt.Errorf("route %s upstream api key env %s is empty", route.Name, route.UpstreamAPIKeyEnv)
+		var upstreamAPIKey string
+		var upstreamAccessKey string
+		var upstreamSecretKey string
+		switch route.UpstreamAuthType {
+		case UpstreamAuthTypeHeader:
+			upstreamAPIKey = strings.TrimSpace(secretLookup(route.UpstreamAPIKeyEnv))
+			if upstreamAPIKey == "" {
+				return nil, fmt.Errorf("route %s upstream api key env %s is empty", route.Name, route.UpstreamAPIKeyEnv)
+			}
+		case UpstreamAuthTypeMobileCloudAKSK:
+			upstreamAccessKey = strings.TrimSpace(secretLookup(route.UpstreamAccessKeyEnv))
+			upstreamSecretKey = strings.TrimSpace(secretLookup(route.UpstreamSecretKeyEnv))
+			if upstreamAccessKey == "" || upstreamSecretKey == "" {
+				return nil, fmt.Errorf("route %s mobile cloud AK/SK credentials are empty", route.Name)
+			}
 		}
 		routeActions := make(map[string]compiledRouteAction, len(route.EnabledActions))
 		for _, actionKey := range route.EnabledActions {
@@ -115,12 +139,18 @@ func BuildRuntimeRouter(config *RoutesConfig, secretLookup func(string) string) 
 			}
 		}
 		compiled := compiledRoute{
-			name:             route.Name,
-			channelID:        route.ChannelID,
-			upstreamBaseURL:  baseURL,
-			upstreamAPIKey:   upstreamAPIKey,
-			assetNamespaceID: route.AssetNamespaceID,
-			actions:          routeActions,
+			name:               route.Name,
+			channelID:          route.ChannelID,
+			upstreamBaseURL:    baseURL,
+			upstreamAuthType:   route.UpstreamAuthType,
+			upstreamAPIKey:     upstreamAPIKey,
+			upstreamAccessKey:  upstreamAccessKey,
+			upstreamSecretKey:  upstreamSecretKey,
+			upstreamAuthHeader: route.UpstreamAuthHeader,
+			upstreamAuthPrefix: route.UpstreamAuthPrefix,
+			assetNamespaceID:   route.AssetNamespaceID,
+			assetScopeID:       route.AssetScopeID,
+			actions:            routeActions,
 		}
 		for _, apiKeyID := range routeAPIKeyIDs(route) {
 			for _, model := range route.Models {
@@ -210,13 +240,19 @@ func (router *RuntimeRouter) Match(apiKeyID int, model string, action ActionMatc
 	}
 	baseURL := *matched.upstreamBaseURL
 	return RouteMatch{
-		RouteName:        matched.name,
-		ChannelID:        matched.channelID,
-		UpstreamBaseURL:  &baseURL,
-		UpstreamAPIKey:   matched.upstreamAPIKey,
-		UpstreamMethod:   routeAction.method,
-		UpstreamPath:     upstreamPath,
-		AssetNamespaceID: matched.assetNamespaceID,
+		RouteName:          matched.name,
+		ChannelID:          matched.channelID,
+		UpstreamBaseURL:    &baseURL,
+		UpstreamAuthType:   matched.upstreamAuthType,
+		UpstreamAPIKey:     matched.upstreamAPIKey,
+		UpstreamAccessKey:  matched.upstreamAccessKey,
+		UpstreamSecretKey:  matched.upstreamSecretKey,
+		UpstreamMethod:     routeAction.method,
+		UpstreamPath:       upstreamPath,
+		AssetNamespaceID:   matched.assetNamespaceID,
+		AssetScopeID:       matched.assetScopeID,
+		UpstreamAuthHeader: matched.upstreamAuthHeader,
+		UpstreamAuthPrefix: matched.upstreamAuthPrefix,
 	}, true, nil
 }
 
@@ -280,6 +316,15 @@ func (template pathTemplate) Match(path string) (map[string]string, bool) {
 		}
 	}
 	return params, true
+}
+
+func (template pathTemplate) hasVariable(name string) bool {
+	for _, segment := range template.segments {
+		if segment.name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func fillPathTemplate(path string, params map[string]string) (string, error) {

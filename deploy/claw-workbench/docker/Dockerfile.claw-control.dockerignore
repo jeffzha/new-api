@@ -1,0 +1,10 @@
+**
+!claw-control/
+!claw-control/**
+!deploy/
+!deploy/claw-workbench/
+!deploy/claw-workbench/docker/
+!deploy/claw-workbench/docker/entrypoint-control.sh
+claw-control/admin-ui/node_modules
+claw-control/admin-ui/dist
+claw-control/admin-ui/*.tsbuildinfo

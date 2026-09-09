@@ -1,0 +1,11 @@
+{
+	auto_https off
+}
+:9443 {
+	log
+	import /etc/caddy/Caddyfile.public.snippet
+
+	handle {
+		respond 200
+	}
+}

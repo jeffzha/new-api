@@ -8,11 +8,16 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 )
 
 type TaskStatus string
+
+const (
+	TaskBillingSourceWallet       = "wallet"
+	TaskBillingSourceSubscription = "subscription"
+)
 
 func (t TaskStatus) ToVideoStatus() string {
 	var status string
@@ -41,6 +46,10 @@ const (
 	TaskStatusUnknown               = "UNKNOWN"
 )
 
+// TaskRefundLegacyCutoff separates tasks created before timeout refunds were
+// introduced. Those legacy tasks are failed without an automatic refund.
+const TaskRefundLegacyCutoff int64 = 1771718400 // 2026-02-22 00:00:00 UTC
+
 type Task struct {
 	ID         int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
 	CreatedAt  int64                 `json:"created_at" gorm:"index"`
@@ -58,8 +67,12 @@ type Task struct {
 	StartTime  int64                 `json:"start_time" gorm:"index"`
 	FinishTime int64                 `json:"finish_time" gorm:"index"`
 	Progress   string                `json:"progress" gorm:"type:varchar(20);index"`
-	Properties Properties            `json:"properties" gorm:"type:json"`
-	Username   string                `json:"username,omitempty" gorm:"-"`
+	// BillingReconciliationPending is a durable enqueue intent. It is written
+	// with the task so a transient failure creating the reconciliation row can
+	// be recovered by the async task worker.
+	BillingReconciliationPending bool       `json:"-" gorm:"index"`
+	Properties                   Properties `json:"properties" gorm:"type:json"`
+	Username                     string     `json:"username,omitempty" gorm:"-"`
 	// 禁止返回给用户，内部可能包含key等隐私信息
 	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
 	Data        json.RawMessage `json:"data" gorm:"type:json"`
@@ -116,12 +129,27 @@ type TaskEndpointSnapshot struct {
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
 type TaskBillingContext struct {
-	ModelPrice      float64            `json:"model_price,omitempty"`       // 模型单价
-	GroupRatio      float64            `json:"group_ratio,omitempty"`       // 分组倍率
-	ModelRatio      float64            `json:"model_ratio,omitempty"`       // 模型倍率
-	OtherRatios     map[string]float64 `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
-	OriginModelName string             `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
-	PerCallBilling  bool               `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
+	ModelPrice      float64                      `json:"model_price,omitempty"`       // 模型单价
+	GroupRatio      float64                      `json:"group_ratio,omitempty"`       // 分组倍率
+	ModelRatio      float64                      `json:"model_ratio,omitempty"`       // 模型倍率
+	OtherRatios     map[string]float64           `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
+	OriginModelName string                       `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
+	PerCallBilling  bool                         `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
+	ProviderBilling *TaskProviderBillingSnapshot `json:"provider_billing,omitempty"`
+}
+
+// TaskProviderBillingSnapshot freezes provider-specific pricing inputs at
+// submission time so settlement is independent of later configuration changes.
+type TaskProviderBillingSnapshot struct {
+	Provider                    string  `json:"provider"`
+	Currency                    string  `json:"currency"`
+	UnitPricePerMillionTokens   string  `json:"unit_price_per_million_tokens"`
+	CNYPerUSD                   string  `json:"cny_per_usd"`
+	GroupRatio                  float64 `json:"group_ratio"`
+	Resolution                  string  `json:"resolution"`
+	HasVideoInput               bool    `json:"has_video_input"`
+	EstimatedTokens             int64   `json:"estimated_tokens"`
+	AsyncReconciliationRequired bool    `json:"async_reconciliation_required"`
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）
@@ -181,7 +209,9 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 	privateData := TaskPrivateData{}
 	if relayInfo != nil && relayInfo.ChannelMeta != nil {
 		if relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeGemini ||
-			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi {
+			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi ||
+			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeSeedanceDomestic ||
+			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeMobileCloudSeedance {
 			privateData.Key = relayInfo.ChannelMeta.ApiKey
 		}
 		if relayInfo.UpstreamModelName != "" {
@@ -336,20 +366,6 @@ func HasUnfinishedSyncTasks() bool {
 	return err == nil && id != 0
 }
 
-func GetByOnlyTaskId(taskId string) (*Task, bool, error) {
-	if taskId == "" {
-		return nil, false, nil
-	}
-	var task *Task
-	var err error
-	err = DB.Where("task_id = ?", taskId).First(&task).Error
-	exist, err := RecordExist(err)
-	if err != nil {
-		return nil, false, err
-	}
-	return task, exist, err
-}
-
 func GetByTaskId(userId int, taskId string) (*Task, bool, error) {
 	if taskId == "" {
 		return nil, false, nil
@@ -429,7 +445,9 @@ func (t *Task) UpdateQuota() error {
 
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).
 // Returns (true, nil) if this caller won the update, (false, nil) if
-// another process already moved the task out of fromStatus.
+// another process already moved the task out of fromStatus. MySQL commonly
+// reports changed rows rather than matched rows, so a same-value no-op update
+// can also return false even when the status predicate still matched.
 //
 // Uses Model().Select("*").Updates() instead of Save() because GORM's Save
 // falls back to INSERT ON CONFLICT when the WHERE-guarded UPDATE matches
@@ -440,17 +458,6 @@ func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
 		return false, result.Error
 	}
 	return result.RowsAffected > 0, nil
-}
-
-// TaskBulkUpdate performs an unconditional bulk UPDATE by upstream task_id strings.
-// Same caveats as TaskBulkUpdateByID — no CAS guard.
-func TaskBulkUpdate(taskIds []string, params map[string]any) error {
-	if len(taskIds) == 0 {
-		return nil
-	}
-	return DB.Model(&Task{}).
-		Where("task_id in (?)", taskIds).
-		Updates(params).Error
 }
 
 // TaskBulkUpdateByID performs an unconditional bulk UPDATE by primary key IDs.

@@ -1,0 +1,149 @@
+# Import this snippet INSIDE the existing HTTPS site and BEFORE the existing
+# new-api catch-all. Import only after P0 E2E passes. The stack has no host port.
+
+# Entry tickets live in the query string, and workbench requests carry private
+# cookies. Skip edge access logs for this whole surface; use secret-free
+# application audit rows keyed by request_id/turn_id instead. Caddy 2.8+ is
+# required for log_skip and must be validated on the production binary.
+@workbenchSensitiveLog path /api/workbench/* /api/admin/workbench/* /api/internal/workbench/* /workbench /workbench/*
+log_skip @workbenchSensitiveLog
+
+# Never accept service-auth or forwarded-identity headers from the Internet.
+request_header -X-Workbench-Service
+request_header -X-Workbench-Timestamp
+request_header -X-Workbench-Nonce
+request_header -X-Workbench-Signature
+request_header -X-Workbench-Principal
+request_header -X-Workbench-Customer
+request_header -X-Workbench-Auth-Timestamp
+request_header -X-Workbench-Auth-Signature
+
+# claw-control currently scopes its browser cookie to Path=/; strip every
+# claw_* cookie before any non-control request can fall through to new-api.
+@outsideWorkbenchControl {
+	not path /api/workbench/entry /api/workbench/config /api/workbench/plan /api/workbench/selections /api/workbench/selections/choose /api/workbench/agent-store/status /api/workbench/agent-store /api/workbench/agent-store/* /api/admin/workbench/* /workbench /workbench/*
+}
+request_header @outsideWorkbenchControl Cookie "claw_[^=;\\s]+=[^;]*(;\\s*)?" ""
+request_header @outsideWorkbenchControl Cookie "^;\\s*" ""
+request_header @outsideWorkbenchControl Cookie ";\\s*;" ";"
+request_header @outsideWorkbenchControl Cookie ";\\s*$" ""
+
+# These three POST endpoints belong to new-api, not claw-control. A browser may
+# already carry control/admin cookies, so remove them before the existing
+# new-api catch-all receives the request.
+@newApiWorkbenchTicket path /api/workbench/session-ticket /api/admin/workbench/session-ticket /api/admin/workbench/step-up-ticket
+request_header @newApiWorkbenchTicket Cookie "claw_[^=;\\s]+=[^;]*(;\\s*)?" ""
+request_header @newApiWorkbenchTicket Cookie "^;\\s*" ""
+request_header @newApiWorkbenchTicket Cookie ";\\s*;" ";"
+request_header @newApiWorkbenchTicket Cookie ";\\s*$" ""
+
+# Internal workbench service APIs must never fall through to a public upstream.
+@workbenchInternal path /api/internal/workbench/*
+handle @workbenchInternal {
+	respond 404
+}
+
+# This migration-only endpoint is callable solely through claw-control's
+# container loopback listener with the emergency bootstrap token.
+@workbenchFingerprintReenroll path /api/admin/workbench/secret-fingerprints/re-enroll
+handle @workbenchFingerprintReenroll {
+	respond 404
+}
+
+@workbenchBootstrapAdmin {
+	path /api/admin/workbench/*
+	not path /api/admin/workbench/session-ticket /api/admin/workbench/step-up-ticket
+}
+handle @workbenchBootstrapAdmin {
+	# Public administration accepts only the short-lived admin session + CSRF
+	# flow. Never expose the emergency bootstrap Bearer token at the edge.
+	request_header -Authorization
+	request_header -X-Claw-Actor
+	reverse_proxy claw-control-active:8080
+}
+
+@clawControlPublic path /api/workbench/entry /api/workbench/config /api/workbench/plan /api/workbench/selections /api/workbench/selections/choose /api/workbench/agent-store/status /api/workbench/agent-store /api/workbench/agent-store/*
+handle @clawControlPublic {
+	reverse_proxy claw-control-active:8080
+}
+
+handle /workbench {
+	redir /workbench/ 308
+}
+
+@workbenchAdmin path /workbench/admin /workbench/admin/*
+handle @workbenchAdmin {
+	# The SPA shell is public, while every data API remains protected by the
+	# short-lived admin session and mutation CSRF checks in claw-control.
+	request_header -Authorization
+	request_header -X-Workbench-Principal
+	request_header -X-Workbench-Customer
+	request_header -X-Workbench-Auth-Timestamp
+	request_header -X-Workbench-Auth-Signature
+	reverse_proxy claw-control-active:8080
+}
+
+@workbenchSSO path /workbench/auth/sso
+handle @workbenchSSO {
+	request_header -X-Workbench-Principal
+	request_header -X-Workbench-Customer
+	request_header -X-Workbench-Auth-Timestamp
+	request_header -X-Workbench-Auth-Signature
+
+	# The control session is used only by forward_auth. The ADP SSO exchange
+	# receives exactly the one-time, browser-bound cookie and no other claw_*
+	# credential. ADP deletes this cookie on both success and failure.
+	forward_auth claw-control-active:8080 {
+		# This exact bootstrap check revalidates the new-api identity and the
+		# selected control session while allowing only a provisioning identity.
+		# Ordinary config/plan routes still require an active identity.
+		uri /api/workbench/sso-preflight
+		header_up X-Original-Method {method}
+		header_up X-Original-URI {uri}
+	}
+
+	uri strip_prefix /workbench
+	reverse_proxy adp-chat-client:8000 {
+		flush_interval -1
+		header_up Cookie "claw_sso_binding={http.request.cookie.claw_sso_binding}"
+		header_up X-Forwarded-Prefix /workbench
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+@workbench {
+	path /workbench/*
+	not path /workbench/auth/sso /workbench/admin /workbench/admin/*
+}
+handle @workbench {
+	# Discard spoofed identity headers; ADP resolves identity from its signed
+	# server-side session and continuous control-plane authorization.
+	request_header -X-Workbench-Principal
+	request_header -X-Workbench-Customer
+	request_header -X-Workbench-Auth-Timestamp
+	request_header -X-Workbench-Auth-Signature
+
+	# This browser-session check is deliberately public and cookie based. ADP
+	# separately performs signed, continuous authorization against the internal
+	# HMAC endpoint; the internal endpoint is never exposed through this Caddy.
+	forward_auth claw-control-active:8080 {
+		uri /api/workbench/config
+		header_up X-Original-Method {method}
+		header_up X-Original-URI {uri}
+	}
+
+	uri strip_prefix /workbench
+	reverse_proxy adp-chat-client:8000 {
+		flush_interval -1
+		# Remove every control-plane cookie, including any injected SSO binding;
+		# retain only ADP's own token and unrelated application cookies.
+		header_up Cookie "claw_[^=;\\s]+=[^;]*(;\\s*)?" ""
+		header_up Cookie "^;\\s*" ""
+		header_up Cookie ";\\s*;" ";"
+		header_up Cookie ";\\s*$" ""
+		header_up X-Forwarded-Prefix /workbench
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+}

@@ -117,9 +117,13 @@ func createTaskError(err error, code string, statusCode int, localError bool) *d
 	}
 }
 
-func storeTaskRequest(c *gin.Context, info *RelayInfo, action string, requestObj TaskSubmitReq) {
+func StoreTaskRequest(c *gin.Context, info *RelayInfo, action string, requestObj TaskSubmitReq) {
 	info.Action = action
 	c.Set("task_request", requestObj)
+}
+
+func storeTaskRequest(c *gin.Context, info *RelayInfo, action string, requestObj TaskSubmitReq) {
+	StoreTaskRequest(c, info, action, requestObj)
 }
 func GetTaskRequest(c *gin.Context) (TaskSubmitReq, error) {
 	v, exists := c.Get("task_request")
@@ -145,13 +149,10 @@ func validatePrompt(prompt string) *dto.TaskError {
 // overflow quota calculation into a negative charge.
 const MaxTaskDurationSeconds = 3600
 
-func validateTaskDurationBounds(req TaskSubmitReq, autoDurationModels []string) *dto.TaskError {
+func validateTaskDurationBounds(req TaskSubmitReq) *dto.TaskError {
 	seconds := req.Duration
 	if seconds == 0 && req.Seconds != "" {
 		seconds, _ = strconv.Atoi(req.Seconds)
-	}
-	if seconds == -1 && lo.Contains(autoDurationModels, req.Model) {
-		return nil
 	}
 	if seconds < 0 || seconds > MaxTaskDurationSeconds {
 		return createTaskError(fmt.Errorf("seconds must be between 1 and %d", MaxTaskDurationSeconds), "invalid_seconds", http.StatusBadRequest, true)
@@ -237,7 +238,7 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		return taskErr
 	}
 
-	if taskErr := validateTaskDurationBounds(req, nil); taskErr != nil {
+	if taskErr := validateTaskDurationBounds(req); taskErr != nil {
 		return taskErr
 	}
 
@@ -284,7 +285,18 @@ func isKnownTaskField(field string) bool {
 	return knownFields[field]
 }
 
-func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string, autoDurationModels ...string) *dto.TaskError {
+func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *dto.TaskError {
+	return validateBasicTaskRequest(c, info, action, "")
+}
+
+// ValidateTaskRequestWithAutoDuration keeps the common task contract while
+// permitting providers that document duration=-1 to validate that sentinel in
+// their own adapter. All existing adapters continue to use the strict helper.
+func ValidateTaskRequestWithAutoDuration(c *gin.Context, info *RelayInfo, action string, autoDurationModel string) *dto.TaskError {
+	return validateBasicTaskRequest(c, info, action, autoDurationModel)
+}
+
+func validateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string, autoDurationModel string) *dto.TaskError {
 	var err error
 	contentType := c.GetHeader("Content-Type")
 	var req TaskSubmitReq
@@ -303,8 +315,10 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string, au
 		return taskErr
 	}
 
-	if taskErr := validateTaskDurationBounds(req, autoDurationModels); taskErr != nil {
-		return taskErr
+	if !(req.Duration == -1 && req.Model == autoDurationModel) {
+		if taskErr := validateTaskDurationBounds(req); taskErr != nil {
+			return taskErr
+		}
 	}
 
 	if len(req.Images) == 0 && strings.TrimSpace(req.Image) != "" {

@@ -1,0 +1,558 @@
+package controller
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/workbenchbridge"
+	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+)
+
+var (
+	workbenchControlTestSecret = []byte("control-hmac-secret-0123456789abcdef")
+	workbenchServiceTestSecret = []byte("service-hmac-secret-0123456789abcdef")
+)
+
+const workbenchIdentityTestNonce = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+type fakeWorkbenchTicketIssuer struct {
+	issued  workbenchbridge.IssuedTicket
+	err     error
+	request workbenchbridge.TicketIssueRequest
+}
+
+func (issuer *fakeWorkbenchTicketIssuer) Issue(_ context.Context, request workbenchbridge.TicketIssueRequest) (workbenchbridge.IssuedTicket, error) {
+	issuer.request = request
+	return issuer.issued, issuer.err
+}
+
+func newWorkbenchTestBridge(t *testing.T, user *model.User) (*WorkbenchIdentityBridge, *fakeWorkbenchTicketIssuer) {
+	t.Helper()
+	config := workbenchbridge.Config{
+		Enabled:             true,
+		ControlURL:          "https://claw-control.internal",
+		ControlHMACSecret:   workbenchControlTestSecret,
+		ControlServiceName:  "new-api-core",
+		ControlTimeout:      time.Second,
+		ServiceHMACSecret:   workbenchServiceTestSecret,
+		InternalRequestSkew: time.Minute,
+	}
+	tickets := &fakeWorkbenchTicketIssuer{issued: workbenchbridge.IssuedTicket{
+		Value:     "control-issued-single-use-ticket",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}}
+	lookup := func(userID int) (*model.User, error) {
+		if user == nil || user.Id != userID {
+			return nil, gorm.ErrRecordNotFound
+		}
+		copy := *user
+		return &copy, nil
+	}
+	return NewWorkbenchIdentityBridge(config, tickets, lookup), tickets
+}
+
+func newWorkbenchSessionRouter(bridge *WorkbenchIdentityBridge, sessionStatus int) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("id", 42)
+		c.Set("status", sessionStatus)
+		c.Set("use_access_token", false)
+		c.Next()
+	})
+	router.POST("/api/workbench/session-ticket", bridge.SessionTicket)
+	return router
+}
+
+func authenticatedWorkbenchRequest(t *testing.T, router *gin.Engine) *httptest.ResponseRecorder {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/workbench/session-ticket", nil)
+	request.Header.Set("Origin", "http://example.com")
+	router.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func authenticatedWorkbenchAdminRequest(t *testing.T, bridge *WorkbenchIdentityBridge, sessionRole int) *httptest.ResponseRecorder {
+	t.Helper()
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("id", 42)
+		c.Set("role", sessionRole)
+		c.Set("use_access_token", false)
+		c.Next()
+	})
+	router.POST("/api/admin/workbench/session-ticket", bridge.AdminSessionTicket)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/session-ticket", nil)
+	request.Header.Set("Origin", "http://example.com")
+	router.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func TestSessionTicketUsesCurrentDatabaseIdentityAndReturnsControlTicket(t *testing.T) {
+	user := &model.User{
+		Id:          42,
+		Username:    "alice",
+		DisplayName: "Alice",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "vip",
+		Quota:       123456,
+		Email:       "alice@example.com",
+		CreatedAt:   1_700_000_000,
+	}
+	bridge, tickets := newWorkbenchTestBridge(t, user)
+	recorder := authenticatedWorkbenchRequest(t, newWorkbenchSessionRouter(bridge, common.UserStatusEnabled))
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	responseBody := append([]byte(nil), recorder.Body.Bytes()...)
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Ticket    string `json:"ticket"`
+			ExpiresAt int64  `json:"expires_at"`
+			ExpiresIn int64  `json:"expires_in"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(responseBody, &payload))
+	require.True(t, payload.Success)
+	assert.NotEmpty(t, payload.Data.Ticket)
+	assert.Greater(t, payload.Data.ExpiresAt, time.Now().Unix())
+	assert.InDelta(t, 60, payload.Data.ExpiresIn, 1)
+	assert.NotContains(t, string(responseBody), "quota")
+	assert.NotContains(t, string(responseBody), "group")
+	assert.NotContains(t, string(responseBody), "email")
+
+	assert.Equal(t, user.Id, tickets.request.UserID)
+	assert.Equal(t, workbenchbridge.IdentityVersion(identityFromUser(user)), tickets.request.IdentityVersion)
+	assert.Equal(t, workbenchbridge.SurfaceWorkbench, tickets.request.Surface)
+}
+
+func TestSessionTicketRejectsAccessTokenAuthentication(t *testing.T) {
+	bridge, _ := newWorkbenchTestBridge(t, &model.User{Id: 42, Username: "alice", Status: common.UserStatusEnabled})
+	router := gin.New()
+	router.POST("/api/workbench/session-ticket", func(c *gin.Context) {
+		c.Set("id", 42)
+		c.Set("use_access_token", true)
+		c.Next()
+	}, bridge.SessionTicket)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/workbench/session-ticket", nil))
+
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "web session")
+}
+
+func TestAdminSessionTicketRequiresAndRecordsSuperAdministratorSurface(t *testing.T) {
+	bridge, tickets := newWorkbenchTestBridge(t, &model.User{
+		Id: 42, Username: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled,
+	})
+	recorder := authenticatedWorkbenchAdminRequest(t, bridge, common.RoleRootUser)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, workbenchbridge.SurfaceAdmin, tickets.request.Surface)
+	assert.True(t, tickets.request.IsSuperAdmin)
+}
+
+func TestAdminStepUpTicketBindsTrustedSecureVerificationToDeterministicNonce(t *testing.T) {
+	bridge, tickets := newWorkbenchTestBridge(t, &model.User{
+		Id: 42, Username: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled,
+	})
+	router := gin.New()
+	identity := service.AuthIdentity{UserID: 42, SessionID: "session-42", UserAuthVersion: 1, SessionVersion: 1}
+	proof, _, err := service.IssueSecurityProof(identity, secureVerificationMethodPasskey, []string{securityProofScopeWorkbenchStepUp})
+	require.NoError(t, err)
+	router.POST("/api/admin/workbench/step-up-ticket", func(c *gin.Context) {
+		c.Set("id", 42)
+		c.Set("session_id", identity.SessionID)
+		c.Set("auth_version", identity.UserAuthVersion)
+		c.Set("session_version", identity.SessionVersion)
+		c.Next()
+	}, bridge.AdminStepUpTicket)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/step-up-ticket", bytes.NewBufferString(`{"method":"secure_verification"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://example.com")
+	request.Header.Set("X-Security-Proof", proof)
+	first := httptest.NewRecorder()
+	router.ServeHTTP(first, request)
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+	assert.WithinDuration(t, time.Now(), tickets.request.AuthenticatedAt, 2*time.Second)
+	assert.Equal(t, []string{"webauthn"}, tickets.request.AMR)
+	assert.NotEmpty(t, tickets.request.ReauthNonce)
+	firstNonce := tickets.request.ReauthNonce
+
+	replay := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/step-up-ticket", bytes.NewBufferString(`{"method":"secure_verification"}`))
+	replay.Header.Set("Content-Type", "application/json")
+	replay.Header.Set("Origin", "http://example.com")
+	replay.Header.Set("X-Security-Proof", proof)
+	second := httptest.NewRecorder()
+	router.ServeHTTP(second, replay)
+	require.Equal(t, http.StatusOK, second.Code, second.Body.String())
+	assert.Equal(t, firstNonce, tickets.request.ReauthNonce)
+}
+
+func TestAdminStepUpTicketRejectsInvalidSecureVerification(t *testing.T) {
+	bridge, tickets := newWorkbenchTestBridge(t, &model.User{
+		Id: 42, Username: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled,
+	})
+	recorder := httptest.NewRecorder()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/admin/workbench/step-up-ticket", func(c *gin.Context) {
+		c.Set("id", 42)
+		c.Set("session_id", "session-42")
+		c.Set("auth_version", int64(1))
+		c.Set("session_version", int64(1))
+		c.Next()
+	}, bridge.AdminStepUpTicket)
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/step-up-ticket", bytes.NewBufferString(`{"method":"secure_verification"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://example.com")
+	request.Header.Set("X-Security-Proof", "invalid")
+	router.ServeHTTP(recorder, request)
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Zero(t, tickets.request.UserID)
+}
+
+func TestAdminStepUpTicketVerifiesPasswordOnlyInsideNewAPI(t *testing.T) {
+	hashedPassword, err := common.Password2Hash("RootPassword@2026")
+	require.NoError(t, err)
+	bridge, tickets := newWorkbenchTestBridge(t, &model.User{
+		Id: 42, Username: "root", Password: hashedPassword, Role: common.RoleRootUser, Status: common.UserStatusEnabled,
+	})
+	router := gin.New()
+	router.POST("/api/admin/workbench/step-up-ticket", func(c *gin.Context) {
+		c.Set("id", 42)
+		c.Next()
+	}, bridge.AdminStepUpTicket)
+
+	wrong := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/step-up-ticket", bytes.NewBufferString(`{"method":"password","password":"wrong"}`))
+	wrong.Header.Set("Content-Type", "application/json")
+	wrong.Header.Set("Origin", "http://example.com")
+	wrongResult := httptest.NewRecorder()
+	router.ServeHTTP(wrongResult, wrong)
+	assert.Equal(t, http.StatusForbidden, wrongResult.Code)
+	assert.Zero(t, tickets.request.UserID)
+
+	correct := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/step-up-ticket", bytes.NewBufferString(`{"method":"password","password":"RootPassword@2026"}`))
+	correct.Header.Set("Content-Type", "application/json")
+	correct.Header.Set("Origin", "http://example.com")
+	correctResult := httptest.NewRecorder()
+	router.ServeHTTP(correctResult, correct)
+	require.Equal(t, http.StatusOK, correctResult.Code, correctResult.Body.String())
+	assert.Equal(t, []string{"pwd"}, tickets.request.AMR)
+	assert.NotEmpty(t, tickets.request.ReauthNonce)
+	assert.NotContains(t, fmt.Sprintf("%#v", tickets.request), "RootPassword@2026")
+}
+
+func TestDefaultAdminStepUpLookupReadsTheStoredPasswordHash(t *testing.T) {
+	originalDB := model.DB
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = originalDB
+		sqlDB, dbErr := db.DB()
+		if dbErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	require.NoError(t, db.AutoMigrate(&model.User{}))
+
+	hashedPassword, err := common.Password2Hash("RootPassword@2026")
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.User{
+		Id:       42,
+		Username: "root",
+		Password: hashedPassword,
+		Role:     common.RoleRootUser,
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	config := workbenchbridge.Config{
+		Enabled:             true,
+		ControlURL:          "https://claw-control.internal",
+		ControlHMACSecret:   workbenchControlTestSecret,
+		ControlServiceName:  "new-api-core",
+		ControlTimeout:      time.Second,
+		ServiceHMACSecret:   workbenchServiceTestSecret,
+		InternalRequestSkew: time.Minute,
+	}
+	tickets := &fakeWorkbenchTicketIssuer{issued: workbenchbridge.IssuedTicket{
+		Value:     "control-issued-step-up-ticket",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}}
+	bridge := NewWorkbenchIdentityBridge(config, tickets, nil)
+
+	router := gin.New()
+	router.POST("/api/admin/workbench/step-up-ticket", func(c *gin.Context) {
+		c.Set("id", 42)
+		c.Next()
+	}, bridge.AdminStepUpTicket)
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/workbench/step-up-ticket", bytes.NewBufferString(`{"method":"password","password":"RootPassword@2026"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://example.com")
+	result := httptest.NewRecorder()
+	router.ServeHTTP(result, request)
+
+	require.Equal(t, http.StatusOK, result.Code, result.Body.String())
+	assert.Equal(t, []string{"pwd"}, tickets.request.AMR)
+	assert.NotEmpty(t, tickets.request.ReauthNonce)
+}
+
+func TestSessionTicketRejectsUserDisabledAfterSessionWasCreated(t *testing.T) {
+	bridge, _ := newWorkbenchTestBridge(t, &model.User{Id: 42, Username: "alice", Status: common.UserStatusDisabled})
+	recorder := authenticatedWorkbenchRequest(t, newWorkbenchSessionRouter(bridge, common.UserStatusEnabled))
+
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "user is disabled")
+}
+
+func TestSessionTicketRejectsCrossOriginAndFailsClosedWhenControlIsUnavailable(t *testing.T) {
+	user := &model.User{Id: 42, Username: "alice", Status: common.UserStatusEnabled}
+
+	t.Run("cross origin", func(t *testing.T) {
+		bridge, tickets := newWorkbenchTestBridge(t, user)
+		router := newWorkbenchSessionRouter(bridge, common.UserStatusEnabled)
+		loginRecorder := httptest.NewRecorder()
+		router.ServeHTTP(loginRecorder, httptest.NewRequest(http.MethodGet, "/login", nil))
+
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/api/workbench/session-ticket", nil)
+		request.Header.Set("New-Api-User", "42")
+		request.Header.Set("Origin", "https://attacker.example")
+		for _, sessionCookie := range loginRecorder.Result().Cookies() {
+			request.AddCookie(sessionCookie)
+		}
+		router.ServeHTTP(recorder, request)
+
+		assert.Equal(t, http.StatusForbidden, recorder.Code)
+		assert.Zero(t, tickets.request.UserID)
+	})
+
+	t.Run("control unavailable", func(t *testing.T) {
+		bridge, tickets := newWorkbenchTestBridge(t, user)
+		tickets.err = workbenchbridge.ErrControlUnavailable
+		recorder := authenticatedWorkbenchRequest(t, newWorkbenchSessionRouter(bridge, common.UserStatusEnabled))
+
+		assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+		assert.Contains(t, recorder.Body.String(), "failed to issue")
+	})
+}
+
+func TestSessionTicketFeatureFlagDefaultsClosed(t *testing.T) {
+	bridge, _ := newWorkbenchTestBridge(t, &model.User{Id: 42, Username: "alice", Status: common.UserStatusEnabled})
+	bridge.config.Enabled = false
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/workbench/session-ticket", nil)
+	context.Set("id", 42)
+
+	bridge.SessionTicket(context)
+
+	assert.Equal(t, http.StatusNotFound, recorder.Code)
+}
+
+func signedIdentityStatusRequest(t *testing.T, bridge *WorkbenchIdentityBridge, userID int, mutateSignature bool) *httptest.ResponseRecorder {
+	t.Helper()
+	body := []byte(`{"user_id":` + strconv.Itoa(userID) + `}`)
+	timestamp := bridge.now().Unix()
+	signature := workbenchbridge.SignInternalRequest(
+		workbenchServiceTestSecret,
+		http.MethodPost,
+		"/api/internal/workbench/identity-status",
+		timestamp,
+		workbenchIdentityTestNonce,
+		body,
+	)
+	if mutateSignature {
+		signature = strings.Repeat("0", len(signature))
+	}
+
+	router := gin.New()
+	router.POST("/api/internal/workbench/identity-status", bridge.IdentityStatus)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/internal/workbench/identity-status", bytes.NewReader(body))
+	request.Header.Set(workbenchbridge.ContractVersionHeader, workbenchbridge.ContractVersion)
+	request.Header.Set(workbenchbridge.InternalTimestampHeader, strconv.FormatInt(timestamp, 10))
+	request.Header.Set(workbenchbridge.InternalNonceHeader, workbenchIdentityTestNonce)
+	request.Header.Set(workbenchbridge.InternalSignatureHeader, signature)
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func TestIdentityStatusReturnsOnlyExistenceEnabledStateAndVersion(t *testing.T) {
+	user := &model.User{
+		Id:          42,
+		Username:    "alice",
+		DisplayName: "Alice",
+		Role:        common.RoleAdminUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "vip",
+		Quota:       123456,
+		Email:       "alice@example.com",
+		CreatedAt:   1_700_000_000,
+	}
+	bridge, _ := newWorkbenchTestBridge(t, user)
+	recorder := signedIdentityStatusRequest(t, bridge, user.Id, false)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	responseBody := append([]byte(nil), recorder.Body.Bytes()...)
+	var payload struct {
+		Success bool                        `json:"success"`
+		Data    workbenchIdentityStatusData `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(responseBody, &payload))
+	require.True(t, payload.Success)
+	assert.Equal(t, user.Id, payload.Data.UserID)
+	assert.True(t, payload.Data.Exists)
+	assert.True(t, payload.Data.Enabled)
+	assert.Equal(t, workbenchbridge.IdentityVersion(identityFromUser(user)), payload.Data.IdentityVersion)
+	assert.NotContains(t, string(responseBody), "quota")
+	assert.NotContains(t, string(responseBody), "group")
+	assert.NotContains(t, string(responseBody), "email")
+	assert.NotContains(t, string(responseBody), "role")
+	responseTimestamp, err := strconv.ParseInt(recorder.Header().Get(workbenchbridge.ResponseTimestampHeader), 10, 64)
+	require.NoError(t, err)
+	requestNonce := recorder.Header().Get(workbenchbridge.ResponseNonceHeader)
+	assert.Equal(t, workbenchIdentityTestNonce, requestNonce)
+	assert.Equal(t, workbenchbridge.SignInternalResponse(
+		workbenchServiceTestSecret,
+		http.StatusOK,
+		"/api/internal/workbench/identity-status",
+		responseTimestamp,
+		requestNonce,
+		responseBody,
+	), recorder.Header().Get(workbenchbridge.ResponseSignatureHeader))
+}
+
+func TestIdentityStatusReportsMissingAndDisabledUsers(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		bridge, _ := newWorkbenchTestBridge(t, nil)
+		recorder := signedIdentityStatusRequest(t, bridge, 99, false)
+		require.Equal(t, http.StatusOK, recorder.Code)
+		assert.Contains(t, recorder.Body.String(), `"exists":false`)
+		assert.Contains(t, recorder.Body.String(), `"enabled":false`)
+	})
+
+	t.Run("disabled", func(t *testing.T) {
+		bridge, _ := newWorkbenchTestBridge(t, &model.User{Id: 42, Username: "alice", Status: common.UserStatusDisabled})
+		recorder := signedIdentityStatusRequest(t, bridge, 42, false)
+		require.Equal(t, http.StatusOK, recorder.Code)
+		assert.Contains(t, recorder.Body.String(), `"exists":true`)
+		assert.Contains(t, recorder.Body.String(), `"enabled":false`)
+	})
+}
+
+func TestAdminIdentityStatusRequiresMatchingVersionAndRootRole(t *testing.T) {
+	user := &model.User{
+		Id: 42, Username: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled,
+	}
+	bridge, _ := newWorkbenchTestBridge(t, user)
+	identityVersion := workbenchbridge.IdentityVersion(identityFromUser(user))
+	body, err := common.Marshal(workbenchIdentityStatusRequest{UserID: user.Id, IdentityVersion: identityVersion})
+	require.NoError(t, err)
+	timestamp := bridge.now().Unix()
+	path := "/api/internal/workbench/admin-identity-status"
+	signature := workbenchbridge.SignInternalRequest(workbenchServiceTestSecret, http.MethodPost, path, timestamp, workbenchIdentityTestNonce, body)
+
+	router := gin.New()
+	router.POST(path, bridge.AdminIdentityStatus)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	request.Header.Set(workbenchbridge.ContractVersionHeader, workbenchbridge.ContractVersion)
+	request.Header.Set(workbenchbridge.InternalTimestampHeader, strconv.FormatInt(timestamp, 10))
+	request.Header.Set(workbenchbridge.InternalNonceHeader, workbenchIdentityTestNonce)
+	request.Header.Set(workbenchbridge.InternalSignatureHeader, signature)
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, workbenchbridge.ContractVersion, recorder.Header().Get(workbenchbridge.ContractVersionHeader))
+	assert.Contains(t, recorder.Body.String(), `"is_super_admin":true`)
+}
+
+func TestIdentityStatusRejectsInvalidSignatureBeforeUserLookup(t *testing.T) {
+	lookupCalled := false
+	config := workbenchbridge.Config{
+		Enabled:             true,
+		ControlURL:          "https://claw-control.internal",
+		ControlHMACSecret:   workbenchControlTestSecret,
+		ControlServiceName:  "new-api-core",
+		ControlTimeout:      time.Second,
+		ServiceHMACSecret:   workbenchServiceTestSecret,
+		InternalRequestSkew: time.Minute,
+	}
+	bridge := NewWorkbenchIdentityBridge(config, nil, func(_ int) (*model.User, error) {
+		lookupCalled = true
+		return nil, errors.New("should not be called")
+	})
+	recorder := signedIdentityStatusRequest(t, bridge, 42, true)
+
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+	assert.False(t, lookupCalled)
+}
+
+func TestIdentityStatusRejectsMissingOrTamperedNonceBeforeUserLookup(t *testing.T) {
+	for name, requestNonce := range map[string]string{
+		"missing":  "",
+		"tampered": "1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	} {
+		t.Run(name, func(t *testing.T) {
+			lookupCalled := false
+			config := workbenchbridge.Config{
+				Enabled:             true,
+				ControlURL:          "https://claw-control.internal",
+				ControlHMACSecret:   workbenchControlTestSecret,
+				ControlServiceName:  "new-api-core",
+				ControlTimeout:      time.Second,
+				ServiceHMACSecret:   workbenchServiceTestSecret,
+				InternalRequestSkew: time.Minute,
+			}
+			bridge := NewWorkbenchIdentityBridge(config, nil, func(_ int) (*model.User, error) {
+				lookupCalled = true
+				return nil, errors.New("should not be called")
+			})
+			body := []byte(`{"user_id":42}`)
+			timestamp := bridge.now().Unix()
+			path := "/api/internal/workbench/identity-status"
+			signature := workbenchbridge.SignInternalRequest(
+				workbenchServiceTestSecret, http.MethodPost, path, timestamp, workbenchIdentityTestNonce, body,
+			)
+			router := gin.New()
+			router.POST(path, bridge.IdentityStatus)
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+			request.Header.Set(workbenchbridge.ContractVersionHeader, workbenchbridge.ContractVersion)
+			request.Header.Set(workbenchbridge.InternalTimestampHeader, strconv.FormatInt(timestamp, 10))
+			if requestNonce != "" {
+				request.Header.Set(workbenchbridge.InternalNonceHeader, requestNonce)
+			}
+			request.Header.Set(workbenchbridge.InternalSignatureHeader, signature)
+			router.ServeHTTP(recorder, request)
+
+			assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+			assert.False(t, lookupCalled)
+		})
+	}
+}

@@ -9,10 +9,11 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service/opsmonitor"
 	"github.com/gin-gonic/gin"
 )
 
@@ -40,6 +41,7 @@ func BuildUpstreamResponseEvent(c *gin.Context, info *relaycommon.RelayInfo, usa
 }
 
 func EmitUpstreamResponse(c *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage, extra map[string]interface{}) {
+	opsmonitor.ObserveUsage(c, info, usage)
 	Emit(BuildUpstreamResponseEvent(c, info, usage, extra), PriorityHigh)
 }
 
@@ -162,6 +164,7 @@ func BuildTaskSubmitResponseEvent(c *gin.Context, info *relaycommon.RelayInfo, u
 }
 
 func EmitTaskSubmitResponse(c *gin.Context, info *relaycommon.RelayInfo, upstreamTaskID string, taskData []byte, platform constant.TaskPlatform, quota int) {
+	opsmonitor.ObserveRelay(c, info)
 	Emit(BuildTaskSubmitResponseEvent(c, info, upstreamTaskID, taskData, platform, quota), PriorityCritical)
 }
 
@@ -269,24 +272,37 @@ func baseRelayEvent(c *gin.Context, info *relaycommon.RelayInfo, eventType strin
 		APIKeyRedacted:    info.TokenKey != "",
 		Group:             group,
 	}
+	channelID := 0
 	channelType := ""
+	upstreamModelName := ""
+	upstreamBaseURL := ""
+	isModelMapped := false
 	if info.ChannelMeta != nil {
+		channelID = info.ChannelMeta.ChannelId
 		channelType = constant.ChannelTypeNames[info.ChannelMeta.ChannelType]
+		upstreamModelName = info.ChannelMeta.UpstreamModelName
+		upstreamBaseURL = info.ChannelMeta.ChannelBaseUrl
+		isModelMapped = info.ChannelMeta.IsModelMapped
+	} else if c != nil {
+		channelID = common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+		channelType = constant.ChannelTypeNames[common.GetContextKeyInt(c, constant.ContextKeyChannelType)]
+		upstreamModelName = common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+		upstreamBaseURL = common.GetContextKeyString(c, constant.ContextKeyChannelBaseUrl)
 	}
-	event.RoutingContext.ChannelID = intString(info.ChannelId)
+	if upstreamModelName == "" {
+		upstreamModelName = info.OriginModelName
+	}
+	event.RoutingContext.ChannelID = intString(channelID)
 	event.RoutingContext.ChannelType = channelType
 	event.RoutingContext.ModelName = info.OriginModelName
 	event.RoutingContext.OriginModelName = info.OriginModelName
-	event.RoutingContext.UpstreamModelName = info.UpstreamModelName
-	if event.RoutingContext.UpstreamModelName == "" && info.ChannelMeta != nil {
-		event.RoutingContext.UpstreamModelName = info.ChannelMeta.UpstreamModelName
-	}
+	event.RoutingContext.UpstreamModelName = upstreamModelName
 	event.RoutingContext.CallType = callTypeFromRelayMode(info.RelayMode)
 	event.RoutingContext.RelayMode = relayModeName(info.RelayMode)
 	event.RoutingContext.RelayFormat = string(info.GetFinalRequestRelayFormat())
-	event.RoutingContext.UpstreamBaseURL = info.ChannelBaseUrl
+	event.RoutingContext.UpstreamBaseURL = upstreamBaseURL
 	event.RoutingContext.IsStream = info.IsStream
-	event.RoutingContext.IsModelMapped = info.IsModelMapped
+	event.RoutingContext.IsModelMapped = isModelMapped
 	if info.TaskRelayInfo != nil {
 		event.TaskID = info.PublicTaskID
 		event.UsageContext.ExtraJSON = map[string]interface{}{

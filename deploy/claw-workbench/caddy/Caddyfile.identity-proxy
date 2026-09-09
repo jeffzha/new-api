@@ -1,0 +1,20 @@
+{
+	admin 127.0.0.1:2019
+	auto_https off
+}
+
+https://new-api-identity.internal:8443 {
+	tls /run/secrets/new_api_identity_tls_cert /run/secrets/new_api_identity_tls_key
+
+	@identityStatus {
+		method POST
+		path /api/internal/workbench/identity-status /api/internal/workbench/admin-identity-status
+	}
+	handle @identityStatus {
+		reverse_proxy {$NEW_API_INTERNAL_UPSTREAM}
+	}
+
+	handle {
+		respond 404
+	}
+}

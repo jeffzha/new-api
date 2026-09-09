@@ -1,0 +1,394 @@
+{
+  "$schema": "./schema.json",
+  "version": 1,
+  "base_url": "https://gateway.example.com",
+  "direct_adp_base_url": "https://adp-internal.example.com",
+  "timeout_seconds": 20,
+  "acceptance_report_signing_key_file": "file:/run/secrets/e2e_acceptance_signing_key",
+  "sandbox_mode": "off",
+  "acceptance_observer": {
+    "allowed_signers_file": "file:/secure/keys/acceptance-observer-allowed_signers",
+    "wait_seconds": 60,
+    "max_age_seconds": 900,
+    "evidence": {
+      "scheduled.worker_failover": "file:/secure/evidence/${acceptance_run_id}/scheduled-worker-failover.json",
+      "scheduled.provider_unknown_no_repost": "file:/secure/evidence/${acceptance_run_id}/scheduled-provider-submit.json",
+      "byok.secret_leak_scan": "file:/secure/evidence/${acceptance_run_id}/byok-secret-scan.json",
+      "billing_import.coordinator_single_claim": "file:/secure/evidence/${acceptance_run_id}/billing-single-claim.json",
+      "agent_store.non_dynamic_zero_copy": "file:/secure/evidence/${acceptance_run_id}/agent-store-non-dynamic-copy-count.json",
+      "agent_store.dynamic_copy_single_request": "file:/secure/evidence/${acceptance_run_id}/agent-store-dynamic-copy-count.json",
+      "agent_store.dynamic_binding_unique": "file:/secure/evidence/${acceptance_run_id}/agent-store-dynamic-binding.json",
+      "app_migration.lineage_single_activation": "file:/secure/evidence/${acceptance_run_id}/app-migration-lineage.json",
+      "retention.delivery_receipt_completed": "file:/secure/evidence/${acceptance_run_id}/retention-delivery-receipt.json",
+      "retention.adp_exact_deletion": "file:/secure/evidence/${acceptance_run_id}/retention-adp-deletion.json",
+      "retention.cos_exact_deletion": "file:/secure/evidence/${acceptance_run_id}/retention-cos-deletion.json",
+      "retention.provider_revoked": "file:/secure/evidence/${acceptance_run_id}/retention-provider-revoke.json",
+      "retention.control_records_preserved": "file:/secure/evidence/${acceptance_run_id}/retention-control-preservation.json"
+    }
+  },
+  "secrets": {
+    "admin_session": "env:CLAW_E2E_ADMIN_COOKIE",
+    "admin_requester_session": "env:CLAW_E2E_ADMIN_REQUESTER_COOKIE",
+    "admin_approver_session": "env:CLAW_E2E_ADMIN_APPROVER_COOKIE",
+    "user_a_session": "env:CLAW_E2E_USER_A_COOKIE",
+    "user_b_same_customer_session": "env:CLAW_E2E_USER_B_SAME_COOKIE",
+    "user_b_other_customer_session": "env:CLAW_E2E_USER_B_OTHER_COOKIE",
+    "model_api_key": "env:CLAW_E2E_MODEL_API_KEY",
+    "sandbox_acceptance_token": "file:/run/secrets/workbench_sandbox_acceptance_token"
+  },
+  "variables": {
+    "customer_code": "acceptance-customer",
+    "customer_id": "replace-after-create"
+  },
+  "selection_targets": {
+    "user_a": {
+      "customer_code": "acceptance-customer",
+      "app_selector": "primary"
+    },
+    "user_a_context_1": {
+      "customer_code": "acceptance-customer",
+      "app_selector": "primary"
+    },
+    "user_a_context_2": {
+      "customer_code": "acceptance-customer",
+      "app_selector": "secondary"
+    },
+    "user_a_customer_2": {
+      "customer_code": "acceptance-customer-2",
+      "app_selector": "primary"
+    },
+    "user_a_stale_context": {
+      "customer_code": "acceptance-customer",
+      "app_selector": "secondary"
+    }
+  },
+  "release_manifest": "file:/secure/evidence/release-manifest.json",
+  "paths": {
+    "legacy": "/playground/legacy",
+    "user_ticket": "/api/workbench/session-ticket",
+    "admin_ticket": "/api/admin/workbench/session-ticket",
+    "entry": "/api/workbench/entry",
+    "selections": "/api/workbench/selections",
+    "selection_choose": "/api/workbench/selections/choose",
+    "workbench_root": "/workbench/",
+    "account_info": "/workbench/account/info",
+    "application_list": "/workbench/application/list",
+    "turn": "/workbench/chat/message",
+    "turn_events": "/workbench/chat/turn/events",
+    "history": "/workbench/chat/messages",
+    "file_upload": "/workbench/file/upload"
+  },
+  "lifecycle": {
+    "create_customer_members": [],
+    "invalid_app_validation": [],
+    "no_plan_gate": [],
+    "activate_plan": []
+  },
+  "turn": {
+    "request_fixture": "file:/secure/fixtures/minimal-turn.json",
+    "disconnect_after_events": 2
+  },
+  "isolation_checks": [],
+  "eicar": {
+    "file_ref": "file:/secure/fixtures/eicar.com.txt"
+  },
+  "policy_checks": [],
+  "limit_checks": [],
+  "selector_checks": [],
+  "oauth_checks": [],
+  "integration_execution_mode": "blocked",
+  "integration_execution_checks": [],
+  "scheduled_task_checks": [],
+  "agent_store_checks": [],
+  "app_migration_checks": [],
+  "sandbox_checks": [
+    {
+      "name": "managed sandbox exposes only approved capabilities",
+      "requirement": "capability_contract",
+      "actor": "user_a",
+      "method": "GET",
+      "path": "/workbench/sandbox/config",
+      "expect_status": [200],
+      "json_equals": {"/sandbox_enabled": true, "/shell_enabled": true, "/files_enabled": true, "/code_execution_enabled": false, "/pty_enabled": false}
+    },
+    {
+      "name": "create a dedicated Conversation for provider-response-loss acceptance",
+      "requirement": "provider_unknown_no_duplicate",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/adp/CreateConversation",
+      "body_fixture": "file:/secure/fixtures/provider-unknown-conversation.json",
+      "expect_status": [200],
+      "capture": {"provider_unknown_conversation_id": "/Response/ConversationId"}
+    },
+    {
+      "name": "inject one provider Start response loss",
+      "requirement": "provider_unknown_no_duplicate",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/sandbox",
+      "body_fixture": "file:/secure/fixtures/provider-unknown-sandbox.json",
+      "expect_status": [503],
+      "require_response_markers": ["acceptance_provider_response_lost"]
+    },
+    {
+      "name": "replay sandbox creation without a second provider Start",
+      "requirement": "provider_unknown_no_duplicate",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/sandbox",
+      "body_fixture": "file:/secure/fixtures/provider-unknown-sandbox.json",
+      "expect_status": [201],
+      "json_equals": {"/status": "provider_unknown"},
+      "capture": {"provider_unknown_sandbox_id": "/sandbox_id"}
+    },
+    {
+      "name": "prove exactly one provider Start was observed",
+      "requirement": "provider_unknown_no_duplicate",
+      "actor": "user_a",
+      "method": "GET",
+      "path": "/workbench/sandbox/acceptance/provider-start-count?acceptance_run_id=${acceptance_run_id}&conversation_id=${provider_unknown_conversation_id}",
+      "expect_status": [200],
+      "json_equals": {"/provider_start_count": 1}
+    },
+    {
+      "name": "bind the one-start evidence to the recovered sandbox",
+      "requirement": "provider_unknown_no_duplicate",
+      "actor": "user_a",
+      "method": "GET",
+      "path": "/workbench/sandbox/acceptance/instances?acceptance_run_id=${acceptance_run_id}&conversation_id=${provider_unknown_conversation_id}",
+      "expect_status": [200],
+      "json_equals": {"/provider_start_count": 1, "/instances/0/sandbox_id": "${provider_unknown_sandbox_id}"},
+      "json_absent": ["/instances/0/provider_instance_id", "/instances/0/provider_locator"]
+    },
+    {
+      "name": "create managed sandbox for the accepted conversation",
+      "requirement": "lifecycle_ownership",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/sandbox",
+      "body_fixture": "file:/secure/fixtures/sandbox-create.json",
+      "expect_status": [201],
+      "capture": {"sandbox_id": "/sandbox_id"}
+    },
+    {
+      "name": "query managed sandbox ownership and lifecycle",
+      "requirement": "lifecycle_ownership",
+      "actor": "user_a",
+      "method": "GET",
+      "path": "/workbench/sandbox/${sandbox_id}?conversation_id=${conversation_id}",
+      "expect_status": [200],
+      "poll": {"pointer": "/status", "equals": "running", "forbid_values": ["failed", "provider_unknown", "stopped"], "timeout_seconds": 120, "interval_seconds": 2}
+    },
+    {
+      "name": "different customer cannot query the managed sandbox",
+      "requirement": "cross_scope_idor",
+      "actor": "user_b_other",
+      "method": "GET",
+      "path": "/workbench/sandbox/${sandbox_id}?conversation_id=${conversation_id}",
+      "expect_status": [404]
+    },
+    {
+      "name": "missing CSRF is rejected before Shell reaches the provider",
+      "requirement": "csrf_rejected",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/sandbox/${sandbox_id}/shell",
+      "body_fixture": "file:/secure/fixtures/sandbox-shell.json",
+      "csrf_mode": "omit",
+      "expect_status": [403],
+      "require_response_markers": ["CSRF"]
+    },
+    {
+      "name": "invalid CSRF is rejected before Shell reaches the provider",
+      "requirement": "csrf_rejected",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/sandbox/${sandbox_id}/shell",
+      "body_fixture": "file:/secure/fixtures/sandbox-shell.json",
+      "csrf_mode": "invalid",
+      "expect_status": [403],
+      "require_response_markers": ["CSRF"]
+    },
+    {
+      "name": "execute bounded managed sandbox Shell command",
+      "requirement": "shell_bounded",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/sandbox/${sandbox_id}/shell",
+      "body_fixture": "file:/secure/fixtures/sandbox-shell.json",
+      "expect_status": [200],
+      "require_response_markers": ["\"exit_code\":0"]
+    },
+    {
+      "name": "oversized managed sandbox Shell command is rejected",
+      "requirement": "resource_bounds",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/sandbox/${sandbox_id}/shell",
+      "body_fixture": "file:/secure/fixtures/sandbox-shell-oversize.json",
+      "body_min_bytes": 65537,
+      "fixture_json_min_lengths": {"/command": 65537},
+      "expect_status": [400],
+      "require_response_markers": ["command_invalid"]
+    },
+    {
+      "name": "stream bounded managed sandbox Shell command",
+      "requirement": "shell_stream_bounded",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/sandbox/${sandbox_id}/shell/stream",
+      "body_fixture": "file:/secure/fixtures/sandbox-shell.json",
+      "expect_status": [200],
+      "require_response_markers": ["\"exit_code\":0"]
+    },
+    {
+      "name": "write a managed sandbox workspace file",
+      "requirement": "file_roundtrip",
+      "actor": "user_a",
+      "method": "PUT",
+      "path": "/workbench/sandbox/${sandbox_id}/files?conversation_id=${conversation_id}&path=acceptance/result.json",
+      "body_fixture": "file:/secure/fixtures/sandbox-file.json",
+      "expect_status": [200],
+      "require_response_markers": ["\"written\":true"]
+    },
+    {
+      "name": "read the managed sandbox workspace file",
+      "requirement": "file_roundtrip",
+      "actor": "user_a",
+      "method": "GET",
+      "path": "/workbench/sandbox/${sandbox_id}/files?conversation_id=${conversation_id}&path=acceptance/result.json",
+      "expect_status": [200],
+      "require_response_markers": ["claw sandbox E2E"]
+    },
+    {
+      "name": "managed code interpreter remains fail closed",
+      "requirement": "code_fail_closed",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/sandbox/${sandbox_id}/code",
+      "body_fixture": "file:/secure/fixtures/sandbox-code-disabled.json",
+      "expect_status": [503],
+      "require_response_markers": ["provider_contract_unavailable"]
+    },
+    {
+      "name": "managed PTY remains fail closed",
+      "requirement": "pty_fail_closed",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/sandbox/${sandbox_id}/pty",
+      "body_fixture": "file:/secure/fixtures/sandbox-lifecycle.json",
+      "expect_status": [503],
+      "require_response_markers": ["provider_contract_unavailable"]
+    },
+    {
+      "name": "pause managed sandbox",
+      "requirement": "lifecycle_transitions",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/sandbox/${sandbox_id}/pause",
+      "body_fixture": "file:/secure/fixtures/sandbox-lifecycle.json",
+      "expect_status": [200]
+    },
+    {
+      "name": "wait for managed sandbox to pause",
+      "requirement": "lifecycle_transitions",
+      "actor": "user_a",
+      "method": "GET",
+      "path": "/workbench/sandbox/${sandbox_id}?conversation_id=${conversation_id}",
+      "expect_status": [200],
+      "poll": {"pointer": "/status", "equals": "paused", "forbid_values": ["failed", "provider_unknown", "stopped"], "timeout_seconds": 120, "interval_seconds": 2}
+    },
+    {
+      "name": "resume managed sandbox",
+      "requirement": "lifecycle_transitions",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/sandbox/${sandbox_id}/resume",
+      "body_fixture": "file:/secure/fixtures/sandbox-lifecycle.json",
+      "expect_status": [200]
+    },
+    {
+      "name": "wait for managed sandbox to resume",
+      "requirement": "lifecycle_transitions",
+      "actor": "user_a",
+      "method": "GET",
+      "path": "/workbench/sandbox/${sandbox_id}?conversation_id=${conversation_id}",
+      "expect_status": [200],
+      "poll": {"pointer": "/status", "equals": "running", "forbid_values": ["failed", "provider_unknown", "stopped"], "timeout_seconds": 120, "interval_seconds": 2}
+    },
+    {
+      "name": "stop managed sandbox cleanup",
+      "requirement": "cleanup_terminal",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/sandbox/${sandbox_id}/stop",
+      "body_fixture": "file:/secure/fixtures/sandbox-lifecycle.json",
+      "expect_status": [200],
+      "cleanup": true
+    },
+    {
+      "name": "confirm managed sandbox terminal cleanup",
+      "requirement": "cleanup_terminal",
+      "actor": "user_a",
+      "method": "GET",
+      "path": "/workbench/sandbox/${sandbox_id}?conversation_id=${conversation_id}",
+      "expect_status": [200],
+      "poll": {"pointer": "/status", "equals": "stopped", "forbid_values": ["failed", "provider_unknown"], "timeout_seconds": 120, "interval_seconds": 2},
+      "cleanup": true
+    },
+    {
+      "name": "stop every provider instance recorded by the response-loss run",
+      "requirement": "provider_unknown_no_duplicate",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/sandbox/acceptance/cleanup",
+      "body_fixture": "file:/secure/fixtures/provider-unknown-acceptance-cleanup.json",
+      "expect_status": [200],
+      "json_equals": {"/complete": true, "/cleanup_failed": 0},
+      "cleanup": true
+    },
+    {
+      "name": "confirm every response-loss provider instance is terminal",
+      "requirement": "provider_unknown_no_duplicate",
+      "actor": "user_a",
+      "method": "GET",
+      "path": "/workbench/sandbox/acceptance/instances?acceptance_run_id=${acceptance_run_id}&conversation_id=${provider_unknown_conversation_id}",
+      "expect_status": [200],
+      "json_equals": {"/provider_start_count": 1, "/instances/0/sandbox_id": "${provider_unknown_sandbox_id}"},
+      "json_one_of": {"/instances/0/cleanup_status": ["not_found", "stopped"]},
+      "cleanup": true
+    },
+    {
+      "name": "delete the dedicated provider-response-loss Conversation",
+      "requirement": "provider_unknown_no_duplicate",
+      "actor": "user_a",
+      "method": "POST",
+      "path": "/workbench/chat/conversation/delete",
+      "body_fixture": "file:/secure/fixtures/provider-unknown-conversation-delete.json",
+      "expect_status": [200],
+      "json_equals": {"/Success": 1},
+      "cleanup": true
+    }
+  ],
+  "gate_scenarios": [],
+  "rotation_checks": [],
+  "byok_checks": [],
+  "usage_audit_checks": [],
+  "billing_import_checks": [],
+  "smoke_checks": [],
+  "security_checks": [],
+  "retention_checks": [],
+  "direct_adp_paths": ["/account/info", "/application/list", "/chat/messages"],
+  "load": {
+    "request_fixture": "file:/secure/fixtures/minimal-turn.json",
+    "turn_path": "/workbench/chat/message",
+    "timeout_seconds": 900,
+    "external_evidence": {
+      "50": "file:/secure/evidence/claw-load-50.json",
+      "100": "file:/secure/evidence/claw-load-100.json"
+    },
+    "external_evidence_allowed_signers_file": "file:/secure/keys/load-observer-allowed_signers",
+    "external_evidence_wait_seconds": 60
+  }
+}

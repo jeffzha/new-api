@@ -24,12 +24,14 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/mistral"
 	"github.com/QuantumNous/new-api/relay/channel/mokaai"
 	"github.com/QuantumNous/new-api/relay/channel/moonshot"
+	"github.com/QuantumNous/new-api/relay/channel/newapi"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	"github.com/QuantumNous/new-api/relay/channel/palm"
 	"github.com/QuantumNous/new-api/relay/channel/perplexity"
 	"github.com/QuantumNous/new-api/relay/channel/replicate"
 	"github.com/QuantumNous/new-api/relay/channel/siliconflow"
+	"github.com/QuantumNous/new-api/relay/channel/sub2api"
 	"github.com/QuantumNous/new-api/relay/channel/submodel"
 	taskali "github.com/QuantumNous/new-api/relay/channel/task/ali"
 	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
@@ -37,6 +39,8 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/hailuo"
 	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
+	mobilecloudseedance "github.com/QuantumNous/new-api/relay/channel/task/mobilecloudseedance"
+	seedancedomestic "github.com/QuantumNous/new-api/relay/channel/task/seedancedomestic"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
 	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
@@ -66,7 +70,7 @@ func GetAdaptor(apiType int) channel.Adaptor {
 	case constant.APITypePaLM:
 		return &palm.Adaptor{}
 	case constant.APITypeTencent:
-		return &tencent.Adaptor{}
+		return &tencent.DispatchAdaptor{}
 	case constant.APITypeXunfei:
 		return &xunfei.Adaptor{}
 	case constant.APITypeZhipu:
@@ -123,6 +127,10 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &codex.Adaptor{}
 	case constant.APITypeAdvancedCustom:
 		return &advancedcustom.Adaptor{}
+	case constant.APITypeSub2API:
+		return &sub2api.Adaptor{}
+	case constant.APITypeNewAPI:
+		return &newapi.Adaptor{}
 	}
 	return nil
 }
@@ -156,6 +164,10 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskVidu.TaskAdaptor{}
 		case constant.ChannelTypeDoubaoVideo, constant.ChannelTypeVolcEngine:
 			return &taskdoubao.TaskAdaptor{}
+		case constant.ChannelTypeSeedanceDomestic:
+			return &seedancedomestic.TaskAdaptor{}
+		case constant.ChannelTypeMobileCloudSeedance:
+			return &mobilecloudseedance.TaskAdaptor{}
 		case constant.ChannelTypeSora, constant.ChannelTypeOpenAI:
 			return &tasksora.TaskAdaptor{}
 		case constant.ChannelTypeGemini:
@@ -165,4 +177,15 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 		}
 	}
 	return nil
+}
+
+// TaskAdaptorUsesProviderBilling reports whether a channel and model pair's task
+// adaptor supplies its complete price instead of relying on model ratio/price settings.
+func TaskAdaptorUsesProviderBilling(channelType int, modelName string) bool {
+	adaptor := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(channelType)))
+	if adaptor == nil {
+		return false
+	}
+	estimator, ok := adaptor.(channel.TaskBillingEstimator)
+	return ok && estimator.SupportsTaskBilling(channelType, modelName)
 }

@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "customer": {
+    "customer_code": "",
+    "display_name": "",
+    "new_api_user_ids": [],
+    "provider_secret_name_prefix": ""
+  },
+  "adp": {
+    "provider_environment": "china_tencent_cloud",
+    "region": "",
+    "app_id": "",
+    "space_id": "",
+    "template_agent_id": "",
+    "app_mode": null,
+    "release_running": null,
+    "dynamic_agent_config_enabled": null,
+    "app_key_delivery": "missing_or_rotate_required",
+    "app_key_fingerprint": "",
+    "management_credential_delivery": "missing",
+    "management_credential_fingerprint": ""
+  },
+  "agsx": {
+    "enabled_for_acceptance": false,
+    "region": "",
+    "tool_id": "",
+    "tool_name": "",
+    "network_mode": "SANDBOX",
+    "auth_mode": "TOKEN",
+    "credential_delivery": "missing"
+  },
+  "cos": {
+    "enabled_for_acceptance": false,
+    "region": "",
+    "private_bucket": "",
+    "object_prefix": "workbench/",
+    "credential_delivery": "missing"
+  },
+  "internal_pki": {
+    "delivery_directory": "",
+    "ca_chain_present": false,
+    "workbench_control_leaf_present": false,
+    "new_api_identity_leaf_present": false,
+    "validated": false
+  }
+}

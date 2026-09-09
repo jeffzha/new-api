@@ -1,9 +1,11 @@
 package model_setting
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/config"
 )
 
@@ -19,6 +21,8 @@ type ClaudeSettings struct {
 	DefaultMaxTokens                      map[string]int                 `json:"default_max_tokens"`
 	ThinkingAdapterEnabled                bool                           `json:"thinking_adapter_enabled"`
 	ThinkingAdapterBudgetTokensPercentage float64                        `json:"thinking_adapter_budget_tokens_percentage"`
+	PromptCacheEnabled                    bool                           `json:"prompt_cache_enabled"`
+	PromptCacheTTL                        string                         `json:"prompt_cache_ttl"`
 }
 
 // 默认配置
@@ -29,6 +33,8 @@ var defaultClaudeSettings = ClaudeSettings{
 		"default": 8192,
 	},
 	ThinkingAdapterBudgetTokensPercentage: 0.8,
+	PromptCacheEnabled:                    false,
+	PromptCacheTTL:                        "5m",
 }
 
 // 全局实例
@@ -86,4 +92,33 @@ func (c *ClaudeSettings) GetDefaultMaxTokens(model string) int {
 		return maxTokens
 	}
 	return c.DefaultMaxTokens["default"]
+}
+
+// ValidateClaudeDefaultMaxTokens validates the JSON persisted by the option
+// API. Zero stays allowed — the current Messages API accepts max_tokens: 0 as
+// cache pre-warming — but negative values are rejected because they would
+// wrap into huge unsigned values during request conversion.
+func ValidateClaudeDefaultMaxTokens(value string) error {
+	var settings map[string]int
+	if err := common.UnmarshalJsonStr(value, &settings); err != nil {
+		return fmt.Errorf("Claude default max tokens must be a JSON map of model to integer: %w", err)
+	}
+	if settings == nil {
+		return fmt.Errorf("Claude default max tokens must be a JSON map of model to integer")
+	}
+	for model, maxTokens := range settings {
+		if maxTokens < 0 {
+			return fmt.Errorf("negative Claude default max_tokens %d for %q", maxTokens, model)
+		}
+	}
+	return nil
+}
+
+func ValidateClaudePromptCacheTTL(value string) error {
+	switch strings.TrimSpace(value) {
+	case "5m", "1h":
+		return nil
+	default:
+		return fmt.Errorf("Claude prompt cache TTL must be 5m or 1h")
+	}
 }

@@ -480,7 +480,7 @@ func tokenOperationChannelObjectStatus(status int) string {
 func inferTokenOperationCallType(modelName string, channelType int) (string, string) {
 	lower := strings.ToLower(strings.TrimSpace(modelName))
 	switch channelType {
-	case constant.ChannelTypeDoubaoVideo, constant.ChannelTypeSora, constant.ChannelTypeKling, constant.ChannelTypeVidu:
+	case constant.ChannelTypeDoubaoVideo, constant.ChannelTypeSeedanceDomestic, constant.ChannelTypeMobileCloudSeedance, constant.ChannelTypeSora, constant.ChannelTypeKling, constant.ChannelTypeVidu:
 		return "video_generation", "high"
 	case constant.ChannelTypeSunoAPI:
 		return "speech", "medium"

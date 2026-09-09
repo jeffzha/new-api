@@ -1,0 +1,60 @@
+{
+	# Literal-IP TLS clients commonly omit SNI. Serve the public IP certificate
+	# as the default certificate while preserving normal domain SNI handling.
+	default_sni 124.174.0.221
+}
+
+(seedance_gateway) {
+	encode zstd gzip
+
+	@apidocs_no_slash path /apidocs
+	redir @apidocs_no_slash /apidocs/ 308
+
+	# The liveness provider returns a single-use BytedToken in the callback query.
+	# Never cache it or forward the callback URL as a referrer. Query logging for
+	# this path must also be disabled/redacted in any external CDN or WAF.
+	@visual_callback path /apidocs/apidocs-example-callback.html
+	log_skip @visual_callback
+	header @visual_callback {
+		>Cache-Control "no-store"
+		>Referrer-Policy "no-referrer"
+		>X-Content-Type-Options "nosniff"
+		>Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+	}
+
+	handle_path /apidocs/* {
+		reverse_proxy api-docs:80
+	}
+
+	@seedance_assets {
+		path /api/v3/open/CreateVisualValidateSession /api/v3/open/GetVisualValidateResult /api/v3/open/CreateAssetGroup /api/v3/open/CreateAsset /api/v3/open/GetAsset
+	}
+	handle @seedance_assets {
+		reverse_proxy hwdrama-proxy:3001 {
+			transport http {
+				dial_timeout 10s
+				response_header_timeout 10m
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy new-api:3000
+	}
+}
+
+gateway.nexus-reach.com {
+	import seedance_gateway
+}
+
+124.174.0.221 {
+	# Let's Encrypt IP certificates must use the short-lived ACME profile.
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+			profile shortlived
+		}
+	}
+
+	import seedance_gateway
+}

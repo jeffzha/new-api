@@ -1,0 +1,875 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <title>new-api 运维观测与并发控制说明</title>
+  <style>
+    :root {
+      --ink: #182230;
+      --muted: #667085;
+      --line: #d0d5dd;
+      --soft-line: #e4e7ec;
+      --panel: #ffffff;
+      --canvas: #f6f8fb;
+      --blue: #175cd3;
+      --blue-soft: #eff8ff;
+      --green: #067647;
+      --green-soft: #ecfdf3;
+      --amber: #b54708;
+      --amber-soft: #fffaeb;
+      --red: #b42318;
+      --red-soft: #fef3f2;
+      --violet: #6938ef;
+      --violet-soft: #f4f3ff;
+      --code: #101828;
+      --shadow: 0 10px 30px rgba(16, 24, 40, 0.07);
+      font-family: Inter, "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 0%, rgba(23, 92, 211, 0.11), transparent 31rem),
+        radial-gradient(circle at 88% 3%, rgba(105, 56, 239, 0.08), transparent 28rem),
+        var(--canvas);
+      line-height: 1.68;
+    }
+
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre, .formula { font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; }
+    code { padding: 0.12rem 0.34rem; border-radius: 5px; background: #f2f4f7; font-size: 0.92em; }
+
+    .page { width: min(1380px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 72px; }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: clamp(28px, 5vw, 58px);
+      border: 1px solid rgba(23, 92, 211, 0.18);
+      border-radius: 20px;
+      background: linear-gradient(135deg, rgba(255,255,255,0.98), rgba(239,248,255,0.94));
+      box-shadow: var(--shadow);
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      width: 320px;
+      height: 320px;
+      right: -90px;
+      top: -130px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, rgba(23,92,211,0.18), rgba(105,56,239,0.12));
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 11px;
+      border-radius: 999px;
+      color: #1849a9;
+      background: #d1e9ff;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 18px 0 12px; font-size: clamp(34px, 5vw, 62px); line-height: 1.08; letter-spacing: -0.035em; }
+    .hero p { max-width: 940px; margin: 0; color: #475467; font-size: 17px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 22px; }
+    .chip { padding: 6px 10px; border: 1px solid #b2ddff; border-radius: 999px; color: #1849a9; background: rgba(255,255,255,0.82); font-size: 12px; font-weight: 700; }
+
+    .layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 24px; align-items: start; margin-top: 24px; }
+    .toc {
+      position: sticky;
+      top: 18px;
+      max-height: calc(100vh - 36px);
+      overflow: auto;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.94);
+      box-shadow: 0 6px 18px rgba(16,24,40,0.05);
+    }
+    .toc strong { display: block; margin-bottom: 8px; font-size: 13px; color: #344054; }
+    .toc a { display: block; padding: 6px 8px; border-radius: 7px; color: #475467; font-size: 13px; }
+    .toc a:hover { color: var(--blue); background: var(--blue-soft); text-decoration: none; }
+    .content { min-width: 0; }
+
+    section { scroll-margin-top: 20px; margin-bottom: 22px; }
+    .section-card { padding: clamp(20px, 3vw, 34px); border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: 0 5px 18px rgba(16,24,40,0.045); }
+    h2 { margin: 0 0 8px; font-size: clamp(24px, 3vw, 32px); line-height: 1.22; letter-spacing: -0.02em; }
+    h3 { margin: 28px 0 10px; font-size: 19px; line-height: 1.3; }
+    h4 { margin: 20px 0 7px; font-size: 15px; }
+    .section-intro { margin: 0 0 18px; color: var(--muted); }
+    p { margin: 8px 0 12px; }
+    ul, ol { padding-left: 1.3rem; }
+    li { margin: 5px 0; }
+
+    .grid { display: grid; gap: 14px; }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .mini-card { padding: 16px; border: 1px solid var(--soft-line); border-radius: 12px; background: #fcfcfd; }
+    .mini-card h3, .mini-card h4 { margin-top: 0; }
+    .kpi { font-size: 26px; font-weight: 800; line-height: 1.15; color: #101828; }
+    .small { font-size: 13px; color: var(--muted); }
+
+    .callout { margin: 16px 0; padding: 14px 16px; border-left: 4px solid var(--blue); border-radius: 8px; background: var(--blue-soft); }
+    .callout.warn { border-color: var(--amber); background: var(--amber-soft); }
+    .callout.danger { border-color: var(--red); background: var(--red-soft); }
+    .callout.success { border-color: var(--green); background: var(--green-soft); }
+    .callout p:last-child { margin-bottom: 0; }
+
+    .formula {
+      overflow-x: auto;
+      margin: 12px 0;
+      padding: 14px 16px;
+      border: 1px solid #d6bbfb;
+      border-radius: 10px;
+      color: #42307d;
+      background: var(--violet-soft);
+      white-space: pre-wrap;
+      font-size: 13px;
+      line-height: 1.75;
+    }
+    pre {
+      position: relative;
+      overflow: auto;
+      margin: 12px 0;
+      padding: 16px;
+      border-radius: 12px;
+      color: #e6edf3;
+      background: var(--code);
+      font-size: 12.5px;
+      line-height: 1.62;
+      tab-size: 2;
+    }
+    pre code { padding: 0; color: inherit; background: transparent; }
+
+    .flow { display: grid; grid-template-columns: repeat(5, minmax(130px, 1fr)); gap: 10px; align-items: stretch; margin: 18px 0; }
+    .flow-node { position: relative; display: grid; place-items: center; min-height: 92px; padding: 12px; border: 1px solid #b2ddff; border-radius: 12px; text-align: center; background: #f5fbff; font-size: 13px; font-weight: 700; }
+    .flow-node:not(:last-child)::after { content: "→"; position: absolute; right: -14px; top: 50%; transform: translateY(-50%); z-index: 2; color: var(--blue); font-size: 19px; }
+
+    .table-wrap { overflow-x: auto; margin: 14px 0; border: 1px solid var(--line); border-radius: 11px; }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; font-size: 13px; }
+    th { padding: 10px 12px; color: #344054; background: #f2f4f7; text-align: left; vertical-align: top; }
+    td { padding: 10px 12px; border-top: 1px solid var(--soft-line); vertical-align: top; }
+    tbody tr:hover { background: #fcfcfd; }
+    .nowrap { white-space: nowrap; }
+    .tag { display: inline-flex; padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 800; }
+    .tag.green { color: var(--green); background: var(--green-soft); }
+    .tag.blue { color: var(--blue); background: var(--blue-soft); }
+    .tag.amber { color: var(--amber); background: var(--amber-soft); }
+    .tag.red { color: var(--red); background: var(--red-soft); }
+
+    details { margin: 10px 0; border: 1px solid var(--soft-line); border-radius: 10px; background: #fcfcfd; }
+    summary { cursor: pointer; padding: 12px 14px; font-weight: 750; }
+    details > div { padding: 0 14px 14px; }
+    .footer { padding: 22px; color: var(--muted); text-align: center; font-size: 12px; }
+    .print-button { float: right; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; color: #344054; background: #fff; cursor: pointer; font-weight: 700; }
+
+    @media (max-width: 1050px) {
+      .layout { grid-template-columns: 1fr; }
+      .toc { position: static; max-height: none; }
+      .toc a { display: inline-flex; margin: 2px; }
+      .flow { grid-template-columns: 1fr; }
+      .flow-node:not(:last-child)::after { content: "↓"; right: 50%; top: auto; bottom: -20px; transform: translateX(50%); }
+    }
+    @media (max-width: 760px) {
+      .page { width: min(100% - 18px, 1380px); padding-top: 10px; }
+      .hero { border-radius: 14px; }
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .section-card { border-radius: 12px; }
+      .print-button { display: none; }
+    }
+    @media print {
+      body { background: #fff; }
+      .page { width: 100%; padding: 0; }
+      .hero, .section-card { box-shadow: none; break-inside: avoid; }
+      .layout { display: block; }
+      .toc, .print-button { display: none; }
+      section { break-before: auto; }
+      a { color: inherit; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <button class="print-button" type="button" onclick="window.print()">打印 / 导出 PDF</button>
+      <span class="eyebrow">Operations · Observability · Concurrency</span>
+      <h1>new-api 运维观测与并发控制说明</h1>
+      <p>本文对应提交 <code>3bbfea6d3</code>，说明运维监控页面中每个指标的统计口径、计算公式、数据采集链路、持久化方式、设置项含义，以及并发限制从“只观测”到“正式执行”的配置方法。</p>
+      <div class="meta">
+        <span class="chip">观测默认开启</span>
+        <span class="chip">并发限制默认关闭</span>
+        <span class="chip">Root 权限可见</span>
+        <span class="chip">SQLite / MySQL / PostgreSQL</span>
+        <span class="chip">文档版本：2026-08-02</span>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav class="toc" aria-label="目录">
+        <strong>目录</strong>
+        <a href="#quick-start">1. 功能入口与默认状态</a>
+        <a href="#architecture">2. 数据链路与表结构</a>
+        <a href="#scope">3. 观测范围与请求分类</a>
+        <a href="#definitions">4. 统一统计口径</a>
+        <a href="#traffic">5. 请求、Token、QPS/TPS</a>
+        <a href="#latency">6. 延迟与 TTFT</a>
+        <a href="#errors">7. 错误、SLA 与切换</a>
+        <a href="#tasks">8. 视频任务与模型速度</a>
+        <a href="#system">9. 系统、网络、DB、Redis</a>
+        <a href="#health">10. 健康分与智能诊断</a>
+        <a href="#concurrency">11. 并发与可用性</a>
+        <a href="#settings">12. 全局设置项</a>
+        <a href="#limit-settings">13. 渠道并发规则</a>
+        <a href="#configuration">14. 界面与 API 配置</a>
+        <a href="#operations">15. 上线建议与排障</a>
+        <a href="#limitations">16. 精度与边界</a>
+      </nav>
+
+      <article class="content">
+        <section id="quick-start" class="section-card">
+          <h2>1. 功能入口与默认状态</h2>
+          <p class="section-intro">运维监控嵌入新版管理界面的“系统信息”页面，只允许 Root 用户访问。</p>
+          <div class="grid grid-3">
+            <div class="mini-card">
+              <div class="small">界面路径</div>
+              <div class="kpi">系统信息</div>
+              <p>登录 Root 账号后进入“系统信息”，最上方即为“运维监控”。</p>
+            </div>
+            <div class="mini-card">
+              <div class="small">请求和系统观测</div>
+              <div class="kpi" style="color:var(--green)">开启</div>
+              <p><code>enabled=true</code>，采集规范化请求事件和每节点系统资源。</p>
+            </div>
+            <div class="mini-card">
+              <div class="small">并发限制执行</div>
+              <div class="kpi" style="color:var(--amber)">关闭</div>
+              <p><code>concurrency_enforcement_enabled=false</code>，先记录占用，不排队、不拒绝。</p>
+            </div>
+          </div>
+          <div class="callout success">
+            <strong>当前安全默认值：</strong>系统会记录真实并发占用，但即使已经配置某个渠道的并发规则，只要“全局并发限制执行”没有开启，请求就不会因为该规则被拒绝。
+          </div>
+          <p>页面提供 5 分钟、1 小时、24 小时窗口，以及模型、分组、渠道、端点类型和节点筛选。后端快照接口默认查询最近 1 小时，单次最长查询 31 天，时间区间统一采用半开区间 <code>[start, end)</code>。</p>
+          <h3>筛选条件实际作用范围</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>页面区域</th><th>时间窗口</th><th>模型/分组/渠道/端点</th><th>节点</th></tr></thead>
+              <tbody>
+                <tr><td>概览、QPS/TPS、延迟、错误、切换、最近错误</td><td>生效</td><td>生效</td><td>生效</td></tr>
+                <tr><td>系统资源趋势</td><td>生效</td><td>不适用</td><td>生效</td></tr>
+                <tr><td>视频提交统计</td><td>生效</td><td>对提交请求聚合生效</td><td>生效</td></tr>
+                <tr><td>视频终态和耗时</td><td>按任务 created_at 生效</td><td>当前不生效</td><td>当前不生效</td></tr>
+                <tr><td>并发、平台、分组、活跃用户</td><td>实时快照，不跟随</td><td>不跟随</td><td>不跟随</td></tr>
+                <tr><td>后台任务心跳</td><td>读取最近 1000 条任务，不跟随</td><td>不跟随</td><td>不跟随</td></tr>
+                <tr><td>模型 Token 速度</td><td>固定最近 30 天</td><td>固定 <code>model LIKE 'gpt%'</code></td><td>不跟随</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="architecture" class="section-card">
+          <h2>2. 数据链路与表结构</h2>
+          <p class="section-intro">业务请求与系统资源分两条链路采集，最后由同一个 Root 运维页面组合展示。</p>
+          <div class="flow" aria-label="请求观测数据流">
+            <div class="flow-node">客户请求<br /><span class="small">Relay / Task / Asset</span></div>
+            <div class="flow-node">全局观测中间件<br /><span class="small">开始时间、路径、请求 ID</span></div>
+            <div class="flow-node">Relay 集成点<br /><span class="small">渠道、Token、用量、错误、尝试</span></div>
+            <div class="flow-node">内存批量队列<br /><span class="small">500ms 或 200 条刷新</span></div>
+            <div class="flow-node">原始表 + 分钟表<br /><span class="small">Dashboard Snapshot</span></div>
+          </div>
+          <div class="flow" aria-label="系统采集数据流">
+            <div class="flow-node">每个运行实例<br /><span class="small">按采集间隔执行</span></div>
+            <div class="flow-node">cgroup / 主机<br /><span class="small">CPU、内存、磁盘、网络</span></div>
+            <div class="flow-node">连接池探针<br /><span class="small">DB Ping、Redis Ping</span></div>
+            <div class="flow-node">自然分钟去重<br /><span class="small">节点名 + 分钟</span></div>
+            <div class="flow-node">基础设施趋势<br /><span class="small">逐节点展示</span></div>
+          </div>
+
+          <h3>持久化表</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>表</th><th>用途</th><th>粒度 / 唯一维度</th><th>默认保留</th></tr></thead>
+              <tbody>
+                <tr><td><code>ops_request_events</code></td><td>每个被观测的下游请求；不保存请求体和响应体。</td><td>每请求一行，包含请求 ID、用户/Token/渠道 ID、端点、状态、用量、延迟和错误摘要。</td><td>30 天</td></tr>
+                <tr><td><code>ops_upstream_attempts</code></td><td>同一个下游请求对上游的每次尝试，用于重试、切换和排队诊断。</td><td>每次 attempt 一行；按请求 ID 关联原始请求。</td><td>30 天</td></tr>
+                <tr><td><code>ops_minute_metrics</code></td><td>请求分钟聚合，供长窗口趋势和历史统计使用。</td><td>分钟、节点、模型、分组、渠道、端点、有效状态码、错误归属、业务限制。</td><td>180 天</td></tr>
+                <tr><td><code>ops_system_metrics</code></td><td>每实例系统、网络、数据库和 Redis 指标。</td><td>自然分钟 + 节点名；同一分钟重复采集会更新该行。</td><td>90 天</td></tr>
+                <tr><td><code>ops_concurrency_limits</code></td><td>渠道或渠道密钥的并发规则。</td><td>渠道 ID + 密钥索引。</td><td>配置数据，不按观测保留期删除</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout">
+            原始请求队列容量为 10,000，attempt 队列容量为 20,000；写入器每 500ms 或积累到 200 条时批量落库。队列满时不会阻塞业务请求，而是丢弃观测事件、增加 <code>dropped_requests</code> / <code>dropped_attempts</code> 并写告警日志。
+          </div>
+          <p>页面的 telemetry 字段直接读取进程内队列状态：<code>request_queue_depth</code>、<code>attempt_queue_depth</code> 是尚未刷新到数据库的事件数；<code>dropped_requests</code>、<code>dropped_attempts</code> 是进程启动以来因为队列满而丢弃的累计数。它们不是数据库历史指标，实例重启后重新计数。</p>
+          <p>保留清理由 Master 节点启动后立即执行一次，之后每 24 小时执行一次。删除操作同时覆盖原始请求、attempt、分钟聚合和系统指标。</p>
+        </section>
+
+        <section id="scope" class="section-card">
+          <h2>3. 观测范围与请求分类</h2>
+          <p class="section-intro">只把公开 Relay、异步任务、视频、素材和认证端点纳入业务观测；后台管理页面和普通 Web 请求不进入 SLA 分母。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>endpoint_type</th><th>匹配范围</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td><code>chat</code></td><td><code>/v1/chat/completions*</code></td><td>OpenAI Chat Completions</td></tr>
+                <tr><td><code>responses</code></td><td><code>/v1/responses*</code></td><td>OpenAI Responses</td></tr>
+                <tr><td><code>messages</code></td><td><code>/v1/messages*</code></td><td>Anthropic Messages</td></tr>
+                <tr><td><code>embedding</code></td><td>路径包含 <code>/embeddings</code>、<code>:embedContent</code>、<code>:batchEmbedContents</code></td><td>Embedding 类请求</td></tr>
+                <tr><td><code>rerank</code></td><td>路径包含 <code>/rerank</code></td><td>重排请求</td></tr>
+                <tr><td><code>image_generation</code></td><td><code>/images/generations</code>、<code>/images/edits</code></td><td>图片生成与编辑</td></tr>
+                <tr><td><code>audio</code></td><td>路径包含 <code>/audio/</code></td><td>TTS、转录等音频请求</td></tr>
+                <tr><td><code>video_submit</code></td><td><code>POST /v1/video/generations</code> 或 <code>POST /v1/videos</code></td><td>视频任务提交</td></tr>
+                <tr><td><code>video_poll</code></td><td>视频任务查询路径</td><td>任务轮询</td></tr>
+                <tr><td><code>video_content</code></td><td><code>/v1/videos/{id}/content</code></td><td>视频内容读取</td></tr>
+                <tr><td><code>asset_management</code></td><td><code>/api/v3/open/</code> 或 <code>/api/openapi-maas/</code> 下包含 <code>asset</code></td><td>移动素材库管理</td></tr>
+                <tr><td><code>identity_verification</code></td><td>上述移动路径中包含 <code>visualValidate</code> 或 <code>real-person-auth</code></td><td>真人/活体相关接口</td></tr>
+                <tr><td><code>async_task</code></td><td><code>/mj/</code>、<code>/suno/</code></td><td>其他异步任务</td></tr>
+                <tr><td><code>relay_other</code></td><td>其余 <code>/v1/</code>、<code>/v1beta/</code>、<code>/v1beta1/</code></td><td>未单独分类的 Relay</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>一次请求会采集什么</h3>
+          <div class="grid grid-2">
+            <div class="mini-card">
+              <h4>入口中间件</h4>
+              <p>记录请求 ID、节点名、开始时间、HTTP 方法、路径和端点类型；请求完成后计算总耗时和下游状态码。</p>
+            </div>
+            <div class="mini-card">
+              <h4>Relay 元数据</h4>
+              <p>补充用户 ID、Token ID、客户模型、实际上游模型、分组、渠道、渠道类型、渠道密钥索引、流式标记和任务 ID。</p>
+            </div>
+            <div class="mini-card">
+              <h4>上游用量</h4>
+              <p>规范化为互不重叠的输入、输出、缓存读取、缓存创建四类 Token；失败请求的 Token 不进入概览 Token 汇总。</p>
+            </div>
+            <div class="mini-card">
+              <h4>错误和尝试</h4>
+              <p>记录错误归属、有效状态码、脱敏摘要、重试索引、账号切换和每次上游尝试的耗时与并发等待时间。</p>
+            </div>
+          </div>
+          <div class="callout success"><strong>隐私边界：</strong>观测表不保存请求正文和响应正文。错误摘要会先脱敏并限制预览长度；原始记录中的内部 ID 和错误摘要仅通过 Root 接口查看。</div>
+        </section>
+
+        <section id="definitions" class="section-card">
+          <h2>4. 统一统计口径</h2>
+          <p class="section-intro">以下符号用于后续全部公式。业务请求指标会先应用对应筛选条件和时间窗口，再进行计算；实时并发、后台任务和固定 30 天模型速度等区域的筛选边界见第一节。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>符号</th><th>含义</th><th>来源</th></tr></thead>
+              <tbody>
+                <tr><td><code>R</code></td><td>观测请求总数</td><td><code>request_count</code></td></tr>
+                <tr><td><code>S</code></td><td>成功请求数</td><td>HTTP 2xx/3xx 且没有记录业务错误码</td></tr>
+                <tr><td><code>E</code></td><td>失败请求数</td><td><code>E = R - S</code></td></tr>
+                <tr><td><code>B</code></td><td>业务限制失败数</td><td>本地配额、鉴权、非法请求、本地并发限制等</td></tr>
+                <tr><td><code>F</code></td><td>SLA 错误数</td><td><code>F = E - B</code></td></tr>
+                <tr><td><code>U</code></td><td>上游错误数</td><td>归属 provider、状态码 ≥400，并排除 429/529</td></tr>
+                <tr><td><code>I/O/CR/CC</code></td><td>输入 / 输出 / 缓存读取 / 缓存创建 Token</td><td>仅成功请求参与概览汇总</td></tr>
+                <tr><td><code>T</code></td><td>总 Token</td><td><code>T = I + O + CR + CC</code></td></tr>
+                <tr><td><code>W</code></td><td>选择窗口秒数</td><td><code>end - start</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="formula">effective_status = upstream_status_code &gt; 0 ? upstream_status_code : downstream_status_code
+
+success = (200 ≤ downstream_status_code &lt; 400) AND error_code 为空
+E = R - S
+F = E - B
+U = provider_error AND effective_status ≥ 400 AND effective_status NOT IN (429, 529)</div>
+          <p>未进入 Relay 的鉴权失败也会被入口中间件记录。例如下游 401 会被归属为 <code>gateway</code> 并标记为业务限制，因此不降低 SLA。未显式分类的失败默认归属 gateway；400、401、403、429 默认视为业务限制。</p>
+          <h3>业务限制的判定</h3>
+          <p>仅当错误归属为 gateway 时，本地配额不足、预扣费失败、模型价格错误、非法请求、请求体错误、访问拒绝、无法取得渠道，以及错误码中包含 <code>quota</code> 或 <code>concurrency</code> 的错误会进入 <code>B</code>。provider 返回的 429/529 不属于本地业务限制，仍会降低 SLA，但不会进入上游错误率的分子。</p>
+        </section>
+
+        <section id="traffic" class="section-card">
+          <h2>5. 请求、Token、QPS/TPS</h2>
+          <h3>概览指标</h3>
+          <div class="formula">总请求数       = R
+成功请求数     = S
+总错误数       = E = R - S
+业务限制数     = B
+SLA 错误数     = F = E - B
+上游错误数     = U
+
+SLA            = S / (S + F)
+请求错误率     = F / (S + F)
+上游错误率     = U / (S + F)
+
+平均 QPS       = R / W
+平均 TPS       = T / W
+平均账号切换数 = Σswitch_count / R</div>
+          <p>当 <code>S + F = 0</code> 时，SLA 和两个错误率返回 0；页面在没有请求时通常显示为待机。只要分母存在，<code>SLA + 请求错误率 = 100%</code>。</p>
+          <div class="callout">
+            <strong>示例：</strong>窗口内 R=1000、S=950、B=30，则 F=20，SLA=950/(950+20)=97.938%，请求错误率=2.062%。如果其中 U=15，上游错误率=15/970=1.546%。
+          </div>
+
+          <h3>Token 规范化</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>语义</th><th>输入</th><th>输出</th><th>缓存读取</th><th>缓存创建</th></tr></thead>
+              <tbody>
+                <tr><td>OpenAI / 通用</td><td><code>InputTokens</code>，为 0 时使用 <code>PromptTokens</code>，再减去缓存读取和缓存创建</td><td><code>OutputTokens</code>，为 0 时使用 <code>CompletionTokens</code></td><td>取两套 details 中较大的 cached tokens</td><td>取 details 和 Claude 5m/1h 分拆中的较大值</td></tr>
+                <tr><td>Anthropic</td><td><code>input_tokens</code></td><td><code>output_tokens</code></td><td><code>cache_read_input_tokens</code></td><td>所有 cache creation 子项合计</td></tr>
+                <tr><td>Gemini</td><td><code>prompt_token_count - cached_content_token_count</code></td><td><code>candidates_token_count</code></td><td><code>cached_content_token_count</code></td><td>0</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>所有规范化分量都做非负保护。总 Token 四项互斥，避免缓存 Token 既算普通输入又算缓存用量。</p>
+
+          <h3>当前值、峰值与趋势</h3>
+          <div class="formula">当前 QPS = 最近 60 秒请求数 / 60
+当前 TPS = 最近 60 秒成功请求 Token / 60
+
+峰值 QPS = max(每个自然分钟请求数 / 60)
+峰值 TPS = max(每个自然分钟 Token 数 / 60)</div>
+          <ul>
+            <li>只要窗口仍在原始数据保留期内，“当前值”直接查询原始事件的最后 60 秒。</li>
+            <li>历史窗口超出原始保留期时，当前值由分钟表近似，接口将 <code>approximate=true</code>。</li>
+            <li>峰值是“最高自然分钟的平均速率”，不是单秒峰值；窗口首尾不足一分钟仍除以 60。</li>
+            <li>趋势桶宽：窗口 ≤2 小时为 60 秒；≤24 小时为 300 秒；更长为 3600 秒。</li>
+            <li>趋势补齐空桶；每个点的 QPS/TPS 始终除以完整桶宽，因此不完整边缘桶可能偏低。</li>
+          </ul>
+        </section>
+
+        <section id="latency" class="section-card">
+          <h2>6. 延迟与 TTFT</h2>
+          <p class="section-intro">请求总耗时和 TTFT 只统计成功请求；TTFT 只统计有首个流式响应时间的样本。</p>
+          <div class="formula">duration_ms = completed_at - request_started_at
+TTFT_ms     = first_response_time - relay_start_time
+
+Avg = Σ样本值 / 样本数
+Max = max(样本值)</div>
+          <h3>精确百分位</h3>
+          <p>窗口位于原始保留期内且成功请求不超过 50,000 条时，后端读取全部样本、升序排列并线性插值：</p>
+          <div class="formula">position = (n - 1) × p
+lower    = floor(position)
+upper    = ceil(position)
+Pp       = round(values[lower] + (values[upper] - values[lower]) × 小数部分)</div>
+          <p>分别计算 P50、P90、P95、P99，平均值采用整数除法。接口返回 <code>approximate=false</code>。</p>
+
+          <h3>分钟聚合近似百分位</h3>
+          <p>窗口超出原始保留期或样本超过 50,000 条时，使用分钟表中的六档直方图估算：</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>档位</th><th>边界规则</th></tr></thead>
+              <tbody>
+                <tr><td>0–100ms</td><td><code>value &lt; 100</code></td></tr>
+                <tr><td>100–200ms</td><td><code>100 ≤ value &lt; 200</code></td></tr>
+                <tr><td>200–500ms</td><td><code>200 ≤ value &lt; 500</code></td></tr>
+                <tr><td>500–1000ms</td><td><code>500 ≤ value &lt; 1000</code></td></tr>
+                <tr><td>1000–2000ms</td><td><code>1000 ≤ value &lt; 2000</code></td></tr>
+                <tr><td>2000ms+</td><td><code>value ≥ 2000</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>先定位目标累计样本所在档位，再按该档内部样本比例做线性估算；最后一档的上界使用窗口最大值。此时 <code>approximate=true</code>。延迟直方图只展示总耗时档位，TTFT 仍返回独立的百分位摘要。</p>
+        </section>
+
+        <section id="errors" class="section-card">
+          <h2>7. 错误、SLA、重试与账号切换</h2>
+          <h3>错误趋势和分布</h3>
+          <p>错误趋势按趋势桶分别展示 SLA 错误 <code>F</code>、上游错误 <code>U</code> 和业务限制 <code>B</code>。错误分布按有效状态码聚合，每个状态码同时返回总错误、SLA 错误、业务限制和上游错误，最后只保留总错误数最多的 20 个状态码。</p>
+          <div class="formula">状态码分布键 = effective_status
+TopStatusCode = Top 20 中 total 最大的状态码
+同 total 时按状态码升序</div>
+          <h3>错误归属</h3>
+          <ul>
+            <li>网络请求失败、读取上游响应失败、上游坏状态/坏响应/空响应、AWS 调用错误等归属 <code>provider</code>。</li>
+            <li>new-api 自身校验、配额、价格、路由和鉴权错误默认归属 <code>gateway</code>。</li>
+            <li>异步任务错误中，<code>LocalError=true</code> 归属 gateway，否则归属 provider。</li>
+            <li>错误摘要保存前调用敏感信息遮罩；详情页按请求 ID 同时展示请求和全部上游尝试。</li>
+          </ul>
+
+          <h3>重试和账号切换</h3>
+          <p>账号身份由 <code>(channel_id, key_index)</code> 组成。一次下游请求第一次使用某个账号不算切换；后续遇到此前未见过的账号才增加一次切换。回到已经见过的账号不会再次增加切换数。</p>
+          <div class="formula">switch_count(request) = 本请求中“首次出现的新账号（排除第一个）”数量
+平均账号切换数      = Σswitch_count / R
+retry_count          = RelayInfo.RetryIndex 的请求级累计值</div>
+          <p>每次上游 attempt 还会独立保存 attempt 索引、渠道、密钥、耗时、状态、错误码、是否切换、并发等待毫秒数和是否被并发追踪。</p>
+        </section>
+
+        <section id="tasks" class="section-card">
+          <h2>8. 视频任务生命周期与模型 Token 速度</h2>
+          <h3>视频任务生命周期</h3>
+          <div class="formula">提交数             = endpoint_type=video_submit 的请求数
+提交成功数         = 上述请求中的成功数
+提交成功率         = 提交成功数 / 提交数
+
+终态任务数         = SUCCESS + FAILURE
+生成成功率         = SUCCESS / 终态任务数
+
+排队时间           = start_time - submit_time
+生成时间           = finish_time - start_time
+端到端时间         = finish_time - submit_time</div>
+          <p><code>submit_time</code> 缺失时使用 <code>created_at</code>；数据库中大于 10<sup>12</sup> 的时间戳按毫秒转为秒。只有时间顺序有效的样本才进入相应平均值。任务状态来自统一 <code>tasks</code> 表，而不是请求日志推断。</p>
+          <div class="callout warn"><strong>筛选差异：</strong>“提交数/提交成功数”来自已经应用页面模型、分组、渠道、端点和节点筛选的请求聚合；“终态、生成成功率、排队/生成/端到端耗时”当前只按任务 <code>created_at</code> 时间范围查询，不携带上述业务筛选。</div>
+
+          <h3>模型 Token 速度</h3>
+          <p>该卡片当前固定查询最近 30 天、模型名以 <code>gpt</code> 开头的成功请求，并以自然分钟为缓存键；它不跟随页面顶部的 5m/1h/24h 窗口和模型/渠道筛选。</p>
+          <div class="formula">单请求输出速度_i = output_tokens_i × 1000 / duration_ms_i
+平均 Tokens/s      = AVG(单请求输出速度_i)
+
+条件：duration_ms &gt; 0 AND output_tokens &gt; 0
+平均 TTFT          = AVG(ttft_ms WHERE has_ttft=true)
+平均耗时           = AVG(duration_ms)
+输出 Token 总数    = SUM(output_tokens)</div>
+          <p>这是“每请求输出速度的算术平均”，不是 <code>Σoutput_tokens / Σduration</code>，也没有从总耗时中扣除 TTFT。</p>
+
+          <h3>后台任务心跳</h3>
+          <p>按系统任务类型读取最近 1000 条任务：最新失败时间晚于最新成功时间时为 <code>failed</code>；异步任务轮询和 Midjourney 轮询在最后成功超过 15 分钟时为 <code>stale</code>；其余为 <code>healthy</code>。</p>
+        </section>
+
+        <section id="system" class="section-card">
+          <h2>9. 系统、网络、数据库和 Redis 指标</h2>
+          <p class="section-intro">每个运行实例各自采集、各自按节点名落库。页面显示每个节点的最新值以及时间趋势，不把多个实例平均成一个“全局机器”。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>指标</th><th>采集方法 / 公式</th><th>备注</th></tr></thead>
+              <tbody>
+                <tr><td>CPU%</td><td><code>Δcgroup CPU 使用秒数 / (采样间隔秒 × CPU 配额核数) × 100%</code></td><td>Linux 优先 cgroup v2，再尝试 v1；配额核数取 quota/period，无配额则取 NumCPU；限制在 0–100%。首个样本或读取失败退回主机 CPU。</td></tr>
+                <tr><td>Memory%</td><td><code>memory.current / memory.max × 100%</code></td><td>Linux 优先 cgroup v2，再尝试 v1；无限制或读取失败退回主机虚拟内存使用率。</td></tr>
+                <tr><td>Disk%</td><td><code>(total - free_blocks) / total × 100%</code></td><td>读取磁盘缓存目录所在文件系统；Unix 使用 <code>statfs</code>。</td></tr>
+                <tr><td>网络接收 B/s</td><td><code>(本次累计接收字节 - 上次累计接收字节) / 实际采样间隔</code></td><td>统计当前网络命名空间全部接口的聚合值；计数器回退时速率记 0。</td></tr>
+                <tr><td>网络发送 B/s</td><td><code>(本次累计发送字节 - 上次累计发送字节) / 实际采样间隔</code></td><td>同时保存累计接收/发送字节。</td></tr>
+                <tr><td>Goroutines</td><td><code>runtime.NumGoroutine()</code></td><td>当前 Go 进程协程数量。</td></tr>
+                <tr><td>DB 健康</td><td>2 秒超时的 <code>PingContext</code></td><td>成功为 true。</td></tr>
+                <tr><td>DB 连接</td><td>读取 <code>database/sql.DBStats</code></td><td>open、max open、in use、idle、wait count、累计 wait duration。</td></tr>
+                <tr><td>DB 使用率</td><td><code>open_connections / max_open_connections × 100%</code></td><td>max 为 0 时不计算百分比。</td></tr>
+                <tr><td>Redis 健康</td><td>2 秒上下文中的 <code>PING</code></td><td>仅 Redis 已启用时采集。</td></tr>
+                <tr><td>Redis 连接</td><td>读取 go-redis <code>PoolStats</code></td><td>总连接、空闲连接、配置池大小；活跃连接可按 total-idle 推导。</td></tr>
+                <tr><td>Redis 使用率</td><td><code>total_connections / pool_size × 100%</code></td><td>池大小为 0 时不计算百分比。</td></tr>
+                <tr><td>Queue depth</td><td>所有已配置并发规则等待队列的当前数量之和</td><td>Redis 模式读取等待 ZSET；本地模式累计进程内 waiting。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout warn">
+            <strong>多节点含义：</strong>采集器没有选举单一 leader。每个新版本实例都会写入以自身 <code>NODE_NAME</code> 为维度的记录，所以 Blue/Green 同时运行时会出现两条节点曲线。这正是“逐实例观测”，不是重复数据。
+          </div>
+          <p>采样时间按 UTC 截断到自然分钟，唯一键为 <code>(bucket_ts, node_name)</code>。当采集间隔小于 60 秒时，同一节点同一分钟的后一次样本覆盖前一次样本；当间隔大于 60 秒时，中间分钟不会补点。</p>
+        </section>
+
+        <section id="health" class="section-card">
+          <h2>10. 综合健康分与智能诊断</h2>
+          <p class="section-intro">健康分将业务质量与基础设施组合为 0–100 分；诊断提示另有可配置阈值和少量固定阈值。</p>
+          <h3>通用线性降分函数</h3>
+          <div class="formula">L(x; healthy, critical) =
+  100                                    , x ≤ healthy
+  0                                      , x ≥ critical
+  (critical - x)/(critical - healthy)×100, 其他</div>
+          <h3>业务分</h3>
+          <div class="formula">ErrorPct   = 100 × max(请求错误率, 上游错误率)
+ErrorScore = L(ErrorPct; 1, 10)
+
+TTFTScore  = 100                              , 没有 TTFT 样本
+TTFTScore  = L(TTFT_P99_ms; 1000, 3000)       , 有样本
+
+BusinessHealth = 0.5 × ErrorScore + 0.5 × TTFTScore</div>
+          <h3>基础设施分</h3>
+          <div class="formula">StorageScore = 0   , 任意节点 DB 不健康
+StorageScore = 50  , DB 均健康，但任意启用 Redis 的节点不健康
+StorageScore = 100 , 其他
+
+NodeCompute = [L(CPU%; 80, 100) + L(Memory%; 85, 100)] / 2
+ComputeScore = min(所有节点 NodeCompute)
+
+JobScore = 100 × (1 - 非 healthy 任务类型数 / 任务类型总数)
+InfraHealth = 0.4 × StorageScore + 0.3 × ComputeScore + 0.3 × JobScore</div>
+          <h3>最终分数</h3>
+          <div class="formula">Health = round(0.7 × BusinessHealth + 0.3 × InfraHealth)
+
+Health ≥ 90       → healthy
+60 ≤ Health &lt; 90 → warning
+Health &lt; 60       → critical</div>
+          <p>展开后的权重约为：错误 35%、TTFT 35%、存储 12%、计算 9%、后台任务 9%。当窗口内 <strong>完全没有观测请求</strong> 时，代码直接返回 <code>idle / 100</code>，此时基础设施异常不会降低该综合分，但仍会出现在独立系统卡片和诊断列表中。</p>
+
+          <h3>智能诊断触发条件</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>诊断</th><th>级别</th><th>条件</th><th>阈值来源</th></tr></thead>
+              <tbody>
+                <tr><td>SLA 低</td><td><span class="tag red">critical</span></td><td>有请求且 SLA &lt; SLA threshold</td><td>可配置，默认 99.5%</td></tr>
+                <tr><td>SLA 接近下限</td><td><span class="tag amber">warning</span></td><td>SLA 在阈值以上 0.1 个百分点以内</td><td>可配置，默认 99.5%</td></tr>
+                <tr><td>请求 P99 延迟高</td><td>warning / critical</td><td>P99 ≥ 阈值的 80% 为 warning；P99 ≥ 阈值为 critical</td><td>可配置，默认 10000ms</td></tr>
+                <tr><td>TTFT P99 高</td><td>warning / critical</td><td>P99 ≥ 阈值的 80% 为 warning；P99 ≥ 阈值为 critical</td><td>可配置，默认 500ms</td></tr>
+                <tr><td>请求错误率高</td><td>warning / critical</td><td>错误率 ≥ 阈值的 80% 为 warning；错误率 ≥ 阈值为 critical</td><td>可配置，默认 5%</td></tr>
+                <tr><td>上游错误率高</td><td>warning / critical</td><td>错误率 ≥ 阈值的 80% 为 warning；错误率 ≥ 阈值为 critical</td><td>可配置，默认 5%</td></tr>
+                <tr><td>DB / Redis 失败</td><td><span class="tag red">critical</span></td><td>健康探针失败</td><td>固定</td></tr>
+                <tr><td>CPU 高</td><td>warning / critical</td><td>CPU ≥ 80% 为 warning；CPU ≥ 95% 为 critical</td><td>固定</td></tr>
+                <tr><td>内存高</td><td>warning / critical</td><td>Memory ≥ 85% 为 warning；Memory ≥ 95% 为 critical</td><td>固定</td></tr>
+                <tr><td>磁盘高</td><td>warning / critical</td><td>Disk ≥ 80% 为 warning；Disk ≥ 95% 为 critical</td><td>固定</td></tr>
+                <tr><td>任务不健康</td><td><span class="tag amber">warning</span></td><td>job 状态不是 healthy</td><td>固定</td></tr>
+                <tr><td>遥测丢弃</td><td><span class="tag red">critical</span></td><td>dropped request/attempt &gt; 0</td><td>固定</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>界面统一颜色规则</h3>
+          <ul>
+            <li><strong>灰色 neutral：</strong>无样本、未知、未启用或仅观察模式。</li>
+            <li><strong>蓝色 info：</strong>请求量、吞吐、绝对并发数、网络速率和无告警阈值的耗时等纯信息指标。</li>
+            <li><strong>绿色 success：</strong>健康、可用、零失败或处于正常阈值范围。</li>
+            <li><strong>黄色 warning：</strong>接近阈值、部分可用、发生排队或渠道切换等需要关注但仍可恢复的状态。</li>
+            <li><strong>红色 critical：</strong>达到严重阈值、服务不可用、任务失败、5xx 或遥测数据丢弃。</li>
+          </ul>
+          <p>所有“越低越好”的可配置指标统一在达到严重阈值的 80% 时变黄、达到阈值时变红；SLA 等“越高越好”的指标低于阈值变红，阈值以上 0.1 个百分点以内变黄。HTTP 4xx 显示黄色，5xx 和无有效状态码显示红色；趋势图的多序列颜色只用于区分数据系列，不代表健康状态。</p>
+        </section>
+
+        <section id="concurrency" class="section-card">
+          <h2>11. 并发观测、排队、租约与可用性</h2>
+          <p class="section-intro">并发模块在全局执行关闭时仍建立短期租约以展示真实占用；只有全局执行和匹配规则同时开启时才限制请求。</p>
+          <h3>生效条件</h3>
+          <div class="formula">enforce =
+  concurrency_enforcement_enabled
+  AND 找到匹配规则
+  AND rule.enabled
+  AND rule.max_concurrency &gt; 0</div>
+          <p>规则匹配先查精确的渠道密钥索引，再回退到该渠道的“全部密钥”规则（<code>key_index=-1</code>）。精确规则即使处于 disabled，也会遮蔽全部密钥规则，因此如需恢复继承，应删除精确规则，而不只是把它关闭。</p>
+
+          <h3>Redis 模式</h3>
+          <ul>
+            <li>占用和等待队列使用 Redis ZSET；score 为租约到期毫秒或进入队列时间。</li>
+            <li>Lua 脚本先清理过期租约，再按等待队列排名和剩余容量原子授予名额。</li>
+            <li>排队时每 100ms 重试一次；队列已满或超时返回 HTTP 429、错误码 <code>concurrency_limit</code>，并跳过自动重试。</li>
+            <li>租约每 <code>lease_seconds / 3</code> 自动续期；请求结束时主动从渠道、密钥和用户维度释放。</li>
+            <li>Redis 让多个 new-api 实例共享同一套并发容量，是生产多实例部署的推荐方式。</li>
+          </ul>
+
+          <h3>本地模式与 Fail Open</h3>
+          <ul>
+            <li>未启用 Redis 时，使用进程内计数器和 50ms 轮询；限制只对当前实例有效，不能形成集群总上限。</li>
+            <li>Redis 已启用但命令发生错误时：若执行开启且 <code>fail_open=false</code>，请求返回错误；若 <code>fail_open=true</code>，记录错误并退回本地“只观测”，不因规则拒绝。</li>
+            <li><code>fail_open</code> 不代表“Redis 未配置时不限制”。Redis 完全未启用时，代码会采用本地规则执行。</li>
+          </ul>
+
+          <h3>并发指标</h3>
+          <div class="formula">渠道负载率 = in_use / capacity × 100%
+平台负载率 = Σ渠道 in_use / Σ渠道 capacity × 100%
+分组负载率 = Σ渠道 in_use / Σ渠道 capacity × 100%
+
+可用率（可由返回字段计算） = available_channels / total_channels × 100%</div>
+          <p>平台按渠道类型聚合；一个渠道属于多个分组时，会完整贡献给每个分组，因此不同分组不能再次相加。用户并发只列出当前存在租约的用户，并按占用数降序。</p>
+
+          <h3>并发快照字段</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>字段</th><th>含义</th></tr></thead>
+              <tbody>
+                <tr><td><code>enforcement_enabled</code></td><td>全局并发执行开关的当前值。</td></tr>
+                <tr><td><code>redis_backed</code></td><td>当前实例是否使用 Redis 共享租约；false 表示进程内观测/限制。</td></tr>
+                <tr><td><code>in_use</code></td><td>尚未释放且未过期的渠道租约数。</td></tr>
+                <tr><td><code>capacity</code></td><td>根据 enabled 的全部密钥或逐密钥规则计算的展示容量。</td></tr>
+                <tr><td><code>waiting</code></td><td>匹配规则当前等待者数量合计。</td></tr>
+                <tr><td><code>load_percent</code></td><td><code>in_use/capacity×100%</code>；capacity=0 时为 0。</td></tr>
+                <tr><td><code>limit_configured</code></td><td>该渠道是否存在任何规则记录，包括 disabled 规则。</td></tr>
+                <tr><td><code>limit_enabled</code></td><td>是否至少存在 enabled 且容量大于 0 的规则。</td></tr>
+                <tr><td><code>available</code></td><td>渠道状态、运行时冷却和容量检查后的可调度判断。</td></tr>
+                <tr><td><code>unavailable_reason</code></td><td>disabled、rate_limited、overloaded、temporarily_unschedulable 或 at_capacity。</td></tr>
+                <tr><td><code>platforms / groups</code></td><td>按平台或分组汇总的占用、容量、等待、可用渠道数和渠道总数。</td></tr>
+                <tr><td><code>users</code></td><td>Redis 模式下当前有租约的用户 ID 和占用数；本地模式不返回用户列表。</td></tr>
+                <tr><td><code>collected_at</code></td><td>生成快照时的 Unix 秒。</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>渠道可用性判定顺序</h3>
+          <ol>
+            <li>渠道状态不是 enabled：<code>disabled</code>。</li>
+            <li>最近一次 attempt 返回 429，且冷却未结束：<code>rate_limited</code>。</li>
+            <li>最近一次 attempt 返回 529，且冷却未结束：<code>overloaded</code>。</li>
+            <li>最近一次 attempt 返回其他 ≥500，且临时冷却未结束：<code>temporarily_unschedulable</code>。</li>
+            <li>启用的并发容量已满：<code>at_capacity</code>。</li>
+            <li>以上均不满足：available。</li>
+          </ol>
+          <p>运行时 429/529/5xx 冷却标记只写 Redis。没有 Redis 时不会跨请求保存这三类可用性状态。</p>
+        </section>
+
+        <section id="settings" class="section-card">
+          <h2>12. 全局设置项：意义、默认值和范围</h2>
+          <p class="section-intro">界面中的百分比以 0–100 展示；REST API 中对应值使用 0–1，例如 99.5% 发送为 0.995。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>字段</th><th>默认</th><th>允许范围</th><th>意义与建议</th></tr></thead>
+              <tbody>
+                <tr><td><code>enabled</code></td><td>true</td><td>布尔</td><td>控制请求入口观测和系统资源采集。关闭不会删除历史数据；并发控制是独立开关。</td></tr>
+                <tr><td><code>raw_retention_days</code></td><td>30</td><td>1–365 天</td><td>原始请求和 attempt 保留期；决定请求详情、精确概览和精确延迟的可查询时间。</td></tr>
+                <tr><td><code>aggregate_retention_days</code></td><td>180</td><td>raw retention–3650 天</td><td>分钟聚合保留期；必须不小于原始保留期。</td></tr>
+                <tr><td><code>system_retention_days</code></td><td>90</td><td>1–3650 天</td><td>系统、网络、DB、Redis 指标保留期。</td></tr>
+                <tr><td><code>system_collection_interval_secs</code></td><td>60</td><td>15–3600 秒</td><td>每实例采集间隔。小于 60 秒不会产生多个分钟点，只会覆盖同一分钟最新值。</td></tr>
+                <tr><td><code>concurrency_enforcement_enabled</code></td><td>false</td><td>布尔</td><td>全局并发执行总开关。建议先保持 false 观察真实峰值，再逐步开启。</td></tr>
+                <tr><td><code>concurrency_fail_open</code></td><td>true</td><td>布尔</td><td>Redis 协调失败时是否让请求继续；生产初期建议 true，严格保护上游时可改 false。</td></tr>
+                <tr><td><code>default_lease_seconds</code></td><td>300</td><td>30–86400 秒</td><td>规则未单独指定时的租约时长。应长于普通请求耗时；运行中会每 1/3 租约周期续期。</td></tr>
+                <tr><td><code>rate_limit_cooldown_seconds</code></td><td>60</td><td>1–86400 秒</td><td>上游返回 429 后，渠道密钥在可用性视图中保持 rate_limited 的时间。</td></tr>
+                <tr><td><code>overload_cooldown_seconds</code></td><td>30</td><td>1–86400 秒</td><td>上游返回 529 后保持 overloaded 的时间。</td></tr>
+                <tr><td><code>temporary_unschedulable_seconds</code></td><td>10</td><td>1–3600 秒</td><td>其他 ≥500 错误后保持临时不可调度的时间。</td></tr>
+                <tr><td><code>sla_threshold</code></td><td>0.995</td><td>(0, 1]</td><td>SLA 低于该值触发 critical 诊断；界面默认显示 99.5%。</td></tr>
+                <tr><td><code>request_p99_threshold_ms</code></td><td>10000</td><td>1–600000ms</td><td>请求总耗时 P99 的 critical 阈值；达到 80% 时先显示 warning。</td></tr>
+                <tr><td><code>ttft_p99_threshold_ms</code></td><td>500</td><td>1–600000ms</td><td>TTFT P99 的 critical 阈值；达到 80% 时先显示 warning。</td></tr>
+                <tr><td><code>request_error_rate_threshold</code></td><td>0.05</td><td>(0, 1]</td><td>请求错误率达到该值触发 critical；界面默认显示 5%。</td></tr>
+                <tr><td><code>upstream_error_rate_threshold</code></td><td>0.05</td><td>(0, 1]</td><td>上游错误率达到该值触发 critical；界面默认显示 5%。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout warn">
+            <strong><code>enabled=false</code> 的当前边界：</strong>入口请求事件和系统指标停止新增，但上游 attempt 集成点仍可能为了并发占用、切换和错误诊断写入 attempt 记录。它不是“彻底停止所有运维表写入”或“清空历史数据”的开关。
+          </div>
+        </section>
+
+        <section id="limit-settings" class="section-card">
+          <h2>13. 渠道并发规则设置</h2>
+          <p class="section-intro">规则保存在独立表中。配置规则本身不会立即限流；必须同时开启全局并发执行。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>字段</th><th>范围</th><th>意义</th></tr></thead>
+              <tbody>
+                <tr><td><code>channel_id</code></td><td>&gt;0 且渠道存在</td><td>规则所属渠道。</td></tr>
+                <tr><td><code>key_index</code></td><td>-1 或 0…multi_key_size-1</td><td>-1 表示渠道全部密钥；非负值只约束指定密钥。未传时按 -1。</td></tr>
+                <tr><td><code>enabled</code></td><td>布尔</td><td>该规则是否允许参与执行；全局开关仍优先。</td></tr>
+                <tr><td><code>max_concurrency</code></td><td>0–100000</td><td>并发容量。规则 enabled 时必须大于 0。</td></tr>
+                <tr><td><code>queue_size</code></td><td>0–100000</td><td>容量满后最多允许多少个等待者。0 表示不排队，满载立即拒绝。</td></tr>
+                <tr><td><code>queue_timeout_ms</code></td><td>0–3600000ms</td><td>最大等待时间；0 在运行时使用 30 秒默认等待。</td></tr>
+                <tr><td><code>lease_seconds</code></td><td>0–86400 秒</td><td>0 表示继承全局 default lease；大于 0 时覆盖。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>容量展示规则</h3>
+          <ul>
+            <li>存在 enabled 的“全部密钥”规则时，渠道展示容量等于该规则的 <code>max_concurrency</code>。</li>
+            <li>没有 enabled 的全部密钥规则时，渠道展示容量为所有 enabled 密钥规则容量之和。</li>
+            <li>没有任何 enabled 规则时容量为 0、负载率为 0，但仍可展示只观测得到的 in-use。</li>
+          </ul>
+          <div class="callout danger">
+            在多实例生产环境正式开启限制前，应确认 Redis 正常，并根据上游真实账号配额选择作用域。没有 Redis 时，每个实例都拥有自己的本地容量，例如两台实例各设 10，集群实际可能达到 20。
+          </div>
+        </section>
+
+        <section id="configuration" class="section-card">
+          <h2>14. 设置方法：管理界面与 Root API</h2>
+          <h3>通过管理界面</h3>
+          <ol>
+            <li>使用 Root 账号登录新版管理界面。</li>
+            <li>进入 <strong>系统信息 → 运维监控</strong>。</li>
+            <li>切换到 <strong>设置</strong> 标签页。</li>
+            <li>先调整观测、保留期、采集间隔和诊断阈值，点击“保存设置”。</li>
+            <li>在“渠道并发限制”中选择渠道、全部密钥或指定密钥，填写容量、队列、超时和租约，保存规则。</li>
+            <li>观察并发页面一段时间；确认容量合理后，最后再打开“并发限制执行”。</li>
+          </ol>
+          <p>全局设置保存到主数据库 <code>options</code> 表，当前实例立即更新；其他实例通过系统选项同步周期加载，默认同步频率为 60 秒。并发规则保存后当前实例立即刷新，所有实例还会每 30 秒重新加载规则。</p>
+
+          <h3>Root API 一览</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>方法</th><th>Endpoint</th><th>用途</th></tr></thead>
+              <tbody>
+                <tr><td>GET</td><td><code>/api/ops/dashboard/snapshot</code></td><td>获取完整监控快照</td></tr>
+                <tr><td>GET</td><td><code>/api/ops/requests/{request_id}</code></td><td>请求详情及全部上游 attempts</td></tr>
+                <tr><td>GET</td><td><code>/api/ops/concurrency</code></td><td>实时并发、队列、平台、分组和用户视图</td></tr>
+                <tr><td>GET / PUT</td><td><code>/api/ops/settings</code></td><td>读取或完整更新全局设置</td></tr>
+                <tr><td>GET / PUT</td><td><code>/api/ops/concurrency-limits</code></td><td>列出或新增/覆盖并发规则</td></tr>
+                <tr><td>DELETE</td><td><code>/api/ops/concurrency-limits/{channel_id}?key_index=-1</code></td><td>删除渠道或渠道密钥规则</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>所有接口使用 Root 管理会话鉴权。以下示例假定已把登录 Cookie 保存到 <code>cookies.txt</code>；<code>{BASE_URL}</code> 使用浏览器当前访问的域名或 IP，例如 <code>https://gateway.nexus-reach.com</code>。</p>
+
+          <h4>查询快照</h4>
+          <pre><code>curl -b cookies.txt \
+  "{BASE_URL}/api/ops/dashboard/snapshot?start=1785646800&amp;end=1785650400&amp;model=hy3&amp;group=default&amp;channel_id=3&amp;endpoint_type=chat&amp;node_name=gateway-production-blue"</code></pre>
+          <p>查询参数均可省略；<code>start/end</code> 为 Unix 秒。模型、分组、端点和节点是精确匹配，<code>channel_id=0</code> 表示不按渠道筛选。</p>
+
+          <h4>完整更新全局设置</h4>
+          <pre><code>curl -X PUT -b cookies.txt \
+  -H "Content-Type: application/json" \
+  "{BASE_URL}/api/ops/settings" \
+  -d '{
+    "enabled": true,
+    "raw_retention_days": 30,
+    "aggregate_retention_days": 180,
+    "system_retention_days": 90,
+    "system_collection_interval_secs": 60,
+    "concurrency_enforcement_enabled": false,
+    "concurrency_fail_open": true,
+    "default_lease_seconds": 300,
+    "rate_limit_cooldown_seconds": 60,
+    "overload_cooldown_seconds": 30,
+    "temporary_unschedulable_seconds": 10,
+    "sla_threshold": 0.995,
+    "request_p99_threshold_ms": 10000,
+    "ttft_p99_threshold_ms": 500,
+    "request_error_rate_threshold": 0.05,
+    "upstream_error_rate_threshold": 0.05
+  }'</code></pre>
+          <div class="callout warn">PUT 是完整对象更新，不是 PATCH。遗漏布尔字段会按 false 绑定，遗漏数值字段会变成 0 并导致校验失败；建议先 GET、修改目标字段，再 PUT 完整对象。为兼容旧版管理页面，新增的 <code>request_p99_threshold_ms</code> 暂时允许省略，省略时保留当前值。</div>
+
+          <h4>配置渠道全部密钥并发规则</h4>
+          <pre><code>curl -X PUT -b cookies.txt \
+  -H "Content-Type: application/json" \
+  "{BASE_URL}/api/ops/concurrency-limits" \
+  -d '{
+    "channel_id": 3,
+    "key_index": -1,
+    "enabled": true,
+    "max_concurrency": 10,
+    "queue_size": 20,
+    "queue_timeout_ms": 30000,
+    "lease_seconds": 300
+  }'</code></pre>
+          <p>此时如果全局执行仍为 false，只会观测容量和占用，不会排队或返回 429。</p>
+        </section>
+
+        <section id="operations" class="section-card">
+          <h2>15. 推荐上线顺序与排障方法</h2>
+          <h3>安全启用并发限制</h3>
+          <ol>
+            <li><strong>只观测：</strong>保持全局 enforcement=false，运行至少一个业务峰值周期。</li>
+            <li><strong>确定容量：</strong>查看渠道 in-use 峰值、上游 429/529、延迟和成功率，并结合供应商官方并发限制。</li>
+            <li><strong>先建规则：</strong>为单个低风险渠道建立规则，queue size 先设较小值，fail open 保持 true。</li>
+            <li><strong>确认 Redis：</strong>多实例环境检查 Redis healthy、连接池和 Redis-backed 标记。</li>
+            <li><strong>开启总开关：</strong>在低流量时段打开 enforcement，观察 429 concurrency_limit、等待时间和队列。</li>
+            <li><strong>逐步扩展：</strong>确认无误后再增加其他渠道；严格保护供应商时可评估 fail open=false。</li>
+          </ol>
+
+          <h3>常见现象</h3>
+          <details open><summary>页面没有请求数据</summary><div><p>检查 <code>enabled</code>、查询时间窗口、端点是否在分类范围、筛选条件是否过窄；再查看 telemetry 队列是否出现 dropped。非公开 API 和管理页面本来就不进入请求观测。</p></div></details>
+          <details><summary>系统指标有多条节点曲线</summary><div><p>这是正常的逐实例采集。检查每个实例的 <code>NODE_NAME</code> 是否唯一；Blue/Green 不应复用相同节点名，否则同一分钟会互相覆盖。</p></div></details>
+          <details><summary>当前 QPS 与峰值 QPS 感觉偏低</summary><div><p>当前值是最后 60 秒平均，峰值是最高自然分钟平均，不是瞬时单秒峰值；历史窗口或不完整边缘分钟还可能使用近似值。</p></div></details>
+          <details><summary>设置规则后没有拒绝请求</summary><div><p>检查全局 <code>concurrency_enforcement_enabled</code> 是否仍为 false、规则是否 enabled、max concurrency 是否大于 0，以及精确密钥规则是否遮蔽了全部密钥规则。</p></div></details>
+          <details><summary>多实例并发超过设置值</summary><div><p>确认页面显示 Redis-backed。没有 Redis 时容量按实例独立计算；两台实例各限制 10，集群可能达到 20。</p></div></details>
+          <details><summary>SLA 很高但总错误数不低</summary><div><p>SLA 排除了业务限制 B。鉴权、客户配额、非法请求和本地并发限制可能增加总错误，但不进入 SLA 分母。</p></div></details>
+          <details><summary>健康分 100，但 DB/Redis 有告警</summary><div><p>窗口没有请求时健康分直接返回 idle/100；基础设施告警仍会独立展示。此时应以系统卡片和诊断项为准。</p></div></details>
+        </section>
+
+        <section id="limitations" class="section-card">
+          <h2>16. 精度、范围和当前实现边界</h2>
+          <ul>
+            <li><strong>不是全站访问日志：</strong>只观测被分类的公开 AI、任务、视频、素材和认证端点。</li>
+            <li><strong>失败 Token 不计入概览：</strong>即使上游在失败前消耗了 Token，当前总 Token 仍只累加成功请求。</li>
+            <li><strong>原始与聚合精度不同：</strong>原始保留期内概览为精确请求聚合；延迟仅在 ≤50,000 样本时精确，其他情况按六档近似。</li>
+            <li><strong>最大查询窗口 31 天：</strong>更早历史可以保留在分钟表，但单次 Dashboard 快照会把 start 收窄到 end 前 31 天。</li>
+            <li><strong>模型速度卡片固定口径：</strong>最近 30 天、<code>gpt%</code> 模型，不随主筛选变化。</li>
+            <li><strong>平台/分组容量不可交叉求和：</strong>同一渠道可属于多个分组。</li>
+            <li><strong>本地并发不是集群并发：</strong>生产多实例需要 Redis 才能共享租约。</li>
+            <li><strong>可用性冷却依赖 Redis：</strong>没有 Redis 时 429/529/5xx 不形成跨请求冷却状态。</li>
+            <li><strong>配置同步有传播时间：</strong>其他节点的全局设置通常在选项同步周期内生效；并发规则最长约 30 秒刷新。</li>
+            <li><strong>NODE_TYPE 不控制 HTTP 流量：</strong>它决定迁移和部分后台任务；Caddy Blue/Green 权重与运维任务执行实例互相独立。</li>
+          </ul>
+          <div class="callout success">
+            <strong>实现原则：</strong>观测数据不参与客户扣费；并发限制在默认状态下不改变业务流量。先用真实数据建立基线，再把控制能力逐渠道打开。
+          </div>
+          <p class="small">对应主要代码：<code>service/opsmonitor/</code>、<code>model/ops_monitor.go</code>、<code>controller/ops_monitor.go</code>、<code>setting/ops_monitor_setting/config.go</code>、<code>web/src/features/operations/</code>。</p>
+        </section>
+      </article>
+    </div>
+
+    <footer class="footer">new-api 运维观测与并发控制说明 · 生成于 2026-08-02 · 对应提交 3bbfea6d3</footer>
+  </main>
+</body>
+</html>

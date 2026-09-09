@@ -7,11 +7,12 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -68,6 +69,20 @@ func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other
 	}
 }
 
+func appendCacheCreationPricing(other map[string]interface{}, configured bool, cacheWriteTokens int,
+	cacheCreationRatio, cacheCreationRatio5m, cacheCreationRatio1h float64) {
+	other["cache_creation_pricing_configured"] = configured
+	if !configured && cacheWriteTokens <= 0 {
+		delete(other, "cache_creation_ratio")
+		delete(other, "cache_creation_ratio_5m")
+		delete(other, "cache_creation_ratio_1h")
+		return
+	}
+	other["cache_creation_ratio"] = cacheCreationRatio
+	other["cache_creation_ratio_5m"] = cacheCreationRatio5m
+	other["cache_creation_ratio_1h"] = cacheCreationRatio1h
+}
+
 func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelRatio, groupRatio, completionRatio float64,
 	cacheTokens int, cacheRatio float64, modelPrice float64, userGroupRatio float64) map[string]interface{} {
 	other := make(map[string]interface{})
@@ -78,6 +93,15 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other["cache_ratio"] = cacheRatio
 	other["model_price"] = modelPrice
 	other["user_group_ratio"] = userGroupRatio
+	appendCacheCreationPricing(other, relayInfo.PriceData.CacheCreationPricingConfigured, 0,
+		relayInfo.PriceData.CacheCreationRatio, relayInfo.PriceData.CacheCreation5mRatio, relayInfo.PriceData.CacheCreation1hRatio)
+	other["image_ratio"] = relayInfo.PriceData.ImageRatio
+	other["audio_ratio"] = relayInfo.PriceData.AudioRatio
+	other["audio_completion_ratio"] = relayInfo.PriceData.AudioCompletionRatio
+	other["quota_per_unit"] = common.QuotaPerUnit
+	if otherRatios := relayInfo.PriceData.OtherRatios(); len(otherRatios) > 0 {
+		other["other_ratios"] = otherRatios
+	}
 	other["frt"] = float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.StartTime.UnixMilli())
 	if relayInfo.ReasoningEffort != "" {
 		other["reasoning_effort"] = relayInfo.ReasoningEffort
@@ -277,19 +301,23 @@ func GenerateClaudeOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	info := GenerateTextOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio, cacheTokens, cacheRatio, modelPrice, userGroupRatio)
 	info["claude"] = true
 	info["cache_creation_tokens"] = cacheCreationTokens
-	info["cache_creation_ratio"] = cacheCreationRatio
+	cacheWriteTokens := cacheCreationTokens
+	if splitCacheWriteTokens := cacheCreationTokens5m + cacheCreationTokens1h; splitCacheWriteTokens > cacheWriteTokens {
+		cacheWriteTokens = splitCacheWriteTokens
+	}
+	appendCacheCreationPricing(info, relayInfo.PriceData.CacheCreationPricingConfigured,
+		cacheWriteTokens,
+		cacheCreationRatio, cacheCreationRatio5m, cacheCreationRatio1h)
 	if cacheCreationTokens5m != 0 {
 		info["cache_creation_tokens_5m"] = cacheCreationTokens5m
-		info["cache_creation_ratio_5m"] = cacheCreationRatio5m
 	}
 	if cacheCreationTokens1h != 0 {
 		info["cache_creation_tokens_1h"] = cacheCreationTokens1h
-		info["cache_creation_ratio_1h"] = cacheCreationRatio1h
 	}
 	return info
 }
 
-func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.PriceData) map[string]interface{} {
+func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData hosttypes.PriceData) map[string]interface{} {
 	other := make(map[string]interface{})
 	other["model_price"] = priceData.ModelPrice
 	other["group_ratio"] = priceData.GroupRatioInfo.GroupRatio
@@ -315,5 +343,8 @@ func InjectTieredBillingInfo(other map[string]interface{}, relayInfo *relaycommo
 	other["expr_b64"] = base64.StdEncoding.EncodeToString([]byte(snap.ExprString))
 	if result != nil {
 		other["matched_tier"] = result.MatchedTier
+		if len(result.RequestRules) > 0 {
+			other["request_rules"] = result.RequestRules
+		}
 	}
 }

@@ -1,0 +1,284 @@
+name: Claw workbench release images
+
+on:
+  workflow_dispatch:
+    inputs:
+      adp_revision:
+        description: Exact 40-character commit from the trusted ADP workbench fork
+        required: true
+        type: string
+  push:
+    tags:
+      - "claw-workbench-release-*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claw-workbench-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build, scan, and publish immutable images
+    runs-on: ubuntu-latest
+    environment: claw-workbench-production
+    permissions:
+      contents: read
+      packages: write
+    env:
+      ADP_REPOSITORY: jeffzha/adp-chat-client
+      ADP_REVISION: ${{ inputs.adp_revision }}
+      CLAMAV_IMAGE: docker.m.daocloud.io/clamav/clamav@sha256:a73435b0fa51886e9e6dd1881656023ba9dce756e055f23981270badbb8ca3d7
+    steps:
+      - name: Resolve trusted ADP revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          adp_revision="${ADP_REVISION}"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            prefix="claw-workbench-release-"
+            if [[ "${GITHUB_REF_NAME}" != "${prefix}"* ]]; then
+              echo "Release tag does not match the trusted prefix." >&2
+              exit 1
+            fi
+            tag_payload="${GITHUB_REF_NAME#${prefix}}"
+            if [[ "${tag_payload}" =~ ^[0-9a-f]{40}$ ]]; then
+              adp_revision="${tag_payload}"
+            elif [[ "${tag_payload}" =~ ^[0-9a-f]{12}-([0-9a-f]{40})$ ]]; then
+              adp_revision="${BASH_REMATCH[1]}"
+            else
+              echo "Release tag must contain an exact ADP commit, optionally prefixed by the 12-character new-api revision." >&2
+              exit 1
+            fi
+          fi
+          if [[ ! "${adp_revision}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "adp_revision must be an exact lowercase 40-character commit." >&2
+            exit 1
+          fi
+          echo "ADP_REVISION=${adp_revision}" >> "${GITHUB_ENV}"
+
+      - name: Validate trusted source selection
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${ADP_REPOSITORY}" != "jeffzha/adp-chat-client" ]]; then
+            echo "ADP source must be the pinned trusted fork." >&2
+            exit 1
+          fi
+          if [[ ! "${ADP_REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "adp_revision must be an exact lowercase 40-character commit." >&2
+            exit 1
+          fi
+
+      - name: Check out new-api release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify exact new-api source revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          git diff --quiet
+          git diff --cached --quiet
+
+      - name: Resolve upstream new-api version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          upstream_version="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD)"
+          if [[ ! "${upstream_version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Cannot resolve a valid upstream semantic version tag for the release revision." >&2
+            exit 1
+          fi
+          release_version="${upstream_version}.claw.g${GITHUB_SHA:0:12}"
+          echo "upstream=${upstream_version}" >> "${GITHUB_OUTPUT}"
+          echo "release=${release_version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve immutable image names
+        id: names
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          release="${GITHUB_SHA:0:12}-${ADP_REVISION:0:12}"
+          echo "new_api=ghcr.io/${owner}/new-api" >> "${GITHUB_OUTPUT}"
+          echo "control=ghcr.io/${owner}/claw-control" >> "${GITHUB_OUTPUT}"
+          echo "adp=ghcr.io/${owner}/adp-workbench" >> "${GITHUB_OUTPUT}"
+          echo "tag=release-${release}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish new-api
+        id: new_api
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          file: deploy/claw-workbench/docker/Dockerfile.new-api
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ${{ steps.names.outputs.new_api }}:${{ steps.names.outputs.tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          build-args: |
+            BUILD_VERSION=${{ steps.version.outputs.release }}
+            BUN_REGISTRY=https://registry.npmmirror.com
+            GO_PROXY=https://goproxy.cn,direct
+          cache-from: type=gha,scope=new-api-workbench
+          cache-to: type=gha,mode=max,scope=new-api-workbench
+
+      - name: Scan new-api by immutable digest
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ${{ steps.names.outputs.new_api }}@${{ steps.new_api.outputs.digest }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Check out trusted ADP workbench source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ADP_REPOSITORY }}
+          ref: ${{ env.ADP_REVISION }}
+          path: .release/adp
+          fetch-depth: 1
+          token: ${{ secrets.ADP_WORKBENCH_CHECKOUT_TOKEN || github.token }}
+
+      - name: Verify exact ADP source revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .release/adp rev-parse HEAD)" = "${ADP_REVISION}"
+          test -z "$(git -C .release/adp status --porcelain)"
+
+      - name: Build and publish claw-control
+        id: control
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          file: deploy/claw-workbench/docker/Dockerfile.claw-control
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ${{ steps.names.outputs.control }}:${{ steps.names.outputs.tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=claw-control
+          cache-to: type=gha,mode=max,scope=claw-control
+
+      - name: Build and publish ADP workbench
+        id: adp
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          file: deploy/claw-workbench/docker/Dockerfile.adp
+          build-contexts: |
+            adp_source=.release/adp
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ${{ steps.names.outputs.adp }}:${{ steps.names.outputs.tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ env.ADP_REVISION }}
+            org.opencontainers.image.source=https://github.com/${{ env.ADP_REPOSITORY }}
+            com.nexus-reach.workbench.overlay-revision=${{ github.sha }}
+          cache-from: type=gha,scope=adp-workbench
+          cache-to: type=gha,mode=max,scope=adp-workbench
+
+      - name: Scan claw-control by immutable digest
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ${{ steps.names.outputs.control }}@${{ steps.control.outputs.digest }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Scan ADP workbench by immutable digest
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ${{ steps.names.outputs.adp }}@${{ steps.adp.outputs.digest }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Scan pinned ClamAV dependency
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ${{ env.CLAMAV_IMAGE }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Write immutable release candidate manifest
+        shell: bash
+        env:
+          NEW_API_IMAGE: ${{ steps.names.outputs.new_api }}
+          NEW_API_DIGEST: ${{ steps.new_api.outputs.digest }}
+          CONTROL_IMAGE: ${{ steps.names.outputs.control }}
+          CONTROL_DIGEST: ${{ steps.control.outputs.digest }}
+          ADP_IMAGE: ${{ steps.names.outputs.adp }}
+          ADP_DIGEST: ${{ steps.adp.outputs.digest }}
+          CLAMAV_IMAGE: ${{ env.CLAMAV_IMAGE }}
+          NEW_API_UPSTREAM_VERSION: ${{ steps.version.outputs.upstream }}
+          NEW_API_RELEASE_VERSION: ${{ steps.version.outputs.release }}
+        run: |
+          set -euo pipefail
+          mkdir -p .release/output
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "schema_version": 1,
+              "new_api_upstream_version": os.environ["NEW_API_UPSTREAM_VERSION"],
+              "new_api_release_version": os.environ["NEW_API_RELEASE_VERSION"],
+              "new_api_revision": os.environ["GITHUB_SHA"],
+              "claw_control_revision": os.environ["GITHUB_SHA"],
+              "adp_revision": os.environ["ADP_REVISION"],
+              "new_api_image": os.environ["NEW_API_IMAGE"] + "@" + os.environ["NEW_API_DIGEST"],
+              "claw_control_image": os.environ["CONTROL_IMAGE"] + "@" + os.environ["CONTROL_DIGEST"],
+              "adp_workbench_image": os.environ["ADP_IMAGE"] + "@" + os.environ["ADP_DIGEST"],
+              "clamav_image": os.environ["CLAMAV_IMAGE"],
+              "registry": "ghcr.io",
+              "scan_policy": "trivy-high-critical-fixed-and-secret",
+          }
+          Path(".release/output/release-candidate.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload immutable release candidate manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: claw-workbench-release-${{ github.sha }}
+          path: .release/output/release-candidate.json
+          if-no-files-found: error
+          retention-days: 30

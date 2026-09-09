@@ -1,0 +1,12 @@
+[Unit]
+Description=Weekly Claw Workbench cross-region full data check timer
+
+[Timer]
+OnCalendar=Sun *-*-* 04:15:00 UTC
+RandomizedDelaySec=30m
+Persistent=true
+AccuracySec=1m
+Unit=claw-workbench-dr-check.service
+
+[Install]
+WantedBy=timers.target

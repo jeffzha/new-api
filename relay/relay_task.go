@@ -24,11 +24,12 @@ import (
 )
 
 type TaskSubmitResult struct {
-	UpstreamTaskID string
-	TaskData       []byte
-	Platform       constant.TaskPlatform
-	Quota          int
-	Endpoint       *model.TaskEndpointSnapshot
+	UpstreamTaskID  string
+	TaskData        []byte
+	Platform        constant.TaskPlatform
+	Quota           int
+	Endpoint        *model.TaskEndpointSnapshot
+	ProviderBilling *model.TaskProviderBillingSnapshot
 	//PerCallPrice   types.PriceData
 }
 
@@ -181,18 +182,36 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 4. 价格计算：基础模型价格
 	info.OriginModelName = modelName
-	priceData, err := helper.ModelPriceHelperPerCall(c, info)
-	if err != nil {
-		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+	var providerBilling *model.TaskProviderBillingSnapshot
+	estimator, hasProviderBilling := adaptor.(channel.TaskBillingEstimator)
+	hasProviderBilling = hasProviderBilling && estimator.SupportsTaskBilling(info.ChannelType, modelName)
+	if hasProviderBilling {
+		info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+		estimate, taskErr := estimator.EstimateTaskBilling(c, info)
+		if taskErr != nil {
+			return nil, taskErr
+		}
+		if estimate == nil {
+			return nil, service.TaskErrorWrapperLocal(errors.New("provider billing estimate is empty"), "model_price_error", http.StatusInternalServerError)
+		}
+		info.PriceData = estimate.PriceData
+		providerBilling = estimate.Snapshot
+	} else {
+		priceData, err := helper.ModelPriceHelperPerCall(c, info)
+		if err != nil {
+			return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+		}
+		info.PriceData = priceData
 	}
-	info.PriceData = priceData
 
 	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
 	//    必须在 ModelPriceHelperPerCall 之后调用（它会重建 PriceData）。
 	//    ResolveOriginTask 可能已在 remix 路径中预设了 OtherRatios，此处合并。
-	if estimatedRatios := adaptor.EstimateBilling(c, info); len(estimatedRatios) > 0 {
-		for k, v := range estimatedRatios {
-			info.PriceData.AddOtherRatio(k, v)
+	if !hasProviderBilling {
+		if estimatedRatios := adaptor.EstimateBilling(c, info); len(estimatedRatios) > 0 {
+			for k, v := range estimatedRatios {
+				info.PriceData.AddOtherRatio(k, v)
+			}
 		}
 	}
 
@@ -266,11 +285,12 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 
 	return &TaskSubmitResult{
-		UpstreamTaskID: upstreamTaskID,
-		TaskData:       taskData,
-		Platform:       platform,
-		Quota:          finalQuota,
-		Endpoint:       endpoint,
+		UpstreamTaskID:  upstreamTaskID,
+		TaskData:        taskData,
+		Platform:        platform,
+		Quota:           finalQuota,
+		Endpoint:        endpoint,
+		ProviderBilling: providerBilling,
 	}, nil
 }
 
@@ -306,6 +326,22 @@ var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp 
 	relayconstant.RelayModeSunoFetchByID:  sunoFetchByIDRespBodyBuilder,
 	relayconstant.RelayModeSunoFetch:      sunoFetchRespBodyBuilder,
 	relayconstant.RelayModeVideoFetchByID: videoFetchByIDRespBodyBuilder,
+}
+
+type seedanceDomesticTaskFetchResponse struct {
+	Code string                        `json:"code"`
+	Data seedanceDomesticTaskFetchData `json:"data"`
+}
+
+type seedanceDomesticTaskFetchData struct {
+	TaskID     string  `json:"task_id"`
+	Status     string  `json:"status"`
+	FailReason string  `json:"fail_reason"`
+	ResultURL  *string `json:"result_url"`
+	SubmitTime int64   `json:"submit_time"`
+	StartTime  *int64  `json:"start_time"`
+	FinishTime *int64  `json:"finish_time"`
+	Progress   string  `json:"progress"`
 }
 
 func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
@@ -425,6 +461,41 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 			return
 		}
 		taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("not_implemented:%s", originTask.Platform), "not_implemented", http.StatusNotImplemented)
+		return
+	}
+
+	if originTask.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSeedanceDomestic)) {
+		var resultURL *string
+		if originTask.Status == model.TaskStatusSuccess {
+			value := strings.TrimSpace(originTask.GetResultURL())
+			if value != "" {
+				resultURL = &value
+			}
+		}
+		var startTime *int64
+		if originTask.StartTime > 0 {
+			startTime = &originTask.StartTime
+		}
+		var finishTime *int64
+		if originTask.FinishTime > 0 {
+			finishTime = &originTask.FinishTime
+		}
+		respBody, err = common.Marshal(seedanceDomesticTaskFetchResponse{
+			Code: dto.TaskSuccessCode,
+			Data: seedanceDomesticTaskFetchData{
+				TaskID:     originTask.TaskID,
+				Status:     string(originTask.Status),
+				FailReason: originTask.FailReason,
+				ResultURL:  resultURL,
+				SubmitTime: originTask.SubmitTime,
+				StartTime:  startTime,
+				FinishTime: finishTime,
+				Progress:   originTask.Progress,
+			},
+		})
+		if err != nil {
+			taskResp = service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
+		}
 		return
 	}
 

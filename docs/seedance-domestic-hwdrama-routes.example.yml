@@ -1,0 +1,182 @@
+version: 1
+
+actions:
+  seedance_domestic_create_visual_validate_session:
+    downstream_method: POST
+    downstream_path: /api/v3/open/CreateVisualValidateSession
+    default_upstream_method: POST
+    default_upstream_path: /asset/SdToolApi/CreateVisualValidateSession
+
+  seedance_domestic_get_visual_validate_result:
+    downstream_method: POST
+    downstream_path: /api/v3/open/GetVisualValidateResult
+    default_upstream_method: POST
+    default_upstream_path: /asset/SdToolApi/GetVisualValidateResult
+
+  seedance_domestic_create_asset_group:
+    downstream_method: POST
+    downstream_path: /api/v3/open/CreateAssetGroup
+    default_upstream_method: POST
+    default_upstream_path: /asset/SdToolApi/CreateAssetGroup
+
+  seedance_domestic_create_asset:
+    downstream_method: POST
+    downstream_path: /api/v3/open/CreateAsset
+    default_upstream_method: POST
+    default_upstream_path: /asset/SdToolApi/CreateAsset
+    # Production E2E returns the asset identifier in the data.Id field.
+    affinity_response_field: data.Id
+
+  seedance_domestic_get_asset:
+    downstream_method: POST
+    downstream_path: /api/v3/open/GetAsset
+    default_upstream_method: POST
+    default_upstream_path: /asset/SdToolApi/GetAsset
+
+  mobile_cloud_asset_create:
+    downstream_method: POST
+    downstream_path: /api/openapi-maas/exp/aicc/v2/asset
+    default_upstream_method: POST
+    default_upstream_path: /api/openapi-maas/exp/aicc/v2/asset
+    affinity_response_field: body
+    scope_operation: asset_create
+
+  mobile_cloud_asset_list:
+    downstream_method: POST
+    downstream_path: /api/openapi-maas/exp/aicc/v2/asset/query
+    default_upstream_method: POST
+    default_upstream_path: /api/openapi-maas/exp/aicc/v2/asset/query
+    affinity_response_field: body.data.#.assetId
+    scope_operation: asset_list
+
+  mobile_cloud_asset_get:
+    downstream_method: GET
+    downstream_path: /api/openapi-maas/exp/aicc/v2/asset/{asset_id}
+    default_upstream_method: GET
+    default_upstream_path: /api/openapi-maas/exp/aicc/v2/asset/{asset_id}
+    affinity_response_field: body.assetId
+    affinity_path_param: asset_id
+    scope_operation: asset_get
+    scope_path_param: asset_id
+
+  mobile_cloud_asset_update:
+    downstream_method: PUT
+    downstream_path: /api/openapi-maas/exp/aicc/v2/asset/{asset_id}
+    default_upstream_method: PUT
+    default_upstream_path: /api/openapi-maas/exp/aicc/v2/asset/{asset_id}
+    affinity_response_field: body.assetId
+    affinity_path_param: asset_id
+    scope_operation: asset_update
+    scope_path_param: asset_id
+
+  mobile_cloud_asset_delete:
+    downstream_method: DELETE
+    downstream_path: /api/openapi-maas/exp/aicc/v2/asset/{asset_id}
+    default_upstream_method: DELETE
+    default_upstream_path: /api/openapi-maas/exp/aicc/v2/asset/{asset_id}
+    scope_operation: asset_delete
+    scope_path_param: asset_id
+
+  mobile_cloud_asset_group_create:
+    downstream_method: POST
+    downstream_path: /api/openapi-maas/exp/aicc/v2/asset-group
+    default_upstream_method: POST
+    default_upstream_path: /api/openapi-maas/exp/aicc/v2/asset-group
+    scope_operation: asset_group_create
+
+  mobile_cloud_asset_group_list:
+    downstream_method: POST
+    downstream_path: /api/openapi-maas/exp/aicc/v2/asset-group/query
+    default_upstream_method: POST
+    default_upstream_path: /api/openapi-maas/exp/aicc/v2/asset-group/query
+    scope_operation: asset_group_list
+
+  mobile_cloud_asset_group_get:
+    downstream_method: GET
+    downstream_path: /api/openapi-maas/exp/aicc/v2/asset-group/{group_id}
+    default_upstream_method: GET
+    default_upstream_path: /api/openapi-maas/exp/aicc/v2/asset-group/{group_id}
+    scope_operation: asset_group_get
+    scope_path_param: group_id
+
+  mobile_cloud_asset_group_update:
+    downstream_method: PUT
+    downstream_path: /api/openapi-maas/exp/aicc/v2/asset-group/{group_id}
+    default_upstream_method: PUT
+    default_upstream_path: /api/openapi-maas/exp/aicc/v2/asset-group/{group_id}
+    scope_operation: asset_group_update
+    scope_path_param: group_id
+
+  mobile_cloud_asset_group_delete:
+    downstream_method: DELETE
+    downstream_path: /api/openapi-maas/exp/aicc/v2/asset-group/{group_id}
+    default_upstream_method: DELETE
+    default_upstream_path: /api/openapi-maas/exp/aicc/v2/asset-group/{group_id}
+    scope_operation: asset_group_delete
+    scope_path_param: group_id
+
+  mobile_cloud_real_person_session_create:
+    downstream_method: POST
+    downstream_path: /api/openapi-maas/exp/aicc/v2/real-person-auth/sessions
+    default_upstream_method: POST
+    default_upstream_path: /api/openapi-maas/exp/aicc/v2/real-person-auth/sessions
+    scope_operation: real_person_session_create
+
+  mobile_cloud_real_person_group_get:
+    downstream_method: POST
+    downstream_path: /api/openapi-maas/exp/aicc/v2/real-person-auth/asset-group/by-byted-token
+    default_upstream_method: POST
+    default_upstream_path: /api/openapi-maas/exp/aicc/v2/real-person-auth/asset-group/by-byted-token
+    scope_operation: real_person_group_get
+
+routes:
+  - name: seedance-domestic-assets
+    # Replace with the new-api token ID(s) allowed to call the five public routes.
+    api_key_ids:
+      - 10001
+    # Replace with the database ID of the type 59 channel, not the channel type number.
+    channel_id: 123
+    models:
+      - "*"
+    upstream_base_url: https://api.laomandi.com
+    upstream_api_key_env: SEEDANCE_DOMESTIC_LMD_KEY
+    upstream_auth_header: lmd-key
+    upstream_auth_prefix: ""
+    asset_namespace_id: seedance-domestic
+    enabled_actions:
+      - seedance_domestic_create_visual_validate_session
+      - seedance_domestic_get_visual_validate_result
+      - seedance_domestic_create_asset_group
+      - seedance_domestic_create_asset
+      - seedance_domestic_get_asset
+
+  - name: mobile-cloud-assets
+    # Multiple API key IDs for one customer may share this route and scope.
+    api_key_ids:
+      - 20001
+      - 20002
+    # Replace with the database ID of the type 60 channel.
+    channel_id: 456
+    models:
+      - "*"
+    upstream_base_url: https://ecloud.10086.cn
+    upstream_auth_type: mobile_cloud_aksk
+    upstream_access_key_env: MOBILE_CLOUD_MAAS_ACCESS_KEY
+    upstream_secret_key_env: MOBILE_CLOUD_MAAS_SECRET_KEY
+    asset_namespace_id: mobile-cloud-maas
+    # Use one stable value for one customer's API keys. Use another value for
+    # another customer, even when both routes reuse the same upstream AK/SK.
+    asset_scope_id: customer-example
+    enabled_actions:
+      - mobile_cloud_asset_create
+      - mobile_cloud_asset_list
+      - mobile_cloud_asset_get
+      - mobile_cloud_asset_update
+      - mobile_cloud_asset_delete
+      - mobile_cloud_asset_group_create
+      - mobile_cloud_asset_group_list
+      - mobile_cloud_asset_group_get
+      - mobile_cloud_asset_group_update
+      - mobile_cloud_asset_group_delete
+      - mobile_cloud_real_person_session_create
+      - mobile_cloud_real_person_group_get

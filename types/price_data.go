@@ -22,14 +22,17 @@ type PriceData struct {
 	CacheCreationRatio   float64
 	CacheCreation5mRatio float64
 	CacheCreation1hRatio float64
-	ImageRatio           float64
-	AudioRatio           float64
-	AudioCompletionRatio float64
-	otherRatios          map[string]float64
-	UsePrice             bool
-	Quota                int // 按次计费的最终额度（MJ / Task）
-	QuotaToPreConsume    int // 按量计费的预消耗额度
-	GroupRatioInfo       GroupRatioInfo
+	// CacheCreationPricingConfigured distinguishes an explicitly configured
+	// cache-write price from the legacy 1.25 fallback used for billing.
+	CacheCreationPricingConfigured bool
+	ImageRatio                     float64
+	AudioRatio                     float64
+	AudioCompletionRatio           float64
+	otherRatios                    map[string]float64
+	UsePrice                       bool
+	Quota                          int // 按次计费的最终额度（MJ / Task）
+	QuotaToPreConsume              int // 按量计费的预消耗额度
+	GroupRatioInfo                 GroupRatioInfo
 }
 
 func (p *PriceData) AddOtherRatio(key string, ratio float64) {
@@ -104,8 +107,6 @@ func (p *PriceData) RemoveOtherRatiosFromFloat(value float64) float64 {
 }
 
 func isValidOtherRatio(ratio float64) bool {
-	// NaN/Inf would poison every downstream quota multiplication
-	// (int(NaN * quota) wraps to a negative charge).
 	return ratio > 0 && !math.IsInf(ratio, 1)
 }
 

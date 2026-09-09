@@ -13,6 +13,26 @@ import (
 
 const WildcardModel = "*"
 
+const (
+	UpstreamAuthTypeHeader          = "header"
+	UpstreamAuthTypeMobileCloudAKSK = "mobile_cloud_aksk"
+)
+
+const (
+	ScopeOperationAssetCreate             = "asset_create"
+	ScopeOperationAssetList               = "asset_list"
+	ScopeOperationAssetGet                = "asset_get"
+	ScopeOperationAssetUpdate             = "asset_update"
+	ScopeOperationAssetDelete             = "asset_delete"
+	ScopeOperationAssetGroupCreate        = "asset_group_create"
+	ScopeOperationAssetGroupList          = "asset_group_list"
+	ScopeOperationAssetGroupGet           = "asset_group_get"
+	ScopeOperationAssetGroupUpdate        = "asset_group_update"
+	ScopeOperationAssetGroupDelete        = "asset_group_delete"
+	ScopeOperationRealPersonSessionCreate = "real_person_session_create"
+	ScopeOperationRealPersonGroupGet      = "real_person_group_get"
+)
+
 type RoutesConfig struct {
 	Version int                     `yaml:"version"`
 	Actions map[string]ActionConfig `yaml:"actions"`
@@ -24,6 +44,10 @@ type ActionConfig struct {
 	DownstreamPath        string `yaml:"downstream_path"`
 	DefaultUpstreamMethod string `yaml:"default_upstream_method"`
 	DefaultUpstreamPath   string `yaml:"default_upstream_path"`
+	AffinityResponseField string `yaml:"affinity_response_field,omitempty"`
+	AffinityPathParam     string `yaml:"affinity_path_param,omitempty"`
+	ScopeOperation        string `yaml:"scope_operation,omitempty"`
+	ScopePathParam        string `yaml:"scope_path_param,omitempty"`
 }
 
 type RouteConfig struct {
@@ -33,8 +57,14 @@ type RouteConfig struct {
 	ChannelID               int                             `yaml:"channel_id"`
 	Models                  []string                        `yaml:"models"`
 	UpstreamBaseURL         string                          `yaml:"upstream_base_url"`
-	UpstreamAPIKeyEnv       string                          `yaml:"upstream_api_key_env"`
+	UpstreamAuthType        string                          `yaml:"upstream_auth_type,omitempty"`
+	UpstreamAPIKeyEnv       string                          `yaml:"upstream_api_key_env,omitempty"`
+	UpstreamAuthHeader      string                          `yaml:"upstream_auth_header,omitempty"`
+	UpstreamAuthPrefix      string                          `yaml:"upstream_auth_prefix,omitempty"`
+	UpstreamAccessKeyEnv    string                          `yaml:"upstream_access_key_env,omitempty"`
+	UpstreamSecretKeyEnv    string                          `yaml:"upstream_secret_key_env,omitempty"`
 	AssetNamespaceID        string                          `yaml:"asset_namespace_id"`
+	AssetScopeID            string                          `yaml:"asset_scope_id,omitempty"`
 	EnabledActions          []string                        `yaml:"enabled_actions"`
 	UpstreamActionOverrides map[string]UpstreamActionConfig `yaml:"upstream_action_overrides,omitempty"`
 }
@@ -76,14 +106,35 @@ func (config *RoutesConfig) Normalize() {
 		action.DefaultUpstreamMethod = normalizeMethod(action.DefaultUpstreamMethod)
 		action.DownstreamPath = strings.TrimSpace(action.DownstreamPath)
 		action.DefaultUpstreamPath = strings.TrimSpace(action.DefaultUpstreamPath)
+		action.AffinityResponseField = strings.TrimSpace(action.AffinityResponseField)
+		action.AffinityPathParam = strings.TrimSpace(action.AffinityPathParam)
+		action.ScopeOperation = strings.ToLower(strings.TrimSpace(action.ScopeOperation))
+		action.ScopePathParam = strings.TrimSpace(action.ScopePathParam)
 		config.Actions[key] = action
 	}
 	for i := range config.Routes {
 		route := &config.Routes[i]
 		route.Name = strings.TrimSpace(route.Name)
 		route.UpstreamBaseURL = strings.TrimSpace(route.UpstreamBaseURL)
+		route.UpstreamAuthType = strings.ToLower(strings.TrimSpace(route.UpstreamAuthType))
+		if route.UpstreamAuthType == "" {
+			route.UpstreamAuthType = UpstreamAuthTypeHeader
+		}
 		route.UpstreamAPIKeyEnv = strings.TrimSpace(route.UpstreamAPIKeyEnv)
+		route.UpstreamAuthHeader = strings.TrimSpace(route.UpstreamAuthHeader)
+		route.UpstreamAuthPrefix = strings.TrimSpace(route.UpstreamAuthPrefix)
+		route.UpstreamAccessKeyEnv = strings.TrimSpace(route.UpstreamAccessKeyEnv)
+		route.UpstreamSecretKeyEnv = strings.TrimSpace(route.UpstreamSecretKeyEnv)
+		if route.UpstreamAuthType == UpstreamAuthTypeHeader && route.UpstreamAuthHeader == "" {
+			route.UpstreamAuthHeader = "Authorization"
+		}
+		if route.UpstreamAuthType == UpstreamAuthTypeHeader &&
+			strings.EqualFold(route.UpstreamAuthHeader, "Authorization") &&
+			route.UpstreamAuthPrefix == "" {
+			route.UpstreamAuthPrefix = "Bearer"
+		}
 		route.AssetNamespaceID = strings.TrimSpace(route.AssetNamespaceID)
+		route.AssetScopeID = strings.TrimSpace(route.AssetScopeID)
 		route.Models = normalizeList(route.Models)
 		route.EnabledActions = normalizeList(route.EnabledActions)
 		if route.UpstreamActionOverrides != nil {
@@ -125,6 +176,33 @@ func (config *RoutesConfig) Validate(secretLookup func(string) string) error {
 		if err := validatePathTemplate(action.DefaultUpstreamPath, "action "+actionKey+" default_upstream_path"); err != nil {
 			return err
 		}
+		if action.AffinityPathParam != "" {
+			template, err := parsePathTemplate(action.DownstreamPath)
+			if err != nil {
+				return fmt.Errorf("action %s downstream_path: %w", actionKey, err)
+			}
+			if !template.hasVariable(action.AffinityPathParam) {
+				return fmt.Errorf("action %s affinity_path_param %q is not present in downstream_path", actionKey, action.AffinityPathParam)
+			}
+		}
+		if action.ScopePathParam != "" {
+			template, err := parsePathTemplate(action.DownstreamPath)
+			if err != nil {
+				return fmt.Errorf("action %s downstream_path: %w", actionKey, err)
+			}
+			if !template.hasVariable(action.ScopePathParam) {
+				return fmt.Errorf("action %s scope_path_param %q is not present in downstream_path", actionKey, action.ScopePathParam)
+			}
+		}
+		if action.ScopeOperation != "" && !isSupportedAssetScopeOperation(action.ScopeOperation) {
+			return fmt.Errorf("action %s scope_operation %q is unsupported", actionKey, action.ScopeOperation)
+		}
+		if assetScopeOperationNeedsPathParam(action.ScopeOperation) && action.ScopePathParam == "" {
+			return fmt.Errorf("action %s scope_operation %q requires scope_path_param", actionKey, action.ScopeOperation)
+		}
+		if isPrivateBillingPath(action.DefaultUpstreamPath) {
+			return fmt.Errorf("action %s cannot expose the private Seedance billing endpoint", actionKey)
+		}
 		downstreamKey := action.DownstreamMethod + " " + normalizePathTemplate(action.DownstreamPath)
 		if existing, ok := actionByDownstream[downstreamKey]; ok {
 			return fmt.Errorf("actions %s and %s share downstream endpoint %s", existing, actionKey, downstreamKey)
@@ -137,6 +215,7 @@ func (config *RoutesConfig) Validate(secretLookup func(string) string) error {
 	}
 	routeNames := make(map[string]bool, len(config.Routes))
 	routeKeys := make(map[string]string)
+	mobileCloudScopeAssignments := make(map[string]string)
 	for i, route := range config.Routes {
 		prefix := fmt.Sprintf("route[%d]", i)
 		if route.Name == "" {
@@ -166,21 +245,88 @@ func (config *RoutesConfig) Validate(secretLookup func(string) string) error {
 		if route.UpstreamBaseURL == "" {
 			return fmt.Errorf("route %s upstream_base_url cannot be empty", route.Name)
 		}
-		if _, err := parseBaseURL(route.UpstreamBaseURL); err != nil {
+		baseURL, err := parseBaseURL(route.UpstreamBaseURL)
+		if err != nil {
 			return fmt.Errorf("route %s upstream_base_url: %w", route.Name, err)
 		}
-		if route.UpstreamAPIKeyEnv == "" {
-			return fmt.Errorf("route %s upstream_api_key_env cannot be empty", route.Name)
-		}
-		if secretLookup != nil && strings.TrimSpace(secretLookup(route.UpstreamAPIKeyEnv)) == "" {
-			return fmt.Errorf("route %s upstream api key env %s is empty", route.Name, route.UpstreamAPIKeyEnv)
+		switch route.UpstreamAuthType {
+		case UpstreamAuthTypeHeader:
+			if route.UpstreamAPIKeyEnv == "" {
+				return fmt.Errorf("route %s upstream_api_key_env cannot be empty", route.Name)
+			}
+			if !validHeaderName(route.UpstreamAuthHeader) {
+				return fmt.Errorf("route %s upstream_auth_header is invalid", route.Name)
+			}
+			if strings.ContainsAny(route.UpstreamAuthPrefix, "\r\n") {
+				return fmt.Errorf("route %s upstream_auth_prefix is invalid", route.Name)
+			}
+			if secretLookup != nil && strings.TrimSpace(secretLookup(route.UpstreamAPIKeyEnv)) == "" {
+				return fmt.Errorf("route %s upstream api key env %s is empty", route.Name, route.UpstreamAPIKeyEnv)
+			}
+		case UpstreamAuthTypeMobileCloudAKSK:
+			if !strings.EqualFold(baseURL.Scheme, "https") && !isLoopbackHost(baseURL.Hostname()) {
+				return fmt.Errorf("route %s mobile cloud AK/SK authentication requires an HTTPS upstream", route.Name)
+			}
+			if route.AllAPIKeys {
+				return fmt.Errorf("route %s scoped mobile cloud authentication does not allow all_api_keys", route.Name)
+			}
+			if len(route.APIKeyIDs) == 0 {
+				return fmt.Errorf("route %s mobile cloud authentication requires at least one api_key_id", route.Name)
+			}
+			if route.UpstreamAccessKeyEnv == "" {
+				return fmt.Errorf("route %s upstream_access_key_env cannot be empty", route.Name)
+			}
+			if route.UpstreamSecretKeyEnv == "" {
+				return fmt.Errorf("route %s upstream_secret_key_env cannot be empty", route.Name)
+			}
+			if secretLookup != nil && strings.TrimSpace(secretLookup(route.UpstreamAccessKeyEnv)) == "" {
+				return fmt.Errorf("route %s upstream access key env %s is empty", route.Name, route.UpstreamAccessKeyEnv)
+			}
+			if secretLookup != nil && strings.TrimSpace(secretLookup(route.UpstreamSecretKeyEnv)) == "" {
+				return fmt.Errorf("route %s upstream secret key env %s is empty", route.Name, route.UpstreamSecretKeyEnv)
+			}
+			if route.AssetNamespaceID == "" {
+				return fmt.Errorf("route %s asset_namespace_id is required for scoped mobile cloud authentication", route.Name)
+			}
+			if route.AssetScopeID == "" {
+				return fmt.Errorf("route %s asset_scope_id is required for scoped mobile cloud authentication", route.Name)
+			}
+			assignment := fmt.Sprintf("%s\x00%d", route.AssetScopeID, route.ChannelID)
+			for _, apiKeyID := range route.APIKeyIDs {
+				key := fmt.Sprintf("%s\x00%d", route.AssetNamespaceID, apiKeyID)
+				if existing, ok := mobileCloudScopeAssignments[key]; ok && existing != assignment {
+					return fmt.Errorf(
+						"route %s assigns api_key_id %d to conflicting asset scopes or channels in namespace %s",
+						route.Name,
+						apiKeyID,
+						route.AssetNamespaceID,
+					)
+				}
+				mobileCloudScopeAssignments[key] = assignment
+			}
+		default:
+			return fmt.Errorf("route %s upstream_auth_type must be %q or %q", route.Name, UpstreamAuthTypeHeader, UpstreamAuthTypeMobileCloudAKSK)
 		}
 		if len(route.EnabledActions) == 0 {
 			return fmt.Errorf("route %s enabled_actions cannot be empty", route.Name)
 		}
 		for _, actionKey := range route.EnabledActions {
-			if _, ok := config.Actions[actionKey]; !ok {
+			action, ok := config.Actions[actionKey]
+			if !ok {
 				return fmt.Errorf("route %s references unknown action %s", route.Name, actionKey)
+			}
+			if (action.AffinityResponseField != "" || action.AffinityPathParam != "") && route.AssetNamespaceID == "" {
+				return fmt.Errorf("route %s asset_namespace_id is required for affinity action %s", route.Name, actionKey)
+			}
+			if route.UpstreamAuthType == UpstreamAuthTypeMobileCloudAKSK && action.ScopeOperation == "" {
+				return fmt.Errorf("route %s action %s requires scope_operation", route.Name, actionKey)
+			}
+			upstreamPath := action.DefaultUpstreamPath
+			if override, hasOverride := route.UpstreamActionOverrides[actionKey]; hasOverride && override.UpstreamPath != "" {
+				upstreamPath = override.UpstreamPath
+			}
+			if isPrivateBillingPath(singleJoiningSlash(baseURL.Path, upstreamPath)) {
+				return fmt.Errorf("route %s cannot expose the private Seedance billing endpoint", route.Name)
 			}
 		}
 		for actionKey, override := range route.UpstreamActionOverrides {
@@ -199,6 +345,9 @@ func (config *RoutesConfig) Validate(secretLookup func(string) string) error {
 				if err := validatePathTemplate(override.UpstreamPath, "route "+route.Name+" override "+actionKey+" upstream_path"); err != nil {
 					return err
 				}
+				if isPrivateBillingPath(override.UpstreamPath) {
+					return fmt.Errorf("route %s cannot expose the private Seedance billing endpoint", route.Name)
+				}
 			}
 		}
 		for _, apiKeyID := range routeAPIKeyIDs(route) {
@@ -214,6 +363,68 @@ func (config *RoutesConfig) Validate(secretLookup func(string) string) error {
 		}
 	}
 	return nil
+}
+
+func isSupportedAssetScopeOperation(operation string) bool {
+	switch operation {
+	case ScopeOperationAssetCreate,
+		ScopeOperationAssetList,
+		ScopeOperationAssetGet,
+		ScopeOperationAssetUpdate,
+		ScopeOperationAssetDelete,
+		ScopeOperationAssetGroupCreate,
+		ScopeOperationAssetGroupList,
+		ScopeOperationAssetGroupGet,
+		ScopeOperationAssetGroupUpdate,
+		ScopeOperationAssetGroupDelete,
+		ScopeOperationRealPersonSessionCreate,
+		ScopeOperationRealPersonGroupGet:
+		return true
+	default:
+		return false
+	}
+}
+
+func assetScopeOperationNeedsPathParam(operation string) bool {
+	switch operation {
+	case ScopeOperationAssetGet,
+		ScopeOperationAssetUpdate,
+		ScopeOperationAssetDelete,
+		ScopeOperationAssetGroupGet,
+		ScopeOperationAssetGroupUpdate,
+		ScopeOperationAssetGroupDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+func isPrivateBillingPath(path string) bool {
+	path = strings.ToLower(strings.TrimRight(strings.TrimSpace(path), "/"))
+	return strings.HasSuffix(path, "/listsplitbilldetail")
+}
+
+func validHeaderName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') {
+			continue
+		}
+		switch char {
+		case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func isLoopbackHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 func routeAPIKeyIDs(route RouteConfig) []int {

@@ -21,8 +21,10 @@ For commercial licensing, please contact support@quantumnous.com
  */
 
 // System Configuration Defaults
-export const DEFAULT_SYSTEM_NAME = 'New API'
-export const DEFAULT_LOGO = '/logo.png'
+export const DEFAULT_SYSTEM_NAME = 'NEXIGHT'
+export const DEFAULT_FOOTER_HTML =
+  '©2026 - 广州观枢智能科技有限公司 版权所有 · <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备2026132726号-1</a> · <a href="https://beian.mps.gov.cn/#/query/webSearch?code=44010502004383" target="_blank" rel="noopener noreferrer">粤公网安备44010502004383号</a>'
+export const DEFAULT_LOGO = '/static/llm-brand/logo.png'
 
 // LocalStorage Keys
 export const STORAGE_KEYS = {

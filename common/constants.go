@@ -12,9 +12,9 @@ import (
 
 var StartTime = time.Now().Unix() // unit: second
 var Version = "v0.0.0"            // this hard coding will be replaced automatically when building, no need to manually change
-var SystemName = "New API"
-var Footer = ""
-var Logo = ""
+var SystemName = "NEXIGHT"
+var Footer = `©2026 - 广州观枢智能科技有限公司 版权所有 · <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备2026132726号-1</a> · <a href="https://beian.mps.gov.cn/#/query/webSearch?code=44010502004383" target="_blank" rel="noopener noreferrer">粤公网安备44010502004383号</a>`
+var Logo = "/static/llm-brand/logo.png"
 var TopUpLink = ""
 
 // var ChatLink = ""

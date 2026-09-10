@@ -673,6 +673,28 @@ For commercial licensing, please contact support@quantumnous.com
   }
 }
 
+.custom-footer .site-footer-company,
+.custom-footer .site-footer-records {
+  display: inline;
+}
+
+.custom-footer .site-footer-records::before,
+.custom-footer .site-footer-records a + a::before {
+  content: ' · ';
+  white-space: pre;
+}
+
+.custom-footer .site-footer-records a {
+  text-decoration: none;
+  text-underline-offset: 4px;
+}
+
+.custom-footer .site-footer-records a:hover,
+.custom-footer .site-footer-records a:focus-visible {
+  color: var(--foreground);
+  text-decoration: underline;
+}
+
 /* ── Auto group flowing border ── */
 @property --auto-group-flow-angle {
   syntax: '<angle>';

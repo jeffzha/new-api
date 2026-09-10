@@ -26,6 +26,8 @@ param(
     [string]$ExpectedVersion = "",
     [string]$DomainStatusUrl = "https://gateway.nexus-reach.com/api/status",
     [string]$IpStatusUrl = "https://124.174.0.221/api/status",
+    # Use when only the domain is a supported public HTTPS entry point.
+    [switch]$DomainOnly,
     [ValidateRange(0, 120)][int]$SshConnectionCooldownSeconds = 30,
     [ValidateRange(1, 5)][int]$SshReadRetryCount = 3,
     [switch]$Promote,
@@ -37,6 +39,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($DomainStatusUrl)) {
+    throw "DomainStatusUrl is required; public domain validation cannot be disabled."
+}
+if ($DomainOnly) {
+    Write-Host "Public health checks: domain only ($DomainStatusUrl). IP HTTPS is not checked."
+}
 
 $candidateWeightWasExplicit = $PSBoundParameters.ContainsKey("CandidateWeight")
 if ($Install) {
@@ -311,6 +320,7 @@ install_mode="$(if ($Install) { '1' } else { '0' })"
 expected_version="$ExpectedVersion"
 domain_status_url="$DomainStatusUrl"
 ip_status_url="$IpStatusUrl"
+domain_only="$(if ($DomainOnly) { '1' } else { '0' })"
 blue_weight="$blueWeight"
 green_weight="$greenWeight"
 expected_hash="$currentHash"
@@ -371,7 +381,11 @@ check_caddy_upstream() {
 }
 
 check_public_status() {
-    for status_url in "`$domain_status_url" "`$ip_status_url"; do
+    local status_urls=("`$domain_status_url")
+    if [ "`$domain_only" != "1" ]; then
+        status_urls+=("`$ip_status_url")
+    fi
+    for status_url in "`${status_urls[@]}"; do
         if ! curl --fail --show-error --silent --max-time 20 "`$status_url" | grep -Eq '"success"[[:space:]]*:[[:space:]]*true'; then
             echo "Public status check failed: `$status_url" >&2
             return 1
@@ -428,6 +442,9 @@ fi
 if [ -n "`$validation_slot" ]; then
     check_release "`$validation_slot" "`$validation_service"
 fi
+
+# Refuse to change traffic if the selected public endpoints already fail.
+check_public_status
 
 mkdir -p "`$backup_dir"
 cp "`$caddyfile" "`$backup_dir/Caddyfile"

@@ -53,7 +53,7 @@ import type {
 } from '../types'
 import { CreemProductsSection } from './creem-products-section'
 
-// Temporarily hide custom topups; enable to restore the input.
+// Temporarily hide custom topups and their payment summary; enable to restore both.
 const SHOW_CUSTOM_AMOUNT = false
 
 interface RechargeFormCardProps {
@@ -286,46 +286,48 @@ export function RechargeFormCard({
                 </div>
               )}
 
-              <div className='space-y-2.5 sm:space-y-3'>
-                {SHOW_CUSTOM_AMOUNT && (
-                  <Label
-                    htmlFor='topup-amount'
-                    className='text-muted-foreground text-xs font-medium tracking-wider uppercase'
-                  >
-                    {t('Custom Amount')}
-                  </Label>
-                )}
-                <div
-                  className={cn(
-                    SHOW_CUSTOM_AMOUNT &&
-                      'grid grid-cols-[minmax(0,1fr)_minmax(110px,0.55fr)] gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center'
-                  )}
-                >
+              {SHOW_CUSTOM_AMOUNT && (
+                <div className='space-y-2.5 sm:space-y-3'>
                   {SHOW_CUSTOM_AMOUNT && (
-                    <Input
-                      id='topup-amount'
-                      type='number'
-                      value={localAmount}
-                      onChange={(e) => handleAmountChange(e.target.value)}
-                      min={minTopup}
-                      placeholder={`Minimum ${minTopup}`}
-                      className='h-9 text-base sm:h-10 sm:text-lg'
-                    />
+                    <Label
+                      htmlFor='topup-amount'
+                      className='text-muted-foreground text-xs font-medium tracking-wider uppercase'
+                    >
+                      {t('Custom Amount')}
+                    </Label>
                   )}
-                  <div className='bg-muted/30 flex min-h-9 items-center justify-between gap-2 rounded-md border px-3 lg:min-w-52'>
-                    <span className='text-muted-foreground truncate text-xs'>
-                      {t('Amount to pay:')}
-                    </span>
-                    {calculating ? (
-                      <Skeleton className='h-5 w-16' />
-                    ) : (
-                      <span className='text-sm font-semibold'>
-                        {formatCurrency(paymentAmount)}
-                      </span>
+                  <div
+                    className={cn(
+                      SHOW_CUSTOM_AMOUNT &&
+                        'grid grid-cols-[minmax(0,1fr)_minmax(110px,0.55fr)] gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center'
                     )}
+                  >
+                    {SHOW_CUSTOM_AMOUNT && (
+                      <Input
+                        id='topup-amount'
+                        type='number'
+                        value={localAmount}
+                        onChange={(e) => handleAmountChange(e.target.value)}
+                        min={minTopup}
+                        placeholder={`Minimum ${minTopup}`}
+                        className='h-9 text-base sm:h-10 sm:text-lg'
+                      />
+                    )}
+                    <div className='bg-muted/30 flex min-h-9 items-center justify-between gap-2 rounded-md border px-3 lg:min-w-52'>
+                      <span className='text-muted-foreground truncate text-xs'>
+                        {t('Amount to pay:')}
+                      </span>
+                      {calculating ? (
+                        <Skeleton className='h-5 w-16' />
+                      ) : (
+                        <span className='text-sm font-semibold'>
+                          {formatCurrency(paymentAmount)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               <div className='space-y-2.5 sm:space-y-3'>
                 <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>

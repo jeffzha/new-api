@@ -61,7 +61,7 @@ func (s *BillingSession) Settle(actualQuota int) error {
 			if ok {
 				durable := model.IsAgencyDurableUser(wallet.userId)
 				if delta > 0 && durable {
-					paid, err := model.TryReserveAgencyWalletAndToken(wallet.userId, s.relayInfo.TokenId, delta, s.relayInfo.TokenKey, s.agencyChargeID, int64(actualQuota), s.relayInfo.TokenUnlimited)
+					paid, err := model.TryReserveAgencyWalletAndTokenWithSnapshot(wallet.userId, s.relayInfo.TokenId, delta, s.relayInfo.TokenKey, s.agencyChargeID, int64(actualQuota), s.relayInfo.TokenUnlimited, s.relayInfo.AgencyPricing)
 					if err != nil {
 						return err
 					}
@@ -261,7 +261,7 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 		var paid int64
 		var err error
 		if model.IsAgencyDurableUser(s.relayInfo.UserId) {
-			paid, err = model.TryReserveAgencyWalletAndToken(
+			paid, err = model.TryReserveAgencyWalletAndTokenWithSnapshot(
 				s.relayInfo.UserId,
 				s.relayInfo.TokenId,
 				delta,
@@ -269,6 +269,7 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 				s.agencyChargeID,
 				int64(targetQuota),
 				s.relayInfo.TokenUnlimited,
+				s.relayInfo.AgencyPricing,
 			)
 			s.agencyAtomicFunding = true
 		} else {
@@ -313,7 +314,7 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 		if ok {
 			var paid int64
 			if model.IsAgencyDurableUser(wallet.userId) {
-				paid, fundingErr = model.TryReserveAgencyWalletAndToken(wallet.userId, s.relayInfo.TokenId, effectiveQuota, s.relayInfo.TokenKey, s.agencyChargeID, int64(effectiveQuota), s.relayInfo.TokenUnlimited)
+				paid, fundingErr = model.TryReserveAgencyWalletAndTokenWithSnapshot(wallet.userId, s.relayInfo.TokenId, effectiveQuota, s.relayInfo.TokenKey, s.agencyChargeID, int64(effectiveQuota), s.relayInfo.TokenUnlimited, s.relayInfo.AgencyPricing)
 			} else {
 				fundingErr = model.TryReserveUserQuotaAndAgencyWithToken(wallet.userId, s.relayInfo.TokenId, effectiveQuota, s.relayInfo.TokenKey, s.agencyChargeID, int64(effectiveQuota), s.relayInfo.TokenUnlimited)
 			}
@@ -396,7 +397,7 @@ func (s *BillingSession) reserveFunding(delta int) error {
 			var paid int64
 			var err error
 			if durable {
-				paid, err = model.TryReserveAgencyWalletAndToken(
+				paid, err = model.TryReserveAgencyWalletAndTokenWithSnapshot(
 					funding.userId,
 					s.relayInfo.TokenId,
 					delta,
@@ -404,6 +405,7 @@ func (s *BillingSession) reserveFunding(delta int) error {
 					s.agencyChargeID,
 					int64(s.preConsumedQuota+delta),
 					s.relayInfo.TokenUnlimited,
+					s.relayInfo.AgencyPricing,
 				)
 				s.agencyAtomicFunding = true
 			} else {

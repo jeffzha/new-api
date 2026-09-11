@@ -136,7 +136,22 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, feeQuota)
 	model.UpdateChannelUsedQuota(relayInfo.ChannelId, feeQuota)
 	if relayInfo.AgencyPricing != nil {
-		if err := RecordAgencyBillingEvent(relayInfo, int64(feeQuota), "violation_fee"); err != nil {
+		// A violation fee is an independent non-commissionable charge. Reuse
+		// of the normal request id would collide with the finalized journal
+		// and could either drop the fee or turn a retry into a hash conflict.
+		feeInfo := *relayInfo
+		baseChargeID := strings.TrimSpace(relayInfo.RequestId)
+		if baseChargeID == "" {
+			baseChargeID = strings.TrimSpace(relayInfo.AgencyBillingEventID)
+		}
+		if baseChargeID != "" {
+			feeInfo.RequestId = baseChargeID + ":violation_fee"
+		}
+		feeInfo.AgencyBillingEventID = ""
+		feeInfo.AgencyStandardQuota = int64(feeQuota)
+		feeInfo.AgencyPaidAllocatedQuota = 0
+		feeInfo.AgencyRealtimeSegmentsRecorded = 0
+		if err := RecordAgencyBillingEvent(&feeInfo, int64(feeQuota), "violation_fee"); err != nil {
 			common.SysError("agency violation fee event persistence failed: " + err.Error())
 		}
 	}

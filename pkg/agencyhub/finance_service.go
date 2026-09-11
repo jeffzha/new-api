@@ -373,6 +373,9 @@ func (a *App) recordUsageFact(tx *gorm.DB, event agencycontract.BillingEvent) er
 		modelKey = "unknown"
 	}
 	skipReason := event.CommissionSkipReason
+	if skipReason == "" && event.NoncommissionableQuota > 0 {
+		skipReason = "noncommissionable_charge"
+	}
 	if event.CommissionEligible && event.CommissionAmountMicros <= 0 {
 		skipReason = "zero_commission"
 	}

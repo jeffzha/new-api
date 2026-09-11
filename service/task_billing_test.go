@@ -796,6 +796,22 @@ func TestMidjourneyDurableSettlementKeepsWalletAndTokenAtomic(t *testing.T) {
 	}).Error)
 	seedToken(t, tokenID, userID, "sk-midjourney-durable", initialTokenQuota)
 	seedChannel(t, channelID)
+	require.NoError(t, model.DB.Create(&model.Agency{
+		ID: 7201, Code: "mj-durable", DisplayName: "MJ Durable", Status: "active", InviteCode: "MJDURABLE",
+		CurrentPolicyVersionID: 9201, PriceRevision: 1, StateRevision: 1, Version: 1,
+		CreatedByType: "root", CreatedByID: 1, CreatedAt: 1, UpdatedAt: 1,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.AgencyPricePolicyVersion{
+		ID: 9201, AgencyID: 7201, Revision: 1, PolicyJSON: "{}", PolicyHash: "test-policy",
+		CreatedByType: "root", CreatedByID: 1, CreatedAtMS: 1,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.AgencyUserBinding{
+		ID: 8201, UserID: userID, AgencyID: 7201, Revision: 1, InviteSnapshot: "MJDURABLE",
+		CreatedSource: "test", EffectiveAtMS: 1, CreatedAt: 1,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.AgencyActiveUserBinding{
+		UserID: userID, BindingID: 8201, Revision: 1, AgencyID: 7201, UpdatedAt: 1,
+	}).Error)
 
 	relayInfo := &relaycommon.RelayInfo{
 		UserId:     userID,
@@ -808,6 +824,7 @@ func TestMidjourneyDurableSettlementKeepsWalletAndTokenAtomic(t *testing.T) {
 		},
 		AgencyPricing: &agencycontract.PricingSnapshot{
 			UserID: userID, TokenID: tokenID, AgencyID: 7201, BindingID: 8201,
+			BindingRevision: 1, PolicyVersionID: 9201, PolicyRevision: 1, AgencyStateRevision: 1,
 			OriginModelName: "mj_imagine", ModelKey: "mj_imagine",
 			SettlementBPS: 8000, SalesBPS: 9000, CommissionEligible: true,
 			CurrencyCode: "TOKENS", QuotaPerUnit: "1", ExchangeRate: "1",

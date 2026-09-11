@@ -174,7 +174,7 @@ func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.Relay
 	if relayInfo.AgencyPricing != nil && relayInfo.RequestId != "" {
 		var reserveErr error
 		if model.IsAgencyDurableUser(relayInfo.UserId) {
-			paid, reserveErr = model.TryReserveAgencyWalletAndToken(
+			paid, reserveErr = model.TryReserveAgencyWalletAndTokenWithSnapshot(
 				relayInfo.UserId,
 				relayInfo.TokenId,
 				quota,
@@ -182,6 +182,7 @@ func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.Relay
 				relayInfo.RequestId,
 				int64(relayInfo.RealtimePreConsumedQuota+quota),
 				relayInfo.TokenUnlimited,
+				relayInfo.AgencyPricing,
 			)
 		} else {
 			reserveErr = model.TryReserveUserQuotaAndAgencyWithToken(
@@ -290,7 +291,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 			var paid int64
 			var err error
 			if model.IsAgencyDurableUser(relayInfo.UserId) {
-				paid, err = model.TryReserveAgencyWalletAndToken(
+				paid, err = model.TryReserveAgencyWalletAndTokenWithSnapshot(
 					relayInfo.UserId,
 					relayInfo.TokenId,
 					delta,
@@ -298,6 +299,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 					relayInfo.RequestId,
 					int64(quota),
 					relayInfo.TokenUnlimited,
+					relayInfo.AgencyPricing,
 				)
 			} else {
 				err = model.TryReserveUserQuotaAndAgencyWithToken(
@@ -590,7 +592,7 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 				}
 				if quota > 0 {
 					var paid int64
-					paid, err = model.TryReserveAgencyWalletAndToken(
+					paid, err = model.TryReserveAgencyWalletAndTokenWithSnapshot(
 						relayInfo.UserId,
 						relayInfo.TokenId,
 						quota,
@@ -598,6 +600,7 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 						chargeID,
 						targetQuota,
 						relayInfo.TokenUnlimited,
+						relayInfo.AgencyPricing,
 					)
 					relayInfo.AgencyPaidAllocatedQuota += paid
 					tokenAppliedAtomically = err == nil

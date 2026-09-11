@@ -572,6 +572,18 @@ func agencyFundingAllocationActiveTotal(row AgencyFundingAllocation) (int64, err
 // one database transaction, including token remain/used accounting. Redis is
 // updated only after commit and is never used to decide success.
 func TryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, chargeID string, fundingTarget int64, unlimited bool) (int64, error) {
+	return tryReserveAgencyWalletAndToken(userID, tokenID, amount, tokenKey, chargeID, fundingTarget, unlimited, nil)
+}
+
+// TryReserveAgencyWalletAndTokenWithSnapshot is the quote-acceptance variant.
+// It rechecks the active binding, agency state revision and policy revision
+// while the user/token/funding rows are locked, so a quote cannot be accepted
+// after an agency was disabled, transferred, or republished.
+func TryReserveAgencyWalletAndTokenWithSnapshot(userID, tokenID, amount int, tokenKey, chargeID string, fundingTarget int64, unlimited bool, snapshot *agencycontract.PricingSnapshot) (int64, error) {
+	return tryReserveAgencyWalletAndToken(userID, tokenID, amount, tokenKey, chargeID, fundingTarget, unlimited, snapshot)
+}
+
+func tryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, chargeID string, fundingTarget int64, unlimited bool, snapshot *agencycontract.PricingSnapshot) (int64, error) {
 	if userID <= 0 || amount < 0 || strings.TrimSpace(chargeID) == "" || fundingTarget < 0 {
 		return 0, ErrAgencyFundingUnavailable
 	}
@@ -590,6 +602,11 @@ func TryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, charg
 		}
 		if err := EnsureAgencyFundingAccount(tx, int64(userID)); err != nil {
 			return err
+		}
+		if snapshot != nil {
+			if err := ValidateAgencyPricingSnapshotTx(tx, int64(userID), snapshot); err != nil {
+				return err
+			}
 		}
 		allocated, err := agencyFundingAllocatedTx(tx, int64(userID), chargeID)
 		if err != nil {
@@ -647,6 +664,45 @@ func TryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, charg
 		}
 	}
 	return paid, err
+}
+
+// ValidateAgencyPricingSnapshotTx verifies the immutable quote against the
+// authoritative rows inside the caller's transaction. It intentionally does
+// not read Redis and does not permit a disabled agency to accept a new charge.
+func ValidateAgencyPricingSnapshotTx(tx *gorm.DB, userID int64, snapshot *agencycontract.PricingSnapshot) error {
+	if tx == nil || userID <= 0 || snapshot == nil || snapshot.AgencyID <= 0 || snapshot.BindingID <= 0 || snapshot.PolicyVersionID <= 0 {
+		return ErrAgencyFundingUnavailable
+	}
+	var active AgencyActiveUserBinding
+	if err := AgencyLockForUpdate(tx).Where("user_id = ?", userID).First(&active).Error; err != nil {
+		return err
+	}
+	if active.AgencyID != snapshot.AgencyID || active.BindingID != snapshot.BindingID || active.Revision != snapshot.BindingRevision {
+		return errors.New("agency pricing snapshot binding revision conflict")
+	}
+	var binding AgencyUserBinding
+	if err := AgencyLockForUpdate(tx).Where("id = ? AND user_id = ? AND agency_id = ? AND ended_at_ms IS NULL", snapshot.BindingID, userID, snapshot.AgencyID).First(&binding).Error; err != nil {
+		return err
+	}
+	if binding.Revision != snapshot.BindingRevision {
+		return errors.New("agency pricing snapshot binding revision conflict")
+	}
+	var agency Agency
+	if err := AgencyLockForUpdate(tx).Where("id = ?", snapshot.AgencyID).First(&agency).Error; err != nil {
+		return err
+	}
+	if agency.Status != "active" || agency.StateRevision != snapshot.AgencyStateRevision ||
+		agency.CurrentPolicyVersionID != snapshot.PolicyVersionID {
+		return errors.New("agency pricing snapshot is stale")
+	}
+	var policy AgencyPricePolicyVersion
+	if err := tx.Where("id = ? AND agency_id = ?", snapshot.PolicyVersionID, snapshot.AgencyID).First(&policy).Error; err != nil {
+		return err
+	}
+	if policy.Revision != snapshot.PolicyRevision {
+		return errors.New("agency pricing snapshot policy revision conflict")
+	}
+	return nil
 }
 
 // ReleaseAgencyWalletAndToken atomically returns a durable customer's wallet

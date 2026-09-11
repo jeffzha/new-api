@@ -622,6 +622,34 @@ type AgencyExportJob struct {
 
 func (AgencyExportJob) TableName() string { return AgencyTablePrefix + "export_jobs" }
 
+// AgencyArchiveManifest is the durable index for a verified cold-data
+// partition. The manifest is written only after the object has been uploaded
+// and read-back hash/row checks have succeeded; online rows are never removed
+// merely because a manifest exists.
+type AgencyArchiveManifest struct {
+	ID            int64  `gorm:"primaryKey"`
+	AgencyID      *int64 `gorm:"index:idx_agency_archive_agency"`
+	PartitionKey  string `gorm:"size:128;not null;uniqueIndex:uidx_agency_archive_partition"`
+	SchemaVersion string `gorm:"size:64;not null"`
+	StorageKey    string `gorm:"size:512;not null"`
+	RowCount      int64  `gorm:"not null"`
+	MinID         int64  `gorm:"not null"`
+	MaxID         int64  `gorm:"not null"`
+	StartAtMS     int64  `gorm:"not null"`
+	EndAtMS       int64  `gorm:"not null"`
+	SHA256        string `gorm:"size:128;not null"`
+	Status        string `gorm:"size:32;not null;index:idx_agency_archive_status"`
+	CreatedByType string `gorm:"size:32;not null"`
+	CreatedByID   int64  `gorm:"not null"`
+	VerifiedAtMS  *int64
+	DeletedAtMS   *int64
+	CreatedAtMS   int64 `gorm:"not null"`
+}
+
+func (AgencyArchiveManifest) TableName() string {
+	return AgencyTablePrefix + "archive_manifests"
+}
+
 type AgencyWorkerLease struct {
 	Name         string `gorm:"size:128;primaryKey"`
 	HolderID     string `gorm:"size:191;not null"`
@@ -751,7 +779,7 @@ func AgencyModels() []any {
 		&AgencyBillingJournal{}, &AgencyBillingOperation{}, &AgencyBillingOutbox{}, &AgencyEventDelivery{}, &AgencyTaskSubmissionAttempt{},
 		&AgencySourceEvent{}, &AgencyUsageFact{}, &AgencyTopupFact{}, &AgencyCommissionLedger{}, &AgencyCommissionBalance{},
 		&AgencyWithdrawalAccount{}, &AgencyWithdrawal{}, &AgencyWithdrawalPaymentReference{}, &AgencyWithdrawalTransition{}, &AgencyAuditLog{}, &AgencyDailyStat{},
-		&AgencyExportJob{}, &AgencyWorkerLease{}, &AgencyReconciliationIssue{}, &AgencyProvisioningJob{},
+		&AgencyExportJob{}, &AgencyArchiveManifest{}, &AgencyWorkerLease{}, &AgencyReconciliationIssue{}, &AgencyProvisioningJob{},
 		&AgencyCommand{},
 	}
 }

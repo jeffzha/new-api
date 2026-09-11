@@ -38,6 +38,14 @@ func (a *App) StartBackground(ctx context.Context) {
 						common.SysError("agency billing consumer failed: " + err.Error())
 					}
 				}
+				if strings.TrimSpace(a.config.ExportDir) != "" {
+					if _, err := a.ProcessExportJobs(2); err != nil {
+						common.SysError("agency export worker failed: " + err.Error())
+					}
+					if _, err := a.CleanupExpiredExportJobs(20); err != nil {
+						common.SysError("agency export cleanup failed: " + err.Error())
+					}
+				}
 				if _, err := a.ProcessProvisioningJobs(20); err != nil {
 					common.SysError("agency provisioning worker failed: " + err.Error())
 				}

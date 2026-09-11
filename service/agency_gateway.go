@@ -94,11 +94,36 @@ func RecordAgencyRealtimeSegment(relayInfo *relaycommon.RelayInfo, segmentNo int
 	if !commissionEligible && skipReason == "" {
 		skipReason = "realtime_segment_not_success"
 	}
+	commissionableQuota := quota
+	noncommissionableQuota := int64(0)
+	if !commissionEligible {
+		commissionableQuota = 0
+		noncommissionableQuota = quota
+	}
+	moneySeq := relayInfo.AgencyMoneySeq
+	if moneySeq <= 0 {
+		_ = model.DB.Model(&model.AgencyFundingAccount{}).
+			Where("user_id = ?", relayInfo.UserId).
+			Pluck("money_seq", &moneySeq).Error
+	}
+	billingBasis := strings.TrimSpace(relayInfo.AgencyBillingBasis)
+	if billingBasis == "" {
+		billingBasis = mustMarshal(map[string]any{
+			"version":            "gateway-basis-v1",
+			"billing_source":     relayInfo.BillingSource,
+			"relay_mode":         relayInfo.RelayMode,
+			"is_stream":          true,
+			"realtime_segment":   segmentNo,
+			"standard_quota":     standard,
+			"charged_quota":      quota,
+			"rounding_policy_id": "realtime-v1",
+		})
+	}
 	event := agencycontract.BillingEvent{
 		SchemaVersion: agencycontract.SchemaVersion, EventID: eventID,
 		EventType: "agency.billing_finalized", FinancialChargeID: chargeID,
 		OperationID: operationID, SegmentNo: segmentNo, JournalRevision: 1,
-		EventIndex: 0, EventCount: 1, OccurredAtMS: time.Now().UnixMilli(),
+		MoneySeq: moneySeq, EventIndex: 0, EventCount: 1, OccurredAtMS: time.Now().UnixMilli(),
 		UserID: int64(relayInfo.UserId), TokenID: int64Ptr(int64(relayInfo.TokenId)),
 		AgencyID: &snapshot.AgencyID, BindingID: &snapshot.BindingID,
 		OriginModelName: snapshot.OriginModelName, Endpoint: relayInfo.RequestURLPath,
@@ -106,8 +131,9 @@ func RecordAgencyRealtimeSegment(relayInfo *relaycommon.RelayInfo, segmentNo int
 		QuotaPerUnit: snapshot.QuotaPerUnit, ExchangeRate: snapshot.ExchangeRate,
 		SettlementBPS: snapshot.SettlementBPS, SalesBPS: snapshot.SalesBPS,
 		CommissionEligible: commissionEligible, CommissionSkipReason: skipReason,
+		BillingBasis:  billingBasis,
 		StandardQuota: standard, ChargedTotalQuota: quota,
-		CommissionableQuota: quota, SettlementCostQuota: basis.SettlementCostQuota,
+		CommissionableQuota: commissionableQuota, NoncommissionableQuota: noncommissionableQuota, SettlementCostQuota: basis.SettlementCostQuota,
 		TheoreticalCommissionQuota: func() int64 {
 			if commissionEligible {
 				return theoretical
@@ -115,7 +141,7 @@ func RecordAgencyRealtimeSegment(relayInfo *relaycommon.RelayInfo, segmentNo int
 			return 0
 		}(),
 		PaidAllocatedQuota: paidAllocated, CommissionQuota: commissionQuota,
-		CommissionAmountMicros: commissionMicros, UsageHash: usageHash,
+		CommissionAmountMicros: commissionMicros, FinancialFinal: true, UsageHash: usageHash,
 		CumulativeUsage: string(cumulativePayload),
 	}
 	payload, err := common.Marshal(event)
@@ -142,8 +168,8 @@ func RecordAgencyRealtimeSegment(relayInfo *relaycommon.RelayInfo, segmentNo int
 			ChargeID: chargeID, SegmentNo: segmentNo, UserID: event.UserID,
 			TokenID: event.TokenID, Status: "finalized", BusinessStatus: status,
 			DeliveryStatus: "pending", PricingSnapshot: mustMarshal(snapshot),
-			BillingBasis: "gateway-owned-realtime", ReserveQuota: quota,
-			ChargedTotalQuota: quota, CommissionableQuota: quota,
+			BillingBasis: billingBasis, ReserveQuota: quota,
+			ChargedTotalQuota: quota, CommissionableQuota: commissionableQuota,
 			SettlementCostQuota:        basis.SettlementCostQuota,
 			TheoreticalCommissionQuota: event.TheoreticalCommissionQuota,
 			PaidAllocatedQuota:         paidAllocated, CommissionQuota: commissionQuota,
@@ -365,6 +391,12 @@ func RecordAgencyBillingEvent(relayInfo *relaycommon.RelayInfo, actualQuota int6
 		theoretical = 0
 		commissionQuota = 0
 	}
+	commissionableQuota := charged
+	noncommissionableQuota := int64(0)
+	if !commissionEligible {
+		commissionableQuota = 0
+		noncommissionableQuota = charged
+	}
 	commission := relayInfo.AgencyCommissionAmountMicros
 	if !commissionEligible {
 		commission = 0
@@ -387,7 +419,32 @@ func RecordAgencyBillingEvent(relayInfo *relaycommon.RelayInfo, actualQuota int6
 	if !commissionEligible && skipReason == "" {
 		skipReason = "business_status_not_success"
 	}
-	event := agencycontract.BillingEvent{SchemaVersion: agencycontract.SchemaVersion, EventID: eventID, EventType: "agency.billing_finalized", FinancialChargeID: chargeID, OperationID: operationID, SegmentNo: 0, JournalRevision: 1, EventIndex: 0, EventCount: 1, OccurredAtMS: time.Now().UnixMilli(), UserID: int64(relayInfo.UserId), TokenID: int64Ptr(int64(relayInfo.TokenId)), AgencyID: &snapshot.AgencyID, BindingID: &snapshot.BindingID, OriginModelName: snapshot.OriginModelName, Endpoint: relayInfo.RequestURLPath, BusinessStatus: status, BillingStatus: "finalized", CurrencyCode: snapshot.CurrencyCode, QuotaPerUnit: snapshot.QuotaPerUnit, ExchangeRate: snapshot.ExchangeRate, SettlementBPS: snapshot.SettlementBPS, SalesBPS: snapshot.SalesBPS, CommissionEligible: commissionEligible, CommissionSkipReason: skipReason, StandardQuota: standard, ChargedTotalQuota: charged, CommissionableQuota: charged, SettlementCostQuota: settlement, TheoreticalCommissionQuota: theoretical, PaidAllocatedQuota: relayInfo.AgencyPaidAllocatedQuota, CommissionQuota: commissionQuota}
+	moneySeq := relayInfo.AgencyMoneySeq
+	if moneySeq <= 0 {
+		_ = model.DB.Model(&model.AgencyFundingAccount{}).
+			Where("user_id = ?", relayInfo.UserId).
+			Pluck("money_seq", &moneySeq).Error
+	}
+	billingBasis := strings.TrimSpace(relayInfo.AgencyBillingBasis)
+	if billingBasis == "" {
+		billingBasis = mustMarshal(map[string]any{
+			"version":              "gateway-basis-v1",
+			"billing_source":       relayInfo.BillingSource,
+			"relay_mode":           relayInfo.RelayMode,
+			"is_stream":            relayInfo.IsStream,
+			"is_channel_test":      relayInfo.IsChannelTest,
+			"free_model":           relayInfo.PriceData.FreeModel,
+			"model_price":          relayInfo.PriceData.ModelPrice,
+			"model_ratio":          relayInfo.PriceData.ModelRatio,
+			"completion_ratio":     relayInfo.PriceData.CompletionRatio,
+			"cache_ratio":          relayInfo.PriceData.CacheRatio,
+			"cache_creation_ratio": relayInfo.PriceData.CacheCreationRatio,
+			"standard_quota":       standard,
+			"charged_quota":        charged,
+			"rounding_policy_id":   "gateway-v1",
+		})
+	}
+	event := agencycontract.BillingEvent{SchemaVersion: agencycontract.SchemaVersion, EventID: eventID, EventType: "agency.billing_finalized", FinancialChargeID: chargeID, OperationID: operationID, SegmentNo: 0, JournalRevision: 1, MoneySeq: moneySeq, EventIndex: 0, EventCount: 1, OccurredAtMS: time.Now().UnixMilli(), UserID: int64(relayInfo.UserId), TokenID: int64Ptr(int64(relayInfo.TokenId)), AgencyID: &snapshot.AgencyID, BindingID: &snapshot.BindingID, OriginModelName: snapshot.OriginModelName, Endpoint: relayInfo.RequestURLPath, BusinessStatus: status, BillingStatus: "finalized", CurrencyCode: snapshot.CurrencyCode, QuotaPerUnit: snapshot.QuotaPerUnit, ExchangeRate: snapshot.ExchangeRate, SettlementBPS: snapshot.SettlementBPS, SalesBPS: snapshot.SalesBPS, CommissionEligible: commissionEligible, CommissionSkipReason: skipReason, BillingBasis: billingBasis, StandardQuota: standard, ChargedTotalQuota: charged, CommissionableQuota: commissionableQuota, NoncommissionableQuota: noncommissionableQuota, SettlementCostQuota: settlement, TheoreticalCommissionQuota: theoretical, PaidAllocatedQuota: relayInfo.AgencyPaidAllocatedQuota, CommissionQuota: commissionQuota, FinancialFinal: true}
 	if commission == 0 {
 		commission, err = agencyCommissionMicros(commissionQuota, snapshot)
 		if err != nil {
@@ -422,7 +479,7 @@ func RecordAgencyBillingEvent(relayInfo *relaycommon.RelayInfo, actualQuota int6
 		if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
 			return lookupErr
 		}
-		journal := &model.AgencyBillingJournal{ChargeID: event.FinancialChargeID, SegmentNo: 0, UserID: event.UserID, TokenID: event.TokenID, Status: "finalized", BusinessStatus: status, DeliveryStatus: "pending", PricingSnapshot: mustMarshal(snapshot), BillingBasis: "gateway-owned", ReserveQuota: int64(relayInfo.FinalPreConsumedQuota), ChargedTotalQuota: charged, CommissionableQuota: charged, SettlementCostQuota: settlement, TheoreticalCommissionQuota: theoretical, PaidAllocatedQuota: relayInfo.AgencyPaidAllocatedQuota, CommissionQuota: commissionQuota, CommissionAmountMicros: commission, CurrencyCode: snapshot.CurrencyCode, Revision: 1, Version: 1, CreatedAtMS: event.OccurredAtMS, UpdatedAtMS: event.OccurredAtMS}
+		journal := &model.AgencyBillingJournal{ChargeID: event.FinancialChargeID, SegmentNo: 0, UserID: event.UserID, TokenID: event.TokenID, Status: "finalized", BusinessStatus: status, DeliveryStatus: "pending", PricingSnapshot: mustMarshal(snapshot), BillingBasis: billingBasis, ReserveQuota: int64(relayInfo.FinalPreConsumedQuota), ChargedTotalQuota: charged, CommissionableQuota: commissionableQuota, SettlementCostQuota: settlement, TheoreticalCommissionQuota: theoretical, PaidAllocatedQuota: relayInfo.AgencyPaidAllocatedQuota, CommissionQuota: commissionQuota, CommissionAmountMicros: commission, CurrencyCode: snapshot.CurrencyCode, Revision: 1, Version: 1, CreatedAtMS: event.OccurredAtMS, UpdatedAtMS: event.OccurredAtMS}
 		if err := tx.Create(journal).Error; err != nil {
 			if errors.Is(err, gorm.ErrDuplicatedKey) || strings.Contains(strings.ToLower(err.Error()), "unique constraint") || strings.Contains(strings.ToLower(err.Error()), "duplicate key") {
 				// A repeated finalize for the same financial charge is
@@ -448,7 +505,7 @@ func RecordAgencyBillingEvent(relayInfo *relaycommon.RelayInfo, actualQuota int6
 		if err := tx.Create(op).Error; err != nil {
 			return err
 		}
-		outbox := &model.AgencyBillingOutbox{EventID: event.EventID, OperationID: operationID, EventIndex: 0, EventCount: 1, EventKind: event.EventType, UserID: event.UserID, MoneySeq: 0, Payload: string(payload), PayloadHash: payloadHash, SchemaVersion: event.SchemaVersion, CreatedAtMS: event.OccurredAtMS}
+		outbox := &model.AgencyBillingOutbox{EventID: event.EventID, OperationID: operationID, EventIndex: 0, EventCount: 1, EventKind: event.EventType, UserID: event.UserID, MoneySeq: event.MoneySeq, Payload: string(payload), PayloadHash: payloadHash, SchemaVersion: event.SchemaVersion, CreatedAtMS: event.OccurredAtMS}
 		if err := tx.Create(outbox).Error; err != nil {
 			return err
 		}

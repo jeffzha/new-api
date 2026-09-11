@@ -184,32 +184,38 @@ type BillingEvent struct {
 	// CumulativeUsage is a canonical JSON snapshot of the upstream cumulative
 	// usage at this segment. It is intentionally opaque to the sidecar; the
 	// gateway owns usage arithmetic and only persists the audit snapshot.
-	CumulativeUsage                string `json:"cumulative_usage,omitempty"`
-	OccurredAtMS                   int64  `json:"occurred_at_ms"`
-	UserID                         int64  `json:"user_id"`
-	TokenID                        *int64 `json:"token_id,omitempty"`
-	AgencyID                       *int64 `json:"agency_id,omitempty"`
-	BindingID                      *int64 `json:"binding_id,omitempty"`
-	OriginModelName                string `json:"origin_model_name"`
-	Endpoint                       string `json:"endpoint,omitempty"`
-	BusinessStatus                 string `json:"business_status"`
-	BillingStatus                  string `json:"billing_status"`
-	CurrencyCode                   string `json:"currency_code"`
-	QuotaPerUnit                   string `json:"quota_per_unit"`
-	ExchangeRate                   string `json:"exchange_rate"`
-	SettlementBPS                  int    `json:"settlement_bps"`
-	SalesBPS                       int    `json:"sales_bps"`
-	CommissionEligible             bool   `json:"commission_eligible"`
-	CommissionSkipReason           string `json:"commission_skip_reason,omitempty"`
+	CumulativeUsage      string `json:"cumulative_usage,omitempty"`
+	OccurredAtMS         int64  `json:"occurred_at_ms"`
+	UserID               int64  `json:"user_id"`
+	TokenID              *int64 `json:"token_id,omitempty"`
+	AgencyID             *int64 `json:"agency_id,omitempty"`
+	BindingID            *int64 `json:"binding_id,omitempty"`
+	OriginModelName      string `json:"origin_model_name"`
+	Endpoint             string `json:"endpoint,omitempty"`
+	BusinessStatus       string `json:"business_status"`
+	BillingStatus        string `json:"billing_status"`
+	CurrencyCode         string `json:"currency_code"`
+	QuotaPerUnit         string `json:"quota_per_unit"`
+	ExchangeRate         string `json:"exchange_rate"`
+	SettlementBPS        int    `json:"settlement_bps"`
+	SalesBPS             int    `json:"sales_bps"`
+	CommissionEligible   bool   `json:"commission_eligible"`
+	CommissionSkipReason string `json:"commission_skip_reason,omitempty"`
+	// BillingBasis is a redacted immutable snapshot of the gateway inputs
+	// needed to explain the charge. It must not contain credentials or raw
+	// request/response bodies.
+	BillingBasis                   string `json:"billing_basis,omitempty"`
 	StandardQuota                  int64  `json:"standard_quota"`
 	ChargedTotalQuota              int64  `json:"charged_total_quota"`
 	CommissionableQuota            int64  `json:"commissionable_charged_quota"`
+	NoncommissionableQuota         int64  `json:"noncommissionable_quota"`
 	SettlementCostQuota            int64  `json:"settlement_cost_quota"`
 	TheoreticalCommissionQuota     int64  `json:"theoretical_commission_quota"`
 	PaidAllocatedQuota             int64  `json:"paid_allocated_quota"`
 	CommissionQuota                int64  `json:"commission_quota"`
 	CommissionAmountMicros         int64  `json:"commission_amount_micros"`
 	ReversedCommissionAmountMicros int64  `json:"reversed_commission_amount_micros"`
+	FinancialFinal                 bool   `json:"financial_final"`
 }
 
 type PricingSnapshot struct {

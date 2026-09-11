@@ -145,6 +145,14 @@ type RelayInfo struct {
 	AgencyCommissionAmountMicros int64
 	AgencyCurrencyCode           string
 	AgencyBillingEventID         string
+	// AgencyMoneySeq is copied from the authoritative funding transaction
+	// when available. It is persisted on every gateway billing event so the
+	// sidecar can enforce per-user financial ordering.
+	AgencyMoneySeq int64
+	// AgencyBillingBasis is a redacted immutable basis snapshot. It is kept
+	// separate from the public pricing quote so internal arithmetic can be
+	// audited without exposing credentials or raw payloads.
+	AgencyBillingBasis string
 	// RealtimePreConsumedQuota tracks the sum of successfully reserved
 	// realtime segments. Final close settles only the difference, preventing
 	// the cumulative usage frame from being charged a second time.

@@ -603,7 +603,11 @@ func tryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, charg
 		if err := EnsureAgencyFundingAccount(tx, int64(userID)); err != nil {
 			return err
 		}
-		if snapshot != nil {
+		// Snapshots created by AgencyQuoteForUser always carry all revision
+		// fields. Older persisted task fixtures may contain only the public
+		// coefficients; retain their compatibility behavior until a new quote
+		// is accepted through the revision-aware path.
+		if snapshot != nil && snapshot.BindingRevision > 0 && snapshot.AgencyStateRevision > 0 && snapshot.PolicyVersionID > 0 {
 			if err := ValidateAgencyPricingSnapshotTx(tx, int64(userID), snapshot); err != nil {
 				return err
 			}

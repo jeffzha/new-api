@@ -2,6 +2,8 @@ package agencyhub
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"sort"
 	"strings"
@@ -148,7 +150,44 @@ func (a *App) processDelivery(ctx context.Context, delivery model.AgencyEventDel
 }
 
 func (a *App) markDelivery(delivery model.AgencyEventDelivery, status string, deliveryErr error) error {
-	return a.markDeliveryTx(a.db, delivery, status, deliveryErr)
+	return a.db.Transaction(func(tx *gorm.DB) error {
+		if err := a.markDeliveryTx(tx, delivery, status, deliveryErr); err != nil {
+			return err
+		}
+		if status == "poison" {
+			return recordPoisonIssueTx(tx, delivery.EventID, deliveryErr)
+		}
+		return nil
+	})
+}
+
+func recordPoisonIssueTx(tx *gorm.DB, eventID string, deliveryErr error) error {
+	if tx == nil || strings.TrimSpace(eventID) == "" {
+		return nil
+	}
+	var count int64
+	if err := tx.Model(&model.AgencyReconciliationIssue{}).
+		Where("object_type = ? AND object_id = ? AND status = ?", "billing_event", eventID, "open").
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	difference := "billing event delivery moved to poison"
+	if deliveryErr != nil && strings.TrimSpace(deliveryErr.Error()) != "" {
+		difference += ": " + deliveryErr.Error()
+	}
+	digest := sha256.Sum256([]byte(difference))
+	now := time.Now().UnixMilli()
+	return tx.Create(&model.AgencyReconciliationIssue{
+		ObjectType:   "billing_event",
+		ObjectID:     eventID,
+		Difference:   difference,
+		EvidenceHash: hex.EncodeToString(digest[:]),
+		Status:       "open",
+		CreatedAtMS:  now,
+	}).Error
 }
 
 func (a *App) markDeliveryTx(tx *gorm.DB, delivery model.AgencyEventDelivery, status string, deliveryErr error) error {

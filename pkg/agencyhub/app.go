@@ -160,6 +160,7 @@ func (a *App) Router() *gin.Engine {
 	root.GET("/audit", a.listAudit)
 	root.POST("/funding/reversals", a.createFundingReversal)
 	root.POST("/users/:user_id/transfer", a.transferUser)
+	root.GET("/withdrawals", a.listRootWithdrawals)
 	root.POST("/withdrawals/:id/review", a.reviewWithdrawal)
 	root.POST("/withdrawals/:id/transition", a.transitionWithdrawalCommand)
 	root.POST("/withdrawals/:id/mark-paid", a.markWithdrawalPaid)

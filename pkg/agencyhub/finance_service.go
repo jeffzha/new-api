@@ -133,8 +133,14 @@ func (a *App) ReservePaid(tx *gorm.DB, userID int64, chargeID string, amount int
 // contains final B/T/P/K/M snapshots, so this method never recomputes model
 // prices and remains safe when the gateway is upgraded independently.
 func (a *App) ProcessBillingEvent(event agencycontract.BillingEvent) error {
-	if event.EventID == "" || event.UserID <= 0 || event.SchemaVersion == "" {
+	if event.EventID == "" || event.UserID <= 0 || event.SchemaVersion != agencycontract.SchemaVersion {
 		return errors.New("invalid billing event")
+	}
+	if event.MoneySeq < 0 || event.StandardQuota < 0 || event.ChargedTotalQuota < 0 ||
+		event.CommissionableQuota < 0 || event.NoncommissionableQuota < 0 ||
+		event.CommissionableQuota > event.ChargedTotalQuota ||
+		event.NoncommissionableQuota > event.ChargedTotalQuota {
+		return errors.New("invalid billing event amounts")
 	}
 	payload, err := common.Marshal(event)
 	if err != nil {
@@ -227,6 +233,30 @@ func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEve
 			}
 		}
 	}
+	// Funding events for one user form a strict money_seq chain. A late
+	// delivery must wait for every earlier outbox event for that user, while
+	// events for other users continue independently. If an earlier event is
+	// already poison, the dependency remains visible as an open reconciliation
+	// issue and is deliberately retried only after root resolves it.
+	if event.MoneySeq > 1 {
+		var priorOutboxCount int64
+		if err := tx.Model(&model.AgencyBillingOutbox{}).
+			Where("user_id = ? AND money_seq > 0 AND money_seq < ?", event.UserID, event.MoneySeq).
+			Count(&priorOutboxCount).Error; err != nil {
+			return err
+		}
+		if priorOutboxCount > 0 {
+			var priorCompletedCount int64
+			if err := tx.Model(&model.AgencySourceEvent{}).
+				Where("user_id = ? AND money_seq > 0 AND money_seq < ? AND processing_status IN ?", event.UserID, event.MoneySeq, []string{"done", "skipped"}).
+				Count(&priorCompletedCount).Error; err != nil {
+				return err
+			}
+			if priorCompletedCount < priorOutboxCount {
+				return errors.New("agency event waiting for prior user money sequence")
+			}
+		}
+	}
 	isReversal := event.EventType == "agency.billing_reversed"
 	isFundingReversal := event.EventType == "agency.funding_reversed"
 	if !isReversal && !isFundingReversal {
@@ -242,6 +272,18 @@ func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEve
 		}
 		source.ProcessingStatus = "skipped"
 		source.SkipReason = event.CommissionSkipReason
+		if source.SkipReason == "" {
+			switch {
+			case event.AgencyID == nil:
+				source.SkipReason = "no_agency_binding"
+			case isFundingReversal:
+				source.SkipReason = "funding_reversal_noncommissionable"
+			case !event.CommissionEligible:
+				source.SkipReason = "commission_ineligible"
+			default:
+				source.SkipReason = "zero_commission"
+			}
+		}
 		return tx.Model(source).Updates(map[string]any{"processing_status": source.ProcessingStatus, "skip_reason": source.SkipReason}).Error
 	}
 	amount := event.CommissionAmountMicros
@@ -372,7 +414,7 @@ func (a *App) recordUsageFact(tx *gorm.DB, event agencycontract.BillingEvent) er
 func holdUnpaidWithdrawals(tx *gorm.DB, agencyID int64, currencyCode, eventID string, now int64) error {
 	var rows []model.AgencyWithdrawal
 	if err := model.AgencyLockForUpdate(tx).
-		Where("agency_id = ? AND currency_code = ? AND status IN ?", agencyID, currencyCode, []string{"submitted", "reviewing", "approved", "paying", "payment_unknown"}).
+		Where("agency_id = ? AND currency_code = ? AND status IN ?", agencyID, currencyCode, []string{"submitted", "reviewing", "approved"}).
 		Find(&rows).Error; err != nil {
 		return err
 	}
@@ -543,7 +585,7 @@ func (a *App) createWithdrawal(c *gin.Context) {
 		return
 	}
 	var request struct {
-		CurrencyCode string `json:"currency_code"`
+		CurrencyCode string       `json:"currency_code"`
 		AmountMicros decimalInt64 `json:"amount_micros"`
 		AccountID    decimalInt64 `json:"account_id"`
 	}
@@ -692,6 +734,96 @@ func (a *App) listWithdrawals(c *gin.Context) {
 		items = append(items, withdrawalView(row))
 	}
 	respondOK(c, gin.H{"items": items})
+}
+
+func (a *App) listRootWithdrawals(c *gin.Context) {
+	identity := currentIdentity(c)
+	if identity == nil || identity.ActorType != ActorTypeRoot {
+		respondError(c, http.StatusForbidden, "root_required", "仅超级管理员可操作", nil)
+		return
+	}
+	if hasCursorPagingConflict(c) {
+		respondError(c, http.StatusBadRequest, "invalid_cursor", "cursor不能与page同时使用", nil)
+		return
+	}
+	pageSize, err := cursorPageSize(c)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_page_size", err.Error(), nil)
+		return
+	}
+	var cursor agencyCursor
+	rawCursor := strings.TrimSpace(c.Query("cursor"))
+	if rawCursor != "" {
+		cursor, err = a.decodeCursor(rawCursor, c, "root_withdrawals", identity)
+		if err != nil {
+			respondError(c, http.StatusBadRequest, "invalid_cursor", "cursor无效或已过期", nil)
+			return
+		}
+	}
+	query := a.db.Model(&model.AgencyWithdrawal{})
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		switch status {
+		case "submitted", "reviewing", "approved", "paying", "payment_unknown", "on_hold", "paid", "rejected", "cancelled":
+			query = query.Where("status = ?", status)
+		default:
+			respondError(c, http.StatusBadRequest, "invalid_status", "无效的提现状态", nil)
+			return
+		}
+	}
+	if currency := strings.TrimSpace(c.Query("currency_code")); currency != "" {
+		if len(currency) > 16 {
+			respondError(c, http.StatusBadRequest, "invalid_currency", "币种无效", nil)
+			return
+		}
+		query = query.Where("currency_code = ?", currency)
+	}
+	if rawAgency := strings.TrimSpace(c.Query("agency_id")); rawAgency != "" {
+		agencyID, parseErr := strconv.ParseInt(rawAgency, 10, 64)
+		if parseErr != nil || agencyID <= 0 {
+			respondError(c, http.StatusBadRequest, "invalid_agency_id", "代理商ID无效", nil)
+			return
+		}
+		query = query.Where("agency_id = ?", agencyID)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取提现记录失败", nil)
+		return
+	}
+	if rawCursor != "" {
+		query = query.Where("id < ?", cursor.PositionID)
+	}
+	var rows []model.AgencyWithdrawal
+	if err := query.Order("id DESC").Limit(pageSize + 1).Find(&rows).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取提现记录失败", nil)
+		return
+	}
+	hasMore := len(rows) > pageSize
+	if hasMore {
+		rows = rows[:pageSize]
+	}
+	items := make([]gin.H, 0, len(rows))
+	for _, row := range rows {
+		item := withdrawalView(row)
+		item["agency_id"] = row.AgencyID
+		item["reviewer_id"] = row.ReviewerID
+		item["previous_status"] = row.PreviousStatus
+		item["payment_lease_until"] = row.PaymentLeaseUntil
+		items = append(items, item)
+	}
+	nextCursor := ""
+	if hasMore && len(rows) > 0 {
+		nextCursor, err = a.encodeCursor(agencyCursor{
+			Kind: "root_withdrawals", Scope: cursorScope(c, "root_withdrawals", identity),
+			ActorType: identity.ActorType, ActorID: identity.ActorID,
+			PositionID: rows[len(rows)-1].ID,
+		})
+		if err != nil {
+			respondError(c, http.StatusServiceUnavailable, "cursor_unavailable", "分页服务暂不可用", nil)
+			return
+		}
+	}
+	respondOK(c, gin.H{"items": items, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
 }
 
 func (a *App) cancelOwnWithdrawal(c *gin.Context) {

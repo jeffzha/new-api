@@ -13,28 +13,64 @@ import (
 )
 
 func (a *App) listReconciliationIssues(c *gin.Context) {
+	identity := currentIdentity(c)
+	if hasCursorPagingConflict(c) {
+		respondError(c, http.StatusBadRequest, "invalid_cursor", "cursor不能与page同时使用", nil)
+		return
+	}
 	status := strings.TrimSpace(c.Query("status"))
-	limit := 50
-	if value, err := strconv.Atoi(c.Query("limit")); err == nil && value > 0 {
-		limit = value
+	if status != "" && status != "open" && status != "resolved" && status != "ignored" {
+		respondError(c, http.StatusBadRequest, "invalid_status", "无效的异常状态", nil)
+		return
 	}
-	if limit > 200 {
-		limit = 200
+	pageSize, err := cursorPageSize(c)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_page_size", err.Error(), nil)
+		return
 	}
-	query := a.db.Model(&model.AgencyReconciliationIssue{}).Order("id DESC").Limit(limit)
-	if status != "" {
-		if status != "open" && status != "resolved" && status != "ignored" {
-			respondError(c, http.StatusBadRequest, "invalid_status", "无效的异常状态", nil)
+	var cursor agencyCursor
+	rawCursor := strings.TrimSpace(c.Query("cursor"))
+	if rawCursor != "" {
+		cursor, err = a.decodeCursor(rawCursor, c, "root_reconciliation_issues", identity)
+		if err != nil {
+			respondError(c, http.StatusBadRequest, "invalid_cursor", "cursor无效或已过期", nil)
 			return
 		}
+	}
+	query := a.db.Model(&model.AgencyReconciliationIssue{})
+	if status != "" {
 		query = query.Where("status = ?", status)
 	}
-	var issues []model.AgencyReconciliationIssue
-	if err := query.Find(&issues).Error; err != nil {
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
 		respondError(c, http.StatusInternalServerError, "database_error", "读取对账异常失败", nil)
 		return
 	}
-	respondOK(c, gin.H{"items": issues, "total": len(issues)})
+	if rawCursor != "" {
+		query = query.Where("id < ?", cursor.PositionID)
+	}
+	var issues []model.AgencyReconciliationIssue
+	if err := query.Order("id DESC").Limit(pageSize + 1).Find(&issues).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取对账异常失败", nil)
+		return
+	}
+	hasMore := len(issues) > pageSize
+	if hasMore {
+		issues = issues[:pageSize]
+	}
+	nextCursor := ""
+	if hasMore && len(issues) > 0 {
+		nextCursor, err = a.encodeCursor(agencyCursor{
+			Kind: "root_reconciliation_issues", Scope: cursorScope(c, "root_reconciliation_issues", identity),
+			ActorType: identity.ActorType, ActorID: identity.ActorID,
+			PositionID: issues[len(issues)-1].ID,
+		})
+		if err != nil {
+			respondError(c, http.StatusServiceUnavailable, "cursor_unavailable", "分页服务暂不可用", nil)
+			return
+		}
+	}
+	respondOK(c, gin.H{"items": issues, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
 }
 
 func (a *App) resolveReconciliationIssue(c *gin.Context) {

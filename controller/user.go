@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/agencyhub"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
@@ -272,6 +273,26 @@ func Register(c *gin.Context) {
 	if common.EmailVerificationEnabled {
 		cleanUser.Email = user.Email
 	}
+	if strings.TrimSpace(user.AgencyInvite) != "" {
+		if strings.TrimSpace(affCode) != "" {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		if err := registerAgencyCustomer(&cleanUser, user.AgencyInvite); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) || strings.Contains(err.Error(), "agency invitation is disabled") {
+				common.ApiErrorMsg(c, "agency invitation is invalid or disabled")
+				return
+			}
+			if errors.Is(err, model.ErrEmailAlreadyTaken) {
+				common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
+				return
+			}
+			common.ApiError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+		return
+	}
 	if err := cleanUser.Insert(inviterId); err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
@@ -321,6 +342,42 @@ func Register(c *gin.Context) {
 		"message": "",
 	})
 	return
+}
+
+// registerAgencyCustomer keeps invited registration atomic: the zero-quota
+// user, optional default token, funding account, and agency binding commit or
+// roll back together. It intentionally bypasses legacy affiliate rewards.
+func registerAgencyCustomer(user *model.User, inviteCode string) error {
+	return model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := user.InsertWithTxAgency(tx); err != nil {
+			return err
+		}
+		if _, err := agencyhub.BindUserByInvite(tx, int64(user.Id), strings.TrimSpace(inviteCode), "invite_register", 0); err != nil {
+			return err
+		}
+		if !constant.GenerateDefaultToken {
+			return nil
+		}
+		key, err := common.GenerateKey()
+		if err != nil {
+			return err
+		}
+		token := model.Token{
+			UserId:             user.Id,
+			Name:               user.Username + "的初始令牌",
+			Key:                key,
+			CreatedTime:        common.GetTimestamp(),
+			AccessedTime:       common.GetTimestamp(),
+			ExpiredTime:        -1,
+			RemainQuota:        500000,
+			UnlimitedQuota:     true,
+			ModelLimitsEnabled: false,
+		}
+		if setting.DefaultUseAutoGroup {
+			token.Group = "auto"
+		}
+		return tx.Create(&token).Error
+	})
 }
 
 func GetAllUsers(c *gin.Context) {
@@ -1188,7 +1245,15 @@ func ManageUser(c *gin.Context) {
 			})
 		case "override":
 			oldQuota := user.Quota
-			if err := model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("quota", req.Value).Error; err != nil {
+			var err error
+			if user.BillingMode == model.AgencyProvisioningBillingMode {
+				err = model.ErrAgencyProvisioning
+			} else if user.BillingMode == model.AgencyDurableBillingMode {
+				err = model.SetAgencyQuotaAbsolute(int64(user.Id), req.Value, "admin_override")
+			} else {
+				err = model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("quota", req.Value).Error
+			}
+			if err != nil {
 				common.ApiError(c, err)
 				return
 			}

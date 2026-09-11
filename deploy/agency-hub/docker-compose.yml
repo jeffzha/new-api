@@ -1,0 +1,53 @@
+services:
+  agency-hub:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: agency-hub
+    environment:
+      AGENCY_HUB_PORT: "3201"
+      AGENCY_HUB_BASE_PATH: /agency
+      AGENCY_HUB_PUBLIC_BASE_URL: ${AGENCY_HUB_PUBLIC_BASE_URL:-https://gateway.nexus-reach.com}
+      SQL_DSN: ${SQL_DSN:?set SQL_DSN}
+      LOG_SQL_DSN: ${LOG_SQL_DSN:-}
+      AGENCY_HUB_AUTO_MIGRATE: "false"
+      AGENCY_COMMISSION_PROCESSING_ENABLED: "false"
+      AGENCY_WITHDRAWALS_ENABLED: "false"
+      AGENCY_HUB_SSO_PUBLIC_KEY_FILE: /run/secrets/agency_sso_public_key
+      AGENCY_HUB_COMMAND_SERVICE_PUBLIC_KEY_FILE: /run/secrets/agency_command_service_public_key
+      AGENCY_HUB_COMMAND_SERVICE_PRIVATE_KEY_FILE: /run/secrets/agency_command_service_private_key
+      AGENCY_HUB_DELIVERY_KEY_FILE: /run/secrets/agency_delivery_key
+      AGENCY_PAYOUT_KEY_FILE: /run/secrets/agency_payout_key
+    expose:
+      - "3201"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:3201/agency/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+    secrets:
+      - source: agency_sso_public_key
+        target: agency_sso_public_key
+      - source: agency_command_service_public_key
+        target: agency_command_service_public_key
+      - source: agency_command_service_private_key
+        target: agency_command_service_private_key
+      - source: agency_delivery_key
+        target: agency_delivery_key
+      - source: agency_payout_key
+        target: agency_payout_key
+    restart: unless-stopped
+    entrypoint: ["/agency-hub"]
+
+secrets:
+  agency_sso_public_key:
+    file: ${AGENCY_HUB_SSO_PUBLIC_KEY_HOST_FILE:?set AGENCY_HUB_SSO_PUBLIC_KEY_HOST_FILE}
+  agency_command_service_public_key:
+    file: ${AGENCY_HUB_COMMAND_SERVICE_PUBLIC_KEY_HOST_FILE:?set AGENCY_HUB_COMMAND_SERVICE_PUBLIC_KEY_HOST_FILE}
+  agency_command_service_private_key:
+    file: ${AGENCY_HUB_COMMAND_SERVICE_PRIVATE_KEY_HOST_FILE:?set AGENCY_HUB_COMMAND_SERVICE_PRIVATE_KEY_HOST_FILE}
+  agency_delivery_key:
+    file: ${AGENCY_HUB_DELIVERY_KEY_FILE:?set AGENCY_HUB_DELIVERY_KEY_FILE}
+  agency_payout_key:
+    file: ${AGENCY_PAYOUT_KEY_FILE:?set AGENCY_PAYOUT_KEY_FILE}

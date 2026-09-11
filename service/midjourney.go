@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -51,9 +50,15 @@ func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.
 	if relayInfo.BillingSource == BillingSourceSubscription {
 		return false, errors.New("legacy Midjourney billing does not support subscriptions")
 	}
+	if relayInfo.AgencyPricing != nil && strings.TrimSpace(relayInfo.RequestId) == "" {
+		relayInfo.RequestId = common.NewRequestId()
+	}
 
 	task.Quota = quota
 	task.BillingChannelId = task.ChannelId
+	if relayInfo.AgencyPricing != nil {
+		task.AgencyChargeID = relayInfo.RequestId
+	}
 	if relayInfo.ChannelMeta != nil && relayInfo.ChannelId > 0 {
 		task.BillingChannelId = relayInfo.ChannelId
 	}
@@ -72,11 +77,38 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 		return false, errors.New("Midjourney task must be persisted before billing")
 	}
 
-	result, billingErr := postConsumeQuotaWithResult(relayInfo, task.Quota, 0, true)
+	var result postConsumeQuotaResult
+	var billingErr error
+	// Durable agency customers must settle the wallet/funding projection and
+	// token in the same database transaction. The legacy helper intentionally
+	// keeps its historical behavior for unmanaged users.
+	if relayInfo.AgencyPricing != nil &&
+		relayInfo.RequestId != "" &&
+		model.IsAgencyDurableUser(relayInfo.UserId) &&
+		!relayInfo.IsPlayground {
+		var paid int64
+		paid, billingErr = model.TryReserveAgencyWalletAndToken(
+			relayInfo.UserId,
+			relayInfo.TokenId,
+			task.Quota,
+			relayInfo.TokenKey,
+			relayInfo.RequestId,
+			int64(task.Quota),
+			relayInfo.TokenUnlimited,
+		)
+		if billingErr == nil {
+			relayInfo.AgencyPaidAllocatedQuota += paid
+			result.FundingApplied = true
+			result.TokenApplied = true
+		}
+	} else {
+		result, billingErr = postConsumeQuotaWithResult(relayInfo, task.Quota, 0, true)
+	}
 	if !result.FundingApplied {
 		task.Quota = 0
 		task.TokenId = 0
 		task.BillingChannelId = 0
+		task.AgencyBillingEventID = ""
 		if updateErr := task.UpdateBillingState(); updateErr != nil {
 			return false, errors.Join(billingErr, fmt.Errorf("clear Midjourney billing state: %w", updateErr))
 		}
@@ -87,6 +119,16 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 	if result.TokenApplied {
 		task.TokenId = relayInfo.TokenId
 	}
+	if err := RecordAgencyBillingEvent(relayInfo, int64(task.Quota), "success"); err != nil {
+		if relayInfo.AgencyBillingEventID != "" {
+			task.AgencyBillingEventID = relayInfo.AgencyBillingEventID
+		}
+		if updateErr := task.UpdateBillingState(); updateErr != nil {
+			return true, errors.Join(billingErr, err, fmt.Errorf("update Midjourney agency billing marker: %w", updateErr))
+		}
+		return true, errors.Join(billingErr, err)
+	}
+	task.AgencyBillingEventID = relayInfo.AgencyBillingEventID
 	if updateErr := task.UpdateBillingState(); updateErr != nil {
 		return true, errors.Join(billingErr, fmt.Errorf("update Midjourney billing state: %w", updateErr))
 	}
@@ -100,13 +142,29 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		return true
 	}
 
-	if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
-		logger.LogWarn(ctx, fmt.Sprintf("退还 Midjourney 用户额度失败 task %s: %s", task.MjId, err.Error()))
+	var fundingErr error
+	tokenKey := ""
+	if task.TokenId > 0 {
+		tokenKey = resolveTokenKey(ctx, task.TokenId, task.MjId)
+	}
+	if task.AgencyChargeID != "" {
+		if model.IsAgencyDurableUser(task.UserId) {
+			_, fundingErr = model.ReleaseAgencyWalletAndToken(task.UserId, task.TokenId, quota, tokenKey, task.AgencyChargeID)
+		} else {
+			_, fundingErr = model.ReleaseUserQuotaAndAgency(task.UserId, quota, task.AgencyChargeID)
+		}
+	} else {
+		fundingErr = model.IncreaseUserQuota(task.UserId, quota, false)
+	}
+	if fundingErr != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("退还 Midjourney 用户额度失败 task %s: %s", task.MjId, fundingErr.Error()))
 		return false
 	}
+	if err := RecordAgencyMidjourneyRefundEvent(task, int64(quota), reason); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("记录代理商 Midjourney 佣金冲正失败 task %s: %s", task.MjId, err.Error()))
+	}
 
-	if task.TokenId > 0 {
-		tokenKey := resolveTokenKey(ctx, task.TokenId, task.MjId)
+	if task.TokenId > 0 && !(task.AgencyChargeID != "" && model.IsAgencyDurableUser(task.UserId)) {
 		if tokenKey != "" {
 			if err := model.IncreaseTokenQuota(task.TokenId, tokenKey, quota); err != nil {
 				logger.LogWarn(ctx, fmt.Sprintf("退还 Midjourney 令牌额度失败 task %s: %s", task.MjId, err.Error()))
@@ -281,7 +339,7 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 	var mapResult map[string]interface{}
 	// if get request, no need to read request body
 	if c.Request.Method != "GET" {
-		err := json.NewDecoder(c.Request.Body).Decode(&mapResult)
+		err := common.DecodeJson(c.Request.Body, &mapResult)
 		if err != nil {
 			return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "read_request_body_failed", http.StatusInternalServerError), nullBytes, err
 		}
@@ -303,7 +361,7 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 			mapResult["prompt"] = prompt
 		}
 	}
-	reqBody, err := json.Marshal(mapResult)
+	reqBody, err := common.Marshal(mapResult)
 	if err != nil {
 		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "marshal_request_body_failed", http.StatusInternalServerError), nullBytes, err
 	}
@@ -350,9 +408,9 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 	if len(responseBody) == 0 {
 		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "empty_response_body", statusCode), responseBody, nil
 	} else {
-		err = json.Unmarshal(responseBody, &midjResponse)
+		err = common.Unmarshal(responseBody, &midjResponse)
 		if err != nil {
-			err2 := json.Unmarshal(responseBody, &midjourneyUploadsResponse)
+			err2 := common.Unmarshal(responseBody, &midjourneyUploadsResponse)
 			if err2 != nil {
 				return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "unmarshal_response_body_failed", statusCode), responseBody, err
 			}

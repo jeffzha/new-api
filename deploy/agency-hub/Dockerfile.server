@@ -1,0 +1,6 @@
+FROM ghcr.nju.edu.cn/jeffzha/new-api@sha256:955f317363a4af858ed95ff2126fd50b6eac6f769392ff46f096e0ab211d5660
+
+COPY new-api /new-api
+COPY agency-hub /agency-hub
+
+ENTRYPOINT ["/new-api"]

@@ -23,6 +23,7 @@ type oauthStateRequest struct {
 	Provider string `json:"provider"`
 	Intent   string `json:"intent"`
 	Aff      string `json:"aff,omitempty"`
+	Invite   string `json:"invite,omitempty"`
 }
 
 type oauthFlowPayload struct {
@@ -44,9 +45,11 @@ func GenerateOAuthCode(c *gin.Context) {
 	request.Provider = strings.TrimSpace(request.Provider)
 	request.Intent = strings.TrimSpace(request.Intent)
 	request.Aff = strings.TrimSpace(request.Aff)
+	request.Invite = strings.TrimSpace(request.Invite)
 	if oauth.GetProvider(request.Provider) == nil ||
 		(request.Intent != model.AuthFlowIntentLogin && request.Intent != model.AuthFlowIntentBind) ||
 		len(request.Aff) > 32 ||
+		request.Invite != "" ||
 		(request.Intent == model.AuthFlowIntentBind && request.Aff != "") {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return

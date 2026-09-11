@@ -145,6 +145,8 @@ func main() {
 		}
 		return a
 	}
+	commandWorkerCtx, stopAgencyCommandWorker := context.WithCancel(context.Background())
+	service.StartAgencyCommandWorker(commandWorkerCtx)
 
 	// Register the periodic channel test, upstream model update, and async task
 	// polling (Midjourney / Suno / video) jobs as scheduled system tasks
@@ -228,6 +230,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
 	common.SysLog(fmt.Sprintf("received signal: %v, shutting down...", sig))
+	stopAgencyCommandWorker()
 
 	// SSE streams may run for minutes; give them time to finish before forced exit
 	shutdownTimeout := time.Duration(common.GetEnvOrDefault("SHUTDOWN_TIMEOUT_SECONDS", 120)) * time.Second

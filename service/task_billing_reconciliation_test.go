@@ -187,3 +187,51 @@ END`).Error)
 	require.NoError(t, err)
 	assert.Zero(t, enqueued)
 }
+
+func TestTaskBillingReconciliationDeletedTokenRetainsReservation(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.TaskBillingReconciliation{}))
+	t.Cleanup(func() { model.DB.Exec("DELETE FROM task_billing_reconciliations") })
+
+	const userID, tokenID, channelID = 83, 84, 85
+	seedUser(t, userID, 10_000)
+	seedToken(t, tokenID, userID, "seedance-deleted-token", 5_000)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, 100, tokenID, BillingSourceWallet, 0)
+	task.Status = model.TaskStatusSuccess
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Delete(&model.Token{}, tokenID).Error)
+
+	record := &model.TaskBillingReconciliation{
+		TaskID:      task.ID,
+		Provider:    model.TaskBillingProviderSeedanceDomestic,
+		ChannelID:   channelID,
+		Status:      model.TaskBillingReconciliationProcessing,
+		NextRetryAt: time.Now().Unix(),
+		CreatedAt:   time.Now().Unix(),
+		UpdatedAt:   time.Now().Unix(),
+	}
+	require.NoError(t, model.DB.Create(record).Error)
+
+	result, err := model.SettleTaskBillingReconciliation(record.ID, model.TaskBillingReconciliationSettlement{
+		ActualQuota: 50,
+		TotalTokens: 1000,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.TokenUnavailable)
+	assert.False(t, result.Applied)
+	assert.Zero(t, result.QuotaDelta)
+	assert.Equal(t, 10_000, getUserQuota(t, userID))
+
+	var storedTask model.Task
+	require.NoError(t, model.DB.First(&storedTask, task.ID).Error)
+	assert.Equal(t, 100, storedTask.Quota)
+	var storedRecord model.TaskBillingReconciliation
+	require.NoError(t, model.DB.First(&storedRecord, record.ID).Error)
+	assert.Equal(t, model.TaskBillingReconciliationSettled, storedRecord.Status)
+	assert.Equal(t, 0, storedRecord.QuotaDelta)
+	assert.Contains(t, storedRecord.LastError, "token unavailable")
+}

@@ -51,6 +51,13 @@ func (a *App) validateQuotaCarrier(userID int, excludeResellerID int) (*model.Us
 	if user.Role != common.RoleCommonUser {
 		return nil, errors.New("quota carrier must be an enabled common user")
 	}
+	// A durable agency customer is governed by the agency funding ledger.
+	// Reusing that account as the legacy reseller quota carrier would create a
+	// second wallet mutation path that cannot produce the agency journal/lot
+	// facts, so fail closed before the reseller is created or reassigned.
+	if user.BillingMode == model.AgencyDurableBillingMode || user.BillingMode == model.AgencyProvisioningBillingMode {
+		return nil, errors.New("quota carrier cannot be an agency-managed user")
+	}
 	var count int64
 	query := a.db.Model(&Reseller{}).Where("quota_carrier_user_id = ?", userID)
 	if excludeResellerID > 0 {

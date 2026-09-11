@@ -76,6 +76,35 @@ func TestCalculateTextQuotaSummaryUnifiedForClaudeSemantic(t *testing.T) {
 	require.Equal(t, 1488, chatSummary.Quota)
 }
 
+func TestAgencySettlementUsesActualStandardTextQuota(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "Hunyuan/hy3",
+		PriceData: hosttypes.PriceData{
+			ModelRatio:      0.068493150685,
+			CompletionRatio: 4,
+			GroupRatioInfo: hosttypes.GroupRatioInfo{
+				GroupRatio: 0.9,
+			},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens:     19,
+		CompletionTokens: 2,
+		TotalTokens:      21,
+	}
+
+	charged := calculateTextQuotaSummary(ctx, relayInfo, usage)
+	neutralRatio := 1.0
+	standard := calculateTextQuotaSummaryWithGroupRatio(ctx, relayInfo, usage, &neutralRatio)
+
+	require.Equal(t, 2, charged.Quota)
+	require.Equal(t, 2, standard.Quota)
+	require.Less(t, standard.Quota, 34, "the pre-consume estimate must not be reused as final settlement basis")
+}
+
 func TestGenerateTextOtherInfoSnapshotsBillingConfiguration(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())

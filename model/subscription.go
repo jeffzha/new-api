@@ -790,9 +790,17 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 			return errors.New("余额不足")
 		}
 		if requiredQuota > 0 {
-			if err := tx.Model(&User{}).Where("id = ?", userId).
-				Update("quota", gorm.Expr("quota - ?", requiredQuota)).Error; err != nil {
-				return err
+			var quotaErr error
+			if user.BillingMode == AgencyProvisioningBillingMode {
+				quotaErr = ErrAgencyProvisioning
+			} else if user.BillingMode == AgencyDurableBillingMode {
+				quotaErr = ApplyAgencyQuotaDeltaTx(tx, int64(userId), -int64(requiredQuota), "subscription_purchase")
+			} else {
+				quotaErr = tx.Model(&User{}).Where("id = ?", userId).
+					Update("quota", gorm.Expr("quota - ?", requiredQuota)).Error
+			}
+			if quotaErr != nil {
+				return quotaErr
 			}
 		}
 
@@ -832,9 +840,7 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 	}
 
 	if chargedQuota > 0 {
-		if err := cacheDecrUserQuota(userId, int64(chargedQuota)); err != nil {
-			common.SysLog("failed to decrease user quota cache after subscription balance purchase: " + err.Error())
-		}
+		syncDebitUserQuotaCache(userId, chargedQuota, "subscription balance purchase")
 	}
 	if upgradeGroup != "" {
 		refreshSubscriptionUserGroupCache(userId, "subscription balance purchase")

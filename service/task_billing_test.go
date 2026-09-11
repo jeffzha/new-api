@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -89,6 +90,9 @@ func TestMain(m *testing.M) {
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
+	if err := model.MigrateAgency(db); err != nil {
+		panic("failed to migrate agency tables: " + err.Error())
+	}
 
 	os.Exit(m.Run())
 }
@@ -110,6 +114,10 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM user_subscriptions")
 		model.DB.Exec("DELETE FROM system_task_locks")
 		model.DB.Exec("DELETE FROM system_tasks")
+		model.DB.Exec("DELETE FROM agency_hub_billing_outbox")
+		model.DB.Exec("DELETE FROM agency_hub_billing_operations")
+		model.DB.Exec("DELETE FROM agency_hub_billing_journals")
+		model.DB.Exec("DELETE FROM agency_hub_event_delivery")
 	})
 }
 
@@ -165,6 +173,77 @@ func seedChargedAccounting(t *testing.T, userID, channelID, tokenID, quota, requ
 		require.NoError(t, model.DB.Model(&model.Token{}).Where("id = ?", tokenID).
 			Update("used_quota", quota).Error)
 	}
+}
+
+func seedAgencyBillingEvent(t *testing.T, eventID, chargeID string, chargedQuota, commissionMicros int64) agencycontract.BillingEvent {
+	t.Helper()
+	agencyID := int64(7001)
+	bindingID := int64(8001)
+	tokenID := int64(9001)
+	now := time.Now().UnixMilli()
+	event := agencycontract.BillingEvent{
+		SchemaVersion:              agencycontract.SchemaVersion,
+		EventID:                    eventID,
+		EventType:                  "agency.billing_finalized",
+		FinancialChargeID:          chargeID,
+		OperationID:                "agency-finalize-" + eventID,
+		SegmentNo:                  0,
+		JournalRevision:            1,
+		EventIndex:                 0,
+		EventCount:                 1,
+		OccurredAtMS:               now,
+		UserID:                     1001,
+		TokenID:                    &tokenID,
+		AgencyID:                   &agencyID,
+		BindingID:                  &bindingID,
+		OriginModelName:            "test-model",
+		BusinessStatus:             "success",
+		BillingStatus:              "finalized",
+		CurrencyCode:               "TOKENS",
+		QuotaPerUnit:               "1",
+		ExchangeRate:               "1",
+		CommissionEligible:         true,
+		StandardQuota:              chargedQuota,
+		ChargedTotalQuota:          chargedQuota,
+		CommissionableQuota:        chargedQuota,
+		SettlementCostQuota:        chargedQuota - commissionMicros,
+		TheoreticalCommissionQuota: commissionMicros,
+		PaidAllocatedQuota:         chargedQuota,
+		CommissionQuota:            commissionMicros,
+		CommissionAmountMicros:     commissionMicros,
+	}
+	payload, err := common.Marshal(event)
+	require.NoError(t, err)
+	payloadHash, err := agencycontract.CanonicalHash(event)
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Create(&model.AgencyBillingJournal{
+		ChargeID: chargeID, SegmentNo: 0, UserID: event.UserID,
+		TokenID: event.TokenID, Status: "finalized", BusinessStatus: "success",
+		DeliveryStatus: "pending", PricingSnapshot: "{}", BillingBasis: "test",
+		ChargedTotalQuota: chargedQuota, CommissionableQuota: chargedQuota,
+		SettlementCostQuota:        event.SettlementCostQuota,
+		TheoreticalCommissionQuota: commissionMicros,
+		PaidAllocatedQuota:         chargedQuota,
+		CommissionQuota:            commissionMicros,
+		CommissionAmountMicros:     commissionMicros,
+		CurrencyCode:               "TOKENS",
+		Revision:                   1,
+		Version:                    1,
+		CreatedAtMS:                now,
+		UpdatedAtMS:                now,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.AgencyBillingOperation{
+		ChargeID: chargeID, SegmentNo: 0, Revision: 1, Operation: "finalize",
+		InputHash: payloadHash, CommittedResult: string(payload), EventCount: 1,
+		CreatedAtMS: now,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.AgencyBillingOutbox{
+		EventID: eventID, OperationID: event.OperationID, EventIndex: 0,
+		EventCount: 1, EventKind: event.EventType, UserID: event.UserID,
+		Payload: string(payload), PayloadHash: payloadHash,
+		SchemaVersion: event.SchemaVersion, CreatedAtMS: now,
+	}).Error)
+	return event
 }
 
 func makeTask(userId, channelId, quota, tokenId int, billingSource string, subscriptionId int) *model.Task {
@@ -652,6 +731,109 @@ func TestRefundMidjourneyQuotaUsesLegacyChannelFallbackWithoutTokenAdjustment(t 
 	assert.Zero(t, log.TokenId)
 }
 
+func TestSettleMidjourneyTaskBillingRecordsAgencyEventID(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID, channelID = 55, 55, 55
+	const initialUserQuota, initialTokenQuota, chargedQuota = 10000, 5000, 3000
+	seedUser(t, userID, initialUserQuota)
+	seedToken(t, tokenID, userID, "sk-midjourney-agency", initialTokenQuota)
+	seedChannel(t, channelID)
+
+	agencyID := int64(7101)
+	bindingID := int64(8101)
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:     userID,
+		TokenId:    tokenID,
+		TokenKey:   "sk-midjourney-agency",
+		UserQuota:  initialUserQuota,
+		RequestId:  "mj-agency-charge",
+		UsingGroup: "default",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId: channelID,
+		},
+		AgencyPricing: &agencycontract.PricingSnapshot{
+			UserID: userID, TokenID: tokenID, AgencyID: agencyID, BindingID: bindingID,
+			OriginModelName: "mj_imagine", ModelKey: "mj_imagine",
+			SettlementBPS: 8000, SalesBPS: 9000, CommissionEligible: true,
+			CurrencyCode: "TOKENS", QuotaPerUnit: "1", ExchangeRate: "1",
+		},
+		AgencyStandardQuota: chargedQuota,
+	}
+	task := &model.Midjourney{
+		UserId: userID, Action: "IMAGINE", MjId: "mj-agency-event", ChannelId: channelID,
+	}
+
+	prepared, err := PrepareMidjourneyTaskBilling(relayInfo, task, chargedQuota, true)
+	require.NoError(t, err)
+	require.True(t, prepared)
+	require.NoError(t, task.Insert())
+
+	billed, err := SettleMidjourneyTaskBilling(relayInfo, task, prepared)
+	require.NoError(t, err)
+	require.True(t, billed)
+
+	persisted := getMidjourneyTask(t, task.Id)
+	require.NotEmpty(t, persisted.AgencyBillingEventID)
+	assert.Equal(t, "mj-agency-charge", persisted.AgencyChargeID)
+	var outbox model.AgencyBillingOutbox
+	require.NoError(t, model.DB.Where("event_id = ?", persisted.AgencyBillingEventID).First(&outbox).Error)
+	assert.Equal(t, "agency.billing_finalized", outbox.EventKind)
+	var journal model.AgencyBillingJournal
+	require.NoError(t, model.DB.Where("charge_id = ?", persisted.AgencyChargeID).First(&journal).Error)
+	assert.Equal(t, int64(chargedQuota), journal.ChargedTotalQuota)
+}
+
+func TestMidjourneyDurableSettlementKeepsWalletAndTokenAtomic(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID, channelID = 56, 56, 56
+	const initialUserQuota, initialTokenQuota, chargedQuota = 10000, 5000, 3000
+	seedUser(t, userID, initialUserQuota)
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", userID).Updates(map[string]any{
+		"billing_mode":    model.AgencyDurableBillingMode,
+		"funding_version": 1,
+	}).Error)
+	seedToken(t, tokenID, userID, "sk-midjourney-durable", initialTokenQuota)
+	seedChannel(t, channelID)
+
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:     userID,
+		TokenId:    tokenID,
+		TokenKey:   "sk-midjourney-durable",
+		RequestId:  "mj-durable-atomic",
+		UsingGroup: "default",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId: channelID,
+		},
+		AgencyPricing: &agencycontract.PricingSnapshot{
+			UserID: userID, TokenID: tokenID, AgencyID: 7201, BindingID: 8201,
+			OriginModelName: "mj_imagine", ModelKey: "mj_imagine",
+			SettlementBPS: 8000, SalesBPS: 9000, CommissionEligible: true,
+			CurrencyCode: "TOKENS", QuotaPerUnit: "1", ExchangeRate: "1",
+		},
+		AgencyStandardQuota: chargedQuota,
+	}
+	task := &model.Midjourney{
+		UserId: userID, Action: "IMAGINE", MjId: "mj-durable-atomic", ChannelId: channelID,
+	}
+	prepared, err := PrepareMidjourneyTaskBilling(relayInfo, task, chargedQuota, true)
+	require.NoError(t, err)
+	require.True(t, prepared)
+	require.NoError(t, task.Insert())
+
+	billed, err := SettleMidjourneyTaskBilling(relayInfo, task, prepared)
+	require.NoError(t, err)
+	require.True(t, billed)
+	assert.Equal(t, initialUserQuota-chargedQuota, getUserQuota(t, userID))
+	assert.Equal(t, initialTokenQuota-chargedQuota, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, tokenID, getMidjourneyTask(t, task.Id).TokenId)
+
+	assert.True(t, RefundMidjourneyQuota(context.Background(), task, "durable task failure"))
+	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
+	assert.Equal(t, initialTokenQuota, getTokenRemainQuota(t, tokenID))
+}
+
 // ===========================================================================
 // RefundTaskQuota tests
 // ===========================================================================
@@ -801,6 +983,93 @@ func TestRefundTaskQuota_FundingFailureKeepsAccountingAndPendingMarker(t *testin
 	assert.Equal(t, 1, requestCount)
 	assert.Equal(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
 	assert.Equal(t, int64(0), countLogs(t))
+}
+
+func TestAgencyTaskRefundProratesAndFinalRefundUsesRemainder(t *testing.T) {
+	truncate(t)
+
+	event := seedAgencyBillingEvent(t, "task-agency-event", "task-agency-charge", 3, 100)
+	task := makeTask(int(event.UserID), 1, 3, int(*event.TokenID), BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.AgencyChargeID = event.FinancialChargeID
+	task.PrivateData.BillingContext.AgencyBillingEventID = event.EventID
+
+	require.NoError(t, RecordAgencyTaskRefundEvent(task, 1, "first partial"))
+	require.NoError(t, RecordAgencyTaskRefundEvent(task, 1, "second partial"))
+	require.NoError(t, RecordAgencyTaskRefundEvent(task, 1, "final partial"))
+	require.NoError(t, RecordAgencyTaskRefundEvent(task, 1, "duplicate after full refund"))
+
+	var rows []model.AgencyBillingOutbox
+	require.NoError(t, model.DB.Where("event_kind = ?", "agency.billing_reversed").Order("id asc").Find(&rows).Error)
+	require.Len(t, rows, 3)
+	amounts := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		var reversal agencycontract.BillingEvent
+		require.NoError(t, common.Unmarshal([]byte(row.Payload), &reversal))
+		amounts = append(amounts, reversal.ReversedCommissionAmountMicros)
+		assert.Equal(t, event.EventID, reversal.OriginalEventID)
+	}
+	assert.Equal(t, []int64{33, 34, 33}, amounts)
+
+	var journal model.AgencyBillingJournal
+	require.NoError(t, model.DB.Where("charge_id = ?", event.FinancialChargeID).First(&journal).Error)
+	assert.Equal(t, int64(3), journal.ReversedQuota)
+	assert.Equal(t, int64(100), journal.ReversedCommissionQuota)
+}
+
+func TestAgencyTaskRefundUsesCumulativeCommissionRounding(t *testing.T) {
+	truncate(t)
+
+	// The commission is deliberately smaller than the charge so that several
+	// individual refunds round to zero. Calculating each callback independently
+	// would front-load the commission and make the result depend on callback
+	// fragmentation.
+	event := seedAgencyBillingEvent(t, "task-agency-rounding-event", "task-agency-rounding-charge", 8, 5)
+	task := makeTask(int(event.UserID), 1, 8, int(*event.TokenID), BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.AgencyChargeID = event.FinancialChargeID
+	task.PrivateData.BillingContext.AgencyBillingEventID = event.EventID
+
+	for i := 0; i < 8; i++ {
+		require.NoError(t, RecordAgencyTaskRefundEvent(task, 1, "partial refund"))
+	}
+
+	var rows []model.AgencyBillingOutbox
+	require.NoError(t, model.DB.Where("event_kind = ?", "agency.billing_reversed").Order("id asc").Find(&rows).Error)
+	require.Len(t, rows, 8)
+	amounts := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		var reversal agencycontract.BillingEvent
+		require.NoError(t, common.Unmarshal([]byte(row.Payload), &reversal))
+		amounts = append(amounts, reversal.ReversedCommissionAmountMicros)
+	}
+	assert.Equal(t, []int64{1, 0, 1, 1, 0, 1, 0, 1}, amounts)
+
+	var journal model.AgencyBillingJournal
+	require.NoError(t, model.DB.Where("charge_id = ?", event.FinancialChargeID).First(&journal).Error)
+	assert.Equal(t, int64(8), journal.ReversedQuota)
+	assert.Equal(t, int64(5), journal.ReversedCommissionQuota)
+	assert.Equal(t, "reversed", journal.Status)
+}
+
+func TestAgencyMidjourneyRefundFallsBackToChargeOperation(t *testing.T) {
+	truncate(t)
+
+	event := seedAgencyBillingEvent(t, "mj-agency-event", "mj-agency-charge-fallback", 10, 3)
+	task := &model.Midjourney{
+		UserId: int(event.UserID), MjId: "mj-refund-fallback", AgencyChargeID: event.FinancialChargeID,
+	}
+
+	require.NoError(t, RecordAgencyMidjourneyRefundEvent(task, 10, "full refund"))
+
+	var row model.AgencyBillingOutbox
+	require.NoError(t, model.DB.Where("event_kind = ?", "agency.billing_reversed").First(&row).Error)
+	var reversal agencycontract.BillingEvent
+	require.NoError(t, common.Unmarshal([]byte(row.Payload), &reversal))
+	assert.Equal(t, event.EventID, reversal.OriginalEventID)
+	assert.Equal(t, int64(3), reversal.ReversedCommissionAmountMicros)
+	var journal model.AgencyBillingJournal
+	require.NoError(t, model.DB.Where("charge_id = ?", event.FinancialChargeID).First(&journal).Error)
+	assert.Equal(t, int64(10), journal.ReversedQuota)
+	assert.Equal(t, int64(3), journal.ReversedCommissionQuota)
 }
 
 // ===========================================================================
@@ -959,6 +1228,90 @@ func TestRecalculate_Subscription_NegativeDelta(t *testing.T) {
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
+}
+
+func TestRecalculateDeletedTokenRetainsPreConsumedCharge(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 60, 60, 60
+	const initialUserQuota, preConsumed = 10000, 3000
+	seedUser(t, userID, initialUserQuota)
+	seedToken(t, tokenID, userID, "sk-deleted-recalc", 5000)
+	seedChannel(t, channelID)
+	seedChargedAccounting(t, userID, channelID, tokenID, preConsumed, 1)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Delete(&model.Token{}, tokenID).Error)
+
+	RecalculateTaskQuota(ctx, task, 1000, "provider reported lower usage")
+
+	// The token no longer exists, so a partial refund must not credit the
+	// wallet without restoring the deleted token. The task remains at its
+	// accepted reservation and is auditable through the provider record.
+	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
+	assert.Equal(t, preConsumed, task.Quota)
+	assert.Equal(t, preConsumed, getTaskQuota(t, task.ID))
+	assert.Zero(t, countLogs(t))
+}
+
+func TestRefundDeletedTokenRetainsPreConsumedCharge(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 61, 61, 61
+	const initialUserQuota, preConsumed = 10000, 3000
+	seedUser(t, userID, initialUserQuota)
+	seedToken(t, tokenID, userID, "sk-deleted-refund", 5000)
+	seedChannel(t, channelID)
+	seedChargedAccounting(t, userID, channelID, tokenID, preConsumed, 1)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Status = model.TaskStatusFailure
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Delete(&model.Token{}, tokenID).Error)
+
+	assert.True(t, RefundTaskQuota(ctx, task, "provider failure after token deletion"))
+	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
+	assert.Equal(t, preConsumed, task.Quota)
+	assert.Equal(t, preConsumed, getTaskQuota(t, task.ID))
+	assert.Zero(t, countLogs(t))
+}
+
+func TestRecalculateTaskQuotaRollsBackWalletWhenTokenUpdateFails(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 62, 62, 62
+	const initialUserQuota, preConsumed = 10000, 3000
+	seedUser(t, userID, initialUserQuota)
+	seedToken(t, tokenID, userID, "sk-atomic-recalc", 5000)
+	seedChannel(t, channelID)
+	seedChargedAccounting(t, userID, channelID, tokenID, preConsumed, 1)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Exec(`
+		CREATE TRIGGER fail_task_quota_token_update
+		BEFORE UPDATE ON tokens
+		WHEN OLD.id = 62
+		BEGIN
+			SELECT RAISE(ABORT, 'forced token quota failure');
+		END;
+	`).Error)
+	t.Cleanup(func() {
+		model.DB.Exec("DROP TRIGGER IF EXISTS fail_task_quota_token_update")
+	})
+
+	RecalculateTaskQuota(ctx, task, 4000, "provider reported higher usage")
+
+	// User wallet, token and task quota are one database transaction.
+	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
+	assert.Equal(t, 5000, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, preConsumed, task.Quota)
+	assert.Equal(t, preConsumed, getTaskQuota(t, task.ID))
+	assert.Zero(t, countLogs(t))
 }
 
 // ===========================================================================

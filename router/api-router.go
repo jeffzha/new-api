@@ -19,6 +19,11 @@ func SetApiRouter(router *gin.Engine) {
 	apiRouter.Use(middleware.GlobalAPIRateLimit())
 	anonymousRequestBodyLimit := middleware.AnonymousRequestBodyLimit()
 	registerWorkbenchIdentityRoutes(apiRouter)
+	agencyRoute := apiRouter.Group("/agency")
+	agencyRoute.POST("/sso-ticket", middleware.RootAuth(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.IssueAgencySSOTicket)
+	agencyRoute.POST("/verify", middleware.RootAuth(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.IssueAgencyVerification)
+	agencyRoute.POST("/command-proof", middleware.RootAuth(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.IssueAgencyCommandProof)
+	agencyRoute.GET("/effective-pricing", middleware.UserAuth(), controller.GetAgencyEffectivePricing)
 	{
 		apiRouter.GET("/setup", controller.GetSetup)
 		apiRouter.POST("/setup", anonymousRequestBodyLimit, controller.PostSetup)

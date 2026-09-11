@@ -77,38 +77,46 @@ func resolveUserSortOptions(sortOptions []UserSortOptions) UserSortOptions {
 // User if you add sensitive fields, don't forget to clean them in setupLogin function.
 // Otherwise, the sensitive information will be saved on local storage in plain text!
 type User struct {
-	Id               int                        `json:"id"`
-	Username         string                     `json:"username" gorm:"unique;index" validate:"max=20"`
-	Password         string                     `json:"password" gorm:"not null;" validate:"min=8,max=20"`
-	OriginalPassword string                     `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
-	DisplayName      string                     `json:"display_name" gorm:"index" validate:"max=20"`
-	Role             int                        `json:"role" gorm:"type:int;default:1"`   // admin, common
-	Status           int                        `json:"status" gorm:"type:int;default:1"` // enabled, disabled
-	Email            string                     `json:"email" gorm:"index" validate:"max=50"`
-	GitHubId         string                     `json:"github_id" gorm:"column:github_id;index"`
-	DiscordId        string                     `json:"discord_id" gorm:"column:discord_id;index"`
-	OidcId           string                     `json:"oidc_id" gorm:"column:oidc_id;index"`
-	WeChatId         string                     `json:"wechat_id" gorm:"column:wechat_id;index"`
-	TelegramId       string                     `json:"telegram_id" gorm:"column:telegram_id;index"`
-	VerificationCode string                     `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
-	AccessToken      *string                    `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
-	Quota            int                        `json:"quota" gorm:"type:int;default:0"`
-	UsedQuota        int                        `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
-	RequestCount     int                        `json:"request_count" gorm:"type:int;default:0;"`               // request number
-	Group            string                     `json:"group" gorm:"type:varchar(64);default:'default'"`
-	AffCode          string                     `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
-	AffCount         int                        `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
-	AffQuota         int                        `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
-	AffHistoryQuota  int                        `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
-	InviterId        int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
-	DeletedAt        gorm.DeletedAt             `gorm:"index"`
-	LinuxDOId        string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`
-	Setting          string                     `json:"setting" gorm:"type:text;column:setting"`
-	Remark           string                     `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
-	StripeCustomer   string                     `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
-	CreatedAt        int64                      `json:"created_at" gorm:"autoCreateTime;column:created_at"`
-	LastLoginAt      int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`
-	AuthVersion      int64                      `json:"-" gorm:"type:bigint;not null;default:1;column:auth_version"`
+	Id               int     `json:"id"`
+	Username         string  `json:"username" gorm:"unique;index" validate:"max=20"`
+	Password         string  `json:"password" gorm:"not null;" validate:"min=8,max=20"`
+	OriginalPassword string  `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
+	DisplayName      string  `json:"display_name" gorm:"index" validate:"max=20"`
+	Role             int     `json:"role" gorm:"type:int;default:1"`   // admin, common
+	Status           int     `json:"status" gorm:"type:int;default:1"` // enabled, disabled
+	Email            string  `json:"email" gorm:"index" validate:"max=50"`
+	GitHubId         string  `json:"github_id" gorm:"column:github_id;index"`
+	DiscordId        string  `json:"discord_id" gorm:"column:discord_id;index"`
+	OidcId           string  `json:"oidc_id" gorm:"column:oidc_id;index"`
+	WeChatId         string  `json:"wechat_id" gorm:"column:wechat_id;index"`
+	TelegramId       string  `json:"telegram_id" gorm:"column:telegram_id;index"`
+	VerificationCode string  `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
+	AccessToken      *string `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
+	Quota            int     `json:"quota" gorm:"type:int;default:0"`
+	UsedQuota        int     `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
+	RequestCount     int     `json:"request_count" gorm:"type:int;default:0;"`               // request number
+	Group            string  `json:"group" gorm:"type:varchar(64);default:'default'"`
+	AffCode          string  `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
+	AffCount         int     `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
+	AffQuota         int     `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
+	AffHistoryQuota  int     `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
+	// AgencyInvite is a registration-only field. It is never persisted and is
+	// deliberately separate from the legacy affiliate-code field.
+	AgencyInvite   string         `json:"invite,omitempty" gorm:"-:all"`
+	InviterId      int            `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
+	DeletedAt      gorm.DeletedAt `gorm:"index"`
+	LinuxDOId      string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
+	Setting        string         `json:"setting" gorm:"type:text;column:setting"`
+	Remark         string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
+	StripeCustomer string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
+	CreatedAt      int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`
+	LastLoginAt    int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`
+	AuthVersion    int64          `json:"-" gorm:"type:bigint;not null;default:1;column:auth_version"`
+	// BillingMode is legacy for existing users and agency-durable for invited
+	// customers. It is persisted so a gateway restart cannot silently fall
+	// back to the legacy wallet semantics for a managed customer.
+	BillingMode      string                     `json:"-" gorm:"type:varchar(32);column:billing_mode"`
+	FundingVersion   int64                      `json:"-" gorm:"type:bigint;column:funding_version"`
 	AdminPermissions map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
 }
 
@@ -557,28 +565,69 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 	}
 	defer tx.Rollback() // 确保在函数退出时事务能回滚
 
-	// 加锁查询用户以确保数据一致性
-	err := lockForUpdate(tx).First(user, user.Id).Error
+	// 加锁查询用户以确保数据一致性. Keep the authoritative quota mutation
+	// in the same transaction as the affiliate-balance decrement.
+	var current User
+	err := lockForUpdate(tx).First(&current, user.Id).Error
 	if err != nil {
 		return err
 	}
 
 	// 再次检查用户的AffQuota是否足够
-	if user.AffQuota < quota {
+	if current.AffQuota < quota {
 		return errors.New("邀请额度不足！")
 	}
 
-	// 更新用户额度
-	user.AffQuota -= quota
-	user.Quota += quota
-
-	// 保存用户状态
-	if err := tx.Save(user).Error; err != nil {
-		return err
+	if current.BillingMode == AgencyProvisioningBillingMode {
+		return ErrAgencyProvisioning
 	}
 
-	// 提交事务
-	return tx.Commit().Error
+	if current.BillingMode == AgencyDurableBillingMode {
+		if err := ApplyAgencyQuotaDeltaTx(tx, int64(current.Id), int64(quota), "affiliate_transfer"); err != nil {
+			return err
+		}
+	} else {
+		result := tx.Model(&User{}).
+			Where("id = ? AND aff_quota >= ?", current.Id, quota).
+			Updates(map[string]interface{}{
+				"quota":     gorm.Expr("quota + ?", quota),
+				"aff_quota": gorm.Expr("aff_quota - ?", quota),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("邀请额度不足！")
+		}
+	}
+	if current.BillingMode == AgencyDurableBillingMode {
+		result := tx.Model(&User{}).
+			Where("id = ? AND aff_quota >= ?", current.Id, quota).
+			Update("aff_quota", gorm.Expr("aff_quota - ?", quota))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("邀请额度不足！")
+		}
+	}
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+	user.AffQuota = current.AffQuota - quota
+	user.Quota = current.Quota + quota
+	if current.BillingMode == AgencyDurableBillingMode {
+		if common.RedisEnabled {
+			if err := InvalidateUserCache(current.Id); err != nil {
+				common.SysLog("failed to invalidate durable user quota cache after affiliate transfer: " + err.Error())
+			}
+		}
+	} else if common.RedisEnabled {
+		if err := cacheIncrUserQuota(current.Id, int64(quota)); err != nil {
+			common.SysLog("failed to sync user quota cache after affiliate transfer: " + err.Error())
+		}
+	}
+	return nil
 }
 
 func (user *User) prepareForInsert(tx *gorm.DB) error {
@@ -639,6 +688,9 @@ func (user *User) Insert(inviterId int) error {
 				return err
 			}
 			user.Quota = common.QuotaForNewUser
+			if user.BillingMode == "" {
+				user.BillingMode = "legacy"
+			}
 			user.AffCode = common.GetRandomString(4)
 
 			// 初始化用户设置，包括默认的边栏配置
@@ -703,6 +755,9 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 			return err
 		}
 		user.Quota = common.QuotaForNewUser
+		if user.BillingMode == "" {
+			user.BillingMode = "legacy"
+		}
 		user.AffCode = common.GetRandomString(4)
 
 		// 初始化用户设置
@@ -711,6 +766,25 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 			user.SetSetting(defaultSetting)
 		}
 
+		return tx.Create(user).Error
+	})
+}
+
+// InsertWithTxAgency creates an agency-invited customer with zero initial
+// quota and without legacy affiliate rewards. The caller must bind the agency
+// in the same transaction before committing.
+func (user *User) InsertWithTxAgency(tx *gorm.DB) error {
+	return withNormalizedEmailLock(tx, user.Email, func(tx *gorm.DB) error {
+		if err := user.prepareForInsert(tx); err != nil {
+			return err
+		}
+		user.Quota = 0
+		user.BillingMode = "agency-durable-v1"
+		user.FundingVersion = 1
+		user.AffCode = common.GetRandomString(4)
+		if user.Setting == "" {
+			user.SetSetting(dto.UserSetting{})
+		}
 		return tx.Create(user).Error
 	})
 }
@@ -1271,6 +1345,15 @@ func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
+	if isAgencyProvisioningUser(id) {
+		return ErrAgencyProvisioning
+	}
+	if db && isAgencyDurableUser(id) {
+		return ApplyAgencyQuotaDelta(int64(id), int64(quota), "quota_grant")
+	}
+	if !db && isAgencyDurableUser(id) {
+		return ErrAgencyFundingUnavailable
+	}
 	gopool.Go(func() {
 		err := cacheIncrUserQuota(id, int64(quota))
 		if err != nil {
@@ -1281,7 +1364,15 @@ func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 		addNewRecord(BatchUpdateTypeUserQuota, id, quota)
 		return nil
 	}
-	return increaseUserQuota(id, quota)
+	if err := increaseUserQuota(id, quota); err != nil {
+		return err
+	}
+	if db {
+		if err := MirrorAgencyNonpaidCredit(int64(id), int64(quota), "quota_grant"); err != nil {
+			common.SysError("failed to mirror agency nonpaid credit: " + err.Error())
+		}
+	}
+	return nil
 }
 
 func increaseUserQuota(id int, quota int) (err error) {
@@ -1295,6 +1386,15 @@ func increaseUserQuota(id int, quota int) (err error) {
 func DecreaseUserQuota(id int, quota int, db bool) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
+	}
+	if isAgencyProvisioningUser(id) {
+		return ErrAgencyProvisioning
+	}
+	if db && isAgencyDurableUser(id) {
+		return ApplyAgencyQuotaDelta(int64(id), -int64(quota), "quota_debit")
+	}
+	if !db && isAgencyDurableUser(id) {
+		return ErrAgencyFundingUnavailable
 	}
 	gopool.Go(func() {
 		err := cacheDecrUserQuota(id, int64(quota))
@@ -1315,6 +1415,48 @@ func decreaseUserQuota(id int, quota int) (err error) {
 		return err
 	}
 	return err
+}
+
+func isAgencyDurableUser(id int) bool {
+	if id <= 0 || DB == nil {
+		return false
+	}
+	var mode string
+	if err := DB.Model(&User{}).Where("id = ?", id).Pluck("billing_mode", &mode).Error; err != nil {
+		// Fail closed: a transient database error must not silently route a
+		// durable agency user through the legacy quota-only path.
+		common.SysLog("failed to resolve user billing mode: " + err.Error())
+		return true
+	}
+	return mode == AgencyDurableBillingMode
+}
+
+// isAgencyProvisioningUser is deliberately fail-closed when the billing mode
+// cannot be read.  A user in the provisioning barrier must never fall back to
+// the legacy quota mutation path while the worker is draining old activity.
+func isAgencyProvisioningUser(id int) bool {
+	if id <= 0 || DB == nil {
+		return false
+	}
+	var mode string
+	if err := DB.Model(&User{}).Where("id = ?", id).Pluck("billing_mode", &mode).Error; err != nil {
+		// A failed mode lookup must not reopen the legacy quota path while a
+		// provisioning barrier may be active. Callers treat this as a hard
+		// admission failure, preserving the fail-closed invariant.
+		common.SysLog("failed to resolve user provisioning mode: " + err.Error())
+		return true
+	}
+	return mode == AgencyProvisioningBillingMode
+}
+
+// IsAgencyProvisioningUser reports the temporary provisioning barrier mode.
+func IsAgencyProvisioningUser(id int) bool { return isAgencyProvisioningUser(id) }
+
+// IsAgencyDurableUser reports whether the user is managed by the durable
+// agency funding ledger. It is exported for asynchronous billing paths that
+// must choose agency-aware settlement instead of legacy quota helpers.
+func IsAgencyDurableUser(id int) bool {
+	return isAgencyDurableUser(id)
 }
 
 func DeltaUpdateUserQuota(id int, delta int) (err error) {
@@ -1385,6 +1527,13 @@ func updateUserUsedQuotaAndRequestCount(id int, quota int, count int) {
 func updateUserQuotaUsedQuotaAndRequestCount(id int, quota int, usedQuota int, requestCount int) {
 	if quota == 0 && usedQuota == 0 && requestCount == 0 {
 		return
+	}
+	if quota != 0 && isAgencyDurableUser(id) {
+		if err := ApplyAgencyQuotaDelta(int64(id), int64(quota), "batch_quota"); err != nil {
+			common.SysError("failed to apply durable agency batch quota: " + err.Error())
+			return
+		}
+		quota = 0
 	}
 
 	err := DB.Model(&User{}).Where("id = ?", id).Updates(

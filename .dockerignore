@@ -10,3 +10,8 @@ docs
 /web/node_modules
 /web/dist
 !THIRD-PARTY-LICENSES.md
+*.pem
+server-data.sql
+server-data.sql.gz
+problem.jpg
+uzoom-invite-qr.png

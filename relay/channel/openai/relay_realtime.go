@@ -34,6 +34,10 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	usage := &dto.RealtimeUsage{}
 	localUsage := &dto.RealtimeUsage{}
 	sumUsage := &dto.RealtimeUsage{}
+	// OpenAI Realtime response.done usage is cumulative for the session. Keep
+	// the last accepted frame so repeated cumulative frames become a no-op and
+	// only the positive component delta is reserved.
+	var lastUpstreamUsage *dto.RealtimeUsage
 
 	gopool.Go(func() {
 		defer func() {
@@ -125,23 +129,29 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 				if realtimeEvent.Type == dto.RealtimeEventTypeResponseDone {
 					realtimeUsage := realtimeEvent.Response.Usage
 					if realtimeUsage != nil {
-						usage.TotalTokens += realtimeUsage.TotalTokens
-						usage.InputTokens += realtimeUsage.InputTokens
-						usage.OutputTokens += realtimeUsage.OutputTokens
-						usage.InputTokenDetails.AudioTokens += realtimeUsage.InputTokenDetails.AudioTokens
-						usage.InputTokenDetails.CachedTokens += realtimeUsage.InputTokenDetails.CachedTokens
-						usage.InputTokenDetails.TextTokens += realtimeUsage.InputTokenDetails.TextTokens
-						usage.OutputTokenDetails.AudioTokens += realtimeUsage.OutputTokenDetails.AudioTokens
-						usage.OutputTokenDetails.TextTokens += realtimeUsage.OutputTokenDetails.TextTokens
-						err := preConsumeUsage(c, info, usage, sumUsage)
-						if err != nil {
-							errChan <- fmt.Errorf("error consume usage: %v", err)
-							return
+						current := *realtimeUsage
+						// A provider retry may resend the exact same cumulative frame.
+						// Forward it to the client but do not reserve or journal it.
+						if lastUpstreamUsage != nil && current == *lastUpstreamUsage {
+							usage = &dto.RealtimeUsage{}
+						} else if lastUpstreamUsage != nil && !realtimeUsageMonotonic(&current, lastUpstreamUsage) {
+							// A cumulative counter moving backwards is not a valid
+							// delta frame. Preserve the last baseline so a later
+							// retry cannot turn the rollback into a second charge.
+							logger.LogWarn(c, "ignoring non-monotonic realtime usage frame")
+							usage = &dto.RealtimeUsage{}
+						} else {
+							delta := realtimeUsageDelta(&current, lastUpstreamUsage)
+							err := preConsumeUsageWithCumulative(c, info, &delta, sumUsage, &current)
+							if err != nil {
+								errChan <- fmt.Errorf("error consume usage: %v", err)
+								return
+							}
+							last := current
+							lastUpstreamUsage = &last
+							usage = &dto.RealtimeUsage{}
+							localUsage = &dto.RealtimeUsage{}
 						}
-						// 本次计费完成，清除
-						usage = &dto.RealtimeUsage{}
-
-						localUsage = &dto.RealtimeUsage{}
 					} else {
 						textToken, audioToken, err := service.CountTokenRealtime(info, *realtimeEvent, info.UpstreamModelName)
 						if err != nil {
@@ -224,19 +234,122 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 }
 
 func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.RealtimeUsage, totalUsage *dto.RealtimeUsage) error {
+	return preConsumeUsageWithCumulative(ctx, info, usage, totalUsage, nil)
+}
+
+// realtimeUsageDelta converts an upstream cumulative usage frame into the
+// incremental segment charged by the gateway. Provider retries can resend a
+// lower or identical cumulative value; those fields produce a zero delta and
+// therefore cannot create a negative refund or duplicate charge.
+func realtimeUsageDelta(current, previous *dto.RealtimeUsage) dto.RealtimeUsage {
+	if current == nil {
+		return dto.RealtimeUsage{}
+	}
+	if previous == nil {
+		return *current
+	}
+	return dto.RealtimeUsage{
+		TotalTokens:  nonNegativeUsageDelta(current.TotalTokens, previous.TotalTokens),
+		InputTokens:  nonNegativeUsageDelta(current.InputTokens, previous.InputTokens),
+		OutputTokens: nonNegativeUsageDelta(current.OutputTokens, previous.OutputTokens),
+		InputTokenDetails: dto.InputTokenDetails{
+			CachedTokens:         nonNegativeUsageDelta(current.InputTokenDetails.CachedTokens, previous.InputTokenDetails.CachedTokens),
+			CacheWriteTokens:     nonNegativeUsageDelta(current.InputTokenDetails.CacheWriteTokens, previous.InputTokenDetails.CacheWriteTokens),
+			CachedCreationTokens: nonNegativeUsageDelta(current.InputTokenDetails.CachedCreationTokens, previous.InputTokenDetails.CachedCreationTokens),
+			TextTokens:           nonNegativeUsageDelta(current.InputTokenDetails.TextTokens, previous.InputTokenDetails.TextTokens),
+			AudioTokens:          nonNegativeUsageDelta(current.InputTokenDetails.AudioTokens, previous.InputTokenDetails.AudioTokens),
+			ImageTokens:          nonNegativeUsageDelta(current.InputTokenDetails.ImageTokens, previous.InputTokenDetails.ImageTokens),
+		},
+		OutputTokenDetails: dto.OutputTokenDetails{
+			TextTokens:      nonNegativeUsageDelta(current.OutputTokenDetails.TextTokens, previous.OutputTokenDetails.TextTokens),
+			AudioTokens:     nonNegativeUsageDelta(current.OutputTokenDetails.AudioTokens, previous.OutputTokenDetails.AudioTokens),
+			ImageTokens:     nonNegativeUsageDelta(current.OutputTokenDetails.ImageTokens, previous.OutputTokenDetails.ImageTokens),
+			ReasoningTokens: nonNegativeUsageDelta(current.OutputTokenDetails.ReasoningTokens, previous.OutputTokenDetails.ReasoningTokens),
+		},
+	}
+}
+
+func nonNegativeUsageDelta(current, previous int) int {
+	if current <= 0 {
+		return 0
+	}
+	if previous < 0 {
+		return current
+	}
+	if current <= previous {
+		return 0
+	}
+	return current - previous
+}
+
+func realtimeUsageMonotonic(current, previous *dto.RealtimeUsage) bool {
+	if current == nil || previous == nil {
+		return true
+	}
+	return current.TotalTokens >= previous.TotalTokens &&
+		current.InputTokens >= previous.InputTokens &&
+		current.OutputTokens >= previous.OutputTokens &&
+		current.InputTokenDetails.CachedTokens >= previous.InputTokenDetails.CachedTokens &&
+		current.InputTokenDetails.CacheWriteTokens >= previous.InputTokenDetails.CacheWriteTokens &&
+		current.InputTokenDetails.CachedCreationTokens >= previous.InputTokenDetails.CachedCreationTokens &&
+		current.InputTokenDetails.TextTokens >= previous.InputTokenDetails.TextTokens &&
+		current.InputTokenDetails.AudioTokens >= previous.InputTokenDetails.AudioTokens &&
+		current.InputTokenDetails.ImageTokens >= previous.InputTokenDetails.ImageTokens &&
+		current.OutputTokenDetails.TextTokens >= previous.OutputTokenDetails.TextTokens &&
+		current.OutputTokenDetails.AudioTokens >= previous.OutputTokenDetails.AudioTokens &&
+		current.OutputTokenDetails.ImageTokens >= previous.OutputTokenDetails.ImageTokens &&
+		current.OutputTokenDetails.ReasoningTokens >= previous.OutputTokenDetails.ReasoningTokens
+}
+
+func preConsumeUsageWithCumulative(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.RealtimeUsage, totalUsage, cumulative *dto.RealtimeUsage) error {
 	if usage == nil || totalUsage == nil {
 		return fmt.Errorf("invalid usage pointer")
 	}
 
-	totalUsage.TotalTokens += usage.TotalTokens
-	totalUsage.InputTokens += usage.InputTokens
-	totalUsage.OutputTokens += usage.OutputTokens
-	totalUsage.InputTokenDetails.CachedTokens += usage.InputTokenDetails.CachedTokens
-	totalUsage.InputTokenDetails.TextTokens += usage.InputTokenDetails.TextTokens
-	totalUsage.InputTokenDetails.AudioTokens += usage.InputTokenDetails.AudioTokens
-	totalUsage.OutputTokenDetails.TextTokens += usage.OutputTokenDetails.TextTokens
-	totalUsage.OutputTokenDetails.AudioTokens += usage.OutputTokenDetails.AudioTokens
-	// clear usage
-	err := service.PreWssConsumeQuota(ctx, info, usage)
-	return err
+	// Build the candidate cumulative frame before reserving. This lets the
+	// durable usage hash reject a repeated upstream usage frame without first
+	// changing either the wallet or the in-memory cumulative total.
+	nextTotal := *totalUsage
+	nextTotal.TotalTokens += usage.TotalTokens
+	nextTotal.InputTokens += usage.InputTokens
+	nextTotal.OutputTokens += usage.OutputTokens
+	nextTotal.InputTokenDetails.CachedTokens += usage.InputTokenDetails.CachedTokens
+	nextTotal.InputTokenDetails.CacheWriteTokens += usage.InputTokenDetails.CacheWriteTokens
+	nextTotal.InputTokenDetails.CachedCreationTokens += usage.InputTokenDetails.CachedCreationTokens
+	nextTotal.InputTokenDetails.TextTokens += usage.InputTokenDetails.TextTokens
+	nextTotal.InputTokenDetails.AudioTokens += usage.InputTokenDetails.AudioTokens
+	nextTotal.InputTokenDetails.ImageTokens += usage.InputTokenDetails.ImageTokens
+	nextTotal.OutputTokenDetails.TextTokens += usage.OutputTokenDetails.TextTokens
+	nextTotal.OutputTokenDetails.AudioTokens += usage.OutputTokenDetails.AudioTokens
+	nextTotal.OutputTokenDetails.ImageTokens += usage.OutputTokenDetails.ImageTokens
+	nextTotal.OutputTokenDetails.ReasoningTokens += usage.OutputTokenDetails.ReasoningTokens
+	cumulativeForJournal := &nextTotal
+	if cumulative != nil {
+		cumulativeForJournal = cumulative
+	}
+	if info.AgencyPricing != nil {
+		duplicate, err := service.AgencyRealtimeSegmentRecorded(info, usage, cumulativeForJournal)
+		if err != nil {
+			return err
+		}
+		if duplicate {
+			return nil
+		}
+	}
+	// Reserve first, then persist the immutable financial fact for this
+	// successful segment. The local segment number is process-independent for
+	// the connection because the journal's unique (charge_id, segment_no)
+	// key makes retries idempotent.
+	quota, paidAllocated, err := service.PreWssConsumeQuotaWithResult(ctx, info, usage)
+	if err != nil {
+		return err
+	}
+	if info.AgencyPricing != nil {
+		segmentNo := info.AgencyRealtimeSegmentsRecorded
+		if err := service.RecordAgencyRealtimeSegment(info, segmentNo, usage, cumulativeForJournal, int64(quota), paidAllocated, "success"); err != nil {
+			return err
+		}
+	}
+	*totalUsage = nextTotal
+	return nil
 }

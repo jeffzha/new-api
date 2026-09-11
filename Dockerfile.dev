@@ -11,7 +11,10 @@ ENV GOEXPERIMENT=greenteagc
 
 WORKDIR /build
 
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY="${GOPROXY}"
 ADD go.mod go.sum ./
+ADD relaykit/go.mod relaykit/go.sum ./relaykit/
 RUN go mod download
 
 COPY . .

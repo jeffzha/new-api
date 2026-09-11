@@ -47,7 +47,9 @@ import { useEmailVerification } from '@/features/auth/hooks/use-email-verificati
 import { useTurnstile } from '@/features/auth/hooks/use-turnstile'
 import {
   getAffiliateCode,
+  getAgencyInvite,
   saveAffiliateCode,
+  saveAgencyInvite,
 } from '@/features/auth/lib/storage'
 import { useStatus } from '@/hooks/use-status'
 import { isAuthBundle } from '@/lib/api'
@@ -108,6 +110,9 @@ export function SignUpForm({
     true
   const hasWeChatLogin = Boolean(status?.wechat_login)
   const turnstileReady = !isTurnstileEnabled || Boolean(turnstileToken)
+  const agencyInvite =
+    new URLSearchParams(window.location.search).get('invite')?.trim() ||
+    getAgencyInvite()
 
   const wechatQrCodeUrl = useMemo(() => {
     return (
@@ -132,8 +137,12 @@ export function SignUpForm({
   }, [requiresLegalConsent])
 
   useEffect(() => {
-    const aff = new URLSearchParams(window.location.search).get('aff')?.trim()
-    if (aff) {
+    const params = new URLSearchParams(window.location.search)
+    const invite = params.get('invite')?.trim()
+    const aff = params.get('aff')?.trim()
+    if (invite) {
+      saveAgencyInvite(invite)
+    } else if (aff) {
       saveAffiliateCode(aff)
     }
   }, [])
@@ -165,7 +174,8 @@ export function SignUpForm({
         password: data.password,
         email: data.email || undefined,
         verification_code: verificationCode || undefined,
-        aff_code: getAffiliateCode(),
+        aff_code: agencyInvite ? undefined : getAffiliateCode(),
+        invite: agencyInvite || undefined,
         turnstile: turnstileToken,
       })
 
@@ -378,7 +388,7 @@ export function SignUpForm({
           {t('Create account')}
         </Button>
 
-        {oauthRegisterEnabled && (
+        {oauthRegisterEnabled && !agencyInvite && (
           <OAuthProviders
             status={status}
             disabled={isLoading || (requiresLegalConsent && !agreedToLegal)}
@@ -389,7 +399,7 @@ export function SignUpForm({
         )}
       </form>
 
-      {hasWeChatLogin && (
+      {hasWeChatLogin && !agencyInvite && (
         <Dialog
           open={isWeChatDialogOpen}
           onOpenChange={handleWeChatDialogChange}

@@ -18,6 +18,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// AgencyRatioOverrideContextKey is an internal request-context key used by
+// the gateway's agency pricing bridge. When present, the normal group ratio
+// is replaced for this request only; the underlying model pricing formula is
+// unchanged.
+const AgencyRatioOverrideContextKey = "agency_ratio_override"
+
 func modelPriceNotConfiguredError(modelName string, userId int) error {
 	if model.IsAdmin(userId) {
 		return fmt.Errorf(
@@ -65,6 +71,16 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) hostty
 	} else {
 		// normal group ratio
 		groupRatioInfo.GroupRatio = ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
+	}
+
+	if ctx != nil {
+		if override, exists := ctx.Get(AgencyRatioOverrideContextKey); exists {
+			if ratio, ok := override.(float64); ok && ratio >= 0 {
+				groupRatioInfo.GroupRatio = ratio
+				groupRatioInfo.GroupSpecialRatio = ratio
+				groupRatioInfo.HasSpecialRatio = true
+			}
+		}
 	}
 
 	return groupRatioInfo

@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -136,6 +137,22 @@ type RelayInfo struct {
 	// SubscriptionPlanId / SubscriptionPlanTitle are used for logging/UI display.
 	SubscriptionPlanId    int
 	SubscriptionPlanTitle string
+	// AgencyPricing is a gateway-owned immutable quote snapshot. It is nil for
+	// legacy/non-managed users, keeping the existing billing path unchanged.
+	AgencyPricing                *agencycontract.PricingSnapshot
+	AgencyStandardQuota          int64
+	AgencyPaidAllocatedQuota     int64
+	AgencyCommissionAmountMicros int64
+	AgencyCurrencyCode           string
+	AgencyBillingEventID         string
+	// RealtimePreConsumedQuota tracks the sum of successfully reserved
+	// realtime segments. Final close settles only the difference, preventing
+	// the cumulative usage frame from being charged a second time.
+	RealtimePreConsumedQuota int
+	// AgencyRealtimeSegmentsRecorded counts immutable realtime segment journals
+	// written for this connection. Once non-zero, final close must not append a
+	// second aggregate charge event for the same charge id.
+	AgencyRealtimeSegmentsRecorded int
 	// RequestId is used for idempotent pre-consume/refund
 	RequestId string
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.

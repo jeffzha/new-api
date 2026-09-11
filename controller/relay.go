@@ -26,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/service/opsmonitor"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/samber/lo"
@@ -156,7 +157,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	relayInfo.SetEstimatePromptTokens(tokens)
 
-	priceData, err := helper.ModelPriceHelper(c, relayInfo, tokens, meta)
+	priceData, err := resolveAgencyPrice(c, relayInfo, func() (hosttypes.PriceData, error) {
+		return helper.ModelPriceHelper(c, relayInfo, tokens, meta)
+	})
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
 		return
@@ -618,7 +621,12 @@ func RelayTask(c *gin.Context) {
 			OriginModelName: relayInfo.OriginModelName,
 			PerCallBilling: result.ProviderBilling == nil &&
 				(common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice),
-			ProviderBilling: result.ProviderBilling,
+			ProviderBilling:          result.ProviderBilling,
+			AgencyPricing:            relayInfo.AgencyPricing,
+			AgencyStandardQuota:      relayInfo.AgencyStandardQuota,
+			AgencyPaidAllocatedQuota: relayInfo.AgencyPaidAllocatedQuota,
+			AgencyChargeID:           relayInfo.RequestId,
+			AgencyBillingEventID:     relayInfo.AgencyBillingEventID,
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData

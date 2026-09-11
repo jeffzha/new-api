@@ -20,7 +20,9 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
+	hosttypes "github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type TaskSubmitResult struct {
@@ -185,7 +187,38 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	var providerBilling *model.TaskProviderBillingSnapshot
 	estimator, hasProviderBilling := adaptor.(channel.TaskBillingEstimator)
 	hasProviderBilling = hasProviderBilling && estimator.SupportsTaskBilling(info.ChannelType, modelName)
+	snapshot, agencyErr := service.AgencyQuoteForUser(info.UserId, info.TokenId, modelName, info.StartTime.UnixMilli())
+	if agencyErr != nil && !errors.Is(agencyErr, gorm.ErrRecordNotFound) {
+		return nil, service.TaskErrorWrapperLocal(agencyErr, "agency_pricing_unavailable", http.StatusServiceUnavailable)
+	}
+	// A durable agency customer must never fall back to the legacy task
+	// pricing/funding path when its binding or agency schema cannot be read.
+	// Without this guard a missing active binding is indistinguishable from a
+	// legacy customer here; subscription-backed tasks could then be accepted
+	// without a frozen agency quote or commission fact.
+	if agencyErr != nil && model.IsAgencyDurableUser(info.UserId) {
+		return nil, service.TaskErrorWrapperLocal(
+			fmt.Errorf("agency pricing unavailable for durable user: %w", agencyErr),
+			"agency_pricing_unavailable",
+			http.StatusServiceUnavailable,
+		)
+	}
+	managed := snapshot != nil
+	var standardTaskPrice *channel.TaskBillingEstimate
+	var standardPriceData hosttypes.PriceData
 	if hasProviderBilling {
+		if managed {
+			c.Set(helper.AgencyRatioOverrideContextKey, float64(1))
+			var taskErr *dto.TaskError
+			standardTaskPrice, taskErr = estimator.EstimateTaskBilling(c, info)
+			if taskErr != nil {
+				return nil, taskErr
+			}
+			if standardTaskPrice == nil {
+				return nil, service.TaskErrorWrapperLocal(errors.New("provider billing estimate is empty"), "model_price_error", http.StatusInternalServerError)
+			}
+			c.Set(helper.AgencyRatioOverrideContextKey, float64(snapshot.SalesBPS)/10000)
+		}
 		info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
 		estimate, taskErr := estimator.EstimateTaskBilling(c, info)
 		if taskErr != nil {
@@ -196,7 +229,21 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 		info.PriceData = estimate.PriceData
 		providerBilling = estimate.Snapshot
+		if managed {
+			if err := service.AttachAgencyQuote(info, snapshot, int64(standardTaskPrice.PriceData.Quota)); err != nil {
+				return nil, service.TaskErrorWrapperLocal(err, "agency_pricing_unavailable", http.StatusServiceUnavailable)
+			}
+		}
 	} else {
+		var err error
+		if managed {
+			c.Set(helper.AgencyRatioOverrideContextKey, float64(1))
+			standardPriceData, err = helper.ModelPriceHelperPerCall(c, info)
+			if err != nil {
+				return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+			}
+			c.Set(helper.AgencyRatioOverrideContextKey, float64(snapshot.SalesBPS)/10000)
+		}
 		priceData, err := helper.ModelPriceHelperPerCall(c, info)
 		if err != nil {
 			return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
@@ -211,6 +258,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		if estimatedRatios := adaptor.EstimateBilling(c, info); len(estimatedRatios) > 0 {
 			for k, v := range estimatedRatios {
 				info.PriceData.AddOtherRatio(k, v)
+				if managed {
+					standardPriceData.AddOtherRatio(k, v)
+				}
 			}
 		}
 	}
@@ -221,6 +271,15 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
 		info.PriceData.Quota = quota
 		noteTaskQuotaClamp(info, clamp)
+	}
+	if managed && !hasProviderBilling {
+		standardQuotaWithRatios, clamp := common.QuotaFromFloatChecked(standardPriceData.ApplyOtherRatiosToFloat(float64(standardPriceData.Quota)))
+		if clamp != nil {
+			noteTaskQuotaClamp(info, clamp)
+		}
+		if err := service.AttachAgencyQuote(info, snapshot, int64(standardQuotaWithRatios)); err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "agency_pricing_unavailable", http.StatusServiceUnavailable)
+		}
 	}
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）

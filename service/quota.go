@@ -88,17 +88,39 @@ func calculateAudioQuota(info QuotaInfo) (int, *common.QuotaClamp) {
 }
 
 func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) error {
+	_, _, err := PreWssConsumeQuotaWithResult(ctx, relayInfo, usage)
+	return err
+}
+
+// PreWssConsumeQuotaWithResult is the realtime reservation path with the
+// effective quota and paid-lot allocation returned to callers that persist a
+// per-segment financial journal. The legacy wrapper above preserves the
+// existing error-only API.
+func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) (int, int64, error) {
 	if relayInfo.UsePrice {
-		return nil
+		// Price-based realtime requests do not reserve through the legacy
+		// wallet path, but managed users still need a durable segment fact.
+		// Compute the same quota PostWssConsumeQuota will use without touching
+		// either wallet or token here.
+		groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
+		quota, clamp := calculateAudioQuota(QuotaInfo{
+			InputDetails:  TokenDetails{TextTokens: usage.InputTokenDetails.TextTokens, AudioTokens: usage.InputTokenDetails.AudioTokens},
+			OutputDetails: TokenDetails{TextTokens: usage.OutputTokenDetails.TextTokens, AudioTokens: usage.OutputTokenDetails.AudioTokens},
+			ModelName:     relayInfo.OriginModelName, UsePrice: true,
+			ModelPrice: relayInfo.PriceData.ModelPrice, GroupRatio: groupRatio,
+		})
+		noteQuotaClamp(relayInfo, clamp)
+		return quota, 0, nil
 	}
-	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
+	fromDB := relayInfo.AgencyPricing != nil
+	userQuota, err := model.GetUserQuota(relayInfo.UserId, fromDB)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 
 	token, err := model.GetTokenByKey(strings.TrimPrefix(relayInfo.TokenKey, "sk-"), false)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 
 	modelName := relayInfo.OriginModelName
@@ -141,19 +163,50 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	noteQuotaClamp(relayInfo, clamp)
 
 	if userQuota < quota {
-		return fmt.Errorf("user quota is not enough, user quota: %s, need quota: %s", logger.FormatQuota(userQuota), logger.FormatQuota(quota))
+		return 0, 0, fmt.Errorf("user quota is not enough, user quota: %s, need quota: %s", logger.FormatQuota(userQuota), logger.FormatQuota(quota))
 	}
 
 	if !token.UnlimitedQuota && token.RemainQuota < quota {
-		return fmt.Errorf("token quota is not enough, token remain quota: %s, need quota: %s", logger.FormatQuota(token.RemainQuota), logger.FormatQuota(quota))
+		return 0, 0, fmt.Errorf("token quota is not enough, token remain quota: %s, need quota: %s", logger.FormatQuota(token.RemainQuota), logger.FormatQuota(quota))
 	}
 
-	err = PostConsumeQuota(relayInfo, quota, 0, false)
-	if err != nil {
-		return err
+	var paid int64
+	if relayInfo.AgencyPricing != nil && relayInfo.RequestId != "" {
+		var reserveErr error
+		if model.IsAgencyDurableUser(relayInfo.UserId) {
+			paid, reserveErr = model.TryReserveAgencyWalletAndToken(
+				relayInfo.UserId,
+				relayInfo.TokenId,
+				quota,
+				relayInfo.TokenKey,
+				relayInfo.RequestId,
+				int64(relayInfo.RealtimePreConsumedQuota+quota),
+				relayInfo.TokenUnlimited,
+			)
+		} else {
+			reserveErr = model.TryReserveUserQuotaAndAgencyWithToken(
+				relayInfo.UserId,
+				relayInfo.TokenId,
+				quota,
+				relayInfo.TokenKey,
+				relayInfo.RequestId,
+				int64(relayInfo.RealtimePreConsumedQuota+quota),
+				relayInfo.TokenUnlimited,
+			)
+		}
+		if reserveErr != nil {
+			return 0, 0, reserveErr
+		}
+		relayInfo.AgencyPaidAllocatedQuota += paid
+	} else {
+		err = PostConsumeQuota(relayInfo, quota, 0, false)
+		if err != nil {
+			return 0, 0, err
+		}
 	}
+	relayInfo.RealtimePreConsumedQuota += quota
 	logger.LogInfo(ctx, "realtime streaming consume quota success, quota: "+fmt.Sprintf("%d", quota))
-	return nil
+	return quota, paid, nil
 }
 
 func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelName string,
@@ -229,7 +282,73 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 
-	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
+	if relayInfo.AgencyPricing != nil && relayInfo.RequestId != "" {
+		// PreWssConsumeQuota reserves each successful usage segment. The final
+		// cumulative frame contributes only its delta (or releases an excess).
+		delta := quota - relayInfo.RealtimePreConsumedQuota
+		if delta > 0 {
+			var paid int64
+			var err error
+			if model.IsAgencyDurableUser(relayInfo.UserId) {
+				paid, err = model.TryReserveAgencyWalletAndToken(
+					relayInfo.UserId,
+					relayInfo.TokenId,
+					delta,
+					relayInfo.TokenKey,
+					relayInfo.RequestId,
+					int64(quota),
+					relayInfo.TokenUnlimited,
+				)
+			} else {
+				err = model.TryReserveUserQuotaAndAgencyWithToken(
+					relayInfo.UserId,
+					relayInfo.TokenId,
+					delta,
+					relayInfo.TokenKey,
+					relayInfo.RequestId,
+					int64(quota),
+					relayInfo.TokenUnlimited,
+				)
+			}
+			if err != nil {
+				logger.LogError(ctx, "error settling realtime agency delta: "+err.Error())
+			} else {
+				relayInfo.AgencyPaidAllocatedQuota += paid
+			}
+		} else if delta < 0 {
+			var released int64
+			var err error
+			if model.IsAgencyDurableUser(relayInfo.UserId) {
+				released, err = model.ReleaseAgencyWalletAndToken(
+					relayInfo.UserId,
+					relayInfo.TokenId,
+					-delta,
+					relayInfo.TokenKey,
+					relayInfo.RequestId,
+				)
+			} else {
+				err = model.ReleaseUserQuotaAndAgencyWithToken(
+					relayInfo.UserId,
+					relayInfo.TokenId,
+					-delta,
+					relayInfo.TokenKey,
+					relayInfo.RequestId,
+				)
+			}
+			if err != nil {
+				logger.LogError(ctx, "error releasing realtime agency delta: "+err.Error())
+			} else {
+				relayInfo.AgencyPaidAllocatedQuota -= released
+				if relayInfo.AgencyPaidAllocatedQuota < 0 {
+					relayInfo.AgencyPaidAllocatedQuota = 0
+				}
+			}
+		}
+		relayInfo.RealtimePreConsumedQuota = quota
+		if err := RecordAgencyBillingEvent(relayInfo, int64(quota), "success"); err != nil {
+			logger.LogError(ctx, "error recording realtime agency billing: "+err.Error())
+		}
+	} else if err := SettleBilling(ctx, relayInfo, quota); err != nil {
 		logger.LogError(ctx, "error settling billing: "+err.Error())
 	}
 	upstreamevent.EmitUpstreamResponse(ctx, relayInfo, &dto.Usage{
@@ -446,6 +565,7 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 }
 
 func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (result postConsumeQuotaResult, err error) {
+	tokenAppliedAtomically := false
 
 	// 1) Consume from wallet quota OR subscription item
 	if relayInfo != nil && relayInfo.BillingSource == BillingSourceSubscription {
@@ -461,9 +581,56 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 		}
 	} else {
 		// Wallet
-		if quota > 0 {
+		if relayInfo.AgencyPricing != nil && relayInfo.RequestId != "" {
+			chargeID := relayInfo.RequestId
+			if model.IsAgencyDurableUser(relayInfo.UserId) {
+				targetQuota := int64(preConsumedQuota) + int64(quota)
+				if targetQuota < 0 {
+					return result, fmt.Errorf("agency billing target quota cannot be negative")
+				}
+				if quota > 0 {
+					var paid int64
+					paid, err = model.TryReserveAgencyWalletAndToken(
+						relayInfo.UserId,
+						relayInfo.TokenId,
+						quota,
+						relayInfo.TokenKey,
+						chargeID,
+						targetQuota,
+						relayInfo.TokenUnlimited,
+					)
+					relayInfo.AgencyPaidAllocatedQuota += paid
+					tokenAppliedAtomically = err == nil
+				} else if quota < 0 {
+					var released int64
+					released, err = model.ReleaseAgencyWalletAndToken(
+						relayInfo.UserId,
+						relayInfo.TokenId,
+						-quota,
+						relayInfo.TokenKey,
+						chargeID,
+					)
+					relayInfo.AgencyPaidAllocatedQuota -= released
+					if relayInfo.AgencyPaidAllocatedQuota < 0 {
+						relayInfo.AgencyPaidAllocatedQuota = 0
+					}
+					tokenAppliedAtomically = err == nil
+				}
+			} else if quota > 0 {
+				var paid int64
+				paid, err = model.TryReserveUserQuotaAndAgency(relayInfo.UserId, quota, chargeID, int64(quota))
+				relayInfo.AgencyPaidAllocatedQuota += paid
+			} else if quota < 0 {
+				var released int64
+				released, err = model.ReleaseUserQuotaAndAgency(relayInfo.UserId, -quota, chargeID)
+				relayInfo.AgencyPaidAllocatedQuota -= released
+				if relayInfo.AgencyPaidAllocatedQuota < 0 {
+					relayInfo.AgencyPaidAllocatedQuota = 0
+				}
+			}
+		} else if quota > 0 {
 			err = model.DecreaseUserQuota(relayInfo.UserId, quota, false)
-		} else {
+		} else if quota < 0 {
 			err = model.IncreaseUserQuota(relayInfo.UserId, -quota, false)
 		}
 		if err != nil {
@@ -471,8 +638,11 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 		}
 	}
 	result.FundingApplied = true
+	if tokenAppliedAtomically {
+		result.TokenApplied = true
+	}
 
-	if !relayInfo.IsPlayground {
+	if !relayInfo.IsPlayground && !tokenAppliedAtomically {
 		if quota > 0 {
 			err = model.DecreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, quota)
 		} else {

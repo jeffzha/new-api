@@ -22,6 +22,13 @@ export default defineConfig(({ envMode }) => {
       { target: serverUrl, changeOrigin: true },
     ])
   ) as Record<string, { target: string; changeOrigin: boolean }>
+  // Route the Reseller Hub sidecar through the gateway origin (same host) so the
+  // dashboard login token (mirrored by http-client.ts) and same-origin CSRF apply.
+  // changeOrigin:false preserves the browser Host so the sidecar's same-origin check passes.
+  devProxy['/reseller'] = {
+    target: process.env.VITE_RESELLER_HUB_URL || 'http://localhost:3200',
+    changeOrigin: false,
+  }
 
   return {
     plugins: [pluginReact(), pluginTailwindcss({ optimize: false })],

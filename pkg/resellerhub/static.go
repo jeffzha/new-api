@@ -399,6 +399,9 @@ const embeddedIndexHTML = `<!doctype html>
       if (write) headers['Content-Type']='application/json';
       var uid=getNewAPIUserId();
       if (uid) headers['New-Api-User']=uid;
+      var auth='';
+      try { auth=window.localStorage.getItem('new_api_access_token')||''; } catch(_) {}
+      if (auth) headers['Authorization']='Bearer '+auth;
       var csrf=state.csrf || getCookie('csrf_token') || getCookie('csrf');
       if (csrf) { headers['X-CSRF-Token']=csrf; headers['X-CSRFToken']=csrf; }
       if (eventId) { headers['Idempotency-Key']=eventId; headers['X-Idempotency-Key']=eventId; }

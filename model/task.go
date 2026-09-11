@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"gorm.io/gorm"
 )
 
 type TaskStatus string
@@ -129,13 +132,21 @@ type TaskEndpointSnapshot struct {
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
 type TaskBillingContext struct {
-	ModelPrice      float64                      `json:"model_price,omitempty"`       // 模型单价
-	GroupRatio      float64                      `json:"group_ratio,omitempty"`       // 分组倍率
-	ModelRatio      float64                      `json:"model_ratio,omitempty"`       // 模型倍率
-	OtherRatios     map[string]float64           `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
-	OriginModelName string                       `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
-	PerCallBilling  bool                         `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
-	ProviderBilling *TaskProviderBillingSnapshot `json:"provider_billing,omitempty"`
+	ModelPrice               float64                         `json:"model_price,omitempty"`       // 模型单价
+	GroupRatio               float64                         `json:"group_ratio,omitempty"`       // 分组倍率
+	ModelRatio               float64                         `json:"model_ratio,omitempty"`       // 模型倍率
+	OtherRatios              map[string]float64              `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
+	OriginModelName          string                          `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
+	PerCallBilling           bool                            `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
+	ProviderBilling          *TaskProviderBillingSnapshot    `json:"provider_billing,omitempty"`
+	AgencyPricing            *agencycontract.PricingSnapshot `json:"agency_pricing,omitempty"`
+	AgencyStandardQuota      int64                           `json:"agency_standard_quota,omitempty"`
+	AgencyPaidAllocatedQuota int64                           `json:"agency_paid_allocated_quota,omitempty"`
+	// AgencyChargeID is the stable financial charge identifier used by the
+	// gateway reservation and later asynchronous reconciliation. It must not
+	// be confused with the outbox event ID, which is generated at finalization.
+	AgencyChargeID       string `json:"agency_charge_id,omitempty"`
+	AgencyBillingEventID string `json:"agency_billing_event_id,omitempty"`
 }
 
 // TaskProviderBillingSnapshot freezes provider-specific pricing inputs at
@@ -440,7 +451,17 @@ func (Task *Task) Update() error {
 }
 
 func (t *Task) UpdateQuota() error {
-	return DB.Model(t).Update("quota", t.Quota).Error
+	if t == nil || t.ID <= 0 {
+		return errors.New("task id is required to update quota")
+	}
+	result := DB.Model(&Task{}).Where("id = ?", t.ID).Update("quota", t.Quota)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).

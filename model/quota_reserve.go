@@ -166,6 +166,14 @@ func TryReserveUserQuota(id int, quota int) (bool, error) {
 	if quota < 0 {
 		return false, errors.New("quota 不能为负数！")
 	}
+	if isAgencyProvisioningUser(id) {
+		return false, ErrAgencyProvisioning
+	}
+	// Durable agency users must reserve through the agency-aware transaction
+	// so the wallet and funding projection cannot diverge.
+	if isAgencyDurableUser(id) {
+		return false, ErrAgencyFundingUnavailable
+	}
 	if quota == 0 {
 		return true, nil
 	}

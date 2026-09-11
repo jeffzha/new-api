@@ -90,10 +90,45 @@ func taskIsSubscription(task *model.Task) bool {
 	return task.PrivateData.BillingSource == BillingSourceSubscription && task.PrivateData.SubscriptionId > 0
 }
 
+// taskAgencyChargeID returns the stable financial identifier persisted at task
+// submission. Older tasks may only have the final event ID; keep that as a
+// compatibility fallback so reconciliation can still find its allocations.
+func taskAgencyChargeID(task *model.Task) string {
+	if task == nil {
+		return ""
+	}
+	if bc := task.PrivateData.BillingContext; bc != nil {
+		if id := strings.TrimSpace(bc.AgencyChargeID); id != "" {
+			return id
+		}
+		if id := strings.TrimSpace(bc.AgencyBillingEventID); id != "" {
+			return id
+		}
+	}
+	if task.TaskID != "" {
+		return task.TaskID
+	}
+	return ""
+}
+
 // taskAdjustFunding 调整任务的资金来源（钱包或订阅），delta > 0 表示扣费，delta < 0 表示退还。
 func taskAdjustFunding(task *model.Task, delta int) error {
 	if taskIsSubscription(task) {
 		return model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
+	}
+	if task != nil && delta != 0 && model.IsAgencyDurableUser(task.UserId) {
+		chargeID := taskAgencyChargeID(task)
+		if chargeID == "" {
+			return model.ErrAgencyFundingUnavailable
+		}
+		target := int64(task.Quota)
+		if delta > 0 {
+			target += int64(delta)
+		}
+		if target <= 0 || target > int64(common.MaxQuota) {
+			return fmt.Errorf("agency task quota target out of range: %d", target)
+		}
+		return model.AdjustAgencyCharge(task.UserId, delta, chargeID, target)
 	}
 	if delta > 0 {
 		return model.DecreaseUserQuota(task.UserId, delta, false)
@@ -136,6 +171,12 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 				other[k] = v
 			}
 		}
+		if bc.AgencyPricing != nil {
+			other["agency_sales_bps"] = bc.AgencyPricing.SalesBPS
+			other["agency_settlement_bps"] = bc.AgencyPricing.SettlementBPS
+			other["agency_standard_quota"] = bc.AgencyStandardQuota
+			other["agency_paid_allocated_quota"] = bc.AgencyPaidAllocatedQuota
+		}
 	}
 	props := task.Properties
 	if props.UpstreamModelName != "" && props.UpstreamModelName != props.OriginModelName {
@@ -173,18 +214,32 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 		return true
 	}
 
-	// 1. 退还资金来源（钱包或订阅）
-	if err := taskAdjustFunding(task, -quota); err != nil {
+	// Funding, token, and the persisted task marker must move together. In
+	// particular, a token may have been soft-deleted after acceptance; the
+	// atomic model operation then retains the original charge instead of
+	// refunding the wallet without a token to restore.
+	adjustment, err := model.ApplyTaskQuotaAdjustment(task, 0)
+	if err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("退还资金来源失败 task %s: %s", task.TaskID, err.Error()))
 		return false
 	}
+	if adjustment.TokenUnavailable {
+		logger.LogWarn(ctx, fmt.Sprintf("任务 %s 令牌已删除，保留已扣额度并跳过退款", task.TaskID))
+		return true
+	}
 
-	// 2. 退还令牌额度
-	taskAdjustTokenQuota(ctx, task, -quota)
+	// 1. Record the compensating agency event only after the atomic wallet
+	// and token transaction has committed.
+	if err := RecordAgencyTaskRefundEvent(task, int64(-adjustment.QuotaDelta), reason); err != nil {
+		// The wallet refund has already committed. Keep the task refund
+		// successful, but surface the missing compensating event for durable
+		// reconciliation instead of silently retaining commission.
+		logger.LogError(ctx, fmt.Sprintf("记录代理商任务佣金冲正失败 task %s: %s", task.TaskID, err.Error()))
+	}
 
-	// 3. 回减预扣时累计的用户和渠道用量，请求次数保持不变
-	model.UpdateUserUsedQuota(task.UserId, -quota)
-	model.UpdateChannelUsedQuota(task.ChannelId, -quota)
+	// 2. 回减预扣时累计的用户和渠道用量，请求次数保持不变.
+	model.UpdateUserUsedQuota(task.UserId, adjustment.QuotaDelta)
+	model.UpdateChannelUsedQuota(task.ChannelId, adjustment.QuotaDelta)
 
 	// 4. 记录日志
 	other := taskBillingOther(task)
@@ -196,21 +251,15 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 		Content:   "",
 		ChannelId: task.ChannelId,
 		ModelName: taskModelName(task),
-		Quota:     quota,
+		Quota:     -adjustment.QuotaDelta,
 		TokenId:   task.PrivateData.TokenId,
 		Group:     task.Group,
 		Other:     other,
 	})
-	upstreamevent.EmitTaskBillingDelta(task, "task_failure_refund", -quota, quota, 0, map[string]interface{}{
+	upstreamevent.EmitTaskBillingDelta(task, "task_failure_refund", adjustment.QuotaDelta, quota, task.Quota, map[string]interface{}{
 		"reason": reason,
 	})
 
-	// 5. 资金退款完成后再清除持久化标记。
-	// 回写失败必须显式告警，避免漏掉潜在的重复退款风险。
-	task.Quota = 0
-	if err := task.UpdateQuota(); err != nil {
-		logger.LogError(ctx, fmt.Sprintf("退款成功但清除 task quota 失败 task %s: %s", task.TaskID, err.Error()))
-	}
 	return true
 }
 
@@ -223,28 +272,26 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		return
 	}
 	preConsumedQuota := task.Quota
-	quotaDelta := actualQuota - preConsumedQuota
-
-	if quotaDelta == 0 {
-		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）",
-			task.TaskID, logger.LogQuota(actualQuota), reason))
-		return
-	}
-
-	// 调整资金来源
-	if err := taskAdjustFunding(task, quotaDelta); err != nil {
+	adjustment, err := model.ApplyTaskQuotaAdjustment(task, actualQuota)
+	if err != nil {
 		logger.LogError(ctx, fmt.Sprintf("差额结算资金调整失败 task %s: %s", task.TaskID, err.Error()))
 		return
 	}
-
-	// 调整令牌额度
-	taskAdjustTokenQuota(ctx, task, quotaDelta)
-
-	task.Quota = actualQuota
-	if err := task.UpdateQuota(); err != nil {
-		logger.LogError(ctx, fmt.Sprintf("差额结算回写 quota 失败 task %s: %s", task.TaskID, err.Error()))
+	if adjustment.TokenUnavailable {
+		logger.LogWarn(ctx, fmt.Sprintf("任务 %s 令牌已删除，差额退款被保留在预扣额度", task.TaskID))
 	}
-	recordTaskQuotaAdjustment(ctx, task, preConsumedQuota, actualQuota, reason, clamps...)
+	if adjustment.QuotaDelta == 0 {
+		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）",
+			task.TaskID, logger.LogQuota(adjustment.AppliedQuota), reason))
+		return
+	}
+	if adjustment.QuotaDelta < 0 {
+		if err := RecordAgencyTaskRefundEvent(task, int64(-adjustment.QuotaDelta), reason); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("记录代理商任务差额佣金冲正失败 task %s: %s", task.TaskID, err.Error()))
+		}
+	}
+
+	recordTaskQuotaAdjustment(ctx, task, preConsumedQuota, adjustment.AppliedQuota, reason, clamps...)
 }
 
 func recordTaskQuotaAdjustment(ctx context.Context, task *model.Task, preConsumedQuota int, actualQuota int, reason string, clamps ...*common.QuotaClamp) {

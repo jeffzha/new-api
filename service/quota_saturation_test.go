@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 
@@ -110,4 +111,28 @@ func TestPreConsumeBillingRejectsNegativeQuotaBeforeDeduction(t *testing.T) {
 	require.Equal(t, types.ErrorCodeModelPriceError, apiErr.GetErrorCode())
 	require.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
 	require.Nil(t, info.Billing)
+}
+
+func TestBillingSessionDoesNotTrustDurableAgencyWallet(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	user := &model.User{
+		Username:       "durable-trust-guard-" + common.GetRandomString(8),
+		Password:       "unused-password-hash",
+		Role:           common.RoleCommonUser,
+		Status:         common.UserStatusEnabled,
+		Quota:          common.GetTrustQuota() + 1,
+		BillingMode:    model.AgencyDurableBillingMode,
+		FundingVersion: 1,
+	}
+	require.NoError(t, model.DB.Create(user).Error)
+	t.Cleanup(func() { model.DB.Delete(&model.User{}, user.Id) })
+
+	ctx, _ := gin.CreateTestContext(nil)
+	session := &BillingSession{relayInfo: &relaycommon.RelayInfo{
+		UserId:         user.Id,
+		UserQuota:      user.Quota,
+		TokenUnlimited: true,
+	}}
+
+	require.False(t, session.shouldTrust(ctx))
 }

@@ -173,6 +173,11 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 				"Seedance domestic provider bill reconciliation",
 				resolution.QuotaClamp,
 			)
+		} else if settlement.TokenUnavailable {
+			logger.LogWarn(ctx, fmt.Sprintf(
+				"task billing reconciliation %d settled with deleted token; retained pre-consumed quota",
+				record.ID,
+			))
 		}
 		summary.Settled++
 	}

@@ -26,6 +26,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 const STORAGE_KEYS = {
   AFFILIATE: 'aff',
+  AGENCY_INVITE: 'agency_invite',
   STATUS: 'status',
 } as const
 
@@ -44,6 +45,25 @@ export function getAffiliateCode(): string {
     // eslint-disable-next-line no-console
     console.error('Failed to get affiliate code:', error)
     return ''
+  }
+}
+
+export function getAgencyInvite(): string {
+  if (typeof window === 'undefined') return ''
+  try {
+    return window.sessionStorage.getItem(STORAGE_KEYS.AGENCY_INVITE) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+export function saveAgencyInvite(code: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.sessionStorage.setItem(STORAGE_KEYS.AGENCY_INVITE, code)
+    window.localStorage.removeItem(STORAGE_KEYS.AFFILIATE)
+  } catch {
+    // Browser storage is optional; the current URL still carries the invite.
   }
 }
 

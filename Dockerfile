@@ -38,9 +38,10 @@ RUN version="${BUILD_VERSION:-$(cat VERSION)}" \
     && go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${version}'" -o hwdrama-proxy ./cmd/hwdrama-proxy \
     && go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${version}'" -o reverse-newapi-volcengine ./cmd/reverse-newapi-volcengine \
     && go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${version}'" -o enterprise-policy-hub ./cmd/enterprise-policy-hub \
-    && go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${version}'" -o reseller-hub ./cmd/reseller-hub
+    && go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${version}'" -o reseller-hub ./cmd/reseller-hub \
+    && go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${version}'" -o agency-hub ./cmd/agency-hub
 
-FROM debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a
+FROM debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a AS agency-hub
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates tzdata libasan8 wget \
@@ -52,6 +53,7 @@ COPY --from=builder2 /build/hwdrama-proxy /
 COPY --from=builder2 /build/reverse-newapi-volcengine /
 COPY --from=builder2 /build/enterprise-policy-hub /
 COPY --from=builder2 /build/reseller-hub /
+COPY --from=builder2 /build/agency-hub /
 COPY LICENSE NOTICE THIRD-PARTY-LICENSES.md /licenses/
 EXPOSE 3000
 WORKDIR /data

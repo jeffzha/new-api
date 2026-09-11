@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -85,9 +86,23 @@ func ValidateTopUpQuotaCapacity(userId int, creditedQuota int) error {
 // quota. Keeping the predicate and increment in one UPDATE prevents two
 // concurrent callbacks from both passing a separate read/check.
 func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, updates map[string]interface{}) error {
+	return creditTopUpQuotaWithFunding(tx, userId, creditedQuota, updates, "", "")
+}
+
+func creditTopUpQuotaWithFunding(tx *gorm.DB, userId int, creditedQuota int, updates map[string]interface{}, sourceKind, sourceID string) error {
 	maxCurrentQuota, err := topUpQuotaMaxCurrent(creditedQuota)
 	if err != nil {
 		return err
+	}
+	var billingMode string
+	if err := tx.Model(&User{}).Where("id = ?", userId).Pluck("billing_mode", &billingMode).Error; err != nil {
+		return err
+	}
+	if billingMode == AgencyProvisioningBillingMode {
+		return ErrAgencyProvisioning
+	}
+	if billingMode == AgencyDurableBillingMode && (strings.TrimSpace(sourceKind) == "" || strings.TrimSpace(sourceID) == "") {
+		return ErrAgencyFundingUnavailable
 	}
 
 	updateFields := make(map[string]interface{}, len(updates)+1)
@@ -103,7 +118,10 @@ func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, updates map[st
 		return result.Error
 	}
 	if result.RowsAffected == 1 {
-		return nil
+		if sourceID == "" {
+			return nil
+		}
+		return RecordAgencyTopup(tx, int64(userId), sourceKind, sourceID, "payment_callback", int64(creditedQuota), 0)
 	}
 
 	var count int64
@@ -214,7 +232,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 		if err := tx.Save(topUp).Error; err != nil {
 			return err
 		}
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		return creditTopUpQuotaWithFunding(tx, topUp.UserId, quotaToAdd, nil, topUp.PaymentProvider, topUp.TradeNo)
 	})
 	if err != nil {
 		if !errors.Is(err, ErrTopUpNotFound) && !errors.Is(err, ErrPaymentMethodMismatch) && !errors.Is(err, ErrTopUpStatusInvalid) {
@@ -272,9 +290,9 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		if err != nil || quota <= 0 {
 			return ErrInvalidTopUpQuota
 		}
-		return creditTopUpQuota(tx, topUp.UserId, quota, map[string]interface{}{
+		return creditTopUpQuotaWithFunding(tx, topUp.UserId, quota, map[string]interface{}{
 			"stripe_customer": customerId,
-		})
+		}, topUp.PaymentProvider, topUp.TradeNo)
 	})
 
 	if err != nil {
@@ -502,7 +520,8 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		}
 
 		// 增加用户额度（立即写库，保持一致性）
-		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
+		// 管理员补单属于平台授信，不是客户真实支付，计入 nonpaid 资金池。
+		if err := creditTopUpQuotaWithFunding(tx, topUp.UserId, quotaToAdd, nil, "admin", topUp.TradeNo); err != nil {
 			return err
 		}
 
@@ -579,7 +598,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 			}
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quota, updateFields)
+		return creditTopUpQuotaWithFunding(tx, topUp.UserId, quota, updateFields, topUp.PaymentProvider, topUp.TradeNo)
 	})
 
 	if err != nil {
@@ -637,7 +656,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 			return err
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		return creditTopUpQuotaWithFunding(tx, topUp.UserId, quotaToAdd, nil, topUp.PaymentProvider, topUp.TradeNo)
 	})
 
 	if err != nil {
@@ -697,7 +716,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 			return err
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		return creditTopUpQuotaWithFunding(tx, topUp.UserId, quotaToAdd, nil, topUp.PaymentProvider, topUp.TradeNo)
 	})
 
 	if err != nil {

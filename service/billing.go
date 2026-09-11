@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -20,6 +21,18 @@ const (
 // PreConsumeBilling 根据用户计费偏好创建 BillingSession 并执行预扣费。
 // 会话存储在 relayInfo.Billing 上，供后续 Settle / Refund 使用。
 func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
+	if relayInfo != nil && model.IsAgencyDurableUser(relayInfo.UserId) && relayInfo.AgencyPricing == nil {
+		// Durable customers must carry an accepted, immutable agency quote
+		// before any funding source (including subscription fallback) is
+		// touched.  Falling through here would let a missing binding/schema
+		// silently bypass commission and usage journaling.
+		return types.NewErrorWithStatusCode(
+			fmt.Errorf("agency pricing unavailable for durable user"),
+			types.ErrorCodeQueryDataError,
+			http.StatusServiceUnavailable,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
 	if relayInfo != nil && relayInfo.QuotaClamp != nil {
 		return types.NewErrorWithStatusCode(
 			relayInfo.QuotaClamp,
@@ -78,6 +91,10 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 			return err
 		}
 		upstreamevent.EmitBillingDelta(ctx, relayInfo, "settle", delta, preConsumed, actualQuota, nil)
+		if err := RecordAgencyBillingEvent(relayInfo, int64(actualQuota), "success"); err != nil {
+			common.SysError("agency billing event persistence failed: " + err.Error())
+			return err
+		}
 
 		// 发送额度通知（订阅计费使用订阅剩余额度）
 		if actualQuota != 0 {
@@ -96,7 +113,10 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 		if err := PostConsumeQuota(relayInfo, quotaDelta, relayInfo.FinalPreConsumedQuota, true); err != nil {
 			return err
 		}
-		return nil
+	}
+	if err := RecordAgencyBillingEvent(relayInfo, int64(actualQuota), "success"); err != nil {
+		common.SysError("agency billing event persistence failed: " + err.Error())
+		return err
 	}
 	return nil
 }

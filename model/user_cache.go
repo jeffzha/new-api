@@ -165,8 +165,37 @@ func syncCreditUserQuotaCache(userId int, quota int, operation string) {
 	if quota <= 0 {
 		return
 	}
+	// Durable agency balances are projected from the funding account and may
+	// have changed by more than this one delta (for example, a debt repayment
+	// or a concurrent reservation). Never increment a potentially stale Redis
+	// snapshot; invalidate it so the next read hydrates from the committed DB
+	// row.
+	if IsAgencyDurableUser(userId) {
+		if err := InvalidateUserCache(userId); err != nil {
+			common.SysLog(fmt.Sprintf("failed to invalidate %s durable user quota cache: %s", operation, err.Error()))
+		}
+		return
+	}
 	if err := cacheIncrUserQuota(userId, int64(quota)); err != nil {
 		common.SysLog(fmt.Sprintf("failed to sync %s credit to user quota cache: %s", operation, err.Error()))
+	}
+}
+
+// syncDebitUserQuotaCache mirrors a committed wallet debit. Durable agency
+// users must invalidate rather than apply a blind decrement because the
+// funding transaction can consume non-paid lots or create debt.
+func syncDebitUserQuotaCache(userId int, quota int, operation string) {
+	if quota <= 0 {
+		return
+	}
+	if IsAgencyDurableUser(userId) {
+		if err := InvalidateUserCache(userId); err != nil {
+			common.SysLog(fmt.Sprintf("failed to invalidate %s durable user quota cache: %s", operation, err.Error()))
+		}
+		return
+	}
+	if err := cacheDecrUserQuota(userId, int64(quota)); err != nil {
+		common.SysLog(fmt.Sprintf("failed to sync %s debit to user quota cache: %s", operation, err.Error()))
 	}
 }
 

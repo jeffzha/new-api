@@ -145,6 +145,13 @@ api.interceptors.request.use((config) => {
   const accessToken = useAuthStore.getState().auth.accessToken
   if (accessToken) {
     config.headers.Authorization = `Bearer ${accessToken}`
+    // Mirror the dashboard bearer token for the Reseller Hub sidecar (same origin),
+    // so its SPA can authenticate against the gateway without sharing the in-memory store.
+    try {
+      window.localStorage.setItem('new_api_access_token', accessToken)
+    } catch {
+      // storage may be unavailable; the sidecar just falls back to no auth
+    }
   }
   return config
 })

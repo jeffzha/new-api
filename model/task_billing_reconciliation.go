@@ -56,6 +56,7 @@ type TaskBillingReconciliationSettlementResult struct {
 	QuotaDelta       int
 	Applied          bool
 	WalletAdjusted   bool
+	TokenUnavailable bool
 }
 
 func EnqueueTaskBillingReconciliation(task *Task, provider string) error {
@@ -209,15 +210,68 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 		result.QuotaDelta = settlement.ActualQuota - task.Quota
 		result.WalletAdjusted = task.PrivateData.BillingSource != TaskBillingSourceSubscription || task.PrivateData.SubscriptionId <= 0
 
+		// A token may be soft-deleted after the task was accepted. Never
+		// refund the wallet without a token to restore: retain a negative
+		// adjustment at the pre-consumed amount and leave an audit marker on
+		// the reconciliation row. Additional provider usage may still be
+		// charged to the wallet, but a deleted token is never recreated.
+		var token Token
+		tokenPresent := task.PrivateData.TokenId <= 0
+		if task.PrivateData.TokenId > 0 {
+			tokenErr := lockForUpdate(tx).
+				Where("id = ? AND user_id = ?", task.PrivateData.TokenId, task.UserId).
+				First(&token).Error
+			switch {
+			case tokenErr == nil:
+				tokenPresent = true
+			case errors.Is(tokenErr, gorm.ErrRecordNotFound):
+				result.TokenUnavailable = true
+				if result.QuotaDelta < 0 {
+					result.QuotaDelta = 0
+					result.WalletAdjusted = false
+				}
+			default:
+				return tokenErr
+			}
+		}
+
 		if result.QuotaDelta != 0 {
 			if result.WalletAdjusted {
-				update := tx.Model(&User{}).Where("id = ?", task.UserId).
-					Update("quota", gorm.Expr("quota - ?", result.QuotaDelta))
-				if update.Error != nil {
-					return update.Error
+				var billingMode string
+				if err := tx.Model(&User{}).Where("id = ?", task.UserId).Pluck("billing_mode", &billingMode).Error; err != nil {
+					return err
 				}
-				if update.RowsAffected != 1 {
-					return fmt.Errorf("task billing user %d not found", task.UserId)
+				if billingMode == AgencyProvisioningBillingMode {
+					return ErrAgencyProvisioning
+				}
+				if billingMode == AgencyDurableBillingMode {
+					// Reconciliation must address the same stable charge used by
+					// the initial reservation. The finalized event ID is distinct
+					// and cannot be used to locate those allocations.
+					chargeID := ""
+					if task.PrivateData.BillingContext != nil {
+						chargeID = task.PrivateData.BillingContext.AgencyChargeID
+					}
+					if chargeID == "" && task.PrivateData.BillingContext != nil {
+						// Compatibility for tasks written before AgencyChargeID
+						// was persisted. Such tasks may still have the old event ID.
+						chargeID = task.PrivateData.BillingContext.AgencyBillingEventID
+					}
+					if chargeID == "" {
+						chargeID = task.TaskID
+					}
+					if err := AdjustAgencyChargeTx(tx, task.UserId, result.QuotaDelta, chargeID, int64(settlement.ActualQuota)); err != nil {
+						return fmt.Errorf("adjust agency funding for reconciliation: %w", err)
+					}
+				} else {
+					update := tx.Model(&User{}).Where("id = ?", task.UserId).
+						Update("quota", gorm.Expr("quota - ?", result.QuotaDelta))
+					if update.Error != nil {
+						return update.Error
+					}
+					if update.RowsAffected != 1 {
+						return fmt.Errorf("task billing user %d not found", task.UserId)
+					}
 				}
 			} else {
 				var subscription UserSubscription
@@ -236,13 +290,25 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 				}
 			}
 
-			if task.PrivateData.TokenId > 0 {
-				if err := tx.Model(&Token{}).Where("id = ?", task.PrivateData.TokenId).Updates(map[string]any{
-					"remain_quota":  gorm.Expr("remain_quota - ?", result.QuotaDelta),
-					"used_quota":    gorm.Expr("used_quota + ?", result.QuotaDelta),
-					"accessed_time": time.Now().Unix(),
-				}).Error; err != nil {
-					return err
+			if tokenPresent && task.PrivateData.TokenId > 0 {
+				afterRemain := int64(token.RemainQuota) - int64(result.QuotaDelta)
+				afterUsed := int64(token.UsedQuota) + int64(result.QuotaDelta)
+				if afterRemain > int64(common.MaxQuota) || afterRemain < -int64(common.MaxQuota)-1 ||
+					afterUsed > int64(common.MaxQuota) || afterUsed < -int64(common.MaxQuota)-1 {
+					return errors.New("task billing token quota arithmetic overflow")
+				}
+				updatedToken := tx.Model(&Token{}).
+					Where("id = ? AND user_id = ?", token.Id, task.UserId).
+					Updates(map[string]any{
+						"remain_quota":  afterRemain,
+						"used_quota":    afterUsed,
+						"accessed_time": time.Now().Unix(),
+					})
+				if updatedToken.Error != nil {
+					return updatedToken.Error
+				}
+				if updatedToken.RowsAffected != 1 {
+					return fmt.Errorf("task billing token %d changed concurrently", token.Id)
 				}
 			}
 
@@ -271,6 +337,9 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 			"actual_quota":         settlement.ActualQuota,
 			"quota_delta":          result.QuotaDelta,
 			"updated_at":           time.Now().Unix(),
+		}
+		if result.TokenUnavailable {
+			updates["last_error"] = "token unavailable; historical quota retained"
 		}
 		updatedRecord := tx.Model(&TaskBillingReconciliation{}).
 			Where("id = ? AND status = ?", id, TaskBillingReconciliationProcessing).

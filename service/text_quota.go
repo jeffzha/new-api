@@ -231,6 +231,18 @@ func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaS
 // effectiveBillingUsage; PostTextConsumeQuota performs that remap once and shares
 // the result with tiered billing, affinity observation and logging.
 func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage) textQuotaSummary {
+	return calculateTextQuotaSummaryWithGroupRatio(ctx, relayInfo, usage, nil)
+}
+
+// calculateTextQuotaSummaryWithGroupRatio calculates the same final usage
+// charge while allowing callers to evaluate a neutral (1.0) group ratio.
+// Agency settlement needs the standard, un-discounted quota for the actual
+// upstream usage; the request's sales ratio is only for the customer charge.
+func calculateTextQuotaSummaryWithGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, groupRatioOverride *float64) textQuotaSummary {
+	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
+	if groupRatioOverride != nil {
+		groupRatio = *groupRatioOverride
+	}
 	summary := textQuotaSummary{
 		ModelName:            relayInfo.OriginModelName,
 		TokenName:            ctx.GetString("token_name"),
@@ -239,7 +251,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		CacheRatio:           relayInfo.PriceData.CacheRatio,
 		ImageRatio:           relayInfo.PriceData.ImageRatio,
 		ModelRatio:           relayInfo.PriceData.ModelRatio,
-		GroupRatio:           relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+		GroupRatio:           groupRatio,
 		ModelPrice:           relayInfo.PriceData.ModelPrice,
 		CacheCreationRatio:   relayInfo.PriceData.CacheCreationRatio,
 		CacheCreationRatio5m: relayInfo.PriceData.CacheCreation5mRatio,
@@ -422,6 +434,27 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 			tieredBillingApplied = true
 			tieredResult = tieredRes
 			summary.Quota = composeTieredTextQuota(relayInfo, summary, tieredQuota, tieredRes)
+		}
+	}
+
+	// The agency quote captured before the upstream request is only a
+	// reservation estimate. For final settlement, replace it with the
+	// un-discounted quota computed from the actual usage so settlement cost and
+	// customer charge use the same usage basis.
+	if relayInfo.AgencyPricing != nil {
+		neutralGroupRatio := 1.0
+		standardSummary := calculateTextQuotaSummaryWithGroupRatio(ctx, relayInfo, billingUsage, &neutralGroupRatio)
+		if tieredBillingApplied && tieredResult != nil {
+			// Tiered expressions expose their actual ungrouped result directly;
+			// only the separately-priced tool surcharge needs to be added.
+			standardQuota, clamp := common.QuotaFromDecimalChecked(
+				decimal.NewFromFloat(tieredResult.ActualQuotaBeforeGroup).
+					Add(standardSummary.ToolCallSurchargeQuota),
+			)
+			noteQuotaClamp(relayInfo, clamp)
+			relayInfo.AgencyStandardQuota = int64(standardQuota)
+		} else {
+			relayInfo.AgencyStandardQuota = int64(standardSummary.Quota)
 		}
 	}
 

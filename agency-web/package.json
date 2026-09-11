@@ -1,0 +1,8 @@
+{
+  "name": "agency-center",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "vite", "build": "tsc -b && vite build" },
+  "dependencies": { "@vitejs/plugin-react": "latest", "@types/react": "latest", "@types/react-dom": "latest", "react": "latest", "react-dom": "latest", "typescript": "latest", "vite": "latest" },
+  "devDependencies": {}
+}

@@ -87,7 +87,8 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 		model.IsAgencyDurableUser(relayInfo.UserId) &&
 		!relayInfo.IsPlayground {
 		var paid int64
-		paid, billingErr = model.TryReserveAgencyWalletAndTokenWithSnapshot(
+		var moneySeq int64
+		paid, moneySeq, billingErr = model.TryReserveAgencyWalletAndTokenWithSequence(
 			relayInfo.UserId,
 			relayInfo.TokenId,
 			task.Quota,
@@ -99,6 +100,9 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 		)
 		if billingErr == nil {
 			relayInfo.AgencyPaidAllocatedQuota += paid
+			if moneySeq > 0 {
+				relayInfo.AgencyMoneySeq = moneySeq
+			}
 			result.FundingApplied = true
 			result.TokenApplied = true
 		}

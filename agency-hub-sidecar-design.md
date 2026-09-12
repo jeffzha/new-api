@@ -866,6 +866,7 @@ outbox不可变，领取/重试状态固定保存在event_deliveries；两行在
 
 | 服务 | 方法与完整Endpoint | 作用 |
 | --- | --- | --- |
+| new-api | GET /api/agency/sso | Root浏览器会话同源桥接页：隐藏iframe主动POST签票，票经postMessage回传hub（不落URL）；白名单AGENCY_SSO_ALLOWED_ORIGIN为空即禁用 |
 | new-api | POST /api/agency/sso-ticket | 仅Root浏览器Session签票 |
 | new-api | POST /api/agency/verify | action/body绑定的高风险验证证明 |
 | new-api | GET /api/agency/effective-pricing?model=... | 当前客户有效价格；原new-api用户鉴权，响应不含C |
@@ -1157,6 +1158,11 @@ AGENCY_HUB_BASE_PATH=/agency
 AGENCY_HUB_PUBLIC_BASE_URL=https://gateway.nexus-reach.com
 AGENCY_HUB_TIMEZONE=Asia/Shanghai
 AGENCY_HUB_SSO_PUBLIC_KEY_FILE=/run/secrets/agency_sso_public.pem
+AGENCY_HUB_PLATFORM_BASE_URL=https://gateway.nexus-reach.com
+AGENCY_HUB_COOKIE_SECURE=true
+AGENCY_SSO_PRIVATE_KEY_FILE=/run/secrets/agency_sso_private.pem
+AGENCY_SSO_KEY_ID=agency-sso-v1
+AGENCY_SSO_ALLOWED_ORIGIN=https://agency.nexus-reach.com
 AGENCY_HUB_BANK_KEY_FILE=/run/secrets/agency_bank_key
 AGENCY_HUB_DELIVERY_KEY_FILE=/run/secrets/agency_delivery_key
 AGENCY_HUB_PRICE_L1_TTL_SECONDS=5

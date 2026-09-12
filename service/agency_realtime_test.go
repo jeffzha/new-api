@@ -2,6 +2,7 @@ package service
 
 import (
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
@@ -123,4 +124,49 @@ func TestRecordAgencyBillingEventUsesActualStandardQuota(t *testing.T) {
 	require.Equal(t, int64(2), journal.ChargedTotalQuota)
 	require.Equal(t, int64(1), journal.SettlementCostQuota)
 	require.Equal(t, int64(1), journal.TheoreticalCommissionQuota)
+}
+
+func TestRecordAgencyBillingEventRollsBackJournalWhenOutboxConflicts(t *testing.T) {
+	// Crash injection between the journal/operation writes and the outbox/delivery
+	// writes: a duplicate outbox event_id forces the insert to fail mid-transaction
+	// (acceptance §22.3「journal 与 outbox/delivery 之间（同事务应整体回滚）」). No
+	// half-transaction may be visible afterwards: the journal and operation rows for
+	// the new charge must be rolled back together with the delivery.
+	db, err := gorm.Open(sqlite.Open("file:agency-finalize-outbox-conflict?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	previousDB := model.DB
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+	require.NoError(t, model.MigrateAgency(db))
+
+	const blockedEvent = "blocked-outbox-event"
+	require.NoError(t, db.Create(&model.AgencyBillingOutbox{
+		EventID: blockedEvent, OperationID: "blocked-op", EventIndex: 0, EventCount: 1,
+		EventKind: "agency.billing_finalized", UserID: 100, MoneySeq: 1,
+		Payload: "{}", PayloadHash: "blocked-hash", SchemaVersion: agencycontract.SchemaVersion, CreatedAtMS: time.Now().UnixMilli(),
+	}).Error)
+
+	info := &relaycommon.RelayInfo{
+		UserId: 100, TokenId: 200, RequestId: "outbox-crash-charge-1",
+		AgencyBillingEventID:     blockedEvent,
+		FinalPreConsumedQuota:    100,
+		AgencyPaidAllocatedQuota: 100,
+		RequestURLPath:           "/v1/chat/completions",
+		AgencyPricing: &agencycontract.PricingSnapshot{
+			AgencyID: 7, BindingID: 11, OriginModelName: "model", ModelKey: "model",
+			SettlementBPS: 7500, SalesBPS: 9000, CommissionEligible: true,
+			CurrencyCode: "TOKENS", QuotaPerUnit: "1", ExchangeRate: "1",
+		},
+	}
+	require.Error(t, RecordAgencyBillingEvent(info, 100, "success"))
+
+	var journalCount, operationCount, deliveryCount, outboxCount int64
+	require.NoError(t, db.Model(&model.AgencyBillingJournal{}).Where("charge_id = ?", info.RequestId).Count(&journalCount).Error)
+	require.NoError(t, db.Model(&model.AgencyBillingOperation{}).Where("charge_id = ?", info.RequestId).Count(&operationCount).Error)
+	require.NoError(t, db.Model(&model.AgencyEventDelivery{}).Where("event_id = ?", blockedEvent).Count(&deliveryCount).Error)
+	require.NoError(t, db.Model(&model.AgencyBillingOutbox{}).Where("event_id = ?", blockedEvent).Count(&outboxCount).Error)
+	require.Zero(t, journalCount, "journal must roll back with the failed outbox insert")
+	require.Zero(t, operationCount, "operation must roll back with the failed outbox insert")
+	require.Zero(t, deliveryCount, "delivery must never be written")
+	require.Equal(t, int64(1), outboxCount, "only the pre-existing blocked outbox remains")
 }

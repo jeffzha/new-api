@@ -174,7 +174,8 @@ func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.Relay
 	if relayInfo.AgencyPricing != nil && relayInfo.RequestId != "" {
 		var reserveErr error
 		if model.IsAgencyDurableUser(relayInfo.UserId) {
-			paid, reserveErr = model.TryReserveAgencyWalletAndTokenWithSnapshot(
+			var moneySeq int64
+			paid, moneySeq, reserveErr = model.TryReserveAgencyWalletAndTokenWithSequence(
 				relayInfo.UserId,
 				relayInfo.TokenId,
 				quota,
@@ -184,6 +185,9 @@ func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.Relay
 				relayInfo.TokenUnlimited,
 				relayInfo.AgencyPricing,
 			)
+			if moneySeq > 0 {
+				relayInfo.AgencyMoneySeq = moneySeq
+			}
 		} else {
 			reserveErr = model.TryReserveUserQuotaAndAgencyWithToken(
 				relayInfo.UserId,
@@ -291,7 +295,8 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 			var paid int64
 			var err error
 			if model.IsAgencyDurableUser(relayInfo.UserId) {
-				paid, err = model.TryReserveAgencyWalletAndTokenWithSnapshot(
+				var moneySeq int64
+				paid, moneySeq, err = model.TryReserveAgencyWalletAndTokenWithSequence(
 					relayInfo.UserId,
 					relayInfo.TokenId,
 					delta,
@@ -301,6 +306,9 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 					relayInfo.TokenUnlimited,
 					relayInfo.AgencyPricing,
 				)
+				if moneySeq > 0 {
+					relayInfo.AgencyMoneySeq = moneySeq
+				}
 			} else {
 				err = model.TryReserveUserQuotaAndAgencyWithToken(
 					relayInfo.UserId,
@@ -592,7 +600,8 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 				}
 				if quota > 0 {
 					var paid int64
-					paid, err = model.TryReserveAgencyWalletAndTokenWithSnapshot(
+					var moneySeq int64
+					paid, moneySeq, err = model.TryReserveAgencyWalletAndTokenWithSequence(
 						relayInfo.UserId,
 						relayInfo.TokenId,
 						quota,
@@ -602,6 +611,9 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 						relayInfo.TokenUnlimited,
 						relayInfo.AgencyPricing,
 					)
+					if moneySeq > 0 {
+						relayInfo.AgencyMoneySeq = moneySeq
+					}
 					relayInfo.AgencyPaidAllocatedQuota += paid
 					tokenAppliedAtomically = err == nil
 				} else if quota < 0 {

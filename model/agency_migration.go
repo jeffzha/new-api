@@ -46,6 +46,16 @@ func AgencyLockForUpdate(tx *gorm.DB) *gorm.DB {
 	return tx.Clauses(clause.Locking{Strength: "UPDATE"})
 }
 
+// agencyKeyColumn returns the dialect-quoted token key column. initCol is
+// normally reached through InitDB during application startup; calling it
+// lazily keeps isolated unit tests that open their own database working.
+func agencyKeyColumn() string {
+	if commonKeyCol == "" {
+		initCol()
+	}
+	return commonKeyCol
+}
+
 func MigrateAgencyWithTimeout(db *gorm.DB, timeout time.Duration) error {
 	if timeout <= 0 {
 		return MigrateAgency(db)

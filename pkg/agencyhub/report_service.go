@@ -528,7 +528,7 @@ func (a *App) getCustomer(c *gin.Context) {
 		respondError(c, http.StatusNotFound, "not_found", "客户不存在", nil)
 		return
 	}
-	respondOK(c, gin.H{"user_id": user.Id, "username": user.Username, "status": user.Status, "created_at": user.CreatedAt})
+	respondOK(c, gin.H{"user_id": strconv.FormatInt(int64(user.Id), 10), "username": user.Username, "status": user.Status, "created_at": strconv.FormatInt(user.CreatedAt, 10)})
 }
 
 func (a *App) customerUsage(c *gin.Context) {
@@ -580,7 +580,7 @@ func (a *App) customerUsage(c *gin.Context) {
 	}
 	items := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, gin.H{"event_id": row.EventID, "user_id": row.UserID, "model": row.OriginModelName, "endpoint": row.Endpoint, "business_status": row.BusinessStatus, "standard_quota": row.StandardQuota, "sales_bps": row.SalesBPS, "charged_quota": row.ChargedQuota, "currency_code": row.CurrencyCode, "skip_reason": row.SkipReason, "occurred_at_ms": row.OccurredAtMS})
+		items = append(items, gin.H{"event_id": row.EventID, "user_id": strconv.FormatInt(row.UserID, 10), "model": row.OriginModelName, "endpoint": row.Endpoint, "business_status": row.BusinessStatus, "standard_quota": strconv.FormatInt(row.StandardQuota, 10), "sales_bps": strconv.Itoa(row.SalesBPS), "charged_quota": strconv.FormatInt(row.ChargedQuota, 10), "currency_code": row.CurrencyCode, "skip_reason": row.SkipReason, "occurred_at_ms": strconv.FormatInt(row.OccurredAtMS, 10)})
 	}
 	nextCursor := ""
 	if hasMore && len(rows) > 0 {
@@ -650,13 +650,13 @@ func (a *App) customerTopups(c *gin.Context) {
 		PaymentReference  string `json:"payment_reference,omitempty"`
 		ActualMoney       string `json:"actual_money,omitempty"`
 		CurrencyCode      string `json:"currency_code"`
-		CreditedQuota     int64  `json:"credited_quota"`
-		PaidQuota         int64  `json:"paid_quota"`
-		BonusQuota        int64  `json:"bonus_quota"`
+		CreditedQuota     string `json:"credited_quota"`
+		PaidQuota         string `json:"paid_quota"`
+		BonusQuota        string `json:"bonus_quota"`
 		CompletionSource  string `json:"completion_source"`
 		PaymentStatus     string `json:"payment_status"`
-		RefundedQuota     int64  `json:"refunded_quota"`
-		OccurredAtMS      int64  `json:"occurred_at_ms"`
+		RefundedQuota     string `json:"refunded_quota"`
+		OccurredAtMS      string `json:"occurred_at_ms"`
 	}
 	items := make([]topupView, 0, len(rows))
 	for _, row := range rows {
@@ -665,13 +665,13 @@ func (a *App) customerTopups(c *gin.Context) {
 			PaymentReference:  maskPaymentReference(row.PaymentReference),
 			ActualMoney:       row.ActualMoney,
 			CurrencyCode:      row.CurrencyCode,
-			CreditedQuota:     row.CreditedQuota,
-			PaidQuota:         row.PaidQuota,
-			BonusQuota:        row.BonusQuota,
+			CreditedQuota:     strconv.FormatInt(row.CreditedQuota, 10),
+			PaidQuota:         strconv.FormatInt(row.PaidQuota, 10),
+			BonusQuota:        strconv.FormatInt(row.BonusQuota, 10),
 			CompletionSource:  row.CompletionSource,
 			PaymentStatus:     row.PaymentStatus,
-			RefundedQuota:     row.RefundedQuota,
-			OccurredAtMS:      row.OccurredAtMS,
+			RefundedQuota:     strconv.FormatInt(row.RefundedQuota, 10),
+			OccurredAtMS:      strconv.FormatInt(row.OccurredAtMS, 10),
 		})
 	}
 	nextCursor := ""
@@ -745,13 +745,22 @@ func (a *App) reportSummary(c *gin.Context) {
 	}
 
 	type reportItem struct {
-		UserID           int64  `json:"user_id"`
+		UserID           string `json:"user_id"`
 		Model            string `json:"model"`
 		CurrencyCode     string `json:"currency_code"`
-		Calls            int64  `json:"calls"`
-		ChargedQuota     int64  `json:"charged_quota"`
-		CommissionMicros int64  `json:"commission_micros"`
-		ReversalMicros   int64  `json:"reversal_micros"`
+		Calls            string `json:"calls"`
+		ChargedQuota     string `json:"charged_quota"`
+		CommissionMicros string `json:"commission_micros"`
+		ReversalMicros   string `json:"reversal_micros"`
+	}
+	type reportAggregate struct {
+		UserID           int64
+		Model            string
+		CurrencyCode     string
+		Calls            int64
+		ChargedQuota     int64
+		CommissionMicros int64
+		ReversalMicros   int64
 	}
 	itemByKey := make(map[string]*reportItem)
 	itemKey := func(userID int64, modelName, currency string) string {
@@ -768,7 +777,7 @@ func (a *App) reportSummary(c *gin.Context) {
 	if currencyFilter != "" {
 		usageQuery = usageQuery.Where("currency_code = ?", currencyFilter)
 	}
-	var usageItems []reportItem
+	var usageItems []reportAggregate
 	if err := usageQuery.Select("user_id, origin_model_name AS model, currency_code, COUNT(*) AS calls, COALESCE(SUM(charged_quota), 0) AS charged_quota").
 		Group("user_id, origin_model_name, currency_code").Find(&usageItems).Error; err != nil {
 		respondError(c, http.StatusInternalServerError, "database_error", err.Error(), nil)
@@ -776,7 +785,11 @@ func (a *App) reportSummary(c *gin.Context) {
 	}
 	for index := range usageItems {
 		item := &usageItems[index]
-		itemByKey[itemKey(item.UserID, item.Model, item.CurrencyCode)] = item
+		itemByKey[itemKey(item.UserID, item.Model, item.CurrencyCode)] = &reportItem{
+			UserID: strconv.FormatInt(item.UserID, 10), Model: item.Model, CurrencyCode: item.CurrencyCode,
+			Calls: strconv.FormatInt(item.Calls, 10), ChargedQuota: strconv.FormatInt(item.ChargedQuota, 10),
+			CommissionMicros: "0", ReversalMicros: "0",
+		}
 	}
 
 	commissionQuery := a.db.Model(&model.AgencyCommissionLedger{}).
@@ -807,27 +820,29 @@ func (a *App) reportSummary(c *gin.Context) {
 		key := itemKey(commission.UserID, commission.Model, commission.CurrencyCode)
 		item := itemByKey[key]
 		if item == nil {
-			item = &reportItem{UserID: commission.UserID, Model: commission.Model, CurrencyCode: commission.CurrencyCode}
+			item = &reportItem{UserID: strconv.FormatInt(commission.UserID, 10), Model: commission.Model, CurrencyCode: commission.CurrencyCode, Calls: "0", ChargedQuota: "0", CommissionMicros: "0", ReversalMicros: "0"}
 			itemByKey[key] = item
 		}
 		if commission.EntryType == "reversal" {
+			value := parseReportInt(item.ReversalMicros)
 			if commission.AmountMicros < 0 {
-				item.ReversalMicros += -commission.AmountMicros
+				value += -commission.AmountMicros
 			} else {
-				item.ReversalMicros += commission.AmountMicros
+				value += commission.AmountMicros
 			}
+			item.ReversalMicros = strconv.FormatInt(value, 10)
 		} else {
-			item.CommissionMicros += commission.AmountMicros
+			item.CommissionMicros = strconv.FormatInt(parseReportInt(item.CommissionMicros)+commission.AmountMicros, 10)
 		}
 	}
 	items := make([]reportItem, 0, len(itemByKey))
-	var total reportItem
+	var total reportAggregate
 	for _, item := range itemByKey {
 		items = append(items, *item)
-		total.Calls += item.Calls
-		total.ChargedQuota += item.ChargedQuota
-		total.CommissionMicros += item.CommissionMicros
-		total.ReversalMicros += item.ReversalMicros
+		total.Calls += parseReportInt(item.Calls)
+		total.ChargedQuota += parseReportInt(item.ChargedQuota)
+		total.CommissionMicros += parseReportInt(item.CommissionMicros)
+		total.ReversalMicros += parseReportInt(item.ReversalMicros)
 	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Model != items[j].Model {
@@ -836,17 +851,25 @@ func (a *App) reportSummary(c *gin.Context) {
 		if items[i].CurrencyCode != items[j].CurrencyCode {
 			return items[i].CurrencyCode < items[j].CurrencyCode
 		}
-		return items[i].UserID < items[j].UserID
+		return parseReportInt(items[i].UserID) < parseReportInt(items[j].UserID)
 	})
 	respondOK(c, gin.H{
-		"start_at_ms":       startMS,
-		"end_at_ms":         endMS,
-		"calls":             total.Calls,
-		"charged_quota":     total.ChargedQuota,
-		"commission_micros": total.CommissionMicros,
-		"reversal_micros":   total.ReversalMicros,
+		"start_at_ms":       strconv.FormatInt(startMS, 10),
+		"end_at_ms":         strconv.FormatInt(endMS, 10),
+		"calls":             strconv.FormatInt(total.Calls, 10),
+		"charged_quota":     strconv.FormatInt(total.ChargedQuota, 10),
+		"commission_micros": strconv.FormatInt(total.CommissionMicros, 10),
+		"reversal_micros":   strconv.FormatInt(total.ReversalMicros, 10),
 		"items":             items,
 	})
+}
+
+func parseReportInt(value string) int64 {
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return parsed
 }
 
 func reportRange(c *gin.Context) (int64, int64, error) {

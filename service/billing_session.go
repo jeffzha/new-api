@@ -61,11 +61,14 @@ func (s *BillingSession) Settle(actualQuota int) error {
 			if ok {
 				durable := model.IsAgencyDurableUser(wallet.userId)
 				if delta > 0 && durable {
-					paid, err := model.TryReserveAgencyWalletAndTokenWithSnapshot(wallet.userId, s.relayInfo.TokenId, delta, s.relayInfo.TokenKey, s.agencyChargeID, int64(actualQuota), s.relayInfo.TokenUnlimited, s.relayInfo.AgencyPricing)
+					paid, moneySeq, err := model.TryReserveAgencyWalletAndTokenWithSequence(wallet.userId, s.relayInfo.TokenId, delta, s.relayInfo.TokenKey, s.agencyChargeID, int64(actualQuota), s.relayInfo.TokenUnlimited, s.relayInfo.AgencyPricing)
 					if err != nil {
 						return err
 					}
 					s.agencyPaidReserved += paid
+					if moneySeq > 0 {
+						s.relayInfo.AgencyMoneySeq = moneySeq
+					}
 					wallet.consumed += delta
 					s.agencyAtomicFunding = true
 				} else if delta < 0 && durable {
@@ -259,9 +262,10 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 			s.agencyChargeID = s.relayInfo.RequestId
 		}
 		var paid int64
+		var moneySeq int64
 		var err error
 		if model.IsAgencyDurableUser(s.relayInfo.UserId) {
-			paid, err = model.TryReserveAgencyWalletAndTokenWithSnapshot(
+			paid, moneySeq, err = model.TryReserveAgencyWalletAndTokenWithSequence(
 				s.relayInfo.UserId,
 				s.relayInfo.TokenId,
 				delta,
@@ -273,12 +277,15 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 			)
 			s.agencyAtomicFunding = true
 		} else {
-			paid, err = model.ReserveAgencyFunding(int64(s.relayInfo.UserId), s.agencyChargeID, int64(targetQuota))
+			paid, moneySeq, err = model.ReserveAgencyFundingWithSequence(int64(s.relayInfo.UserId), s.agencyChargeID, int64(targetQuota))
 		}
 		if err != nil {
 			common.SysError("agency funding extra reservation mirror failed: " + err.Error())
 		} else {
 			s.agencyPaidReserved += paid
+			if moneySeq > 0 {
+				s.relayInfo.AgencyMoneySeq = moneySeq
+			}
 		}
 	}
 	s.syncRelayInfo()
@@ -314,7 +321,11 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 		if ok {
 			var paid int64
 			if model.IsAgencyDurableUser(wallet.userId) {
-				paid, fundingErr = model.TryReserveAgencyWalletAndTokenWithSnapshot(wallet.userId, s.relayInfo.TokenId, effectiveQuota, s.relayInfo.TokenKey, s.agencyChargeID, int64(effectiveQuota), s.relayInfo.TokenUnlimited, s.relayInfo.AgencyPricing)
+				var moneySeq int64
+				paid, moneySeq, fundingErr = model.TryReserveAgencyWalletAndTokenWithSequence(wallet.userId, s.relayInfo.TokenId, effectiveQuota, s.relayInfo.TokenKey, s.agencyChargeID, int64(effectiveQuota), s.relayInfo.TokenUnlimited, s.relayInfo.AgencyPricing)
+				if moneySeq > 0 {
+					s.relayInfo.AgencyMoneySeq = moneySeq
+				}
 			} else {
 				fundingErr = model.TryReserveUserQuotaAndAgencyWithToken(wallet.userId, s.relayInfo.TokenId, effectiveQuota, s.relayInfo.TokenKey, s.agencyChargeID, int64(effectiveQuota), s.relayInfo.TokenUnlimited)
 			}
@@ -375,11 +386,14 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 	s.preConsumedQuota = effectiveQuota
 	if s.relayInfo.AgencyPricing != nil && s.funding.Source() == BillingSourceWallet && s.relayInfo.RequestId != "" && effectiveQuota > 0 && s.agencyChargeID == "" {
 		s.agencyChargeID = s.relayInfo.RequestId
-		paid, err := model.ReserveAgencyFunding(int64(s.relayInfo.UserId), s.agencyChargeID, int64(effectiveQuota))
+		paid, moneySeq, err := model.ReserveAgencyFundingWithSequence(int64(s.relayInfo.UserId), s.agencyChargeID, int64(effectiveQuota))
 		if err != nil {
 			common.SysError("agency funding reservation mirror failed: " + err.Error())
 		} else {
 			s.agencyPaidReserved = paid
+			if moneySeq > 0 {
+				s.relayInfo.AgencyMoneySeq = moneySeq
+			}
 		}
 	}
 
@@ -397,7 +411,8 @@ func (s *BillingSession) reserveFunding(delta int) error {
 			var paid int64
 			var err error
 			if durable {
-				paid, err = model.TryReserveAgencyWalletAndTokenWithSnapshot(
+				var moneySeq int64
+				paid, moneySeq, err = model.TryReserveAgencyWalletAndTokenWithSequence(
 					funding.userId,
 					s.relayInfo.TokenId,
 					delta,
@@ -407,6 +422,9 @@ func (s *BillingSession) reserveFunding(delta int) error {
 					s.relayInfo.TokenUnlimited,
 					s.relayInfo.AgencyPricing,
 				)
+				if moneySeq > 0 {
+					s.relayInfo.AgencyMoneySeq = moneySeq
+				}
 				s.agencyAtomicFunding = true
 			} else {
 				err = model.TryReserveUserQuotaAndAgencyWithToken(
@@ -580,11 +598,14 @@ func (s *BillingSession) syncAgencyFunding(actualQuota int) {
 		s.agencyChargeID = s.relayInfo.RequestId
 	}
 	if actualQuota > s.preConsumedQuota {
-		paid, err := model.ReserveAgencyFunding(int64(s.relayInfo.UserId), s.agencyChargeID, int64(actualQuota))
+		paid, moneySeq, err := model.ReserveAgencyFundingWithSequence(int64(s.relayInfo.UserId), s.agencyChargeID, int64(actualQuota))
 		if err != nil {
 			common.SysError("agency funding settlement mirror failed: " + err.Error())
 		} else {
 			s.agencyPaidReserved += paid
+			if moneySeq > 0 {
+				s.relayInfo.AgencyMoneySeq = moneySeq
+			}
 		}
 	} else if actualQuota < s.preConsumedQuota {
 		release := int64(s.preConsumedQuota - actualQuota)

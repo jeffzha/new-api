@@ -294,7 +294,7 @@ func SetAgencyQuotaAbsolute(userID int64, target int, sourceKind string) error {
 		return ErrAgencyFundingUnavailable
 	}
 	var delta int64
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := runAgencyFundingTransaction(func(tx *gorm.DB) error {
 		var user User
 		if err := AgencyLockForUpdate(tx).Select("id, quota, billing_mode").First(&user, userID).Error; err != nil {
 			return err
@@ -454,7 +454,7 @@ func TryReserveUserQuotaAndAgencyWithToken(userID, tokenID, amount int, tokenKey
 	if userID <= 0 || tokenID <= 0 || amount < 0 || fundingTarget < 0 || strings.TrimSpace(chargeID) == "" {
 		return ErrAgencyFundingUnavailable
 	}
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := runAgencyFundingTransaction(func(tx *gorm.DB) error {
 		var user User
 		if err := AgencyLockForUpdate(tx).Select("id, quota, billing_mode").First(&user, userID).Error; err != nil {
 			return err
@@ -471,7 +471,7 @@ func TryReserveUserQuotaAndAgencyWithToken(userID, tokenID, amount int, tokenKey
 
 		query := AgencyLockForUpdate(tx).Where("id = ?", tokenID)
 		if strings.TrimSpace(tokenKey) != "" {
-			query = query.Where("key = ?", tokenKey)
+			query = query.Where(agencyKeyColumn()+" = ?", tokenKey)
 		}
 		var token Token
 		if err := query.First(&token).Error; err != nil {
@@ -509,7 +509,12 @@ func TryReserveUserQuotaAndAgencyWithToken(userID, tokenID, amount int, tokenKey
 
 func agencyFundingAllocatedTx(tx *gorm.DB, userID int64, chargeID string) (int64, error) {
 	var rows []AgencyFundingAllocation
-	if err := AgencyLockForUpdate(tx).
+	// Every caller holds a per-user lock (the user account row or the
+	// funding account row) before this read, so a plain read is safe:
+	// same-user replays are already serialized and a FOR UPDATE scan on
+	// the global idx_agency_alloc_charge tail would deadlock concurrent
+	// time-prefixed charge inserts on MySQL (1213).
+	if err := tx.
 		Where("user_id = ? AND charge_id = ? AND (reserved > 0 OR consumed > 0 OR nonpaid_consumed > 0 OR debt_consumed > 0)", userID, chargeID).
 		Find(&rows).Error; err != nil {
 		return 0, err
@@ -572,7 +577,8 @@ func agencyFundingAllocationActiveTotal(row AgencyFundingAllocation) (int64, err
 // one database transaction, including token remain/used accounting. Redis is
 // updated only after commit and is never used to decide success.
 func TryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, chargeID string, fundingTarget int64, unlimited bool) (int64, error) {
-	return tryReserveAgencyWalletAndToken(userID, tokenID, amount, tokenKey, chargeID, fundingTarget, unlimited, nil)
+	paid, _, err := TryReserveAgencyWalletAndTokenWithSequence(userID, tokenID, amount, tokenKey, chargeID, fundingTarget, unlimited, nil)
+	return paid, err
 }
 
 // TryReserveAgencyWalletAndTokenWithSnapshot is the quote-acceptance variant.
@@ -580,16 +586,26 @@ func TryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, charg
 // while the user/token/funding rows are locked, so a quote cannot be accepted
 // after an agency was disabled, transferred, or republished.
 func TryReserveAgencyWalletAndTokenWithSnapshot(userID, tokenID, amount int, tokenKey, chargeID string, fundingTarget int64, unlimited bool, snapshot *agencycontract.PricingSnapshot) (int64, error) {
+	paid, _, err := TryReserveAgencyWalletAndTokenWithSequence(userID, tokenID, amount, tokenKey, chargeID, fundingTarget, unlimited, snapshot)
+	return paid, err
+}
+
+// TryReserveAgencyWalletAndTokenWithSequence is the sequence-aware variant
+// used by the gateway financial event path. The returned money sequence is
+// read from the same locked funding-account transaction that applies the
+// reservation, so the event cannot race with a later wallet mutation.
+func TryReserveAgencyWalletAndTokenWithSequence(userID, tokenID, amount int, tokenKey, chargeID string, fundingTarget int64, unlimited bool, snapshot *agencycontract.PricingSnapshot) (int64, int64, error) {
 	return tryReserveAgencyWalletAndToken(userID, tokenID, amount, tokenKey, chargeID, fundingTarget, unlimited, snapshot)
 }
 
-func tryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, chargeID string, fundingTarget int64, unlimited bool, snapshot *agencycontract.PricingSnapshot) (int64, error) {
+func tryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, chargeID string, fundingTarget int64, unlimited bool, snapshot *agencycontract.PricingSnapshot) (int64, int64, error) {
 	if userID <= 0 || amount < 0 || strings.TrimSpace(chargeID) == "" || fundingTarget < 0 {
-		return 0, ErrAgencyFundingUnavailable
+		return 0, 0, ErrAgencyFundingUnavailable
 	}
 	var paid int64
+	var moneySeq int64
 	deducted := false
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := runAgencyFundingTransaction(func(tx *gorm.DB) error {
 		var user User
 		if err := AgencyLockForUpdate(tx).Select("id, quota, billing_mode").First(&user, userID).Error; err != nil {
 			return err
@@ -617,6 +633,11 @@ func tryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, charg
 			return err
 		}
 		if fundingTarget <= allocated {
+			var account AgencyFundingAccount
+			if err := AgencyLockForUpdate(tx).Where("user_id = ?", userID).First(&account).Error; err != nil {
+				return err
+			}
+			moneySeq = account.MoneySeq
 			return nil
 		}
 		if user.Quota < amount {
@@ -626,7 +647,7 @@ func tryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, charg
 			var token Token
 			query := AgencyLockForUpdate(tx).Where("id = ?", tokenID)
 			if strings.TrimSpace(tokenKey) != "" {
-				query = query.Where("key = ?", tokenKey)
+				query = query.Where(agencyKeyColumn()+" = ?", tokenKey)
 			}
 			if err := query.First(&token).Error; err != nil {
 				return err
@@ -653,6 +674,14 @@ func tryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, charg
 		}
 		paid, err = reserveAgencyFundingTx(tx, int64(userID), chargeID, fundingTarget)
 		deducted = amount > 0
+		if err != nil {
+			return err
+		}
+		var account AgencyFundingAccount
+		if err := AgencyLockForUpdate(tx).Where("user_id = ?", userID).First(&account).Error; err != nil {
+			return err
+		}
+		moneySeq = account.MoneySeq
 		return err
 	})
 	if err == nil && deducted {
@@ -667,7 +696,7 @@ func tryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, charg
 			}
 		}
 	}
-	return paid, err
+	return paid, moneySeq, err
 }
 
 // ValidateAgencyPricingSnapshotTx verifies the immutable quote against the
@@ -747,7 +776,7 @@ func ReleaseAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, chargeID
 		}
 		query := AgencyLockForUpdate(tx).Where("id = ?", tokenID)
 		if strings.TrimSpace(tokenKey) != "" {
-			query = query.Where("key = ?", tokenKey)
+			query = query.Where(agencyKeyColumn()+" = ?", tokenKey)
 		}
 		var token Token
 		if err := query.First(&token).Error; err != nil {
@@ -868,7 +897,7 @@ func ReleaseUserQuotaAndAgencyWithToken(userID, tokenID, amount int, tokenKey, c
 
 		query := AgencyLockForUpdate(tx).Where("id = ?", tokenID)
 		if strings.TrimSpace(tokenKey) != "" {
-			query = query.Where("key = ?", tokenKey)
+			query = query.Where(agencyKeyColumn()+" = ?", tokenKey)
 		}
 		var token Token
 		if err := query.First(&token).Error; err != nil {
@@ -1563,13 +1592,36 @@ func compactAgencyFundingReversalCharges(charges []AgencyFundingReversalCharge) 
 // calls idempotent. It returns the newly allocated portion attributable to
 // paid lots; the remainder is non-paid or debt and cannot earn commission.
 func ReserveAgencyFunding(userID int64, chargeID string, amount int64) (int64, error) {
-	var paid int64
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	paid, _, err := ReserveAgencyFundingWithSequence(userID, chargeID, amount)
+	return paid, err
+}
+
+// ReserveAgencyFundingWithSequence mirrors a completed wallet reservation and
+// returns the authoritative per-user money sequence from the same transaction.
+// Non-durable users return sequence zero and preserve the legacy no-op behavior.
+func ReserveAgencyFundingWithSequence(userID int64, chargeID string, amount int64) (int64, int64, error) {
+	var paid, moneySeq int64
+	err := runAgencyFundingTransaction(func(tx *gorm.DB) error {
 		var err error
 		paid, err = reserveAgencyFundingTx(tx, userID, chargeID, amount)
-		return err
+		if err != nil {
+			return err
+		}
+		var user User
+		if err := tx.Select("billing_mode").First(&user, userID).Error; err != nil {
+			return err
+		}
+		if user.BillingMode != AgencyDurableBillingMode {
+			return nil
+		}
+		var account AgencyFundingAccount
+		if err := AgencyLockForUpdate(tx).Where("user_id = ?", userID).First(&account).Error; err != nil {
+			return err
+		}
+		moneySeq = account.MoneySeq
+		return nil
 	})
-	return paid, err
+	return paid, moneySeq, err
 }
 
 // ReserveAgencyFundingTx is the transaction-scoped variant used by task
@@ -1594,8 +1646,19 @@ func reserveAgencyFundingTx(tx *gorm.DB, userID int64, chargeID string, amount i
 		if err := EnsureAgencyFundingAccount(tx, userID); err != nil {
 			return err
 		}
+		// Lock the funding account row before the idempotency check: this
+		// serializes every reserve for the same user (so the plain read below
+		// is a safe replay check) and avoids InnoDB next-key/gap locks on the
+		// global idx_agency_alloc_charge index tail. Charge ids are
+		// time-prefixed, so a FOR UPDATE existence scan always lands on the
+		// index supremum whose shared gap lock deadlocks concurrent inserts
+		// (MySQL 1213) across different users.
+		var account AgencyFundingAccount
+		if err := AgencyLockForUpdate(tx).Where("user_id = ?", userID).First(&account).Error; err != nil {
+			return err
+		}
 		var existing []AgencyFundingAllocation
-		if err := AgencyLockForUpdate(tx).Where("charge_id = ? AND (reserved > 0 OR consumed > 0 OR nonpaid_consumed > 0 OR debt_consumed > 0)", chargeID).Find(&existing).Error; err != nil {
+		if err := tx.Where("charge_id = ? AND (reserved > 0 OR consumed > 0 OR nonpaid_consumed > 0 OR debt_consumed > 0)", chargeID).Find(&existing).Error; err != nil {
 			return err
 		}
 		var allocated int64
@@ -1616,10 +1679,6 @@ func reserveAgencyFundingTx(tx *gorm.DB, userID int64, chargeID string, amount i
 			return nil
 		}
 		amount -= allocated
-		var account AgencyFundingAccount
-		if err := AgencyLockForUpdate(tx).Where("user_id = ?", userID).First(&account).Error; err != nil {
-			return err
-		}
 		remaining := amount
 		var lots []AgencyFundingLot
 		if err := AgencyLockForUpdate(tx).Where("user_id = ? AND (paid_available > 0 OR bonus_available > 0)", userID).Order("money_seq ASC, id ASC").Find(&lots).Error; err != nil {

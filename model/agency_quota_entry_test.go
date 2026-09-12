@@ -224,3 +224,96 @@ func TestSettleTaskBillingReconciliationRejectsProvisioningUser(t *testing.T) {
 	require.NoError(t, DB.First(&storedRecord, record.ID).Error)
 	assert.Equal(t, TaskBillingReconciliationProcessing, storedRecord.Status)
 }
+
+func createDurableQuotaUser(t *testing.T, id int, usernamePrefix string, quota int) User {
+	t.Helper()
+	user := User{
+		Id:             int(id),
+		Username:       usernamePrefix + "-" + common.GetRandomString(8),
+		Password:       "unused-password-hash",
+		Role:           common.RoleCommonUser,
+		Status:         common.UserStatusEnabled,
+		Group:          "default",
+		Quota:          quota,
+		AffCode:        usernamePrefix + "-" + common.GetRandomString(8),
+		BillingMode:    AgencyDurableBillingMode,
+		FundingVersion: 1,
+	}
+	require.NoError(t, DB.Create(&user).Error)
+	return user
+}
+
+func TestAdminQuotaAddSubtractOverrideProjectsAgencyFunding(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, MigrateAgency(DB))
+
+	user := createDurableQuotaUser(t, 920101, "agency-admin-quota", 100)
+
+	require.NoError(t, IncreaseUserQuota(user.Id, 50, true))
+	var stored User
+	require.NoError(t, DB.First(&stored, user.Id).Error)
+	assert.Equal(t, 150, stored.Quota)
+	var account AgencyFundingAccount
+	require.NoError(t, DB.Where("user_id = ?", user.Id).First(&account).Error)
+	assert.Equal(t, int64(50), account.NonpaidAvailable)
+	assert.Equal(t, int64(100), account.PaidAvailable)
+	var ledger AgencyFundingLedger
+	require.NoError(t, DB.Where("user_id = ? AND source_kind = ?", user.Id, "quota_grant").First(&ledger).Error)
+	assert.Equal(t, int64(50), ledger.NonpaidDelta)
+
+	require.NoError(t, DecreaseUserQuota(user.Id, 30, true))
+	require.NoError(t, DB.First(&stored, user.Id).Error)
+	assert.Equal(t, 120, stored.Quota)
+	require.NoError(t, DB.Where("user_id = ?", user.Id).First(&account).Error)
+	assert.Equal(t, int64(20), account.NonpaidAvailable)
+	var debit AgencyFundingLedger
+	require.NoError(t, DB.Where("user_id = ? AND source_kind = ?", user.Id, "quota_debit").First(&debit).Error)
+	assert.Equal(t, int64(-30), debit.NonpaidDelta)
+
+	require.NoError(t, SetAgencyQuotaAbsolute(int64(user.Id), 200, "admin_override"))
+	require.NoError(t, DB.First(&stored, user.Id).Error)
+	assert.Equal(t, 200, stored.Quota)
+	require.NoError(t, DB.Where("user_id = ?", user.Id).First(&account).Error)
+	assert.Equal(t, int64(100), account.NonpaidAvailable)
+	var override AgencyFundingLedger
+	require.NoError(t, DB.Where("user_id = ? AND source_kind = ?", user.Id, "admin_override").First(&override).Error)
+	assert.Equal(t, int64(80), override.NonpaidDelta)
+}
+
+func TestAdminQuotaAddSubtractRejectsProvisioningUser(t *testing.T) {
+	truncateTables(t)
+	user := createProvisioningQuotaUser(t, 100)
+
+	require.ErrorIs(t, IncreaseUserQuota(user.Id, 10, true), ErrAgencyProvisioning)
+	require.ErrorIs(t, DecreaseUserQuota(user.Id, 10, true), ErrAgencyProvisioning)
+
+	var stored User
+	require.NoError(t, DB.First(&stored, user.Id).Error)
+	assert.Equal(t, 100, stored.Quota)
+}
+
+func TestAdminQuotaAddLeavesLegacyUserOnQuotaOnlyPath(t *testing.T) {
+	truncateTables(t)
+	user := User{
+		Id:          920102,
+		Username:    "agency-legacy-admin-" + common.GetRandomString(8),
+		Password:    "unused-password-hash",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+		Quota:       100,
+		AffCode:     "agency-legacy-admin-" + common.GetRandomString(8),
+		AuthVersion: 1,
+	}
+	require.NoError(t, DB.Create(&user).Error)
+
+	require.NoError(t, IncreaseUserQuota(user.Id, 50, true))
+	require.NoError(t, DecreaseUserQuota(user.Id, 25, true))
+	var stored User
+	require.NoError(t, DB.First(&stored, user.Id).Error)
+	assert.Equal(t, 125, stored.Quota)
+
+	var accounts int64
+	require.NoError(t, DB.Model(&AgencyFundingAccount{}).Where("user_id = ?", user.Id).Count(&accounts).Error)
+	assert.Zero(t, accounts)
+}

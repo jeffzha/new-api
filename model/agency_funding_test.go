@@ -504,3 +504,81 @@ func TestReleaseAgencyWalletAndTokenIsAtomic(t *testing.T) {
 	require.NoError(t, db.Where("charge_id = ?", "realtime-atomic-1").First(&allocation).Error)
 	require.Equal(t, int64(30), allocation.Consumed)
 }
+
+func TestAdjustAgencyChargeSettlesDurableDeltaAccurately(t *testing.T) {
+	dsn := "file:agency-adjust-charge-delta-test?" + strings.ReplaceAll(t.Name(), "/", "-") + "&mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&User{}, &Token{}))
+	require.NoError(t, MigrateAgency(db))
+
+	previousDB := DB
+	DB = db
+	t.Cleanup(func() { DB = previousDB })
+
+	// Durable user whose users.quota mirrors total funding availability; topup
+	// creates 100 paid + 50 bonus availability. Reserve via the production
+	// wallet path so users.quota, the token and the funding projection stay in
+	// lock-step (acceptance §22.1：预扣100最终100/60/150 多退少补与 debt 准确).
+	user := User{
+		Username: "agency-adjust-delta-user", Password: "password",
+		Role: common.RoleCommonUser, Status: common.UserStatusEnabled,
+		BillingMode: AgencyDurableBillingMode, FundingVersion: 1, Quota: 150,
+	}
+	require.NoError(t, db.Create(&user).Error)
+	// Create a zeroed funding account explicitly so EnsureAgencyFundingAccount
+	// does not seed users.quota back into paid availability; the topup then owns
+	// the 100 paid / 50 bonus availability mirrored by users.quota=150.
+	require.NoError(t, db.Create(&AgencyFundingAccount{UserID: int64(user.Id), Version: 1}).Error)
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		return RecordAgencyTopup(tx, int64(user.Id), "payment", "topup-adjust-delta", "payment_callback", 100, 50)
+	}))
+	token := Token{
+		UserId: user.Id, Key: "agency-adjust-delta-key",
+		Status: common.TokenStatusEnabled, UnlimitedQuota: true,
+	}
+	require.NoError(t, db.Create(&token).Error)
+	_, seq, err := TryReserveAgencyWalletAndTokenWithSequence(
+		user.Id, token.Id, 100, token.Key, "delta-charge-1", 100, true, nil,
+	)
+	require.NoError(t, err)
+	require.Positive(t, seq)
+
+	var reservedUser User
+	require.NoError(t, db.First(&reservedUser, user.Id).Error)
+	require.Equal(t, 50, reservedUser.Quota, "reserve 100 from 150 available")
+
+	// Over-charge at settle (pre-consumed 100, final 60): refund 40 to the wallet
+	// and shrink the allocation, without creating debt.
+	require.NoError(t, AdjustAgencyCharge(user.Id, -40, "delta-charge-1", 60))
+	var refundedUser User
+	require.NoError(t, db.First(&refundedUser, user.Id).Error)
+	require.Equal(t, 90, refundedUser.Quota, "refunded 40 back into available")
+	var refundedAccount AgencyFundingAccount
+	require.NoError(t, db.Where("user_id = ?", user.Id).First(&refundedAccount).Error)
+	require.Equal(t, int64(40), refundedAccount.PaidAvailable, "refund restores paid availability first")
+	allocated, err := agencyFundingAllocatedTx(db, int64(user.Id), "delta-charge-1")
+	require.NoError(t, err)
+	require.Equal(t, int64(60), allocated, "allocation shrinks to the settled amount")
+
+	// Under-charge at settle for a second charge (reserved 40, final 55): reserve
+	// an extra 15 and drain the wallet, keeping the allocation at the final amount.
+	_, seq, err = TryReserveAgencyWalletAndTokenWithSequence(
+		user.Id, token.Id, 40, token.Key, "delta-charge-2", 40, true, nil,
+	)
+	require.NoError(t, err)
+	require.Positive(t, seq)
+	require.NoError(t, AdjustAgencyCharge(user.Id, 15, "delta-charge-2", 55))
+	var extraUser User
+	require.NoError(t, db.First(&extraUser, user.Id).Error)
+	require.Equal(t, 35, extraUser.Quota, "extra 15 charged from available")
+	allocatedExtra, err := agencyFundingAllocatedTx(db, int64(user.Id), "delta-charge-2")
+	require.NoError(t, err)
+	require.Equal(t, int64(55), allocatedExtra, "allocation grows to the settled amount")
+
+	var allocationCount int64
+	require.NoError(t, db.Model(&AgencyFundingAllocation{}).
+		Where("user_id = ? AND reserved <= 0 AND consumed <= 0 AND nonpaid_consumed <= 0 AND debt_consumed <= 0", user.Id).
+		Count(&allocationCount).Error)
+	require.Zero(t, allocationCount, "no dangling fully-zeroed reservation rows")
+}

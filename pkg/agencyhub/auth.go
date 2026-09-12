@@ -37,7 +37,7 @@ func (a *App) authNonce(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "nonce_failed", "unable to create nonce", nil)
 		return
 	}
-	c.SetCookie("agency_login_nonce", nonce, 300, a.config.BasePath, "", true, true)
+	c.SetCookie("agency_login_nonce", nonce, 300, a.config.BasePath, "", a.config.CookieSecure, true)
 	respondOK(c, gin.H{"nonce": nonce, "expires_in": 300})
 }
 
@@ -56,7 +56,7 @@ func (a *App) login(c *gin.Context) {
 		respondError(c, http.StatusUnauthorized, "invalid_nonce", "登录请求已失效", nil)
 		return
 	}
-	c.SetCookie("agency_login_nonce", "", -1, a.config.BasePath, "", true, true)
+	c.SetCookie("agency_login_nonce", "", -1, a.config.BasePath, "", a.config.CookieSecure, true)
 	normalized := strings.ToLower(request.Username)
 	var account model.AgencyOperatorAccount
 	err := a.db.Where("normalized_username = ?", normalized).First(&account).Error
@@ -118,8 +118,8 @@ func (a *App) setSessionCookies(c *gin.Context, sessionToken, csrf string, expir
 	if maxAge < 0 {
 		maxAge = 0
 	}
-	c.SetCookie(a.config.CookieName, sessionToken, maxAge, a.config.BasePath, "", true, true)
-	c.SetCookie("agency_csrf", csrf, maxAge, a.config.BasePath, "", true, false)
+	c.SetCookie(a.config.CookieName, sessionToken, maxAge, a.config.BasePath, "", a.config.CookieSecure, true)
+	c.SetCookie("agency_csrf", csrf, maxAge, a.config.BasePath, "", a.config.CookieSecure, false)
 }
 
 func (a *App) sessionMiddleware() gin.HandlerFunc {
@@ -288,8 +288,8 @@ func (a *App) logout(c *gin.Context) {
 	if identity != nil {
 		_ = a.db.Model(&model.AgencySession{}).Where("id = ?", identity.SessionID).Update("revoked_at", now).Error
 	}
-	c.SetCookie(a.config.CookieName, "", -1, a.config.BasePath, "", true, true)
-	c.SetCookie("agency_csrf", "", -1, a.config.BasePath, "", true, false)
+	c.SetCookie(a.config.CookieName, "", -1, a.config.BasePath, "", a.config.CookieSecure, true)
+	c.SetCookie("agency_csrf", "", -1, a.config.BasePath, "", a.config.CookieSecure, false)
 	respondOK(c, gin.H{"logged_out": true})
 }
 

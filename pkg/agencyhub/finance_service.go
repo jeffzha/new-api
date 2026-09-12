@@ -486,7 +486,21 @@ func (a *App) commissionSummary(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "database_error", err.Error(), nil)
 		return
 	}
-	respondOK(c, gin.H{"items": balances})
+	items := make([]gin.H, 0, len(balances))
+	for _, balance := range balances {
+		items = append(items, gin.H{
+			"agency_id":        strconv.FormatInt(balance.AgencyID, 10),
+			"currency_code":    balance.CurrencyCode,
+			"earned_micros":    strconv.FormatInt(balance.EarnedMicros, 10),
+			"reversed_micros":  strconv.FormatInt(balance.ReversedMicros, 10),
+			"available_micros": strconv.FormatInt(balance.AvailableMicros, 10),
+			"locked_micros":    strconv.FormatInt(balance.LockedMicros, 10),
+			"paid_micros":      strconv.FormatInt(balance.PaidMicros, 10),
+			"version":          strconv.FormatInt(balance.Version, 10),
+			"updated_at_ms":    strconv.FormatInt(balance.UpdatedAtMS, 10),
+		})
+	}
+	respondOK(c, gin.H{"items": items})
 }
 func (a *App) commissionLedger(c *gin.Context) {
 	agency, _, ok := a.ownAgency(c)
@@ -549,7 +563,11 @@ func (a *App) commissionLedger(c *gin.Context) {
 				return
 			}
 		}
-		respondOK(c, gin.H{"items": rows, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
+		items := make([]gin.H, 0, len(rows))
+		for _, row := range rows {
+			items = append(items, a.commissionLedgerView(row))
+		}
+		respondOK(c, gin.H{"items": items, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
 		return
 	}
 	page := 1
@@ -571,7 +589,42 @@ func (a *App) commissionLedger(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "database_error", err.Error(), nil)
 		return
 	}
-	respondOK(c, gin.H{"items": rows, "total": total, "page": page, "page_size": size})
+	items := make([]gin.H, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, a.commissionLedgerView(row))
+	}
+	respondOK(c, gin.H{"items": items, "total": total, "page": page, "page_size": size})
+}
+
+// commissionLedgerView serializes a commission ledger row with int64 money and
+// timestamp fields as strings so the browser never loses precision, and uses
+// snake_case keys that match the agency-web ledger table contract.
+func (a *App) commissionLedgerView(row model.AgencyCommissionLedger) gin.H {
+	originalEntryID := any(nil)
+	if row.OriginalEntryID != nil {
+		originalEntryID = strconv.FormatInt(*row.OriginalEntryID, 10)
+	}
+	return gin.H{
+		"id":                           row.ID,
+		"event_id":                     row.EventID,
+		"component_id":                 row.ComponentID,
+		"entry_type":                   row.EntryType,
+		"original_entry_id":            originalEntryID,
+		"agency_id":                    strconv.FormatInt(row.AgencyID, 10),
+		"binding_id":                   strconv.FormatInt(row.BindingID, 10),
+		"user_id":                      strconv.FormatInt(row.UserID, 10),
+		"origin_model_name":            row.OriginModelName,
+		"standard_quota":               strconv.FormatInt(row.StandardQuota, 10),
+		"settlement_cost_quota":        strconv.FormatInt(row.SettlementCostQuota, 10),
+		"theoretical_commission_quota": strconv.FormatInt(row.TheoreticalCommissionQuota, 10),
+		"paid_allocated_quota":         strconv.FormatInt(row.PaidAllocatedQuota, 10),
+		"commission_quota":             strconv.FormatInt(row.CommissionQuota, 10),
+		"amount_micros":                strconv.FormatInt(row.AmountMicros, 10),
+		"currency_code":                row.CurrencyCode,
+		"quota_per_unit":               row.QuotaPerUnit,
+		"exchange_rate":                row.ExchangeRate,
+		"occurred_at_ms":               strconv.FormatInt(row.OccurredAtMS, 10),
+	}
 }
 
 func (a *App) createWithdrawal(c *gin.Context) {

@@ -34,7 +34,7 @@ func (a *App) StartBackground(ctx context.Context) {
 					common.SysError("agency delivery-secret cleanup failed: " + err.Error())
 				}
 				if a.config.CommissionEnabled {
-					if err := a.RunConsumerOnce(ctx, 100); err != nil {
+					if err := a.drainConsumerBudget(ctx); err != nil {
 						common.SysError("agency billing consumer failed: " + err.Error())
 					}
 				}
@@ -52,6 +52,30 @@ func (a *App) StartBackground(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// drainConsumerBudget keeps the sidecar consumer ahead of a sustained 60 RPS
+// / 120 peak billing stream. A single RunConsumerOnce(100) per 2s tick caps
+// sustainable drain at 50 events/s, below the design target, so a backlog
+// would grow unboundedly. Per tick we drain bounded batches until the pending
+// queue is empty (or the budget is spent); the budget only saturates under a
+// real backlog and leaves completed deliveries untouched.
+func (a *App) drainConsumerBudget(ctx context.Context) error {
+	const maxBatchesPerTick = 20
+	for i := 0; i < maxBatchesPerTick; i++ {
+		if err := a.RunConsumerOnce(ctx, 500); err != nil {
+			return err
+		}
+		var pending int64
+		if err := a.db.WithContext(ctx).Model(&model.AgencyEventDelivery{}).
+			Where("status IN ?", []string{"pending", "retry"}).Count(&pending).Error; err != nil {
+			return err
+		}
+		if pending == 0 {
+			return nil
+		}
+	}
+	return nil
 }
 
 // RunConsumerOnce claims a bounded batch through event_deliveries. The

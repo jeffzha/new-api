@@ -182,8 +182,8 @@ func (a *App) ssoStart(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "sso_failed", "SSO初始化失败", nil)
 		return
 	}
-	c.SetCookie("agency_sso_nonce", nonce, 300, a.config.BasePath, "", true, true)
-	c.SetCookie("agency_sso_state", state, 300, a.config.BasePath, "", true, true)
+	c.SetCookie("agency_sso_nonce", nonce, 300, a.config.BasePath, "", a.config.CookieSecure, true)
+	c.SetCookie("agency_sso_state", state, 300, a.config.BasePath, "", a.config.CookieSecure, true)
 	respondOK(c, gin.H{"state": state, "state_hash": hashState(state), "return_path": a.config.BasePath + "/"})
 }
 func (a *App) ssoCallback(c *gin.Context) {

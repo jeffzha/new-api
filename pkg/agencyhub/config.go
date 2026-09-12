@@ -11,7 +11,9 @@ type Config struct {
 	Port                         string
 	BasePath                     string
 	PublicBaseURL                string
+	PlatformBaseURL              string
 	CookieName                   string
+	CookieSecure                 bool
 	SessionIdle                  time.Duration
 	SessionAbsolute              time.Duration
 	LoginLockout                 time.Duration
@@ -41,7 +43,9 @@ func LoadConfig() Config {
 		Port:                         envString("AGENCY_HUB_PORT", "3201"),
 		BasePath:                     normalizeBasePath(envString("AGENCY_HUB_BASE_PATH", "/agency")),
 		PublicBaseURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("AGENCY_HUB_PUBLIC_BASE_URL")), "/"),
+		PlatformBaseURL:              strings.TrimRight(strings.TrimSpace(os.Getenv("AGENCY_HUB_PLATFORM_BASE_URL")), "/"),
 		CookieName:                   envString("AGENCY_HUB_COOKIE_NAME", "agency_session"),
+		CookieSecure:                 envBool("AGENCY_HUB_COOKIE_SECURE", true),
 		SessionIdle:                  envDuration("AGENCY_HUB_SESSION_IDLE_SECONDS", 1800),
 		SessionAbsolute:              envDuration("AGENCY_HUB_SESSION_ABSOLUTE_SECONDS", 28800),
 		LoginLockout:                 envDuration("AGENCY_HUB_LOGIN_LOCKOUT_SECONDS", 900),

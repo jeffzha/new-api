@@ -17,6 +17,7 @@ const (
 	TaskBillingReconciliationSettled    = "settled"
 	TaskBillingReconciliationNotNeeded  = "not_needed"
 	TaskBillingProviderSeedanceDomestic = "seedance_domestic"
+	TaskBillingProviderOpenAISeedance   = "openai_seedance"
 	TaskBillingProviderDoubaoVideoCNY   = "doubao_video_cny"
 )
 

@@ -9,6 +9,10 @@ docs
 .gocache
 /web/node_modules
 /web/dist
+/agency-web/node_modules
+/agency-web/dist
+/agency-web/test-results
+/pkg/agencyhub/webdist
 !THIRD-PARTY-LICENSES.md
 *.pem
 server-data.sql

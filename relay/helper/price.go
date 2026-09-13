@@ -73,6 +73,12 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) hostty
 		groupRatioInfo.GroupRatio = ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
 	}
 
+	if relayInfo.AgencyPricing != nil {
+		ratio := float64(relayInfo.AgencyPricing.SalesBPS) / 10000
+		groupRatioInfo.GroupRatio = ratio
+		groupRatioInfo.GroupSpecialRatio = ratio
+		groupRatioInfo.HasSpecialRatio = true
+	}
 	if ctx != nil {
 		if override, exists := ctx.Get(AgencyRatioOverrideContextKey); exists {
 			if ratio, ok := override.(float64); ok && ratio >= 0 {

@@ -2,22 +2,30 @@ services:
   agency-hub:
     build:
       context: ../..
-      dockerfile: Dockerfile
-      target: agency-hub
+      dockerfile: deploy/agency-hub/Dockerfile
     environment:
       AGENCY_HUB_PORT: "3201"
       AGENCY_HUB_BASE_PATH: /agency
       AGENCY_HUB_PUBLIC_BASE_URL: ${AGENCY_HUB_PUBLIC_BASE_URL:-https://gateway.nexus-reach.com}
+      AGENCY_HUB_PLATFORM_BASE_URL: ${AGENCY_HUB_PLATFORM_BASE_URL:-https://gateway.nexus-reach.com}
+      # Enable explicitly on both gateway and hub after acceptance. This does
+      # not change the billing mode or API traffic of existing customers.
+      AGENCY_ONBOARDING_ENABLED: ${AGENCY_ONBOARDING_ENABLED:-false}
       SQL_DSN: ${SQL_DSN:?set SQL_DSN}
       LOG_SQL_DSN: ${LOG_SQL_DSN:-}
+      SQL_MAX_OPEN_CONNS: ${AGENCY_HUB_SQL_MAX_OPEN_CONNS:-20}
+      SQL_MAX_IDLE_CONNS: ${AGENCY_HUB_SQL_MAX_IDLE_CONNS:-5}
+      SQL_MAX_LIFETIME: "60"
       AGENCY_HUB_AUTO_MIGRATE: "false"
-      AGENCY_COMMISSION_PROCESSING_ENABLED: "false"
-      AGENCY_WITHDRAWALS_ENABLED: "false"
+      AGENCY_HUB_COMMISSION_PROCESSING_ENABLED: "false"
+      AGENCY_HUB_WITHDRAWALS_ENABLED: "false"
       AGENCY_HUB_SSO_PUBLIC_KEY_FILE: /run/secrets/agency_sso_public_key
       AGENCY_HUB_COMMAND_SERVICE_PUBLIC_KEY_FILE: /run/secrets/agency_command_service_public_key
       AGENCY_HUB_COMMAND_SERVICE_PRIVATE_KEY_FILE: /run/secrets/agency_command_service_private_key
       AGENCY_HUB_DELIVERY_KEY_FILE: /run/secrets/agency_delivery_key
       AGENCY_PAYOUT_KEY_FILE: /run/secrets/agency_payout_key
+      AGENCY_HUB_EXPORT_DIR: /var/lib/agency-hub/exports
+      AGENCY_HUB_INSTANCE_ID: ${AGENCY_HUB_INSTANCE_ID:-agency-hub-1}
     expose:
       - "3201"
     healthcheck:
@@ -38,7 +46,20 @@ services:
       - source: agency_payout_key
         target: agency_payout_key
     restart: unless-stopped
+    cpus: ${AGENCY_HUB_CPUS:-0.75}
+    mem_limit: ${AGENCY_HUB_MEMORY_LIMIT:-768m}
     entrypoint: ["/agency-hub"]
+    volumes:
+      - agency_hub_exports:/var/lib/agency-hub/exports
+    networks:
+      - agency_backend
+
+volumes:
+  agency_hub_exports:
+
+networks:
+  agency_backend:
+    external: true
 
 secrets:
   agency_sso_public_key:

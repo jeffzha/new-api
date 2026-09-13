@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -57,6 +58,11 @@ type TaskBillingReconciliationSettlementResult struct {
 	Applied          bool
 	WalletAdjusted   bool
 	TokenUnavailable bool
+	// AgencyRefundCommitted indicates a finalized component charge was
+	// reversed through the source-aware cumulative refund transaction. The
+	// service may still write usage logs, but must not emit another financial
+	// refund event.
+	AgencyRefundCommitted bool
 }
 
 func EnqueueTaskBillingReconciliation(task *Task, provider string) error {
@@ -182,7 +188,7 @@ func UpdateTaskBillingReconciliation(id int64, updates map[string]any) error {
 // row. A retry can therefore observe either the complete settlement or none of
 // it, never a partially applied balance adjustment.
 func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliationSettlement) (*TaskBillingReconciliationSettlementResult, error) {
-	if id <= 0 || settlement.ActualQuota <= 0 || settlement.TotalTokens <= 0 {
+	if id <= 0 || settlement.ActualQuota < 0 || int64(settlement.ActualQuota) > int64(common.MaxQuota) || settlement.TotalTokens <= 0 {
 		return nil, fmt.Errorf("invalid task billing settlement")
 	}
 	result := &TaskBillingReconciliationSettlementResult{}
@@ -191,17 +197,55 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 		if err := lockForUpdate(tx).Where("id = ?", id).First(&record).Error; err != nil {
 			return err
 		}
+		var task Task
+		if err := lockForUpdate(tx).Where("id = ?", record.TaskID).First(&task).Error; err != nil {
+			return err
+		}
+		var firstCharge agencycontract.BillingEvent
+		var firstJournal AgencyBillingJournal
+		initialAgencyFinalization := false
+		frozenAgencyBasis := false
+		var billingMode string
+		if err := tx.Model(&User{}).Where("id = ?", task.UserId).Pluck("billing_mode", &billingMode).Error; err != nil {
+			return err
+		}
+		if billingMode == AgencyDurableBillingMode && (task.PrivateData.BillingSource != TaskBillingSourceSubscription || task.PrivateData.SubscriptionId <= 0) {
+			journal, basis, pricing, basisErr := agencyTaskFrozenBasis(tx, &task)
+			if basis.Version == AgencyTaskChargeBasisVersion {
+				frozenAgencyBasis = true
+				if basisErr != nil {
+					return basisErr
+				}
+				if basis.ProviderBilling == nil || basis.ProviderBilling.Provider != record.Provider {
+					return ErrAgencyChargeConflict
+				}
+				var err error
+				firstCharge, err = AgencyTaskFinalCharge(basis, pricing, settlement.TotalTokens, false)
+				if err != nil {
+					return err
+				}
+				// Resolver evidence supplies usage. The accepted frozen basis
+				// remains authoritative even if global quota units changed later.
+				settlement.ActualQuota = int(firstCharge.ChargedTotalQuota)
+				firstJournal = journal
+				initialAgencyFinalization = journal.Status == "reserved" || journal.Status == "submitted" || journal.Status == "reconcile_required"
+			}
+		}
+		if settlement.ActualQuota == 0 && !frozenAgencyBasis {
+			return fmt.Errorf("zero provider bill requires a frozen agency task basis")
+		}
 		if record.Status == TaskBillingReconciliationSettled {
+			if record.ActualQuota != settlement.ActualQuota || record.TotalTokens != settlement.TotalTokens ||
+				record.SupplierPrice != settlement.SupplierPrice || record.SupplierDiscount != settlement.SupplierDiscount ||
+				record.SupplierAmountPaid != settlement.SupplierAmountPaid || record.ExpenseTime != settlement.ExpenseTime {
+				return ErrAgencyChargeConflict
+			}
 			return nil
 		}
 		if record.Status != TaskBillingReconciliationProcessing {
 			return fmt.Errorf("task billing reconciliation %d is not claimed", id)
 		}
 
-		var task Task
-		if err := lockForUpdate(tx).Where("id = ?", record.TaskID).First(&task).Error; err != nil {
-			return err
-		}
 		if task.Status != TaskStatusSuccess {
 			return fmt.Errorf("task %d is not successful", task.ID)
 		}
@@ -210,6 +254,42 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 		result.QuotaDelta = settlement.ActualQuota - task.Quota
 		result.WalletAdjusted = task.PrivateData.BillingSource != TaskBillingSourceSubscription || task.PrivateData.SubscriptionId <= 0
 
+		// A finalized component charge is immutable. A lower confirmed total
+		// uses the original cumulative refund; a larger total requires explicit
+		// reconciliation instead of changing wallet allocations behind that
+		// immutable event. This helper also validates a zero-delta replay.
+		refundResult := TaskQuotaAdjustmentResult{Task: &task, PreConsumedQuota: task.Quota,
+			AppliedQuota: task.Quota, QuotaDelta: result.QuotaDelta, TokenID: task.PrivateData.TokenId}
+		agencyHandled := initialAgencyFinalization
+		if initialAgencyFinalization {
+			_, changed, tokenKey, err := finalizeAgencyTaskChargeTx(tx, &task, firstJournal, firstCharge)
+			if err != nil {
+				return err
+			}
+			updated := tx.Model(&Task{}).Where("id = ? AND quota = ?", task.ID, result.PreConsumedQuota).
+				Updates(map[string]any{"quota": task.Quota, "private_data": task.PrivateData})
+			if updated.Error != nil {
+				return updated.Error
+			}
+			if updated.RowsAffected != 1 {
+				return ErrAgencyChargeConflict
+			}
+			refundResult.Changed, refundResult.WalletAdjusted, refundResult.TokenKey = changed, true, tokenKey
+		} else {
+			var refundErr error
+			agencyHandled, refundErr = applyAgencyTaskRefundTx(tx, &task, settlement.ActualQuota, &refundResult)
+			if refundErr != nil {
+				return refundErr
+			}
+		}
+		if agencyHandled {
+			result.QuotaDelta = refundResult.QuotaDelta
+			result.TokenUnavailable = refundResult.TokenUnavailable
+			result.AgencyRefundCommitted = refundResult.AgencyRefundCommitted
+			result.Applied = refundResult.Changed
+			result.WalletAdjusted = refundResult.WalletAdjusted
+		}
+
 		// A token may be soft-deleted after the task was accepted. Never
 		// refund the wallet without a token to restore: retain a negative
 		// adjustment at the pre-consumed amount and leave an audit marker on
@@ -217,7 +297,7 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 		// charged to the wallet, but a deleted token is never recreated.
 		var token Token
 		tokenPresent := task.PrivateData.TokenId <= 0
-		if task.PrivateData.TokenId > 0 {
+		if task.PrivateData.TokenId > 0 && !agencyHandled {
 			tokenErr := lockForUpdate(tx).
 				Where("id = ? AND user_id = ?", task.PrivateData.TokenId, task.UserId).
 				First(&token).Error
@@ -235,7 +315,7 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 			}
 		}
 
-		if result.QuotaDelta != 0 {
+		if result.QuotaDelta != 0 && !agencyHandled {
 			if result.WalletAdjusted {
 				var billingMode string
 				if err := tx.Model(&User{}).Where("id = ?", task.UserId).Pluck("billing_mode", &billingMode).Error; err != nil {
@@ -366,7 +446,13 @@ func SyncTaskBillingReconciliationCaches(userID int, tokenID int, tokenKey strin
 	}
 	var cacheErrors []error
 	if walletAdjusted {
-		if err := cacheIncrUserQuota(userID, -int64(quotaDelta)); err != nil {
+		var err error
+		if IsAgencyDurableUser(userID) {
+			err = InvalidateUserCache(userID)
+		} else {
+			err = cacheIncrUserQuota(userID, -int64(quotaDelta))
+		}
+		if err != nil {
 			cacheErrors = append(cacheErrors, err)
 		}
 	}

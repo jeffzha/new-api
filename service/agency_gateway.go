@@ -65,7 +65,10 @@ func RecordAgencyRealtimeSegment(relayInfo *relaycommon.RelayInfo, segmentNo int
 	eventID := "agency-realtime-" + hex.EncodeToString(idDigest[:])
 	operationID := "agency-realtime-finalize-" + hex.EncodeToString(idDigest[:])
 	snapshot := *relayInfo.AgencyPricing
-	standard := quota
+	standard := relayInfo.AgencyStandardQuota
+	if standard == 0 {
+		standard = quota
+	}
 	policy := agencycontract.ResolvedPolicy{SettlementBPS: snapshot.SettlementBPS, SalesBPS: snapshot.SalesBPS, ModelKey: snapshot.ModelKey, OriginModelName: snapshot.OriginModelName}
 	basis, err := agencycontract.Calculate(standard, policy, 0, true)
 	if err != nil {
@@ -376,11 +379,21 @@ func RecordAgencyBillingEvent(relayInfo *relaycommon.RelayInfo, actualQuota int6
 		return err
 	}
 	settlement := basis.SettlementCostQuota
+	if relayInfo.AgencySettlementCostQuota != nil {
+		settlement = *relayInfo.AgencySettlementCostQuota
+	}
+	if status != "success" {
+		settlement = 0
+	}
 	theoretical := charged - settlement
 	if theoretical < 0 {
 		return errors.New("negative agency commission")
 	}
-	commissionQuota, err := agencycontract.CommissionForPaid(theoretical, relayInfo.AgencyPaidAllocatedQuota, charged, true)
+	paidForEstimate := relayInfo.AgencyPaidAllocatedQuota
+	if paidForEstimate > charged {
+		paidForEstimate = charged
+	}
+	commissionQuota, err := agencycontract.CommissionForPaid(theoretical, paidForEstimate, charged, true)
 	if err != nil {
 		return err
 	}
@@ -390,6 +403,7 @@ func RecordAgencyBillingEvent(relayInfo *relaycommon.RelayInfo, actualQuota int6
 		// usage/funding facts but never create reseller commission.
 		theoretical = 0
 		commissionQuota = 0
+		settlement = 0
 	}
 	commissionableQuota := charged
 	noncommissionableQuota := int64(0)
@@ -452,6 +466,17 @@ func RecordAgencyBillingEvent(relayInfo *relaycommon.RelayInfo, actualQuota int6
 		}
 	}
 	event.CommissionAmountMicros = commission
+	if snapshot.FinancialChargeID != "" {
+		committed, commitErr := model.AgencyCommitWalletCharge(event, relayInfo.TokenKey)
+		if commitErr != nil {
+			return commitErr
+		}
+		relayInfo.AgencyPaidAllocatedQuota = committed.PaidAllocatedQuota
+		relayInfo.AgencyCommissionAmountMicros = committed.CommissionAmountMicros
+		relayInfo.AgencyMoneySeq = committed.MoneySeq
+		relayInfo.AgencyBillingEventID = committed.EventID
+		return nil
+	}
 	payload, err := common.Marshal(event)
 	if err != nil {
 		return err
@@ -616,6 +641,15 @@ func RecordAgencyRefundByReferenceTx(tx *gorm.DB, originalEventID, chargeID stri
 	return recordAgencyProportionalRefundEventTx(tx, originalEventID, chargeID, reversedQuota, reason)
 }
 
+// RefundAgencyModelCharge is the gateway's cumulative model-refund command.
+// The authorized caller supplies a stable refund ID and a cumulative target;
+// this function restores wallet/token/source funding and emits the component
+// commission reversal in one transaction. It must run before any separate
+// quota release. Payment chargebacks continue through their own Root command.
+func RefundAgencyModelCharge(input model.AgencyComponentRefundInput, tokenKey string) (agencycontract.BillingEvent, error) {
+	return model.AgencyRefundWalletCharge(input, tokenKey)
+}
+
 func recordAgencyProportionalRefundEventTx(tx *gorm.DB, originalEventID, chargeID string, reversedQuota int64, reason string) error {
 	if reversedQuota <= 0 {
 		return nil
@@ -626,6 +660,12 @@ func recordAgencyProportionalRefundEventTx(tx *gorm.DB, originalEventID, chargeI
 	original, err := loadAgencyOriginalBillingEventTx(tx, originalEventID, chargeID)
 	if err != nil {
 		return err
+	}
+	if original.SchemaVersion == agencycontract.ComponentSchemaVersion {
+		// A v2 charge can mix model fees and noncommissionable components.
+		// The old aggregate callback cannot identify which original allocation
+		// was reversed and must never restore funds or guess its commission.
+		return model.ErrAgencyComponentRefundProvenance
 	}
 	if original.EventID == "" {
 		original.EventID = strings.TrimSpace(originalEventID)

@@ -3781,6 +3781,7 @@
     "Price:": "Price:",
     "Price: High to Low": "Price: High to Low",
     "Price: Low to High": "Price: Low to High",
+    "Prices include your agency sales policy. Group selection changes model availability, not your sales rate.": "Prices include your agency sales policy. Group selection changes model availability, not your sales rate.",
     "Prices shown per": "Prices shown per",
     "Prices synced successfully": "Prices synced successfully",
     "Prices vary by usage tier and request conditions": "Prices vary by usage tier and request conditions",
@@ -3790,6 +3791,7 @@
     "Pricing Configuration": "Pricing Configuration",
     "Pricing group example": "Pricing group example",
     "Pricing groups": "Pricing groups",
+    "Pricing is temporarily unavailable. Please try again.": "Pricing is temporarily unavailable. Please try again.",
     "Pricing mode": "Pricing mode",
     "Pricing Ratios": "Pricing Ratios",
     "Pricing Type": "Pricing Type",
@@ -4373,6 +4375,7 @@
     "Seedance 2.0 API": "Seedance 2.0 API",
     "Seedance 2.0 Fast": "Seedance 2.0 Fast",
     "Seedance 2.0 Standard": "Seedance 2.0 Standard",
+    "Seedance 2.5": "Seedance 2.5",
     "Seedance CNY Pricing": "Seedance CNY Pricing",
     "Seedance Domestic": "Seedance Domestic",
     "Select": "Select",
@@ -5645,6 +5648,7 @@
     "Your GitHub OAuth Client ID": "Your GitHub OAuth Client ID",
     "Your GitHub OAuth Client Secret": "Your GitHub OAuth Client Secret",
     "Your new backup codes are ready": "Your new backup codes are ready",
+    "Your price": "Your price",
     "Your Referral Link": "Your Referral Link",
     "Your setup guide is collapsed so usage stays in focus.": "Your setup guide is collapsed so usage stays in focus.",
     "Your system access token for API authentication. Keep it secure and don't share it with others.": "Your system access token for API authentication. Keep it secure and don't share it with others.",
@@ -5656,7 +5660,6 @@
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "Seedance 2.5": "Seedance 2.5"
+    "Zoom": "Zoom"
   }
 }

@@ -48,6 +48,8 @@ import {
 
 type DynamicPricingBreakdownProps = {
   billingExpr: string | null | undefined
+  /** Customer sales multiplier for catalog display; omitted in usage logs. */
+  priceMultiplier?: number
   /**
    * Label of the tier that fired for the current request. When provided,
    * the corresponding row is highlighted and tagged as "Matched". Used by
@@ -169,6 +171,7 @@ function nextOccurrenceKey(
 
 export function DynamicPricingBreakdown({
   billingExpr,
+  priceMultiplier = 1,
   matchedTierLabel,
   requestRules,
   hideCacheColumns = false,
@@ -336,7 +339,7 @@ export function DynamicPricingBreakdown({
                             )}
                           >
                             {value > 0
-                              ? `${symbol}${(value * rate).toFixed(4)}`
+                              ? `${symbol}${(value * rate * priceMultiplier).toFixed(4)}`
                               : '-'}
                           </div>
                         </div>
@@ -425,7 +428,7 @@ export function DynamicPricingBreakdown({
                   )
                   return value > 0 ? (
                     <span className={cn(!compact && 'font-semibold')}>
-                      {`${symbol}${(value * rate).toFixed(4)}`}
+                      {`${symbol}${(value * rate * priceMultiplier).toFixed(4)}`}
                     </span>
                   ) : (
                     '-'

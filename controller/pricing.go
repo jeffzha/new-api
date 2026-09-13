@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"net/http"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -34,6 +36,10 @@ func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string
 }
 
 func GetPricing(c *gin.Context) {
+	// This endpoint can include customer-specific prices. Never allow an HTTP
+	// cache/CDN to serve one customer's policy to another viewer.
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("Vary", "Cookie, Authorization, New-Api-User")
 	pricing := model.GetPricing()
 	userId, exists := c.Get("id")
 	usableGroup := map[string]string{}
@@ -57,6 +63,32 @@ func GetPricing(c *gin.Context) {
 
 	usableGroup = service.GetUserUsableGroups(group)
 	pricing = filterPricingByUsableGroups(pricing, usableGroup)
+	var pricingData any = pricing
+	pricingScope := "standard"
+	if exists {
+		modelNames := make([]string, len(pricing))
+		for i, item := range pricing {
+			modelNames[i] = item.ModelName
+		}
+		sales, err := service.AgencyCustomerSales(c.GetInt("id"), modelNames)
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "pricing is unavailable"})
+			return
+		}
+		if sales != nil {
+			type customerPricing struct {
+				model.Pricing
+				SalesBPS int `json:"sales_bps"`
+			}
+			// Do not edit GetPricing's shared cached slice, expressions or provider
+			// price matrices; only attach the customer sales coefficient.
+			customerPrices := make([]customerPricing, len(pricing))
+			for i, item := range pricing {
+				customerPrices[i] = customerPricing{Pricing: item, SalesBPS: sales[item.ModelName]}
+			}
+			pricingData, pricingScope = customerPrices, "agency"
+		}
+	}
 	// check groupRatio contains usableGroup
 	for group := range ratio_setting.GetGroupRatioCopy() {
 		if _, ok := usableGroup[group]; !ok {
@@ -66,7 +98,8 @@ func GetPricing(c *gin.Context) {
 
 	c.JSON(200, gin.H{
 		"success":            true,
-		"data":               pricing,
+		"data":               pricingData,
+		"pricing_scope":      pricingScope,
 		"vendors":            model.GetVendors(),
 		"group_ratio":        groupRatio,
 		"usable_group":       usableGroup,

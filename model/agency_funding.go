@@ -124,7 +124,7 @@ func AdjustAgencyCharge(userID, delta int, chargeID string, targetQuota int64) e
 
 // ApplyAgencyQuotaDelta applies a non-charge wallet adjustment and its typed
 // funding projection in one transaction. Positive deltas are non-paid grants;
-// negative administrative adjustments consume non-paid first, then paid lots,
+// negative administrative adjustments consume paid first, then non-paid lots,
 // and finally create debt. Legacy users retain the original quota-only path.
 func ApplyAgencyQuotaDelta(userID, delta int64, sourceKind string) error {
 	if userID <= 0 || strings.TrimSpace(sourceKind) == "" {
@@ -208,13 +208,6 @@ func ApplyAgencyQuotaDeltaTx(tx *gorm.DB, userID, delta int64, sourceKind string
 		account.NonpaidAvailable = next
 	} else {
 		remaining := -delta
-		nonpaidTake := remaining
-		if nonpaidTake > account.NonpaidAvailable {
-			nonpaidTake = account.NonpaidAvailable
-		}
-		account.NonpaidAvailable -= nonpaidTake
-		remaining -= nonpaidTake
-		nonpaidDelta = -nonpaidTake
 		if remaining > 0 {
 			var lots []AgencyFundingLot
 			if err := AgencyLockForUpdate(tx).Where("user_id = ? AND paid_available > 0", userID).Order("money_seq ASC, id ASC").Find(&lots).Error; err != nil {
@@ -241,6 +234,13 @@ func ApplyAgencyQuotaDeltaTx(tx *gorm.DB, userID, delta int64, sourceKind string
 				paidDelta -= take
 			}
 		}
+		nonpaidTake := remaining
+		if nonpaidTake > account.NonpaidAvailable {
+			nonpaidTake = account.NonpaidAvailable
+		}
+		account.NonpaidAvailable -= nonpaidTake
+		remaining -= nonpaidTake
+		nonpaidDelta = -nonpaidTake
 		if remaining > 0 {
 			if account.DebtQuota > int64(^uint64(0)>>1)-remaining {
 				return errors.New("agency funding debt overflow")
@@ -272,7 +272,7 @@ func ApplyAgencyQuotaDeltaTx(tx *gorm.DB, userID, delta int64, sourceKind string
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
-	event := agencycontract.BillingEvent{SchemaVersion: agencycontract.SchemaVersion, EventID: "agency-adjust-" + operationID, EventType: "agency.funding_adjusted", FinancialChargeID: operationID, OperationID: operationID, JournalRevision: 1, EventIndex: 0, EventCount: 1, OccurredAtMS: now, UserID: userID, AgencyID: agencyID, BindingID: bindingID, BusinessStatus: sourceKind, BillingStatus: "funding_adjusted", CommissionEligible: false, CommissionSkipReason: "noncommissionable_funding_adjustment"}
+	event := agencycontract.BillingEvent{SchemaVersion: agencycontract.SchemaVersion, EventID: "agency-adjust-" + operationID, EventType: "agency.funding_adjusted", FinancialChargeID: operationID, OperationID: operationID, JournalRevision: 1, MoneySeq: seq, EventIndex: 0, EventCount: 1, OccurredAtMS: now, UserID: userID, AgencyID: agencyID, BindingID: bindingID, BusinessStatus: sourceKind, BillingStatus: "funding_adjusted", CommissionEligible: false, CommissionSkipReason: "noncommissionable_funding_adjustment"}
 	payload, err := common.Marshal(event)
 	if err != nil {
 		return err
@@ -471,7 +471,7 @@ func TryReserveUserQuotaAndAgencyWithToken(userID, tokenID, amount int, tokenKey
 
 		query := AgencyLockForUpdate(tx).Where("id = ?", tokenID)
 		if strings.TrimSpace(tokenKey) != "" {
-			query = query.Where(agencyKeyColumn()+" = ?", tokenKey)
+			query = query.Where(map[string]any{"key": tokenKey})
 		}
 		var token Token
 		if err := query.First(&token).Error; err != nil {
@@ -619,12 +619,18 @@ func tryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, charg
 		if err := EnsureAgencyFundingAccount(tx, int64(userID)); err != nil {
 			return err
 		}
-		// Snapshots created by AgencyQuoteForUser always carry all revision
-		// fields. Older persisted task fixtures may contain only the public
-		// coefficients; retain their compatibility behavior until a new quote
-		// is accepted through the revision-aware path.
-		if snapshot != nil && snapshot.BindingRevision > 0 && snapshot.AgencyStateRevision > 0 && snapshot.PolicyVersionID > 0 {
-			if err := ValidateAgencyPricingSnapshotTx(tx, int64(userID), snapshot); err != nil {
+		var before AgencyFundingAccount
+		if err := AgencyLockForUpdate(tx).Where("user_id = ?", userID).First(&before).Error; err != nil {
+			return err
+		}
+		if before.ReconcileBlocked {
+			return errors.New("agency funding account is blocked for reconciliation")
+		}
+		var journal *AgencyBillingJournal
+		if snapshot != nil {
+			var err error
+			journal, err = acceptAgencyJournalTx(tx, userID, tokenID, chargeID, snapshot)
+			if err != nil {
 				return err
 			}
 		}
@@ -633,6 +639,11 @@ func tryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, charg
 			return err
 		}
 		if fundingTarget <= allocated {
+			if journal != nil {
+				if err := recordAgencyReservationTx(tx, journal, snapshot, allocated, before); err != nil {
+					return err
+				}
+			}
 			var account AgencyFundingAccount
 			if err := AgencyLockForUpdate(tx).Where("user_id = ?", userID).First(&account).Error; err != nil {
 				return err
@@ -647,13 +658,16 @@ func tryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, charg
 			var token Token
 			query := AgencyLockForUpdate(tx).Where("id = ?", tokenID)
 			if strings.TrimSpace(tokenKey) != "" {
-				query = query.Where(agencyKeyColumn()+" = ?", tokenKey)
+				query = query.Where(map[string]any{"key": tokenKey})
 			}
 			if err := query.First(&token).Error; err != nil {
 				return err
 			}
 			if !unlimited && token.RemainQuota < amount {
 				return ErrInsufficientAgencyTokenQuota
+			}
+			if int64(token.RemainQuota)-int64(amount) < -int64(common.MaxQuota)-1 || int64(token.UsedQuota)+int64(amount) > int64(common.MaxQuota) {
+				return errors.New("agency token quota arithmetic overflow")
 			}
 			update := tx.Model(&Token{}).Where("id = ?", tokenID)
 			if !unlimited {
@@ -682,7 +696,16 @@ func tryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, charg
 			return err
 		}
 		moneySeq = account.MoneySeq
-		return err
+		if journal != nil {
+			if err := recordAgencyReservationTx(tx, journal, snapshot, fundingTarget, before); err != nil {
+				return err
+			}
+			if err := tx.Where("user_id = ?", userID).First(&account).Error; err != nil {
+				return err
+			}
+			moneySeq = account.MoneySeq
+		}
+		return nil
 	})
 	if err == nil && deducted {
 		if common.RedisEnabled {
@@ -724,9 +747,12 @@ func ValidateAgencyPricingSnapshotTx(tx *gorm.DB, userID int64, snapshot *agency
 	if err := AgencyLockForUpdate(tx).Where("id = ?", snapshot.AgencyID).First(&agency).Error; err != nil {
 		return err
 	}
-	if agency.Status != "active" || agency.StateRevision != snapshot.AgencyStateRevision ||
+	if (agency.Status != "active" && agency.Status != "disabled") || agency.StateRevision != snapshot.AgencyStateRevision ||
 		agency.CurrentPolicyVersionID != snapshot.PolicyVersionID {
 		return errors.New("agency pricing snapshot is stale")
+	}
+	if snapshot.CommissionEligible != (agency.Status == "active") {
+		return errors.New("agency pricing eligibility snapshot is stale")
 	}
 	var policy AgencyPricePolicyVersion
 	if err := tx.Where("id = ? AND agency_id = ?", snapshot.PolicyVersionID, snapshot.AgencyID).First(&policy).Error; err != nil {
@@ -776,7 +802,7 @@ func ReleaseAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, chargeID
 		}
 		query := AgencyLockForUpdate(tx).Where("id = ?", tokenID)
 		if strings.TrimSpace(tokenKey) != "" {
-			query = query.Where(agencyKeyColumn()+" = ?", tokenKey)
+			query = query.Where(map[string]any{"key": tokenKey})
 		}
 		var token Token
 		if err := query.First(&token).Error; err != nil {
@@ -897,7 +923,7 @@ func ReleaseUserQuotaAndAgencyWithToken(userID, tokenID, amount int, tokenKey, c
 
 		query := AgencyLockForUpdate(tx).Where("id = ?", tokenID)
 		if strings.TrimSpace(tokenKey) != "" {
-			query = query.Where(agencyKeyColumn()+" = ?", tokenKey)
+			query = query.Where(map[string]any{"key": tokenKey})
 		}
 		var token Token
 		if err := query.First(&token).Error; err != nil {
@@ -977,7 +1003,7 @@ func EnsureAgencyFundingAccount(tx *gorm.DB, userID int64) error {
 // RecordAgencyTopup adds a typed paid/bonus lot in the same transaction as
 // the authoritative user quota update. Duplicate source operations are
 // idempotent and never create a second lot.
-func RecordAgencyTopup(tx *gorm.DB, userID int64, sourceKind, sourceID, completionSource string, paidQuota, bonusQuota int64) error {
+func RecordAgencyTopup(tx *gorm.DB, userID int64, sourceKind, sourceID, completionSource string, paidQuota, bonusQuota int64, snapshots ...*TopupFundingSnapshot) error {
 	if tx == nil || userID <= 0 || strings.TrimSpace(sourceID) == "" || len(sourceID) > 120 || paidQuota < 0 || bonusQuota < 0 || (bonusQuota > 0 && paidQuota > int64(^uint64(0)>>1)-bonusQuota) {
 		return ErrAgencyFundingUnavailable
 	}
@@ -991,7 +1017,45 @@ func RecordAgencyTopup(tx *gorm.DB, userID int64, sourceKind, sourceID, completi
 	if user.BillingMode != AgencyDurableBillingMode {
 		return nil
 	}
+	if len(snapshots) > 1 {
+		return ErrTopupPaymentSnapshot
+	}
+	var payment TopupPaymentSnapshot
+	conversionJSON := ""
+	quotaPerUnit := ""
+	if len(snapshots) == 1 && snapshots[0] != nil {
+		snapshot := snapshots[0]
+		if snapshot.Payment != nil {
+			var err error
+			payment, err = snapshot.Payment.normalized()
+			if err != nil {
+				return err
+			}
+		}
+		if snapshot.Conversion != nil {
+			if snapshot.Conversion.CreditedQuota != fmt.Sprint(paidQuota+bonusQuota) {
+				return ErrTopupPaymentSnapshot
+			}
+			encoded, err := common.Marshal(snapshot.Conversion)
+			if err != nil {
+				return err
+			}
+			conversionJSON = string(encoded)
+			quotaPerUnit = snapshot.Conversion.QuotaPerUnit
+		}
+	}
+	if payment.ActualMoney == "0" {
+		// A verified zero-price checkout can grant quota but provides no paid
+		// funding. Keep that credit noncommissionable like any other bonus.
+		bonusQuota += paidQuota
+		paidQuota = 0
+	}
 	if sourceKind == "admin" || completionSource == "admin_adjustment" {
+		// Manual credits must never become verified online payments because
+		// an old order still carries its original payment-provider metadata.
+		if payment.ActualMoney != "" {
+			return ErrTopupPaymentSnapshot
+		}
 		bonusQuota += paidQuota
 		paidQuota = 0
 		completionSource = "admin_adjustment"
@@ -1002,7 +1066,7 @@ func RecordAgencyTopup(tx *gorm.DB, userID int64, sourceKind, sourceID, completi
 		if err := tx.Where("source_operation_id = ?", sourceID).First(&fact).Error; err != nil {
 			return ErrAgencyTopupConflict
 		}
-		if fact.UserID != userID || fact.PaidQuota != paidQuota || fact.BonusQuota != bonusQuota || fact.CompletionSource != completionSource || fact.PaymentStatus != "success" {
+		if fact.UserID != userID || fact.PaidQuota != paidQuota || fact.BonusQuota != bonusQuota || fact.CompletionSource != completionSource || fact.PaymentStatus != "success" || existing.SourceKind != sourceKind || fact.ActualMoney != payment.ActualMoney || fact.CurrencyCode != payment.CurrencyCode || fact.PaymentReference != payment.PaymentReference || fact.QuotaConversionSnapshot != conversionJSON {
 			return ErrAgencyTopupConflict
 		}
 		return nil
@@ -1020,69 +1084,29 @@ func RecordAgencyTopup(tx *gorm.DB, userID int64, sourceKind, sourceID, completi
 	if seq <= account.MoneySeq {
 		return errors.New("agency funding sequence overflow")
 	}
-	paidForWallet := paidQuota
-	debtDelta := int64(0)
-	debtRepay := int64(0)
-	if account.DebtQuota > 0 && paidForWallet > 0 {
-		repay := paidForWallet
-		if repay > account.DebtQuota {
-			repay = account.DebtQuota
-		}
-		paidForWallet -= repay
-		debtDelta = -repay
-		debtRepay = repay
+	now := time.Now().UnixMilli()
+	lot := AgencyFundingLot{UserID: userID, SourceKind: sourceKind, SourceID: sourceID, CompletionSource: completionSource, PaidInitial: paidQuota, BonusInitial: bonusQuota, PaidAvailable: paidQuota, BonusAvailable: bonusQuota, MoneySeq: seq, Version: 1, CreatedAt: now / 1000}
+	if err := tx.Create(&lot).Error; err != nil {
+		return err
 	}
+	paidRepaid, nonpaidRepaid, err := repayAgencyFundingSourcesTx(tx, userID, sourceID, seq, account.DebtQuota,
+		[]agencyFundingSource{{LotID: lot.ID, Paid: paidQuota, Nonpaid: bonusQuota}})
+	if err != nil {
+		return err
+	}
+	paidForWallet, nonpaidForWallet := paidQuota-paidRepaid, bonusQuota-nonpaidRepaid
+	debtDelta := -paidRepaid - nonpaidRepaid
 	paidAvailable := account.PaidAvailable + paidForWallet
-	nonpaidAvailable := account.NonpaidAvailable + bonusQuota
+	nonpaidAvailable := account.NonpaidAvailable + nonpaidForWallet
 	debt := account.DebtQuota + debtDelta
 	if paidAvailable < 0 || nonpaidAvailable < 0 || debt < 0 {
 		return errors.New("agency funding balance overflow")
 	}
-	now := time.Now().UnixMilli()
-	lot := AgencyFundingLot{UserID: userID, SourceKind: sourceKind, SourceID: sourceID, CompletionSource: completionSource, PaidInitial: paidQuota, BonusInitial: bonusQuota, PaidAvailable: paidForWallet, BonusAvailable: bonusQuota, PaidDebtRepaid: debtRepay, MoneySeq: seq, Version: 1, CreatedAt: now / 1000}
-	if err := tx.Create(&lot).Error; err != nil {
-		return err
-	}
 	if err := tx.Model(&account).Updates(map[string]any{"paid_available": paidAvailable, "nonpaid_available": nonpaidAvailable, "debt_quota": debt, "money_seq": seq, "version": account.Version + 1, "updated_at": now / 1000}).Error; err != nil {
 		return err
 	}
-	if debtRepay > 0 {
-		remaining := debtRepay
-		var debts []AgencyFundingDebt
-		if err := AgencyLockForUpdate(tx).
-			Where("user_id = ? AND outstanding_quota > 0", userID).
-			Order("id ASC").Find(&debts).Error; err != nil {
-			return err
-		}
-		for _, debtRow := range debts {
-			if remaining == 0 {
-				break
-			}
-			take := debtRow.OutstandingQuota
-			if take > remaining {
-				take = remaining
-			}
-			restoredTotal := debtRow.OriginalQuota - debtRow.OutstandingQuota + take
-			debtRow.OutstandingQuota -= take
-			if err := tx.Model(&debtRow).Updates(map[string]any{"outstanding_quota": debtRow.OutstandingQuota}).Error; err != nil {
-				return err
-			}
-			lotID := lot.ID
-			if err := tx.Create(&AgencyDebtRepayment{
-				DebtID: debtRow.ID, RepaymentID: fmt.Sprintf("%s-debt-%d", sourceID, debtRow.ID),
-				FundingLotID: &lotID, Quota: take, RestoredTotal: restoredTotal,
-				MoneySeq: seq, CreatedAtMS: now,
-			}).Error; err != nil {
-				return err
-			}
-			remaining -= take
-		}
-		if remaining != 0 {
-			return errors.New("agency funding debt repayment mismatch")
-		}
-	}
 	lotID := lot.ID
-	if err := tx.Create(&AgencyFundingLedger{OperationID: sourceID, EntryNo: 0, UserID: userID, MoneySeq: seq, SourceKind: sourceKind, LotID: &lotID, PaidDelta: paidForWallet, NonpaidDelta: bonusQuota, DebtDelta: debtDelta, PaidAfter: paidAvailable, NonpaidAfter: nonpaidAvailable, DebtAfter: debt, CreatedAtMS: now}).Error; err != nil {
+	if err := tx.Create(&AgencyFundingLedger{OperationID: sourceID, EntryNo: 0, UserID: userID, MoneySeq: seq, SourceKind: sourceKind, LotID: &lotID, PaidDelta: paidForWallet, NonpaidDelta: nonpaidForWallet, DebtDelta: debtDelta, PaidAfter: paidAvailable, NonpaidAfter: nonpaidAvailable, DebtAfter: debt, CurrencyCode: payment.CurrencyCode, CreatedAtMS: now}).Error; err != nil {
 		return err
 	}
 	var active AgencyActiveUserBinding
@@ -1093,10 +1117,12 @@ func RecordAgencyTopup(tx *gorm.DB, userID int64, sourceKind, sourceID, completi
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
-	if err := tx.Create(&AgencyTopupFact{SourceOperationID: sourceID, UserID: userID, AgencyID: agencyID, BindingID: bindingID, CreditedQuota: paidQuota + bonusQuota, PaidQuota: paidQuota, BonusQuota: bonusQuota, CompletionSource: completionSource, PaymentStatus: "success", OccurredAtMS: now}).Error; err != nil {
+	if err := tx.Create(&AgencyTopupFact{SourceOperationID: sourceID, UserID: userID, AgencyID: agencyID, BindingID: bindingID, CreditedQuota: paidQuota + bonusQuota, PaidQuota: paidQuota, BonusQuota: bonusQuota, ActualMoney: payment.ActualMoney, CurrencyCode: payment.CurrencyCode, PaymentReference: payment.PaymentReference, QuotaConversionSnapshot: conversionJSON, CompletionSource: completionSource, PaymentStatus: "success", OccurredAtMS: now}).Error; err != nil {
 		return err
 	}
 	event := agencycontract.BillingEvent{SchemaVersion: agencycontract.SchemaVersion, EventID: "agency-topup-" + sourceID, EventType: "agency.topup_completed", FinancialChargeID: sourceID, OperationID: sourceID, JournalRevision: 1, MoneySeq: seq, EventIndex: 0, EventCount: 1, OccurredAtMS: now, UserID: userID, AgencyID: agencyID, BindingID: bindingID, BusinessStatus: "success", BillingStatus: "funded", CommissionEligible: false, CommissionSkipReason: "topup_noncommissionable"}
+	event.CurrencyCode = payment.CurrencyCode
+	event.QuotaPerUnit = quotaPerUnit
 	payload, err := common.Marshal(event)
 	if err != nil {
 		return err
@@ -1124,14 +1150,50 @@ func ReverseAgencyTopupTx(tx *gorm.DB, input AgencyFundingReversalInput) ([]Agen
 	}
 	input.RefundID = strings.TrimSpace(input.RefundID)
 	input.SourceOperationID = strings.TrimSpace(input.SourceOperationID)
+	input.CurrencyCode = strings.ToUpper(strings.TrimSpace(input.CurrencyCode))
+	input.PaymentReference = strings.TrimSpace(input.PaymentReference)
+	input.EvidenceRef = strings.TrimSpace(input.EvidenceRef)
+	input.Reason = strings.TrimSpace(input.Reason)
+	if len(input.RefundID) > 128 || len(input.SourceOperationID) > 128 || len(input.CurrencyCode) > 16 ||
+		len(input.PaymentReference) > 191 || len(input.EvidenceRef) > 191 || len(input.Reason) > 2000 {
+		return nil, false, ErrAgencyFundingUnavailable
+	}
+	// Serialize against other wallet operations before touching a top-up or
+	// allocation. A locking read also sees a concurrent committed refund under
+	// MySQL's repeatable-read isolation, rather than a stale transaction snapshot.
+	var user User
+	if err := AgencyLockForUpdate(tx).Select("id, quota, billing_mode").First(&user, input.UserID).Error; err != nil {
+		return nil, false, err
+	}
 	var existing AgencyFundingReversal
-	if err := tx.Where("refund_id = ?", input.RefundID).First(&existing).Error; err == nil {
-		if existing.SourceOperationID != input.SourceOperationID || existing.UserID != input.UserID || existing.Quota != input.Quota {
+	if err := AgencyLockForUpdate(tx).Where("refund_id = ?", input.RefundID).First(&existing).Error; err == nil {
+		// Empty currency means the original source's frozen currency. All other
+		// evidence is part of the immutable request; changing it under the same
+		// refund ID must not be reported as a successful retry.
+		if input.CurrencyCode == "" {
+			input.CurrencyCode = existing.CurrencyCode
+		}
+		if existing.RefundID != input.RefundID || existing.SourceOperationID != input.SourceOperationID || existing.UserID != input.UserID || existing.Quota != input.Quota ||
+			existing.CurrencyCode != input.CurrencyCode || existing.PaymentReference != input.PaymentReference ||
+			existing.EvidenceRef != input.EvidenceRef || existing.Reason != input.Reason {
 			return nil, false, ErrAgencyFundingReversalConflict
 		}
 		charges, err := loadAgencyFundingReversalChargesTx(tx, input.RefundID)
 		return charges, false, err
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, err
+	}
+	if user.BillingMode != AgencyDurableBillingMode {
+		return nil, false, errors.New("funding reversal requires a durable user")
+	}
+	if int64(user.Quota)-input.Quota < -int64(common.MaxQuota)-1 {
+		return nil, false, errors.New("funding reversal wallet quota underflow")
+	}
+	if err := EnsureAgencyFundingAccount(tx, input.UserID); err != nil {
+		return nil, false, err
+	}
+	var account AgencyFundingAccount
+	if err := AgencyLockForUpdate(tx).Where("user_id = ?", input.UserID).First(&account).Error; err != nil {
 		return nil, false, err
 	}
 
@@ -1154,23 +1216,6 @@ func ReverseAgencyTopupTx(tx *gorm.DB, input AgencyFundingReversalInput) ([]Agen
 	}
 	if input.CurrencyCode == "" {
 		input.CurrencyCode = topup.CurrencyCode
-	}
-	var user User
-	if err := AgencyLockForUpdate(tx).Select("id, quota, billing_mode").First(&user, input.UserID).Error; err != nil {
-		return nil, false, err
-	}
-	if user.BillingMode != AgencyDurableBillingMode {
-		return nil, false, errors.New("funding reversal requires a durable user")
-	}
-	if int64(user.Quota)-input.Quota < -int64(common.MaxQuota)-1 {
-		return nil, false, errors.New("funding reversal wallet quota underflow")
-	}
-	if err := EnsureAgencyFundingAccount(tx, input.UserID); err != nil {
-		return nil, false, err
-	}
-	var account AgencyFundingAccount
-	if err := AgencyLockForUpdate(tx).Where("user_id = ?", input.UserID).First(&account).Error; err != nil {
-		return nil, false, err
 	}
 	var lots []AgencyFundingLot
 	if err := AgencyLockForUpdate(tx).
@@ -1271,6 +1316,11 @@ func ReverseAgencyTopupTx(tx *gorm.DB, input AgencyFundingReversalInput) ([]Agen
 			if err := AgencyLockForUpdate(tx).First(&debt, repayments[i].DebtID).Error; err != nil {
 				return nil, false, err
 			}
+			if debt.UserID != input.UserID || debt.OriginalQuota < 0 || debt.ReversedQuota < 0 || debt.ReversedQuota > debt.OriginalQuota ||
+				debt.OutstandingQuota < 0 || debt.OutstandingQuota > debt.OriginalQuota-debt.ReversedQuota ||
+				take > debt.OriginalQuota-debt.ReversedQuota-debt.OutstandingQuota {
+				return nil, false, ErrAgencyComponentRefundProvenance
+			}
 			debt.OutstandingQuota += take
 			if err := tx.Model(&debt).Updates(map[string]any{"outstanding_quota": debt.OutstandingQuota}).Error; err != nil {
 				return nil, false, err
@@ -1283,13 +1333,28 @@ func ReverseAgencyTopupTx(tx *gorm.DB, input AgencyFundingReversalInput) ([]Agen
 				if lots[j].ID != *repayments[i].FundingLotID {
 					continue
 				}
-				if lots[j].PaidDebtRepaid < take {
-					return nil, false, errors.New("funding reversal debt repayment underflow")
+				updates := map[string]any{}
+				switch repayments[i].SourceKind {
+				case "", "paid":
+					if lots[j].PaidDebtRepaid < take {
+						return nil, false, ErrAgencyComponentRefundProvenance
+					}
+					lots[j].PaidDebtRepaid -= take
+					lots[j].PaidRevoked += take
+					updates["paid_debt_repaid"], updates["paid_revoked"] = lots[j].PaidDebtRepaid, lots[j].PaidRevoked
+				case "nonpaid":
+					if lots[j].BonusDebtRepaid < take {
+						return nil, false, ErrAgencyComponentRefundProvenance
+					}
+					lots[j].BonusDebtRepaid -= take
+					lots[j].BonusRevoked += take
+					updates["bonus_debt_repaid"], updates["bonus_revoked"] = lots[j].BonusDebtRepaid, lots[j].BonusRevoked
+				default:
+					return nil, false, ErrAgencyComponentRefundProvenance
 				}
-				lots[j].PaidDebtRepaid -= take
-				lots[j].PaidRevoked += take
 				lots[j].Version++
-				if err := tx.Model(&lots[j]).Updates(map[string]any{"paid_debt_repaid": lots[j].PaidDebtRepaid, "paid_revoked": lots[j].PaidRevoked, "version": lots[j].Version}).Error; err != nil {
+				updates["version"] = lots[j].Version
+				if err := tx.Model(&lots[j]).Updates(updates).Error; err != nil {
 					return nil, false, err
 				}
 				break
@@ -1336,6 +1401,19 @@ func ReverseAgencyTopupTx(tx *gorm.DB, input AgencyFundingReversalInput) ([]Agen
 			take := takePaid + takeBonus
 			if take <= 0 {
 				continue
+			}
+			// Component refunds need source-specific revocation watermarks and
+			// commission attribution. The legacy charge-only result below cannot
+			// supply them, even for bonus-funded components with zero commission.
+			// Enforce this at the money boundary, not only in a service hook after
+			// the caller has already committed the source reversal.
+			var componentSource AgencyComponentFunding
+			componentLookup := tx.Where("allocation_id = ?", allocations[i].ID).Limit(1).Find(&componentSource)
+			if componentLookup.Error != nil {
+				return nil, false, componentLookup.Error
+			}
+			if componentLookup.RowsAffected != 0 {
+				return nil, false, ErrAgencyComponentRefundProvenance
 			}
 			if takePaid > 0 {
 				allocations[i].RevokedReservedDebt += takePaid
@@ -1399,17 +1477,29 @@ func ReverseAgencyTopupTx(tx *gorm.DB, input AgencyFundingReversalInput) ([]Agen
 			}).Error; err != nil {
 				return nil, false, err
 			}
-			var debt AgencyFundingDebt
-			debtErr := AgencyLockForUpdate(tx).
-				Where("user_id = ? AND origin_operation_id = ? AND debt_kind = ?", input.UserID, input.SourceOperationID, "payment_chargeback").
-				First(&debt).Error
+			// Payment chargeback debt is attributable to this exact allocation.
+			// Keep the source top-up as OriginOperationID for audit, while the
+			// nullable AllocationID prevents one charge's cancellation from
+			// consuming another charge's repayment. New rows are never pooled.
+			allocationID := allocations[i].ID
+			debt, debtErr := lockAgencyAllocationDebtTx(tx, allocations[i], input.SourceOperationID, "payment_chargeback")
 			if errors.Is(debtErr, gorm.ErrRecordNotFound) {
-				debt = AgencyFundingDebt{UserID: input.UserID, OriginOperationID: input.SourceOperationID, DebtKind: "payment_chargeback", CreatedAtMS: time.Now().UnixMilli()}
+				if allocations[i].RevokedReservedDebt+allocations[i].RevokedNonpaid != take {
+					// Earlier revoked liability has no authoritative debt row. Do
+					// not conceal the missing provenance by creating a fresh one.
+					return nil, false, ErrAgencyComponentRefundProvenance
+				}
+				debt = AgencyFundingDebt{UserID: input.UserID, OriginOperationID: input.SourceOperationID, DebtKind: "payment_chargeback", AllocationID: &allocationID, CreatedAtMS: time.Now().UnixMilli()}
 				if err := tx.Create(&debt).Error; err != nil {
 					return nil, false, err
 				}
 			} else if debtErr != nil {
 				return nil, false, debtErr
+			}
+			if debt.OriginalQuota < 0 || debt.ReversedQuota < 0 || debt.ReversedQuota > debt.OriginalQuota ||
+				debt.OutstandingQuota < 0 || debt.OutstandingQuota > debt.OriginalQuota-debt.ReversedQuota ||
+				debt.OriginalQuota > int64(common.MaxQuota)-take || debt.OriginalQuota-debt.ReversedQuota != allocations[i].DebtConsumed-take {
+				return nil, false, ErrAgencyComponentRefundProvenance
 			}
 			debt.OriginalQuota += take
 			debt.OutstandingQuota += take
@@ -1768,6 +1858,15 @@ func reserveAgencyFundingTx(tx *gorm.DB, userID int64, chargeID string, amount i
 			if err := tx.Create(&row).Error; err != nil {
 				return err
 			}
+			// Retain an exact origin for subsequent repayments and model refunds.
+			// The allocation ID is stable even when a finalized charge is split
+			// into several independently refundable components.
+			allocationID := row.ID
+			if err := tx.Create(&AgencyFundingDebt{UserID: userID,
+				OriginOperationID: fmt.Sprintf("allocation-%d", row.ID), DebtKind: "model_charge", AllocationID: &allocationID,
+				OriginalQuota: debtDelta, OutstandingQuota: debtDelta, CreatedAtMS: time.Now().UnixMilli()}).Error; err != nil {
+				return err
+			}
 		}
 		debt := account.DebtQuota + debtDelta
 		seq := account.MoneySeq + 1
@@ -1802,6 +1901,16 @@ func releaseAgencyFundingTx(tx *gorm.DB, chargeID string, amount int64) (int64, 
 	if strings.TrimSpace(chargeID) == "" || amount < 0 {
 		return 0, ErrAgencyFundingUnavailable
 	}
+	var componentCount int64
+	if err := tx.Model(&AgencyChargeComponent{}).Where("charge_id = ?", chargeID).Count(&componentCount).Error; err != nil {
+		return 0, err
+	}
+	if componentCount > 0 {
+		// Component finalizations must restore their persisted proportional
+		// matrix and commission in one command. A legacy post-task callback
+		// must fail before its wallet transaction commits any source mutation.
+		return 0, ErrAgencyComponentRefundProvenance
+	}
 	var released int64
 	err := func() error {
 		var rows []AgencyFundingAllocation
@@ -1818,6 +1927,8 @@ func releaseAgencyFundingTx(tx *gorm.DB, chargeID string, amount int64) (int64, 
 		remaining := amount
 		restoredNonpaid := int64(0)
 		restoredDebt := int64(0)
+		restoredDebtPaid := int64(0)
+		var restoredSources []agencyFundingSource
 		for _, row := range rows {
 			if remaining == 0 {
 				break
@@ -1840,6 +1951,18 @@ func releaseAgencyFundingTx(tx *gorm.DB, chargeID string, amount int64) (int64, 
 				debtTake = left
 			}
 			left -= debtTake
+			if debtTake > 0 {
+				sources, unpaid, err := restoreAgencyAllocationDebtTx(tx, row, debtTake, true)
+				if err != nil {
+					return err
+				}
+				for _, source := range sources {
+					restoredDebtPaid += source.Paid
+					restoredNonpaid += source.Nonpaid
+				}
+				restoredSources = append(restoredSources, sources...)
+				restoredDebt += unpaid
+			}
 			nonpaidTake := effectiveNonpaid
 			if nonpaidTake > left {
 				nonpaidTake = left
@@ -1886,6 +2009,9 @@ func releaseAgencyFundingTx(tx *gorm.DB, chargeID string, amount int64) (int64, 
 				}
 			}
 			row.NonpaidConsumed -= nonpaidTake
+			if paidTake+nonpaidTake > 0 {
+				restoredSources = append(restoredSources, agencyFundingSource{LotID: row.LotID, Paid: paidTake, Nonpaid: nonpaidTake})
+			}
 			row.DebtConsumed -= debtTake
 			row.Released += take
 			row.Version++
@@ -1894,31 +2020,9 @@ func releaseAgencyFundingTx(tx *gorm.DB, chargeID string, amount int64) (int64, 
 			}
 			released += paidTake
 			restoredNonpaid += nonpaidTake
-			restoredDebt += debtTake
 			remaining -= take
-			if debtTake > 0 && row.LotID > 0 {
-				var lot AgencyFundingLot
-				if err := AgencyLockForUpdate(tx).First(&lot, row.LotID).Error; err != nil {
-					return err
-				}
-				var debt AgencyFundingDebt
-				debtErr := AgencyLockForUpdate(tx).
-					Where("user_id = ? AND origin_operation_id = ? AND debt_kind = ?", row.UserID, lot.SourceID, "payment_chargeback").
-					First(&debt).Error
-				if debtErr == nil {
-					if debt.OutstandingQuota < debtTake {
-						return errors.New("agency funding debt repayment underflow")
-					}
-					debt.OutstandingQuota -= debtTake
-					if err := tx.Model(&debt).Update("outstanding_quota", debt.OutstandingQuota).Error; err != nil {
-						return err
-					}
-				} else if !errors.Is(debtErr, gorm.ErrRecordNotFound) {
-					return debtErr
-				}
-			}
 		}
-		if released == 0 && restoredNonpaid == 0 && restoredDebt == 0 {
+		if released == 0 && restoredNonpaid == 0 && restoredDebt == 0 && restoredDebtPaid == 0 {
 			return nil
 		}
 		seq := account.MoneySeq + 1
@@ -1926,7 +2030,11 @@ func releaseAgencyFundingTx(tx *gorm.DB, chargeID string, amount int64) (int64, 
 		if newDebt < 0 {
 			return errors.New("agency funding debt underflow")
 		}
-		return tx.Model(&account).Updates(map[string]any{"paid_available": account.PaidAvailable + released, "nonpaid_available": account.NonpaidAvailable + restoredNonpaid, "debt_quota": newDebt, "money_seq": seq, "version": account.Version + 1, "updated_at": time.Now().Unix()}).Error
+		paidRepaid, nonpaidRepaid, err := repayAgencyFundingSourcesTx(tx, account.UserID, fmt.Sprintf("release:%s:%d", chargeID, seq), seq, newDebt, restoredSources)
+		if err != nil {
+			return err
+		}
+		return tx.Model(&account).Updates(map[string]any{"paid_available": account.PaidAvailable + released + restoredDebtPaid - paidRepaid, "nonpaid_available": account.NonpaidAvailable + restoredNonpaid - nonpaidRepaid, "debt_quota": newDebt - paidRepaid - nonpaidRepaid, "money_seq": seq, "version": account.Version + 1, "updated_at": time.Now().Unix()}).Error
 	}()
 	return released, err
 }

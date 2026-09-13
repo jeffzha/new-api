@@ -2,6 +2,7 @@ package agencyhub
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -464,7 +465,7 @@ func (a *App) verifyRootCommandProof(req AgencyCommandRequest, bodyHash string, 
 }
 
 func (a *App) createInternalCommand(c *gin.Context) {
-	if a.config.CommandRequireTLS && c.Request.TLS == nil {
+	if a.config.CommandRequireTLS && (c.Request.TLS == nil || len(c.Request.TLS.VerifiedChains) == 0 || len(c.Request.TLS.PeerCertificates) == 0) {
 		respondError(c, http.StatusForbidden, "internal_transport_required", "命令接口仅允许mTLS内部连接", nil)
 		return
 	}
@@ -556,7 +557,15 @@ func (a *App) createInternalCommand(c *gin.Context) {
 	}
 	canonicalPayload, _ := CanonicalPayload(req.Payload)
 	created := &model.AgencyCommand{CommandID: req.CommandID, Action: req.Action, Actor: req.Actor, SourceSID: req.SourceSID, ObjectID: req.ObjectID, ExpectedVersion: req.ExpectedVersion, Payload: string(canonicalPayload), BodyHash: bodyHash, IssuedAt: req.IssuedAt, ExpiresAt: req.ExpiresAt, HubSignature: signature, RootProof: req.RootProof, RootProofJTI: claims.JTI, Status: CommandStatusQueued, CreatedAt: now, UpdatedAt: now}
-	if err = a.db.Create(created).Error; err != nil {
+	if err = a.persistAcceptedCommand(c.Request.Context(), req, created); err != nil {
+		if errors.Is(err, errRootCommandRevoked) {
+			respondError(c, http.StatusForbidden, "root_authorization_revoked", "Root当前身份或源会话已失效", nil)
+			return
+		}
+		if errors.Is(err, errProofReplayed) || errors.Is(err, errCommandConflict) {
+			respondError(c, http.StatusConflict, "command_conflict", "命令或授权证明已用于其他请求", nil)
+			return
+		}
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			var raced model.AgencyCommand
 			if lookupErr := a.db.Where("command_id = ?", req.CommandID).First(&raced).Error; lookupErr == nil {
@@ -578,6 +587,53 @@ func (a *App) createInternalCommand(c *gin.Context) {
 		return
 	}
 	respondAccepted(c, commandResponse(*created))
+}
+
+var errRootCommandRevoked = errors.New("root command authorization is no longer valid")
+
+// Proof consumption and acceptance use gateway-owned rows and the same
+// transaction as current Root/session validation. The Hub only prevalidates.
+func (a *App) persistAcceptedCommand(ctx context.Context, req AgencyCommandRequest, command *model.AgencyCommand) error {
+	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := time.Now().Unix()
+		if _, err := validateCommandRequest(req, now); err != nil {
+			return errRootCommandRevoked
+		}
+		claims, err := a.verifyRootCommandProof(req, command.BodyHash, now)
+		if err != nil {
+			return errRootCommandRevoked
+		}
+		var user model.User
+		if err := model.AgencyLockForUpdate(tx).Select("id, role, status, auth_version").First(&user, claims.Subject).Error; err != nil {
+			return errors.Join(errRootCommandRevoked, err)
+		}
+		var source model.UserSession
+		if err := model.AgencyLockForUpdate(tx).Where("sid = ? AND user_id = ?", claims.SourceSID, claims.Subject).First(&source).Error; err != nil {
+			return errors.Join(errRootCommandRevoked, err)
+		}
+		if user.Role != common.RoleRootUser || user.Status != common.UserStatusEnabled || user.AuthVersion != claims.UserAuthVersion ||
+			claims.SessionVersion <= 0 || source.Version != claims.SessionVersion || source.UserAuthVersion != user.AuthVersion ||
+			source.Status != model.UserSessionStatusActive || source.RevokedAt != 0 || source.ExpiresAt <= time.Now().Unix() || claims.ExpiresAt <= time.Now().Unix() {
+			return errRootCommandRevoked
+		}
+		var existing model.AgencyCommand
+		if err := tx.Where("command_id = ?", req.CommandID).First(&existing).Error; err == nil {
+			if !commandEnvelopeMatchesStored(req, existing, command.BodyHash) || existing.RootProofJTI != claims.JTI {
+				return errCommandConflict
+			}
+			*command = existing
+			return nil
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		var proofUse model.AgencyCommand
+		if err := tx.Where("root_proof_jti = ?", claims.JTI).First(&proofUse).Error; err == nil {
+			return errProofReplayed
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		return tx.Create(command).Error
+	})
 }
 
 func commandEnvelopeMatchesStored(req AgencyCommandRequest, stored model.AgencyCommand, bodyHash string) bool {
@@ -666,7 +722,7 @@ func (a *App) SetInternalCommandResult(commandID, status string, resultCode int,
 }
 
 func (a *App) getInternalCommand(c *gin.Context) {
-	if a.config.CommandRequireTLS && c.Request.TLS == nil {
+	if a.config.CommandRequireTLS && (c.Request.TLS == nil || len(c.Request.TLS.VerifiedChains) == 0 || len(c.Request.TLS.PeerCertificates) == 0) {
 		respondError(c, http.StatusForbidden, "internal_transport_required", "命令接口仅允许mTLS内部连接", nil)
 		return
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const deliveryLeaseName = "agency-billing-consumer"
@@ -22,6 +23,30 @@ func (a *App) StartBackground(ctx context.Context) {
 		return
 	}
 	interval := 2 * time.Second
+	nextReconcile := time.Now().Add(a.config.ReconcileInterval)
+	shanghai := time.FixedZone("Asia/Shanghai", 8*60*60)
+	dailyRunDate := ""
+	// CSV generation can take much longer than a tick. Give exports their own
+	// bounded worker so a large file never stops commissions or provisioning.
+	if strings.TrimSpace(a.config.ExportDir) != "" {
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if _, err := a.ProcessExportJobs(2); err != nil {
+						common.SysError("agency export worker failed: " + err.Error())
+					}
+					if _, err := a.CleanupExpiredExportJobs(20); err != nil {
+						common.SysError("agency export cleanup failed: " + err.Error())
+					}
+				}
+			}
+		}()
+	}
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -30,6 +55,26 @@ func (a *App) StartBackground(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				localNow := time.Now().In(shanghai)
+				if dailyKey, cutoff, due := agencyDailyReconciliationSchedule(localNow, dailyRunDate); due {
+					dailyCtx, dailyCancel := context.WithTimeout(ctx, 2*time.Minute)
+					_, err := a.RunReconciliation(dailyCtx, "daily", dailyKey, cutoff)
+					dailyCancel()
+					if err != nil && !errors.Is(err, errReconciliationRunExists) {
+						common.SysError("agency daily reconciliation failed: " + err.Error())
+					}
+					dailyRunDate = localNow.Format("2006-01-02")
+				}
+				if a.config.ReconcileInterval > 0 && !time.Now().Before(nextReconcile) {
+					reconcileCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+					now := time.Now()
+					key := "scheduled-" + now.In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("200601021504")
+					if _, err := a.RunReconciliation(reconcileCtx, "scheduled", key, 0); err != nil && !errors.Is(err, errReconciliationRunExists) {
+						common.SysError("agency reconciliation failed: " + err.Error())
+					}
+					cancel()
+					nextReconcile = time.Now().Add(a.config.ReconcileInterval)
+				}
 				if err := a.CleanupExpiredDeliverySecrets(time.Now().Unix()); err != nil {
 					common.SysError("agency delivery-secret cleanup failed: " + err.Error())
 				}
@@ -38,20 +83,26 @@ func (a *App) StartBackground(ctx context.Context) {
 						common.SysError("agency billing consumer failed: " + err.Error())
 					}
 				}
-				if strings.TrimSpace(a.config.ExportDir) != "" {
-					if _, err := a.ProcessExportJobs(2); err != nil {
-						common.SysError("agency export worker failed: " + err.Error())
-					}
-					if _, err := a.CleanupExpiredExportJobs(20); err != nil {
-						common.SysError("agency export cleanup failed: " + err.Error())
-					}
-				}
 				if _, err := a.ProcessProvisioningJobs(20); err != nil {
 					common.SysError("agency provisioning worker failed: " + err.Error())
 				}
 			}
 		}
 	}()
+}
+
+// agencyDailyReconciliationSchedule retains the previous natural-day cutoff
+// even when the process restarts after the 02:30 Shanghai schedule. The run's
+// durable key prevents the same day's close from being duplicated by a restart.
+func agencyDailyReconciliationSchedule(now time.Time, lastDate string) (string, int64, bool) {
+	shanghai := time.FixedZone("Asia/Shanghai", 8*60*60)
+	local := now.In(shanghai)
+	date := local.Format("2006-01-02")
+	if date == lastDate || local.Hour()*60+local.Minute() < 2*60+30 {
+		return "", 0, false
+	}
+	midnight := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, shanghai)
+	return "daily-" + local.Format("20060102"), midnight.Add(-time.Millisecond).UnixMilli(), true
 }
 
 // drainConsumerBudget keeps the sidecar consumer ahead of a sustained 60 RPS
@@ -155,8 +206,19 @@ func (a *App) processDelivery(ctx context.Context, delivery model.AgencyEventDel
 		_ = a.markDelivery(delivery, "poison", err)
 		return err
 	}
-	if event.SchemaVersion != agencycontract.SchemaVersion {
+	if event.SchemaVersion != agencycontract.SchemaVersion && event.SchemaVersion != agencycontract.ComponentSchemaVersion {
 		err := errors.New("unknown agency billing event schema version")
+		_ = a.markDelivery(delivery, "poison", err)
+		return err
+	}
+	if err := validateBillingEvent(event); err != nil {
+		_ = a.markDelivery(delivery, "poison", err)
+		return err
+	}
+	if event.SchemaVersion == agencycontract.ComponentSchemaVersion &&
+		(outbox.OperationID != event.OperationID || outbox.SchemaVersion != event.SchemaVersion || outbox.EventKind != event.EventType ||
+			outbox.UserID != event.UserID || outbox.MoneySeq != event.MoneySeq || outbox.EventIndex != event.EventIndex || outbox.EventCount != event.EventCount) {
+		err := errors.New("billing event metadata does not match outbox")
 		_ = a.markDelivery(delivery, "poison", err)
 		return err
 	}
@@ -197,27 +259,20 @@ func recordPoisonIssueTx(tx *gorm.DB, eventID string, deliveryErr error) error {
 	if tx == nil || strings.TrimSpace(eventID) == "" {
 		return nil
 	}
-	var count int64
-	if err := tx.Model(&model.AgencyReconciliationIssue{}).
-		Where("object_type = ? AND object_id = ? AND status = ?", "billing_event", eventID, "open").
-		Count(&count).Error; err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil
-	}
 	difference := "billing event delivery moved to poison"
 	if deliveryErr != nil && strings.TrimSpace(deliveryErr.Error()) != "" {
 		difference += ": " + deliveryErr.Error()
 	}
 	digest := sha256.Sum256([]byte(difference))
+	activeKey := model.AgencyReconciliationActiveKey("billing_event", eventID)
 	now := time.Now().UnixMilli()
-	return tx.Create(&model.AgencyReconciliationIssue{
+	return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "active_key"}}, DoNothing: true}).Create(&model.AgencyReconciliationIssue{
 		ObjectType:   "billing_event",
 		ObjectID:     eventID,
 		Difference:   difference,
 		EvidenceHash: hex.EncodeToString(digest[:]),
 		Status:       "open",
+		ActiveKey:    &activeKey,
 		CreatedAtMS:  now,
 	}).Error
 }

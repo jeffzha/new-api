@@ -295,7 +295,12 @@ func fulfillOrder(ctx context.Context, event stripe.Event, referenceId string, c
 		return
 	}
 
-	err := model.Recharge(referenceId, customerId, callerIp)
+	providerReference := event.GetObjectValue("payment_intent")
+	if providerReference == "" {
+		providerReference = event.GetObjectValue("id")
+	}
+	payment := paymentSnapshotFromMinorUnits(event.GetObjectValue("amount_total"), event.GetObjectValue("currency"), providerReference, model.PaymentProviderStripe)
+	err := model.Recharge(referenceId, customerId, callerIp, payment)
 	if err != nil {
 		logger.LogError(ctx, fmt.Sprintf("Stripe 充值处理失败 trade_no=%s event_type=%s client_ip=%s error=%q", referenceId, string(event.Type), callerIp, err.Error()))
 		return

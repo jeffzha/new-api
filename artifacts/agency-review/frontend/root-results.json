@@ -1,0 +1,356 @@
+{
+  "actor": "root",
+  "scope": "Real served HTML and real Gin API; synthetic local SQLite; jsdom, not visual browser QA",
+  "checks": [
+    {
+      "name": "The server serves the agency UI",
+      "status": "PASS",
+      "details": {
+        "title": "代理商中心"
+      }
+    },
+    {
+      "name": "Root overview loads agency and customer totals",
+      "status": "PASS",
+      "details": "代理商数1客户数1同步积压0对账异常0运行能力{\n  \"backlog\": {\n    \"deliveries\": {\n      \"claimed\": 0,\n      \"pending\": 0,\n      \"poison\": 0,\n      \"retry\": 0\n    },\n    \"exports_in_progress\": 0,\n    \"open_reconciliation_issues\": 0\n  },\n  \"capabilities\": {\n    \"agency_durable_v1\": true,\n    \"commission_worker\": false,\n    \"exports\": false,\n    \"outbox_v1\": true,\n    \"pricing_snapshot_v1\": true,\n    \"withdrawals\": true\n  },\n  \"schema\": {\n    \"missing_tables\": [],\n    \"ready\": true,\n    \"schema_version\": \"agency-hub-v1\"\n  }\n}"
+    },
+    {
+      "name": "Root customer tab can list the bound customer",
+      "status": "FAIL",
+      "details": {
+        "method": "GET",
+        "path": "/agency/api/v1/customers?limit=200",
+        "status": 403,
+        "response": {
+          "success": false,
+          "error": {
+            "code": "agency_required",
+            "message": "当前会话没有代理商范围"
+          },
+          "request_id": "202609121518200447613008268d9d6iug671c9"
+        }
+      }
+    },
+    {
+      "name": "Root commission ledger has a usable agency context",
+      "status": "FAIL",
+      "details": {
+        "method": "GET",
+        "path": "/agency/api/v1/commissions/ledger?limit=200",
+        "status": 403,
+        "response": {
+          "success": false,
+          "error": {
+            "code": "agency_required",
+            "message": "当前会话没有代理商范围"
+          },
+          "request_id": "202609121518200483179008268d9d6rYjuk77l"
+        }
+      }
+    },
+    {
+      "name": "Root agency list loads",
+      "status": "PASS",
+      "details": {
+        "method": "GET",
+        "path": "/agency/api/v1/root/agencies?limit=200",
+        "status": 200,
+        "response": {
+          "success": true,
+          "data": {
+            "items": [
+              {
+                "id": 1,
+                "code": "CYE9VHJWFA38HE4K5HD6",
+                "display_name": "Audit agency",
+                "status": "active",
+                "invite_code": "SA50ZDYMWG",
+                "current_policy_version_id": 1,
+                "price_revision": 1,
+                "state_revision": 1,
+                "version": 1,
+                "created_by_type": "root",
+                "created_by_id": 1,
+                "created_at": 1789226299,
+                "updated_at": 1789226299,
+                "invite_url": "http://127.0.0.1:14644/register?invite=SA50ZDYMWG",
+                "invite_qr_url": "http://127.0.0.1:14644/agency/api/v1/public/invitations/SA50ZDYMWG/qr"
+              }
+            ],
+            "meta": {
+              "next_cursor": ""
+            },
+            "total": 1
+          },
+          "request_id": "202609121518200518676008268d9d6nHdgDrDa"
+        }
+      }
+    },
+    {
+      "name": "Root create agency form succeeds with verification flow",
+      "status": "FAIL",
+      "details": {
+        "method": "POST",
+        "path": "/agency/api/v1/root/agencies",
+        "status": 403,
+        "body": "{\"display_name\":\"New audit agency\",\"operator_username\":\"new-audit-operator\",\"status\":\"active\",\"pricing\":{\"default_settlement_bps\":7500,\"default_sales_bps\":9000,\"min_spread_bps\":500,\"sales_cap_bps\":30000,\"model_overrides\":[]}}",
+        "response": {
+          "success": false,
+          "error": {
+            "code": "verification_required",
+            "message": "该操作需要二次验证"
+          },
+          "request_id": "202609121518200787461008268d9d6rhvXrtm0"
+        }
+      }
+    },
+    {
+      "name": "Root selected agency pricing provides editable controls and publish action",
+      "status": "FAIL",
+      "details": "价格政策{\n  \"agency_id\": 1,\n  \"default_sales_bps\": 9000,\n  \"default_settlement_bps\": 7500,\n  \"min_spread_bps\": 500,\n  \"model_overrides\": null,\n  \"revision\": 1,\n  \"sales_cap_bps\": 30000\n}价格发布使用整包版本和 expected_revision。页面不展示渠道、采购价或上游密钥。"
+    },
+    {
+      "name": "Root can explicitly enter and leave agency management",
+      "status": "FAIL",
+      "details": []
+    }
+  ],
+  "calls": [
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/auth/me",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "actor_type": "root",
+          "actor_id": 1,
+          "must_change_password": false
+        },
+        "request_id": "202609121518200223787008268d9d6cYIl0e97"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/root/sync/status",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "backlog": {
+            "deliveries": {
+              "claimed": 0,
+              "pending": 0,
+              "poison": 0,
+              "retry": 0
+            },
+            "exports_in_progress": 0,
+            "open_reconciliation_issues": 0
+          },
+          "capabilities": {
+            "agency_durable_v1": true,
+            "commission_worker": false,
+            "exports": false,
+            "outbox_v1": true,
+            "pricing_snapshot_v1": true,
+            "withdrawals": true
+          },
+          "schema": {
+            "missing_tables": [],
+            "ready": true,
+            "schema_version": "agency-hub-v1"
+          }
+        },
+        "request_id": "202609121518200292356008268d9d6bdFwV6uU"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/root/customers",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "items": [
+            {
+              "user_id": "2",
+              "username": "audit-customer",
+              "status": 1,
+              "agency_id": "1",
+              "binding_id": "1",
+              "revision": "1",
+              "effective_at_ms": "1789226299000"
+            }
+          ],
+          "meta": {
+            "next_cursor": ""
+          },
+          "total": 1
+        },
+        "request_id": "202609121518200307467008268d9d6B2sfPy5U"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/root/agencies?limit=200",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "items": [
+            {
+              "id": 1,
+              "code": "CYE9VHJWFA38HE4K5HD6",
+              "display_name": "Audit agency",
+              "status": "active",
+              "invite_code": "SA50ZDYMWG",
+              "current_policy_version_id": 1,
+              "price_revision": 1,
+              "state_revision": 1,
+              "version": 1,
+              "created_by_type": "root",
+              "created_by_id": 1,
+              "created_at": 1789226299,
+              "updated_at": 1789226299,
+              "invite_url": "http://127.0.0.1:14644/register?invite=SA50ZDYMWG",
+              "invite_qr_url": "http://127.0.0.1:14644/agency/api/v1/public/invitations/SA50ZDYMWG/qr"
+            }
+          ],
+          "meta": {
+            "next_cursor": ""
+          },
+          "total": 1
+        },
+        "request_id": "202609121518200312637008268d9d6aVsxMZr4"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/customers?limit=200",
+      "status": 403,
+      "response": {
+        "success": false,
+        "error": {
+          "code": "agency_required",
+          "message": "当前会话没有代理商范围"
+        },
+        "request_id": "202609121518200447613008268d9d6iug671c9"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/commissions/ledger?limit=200",
+      "status": 403,
+      "response": {
+        "success": false,
+        "error": {
+          "code": "agency_required",
+          "message": "当前会话没有代理商范围"
+        },
+        "request_id": "202609121518200483179008268d9d6rYjuk77l"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/root/agencies?limit=200",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "items": [
+            {
+              "id": 1,
+              "code": "CYE9VHJWFA38HE4K5HD6",
+              "display_name": "Audit agency",
+              "status": "active",
+              "invite_code": "SA50ZDYMWG",
+              "current_policy_version_id": 1,
+              "price_revision": 1,
+              "state_revision": 1,
+              "version": 1,
+              "created_by_type": "root",
+              "created_by_id": 1,
+              "created_at": 1789226299,
+              "updated_at": 1789226299,
+              "invite_url": "http://127.0.0.1:14644/register?invite=SA50ZDYMWG",
+              "invite_qr_url": "http://127.0.0.1:14644/agency/api/v1/public/invitations/SA50ZDYMWG/qr"
+            }
+          ],
+          "meta": {
+            "next_cursor": ""
+          },
+          "total": 1
+        },
+        "request_id": "202609121518200518676008268d9d6nHdgDrDa"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/agency/api/v1/root/agencies",
+      "status": 403,
+      "body": "{\"display_name\":\"New audit agency\",\"operator_username\":\"new-audit-operator\",\"status\":\"active\",\"pricing\":{\"default_settlement_bps\":7500,\"default_sales_bps\":9000,\"min_spread_bps\":500,\"sales_cap_bps\":30000,\"model_overrides\":[]}}",
+      "response": {
+        "success": false,
+        "error": {
+          "code": "verification_required",
+          "message": "该操作需要二次验证"
+        },
+        "request_id": "202609121518200787461008268d9d6rhvXrtm0"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/root/agencies?limit=200",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "items": [
+            {
+              "id": 1,
+              "code": "CYE9VHJWFA38HE4K5HD6",
+              "display_name": "Audit agency",
+              "status": "active",
+              "invite_code": "SA50ZDYMWG",
+              "current_policy_version_id": 1,
+              "price_revision": 1,
+              "state_revision": 1,
+              "version": 1,
+              "created_by_type": "root",
+              "created_by_id": 1,
+              "created_at": 1789226299,
+              "updated_at": 1789226299,
+              "invite_url": "http://127.0.0.1:14644/register?invite=SA50ZDYMWG",
+              "invite_qr_url": "http://127.0.0.1:14644/agency/api/v1/public/invitations/SA50ZDYMWG/qr"
+            }
+          ],
+          "meta": {
+            "next_cursor": ""
+          },
+          "total": 1
+        },
+        "request_id": "202609121518200817913008268d9d6RUXhuZ2I"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/root/agencies/1/pricing",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "agency_id": 1,
+          "default_sales_bps": 9000,
+          "default_settlement_bps": 7500,
+          "min_spread_bps": 500,
+          "model_overrides": null,
+          "revision": 1,
+          "sales_cap_bps": 30000
+        },
+        "request_id": "202609121518200868474008268d9d6bpgu9lmH"
+      }
+    }
+  ],
+  "passed": 3,
+  "failed": 5
+}

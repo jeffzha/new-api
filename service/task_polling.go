@@ -70,6 +70,12 @@ func sweepTimedOutTasks(ctx context.Context) {
 	timedOutCount := 0
 
 	for _, task := range tasks {
+		if model.IsAgencyDurableUser(task.UserId) {
+			if err := model.MarkAgencyTaskReconcileRequired(task, "task_timeout"); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("retain unknown agency task %s: %v", task.TaskID, err))
+			}
+			continue
+		}
 		isLegacy := task.SubmitTime > 0 && task.SubmitTime < model.TaskRefundLegacyCutoff
 
 		oldStatus := task.Status
@@ -157,6 +163,10 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 		for _, task := range tasks {
 			upstreamID := task.GetUpstreamTaskID()
 			if upstreamID == "" {
+				if model.IsAgencyDurableUser(task.UserId) {
+					_ = model.MarkAgencyTaskReconcileRequired(task, "provider_response_unknown")
+					continue
+				}
 				// 统计失败的未完成任务
 				nullTaskIds = append(nullTaskIds, task.ID)
 				continue
@@ -223,7 +233,19 @@ func UpdateSunoTasks(ctx context.Context, taskChannelM map[int][]string, taskM m
 	return nil
 }
 
-func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM map[string]*model.Task) error {
+func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM map[string]*model.Task) (returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		for _, taskID := range taskIds {
+			if task := taskM[taskID]; task != nil && model.IsAgencyDurableUser(task.UserId) {
+				if err := model.MarkAgencyTaskReconcileRequired(task, "provider_response_unknown"); err != nil {
+					logger.LogError(ctx, fmt.Sprintf("Suno agency task %s reconciliation marker failed: %v", task.TaskID, err))
+				}
+			}
+		}
+	}()
 	logger.LogInfo(ctx, fmt.Sprintf("渠道 #%d 未完成的任务有: %d", channelId, len(taskIds)))
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -238,6 +260,10 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 		var failedIDs []int64
 		for _, upstreamID := range taskIds {
 			if t, ok := taskM[upstreamID]; ok {
+				if model.IsAgencyDurableUser(t.UserId) {
+					_ = model.MarkAgencyTaskReconcileRequired(t, "channel_unavailable")
+					continue
+				}
 				failedIDs = append(failedIDs, t.ID)
 			}
 		}
@@ -263,11 +289,11 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 		common.SysLog(fmt.Sprintf("Get Task Do req error: %v", err))
 		return err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		logger.LogError(ctx, fmt.Sprintf("Get Task status code: %d", resp.StatusCode))
 		return fmt.Errorf("Get Task status code: %d", resp.StatusCode)
 	}
-	defer resp.Body.Close()
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		common.SysLog(fmt.Sprintf("Get Suno Task parse body error: %v", err))
@@ -281,7 +307,7 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 	}
 	if !responseItems.IsSuccess() {
 		common.SysLog(fmt.Sprintf("渠道 #%d 未完成的任务有: %d, 成功获取到任务数: %s", channelId, len(taskIds), string(responseBody)))
-		return err
+		return errors.New("Suno provider did not return a successful task lookup")
 	}
 
 	for _, responseItem := range responseItems.Data {
@@ -293,6 +319,15 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 			logger.LogWarn(ctx, fmt.Sprintf("Suno task response ignored: unknown task_id=%s", responseItem.TaskID))
 			continue
 		}
+		managed := model.IsAgencyDurableUser(task.UserId)
+		if managed {
+			switch responseItem.Status {
+			case string(model.TaskStatusNotStart), model.TaskStatusSubmitted, model.TaskStatusQueued, model.TaskStatusInProgress, model.TaskStatusSuccess, model.TaskStatusFailure:
+			default:
+				_ = model.MarkAgencyTaskReconcileRequired(task, "provider_response_unknown")
+				continue
+			}
+		}
 		if !taskNeedsUpdate(task, responseItem) {
 			continue
 		}
@@ -303,7 +338,7 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 		task.SubmitTime = lo.If(responseItem.SubmitTime != 0, responseItem.SubmitTime).Else(task.SubmitTime)
 		task.StartTime = lo.If(responseItem.StartTime != 0, responseItem.StartTime).Else(task.StartTime)
 		task.FinishTime = lo.If(responseItem.FinishTime != 0, responseItem.FinishTime).Else(task.FinishTime)
-		isFailure := responseItem.FailReason != "" || task.Status == model.TaskStatusFailure
+		isFailure := task.Status == model.TaskStatusFailure || (!managed && responseItem.FailReason != "")
 		if isFailure {
 			logger.LogInfo(ctx, task.TaskID+" 构建失败，"+task.FailReason)
 			task.Status = model.TaskStatusFailure
@@ -314,6 +349,12 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 		}
 		task.Data = responseItem.Data
 
+		if managed && (task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure) {
+			if err := completeAgencyTaskBilling(ctx, task, prevStatus, 0); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("Suno agency task %s remains pending: %v", task.TaskID, err))
+			}
+			continue
+		}
 		// 持久化走 CAS，防止重叠轮询/sweep/多实例/持久化失败重试导致重复退款或覆盖终态。
 		won, err := task.UpdateWithStatus(prevStatus)
 		if err != nil {
@@ -410,6 +451,10 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 		var failedIDs []int64
 		for _, upstreamID := range taskIds {
 			if t, ok := taskM[upstreamID]; ok {
+				if model.IsAgencyDurableUser(t.UserId) {
+					_ = model.MarkAgencyTaskReconcileRequired(t, "channel_unavailable")
+					continue
+				}
 				failedIDs = append(failedIDs, t.ID)
 			}
 		}
@@ -460,7 +505,7 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	return nil
 }
 
-func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *model.Channel, taskId string, taskM map[string]*model.Task) error {
+func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *model.Channel, taskId string, taskM map[string]*model.Task) (returnErr error) {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -475,6 +520,15 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
 		return fmt.Errorf("task %s not found", taskId)
 	}
+	managed := model.IsAgencyDurableUser(task.UserId)
+	outcomeKnown := false
+	defer func() {
+		if returnErr != nil && managed && !outcomeKnown {
+			if err := model.MarkAgencyTaskReconcileRequired(task, "provider_response_unknown"); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("retain unknown task %s outcome: %v", task.TaskID, err))
+			}
+		}
+	}()
 	key := ch.Key
 
 	privateData := task.PrivateData
@@ -503,6 +557,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return fmt.Errorf("fetchTask failed for task %s: %w", taskId, err)
 	}
 	defer resp.Body.Close()
+	if managed && (resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) {
+		return fmt.Errorf("agency task provider returned HTTP %d", resp.StatusCode)
+	}
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("readAll failed for task %s: %w", taskId, err)
@@ -541,6 +598,10 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	now := time.Now().Unix()
 	if taskResult.Status == "" {
+		if model.IsAgencyDurableUser(task.UserId) {
+			_ = model.MarkAgencyTaskReconcileRequired(task, "provider_response_unknown")
+			return fmt.Errorf("agency task %s provider outcome is unknown", task.TaskID)
+		}
 		//taskResult = relaycommon.FailTaskInfo("upstream returned empty status")
 		errorResult := &dto.GeneralErrorResponse{}
 		if err = common.Unmarshal(responseBody, &errorResult); err == nil {
@@ -560,6 +621,10 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 				taskResult = relaycommon.FailTaskInfo("upstream returned unrecognized message")
 			}
 		}
+	}
+	switch taskResult.Status {
+	case model.TaskStatusSubmitted, model.TaskStatusQueued, model.TaskStatusInProgress, model.TaskStatusSuccess, model.TaskStatusFailure:
+		outcomeKnown = true
 	}
 
 	shouldRefund := false
@@ -615,6 +680,15 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
+	if isDone && model.IsAgencyDurableUser(task.UserId) {
+		if err := completeAgencyTaskBilling(ctx, task, snap.Status, int64(taskResult.TotalTokens)); err != nil {
+			return err
+		}
+		if snap.Status != task.Status {
+			upstreamevent.EmitTaskTerminal(task, string(task.Status), taskResult, responseBody)
+		}
+		return nil
+	}
 	if isDone && snap.Status != task.Status {
 		won, err := task.UpdateWithStatus(snap.Status)
 		if err != nil {

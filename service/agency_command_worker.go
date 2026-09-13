@@ -19,10 +19,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// The command row is written by agency-hub and executed by the main gateway.
-// Keep the worker deliberately small: claim and authorization are gateway
-// responsibilities, while provisioning and financial mutations remain in
-// their existing transactional repositories.
+// The gateway accepts signed commands and executes them against the main DB.
+// Current authorization, business changes and the permanent command result
+// share one transaction; a crash cannot commit money without its receipt.
 const (
 	agencyCommandQueued     = "queued"
 	agencyCommandProcessing = "processing"
@@ -117,9 +116,11 @@ func RunAgencyCommandWorkerOnce(ctx context.Context, limit int) (AgencyCommandWo
 	}
 	now := time.Now().Unix()
 	// A process crash must not leave a command in processing forever.
-	_ = model.DB.Model(&model.AgencyCommand{}).
+	if err := model.DB.WithContext(ctx).Model(&model.AgencyCommand{}).
 		Where("status = ? AND updated_at < ?", agencyCommandProcessing, now-int64(agencyCommandLease/time.Second)).
-		Updates(map[string]any{"status": agencyCommandQueued, "updated_at": now})
+		Updates(map[string]any{"status": agencyCommandQueued, "updated_at": now}).Error; err != nil {
+		return summary, err
+	}
 
 	var commands []model.AgencyCommand
 	if err := model.DB.WithContext(ctx).
@@ -164,7 +165,42 @@ func claimAgencyCommand(id int64) (bool, error) {
 }
 
 func executeAgencyCommand(ctx context.Context, command model.AgencyCommand) error {
-	if err := verifyCurrentAgencyCommand(command); err != nil {
+	var fundingUserID int64
+	err := model.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current model.AgencyCommand
+		if err := model.AgencyLockForUpdate(tx).Where("command_id = ?", command.CommandID).First(&current).Error; err != nil {
+			return err
+		}
+		// Another worker may have finished after this worker read the queue.
+		// Never execute from that stale envelope or overwrite its receipt.
+		if current.Status == agencyCommandSucceeded || current.Status == agencyCommandFailed || current.Status == agencyCommandCancelled {
+			return nil
+		}
+		if current.Status != agencyCommandProcessing {
+			return errors.New("agency command is not claimed")
+		}
+		if err := executeAgencyCommandTx(tx, current); err != nil {
+			return err
+		}
+		if current.Action == agencyhub.CommandActionFundingReverse {
+			var payload agencyFundingReverseCommand
+			if err := common.UnmarshalJsonStr(current.Payload, &payload); err != nil {
+				return err
+			}
+			fundingUserID = payload.UserID
+		}
+		return nil
+	})
+	if err == nil && fundingUserID > 0 && common.RedisEnabled {
+		if cacheErr := model.InvalidateUserCache(int(fundingUserID)); cacheErr != nil {
+			common.SysError("agency command wallet cache invalidation: " + cacheErr.Error())
+		}
+	}
+	return err
+}
+
+func executeAgencyCommandTx(tx *gorm.DB, command model.AgencyCommand) error {
+	if err := verifyCurrentAgencyCommandTx(tx, command); err != nil {
 		return &agencyCommandCancelledError{err: err}
 	}
 	switch command.Action {
@@ -179,8 +215,14 @@ func executeAgencyCommand(ctx context.Context, command model.AgencyCommand) erro
 		if payload.UserID <= 0 || strings.TrimSpace(payload.InviteCode) == "" {
 			return errors.New("provisioning.start requires user_id and invite_code")
 		}
+		// Provisioning's repository locks agency before the target user. Keep
+		// that order while checking the expected version in this outer transaction.
+		var agency model.Agency
+		if err := model.AgencyLockForUpdate(tx).Where("invite_code = ?", payload.InviteCode).First(&agency).Error; err != nil {
+			return err
+		}
 		var user model.User
-		if err := model.DB.Select("id, auth_version").First(&user, payload.UserID).Error; err != nil {
+		if err := model.AgencyLockForUpdate(tx).Select("id, auth_version").First(&user, payload.UserID).Error; err != nil {
 			return err
 		}
 		if payload.ExpectedUserVersion <= 0 || payload.ExpectedUserVersion != command.ExpectedVersion {
@@ -193,12 +235,12 @@ func executeAgencyCommand(ctx context.Context, command model.AgencyCommand) erro
 		if err != nil {
 			return err
 		}
-		hub := agencyhub.New(model.DB, model.LOG_DB, agencyhub.Config{BasePath: "/agency"})
+		hub := agencyhub.New(tx, model.LOG_DB, agencyhub.Config{BasePath: "/agency"})
 		job, created, err := hub.EnqueueProvisioningJob(payload.UserID, payload.InviteCode, rootID, strings.TrimSpace(payload.Reason))
 		if err != nil {
 			return err
 		}
-		return setAgencyCommandResult(command.CommandID, agencyCommandSucceeded, 200, map[string]any{
+		return setAgencyCommandResultTx(tx, command.CommandID, agencyCommandSucceeded, 200, map[string]any{
 			"job_id": job.ID, "user_id": payload.UserID, "created": created, "status": job.Status,
 		}, "")
 
@@ -212,8 +254,11 @@ func executeAgencyCommand(ctx context.Context, command model.AgencyCommand) erro
 			return errors.New("provisioning.cancel requires a numeric job object_id")
 		}
 		var job model.AgencyProvisioningJob
-		if err := model.DB.Select("id, user_id, status").First(&job, jobID).Error; err != nil {
+		if err := model.AgencyLockForUpdate(tx).Select("id, user_id, status, fencing_token").First(&job, jobID).Error; err != nil {
 			return err
+		}
+		if job.FencingToken != command.ExpectedVersion {
+			return errors.New("provisioning.cancel job version changed")
 		}
 		// The job object itself is authoritative for the target user. Older
 		// hub command envelopes only carried a reason in the payload, so fill
@@ -225,15 +270,19 @@ func executeAgencyCommand(ctx context.Context, command model.AgencyCommand) erro
 			return errors.New("provisioning.cancel user_id does not match job")
 		}
 		if job.Status == "cancelled" {
-			return setAgencyCommandResult(command.CommandID, agencyCommandCancelled, 200, map[string]any{
+			return setAgencyCommandResultTx(tx, command.CommandID, agencyCommandCancelled, 200, map[string]any{
 				"job_id": jobID, "status": agencyCommandCancelled, "already_cancelled": true,
 			}, "")
 		}
-		hub := agencyhub.New(model.DB, model.LOG_DB, agencyhub.Config{BasePath: "/agency"})
-		if err := hub.CancelProvisioningJob(jobID, strings.TrimSpace(payload.Reason)); err != nil {
+		rootID, err := agencyCommandActorID(command.Actor)
+		if err != nil {
 			return err
 		}
-		return setAgencyCommandResult(command.CommandID, agencyCommandCancelled, 200, map[string]any{
+		hub := agencyhub.New(tx, model.LOG_DB, agencyhub.Config{BasePath: "/agency"})
+		if err := hub.CancelProvisioningJob(jobID, strings.TrimSpace(payload.Reason), rootID); err != nil {
+			return err
+		}
+		return setAgencyCommandResultTx(tx, command.CommandID, agencyCommandCancelled, 200, map[string]any{
 			"job_id": jobID, "status": agencyCommandCancelled,
 		}, "")
 
@@ -241,6 +290,9 @@ func executeAgencyCommand(ctx context.Context, command model.AgencyCommand) erro
 		var payload agencyFundingReverseCommand
 		if err := common.Unmarshal([]byte(command.Payload), &payload); err != nil {
 			return fmt.Errorf("invalid funding.reverse payload: %w", err)
+		}
+		if payload.Quota != 0 && payload.RefundQuota != 0 && payload.Quota != payload.RefundQuota {
+			return errors.New("funding.reverse quota aliases disagree")
 		}
 		quota := payload.RefundQuota
 		if quota == 0 {
@@ -252,16 +304,13 @@ func executeAgencyCommand(ctx context.Context, command model.AgencyCommand) erro
 		if strings.TrimSpace(payload.RefundID) == "" {
 			return errors.New("funding.reverse requires refund_id")
 		}
-		if strings.TrimSpace(payload.RefundID) == "" {
-			return errors.New("funding.reverse requires refund_id")
-		}
 		if strings.TrimSpace(payload.OriginalOperationID) == "" && strings.TrimSpace(payload.OriginalEventID) == "" {
 			return errors.New("funding.reverse requires original funding reference")
 		}
-		if err := reverseAgencyTopup(payload, quota); err != nil {
+		if err := reverseAgencyTopupTx(tx, payload, quota); err != nil {
 			return err
 		}
-		return setAgencyCommandResult(command.CommandID, agencyCommandSucceeded, 200, map[string]any{
+		return setAgencyCommandResultTx(tx, command.CommandID, agencyCommandSucceeded, 200, map[string]any{
 			"user_id": payload.UserID, "requested_quota": quota, "refunded_quota": quota,
 		}, "")
 	default:
@@ -270,54 +319,67 @@ func executeAgencyCommand(ctx context.Context, command model.AgencyCommand) erro
 }
 
 func reverseAgencyTopup(payload agencyFundingReverseCommand, quota int64) error {
-	sourceID := strings.TrimSpace(payload.OriginalOperationID)
-	if sourceID == "" {
-		sourceID = strings.TrimPrefix(strings.TrimSpace(payload.OriginalEventID), "agency-topup-")
-	}
-	if sourceID == "" || strings.TrimSpace(payload.RefundID) == "" {
-		return errors.New("funding.reverse requires source id and refund_id")
-	}
-	var charges []model.AgencyFundingReversalCharge
 	apply := func() error {
 		return model.DB.Transaction(func(tx *gorm.DB) error {
-			var err error
-			charges, _, err = model.ReverseAgencyTopupTx(tx, model.AgencyFundingReversalInput{
-				RefundID: payload.RefundID, SourceOperationID: sourceID, UserID: payload.UserID,
-				Quota: quota, CurrencyCode: payload.CurrencyCode, PaymentReference: payload.PaymentReference,
-				EvidenceRef: payload.EvidenceRef, Reason: payload.Reason,
-			})
-			if err != nil {
-				return err
-			}
-			// Funding and commission reversal are one financial operation.
-			// Keep the sidecar projection out of this transaction only; the
-			// gateway's commission journal/outbox must commit or roll back
-			// together with users.quota and funding lots.
-			for _, charge := range charges {
-				if charge.Quota <= 0 || strings.TrimSpace(charge.ChargeID) == "" {
-					continue
-				}
-				if err := RecordAgencyRefundByReferenceTx(tx, "", charge.ChargeID, charge.Quota, "payment_chargeback"); err != nil {
-					return err
-				}
-			}
-			return nil
+			return reverseAgencyTopupTx(tx, payload, quota)
 		})
 	}
 	err := apply()
 	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		// Another worker may have committed the same external refund ID
-		// concurrently. Re-read the durable idempotency row instead of
-		// reporting a transient duplicate-key failure.
+		// Re-read a concurrent committed refund, including its immutable input.
 		err = apply()
 	}
+	return err
+}
+
+func reverseAgencyTopupTx(tx *gorm.DB, payload agencyFundingReverseCommand, quota int64) error {
+	sourceID := strings.TrimSpace(payload.OriginalOperationID)
+	eventID := strings.TrimSpace(payload.OriginalEventID)
+	if eventID != "" {
+		if !strings.HasPrefix(eventID, "agency-topup-") {
+			return model.ErrAgencyFundingReversalConflict
+		}
+		eventSource := strings.TrimPrefix(eventID, "agency-topup-")
+		if sourceID != "" && sourceID != eventSource {
+			return model.ErrAgencyFundingReversalConflict
+		}
+		sourceID = eventSource
+	}
+	if sourceID == "" || strings.TrimSpace(payload.RefundID) == "" {
+		return errors.New("funding.reverse requires source id and refund_id")
+	}
+	charges, created, err := model.ReverseAgencyTopupTx(tx, model.AgencyFundingReversalInput{
+		RefundID: payload.RefundID, SourceOperationID: sourceID, UserID: payload.UserID,
+		Quota: quota, CurrencyCode: payload.CurrencyCode, PaymentReference: payload.PaymentReference,
+		EvidenceRef: payload.EvidenceRef, Reason: payload.Reason,
+	})
 	if err != nil {
 		return err
+	}
+	// A committed refund is immutable and idempotent. The model returns
+	// the original affected charges for a replay so callers can inspect
+	// them, but replaying those charges into the commission journal would
+	// emit a second financial reversal. Only the transaction that created
+	// the funding reversal may append its commission companions.
+	if !created {
+		return nil
+	}
+	// Funding and commission reversal are one financial operation.
+	// Keep the sidecar projection out of this transaction only; the
+	// gateway's commission journal/outbox must commit or roll back
+	// together with users.quota and funding lots.
+	for _, charge := range charges {
+		if charge.Quota <= 0 || strings.TrimSpace(charge.ChargeID) == "" {
+			continue
+		}
+		if err := RecordAgencyRefundByReferenceTx(tx, "", charge.ChargeID, charge.Quota, "payment_chargeback"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func verifyCurrentAgencyCommand(command model.AgencyCommand) error {
+func verifyCurrentAgencyCommandTx(tx *gorm.DB, command model.AgencyCommand) error {
 	servicePublicKey, err := loadAgencyHubCommandServicePublicKey()
 	if err != nil {
 		return err
@@ -363,14 +425,14 @@ func verifyCurrentAgencyCommand(command model.AgencyCommand) error {
 		return errors.New("agency command proof no longer matches current envelope")
 	}
 	var user model.User
-	if err := model.DB.Select("id, role, status, auth_version").First(&user, actorID).Error; err != nil {
+	if err := model.AgencyLockForUpdate(tx).Select("id, role, status, auth_version").First(&user, actorID).Error; err != nil {
 		return err
 	}
 	if user.Role != common.RoleRootUser || user.Status != common.UserStatusEnabled {
 		return errors.New("root actor is disabled or no longer privileged")
 	}
 	var session model.UserSession
-	if err := model.DB.Where("sid = ?", command.SourceSID).First(&session).Error; err != nil {
+	if err := model.AgencyLockForUpdate(tx).Where("sid = ?", command.SourceSID).First(&session).Error; err != nil {
 		return err
 	}
 	now := time.Now().Unix()
@@ -436,6 +498,12 @@ func agencyCommandActorID(actor string) (int64, error) {
 }
 
 func setAgencyCommandResult(commandID, status string, code int, result any, lastError string) error {
+	return model.DB.Transaction(func(tx *gorm.DB) error {
+		return setAgencyCommandResultTx(tx, commandID, status, code, result, lastError)
+	})
+}
+
+func setAgencyCommandResultTx(tx *gorm.DB, commandID, status string, code int, result any, lastError string) error {
 	now := time.Now().Unix()
 	resultJSON := ""
 	if result != nil {
@@ -445,30 +513,28 @@ func setAgencyCommandResult(commandID, status string, code int, result any, last
 		}
 		resultJSON = string(encoded)
 	}
-	return model.DB.Transaction(func(tx *gorm.DB) error {
-		var command model.AgencyCommand
-		if err := model.AgencyLockForUpdate(tx).Where("command_id = ?", commandID).First(&command).Error; err != nil {
-			return err
-		}
-		if command.Status == agencyCommandSucceeded || command.Status == agencyCommandFailed || command.Status == agencyCommandCancelled {
-			return nil
-		}
-		updates := map[string]any{
-			"status": status, "result_code": code, "result_json": resultJSON,
-			"last_error": strings.TrimSpace(lastError), "updated_at": now,
-		}
-		if status == agencyCommandSucceeded || status == agencyCommandFailed || status == agencyCommandCancelled {
-			updates["completed_at"] = now
-		}
-		result := tx.Model(&model.AgencyCommand{}).
-			Where("id = ? AND status = ?", command.ID, agencyCommandProcessing).
-			Updates(updates)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return gorm.ErrRecordNotFound
-		}
+	var command model.AgencyCommand
+	if err := model.AgencyLockForUpdate(tx).Where("command_id = ?", commandID).First(&command).Error; err != nil {
+		return err
+	}
+	if command.Status == agencyCommandSucceeded || command.Status == agencyCommandFailed || command.Status == agencyCommandCancelled {
 		return nil
-	})
+	}
+	updates := map[string]any{
+		"status": status, "result_code": code, "result_json": resultJSON,
+		"last_error": strings.TrimSpace(lastError), "updated_at": now,
+	}
+	if status == agencyCommandSucceeded || status == agencyCommandFailed || status == agencyCommandCancelled {
+		updates["completed_at"] = now
+	}
+	updated := tx.Model(&model.AgencyCommand{}).
+		Where("id = ? AND status = ?", command.ID, agencyCommandProcessing).
+		Updates(updates)
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }

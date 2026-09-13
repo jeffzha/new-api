@@ -29,8 +29,15 @@ type Config struct {
 	CommandServicePrivateKeyFile string
 	DeliveryKeyFile              string
 	CommandRequireTLS            bool
+	CommandGatewayURL            string
+	CommandClientCAFile          string
+	CommandClientCertFile        string
+	CommandClientKeyFile         string
+	CommandServerName            string
+	CommandAllowLocalSQLite      bool
 	ExportDir                    string
 	CursorSecret                 string
+	ReconcileInterval            time.Duration
 }
 
 func LoadConfig() Config {
@@ -52,8 +59,8 @@ func LoadConfig() Config {
 		MaxLoginAttempts:             envInt("AGENCY_HUB_MAX_LOGIN_ATTEMPTS", 5),
 		MinSpreadBPS:                 envInt("AGENCY_HUB_MIN_SPREAD_BPS", 500),
 		SalesCapBPS:                  envInt("AGENCY_HUB_SALES_CAP_BPS", 30000),
-		CommissionEnabled:            envBool("AGENCY_COMMISSION_PROCESSING_ENABLED", false),
-		WithdrawalsEnabled:           envBool("AGENCY_WITHDRAWALS_ENABLED", false),
+		CommissionEnabled:            envBoolAny(false, "AGENCY_HUB_COMMISSION_PROCESSING_ENABLED", "AGENCY_COMMISSION_PROCESSING_ENABLED"),
+		WithdrawalsEnabled:           envBoolAny(false, "AGENCY_HUB_WITHDRAWALS_ENABLED", "AGENCY_WITHDRAWALS_ENABLED"),
 		AutoMigrate:                  envBool("AGENCY_HUB_AUTO_MIGRATE", false),
 		InstanceID:                   instance,
 		SSOPublicKeyFile:             strings.TrimSpace(os.Getenv("AGENCY_HUB_SSO_PUBLIC_KEY_FILE")),
@@ -61,8 +68,15 @@ func LoadConfig() Config {
 		CommandServicePrivateKeyFile: strings.TrimSpace(os.Getenv("AGENCY_HUB_COMMAND_SERVICE_PRIVATE_KEY_FILE")),
 		DeliveryKeyFile:              strings.TrimSpace(os.Getenv("AGENCY_HUB_DELIVERY_KEY_FILE")),
 		CommandRequireTLS:            envBool("AGENCY_HUB_COMMAND_REQUIRE_TLS", true),
+		CommandGatewayURL:            strings.TrimSpace(os.Getenv("AGENCY_HUB_COMMAND_GATEWAY_URL")),
+		CommandClientCAFile:          strings.TrimSpace(os.Getenv("AGENCY_HUB_COMMAND_CA_FILE")),
+		CommandClientCertFile:        strings.TrimSpace(os.Getenv("AGENCY_HUB_COMMAND_CLIENT_CERT_FILE")),
+		CommandClientKeyFile:         strings.TrimSpace(os.Getenv("AGENCY_HUB_COMMAND_CLIENT_KEY_FILE")),
+		CommandServerName:            strings.TrimSpace(os.Getenv("AGENCY_HUB_COMMAND_SERVER_NAME")),
+		CommandAllowLocalSQLite:      envBool("AGENCY_HUB_COMMAND_ALLOW_LOCAL_SQLITE", false),
 		ExportDir:                    strings.TrimSpace(os.Getenv("AGENCY_HUB_EXPORT_DIR")),
 		CursorSecret:                 strings.TrimSpace(os.Getenv("AGENCY_HUB_CURSOR_SECRET")),
+		ReconcileInterval:            envDuration("AGENCY_HUB_RECONCILE_INTERVAL_SECONDS", 300),
 	}
 }
 
@@ -99,6 +113,17 @@ func envBool(name string, fallback bool) bool {
 		return fallback
 	}
 	return value
+}
+
+func envBoolAny(fallback bool, names ...string) bool {
+	for _, name := range names {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			if parsed, err := strconv.ParseBool(value); err == nil {
+				return parsed
+			}
+		}
+	}
+	return fallback
 }
 func envDuration(name string, fallback int) time.Duration {
 	return time.Duration(envInt(name, fallback)) * time.Second

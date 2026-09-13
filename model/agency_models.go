@@ -80,6 +80,7 @@ type AgencyVerificationUse struct {
 	JTI        string `gorm:"size:128;not null;uniqueIndex:uidx_agency_verify_jti"`
 	ActorType  string `gorm:"size:32;not null"`
 	ActorID    int64  `gorm:"not null"`
+	SessionID  int64  `gorm:"not null;index:idx_agency_verification_session"`
 	Action     string `gorm:"size:128;not null"`
 	ObjectID   string `gorm:"size:191;not null"`
 	BodyHash   string `gorm:"size:128;not null"`
@@ -215,14 +216,15 @@ type AgencyFundingLot struct {
 	PaidRevoked      int64  `gorm:"not null"`
 	// Keep bonus balances on the originating lot as well as in the account
 	// aggregate so a payment refund remains attributable to its top-up.
-	BonusAvailable int64 `gorm:"not null;default:0"`
-	BonusReserved  int64 `gorm:"not null;default:0"`
-	BonusConsumed  int64 `gorm:"not null;default:0"`
-	BonusRevoked   int64 `gorm:"not null;default:0"`
-	PaidDebtRepaid int64 `gorm:"not null;default:0"`
-	MoneySeq       int64 `gorm:"not null;index:idx_agency_funding_lot_user_seq"`
-	Version        int64 `gorm:"not null"`
-	CreatedAt      int64 `gorm:"not null"`
+	BonusAvailable  int64 `gorm:"not null;default:0"`
+	BonusReserved   int64 `gorm:"not null;default:0"`
+	BonusConsumed   int64 `gorm:"not null;default:0"`
+	BonusRevoked    int64 `gorm:"not null;default:0"`
+	PaidDebtRepaid  int64 `gorm:"not null;default:0"`
+	BonusDebtRepaid int64 `gorm:"not null;default:0"`
+	MoneySeq        int64 `gorm:"not null;index:idx_agency_funding_lot_user_seq"`
+	Version         int64 `gorm:"not null"`
+	CreatedAt       int64 `gorm:"not null"`
 }
 
 func (AgencyFundingLot) TableName() string { return AgencyTablePrefix + "funding_lots" }
@@ -315,6 +317,7 @@ func (AgencyBillingJournal) TableName() string { return AgencyTablePrefix + "bil
 type AgencyBillingOperation struct {
 	ID              int64  `gorm:"primaryKey"`
 	ChargeID        string `gorm:"size:128;not null;index:idx_agency_operation_charge;uniqueIndex:uidx_agency_operation,priority:1"`
+	OperationID     string `gorm:"size:128;index:idx_agency_operation_id"`
 	SegmentNo       int    `gorm:"not null;uniqueIndex:uidx_agency_operation,priority:2"`
 	Revision        int64  `gorm:"not null;uniqueIndex:uidx_agency_operation,priority:3"`
 	Operation       string `gorm:"size:32;not null;uniqueIndex:uidx_agency_operation,priority:4"`
@@ -380,8 +383,9 @@ func (AgencySourceEvent) TableName() string { return AgencyTablePrefix + "source
 
 type AgencyUsageFact struct {
 	ID               int64  `gorm:"primaryKey"`
-	EventID          string `gorm:"size:128;not null;uniqueIndex:uidx_agency_usage_event_component,priority:1"`
-	ComponentID      string `gorm:"size:128;not null;uniqueIndex:uidx_agency_usage_event_component,priority:2"`
+	EventID          string `gorm:"size:128;not null;index:idx_agency_usage_event"`
+	ComponentID      string `gorm:"size:128;not null"`
+	ComponentKey     string `gorm:"size:64"`
 	UsageHash        string `gorm:"size:128;index:idx_agency_usage_hash"`
 	CumulativeUsage  string `gorm:"type:text"`
 	UserID           int64  `gorm:"not null;index:idx_agency_usage_user_time"`
@@ -407,21 +411,22 @@ type AgencyUsageFact struct {
 func (AgencyUsageFact) TableName() string { return AgencyTablePrefix + "usage_facts" }
 
 type AgencyTopupFact struct {
-	ID                int64  `gorm:"primaryKey"`
-	SourceOperationID string `gorm:"size:128;not null;uniqueIndex:uidx_agency_topup_source"`
-	UserID            int64  `gorm:"not null;index:idx_agency_topup_user_time"`
-	AgencyID          *int64 `gorm:"index:idx_agency_topup_agency_time"`
-	BindingID         *int64
-	PaymentReference  string `gorm:"size:191"`
-	ActualMoney       string `gorm:"size:64"`
-	CurrencyCode      string `gorm:"size:16"`
-	CreditedQuota     int64
-	PaidQuota         int64
-	BonusQuota        int64
-	CompletionSource  string `gorm:"size:32"`
-	PaymentStatus     string `gorm:"size:32"`
-	RefundedQuota     int64
-	OccurredAtMS      int64 `gorm:"not null;index:idx_agency_topup_agency_time;index:idx_agency_topup_user_time"`
+	ID                      int64  `gorm:"primaryKey"`
+	SourceOperationID       string `gorm:"size:128;not null;uniqueIndex:uidx_agency_topup_source"`
+	UserID                  int64  `gorm:"not null;index:idx_agency_topup_user_time"`
+	AgencyID                *int64 `gorm:"index:idx_agency_topup_agency_time"`
+	BindingID               *int64
+	PaymentReference        string `gorm:"size:191"`
+	ActualMoney             string `gorm:"size:64"`
+	CurrencyCode            string `gorm:"size:16"`
+	QuotaConversionSnapshot string `gorm:"type:text"`
+	CreditedQuota           int64
+	PaidQuota               int64
+	BonusQuota              int64
+	CompletionSource        string `gorm:"size:32"`
+	PaymentStatus           string `gorm:"size:32"`
+	RefundedQuota           int64
+	OccurredAtMS            int64 `gorm:"not null;index:idx_agency_topup_agency_time;index:idx_agency_topup_user_time"`
 }
 
 func (AgencyTopupFact) TableName() string { return AgencyTablePrefix + "topup_facts" }
@@ -457,9 +462,10 @@ func (AgencyFundingReversalChargeRecord) TableName() string {
 
 type AgencyCommissionLedger struct {
 	ID                         int64  `gorm:"primaryKey"`
-	EventID                    string `gorm:"size:128;not null;uniqueIndex:uidx_agency_commission_event,priority:1"`
-	ComponentID                string `gorm:"size:128;not null;uniqueIndex:uidx_agency_commission_event,priority:2"`
-	EntryType                  string `gorm:"size:32;not null;uniqueIndex:uidx_agency_commission_event,priority:3"`
+	EventID                    string `gorm:"size:128;not null;index:idx_agency_commission_event"`
+	ComponentID                string `gorm:"size:128;not null"`
+	ComponentKey               string `gorm:"size:64"`
+	EntryType                  string `gorm:"size:32;not null"`
 	OriginalEntryID            *int64
 	AgencyID                   int64 `gorm:"not null;index:idx_agency_commission_agency_time"`
 	BindingID                  int64
@@ -610,6 +616,7 @@ type AgencyExportJob struct {
 	FilterJSON             string `gorm:"type:text;not null"`
 	PermissionVersion      int64
 	Status                 string `gorm:"size:32;not null;index:idx_agency_export_status"`
+	ErrorCode              string `gorm:"size:64"`
 	FileKey                string `gorm:"size:512"`
 	FileHash               string `gorm:"size:128"`
 	RowCount               int64
@@ -617,6 +624,9 @@ type AgencyExportJob struct {
 	DownloadTokenHash      string `gorm:"size:128"`
 	DownloadTokenExpiresAt int64
 	DownloadTokenSessionID int64
+	LeaseOwner             string `gorm:"size:191"`
+	LeaseUntil             int64  `gorm:"index:idx_agency_export_lease"`
+	Attempts               int
 	CreatedAtMS            int64 `gorm:"not null"`
 }
 
@@ -662,29 +672,53 @@ func (AgencyWorkerLease) TableName() string { return AgencyTablePrefix + "worker
 
 type AgencyReconciliationIssue struct {
 	ID           int64  `gorm:"primaryKey"`
-	ObjectType   string `gorm:"size:64;not null"`
-	ObjectID     string `gorm:"size:191;not null"`
+	ObjectType   string `gorm:"size:64;not null;index:idx_agency_reconcile_object,priority:1"`
+	ObjectID     string `gorm:"size:191;not null;index:idx_agency_reconcile_object,priority:2"`
 	Difference   string `gorm:"type:text;not null"`
 	EvidenceHash string `gorm:"size:128"`
 	Status       string `gorm:"size:32;not null;index:idx_agency_reconcile_status"`
-	Resolution   string `gorm:"type:text"`
-	ActorID      *int64
-	CreatedAtMS  int64 `gorm:"not null"`
-	ResolvedAtMS *int64
+	// Only open issues hold this unique key. NULL on historical rows allows
+	// subsequent discrepancies to be recorded without overwriting prior evidence.
+	ActiveKey          *string `gorm:"size:64"`
+	ResolutionEvidence string  `gorm:"type:text"`
+	RepairEventID      string  `gorm:"size:191"`
+	Resolution         string  `gorm:"type:text"`
+	ActorID            *int64
+	CreatedAtMS        int64 `gorm:"not null"`
+	ResolvedAtMS       *int64
 }
 
 func (AgencyReconciliationIssue) TableName() string {
 	return AgencyTablePrefix + "reconciliation_issues"
 }
 
+// AgencyReconciliationRun records each explicit or scheduled reconciliation
+// pass.  Keeping the summary and cutoff durable lets operators prove when a
+// check ran without inferring it from logs that may have been rotated.
+type AgencyReconciliationRun struct {
+	ID           int64  `gorm:"primaryKey" json:"id"`
+	RunKey       string `gorm:"size:128;not null;uniqueIndex:uidx_agency_reconcile_run_key" json:"run_key"`
+	Trigger      string `gorm:"size:32;not null;index:idx_agency_reconcile_run_trigger" json:"trigger"`
+	Status       string `gorm:"size:32;not null" json:"status"`
+	CutoffAtMS   int64  `gorm:"not null" json:"cutoff_at_ms"`
+	StartedAtMS  int64  `gorm:"not null" json:"started_at_ms"`
+	FinishedAtMS *int64 `json:"finished_at_ms,omitempty"`
+	SummaryJSON  string `gorm:"type:text" json:"summary_json,omitempty"`
+	Error        string `gorm:"type:text" json:"error,omitempty"`
+}
+
+func (AgencyReconciliationRun) TableName() string {
+	return AgencyTablePrefix + "reconciliation_runs"
+}
+
 type AgencyProvisioningJob struct {
 	ID                  int64  `gorm:"primaryKey"`
-	UserID              int64  `gorm:"not null;uniqueIndex:uidx_agency_provision_user_status,priority:1"`
+	UserID              int64  `gorm:"not null;index:idx_agency_provision_user_status,priority:1"`
 	InviteCode          string `gorm:"size:32;not null"`
 	RootActorID         int64  `gorm:"not null"`
 	Reason              string `gorm:"type:text"`
 	ExpectedUserVersion int64  `gorm:"not null"`
-	Status              string `gorm:"size:32;not null;index:idx_agency_provision_status;uniqueIndex:uidx_agency_provision_user_status,priority:2"`
+	Status              string `gorm:"size:32;not null;index:idx_agency_provision_status;index:idx_agency_provision_user_status,priority:2"`
 	BlockingTasks       string `gorm:"type:text"`
 	BlockReason         string `gorm:"type:text"`
 	FencingToken        int64  `gorm:"not null"`
@@ -749,19 +783,25 @@ type AgencyFundingDebt struct {
 	UserID            int64  `gorm:"not null;index:idx_agency_debt_user"`
 	OriginOperationID string `gorm:"size:128;not null"`
 	DebtKind          string `gorm:"size:32;not null"`
-	OriginalQuota     int64
-	OutstandingQuota  int64
-	ReversedQuota     int64
-	CreatedAtMS       int64 `gorm:"not null"`
+	// AllocationID preserves the exact charge allocation that caused a
+	// payment-chargeback debt. It is nullable for historical pooled rows.
+	AllocationID     *int64 `gorm:"index:idx_agency_debt_allocation"`
+	OriginalQuota    int64
+	OutstandingQuota int64
+	ReversedQuota    int64
+	CreatedAtMS      int64 `gorm:"not null"`
 }
 
 func (AgencyFundingDebt) TableName() string { return AgencyTablePrefix + "funding_debts" }
 
 type AgencyDebtRepayment struct {
-	ID            int64  `gorm:"primaryKey"`
-	DebtID        int64  `gorm:"not null;index:idx_agency_repayment_debt"`
-	RepaymentID   string `gorm:"size:128;not null;uniqueIndex:uidx_agency_repayment_id"`
-	FundingLotID  *int64
+	ID           int64  `gorm:"primaryKey"`
+	DebtID       int64  `gorm:"not null;index:idx_agency_repayment_debt"`
+	RepaymentID  string `gorm:"size:128;not null;uniqueIndex:uidx_agency_repayment_id"`
+	FundingLotID *int64
+	// Empty is the historical paid-only format. New repayments always retain
+	// the actual source class; a nil lot is valid only for opening nonpaid funds.
+	SourceKind    string `gorm:"size:16"`
 	Quota         int64
 	ReversedQuota int64 `gorm:"not null;default:0"`
 	RestoredTotal int64
@@ -777,9 +817,10 @@ func AgencyModels() []any {
 		&AgencyUserBinding{}, &AgencyActiveUserBinding{}, &AgencyPricePolicyVersion{}, &AgencyPricePolicyItem{}, &AgencyIdempotencyRecord{},
 		&AgencyFundingAccount{}, &AgencyFundingLot{}, &AgencyFundingAllocation{}, &AgencyFundingLedger{}, &AgencyFundingDebt{}, &AgencyDebtRepayment{}, &AgencyFundingReversal{}, &AgencyFundingReversalChargeRecord{},
 		&AgencyBillingJournal{}, &AgencyBillingOperation{}, &AgencyBillingOutbox{}, &AgencyEventDelivery{}, &AgencyTaskSubmissionAttempt{},
+		&AgencyChargeComponent{}, &AgencyComponentFunding{},
 		&AgencySourceEvent{}, &AgencyUsageFact{}, &AgencyTopupFact{}, &AgencyCommissionLedger{}, &AgencyCommissionBalance{},
 		&AgencyWithdrawalAccount{}, &AgencyWithdrawal{}, &AgencyWithdrawalPaymentReference{}, &AgencyWithdrawalTransition{}, &AgencyAuditLog{}, &AgencyDailyStat{},
-		&AgencyExportJob{}, &AgencyArchiveManifest{}, &AgencyWorkerLease{}, &AgencyReconciliationIssue{}, &AgencyProvisioningJob{},
+		&AgencyExportJob{}, &AgencyArchiveManifest{}, &AgencyWorkerLease{}, &AgencyReconciliationIssue{}, &AgencyReconciliationRun{}, &AgencyProvisioningJob{},
 		&AgencyCommand{},
 	}
 }

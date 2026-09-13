@@ -3781,6 +3781,7 @@
     "Price:": "Giá:",
     "Price: High to Low": "Giá: Từ cao đến thấp",
     "Price: Low to High": "Giá: Thấp đến Cao",
+    "Prices include your agency sales policy. Group selection changes model availability, not your sales rate.": "Giá được tính theo chính sách bán hàng của đại lý của bạn. Chọn nhóm chỉ lọc mô hình khả dụng, không thay đổi hệ số giá của bạn.",
     "Prices shown per": "Giá hiển thị theo",
     "Prices synced successfully": "Đồng bộ giá thành công",
     "Prices vary by usage tier and request conditions": "Giá thay đổi theo bậc dùng và điều kiện yêu cầu",
@@ -3790,6 +3791,7 @@
     "Pricing Configuration": "Price configuration",
     "Pricing group example": "Ví dụ nhóm định giá",
     "Pricing groups": "Nhóm định giá",
+    "Pricing is temporarily unavailable. Please try again.": "Thông tin giá tạm thời không khả dụng. Vui lòng thử lại.",
     "Pricing mode": "Chế độ định giá",
     "Pricing Ratios": "Tỷ lệ định giá",
     "Pricing Type": "Price type",
@@ -4373,6 +4375,7 @@
     "Seedance 2.0 API": "API Seedance 2.0",
     "Seedance 2.0 Fast": "Seedance 2.0 Nhanh",
     "Seedance 2.0 Standard": "Seedance 2.0 Tiêu chuẩn",
+    "Seedance 2.5": "Seedance 2.5",
     "Seedance CNY Pricing": "Định giá Seedance bằng CNY",
     "Seedance Domestic": "Seedance nội địa",
     "Select": "Chọn",
@@ -5645,6 +5648,7 @@
     "Your GitHub OAuth Client ID": "Client ID OAuth GitHub của bạn",
     "Your GitHub OAuth Client Secret": "Bí mật ứng dụng OAuth của GitHub của bạn",
     "Your new backup codes are ready": "Mã dự phòng mới của bạn đã sẵn sàng",
+    "Your price": "Giá của bạn",
     "Your Referral Link": "Liên kết giới thiệu của bạn",
     "Your setup guide is collapsed so usage stays in focus.": "Hướng dẫn thiết lập đã thu gọn để giữ phần sử dụng ở vị trí nổi bật.",
     "Your system access token for API authentication. Keep it secure and don't share it with others.": "Mã truy cập hệ thống của bạn để xác thực API. Hãy giữ nó an toàn và đừng chia sẻ nó với người khác.",
@@ -5656,7 +5660,6 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "Seedance 2.5": "Seedance 2.5"
+    "Zoom": "Zoom"
   }
 }

@@ -17,6 +17,11 @@ import (
 
 func signedCommandRequest(t *testing.T, app *App, commandID, action string, expiry time.Time) (AgencyCommandRequest, []byte, ed25519.PrivateKey, ed25519.PrivateKey) {
 	t.Helper()
+	require.NoError(t, app.db.AutoMigrate(&model.User{}, &model.UserSession{}))
+	root := model.User{Id: 1, Username: "command-root", Password: "password", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+	require.NoError(t, app.db.Where("id = ?", root.Id).FirstOrCreate(&root).Error)
+	source := model.UserSession{SID: "sid-1", UserID: 1, Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive, ExpiresAt: time.Now().Add(time.Hour).Unix(), RefreshHash: "command-test", LoginMethod: "password"}
+	require.NoError(t, app.db.Where("sid = ?", source.SID).FirstOrCreate(&source).Error)
 	rootPublic, rootPrivate, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)
 	servicePublic, servicePrivate, err := ed25519.GenerateKey(nil)
@@ -27,7 +32,7 @@ func signedCommandRequest(t *testing.T, app *App, commandID, action string, expi
 	bodyHash, err := CommandBodyHash(payload)
 	require.NoError(t, err)
 	now := time.Now().Unix()
-	proof, err := SignSSOTicket(rootPrivate, SSOTicketClaims{Issuer: "new-api", Audience: "agency-gateway-command", Subject: 1, SourceSID: "sid-1", JTI: "proof-" + commandID, KeyID: "root-k1", Action: action, CommandID: commandID, ObjectID: "obj-1", ExpectedVersion: 3, BodyHash: bodyHash, IssuedAt: now, NotBefore: now, ExpiresAt: expiry.Unix()})
+	proof, err := SignSSOTicket(rootPrivate, SSOTicketClaims{Issuer: "new-api", Audience: "agency-gateway-command", Subject: 1, SourceSID: "sid-1", UserAuthVersion: 1, SessionVersion: 1, JTI: "proof-" + commandID, KeyID: "root-k1", Action: action, CommandID: commandID, ObjectID: "obj-1", ExpectedVersion: 3, BodyHash: bodyHash, IssuedAt: now, NotBefore: now, ExpiresAt: expiry.Unix()})
 	require.NoError(t, err)
 	req := AgencyCommandRequest{CommandID: commandID, Action: action, Actor: "root:1", SourceSID: "sid-1", ObjectID: "obj-1", ExpectedVersion: 3, Payload: payload, IssuedAt: now, ExpiresAt: expiry.Unix(), BodyHash: bodyHash, RootProof: proof}
 	signature, err := SignCommandEnvelope(servicePrivate, req)
@@ -40,6 +45,7 @@ func signedCommandRequest(t *testing.T, app *App, commandID, action string, expi
 
 func TestRootFundingReversalEndpointEnqueuesGatewayCommand(t *testing.T) {
 	app := newAgencyTestApp(t)
+	app.config.CommandAllowLocalSQLite = true
 	require.NoError(t, app.db.AutoMigrate(&model.User{}, &model.UserSession{}))
 	root := model.User{Username: "root-funding-reversal", Password: "password", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1}
 	require.NoError(t, app.db.Create(&root).Error)
@@ -82,6 +88,18 @@ func TestRootFundingReversalEndpointEnqueuesGatewayCommand(t *testing.T) {
 	request.Header.Set("X-CSRF-Token", csrf)
 	request.Header.Set("Idempotency-Key", "funding-reversal-submit")
 	request.AddCookie(&http.Cookie{Name: app.config.CookieName, Value: sessionToken})
+	// A transport outage must not cache an unrecoverable HTTP 503 under the
+	// browser idempotency key. Retrying the same signed command can recover.
+	failedRequest := httptest.NewRequest(http.MethodPost, "/agency/api/v1/root/funding/reversals", strings.NewReader(body))
+	failedRequest.Header = request.Header.Clone()
+	app.config.CommandAllowLocalSQLite = false
+	failedRecorder := httptest.NewRecorder()
+	app.Router().ServeHTTP(failedRecorder, failedRequest)
+	require.Equal(t, http.StatusServiceUnavailable, failedRecorder.Code, failedRecorder.Body.String())
+	var failedCount int64
+	require.NoError(t, app.db.Model(&model.AgencyCommand{}).Count(&failedCount).Error)
+	require.Zero(t, failedCount)
+	app.config.CommandAllowLocalSQLite = true
 	recorder := httptest.NewRecorder()
 	app.Router().ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusAccepted, recorder.Code, recorder.Body.String())
@@ -122,10 +140,10 @@ func TestInternalCommandAcceptsAndIdempotentlyReplays(t *testing.T) {
 	app := newAgencyTestApp(t)
 	req, body, _, servicePrivate := signedCommandRequest(t, app, "cmd-1", CommandActionProvisioningStart, time.Now().Add(2*time.Minute))
 	first := httptest.NewRecorder()
-	app.Router().ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(body)))
+	app.CommandRouter().ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(body)))
 	require.Equal(t, http.StatusAccepted, first.Code)
 	second := httptest.NewRecorder()
-	app.Router().ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(body)))
+	app.CommandRouter().ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(body)))
 	require.Equal(t, http.StatusAccepted, second.Code)
 	var stored model.AgencyCommand
 	require.NoError(t, app.db.Where("command_id = ?", req.CommandID).First(&stored).Error)
@@ -136,7 +154,7 @@ func TestInternalCommandAcceptsAndIdempotentlyReplays(t *testing.T) {
 	get := httptest.NewRequest(http.MethodGet, "/internal/agency/v1/commands/"+req.CommandID, nil)
 	get.Header.Set(CommandServiceSignatureHeader, getSignature)
 	result := httptest.NewRecorder()
-	app.Router().ServeHTTP(result, get)
+	app.CommandRouter().ServeHTTP(result, get)
 	require.Equal(t, http.StatusOK, result.Code)
 }
 
@@ -149,14 +167,14 @@ func TestInternalCommandRejectsProofAndPayloadConflicts(t *testing.T) {
 	rewritten, err := common.Marshal(request)
 	require.NoError(t, err)
 	recorder := httptest.NewRecorder()
-	app.Router().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(rewritten)))
+	app.CommandRouter().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(rewritten)))
 	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code)
 
 	// Expiry is checked before cryptographic acceptance, so an old command is
 	// never persisted even when its envelope is otherwise well formed.
 	_, expired, _, _ := signedCommandRequest(t, app, "cmd-expired", CommandActionProvisioningStart, time.Now().Add(-time.Minute))
 	recorder = httptest.NewRecorder()
-	app.Router().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(expired)))
+	app.CommandRouter().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(expired)))
 	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code)
 }
 
@@ -175,7 +193,7 @@ func TestCommandPayloadRejectsDuplicateKeys(t *testing.T) {
 	require.Error(t, err)
 	app := newAgencyTestApp(t)
 	recorder := httptest.NewRecorder()
-	app.Router().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", strings.NewReader(`{"command_id":"dup","command_id":"dup2"}`)))
+	app.CommandRouter().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", strings.NewReader(`{"command_id":"dup","command_id":"dup2"}`)))
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "重复字段")
 }
@@ -184,7 +202,7 @@ func TestInternalCommandReplayRemainsAvailableAfterExpiry(t *testing.T) {
 	app := newAgencyTestApp(t)
 	req, body, _, servicePrivate := signedCommandRequest(t, app, "cmd-expiry-replay", CommandActionProvisioningCancel, time.Now().Add(2*time.Minute))
 	recorder := httptest.NewRecorder()
-	app.Router().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(body)))
+	app.CommandRouter().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(body)))
 	require.Equal(t, http.StatusAccepted, recorder.Code)
 	// Re-sign the same envelope with an expired interval. The command_id and
 	// body match the durable row, so this is a replay lookup and must not need a
@@ -195,7 +213,7 @@ func TestInternalCommandReplayRemainsAvailableAfterExpiry(t *testing.T) {
 	replay, err := common.Marshal(req)
 	require.NoError(t, err)
 	recorder = httptest.NewRecorder()
-	app.Router().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(replay)))
+	app.CommandRouter().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(replay)))
 	require.Equal(t, http.StatusAccepted, recorder.Code)
 }
 
@@ -203,12 +221,12 @@ func TestInternalCommandRejectsUnsupportedActionAndRootReplay(t *testing.T) {
 	app := newAgencyTestApp(t)
 	_, body, _, _ := signedCommandRequest(t, app, "cmd-3", "funding.delete", time.Now().Add(2*time.Minute))
 	recorder := httptest.NewRecorder()
-	app.Router().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(body)))
+	app.CommandRouter().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(body)))
 	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code)
 
 	firstReq, first, rootPrivate, servicePrivate := signedCommandRequest(t, app, "cmd-4", CommandActionProvisioningCancel, time.Now().Add(2*time.Minute))
 	recorder = httptest.NewRecorder()
-	app.Router().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(first)))
+	app.CommandRouter().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(first)))
 	require.Equal(t, http.StatusAccepted, recorder.Code)
 	// Reuse the proof JTI under a different command id must be rejected.
 	secondReq := firstReq
@@ -225,6 +243,6 @@ func TestInternalCommandRejectsUnsupportedActionAndRootReplay(t *testing.T) {
 	second, err := common.Marshal(secondReq)
 	require.NoError(t, err)
 	recorder = httptest.NewRecorder()
-	app.Router().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(second)))
+	app.CommandRouter().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(second)))
 	require.Equal(t, http.StatusConflict, recorder.Code)
 }

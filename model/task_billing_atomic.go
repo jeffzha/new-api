@@ -26,6 +26,10 @@ type TaskQuotaAdjustmentResult struct {
 	TokenUnavailable bool
 	Changed          bool
 	WalletAdjusted   bool
+	// AgencyRefundCommitted means wallet/token/task and the component
+	// commission event already committed together. Callers must not emit a
+	// second, commission-only legacy refund for the same adjustment.
+	AgencyRefundCommitted bool
 }
 
 // ApplyTaskQuotaAdjustment atomically applies the final quota for a task to
@@ -68,6 +72,9 @@ func ApplyTaskQuotaAdjustment(task *Task, targetQuota int) (*TaskQuotaAdjustment
 		if result.QuotaDelta == 0 {
 			result.AppliedQuota = current.Quota
 			return nil
+		}
+		if handled, err := applyAgencyTaskRefundTx(tx, current, targetQuota, result); handled || err != nil {
+			return err
 		}
 
 		tokenPresent := current.PrivateData.TokenId <= 0
@@ -138,13 +145,15 @@ func ApplyTaskQuotaAdjustment(task *Task, targetQuota int) (*TaskQuotaAdjustment
 				}
 			}
 			current.Quota = effectiveTarget
-			task.Quota = effectiveTarget
 			result.Changed = true
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+	if result.Changed {
+		task.Quota = result.AppliedQuota
 	}
 
 	if result.Changed && common.RedisEnabled {

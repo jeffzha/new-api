@@ -30,6 +30,8 @@ func TestMigrateAgencySQLiteIsIdempotentAndIndexesReportingFacts(t *testing.T) {
 
 	require.True(t, db.Migrator().HasIndex(&AgencyTopupFact{}, "idx_agency_topup_agency_time"))
 	require.True(t, db.Migrator().HasIndex(&AgencyTopupFact{}, "idx_agency_topup_user_time"))
+	require.True(t, db.Migrator().HasTable(&AgencyReconciliationRun{}))
+	require.True(t, db.Migrator().HasTable(&AgencyArchiveManifest{}))
 }
 
 func TestMigrateAgencyExternalDatabaseCompatibility(t *testing.T) {
@@ -70,4 +72,22 @@ func TestMigrateAgencyExternalDatabaseCompatibility(t *testing.T) {
 			require.True(t, db.Migrator().HasIndex(&AgencyTopupFact{}, "idx_agency_topup_user_time"))
 		})
 	}
+}
+
+func TestMigrateAgencyPreservesCancelledHistoryAndAllowsAnotherCancelledAttempt(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:agency-old-provisioning-index?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, MigrateAgency(db))
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX uidx_agency_provision_user_status ON agency_hub_provisioning_jobs (user_id, status)").Error)
+	first := AgencyProvisioningJob{UserID: 12, Status: "cancelled", Reason: "first attempt"}
+	require.NoError(t, db.Create(&first).Error)
+	require.NoError(t, MigrateAgency(db))
+	require.NoError(t, MigrateAgency(db))
+	require.NoError(t, db.Create(&AgencyProvisioningJob{UserID: 12, Status: "cancelled", Reason: "second attempt"}).Error)
+	var rows []AgencyProvisioningJob
+	require.NoError(t, db.Order("id ASC").Find(&rows).Error)
+	require.Len(t, rows, 2)
+	assert.Equal(t, first.ID, rows[0].ID)
+	assert.Equal(t, "first attempt", rows[0].Reason)
+	assert.Equal(t, "second attempt", rows[1].Reason)
 }

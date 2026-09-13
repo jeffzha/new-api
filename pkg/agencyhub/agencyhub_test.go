@@ -28,6 +28,7 @@ import (
 
 func newAgencyTestApp(t *testing.T) *App {
 	t.Helper()
+	t.Setenv("AGENCY_ONBOARDING_ENABLED", "true")
 	dsn := "file:agency-hub-test-" + strings.ReplaceAll(t.Name(), "/", "-") + "?mode=memory&cache=shared"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
@@ -54,6 +55,68 @@ func TestCreateAgencyAndInvitePreview(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), "测试代理商")
 	require.NotContains(t, recorder.Body.String(), "invite_url")
 	require.NotContains(t, recorder.Body.String(), "invite_qr_url")
+}
+
+func TestRootCustomerListIsCrossAgencyScopedAndCursorBound(t *testing.T) {
+	app := newAgencyTestApp(t)
+	require.NoError(t, app.db.AutoMigrate(&model.User{}, &model.UserSession{}))
+	root := model.User{Username: "root-customers", Password: "password", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+	require.NoError(t, app.db.Create(&root).Error)
+	source := model.UserSession{SID: "root-customers-session", UserID: root.Id, Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive, RefreshHash: "root-customers-refresh", LoginMethod: "password", LastActiveAt: 1, ExpiresAt: 4102444800}
+	require.NoError(t, app.db.Create(&source).Error)
+	token, csrf, err := app.CreateRootSession(int64(root.Id), source.SID, source.Version)
+	require.NoError(t, err)
+	policy := agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
+	firstAgency, _, err := app.CreateAgency(int64(root.Id), "Root list A", "root-list-a", policy)
+	require.NoError(t, err)
+	secondAgency, _, err := app.CreateAgency(int64(root.Id), "Root list B", "root-list-b", policy)
+	require.NoError(t, err)
+	users := []model.User{{Username: "root-customer-a", Password: "password", Status: common.UserStatusEnabled, AffCode: "root-list-a"}, {Username: "root-customer-b", Password: "password", Status: common.UserStatusEnabled, AffCode: "root-list-b"}}
+	for i := range users {
+		require.NoError(t, app.db.Create(&users[i]).Error)
+	}
+	now := time.Now().UnixMilli()
+	for index, user := range users {
+		agencyID := firstAgency.ID
+		if index == 1 {
+			agencyID = secondAgency.ID
+		}
+		binding := model.AgencyUserBinding{UserID: int64(user.Id), AgencyID: agencyID, Revision: 1, InviteSnapshot: "ROOTLIST", CreatedSource: "test", EffectiveAtMS: now, CreatedAt: now / 1000}
+		require.NoError(t, app.db.Create(&binding).Error)
+		require.NoError(t, app.db.Create(&model.AgencyActiveUserBinding{UserID: int64(user.Id), BindingID: binding.ID, Revision: 1, AgencyID: agencyID, UpdatedAt: now / 1000}).Error)
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/agency/api/v1/root/customers?page_size=1", nil)
+	request.AddCookie(&http.Cookie{Name: app.config.CookieName, Value: token})
+	app.Router().ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var first struct {
+		Data struct {
+			Items []struct {
+				AgencyID string `json:"agency_id"`
+			} `json:"items"`
+			Meta struct {
+				NextCursor string `json:"next_cursor"`
+			} `json:"meta"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &first))
+	require.Len(t, first.Data.Items, 1)
+	require.NotEmpty(t, first.Data.Meta.NextCursor)
+	require.NotEmpty(t, first.Data.Items[0].AgencyID)
+
+	second := httptest.NewRecorder()
+	secondRequest := httptest.NewRequest(http.MethodGet, "/agency/api/v1/root/customers?page_size=1&cursor="+url.QueryEscape(first.Data.Meta.NextCursor), nil)
+	secondRequest.AddCookie(&http.Cookie{Name: app.config.CookieName, Value: token})
+	app.Router().ServeHTTP(second, secondRequest)
+	require.Equal(t, http.StatusOK, second.Code, second.Body.String())
+
+	forged := httptest.NewRecorder()
+	forgedRequest := httptest.NewRequest(http.MethodGet, "/agency/api/v1/root/customers?page_size=1&cursor="+url.QueryEscape(first.Data.Meta.NextCursor)+"&status=changed", nil)
+	forgedRequest.AddCookie(&http.Cookie{Name: app.config.CookieName, Value: token})
+	app.Router().ServeHTTP(forged, forgedRequest)
+	require.Equal(t, http.StatusBadRequest, forged.Code, forged.Body.String())
+	_ = csrf
 }
 
 func TestRootCreateAgencyReturnsInviteLinkAndQR(t *testing.T) {
@@ -754,7 +817,7 @@ func TestWithdrawalMarkPaidRequiresCurrentPaymentLease(t *testing.T) {
 	require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
 
 	recorder = httptest.NewRecorder()
-	request = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/agency/api/v1/root/withdrawals/%d/mark-paid", withdrawal.ID), strings.NewReader(fmt.Sprintf(`{"expected_version":1,"payment_lease_token":%d,"payment_reference":"bank-ref-lease"}`, leaseToken)))
+	request = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/agency/api/v1/root/withdrawals/%d/mark-paid", withdrawal.ID), strings.NewReader(fmt.Sprintf(`{"expected_version":1,"payment_lease_token":"%d","payment_reference":"bank-ref-lease"}`, leaseToken)))
 	request.Header.Set("Content-Type", "application/json")
 	ctx, _ = gin.CreateTestContext(recorder)
 	ctx.Request = request
@@ -924,7 +987,7 @@ func TestRootManagementVerificationScopeIsActionBound(t *testing.T) {
 		{name: "root pricing", method: http.MethodPost, path: "/agency/api/v1/root/agencies/8/pricing/publish", params: gin.Params{{Key: "id", Value: "8"}}, action: "pricing.root.publish", objectID: "agency:8"},
 		{name: "user bind", method: http.MethodPost, path: "/agency/api/v1/root/users/55/bind", params: gin.Params{{Key: "user_id", Value: "55"}}, action: "user.bind", objectID: "user:55"},
 		{name: "user transfer", method: http.MethodPost, path: "/agency/api/v1/root/users/55/transfer", params: gin.Params{{Key: "user_id", Value: "55"}}, action: "user.transfer", objectID: "user:55"},
-		{name: "reconciliation resolve", method: http.MethodPost, path: "/agency/api/v1/root/reconciliation/issues/9/resolve", params: gin.Params{{Key: "id", Value: "9"}}, action: "reconciliation.resolve", objectID: "reconciliation:9"},
+		{name: "reconciliation resolve", method: http.MethodPost, path: "/agency/api/v1/root/reconciliation/issues/9/resolve", params: gin.Params{{Key: "id", Value: "9"}}, action: "reconciliation.resolve", objectID: "reconciliation_issue:9"},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -958,7 +1021,7 @@ func TestExportWorkerMaterializesUsageCSV(t *testing.T) {
 	app := newAgencyTestApp(t)
 	app.config.ExportDir = t.TempDir()
 	agencyID := int64(9)
-	job := model.AgencyExportJob{ActorType: ActorTypeOperator, ActorID: 4, AgencyID: &agencyID, Kind: "usage", FilterJSON: "{}", Status: "queued", ExpiresAt: 1, CreatedAtMS: 1}
+	job := model.AgencyExportJob{ActorType: ActorTypeOperator, ActorID: 4, AgencyID: &agencyID, Kind: "usage", FilterJSON: "{}", Status: "queued", ExpiresAt: time.Now().Add(time.Hour).Unix(), CreatedAtMS: 1}
 	require.NoError(t, app.db.Create(&job).Error)
 	require.NoError(t, app.db.Create(&model.AgencyUsageFact{EventID: "evt-export", ComponentID: "default", UserID: 12, AgencyID: &agencyID, OriginModelName: "demo", BusinessStatus: "success", StandardQuota: 10, ChargedQuota: 12, CurrencyCode: "TOKENS", OccurredAtMS: 100}).Error)
 	processed, err := app.ProcessExportJobs(1)

@@ -146,6 +146,23 @@ func main() {
 		return a
 	}
 	commandWorkerCtx, stopAgencyCommandWorker := context.WithCancel(context.Background())
+	defer stopAgencyCommandWorker()
+	commandServer, err := service.StartConfiguredAgencyCommandServer()
+	if err != nil {
+		common.FatalLog("failed to start agency command listener: " + err.Error())
+		return
+	}
+	var commandServerErrors <-chan error
+	if commandServer != nil {
+		commandServerErrors = commandServer.Errors()
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := commandServer.Shutdown(shutdownCtx); err != nil {
+				common.SysError("agency command listener shutdown: " + err.Error())
+			}
+		}()
+	}
 	service.StartAgencyCommandWorker(commandWorkerCtx)
 
 	// Register the periodic channel test, upstream model update, and async task
@@ -228,14 +245,23 @@ func main() {
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-quit
-	common.SysLog(fmt.Sprintf("received signal: %v, shutting down...", sig))
+	select {
+	case sig := <-quit:
+		common.SysLog(fmt.Sprintf("received signal: %v, shutting down...", sig))
+	case commandErr := <-commandServerErrors:
+		common.SysError(fmt.Sprintf("agency command listener stopped: %v; shutting down gateway", commandErr))
+	}
 	stopAgencyCommandWorker()
 
 	// SSE streams may run for minutes; give them time to finish before forced exit
 	shutdownTimeout := time.Duration(common.GetEnvOrDefault("SHUTDOWN_TIMEOUT_SECONDS", 120)) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
+	if commandServer != nil {
+		if err := commandServer.Shutdown(ctx); err != nil {
+			common.SysError("agency command listener forced to shutdown: " + err.Error())
+		}
+	}
 	if err := srv.Shutdown(ctx); err != nil {
 		common.SysError(fmt.Sprintf("server forced to shutdown: %v", err))
 	}

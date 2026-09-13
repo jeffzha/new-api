@@ -1,0 +1,82 @@
+# Merge after the existing gateway blue/green and Agency Hub definitions.
+# The three IPs must be unused addresses on the dedicated private subnet.
+x-command-environment: &command-environment
+  AGENCY_COMMAND_SERVER_CERT_FILE: /run/secrets/agency_command_server_cert
+  AGENCY_COMMAND_SERVER_KEY_FILE: /run/secrets/agency_command_server_key
+  AGENCY_COMMAND_CLIENT_CA_FILE: /run/secrets/agency_command_client_ca
+  AGENCY_COMMAND_CLIENT_IDENTITY: spiffe://nexight/agency-hub
+  AGENCY_SSO_PUBLIC_KEY_FILE: /run/secrets/agency_command_root_verify
+  AGENCY_HUB_COMMAND_SERVICE_PUBLIC_KEY_FILE: /run/secrets/agency_command_service_verify
+
+x-command-secrets: &command-secrets
+  - source: agency_command_server_cert
+    target: agency_command_server_cert
+  - source: agency_command_server_key
+    target: agency_command_server_key
+  - source: agency_command_ca
+    target: agency_command_client_ca
+  - source: agency_command_root_verify
+    target: agency_command_root_verify
+  - source: agency_command_service_verify
+    target: agency_command_service_verify
+
+services:
+  new-api:
+    environment:
+      <<: *command-environment
+      AGENCY_COMMAND_LISTEN_ADDRESS: ${AGENCY_COMMAND_BLUE_IP:?set AGENCY_COMMAND_BLUE_IP}:3443
+    secrets: *command-secrets
+    networks:
+      agency_commands:
+        ipv4_address: ${AGENCY_COMMAND_BLUE_IP:?set AGENCY_COMMAND_BLUE_IP}
+
+  new-api-green:
+    environment:
+      <<: *command-environment
+      AGENCY_COMMAND_LISTEN_ADDRESS: ${AGENCY_COMMAND_GREEN_IP:?set AGENCY_COMMAND_GREEN_IP}:3443
+    secrets: *command-secrets
+    networks:
+      agency_commands:
+        ipv4_address: ${AGENCY_COMMAND_GREEN_IP:?set AGENCY_COMMAND_GREEN_IP}
+
+  agency-hub:
+    environment:
+      AGENCY_HUB_COMMAND_GATEWAY_URL: https://${AGENCY_COMMAND_TARGET_IP:?set AGENCY_COMMAND_TARGET_IP}:3443
+      AGENCY_HUB_COMMAND_CA_FILE: /run/secrets/agency_command_server_ca
+      AGENCY_HUB_COMMAND_CLIENT_CERT_FILE: /run/secrets/agency_command_client_cert
+      AGENCY_HUB_COMMAND_CLIENT_KEY_FILE: /run/secrets/agency_command_client_key
+      AGENCY_HUB_COMMAND_SERVER_NAME: agency-command.gateway.internal
+      AGENCY_HUB_COMMAND_ALLOW_LOCAL_SQLITE: "false"
+    secrets:
+      - source: agency_command_ca
+        target: agency_command_server_ca
+      - source: agency_command_client_cert
+        target: agency_command_client_cert
+      - source: agency_command_client_key
+        target: agency_command_client_key
+    networks:
+      agency_commands:
+        ipv4_address: ${AGENCY_COMMAND_HUB_IP:?set AGENCY_COMMAND_HUB_IP}
+
+networks:
+  agency_commands:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${AGENCY_COMMAND_SUBNET:?set AGENCY_COMMAND_SUBNET}
+
+secrets:
+  agency_command_ca:
+    file: ${AGENCY_COMMAND_CA_HOST_FILE:?set AGENCY_COMMAND_CA_HOST_FILE}
+  agency_command_server_cert:
+    file: ${AGENCY_COMMAND_SERVER_CERT_HOST_FILE:?set AGENCY_COMMAND_SERVER_CERT_HOST_FILE}
+  agency_command_server_key:
+    file: ${AGENCY_COMMAND_SERVER_KEY_HOST_FILE:?set AGENCY_COMMAND_SERVER_KEY_HOST_FILE}
+  agency_command_client_cert:
+    file: ${AGENCY_COMMAND_CLIENT_CERT_HOST_FILE:?set AGENCY_COMMAND_CLIENT_CERT_HOST_FILE}
+  agency_command_client_key:
+    file: ${AGENCY_COMMAND_CLIENT_KEY_HOST_FILE:?set AGENCY_COMMAND_CLIENT_KEY_HOST_FILE}
+  agency_command_root_verify:
+    file: ${AGENCY_HUB_SSO_PUBLIC_KEY_HOST_FILE:?set AGENCY_HUB_SSO_PUBLIC_KEY_HOST_FILE}
+  agency_command_service_verify:
+    file: ${AGENCY_HUB_COMMAND_SERVICE_PUBLIC_KEY_HOST_FILE:?set AGENCY_HUB_COMMAND_SERVICE_PUBLIC_KEY_HOST_FILE}

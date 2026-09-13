@@ -2,7 +2,26 @@
   "name": "agency-center",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "vite", "build": "tsc -b && vite build" },
-  "dependencies": { "@vitejs/plugin-react": "latest", "@types/react": "latest", "@types/react-dom": "latest", "react": "latest", "react-dom": "latest", "typescript": "latest", "vite": "latest" },
-  "devDependencies": {}
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:embed": "tsc --noEmit && vite build --outDir ../pkg/agencyhub/webdist --emptyOutDir false",
+    "test": "bun test src",
+    "test:e2e": "bun x --bun playwright test --config e2e/playwright.config.ts"
+  },
+  "dependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "4.3.4",
+    "i18next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-i18next": "latest",
+    "typescript": "5.9.3",
+    "vite": "4.5.14"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/bun": "^1.4.2"
+  }
 }

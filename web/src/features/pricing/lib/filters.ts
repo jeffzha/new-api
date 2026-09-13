@@ -24,6 +24,7 @@ import {
   ENDPOINT_TYPES,
 } from '../constants'
 import type { PricingModel } from '../types'
+import { getCustomerSalesRatio } from './model-helpers'
 import {
   getLowestVideoTokenMatrixPrice,
   getVideoTokenMatrixPricing,
@@ -106,11 +107,14 @@ export function filterByEndpointType(
  * Get model price for sorting
  */
 function getModelPrice(model: PricingModel): number {
+  const salesRatio = getCustomerSalesRatio(model) ?? 1
   const providerPricing = getVideoTokenMatrixPricing(model)
   if (providerPricing) {
-    return getLowestVideoTokenMatrixPrice(providerPricing) ?? 0
+    return (getLowestVideoTokenMatrixPrice(providerPricing) ?? 0) * salesRatio
   }
-  return model.quota_type === 0 ? model.model_ratio : model.model_price || 0
+  const price =
+    model.quota_type === 0 ? model.model_ratio : model.model_price || 0
+  return price * salesRatio
 }
 
 /**
@@ -191,7 +195,7 @@ export function extractAllTags(models: PricingModel[]): string[] {
     }
   })
 
-  return Array.from(tagSet).sort((a, b) => a.localeCompare(b))
+  return [...tagSet].sort((a, b) => a.localeCompare(b))
 }
 
 /**

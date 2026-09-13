@@ -1,0 +1,320 @@
+{
+  "actor": "operator",
+  "scope": "Real served HTML and real Gin API; synthetic local SQLite; jsdom, not visual browser QA",
+  "checks": [
+    {
+      "name": "The server serves the agency UI",
+      "status": "PASS",
+      "details": {
+        "title": "代理商中心"
+      }
+    },
+    {
+      "name": "Operator overview loads",
+      "status": "PASS",
+      "details": "可提现余额0累计佣金0客户数1待处理提现0下一步从“客户”查看用量，从“销售价格”维护完整价格版本，从“提现”管理收款账户和申请。"
+    },
+    {
+      "name": "Operator customer list loads",
+      "status": "PASS",
+      "details": {
+        "method": "GET",
+        "path": "/agency/api/v1/customers?limit=200",
+        "status": 200,
+        "response": {
+          "success": true,
+          "data": {
+            "items": [
+              {
+                "user_id": 2,
+                "username": "audit-customer",
+                "binding_id": 1,
+                "revision": 1,
+                "effective_at_ms": 1789226300000
+              }
+            ],
+            "meta": {
+              "next_cursor": ""
+            },
+            "total": 1
+          },
+          "request_id": "202609121518211680057008268d9d637oWLPaS"
+        }
+      }
+    },
+    {
+      "name": "Customer filter changes visible results",
+      "status": "FAIL",
+      "details": "刷新用户ID账号绑定ID归属版本2audit-customer11"
+    },
+    {
+      "name": "Selecting customer loads usage detail",
+      "status": "FAIL",
+      "details": []
+    },
+    {
+      "name": "Selecting customer loads topups detail",
+      "status": "FAIL",
+      "details": []
+    },
+    {
+      "name": "Operator can edit preview and publish sales pricing",
+      "status": "FAIL",
+      "details": "价格政策{\n  \"agency_id\": 1,\n  \"default_sales_bps\": 9000,\n  \"default_settlement_bps\": 7500,\n  \"min_spread_bps\": 500,\n  \"model_overrides\": null,\n  \"revision\": 1,\n  \"sales_cap_bps\": 30000\n}价格发布使用整包版本和 expected_revision。页面不展示渠道、采购价或上游密钥。"
+    },
+    {
+      "name": "Operator account creation completes password verification",
+      "status": "FAIL",
+      "details": {
+        "method": "POST",
+        "path": "/agency/api/v1/withdrawal-accounts",
+        "status": 403,
+        "body": "{\"account_type\":\"bank\",\"account_name\":\"Synthetic test account\",\"account_no\":\"000000001234\",\"bank_name\":\"Synthetic bank\"}",
+        "response": {
+          "success": false,
+          "error": {
+            "code": "verification_required",
+            "message": "该操作需要二次验证"
+          },
+          "request_id": "202609121518211968716008268d9d6LnkL1NOs"
+        }
+      }
+    },
+    {
+      "name": "Operator withdrawal obtains a verification proof before submission",
+      "status": "FAIL",
+      "details": {
+        "method": "POST",
+        "path": "/agency/api/v1/withdrawals",
+        "status": 403,
+        "body": "{\"currency_code\":\"CNY\",\"amount_micros\":\"1000000\",\"account_id\":1}",
+        "response": {
+          "success": false,
+          "error": {
+            "code": "verification_required",
+            "message": "该操作需要二次验证"
+          },
+          "request_id": "202609121518212040445008268d9d65PK181PQ"
+        }
+      }
+    }
+  ],
+  "calls": [
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/auth/me",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "actor_type": "agency_operator",
+          "actor_id": 1,
+          "agency_id": 1,
+          "username": "audit-operator",
+          "must_change_password": false
+        },
+        "request_id": "202609121518211465334008268d9d6rGyrbHch"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/commissions/summary",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "items": []
+        },
+        "request_id": "202609121518211539581008268d9d68P1ba69M"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/customers",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "items": [
+            {
+              "user_id": 2,
+              "username": "audit-customer",
+              "binding_id": 1,
+              "revision": 1,
+              "effective_at_ms": 1789226300000
+            }
+          ],
+          "meta": {
+            "next_cursor": ""
+          },
+          "total": 1
+        },
+        "request_id": "202609121518211549935008268d9d6Gfx1URkJ"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/withdrawals",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "items": [],
+          "meta": {
+            "next_cursor": ""
+          },
+          "total": 0
+        },
+        "request_id": "202609121518211563030008268d9d68JdiGwbB"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/customers?limit=200",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "items": [
+            {
+              "user_id": 2,
+              "username": "audit-customer",
+              "binding_id": 1,
+              "revision": 1,
+              "effective_at_ms": 1789226300000
+            }
+          ],
+          "meta": {
+            "next_cursor": ""
+          },
+          "total": 1
+        },
+        "request_id": "202609121518211680057008268d9d637oWLPaS"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/customers?limit=200",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "items": [
+            {
+              "user_id": 2,
+              "username": "audit-customer",
+              "binding_id": 1,
+              "revision": 1,
+              "effective_at_ms": 1789226300000
+            }
+          ],
+          "meta": {
+            "next_cursor": ""
+          },
+          "total": 1
+        },
+        "request_id": "202609121518211742273008268d9d6cOkJbaLF"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/customers?limit=200",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "items": [
+            {
+              "user_id": 2,
+              "username": "audit-customer",
+              "binding_id": 1,
+              "revision": 1,
+              "effective_at_ms": 1789226300000
+            }
+          ],
+          "meta": {
+            "next_cursor": ""
+          },
+          "total": 1
+        },
+        "request_id": "202609121518211806708008268d9d64nOJZPjl"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/pricing",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "agency_id": 1,
+          "default_sales_bps": 9000,
+          "default_settlement_bps": 7500,
+          "min_spread_bps": 500,
+          "model_overrides": null,
+          "revision": 1,
+          "sales_cap_bps": 30000
+        },
+        "request_id": "202609121518211848424008268d9d6QxP1tHrz"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/withdrawal-accounts",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "items": []
+        },
+        "request_id": "202609121518211898859008268d9d6HgkszVYH"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/agency/api/v1/withdrawal-accounts",
+      "status": 403,
+      "body": "{\"account_type\":\"bank\",\"account_name\":\"Synthetic test account\",\"account_no\":\"000000001234\",\"bank_name\":\"Synthetic bank\"}",
+      "response": {
+        "success": false,
+        "error": {
+          "code": "verification_required",
+          "message": "该操作需要二次验证"
+        },
+        "request_id": "202609121518211968716008268d9d6LnkL1NOs"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/withdrawals?limit=200",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "items": [],
+          "meta": {
+            "next_cursor": ""
+          },
+          "total": 0
+        },
+        "request_id": "202609121518211994894008268d9d6ylGu02W0"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/agency/api/v1/withdrawals",
+      "status": 403,
+      "body": "{\"currency_code\":\"CNY\",\"amount_micros\":\"1000000\",\"account_id\":1}",
+      "response": {
+        "success": false,
+        "error": {
+          "code": "verification_required",
+          "message": "该操作需要二次验证"
+        },
+        "request_id": "202609121518212040445008268d9d65PK181PQ"
+      }
+    }
+  ],
+  "passed": 3,
+  "failed": 6
+}

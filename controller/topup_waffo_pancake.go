@@ -523,7 +523,13 @@ func WaffoPancakeWebhook(c *gin.Context) {
 	LockOrder(tradeNo)
 	defer UnlockOrder(tradeNo)
 
-	if err := model.RechargeWaffoPancake(tradeNo); err != nil {
+	// Amount and TaxAmount are separate callback fields without a guaranteed
+	// tax-inclusive total contract. Record the provider order reference only.
+	var payment *model.TopupPaymentSnapshot
+	if event.Data.OrderID != "" {
+		payment = &model.TopupPaymentSnapshot{PaymentReference: event.Data.OrderID}
+	}
+	if err := model.RechargeWaffoPancake(tradeNo, payment); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 充值处理失败 trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), err.Error()))
 		c.String(http.StatusInternalServerError, "retry")
 		return

@@ -25,6 +25,8 @@ const (
 	provisioningCancelled  = "cancelled"
 )
 
+var errAgencyOnboardingDisabled = errors.New("agency onboarding is disabled")
+
 type provisioningTask struct {
 	ID       int64  `json:"id"`
 	TaskID   string `json:"task_id,omitempty"`
@@ -64,12 +66,28 @@ func encodeProvisioningTasks(tasks []provisioningTask) (string, error) {
 }
 
 func (a *App) enqueueProvisioningJob(userID int64, inviteCode string, rootID int64, reason string) (model.AgencyProvisioningJob, bool, error) {
+	if !common.AgencyOnboardingEnabled() {
+		return model.AgencyProvisioningJob{}, false, errAgencyOnboardingDisabled
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" || len(reason) > 2000 {
+		return model.AgencyProvisioningJob{}, false, errors.New("a provisioning reason of at most 2000 bytes is required")
+	}
 	if userID <= 0 || rootID <= 0 || strings.TrimSpace(inviteCode) == "" {
 		return model.AgencyProvisioningJob{}, false, errors.New("invalid provisioning request")
 	}
 	var job model.AgencyProvisioningJob
 	created := false
 	err := a.db.Transaction(func(tx *gorm.DB) error {
+		// Validate and lock the target before installing the admission barrier.
+		// Keep the same agency -> user order as the final binding transaction.
+		var agency model.Agency
+		if err := model.AgencyLockForUpdate(tx).Where("invite_code = ?", inviteCode).First(&agency).Error; err != nil {
+			return err
+		}
+		if agency.Status != AgencyStatusActive {
+			return errors.New("target agency is disabled")
+		}
 		var user model.User
 		if err := model.AgencyLockForUpdate(tx).Select("id, auth_version, billing_mode").First(&user, userID).Error; err != nil {
 			return err
@@ -124,6 +142,9 @@ func (a *App) enqueueProvisioningJob(userID int64, inviteCode string, rootID int
 		if err := tx.Create(&job).Error; err != nil {
 			return err
 		}
+		if err := tx.Create(&model.AgencyAuditLog{EventID: fmt.Sprintf("provisioning-start-%d", job.ID), ActorType: ActorTypeRoot, ActorID: rootID, Action: "provisioning.start", ObjectType: "user", ObjectID: fmt.Sprint(userID), Reason: reason, CreatedAtMS: now}).Error; err != nil {
+			return err
+		}
 		created = true
 		return nil
 	})
@@ -142,6 +163,9 @@ func (a *App) EnqueueProvisioningJob(userID int64, inviteCode string, rootID int
 // multiple hub instances: ownership is acquired with a status CAS and the
 // fencing token is checked again in the final binding transaction.
 func (a *App) ProcessProvisioningJobs(limit int) (int, error) {
+	if !common.AgencyOnboardingEnabled() {
+		return 0, nil
+	}
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
@@ -165,13 +189,13 @@ func (a *App) ProcessProvisioningJobs(limit int) (int, error) {
 			continue
 		}
 		processed++
-		if err := a.runProvisioningJob(candidate.ID); err != nil {
+		if err := a.runProvisioningJob(candidate.ID, token); err != nil {
 			var blocked *provisioningBlockedError
 			if errors.As(err, &blocked) {
 				_ = a.markProvisioningBlocked(candidate.ID, token, blocked.Tasks)
 				continue
 			}
-			_ = a.markProvisioningFailed(candidate.ID, err)
+			_ = a.markProvisioningFailed(candidate.ID, token, err)
 		}
 	}
 	return processed, nil
@@ -189,12 +213,12 @@ func (a *App) claimProvisioningJob(id int64) (bool, int64, error) {
 	return result.RowsAffected == 1, token, result.Error
 }
 
-func (a *App) runProvisioningJob(id int64) error {
+func (a *App) runProvisioningJob(id, token int64) error {
 	var job model.AgencyProvisioningJob
 	if err := a.db.First(&job, id).Error; err != nil {
 		return err
 	}
-	if job.Status != provisioningProcessing || job.FencingToken == 0 {
+	if job.Status != provisioningProcessing || token == 0 || job.FencingToken != token {
 		return errors.New("provisioning job is not owned")
 	}
 	// Read current blockers without holding locks while waiting. The final
@@ -249,8 +273,7 @@ func (a *App) commitProvisioningJob(job model.AgencyProvisioningJob) error {
 		if result.RowsAffected != 1 {
 			return errors.New("provisioning job fencing conflict")
 		}
-		_ = binding
-		return nil
+		return tx.Create(&model.AgencyAuditLog{EventID: fmt.Sprintf("provisioning-completed-%d", job.ID), ActorType: ActorTypeSystem, Action: "provisioning.completed", ObjectType: "user_binding", ObjectID: fmt.Sprint(binding.ID), Reason: current.Reason, CreatedAtMS: now}).Error
 	})
 }
 
@@ -265,7 +288,7 @@ func (a *App) markProvisioningBlocked(id, token int64, tasks []provisioningTask)
 		Updates(map[string]any{"status": provisioningBlocked, "blocking_tasks": encoded, "block_reason": "in_flight_tasks", "updated_at_ms": now}).Error
 }
 
-func (a *App) markProvisioningFailed(id int64, cause error) error {
+func (a *App) markProvisioningFailed(id, token int64, cause error) error {
 	if cause == nil {
 		cause = errors.New("provisioning failed")
 	}
@@ -275,8 +298,8 @@ func (a *App) markProvisioningFailed(id int64, cause error) error {
 		if err := model.AgencyLockForUpdate(tx).First(&job, id).Error; err != nil {
 			return err
 		}
-		if job.Status != provisioningProcessing {
-			return nil
+		if job.Status != provisioningProcessing || token == 0 || job.FencingToken != token {
+			return errors.New("provisioning job fencing conflict")
 		}
 		result := tx.Model(&model.AgencyProvisioningJob{}).Where("id = ? AND status = ? AND fencing_token = ?", id, provisioningProcessing, job.FencingToken).
 			Updates(map[string]any{"status": provisioningFailed, "cancel_reason": cause.Error(), "updated_at_ms": now})
@@ -292,9 +315,13 @@ func (a *App) markProvisioningFailed(id int64, cause error) error {
 	})
 }
 
-func (a *App) cancelProvisioningJob(id int64, reason string) error {
+func (a *App) cancelProvisioningJob(id int64, reason string, rootID int64) error {
 	if id <= 0 {
 		return gorm.ErrRecordNotFound
+	}
+	reason = strings.TrimSpace(reason)
+	if rootID <= 0 || reason == "" || len(reason) > 2000 {
+		return errors.New("cancelling provisioning requires an administrator and a reason of at most 2000 bytes")
 	}
 	now := time.Now().UnixMilli()
 	return a.db.Transaction(func(tx *gorm.DB) error {
@@ -308,11 +335,14 @@ func (a *App) cancelProvisioningJob(id int64, reason string) error {
 		if err := tx.Model(&job).Updates(map[string]any{"status": provisioningCancelled, "cancel_reason": reason, "updated_at_ms": now}).Error; err != nil {
 			return err
 		}
-		return tx.Model(&model.User{}).Where("id = ? AND billing_mode = ?", job.UserID, model.AgencyProvisioningBillingMode).Update("billing_mode", "legacy").Error
+		if err := tx.Model(&model.User{}).Where("id = ? AND billing_mode = ?", job.UserID, model.AgencyProvisioningBillingMode).Update("billing_mode", "legacy").Error; err != nil {
+			return err
+		}
+		return tx.Create(&model.AgencyAuditLog{EventID: fmt.Sprintf("provisioning-cancelled-%d", job.ID), ActorType: ActorTypeRoot, ActorID: rootID, Action: "provisioning.cancel", ObjectType: "provisioning", ObjectID: fmt.Sprint(job.ID), Reason: reason, CreatedAtMS: now}).Error
 	})
 }
 
 // CancelProvisioningJob is the gateway-facing command execution primitive.
-func (a *App) CancelProvisioningJob(id int64, reason string) error {
-	return a.cancelProvisioningJob(id, reason)
+func (a *App) CancelProvisioningJob(id int64, reason string, rootID int64) error {
+	return a.cancelProvisioningJob(id, reason, rootID)
 }

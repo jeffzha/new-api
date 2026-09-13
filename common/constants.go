@@ -2,8 +2,9 @@ package common
 
 import (
 	"crypto/tls"
-	//"os"
-	//"strconv"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,6 +69,16 @@ var WeChatAuthEnabled = false
 var TelegramOAuthEnabled = false
 var TurnstileCheckEnabled = false
 var RegisterEnabled = true
+
+// AgencyOnboardingEnabled controls only new durable account admissions.
+// Missing or invalid configuration keeps onboarding closed; it never changes
+// the persisted billing mode of an existing customer. Set it on both gateway
+// and hub processes, then recreate/restart them when changing environment.
+func AgencyOnboardingEnabled() bool {
+	raw := strings.TrimSpace(os.Getenv("AGENCY_ONBOARDING_ENABLED"))
+	value, err := strconv.ParseBool(raw)
+	return err == nil && value
+}
 
 var EmailDomainRestrictionEnabled = false // 是否启用邮箱域名限制
 var EmailAliasRestrictionEnabled = false  // 是否启用邮箱别名限制

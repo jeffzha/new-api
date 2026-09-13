@@ -1,0 +1,51 @@
+package agencyhub
+
+import (
+	"bytes"
+	"crypto/tls"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/QuantumNous/new-api/model"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// Audit assertions describe the design contract, and are expected to fail on
+// the inspected implementation. This file runs only through the audit overlay.
+func TestAuditDeploymentRejectsTLSWithoutVerifiedClientCertificate(t *testing.T) {
+	app := newAgencyTestApp(t)
+	app.config.CommandRequireTLS = true
+	_, body, _, _ := signedCommandRequest(t, app, "audit-no-client-cert", CommandActionProvisioningStart, time.Now().Add(time.Minute))
+	request := httptest.NewRequest(http.MethodPost, "/internal/agency/v1/commands", bytes.NewReader(body))
+	request.TLS = &tls.ConnectionState{HandshakeComplete: true}
+	recorder := httptest.NewRecorder()
+	app.Router().ServeHTTP(recorder, request)
+	assert.Equal(t, http.StatusForbidden, recorder.Code, "mTLS contract requires a verified client certificate; body=%s", recorder.Body.String())
+}
+
+func TestAuditDeploymentReadinessRejectsMissingFinancialColumn(t *testing.T) {
+	app := newAgencyTestApp(t)
+	require.NoError(t, app.db.Migrator().DropColumn(&model.Agency{}, "PriceRevision"))
+	require.False(t, app.db.Migrator().HasColumn(&model.Agency{}, "PriceRevision"))
+	app.SetReady(true)
+	recorder := httptest.NewRecorder()
+	app.Router().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/agency/readyz", nil))
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code, "schema missing price_revision must not be ready; body=%s", recorder.Body.String())
+}
+
+func TestAuditDeploymentExpiredCrashedExportDoesNotRemainProcessingForever(t *testing.T) {
+	app := newAgencyTestApp(t)
+	app.config.ExportDir = t.TempDir()
+	job := model.AgencyExportJob{ActorType: "root", ActorID: 1, Kind: "usage", FilterJSON: "{}", Status: "processing", ExpiresAt: time.Now().Add(-48*time.Hour).Unix(), CreatedAtMS: time.Now().Add(-72*time.Hour).UnixMilli()}
+	require.NoError(t, app.db.Create(&job).Error)
+	_, err := app.ProcessExportJobs(1)
+	require.NoError(t, err)
+	_, err = app.CleanupExpiredExportJobs(1)
+	require.NoError(t, err)
+	var after model.AgencyExportJob
+	require.NoError(t, app.db.First(&after, job.ID).Error)
+	assert.NotEqual(t, "processing", after.Status, "crashed worker jobs must recover or expire within the 24h retention contract")
+}

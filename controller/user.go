@@ -274,6 +274,10 @@ func Register(c *gin.Context) {
 		cleanUser.Email = user.Email
 	}
 	if strings.TrimSpace(user.AgencyInvite) != "" {
+		if !common.AgencyOnboardingEnabled() {
+			common.ApiErrorMsg(c, "agency onboarding is temporarily disabled")
+			return
+		}
 		if strings.TrimSpace(affCode) != "" {
 			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 			return

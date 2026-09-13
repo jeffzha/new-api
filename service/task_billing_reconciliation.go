@@ -125,7 +125,8 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 			summary.Retried++
 			continue
 		}
-		if resolution == nil || resolution.TotalTokens <= 0 || resolution.ActualQuota <= 0 {
+		if resolution == nil || resolution.TotalTokens <= 0 || resolution.ActualQuota < 0 ||
+			(resolution.ActualQuota == 0 && !model.IsAgencyDurableUser(task.UserId)) {
 			retryTaskBillingReconciliation(record, errors.New("provider returned invalid billing usage"))
 			summary.Retried++
 			continue
@@ -164,12 +165,12 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 					logger.LogWarn(ctx, fmt.Sprintf("invalidate token cache after reconciliation %d failed: %s", record.ID, invalidateErr.Error()))
 				}
 			}
-			settlement.Task.Quota = resolution.ActualQuota
+			settlement.Task.Quota = settlement.PreConsumedQuota + settlement.QuotaDelta
 			recordTaskQuotaAdjustment(
 				ctx,
 				settlement.Task,
 				settlement.PreConsumedQuota,
-				resolution.ActualQuota,
+				settlement.Task.Quota,
 				"Seedance domestic provider bill reconciliation",
 				resolution.QuotaClamp,
 			)

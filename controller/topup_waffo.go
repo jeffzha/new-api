@@ -414,7 +414,18 @@ func handleWaffoPayment(c *gin.Context, wh *core.WebhookHandler, result *core.Pa
 	LockOrder(merchantOrderId)
 	defer UnlockOrder(merchantOrderId)
 
-	if err := model.RechargeWaffo(merchantOrderId, c.ClientIP()); err != nil {
+	// The SDK exposes both order and user settlement currencies, but does
+	// not document which amount includes conversion/fees. Preserve the known
+	// provider reference and leave actual payer money unknown.
+	providerReference := result.AcquiringOrderID
+	if providerReference == "" {
+		providerReference = result.PaymentRequestID
+	}
+	var payment *model.TopupPaymentSnapshot
+	if providerReference != "" {
+		payment = &model.TopupPaymentSnapshot{PaymentReference: providerReference}
+	}
+	if err := model.RechargeWaffo(merchantOrderId, c.ClientIP(), payment); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo 充值处理失败 trade_no=%s client_ip=%s error=%q", merchantOrderId, c.ClientIP(), err.Error()))
 		sendWaffoWebhookResponse(c, wh, false, err.Error())
 		return

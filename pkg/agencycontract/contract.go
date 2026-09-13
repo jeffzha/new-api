@@ -15,11 +15,12 @@ import (
 )
 
 const (
-	SchemaVersion      = "agency-billing-v1"
-	FundingRuleVersion = "paid_first_v1"
-	DefaultSalesCapBPS = 30000
-	MinCoefficientBPS  = 0
-	MaxCoefficientBPS  = 100000
+	SchemaVersion          = "agency-billing-v1"
+	ComponentSchemaVersion = "agency-billing-v2"
+	FundingRuleVersion     = "paid_first_v1"
+	DefaultSalesCapBPS     = 30000
+	MinCoefficientBPS      = 0
+	MaxCoefficientBPS      = 100000
 )
 
 var (
@@ -166,17 +167,18 @@ type ChargeResult struct {
 // sidecar. The gateway must fill StandardQuota and PaidAllocatedQuota after
 // its own pricing/funding transaction; the sidecar does not infer them.
 type BillingEvent struct {
-	SchemaVersion     string `json:"schema_version"`
-	EventID           string `json:"event_id"`
-	EventType         string `json:"event_type"`
-	OriginalEventID   string `json:"original_event_id,omitempty"`
-	FinancialChargeID string `json:"financial_charge_id"`
-	OperationID       string `json:"operation_id"`
-	SegmentNo         int    `json:"segment_no"`
-	JournalRevision   int64  `json:"journal_revision"`
-	MoneySeq          int64  `json:"money_seq"`
-	EventIndex        int    `json:"event_index"`
-	EventCount        int    `json:"event_count"`
+	Components        []BillingComponent `json:"components,omitempty"`
+	SchemaVersion     string             `json:"schema_version"`
+	EventID           string             `json:"event_id"`
+	EventType         string             `json:"event_type"`
+	OriginalEventID   string             `json:"original_event_id,omitempty"`
+	FinancialChargeID string             `json:"financial_charge_id"`
+	OperationID       string             `json:"operation_id"`
+	SegmentNo         int                `json:"segment_no"`
+	JournalRevision   int64              `json:"journal_revision"`
+	MoneySeq          int64              `json:"money_seq"`
+	EventIndex        int                `json:"event_index"`
+	EventCount        int                `json:"event_count"`
 	// UsageHash identifies the exact usage frame represented by a realtime
 	// segment. It is part of the immutable financial payload and is used to
 	// reject a same-segment retry with different usage.

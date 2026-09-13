@@ -11,7 +11,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 type rootFundingReversalRequest struct {
@@ -96,7 +95,7 @@ func (a *App) createFundingReversal(c *gin.Context) {
 		CreatedAt:       time.Now().Unix(),
 		UpdatedAt:       time.Now().Unix(),
 	}
-	signature, err := a.signCommandEnvelope(AgencyCommandRequest{
+	envelope := AgencyCommandRequest{
 		CommandID:       command.CommandID,
 		Action:          command.Action,
 		Actor:           command.Actor,
@@ -108,15 +107,17 @@ func (a *App) createFundingReversal(c *gin.Context) {
 		ExpiresAt:       command.ExpiresAt,
 		BodyHash:        command.BodyHash,
 		RootProof:       command.RootProof,
-	})
+	}
+	signature, err := a.signCommandEnvelope(envelope)
 	if err != nil {
 		respondError(c, http.StatusServiceUnavailable, "command_signing_unavailable", "资金冲正命令签名服务不可用", nil)
 		return
 	}
 	command.HubSignature = signature
-	created, err := a.enqueueRootCommand(command)
+	envelope.HubSignature = signature
+	created, err := a.SubmitRootCommand(c.Request.Context(), envelope)
 	if err != nil {
-		status := http.StatusInternalServerError
+		status := http.StatusServiceUnavailable
 		code := "command_enqueue_failed"
 		message := "资金冲正命令排队失败"
 		if errors.Is(err, errCommandConflict) {
@@ -125,10 +126,17 @@ func (a *App) createFundingReversal(c *gin.Context) {
 		if errors.Is(err, errProofReplayed) {
 			status, code, message = http.StatusConflict, "proof_replayed", "Root授权证明已用于其他命令"
 		}
+		var transportErr *CommandTransportError
+		if errors.As(err, &transportErr) && transportErr.Status >= 400 && transportErr.Status < 500 {
+			status, code = transportErr.Status, transportErr.Code
+		}
+		if errors.Is(err, errRootCommandRevoked) {
+			status, code = http.StatusForbidden, "root_authorization_revoked"
+		}
 		respondError(c, status, code, message, nil)
 		return
 	}
-	respondAccepted(c, commandResponse(created))
+	respondAccepted(c, created)
 }
 
 func normalizeFundingReversalRequest(request rootFundingReversalRequest) (fundingReversalPayload, error) {
@@ -209,53 +217,6 @@ func (a *App) verifyFundingReversalProof(request rootFundingReversalRequest, ide
 		return SSOTicketClaims{}, errors.New("root proof command binding mismatch")
 	}
 	return claims, nil
-}
-
-func (a *App) enqueueRootCommand(command model.AgencyCommand) (model.AgencyCommand, error) {
-	var stored model.AgencyCommand
-	err := a.db.Where("command_id = ?", command.CommandID).First(&stored).Error
-	if err == nil {
-		req := AgencyCommandRequest{
-			CommandID:       command.CommandID,
-			Action:          command.Action,
-			Actor:           command.Actor,
-			SourceSID:       command.SourceSID,
-			ObjectID:        command.ObjectID,
-			ExpectedVersion: command.ExpectedVersion,
-			Payload:         json.RawMessage(command.Payload),
-			IssuedAt:        command.IssuedAt,
-			ExpiresAt:       command.ExpiresAt,
-			BodyHash:        command.BodyHash,
-			RootProof:       command.RootProof,
-		}
-		if commandEnvelopeMatchesStored(req, stored, command.BodyHash) && stored.RootProofJTI == command.RootProofJTI {
-			return stored, nil
-		}
-		return model.AgencyCommand{}, errCommandConflict
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return model.AgencyCommand{}, err
-	}
-	err = a.db.Transaction(func(tx *gorm.DB) error {
-		var reused model.AgencyCommand
-		if err := tx.Where("root_proof_jti = ?", command.RootProofJTI).First(&reused).Error; err == nil {
-			return errProofReplayed
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		return tx.Create(&command).Error
-	})
-	if err != nil {
-		if errors.Is(err, gorm.ErrDuplicatedKey) {
-			var raced model.AgencyCommand
-			if lookupErr := a.db.Where("command_id = ?", command.CommandID).First(&raced).Error; lookupErr == nil {
-				return raced, nil
-			}
-			return model.AgencyCommand{}, errCommandConflict
-		}
-		return model.AgencyCommand{}, err
-	}
-	return command, nil
 }
 
 var (

@@ -48,8 +48,23 @@ func run() error {
 		common.SysLog("Agency Hub migration completed")
 		return nil
 	}
+	if command == "reconcile" {
+		app := agencyhub.New(model.DB, nil, config)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		summary, err := app.Reconcile(ctx)
+		if err != nil {
+			return fmt.Errorf("agency reconciliation failed: %w", err)
+		}
+		encoded, err := common.Marshal(summary)
+		if err != nil {
+			return fmt.Errorf("encode reconciliation summary: %w", err)
+		}
+		fmt.Println(string(encoded))
+		return nil
+	}
 	if command != "serve" {
-		return fmt.Errorf("unknown command %q; expected serve or migrate", command)
+		return fmt.Errorf("unknown command %q; expected serve, migrate, or reconcile", command)
 	}
 	if config.AutoMigrate {
 		if err := model.MigrateAgency(model.DB); err != nil {
@@ -81,10 +96,14 @@ func run() error {
 		}
 		app.SetCommandServicePrivateKey(key)
 	}
+	if err := app.InitializeCommandTransport(); err != nil {
+		return fmt.Errorf("initialize agency command transport: %w", err)
+	}
+	defer app.CloseCommandTransport()
 	app.SetReady(true)
 	workerCtx, stopWorker := context.WithCancel(context.Background())
+	defer stopWorker()
 	app.StartBackground(workerCtx)
-	go runAgencyExportWorker(workerCtx, app)
 	server := &http.Server{Addr: ":" + config.Port, Handler: app.Router(), ReadHeaderTimeout: 30 * time.Second}
 	serverErrors := make(chan error, 1)
 	go func() {
@@ -103,24 +122,5 @@ func run() error {
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	stopWorker()
 	return server.Shutdown(shutdownCtx)
-}
-
-func runAgencyExportWorker(ctx context.Context, app *agencyhub.App) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if _, err := app.ProcessExportJobs(4); err != nil {
-				common.SysLog("agency export worker error: " + err.Error())
-			}
-			if _, err := app.CleanupExpiredExportJobs(16); err != nil {
-				common.SysLog("agency export cleanup error: " + err.Error())
-			}
-		}
-	}
 }

@@ -31,6 +31,10 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    // This browser UI package imports emoji JSON without Node import
+    // attributes. Transform it as app code so real catalog components can be
+    // rendered in jsdom instead of mocking the production UI dependency.
+    server: { deps: { inline: ['@lobehub/ui'] } },
     setupFiles: ['./src/test-setup.ts'],
     clearMocks: true,
     restoreMocks: true,

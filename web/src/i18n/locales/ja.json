@@ -3781,6 +3781,7 @@
     "Price:": "価格：",
     "Price: High to Low": "価格：高い順",
     "Price: Low to High": "価格：低い順",
+    "Prices include your agency sales policy. Group selection changes model availability, not your sales rate.": "所属代理店の販売ポリシーに基づく価格です。グループの選択は利用可能なモデルの絞り込みにのみ適用され、販売倍率は変わりません。",
     "Prices shown per": "価格表示単位",
     "Prices synced successfully": "価格が正常に同期されました",
     "Prices vary by usage tier and request conditions": "価格は利用ティアとリクエスト条件で変動します",
@@ -3790,6 +3791,7 @@
     "Pricing Configuration": "価格設定",
     "Pricing group example": "料金グループの例",
     "Pricing groups": "料金グループ",
+    "Pricing is temporarily unavailable. Please try again.": "価格情報を一時的に取得できません。もう一度お試しください。",
     "Pricing mode": "価格モード",
     "Pricing Ratios": "価格比率",
     "Pricing Type": "価格タイプ",
@@ -4373,6 +4375,7 @@
     "Seedance 2.0 API": "Seedance 2.0 国内版 API",
     "Seedance 2.0 Fast": "Seedance 2.0 高速",
     "Seedance 2.0 Standard": "Seedance 2.0 標準",
+    "Seedance 2.5": "Seedance 2.5",
     "Seedance CNY Pricing": "Seedance 人民元料金",
     "Seedance Domestic": "Seedance 国内版",
     "Select": "選択",
@@ -5645,6 +5648,7 @@
     "Your GitHub OAuth Client ID": "あなたのGitHub OAuthクライアントID",
     "Your GitHub OAuth Client Secret": "あなたのGitHub OAuthクライアントシークレット",
     "Your new backup codes are ready": "新しいバックアップコードの準備ができました",
+    "Your price": "お客様の価格",
     "Your Referral Link": "あなたの紹介リンク",
     "Your setup guide is collapsed so usage stays in focus.": "利用状況に集中できるよう、セットアップガイドを折りたたみました。",
     "Your system access token for API authentication. Keep it secure and don't share it with others.": "API認証用のシステムアクセストークンです。安全に保管し、他者と共有しないでください。",
@@ -5656,7 +5660,6 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム",
-    "Seedance 2.5": "Seedance 2.5"
+    "Zoom": "ズーム"
   }
 }

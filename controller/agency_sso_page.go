@@ -25,27 +25,35 @@ const agencySSOPageTemplate = `<!doctype html>
 <script>
 const PAYLOAD = __PAYLOAD__;
 const origin = PAYLOAD.origin;
-function done(message){try{parent.postMessage(Object.assign({source:'new-api-agency-sso'},message),origin);}catch(e){}}
-(function(){
-  var token = null;
-  try { token = window.localStorage.getItem('new_api_access_token') || null; } catch(e) {}
-  if (!token) {
-    done({ok:false,error:'主平台未登录，请先打开主平台登录，再重试进入代理商中心'});
-    return;
+function done(message){parent.postMessage(Object.assign({source:PAYLOAD.mode==='verify'?'new-api-agency-verification':'new-api-agency-sso'},message),origin);}
+async function request(path,body){
+  async function refresh(){
+    const response=await fetch('/api/user/auth/refresh',{method:'POST',credentials:'include',cache:'no-store'});
+    const data=await response.json();
+    if(!response.ok||!data.success||!data.data?.access_token)throw Error(data.message||'Platform sign-in required.');
+    return data.data.access_token;
   }
-  var headers = {'Content-Type':'application/json','Authorization':'Bearer '+token};
-  fetch('/api/agency/sso-ticket',{method:'POST',credentials:'include',headers:headers,body:JSON.stringify({state_hash:PAYLOAD.state_hash})})
-    .then(function(response){return response.json().then(function(data){return {status:response.status,data:data};});})
-    .then(function(result){
-      var data = result.data || {};
-      if (result.status === 200 && data.success && data.data && data.data.ticket){
-        done({ok:true,ticket:data.data.ticket});
-      } else {
-        done({ok:false,error:data.message||('http_'+result.status)});
-      }
-    })
-    .catch(function(err){done({ok:false,error:String((err&&err.message)||err)});});
-})();
+  const token=navigator.locks?await navigator.locks.request('new-api:auth-refresh',refresh):await refresh();
+  const response=await fetch(path,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify(body),cache:'no-store'});
+  const data=await response.json();
+  if(!response.ok||!data.success)throw Error(data.message||'Verification failed.');
+  return data.data;
+}
+if(PAYLOAD.mode==='verify'){
+  let used=false;
+  window.addEventListener('message',async function(event){
+    if(used||event.source!==parent||event.origin!==origin||event.data?.source!=='agency-hub-verification')return;
+    used=true;
+    const input=event.data;
+    try{const data=await request('/api/agency/verify',input.payload);done({ok:true,request_id:input.request_id,proof:data.proof});}
+    catch(error){done({ok:false,request_id:input.request_id,error:error.message});}
+  });
+  done({ready:true});
+}else{
+  request('/api/agency/sso-ticket',{state_hash:PAYLOAD.state_hash})
+    .then(data=>done({ok:true,ticket:data.ticket}))
+    .catch(error=>done({ok:false,error:error.message}));
+}
 </script></body></html>`
 
 // allowedAgencySSOOrigins returns the exact browser origins the agency SSO
@@ -84,7 +92,12 @@ func AgencySSOPage(c *gin.Context) {
 		return
 	}
 	stateHash := strings.TrimSpace(c.Query("state_hash"))
-	if stateHash == "" {
+	mode := c.Query("mode")
+	if mode != "" && mode != "verify" {
+		respondAgencySSOPageError(c, http.StatusBadRequest, "无效的桥接模式")
+		return
+	}
+	if stateHash == "" && mode != "verify" {
 		respondAgencySSOPageError(c, http.StatusBadRequest, "缺少 state_hash 参数")
 		return
 	}
@@ -93,7 +106,7 @@ func AgencySSOPage(c *gin.Context) {
 		respondAgencySSOPageError(c, http.StatusForbidden, "目标来源不在白名单内，拒绝跳转")
 		return
 	}
-	payload, err := common.Marshal(map[string]string{"state_hash": stateHash, "origin": origin})
+	payload, err := common.Marshal(map[string]string{"state_hash": stateHash, "origin": origin, "mode": mode})
 	if err != nil {
 		respondAgencySSOPageError(c, http.StatusInternalServerError, "页面初始化失败")
 		return

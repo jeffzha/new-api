@@ -25,7 +25,9 @@ import type { PricingData } from './types'
 // ----------------------------------------------------------------------------
 
 // Get model pricing data
-export async function getPricing(): Promise<PricingData> {
-  const res = await api.get('/api/pricing')
+export async function getPricing(signal?: AbortSignal): Promise<PricingData> {
+  // React Query deduplicates per viewer. Do not share HTTP in-flight responses
+  // across sign-in/sign-out when an old session request is still completing.
+  const res = await api.get('/api/pricing', { signal, disableDuplicate: true })
   return res.data
 }

@@ -1,10 +1,14 @@
 package relay
 
 import (
+	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -33,6 +37,72 @@ type TaskSubmitResult struct {
 	Endpoint        *model.TaskEndpointSnapshot
 	ProviderBilling *model.TaskProviderBillingSnapshot
 	//PerCallPrice   types.PriceData
+}
+
+// agencyTaskResponseBuffer delays adaptor c.JSON output until the provider
+// acceptance receipt is durable. Several task adaptors write the response as
+// part of DoResponse, so buffering at this boundary keeps the crash window
+// from acknowledging a task before its submission attempt is recorded.
+type agencyTaskResponseBuffer struct {
+	gin.ResponseWriter
+	header http.Header
+	body   bytes.Buffer
+	status int
+	wrote  bool
+}
+
+const agencyTaskResponseReleaseKey = "agency_task_response_release"
+
+func newAgencyTaskResponseBuffer(w gin.ResponseWriter) *agencyTaskResponseBuffer {
+	return &agencyTaskResponseBuffer{ResponseWriter: w, header: make(http.Header), status: http.StatusOK}
+}
+func (w *agencyTaskResponseBuffer) Header() http.Header { return w.header }
+func (w *agencyTaskResponseBuffer) WriteHeader(code int) {
+	if !w.wrote {
+		w.status = code
+	}
+}
+func (w *agencyTaskResponseBuffer) WriteHeaderNow() { w.wrote = true }
+func (w *agencyTaskResponseBuffer) Write(p []byte) (int, error) {
+	w.wrote = true
+	return w.body.Write(p)
+}
+func (w *agencyTaskResponseBuffer) WriteString(s string) (int, error) {
+	w.wrote = true
+	return w.body.WriteString(s)
+}
+func (w *agencyTaskResponseBuffer) Status() int              { return w.status }
+func (w *agencyTaskResponseBuffer) Size() int                { return w.body.Len() }
+func (w *agencyTaskResponseBuffer) Written() bool            { return w.wrote }
+func (w *agencyTaskResponseBuffer) Flush()                   { w.wrote = true }
+func (w *agencyTaskResponseBuffer) CloseNotify() <-chan bool { return w.ResponseWriter.CloseNotify() }
+func (w *agencyTaskResponseBuffer) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return w.ResponseWriter.Hijack()
+}
+func (w *agencyTaskResponseBuffer) Pusher() http.Pusher { return w.ResponseWriter.Pusher() }
+
+func (w *agencyTaskResponseBuffer) commit() {
+	for key, values := range w.header {
+		w.ResponseWriter.Header()[key] = values
+	}
+	w.ResponseWriter.WriteHeader(w.status)
+	_, _ = w.ResponseWriter.Write(w.body.Bytes())
+}
+
+// ReleaseAgencyTaskResponse completes (or discards) the response captured by
+// a durable task submission. The controller calls this only after the local
+// task row has been persisted, so a client can never observe an accepted task
+// whose public task record was lost.
+func ReleaseAgencyTaskResponse(c *gin.Context, commit bool) {
+	value, exists := c.Get(agencyTaskResponseReleaseKey)
+	if !exists {
+		return
+	}
+	delete(c.Keys, agencyTaskResponseReleaseKey)
+	release, ok := value.(func(bool))
+	if ok {
+		release(commit)
+	}
 }
 
 // ResolveOriginTask 处理基于已有任务的提交（remix / continuation）：
@@ -283,10 +353,25 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
-	if info.Billing == nil && !info.PriceData.FreeModel {
+	if info.Billing == nil && (!info.PriceData.FreeModel || (managed && model.IsAgencyDurableUser(info.UserId))) {
 		info.ForcePreConsume = true
 		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
 			return nil, service.TaskErrorFromAPIError(apiErr)
+		}
+	}
+	if managed && model.IsAgencyDurableUser(info.UserId) {
+		basis := model.AgencyTaskChargeBasis{Version: model.AgencyTaskChargeBasisVersion,
+			ComponentBilling: common.GetEnvOrDefaultBool("AGENCY_COMPONENT_BILLING_ENABLED", false),
+			Mode:             "tokens", QuotaPerUnit: common.QuotaPerUnit, ModelPrice: info.PriceData.ModelPrice,
+			ModelRatio: info.PriceData.ModelRatio, OtherMultiplier: info.PriceData.OtherRatioMultiplier(),
+			IgnoreOtherRatios: common.StringsContains(constant.TaskPricePatches, modelName), ProviderBilling: providerBilling}
+		if providerBilling != nil {
+			basis.Mode = "cny_tokens"
+		} else if info.PriceData.UsePrice || basis.IgnoreOtherRatios {
+			basis.Mode = "fixed"
+		}
+		if err := model.FreezeAgencyTaskChargeBasis(info.UserId, info.RequestId, basis); err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "agency_task_basis_unavailable", http.StatusServiceUnavailable)
 		}
 	}
 
@@ -301,14 +386,36 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 	upstreamevent.EmitTaskSubmitRequest(c, info, requestBodyBytes)
 	requestBody = bytes.NewReader(requestBodyBytes)
+	// Durable agency tasks create an immutable submission receipt before any
+	// provider I/O. This prevents an ambiguous transport failure from being
+	// mistaken for a rejected request and retried as a second video.
+	agencyAttempt := model.IsAgencyDurableUser(info.UserId) && info.Billing != nil
+	if agencyAttempt {
+		digest := sha256.Sum256(requestBodyBytes)
+		if err := model.BeginAgencyTaskSubmission(info.UserId, info.RequestId, info.PublicTaskID,
+			hex.EncodeToString(digest[:]), c.Request.URL.Path); err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "agency_task_submission_record_failed", http.StatusServiceUnavailable)
+		}
+	}
 
 	// 9. 发送请求
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
+		if agencyAttempt {
+			_ = model.ResolveAgencyTaskSubmissionFailure(info.RequestId, false, "transport_error")
+			c.Set("agency_task_reconcile_required", true)
+		}
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
+		if agencyAttempt && resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			_ = model.ResolveAgencyTaskSubmissionFailure(info.RequestId, true, "upstream_rejected")
+			c.Set("agency_task_rejected", true)
+		} else if agencyAttempt {
+			_ = model.ResolveAgencyTaskSubmissionFailure(info.RequestId, false, "upstream_status_unknown")
+			c.Set("agency_task_reconcile_required", true)
+		}
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 	}
 
@@ -320,10 +427,38 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	ratiosJSON, _ := common.Marshal(otherRatios)
 	c.Header("X-New-Api-Other-Ratios", string(ratiosJSON))
 
-	// 11. 解析响应
+	// 11. 解析响应. Durable agency responses are buffered until the provider
+	// task ID receipt has been committed.
+	var responseBuffer *agencyTaskResponseBuffer
+	if agencyAttempt {
+		responseBuffer = newAgencyTaskResponseBuffer(c.Writer)
+		c.Writer = responseBuffer
+	}
 	upstreamTaskID, taskData, taskErr := adaptor.DoResponse(c, resp, info)
+	if responseBuffer != nil {
+		c.Writer = responseBuffer.ResponseWriter
+	}
 	if taskErr != nil {
+		if agencyAttempt {
+			_ = model.ResolveAgencyTaskSubmissionFailure(info.RequestId, false, "response_parse_error")
+			c.Set("agency_task_reconcile_required", true)
+		}
 		return nil, taskErr
+	}
+	if agencyAttempt {
+		if err := model.RecordAgencyTaskSubmission(info.RequestId, info.PublicTaskID, upstreamTaskID); err != nil {
+			// The provider has accepted the task, but the receipt could not be
+			// persisted. Keep the reservation for reconciliation; never refund
+			// or issue another provider submission automatically.
+			_ = model.ResolveAgencyTaskSubmissionFailure(info.RequestId, false, "receipt_persist_failed")
+			c.Set("agency_task_reconcile_required", true)
+			return nil, service.TaskErrorWrapperLocal(err, "agency_task_submission_persist_failed", http.StatusServiceUnavailable)
+		}
+		c.Set(agencyTaskResponseReleaseKey, func(commit bool) {
+			if commit {
+				responseBuffer.commit()
+			}
+		})
 	}
 
 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios

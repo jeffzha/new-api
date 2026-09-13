@@ -3781,6 +3781,7 @@
     "Price:": "Prix :",
     "Price: High to Low": "Prix : Du plus élevé au plus bas",
     "Price: Low to High": "Prix : Du plus bas au plus élevé",
+    "Prices include your agency sales policy. Group selection changes model availability, not your sales rate.": "Les tarifs appliquent la politique de votre agence. Le groupe filtre les modèles disponibles sans modifier votre coefficient tarifaire.",
     "Prices shown per": "Prix affichés par",
     "Prices synced successfully": "Prix synchronisés avec succès",
     "Prices vary by usage tier and request conditions": "Les prix varient selon le palier d’utilisation et les conditions de requête",
@@ -3790,6 +3791,7 @@
     "Pricing Configuration": "Configuration de la tarification",
     "Pricing group example": "Exemple de groupe tarifaire",
     "Pricing groups": "Groupes tarifaires",
+    "Pricing is temporarily unavailable. Please try again.": "Les tarifs sont temporairement indisponibles. Veuillez réessayer.",
     "Pricing mode": "Mode de tarification",
     "Pricing Ratios": "Ratios de tarification",
     "Pricing Type": "Type de tarification",
@@ -4373,6 +4375,7 @@
     "Seedance 2.0 API": "API Seedance 2.0",
     "Seedance 2.0 Fast": "Seedance 2.0 Rapide",
     "Seedance 2.0 Standard": "Seedance 2.0 Standard",
+    "Seedance 2.5": "Seedance 2.5",
     "Seedance CNY Pricing": "Tarification Seedance en CNY",
     "Seedance Domestic": "Seedance national",
     "Select": "Sélectionner",
@@ -5645,6 +5648,7 @@
     "Your GitHub OAuth Client ID": "Votre ID Client OAuth GitHub",
     "Your GitHub OAuth Client Secret": "Votre Secret Client OAuth GitHub",
     "Your new backup codes are ready": "Vos nouveaux codes de secours sont prêts",
+    "Your price": "Votre tarif",
     "Your Referral Link": "Votre lien de parrainage",
     "Your setup guide is collapsed so usage stays in focus.": "Le guide de configuration est réduit afin de garder l'utilisation au premier plan.",
     "Your system access token for API authentication. Keep it secure and don't share it with others.": "Votre jeton d'accès système pour l'authentification API. Gardez-le en sécurité et ne le partagez pas avec d'autres.",
@@ -5656,7 +5660,6 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "Seedance 2.5": "Seedance 2.5"
+    "Zoom": "Zoom"
   }
 }

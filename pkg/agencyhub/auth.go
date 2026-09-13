@@ -397,7 +397,7 @@ func (a *App) operatorVerify(c *gin.Context) {
 	hash := tokenHash(token)
 	now := time.Now().Unix()
 	expiry := now + 300
-	if err = a.db.Create(&model.AgencyVerificationUse{JTI: hash, ActorType: ActorTypeOperator, ActorID: identity.ActorID, Action: request.Action, ObjectID: request.ObjectID, BodyHash: strings.ToLower(request.BodyHash), ExpiresAt: expiry, CreatedAt: now}).Error; err != nil {
+	if err = a.db.Create(&model.AgencyVerificationUse{JTI: hash, ActorType: ActorTypeOperator, ActorID: identity.ActorID, SessionID: identity.SessionID, Action: request.Action, ObjectID: request.ObjectID, BodyHash: strings.ToLower(request.BodyHash), ExpiresAt: expiry, CreatedAt: now}).Error; err != nil {
 		respondError(c, http.StatusInternalServerError, "database_error", "验证失败", nil)
 		return
 	}

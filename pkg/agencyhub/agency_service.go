@@ -36,7 +36,9 @@ type agencyView struct {
 }
 
 func (a *App) createAgencyHTTP(c *gin.Context) {
-	var request createAgencyRequest
+	// Default new agencies to the standard price. Decode over these defaults
+	// so explicitly supplied coefficients, including zero, retain their meaning.
+	request := createAgencyRequest{Pricing: agencycontract.Policy{DefaultSalesBPS: 10000, MinSpreadBPS: a.config.MinSpreadBPS}}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		respondError(c, http.StatusBadRequest, "invalid_request", "请求格式错误", nil)
 		return
@@ -49,9 +51,6 @@ func (a *App) createAgencyHTTP(c *gin.Context) {
 	}
 	if request.Pricing.SalesCapBPS == 0 {
 		request.Pricing.SalesCapBPS = a.config.SalesCapBPS
-	}
-	if request.Pricing.MinSpreadBPS == 0 {
-		request.Pricing.MinSpreadBPS = a.config.MinSpreadBPS
 	}
 	if err := agencycontract.ValidatePolicy(request.Pricing); err != nil {
 		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", err.Error(), nil)
@@ -487,22 +486,28 @@ func (a *App) publicInvitation(c *gin.Context) {
 	// The code is already present in the request URL.  Do not echo invite
 	// delivery URLs or any agency/account fields from this anonymous endpoint:
 	// the registration page only needs a display label and a boolean gate.
-	respondOK(c, gin.H{"display_name": agency.DisplayName, "can_register": true})
+	c.Header("Cache-Control", "no-store")
+	respondOK(c, gin.H{"display_name": agency.DisplayName, "can_register": common.AgencyOnboardingEnabled()})
 }
 
 func (a *App) publicInvitationQR(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	code := strings.TrimSpace(c.Param("code"))
 	var agency model.Agency
 	if err := a.db.Where("invite_code = ? AND status = ?", code, AgencyStatusActive).First(&agency).Error; err != nil {
 		c.Status(http.StatusNotFound)
 		return
 	}
-	png, err := qrcode.Encode(a.inviteURL(agency.InviteCode), qrcode.Medium, 512)
+	inviteURL, _, err := a.invitationLinks(agency.InviteCode)
+	if err != nil {
+		c.Status(http.StatusServiceUnavailable)
+		return
+	}
+	png, err := qrcode.Encode(inviteURL, qrcode.Medium, 512)
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
 		return
 	}
-	c.Header("Cache-Control", "public, max-age=300")
 	c.Data(http.StatusOK, "image/png", png)
 }
 
@@ -510,6 +515,9 @@ func (a *App) publicInvitationQR(c *gin.Context) {
 // registration transaction. It is safe to call only after the core user row
 // has been created and before the transaction commits.
 func BindUserByInvite(tx *gorm.DB, userID int64, inviteCode, source string, rootID int64) (model.AgencyUserBinding, error) {
+	if !common.AgencyOnboardingEnabled() {
+		return model.AgencyUserBinding{}, errAgencyOnboardingDisabled
+	}
 	if tx == nil || userID <= 0 || strings.TrimSpace(inviteCode) == "" {
 		return model.AgencyUserBinding{}, errors.New("invalid invitation binding")
 	}
@@ -567,16 +575,28 @@ func BindUserByInvite(tx *gorm.DB, userID int64, inviteCode, source string, root
 	if err != nil {
 		return model.AgencyUserBinding{}, err
 	}
-	if err := tx.Create(&model.AgencyFundingAccount{UserID: userID, PaidAvailable: 0, NonpaidAvailable: openingNonpaid, DebtQuota: openingDebt, MoneySeq: 0, Version: 1, OpeningSnapshot: string(opening), ReconcileBlocked: false, UpdatedAt: now / 1000}).Error; err != nil {
+	openingSeq := int64(0)
+	if openingNonpaid > 0 || openingDebt > 0 {
+		openingSeq = 1
+	}
+	if err := tx.Create(&model.AgencyFundingAccount{UserID: userID, PaidAvailable: 0, NonpaidAvailable: openingNonpaid, DebtQuota: openingDebt, MoneySeq: openingSeq, Version: 1, OpeningSnapshot: string(opening), ReconcileBlocked: false, UpdatedAt: now / 1000}).Error; err != nil {
 		return model.AgencyUserBinding{}, err
 	}
+	var openingLotID *int64
 	if openingNonpaid > 0 {
-		lot := model.AgencyFundingLot{UserID: userID, SourceKind: "provisioning_opening", SourceID: fmt.Sprintf("provisioning-%d", userID), CompletionSource: "provisioning", BonusInitial: openingNonpaid, MoneySeq: 1, Version: 1, CreatedAt: now / 1000}
+		lot := model.AgencyFundingLot{UserID: userID, SourceKind: "provisioning_opening", SourceID: fmt.Sprintf("provisioning-%d", userID), CompletionSource: "provisioning", BonusInitial: openingNonpaid, BonusAvailable: openingNonpaid, MoneySeq: openingSeq, Version: 1, CreatedAt: now / 1000}
 		if err := tx.Create(&lot).Error; err != nil {
 			return model.AgencyUserBinding{}, err
 		}
-		lotID := lot.ID
-		if err := tx.Create(&model.AgencyFundingLedger{OperationID: fmt.Sprintf("provisioning-opening-%d", userID), EntryNo: 0, UserID: userID, MoneySeq: 1, SourceKind: "provisioning_opening", LotID: &lotID, NonpaidDelta: openingNonpaid, NonpaidAfter: openingNonpaid, DebtAfter: openingDebt, AgencyID: &agency.ID, BindingID: &binding.ID, CreatedAtMS: now}).Error; err != nil {
+		openingLotID = &lot.ID
+	}
+	if openingDebt > 0 {
+		if err := tx.Create(&model.AgencyFundingDebt{UserID: userID, OriginOperationID: fmt.Sprintf("provisioning-opening-%d", userID), DebtKind: "provisioning_opening", OriginalQuota: openingDebt, OutstandingQuota: openingDebt, CreatedAtMS: now}).Error; err != nil {
+			return model.AgencyUserBinding{}, err
+		}
+	}
+	if openingSeq > 0 {
+		if err := tx.Create(&model.AgencyFundingLedger{OperationID: fmt.Sprintf("provisioning-opening-%d", userID), EntryNo: 0, UserID: userID, MoneySeq: openingSeq, SourceKind: "provisioning_opening", LotID: openingLotID, NonpaidDelta: openingNonpaid, DebtDelta: openingDebt, NonpaidAfter: openingNonpaid, DebtAfter: openingDebt, AgencyID: &agency.ID, BindingID: &binding.ID, CreatedAtMS: now}).Error; err != nil {
 			return model.AgencyUserBinding{}, err
 		}
 	}
@@ -597,6 +617,11 @@ func (a *App) bindExistingUser(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, "invalid_request", "请求格式错误", nil)
 		return
 	}
+	request.Reason = strings.TrimSpace(request.Reason)
+	if request.Reason == "" || len(request.Reason) > 2000 {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_reason", "必须提供绑定原因（不超过2000字节）", nil)
+		return
+	}
 	identity := currentIdentity(c)
 	if identity == nil || identity.ActorType != ActorTypeRoot {
 		respondError(c, http.StatusForbidden, "root_required", "仅超级管理员可操作", nil)
@@ -604,6 +629,10 @@ func (a *App) bindExistingUser(c *gin.Context) {
 	}
 	job, created, err := a.enqueueProvisioningJob(int64(userID), strings.TrimSpace(request.InviteCode), identity.ActorID, strings.TrimSpace(request.Reason))
 	if err != nil {
+		if errors.Is(err, errAgencyOnboardingDisabled) {
+			respondError(c, http.StatusServiceUnavailable, "onboarding_disabled", "代理商新用户开通暂时关闭", nil)
+			return
+		}
 		status := http.StatusConflict
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			status = http.StatusNotFound
@@ -614,7 +643,7 @@ func (a *App) bindExistingUser(c *gin.Context) {
 	// A duplicate request returns the original durable job rather than
 	// creating a second barrier.  The worker is intentionally asynchronous so
 	// callers can inspect blocking tasks and cancel a long-running operation.
-	respondAccepted(c, gin.H{"job_id": job.ID, "status": job.Status, "created": created, "blocking_tasks": job.BlockingTasks})
+	respondAccepted(c, gin.H{"job_id": strconv.FormatInt(job.ID, 10), "status": job.Status, "created": created})
 }
 
 func (a *App) getProvisioning(c *gin.Context) {
@@ -628,7 +657,7 @@ func (a *App) getProvisioning(c *gin.Context) {
 		respondError(c, http.StatusNotFound, "not_found", "任务不存在", nil)
 		return
 	}
-	respondOK(c, job)
+	respondOK(c, provisioningView(job))
 }
 
 func (a *App) cancelProvisioning(c *gin.Context) {
@@ -640,8 +669,16 @@ func (a *App) cancelProvisioning(c *gin.Context) {
 	var request struct {
 		Reason string `json:"reason"`
 	}
-	_ = c.ShouldBindJSON(&request)
-	result := a.cancelProvisioningJob(id, request.Reason)
+	if err := c.ShouldBindJSON(&request); err != nil || strings.TrimSpace(request.Reason) == "" || len(request.Reason) > 2000 {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_reason", "必须提供取消原因（不超过2000字节）", nil)
+		return
+	}
+	identity := currentIdentity(c)
+	if identity == nil || identity.ActorType != ActorTypeRoot {
+		respondError(c, http.StatusForbidden, "root_required", "仅超级管理员可操作", nil)
+		return
+	}
+	result := a.cancelProvisioningJob(id, request.Reason, identity.ActorID)
 	if errors.Is(result, gorm.ErrRecordNotFound) {
 		respondError(c, http.StatusNotFound, "not_found", "任务不存在", nil)
 		return
@@ -667,9 +704,9 @@ func (a *App) transferUser(c *gin.Context) {
 		return
 	}
 	var request struct {
-		TargetAgencyID          int64  `json:"target_agency_id"`
-		ExpectedBindingRevision int64  `json:"expected_binding_revision"`
-		Reason                  string `json:"reason"`
+		TargetAgencyID          decimalInt64 `json:"target_agency_id"`
+		ExpectedBindingRevision decimalInt64 `json:"expected_binding_revision"`
+		Reason                  string       `json:"reason"`
 	}
 	if err = c.ShouldBindJSON(&request); err != nil || request.TargetAgencyID <= 0 {
 		respondError(c, http.StatusBadRequest, "invalid_request", "请求格式错误", nil)
@@ -679,15 +716,28 @@ func (a *App) transferUser(c *gin.Context) {
 		respondError(c, http.StatusUnprocessableEntity, "expected_version_required", "必须提供当前归属版本", nil)
 		return
 	}
+	request.Reason = strings.TrimSpace(request.Reason)
+	if request.Reason == "" || len(request.Reason) > 2000 {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_reason", "必须提供转移原因（不超过2000字节）", nil)
+		return
+	}
 	identity := currentIdentity(c)
+	if identity == nil || identity.ActorType != ActorTypeRoot {
+		respondError(c, http.StatusForbidden, "root_required", "仅超级管理员可操作", nil)
+		return
+	}
+	targetAgencyID := int64(request.TargetAgencyID)
 	var result model.AgencyActiveUserBinding
 	err = a.db.Transaction(func(tx *gorm.DB) error {
 		var current model.AgencyActiveUserBinding
 		if err := tx.Where("user_id = ?", userID).First(&current).Error; err != nil {
 			return err
 		}
-		if request.ExpectedBindingRevision != current.Revision {
+		if int64(request.ExpectedBindingRevision) != current.Revision {
 			return errors.New("binding revision conflict")
+		}
+		if targetAgencyID == current.AgencyID {
+			return errors.New("target agency is the current agency")
 		}
 		var oldBinding model.AgencyUserBinding
 		if err := tx.Where("id = ? AND ended_at_ms IS NULL", current.BindingID).First(&oldBinding).Error; err != nil {
@@ -696,7 +746,7 @@ func (a *App) transferUser(c *gin.Context) {
 		// Lock both agencies in a deterministic order. The source may be
 		// disabled (Root can still move its customers), but the destination must
 		// be active at commit time.
-		agencyIDs := []int64{oldBinding.AgencyID, request.TargetAgencyID}
+		agencyIDs := []int64{oldBinding.AgencyID, targetAgencyID}
 		if agencyIDs[0] > agencyIDs[1] {
 			agencyIDs[0], agencyIDs[1] = agencyIDs[1], agencyIDs[0]
 		}
@@ -721,9 +771,27 @@ func (a *App) transferUser(c *gin.Context) {
 		if err := model.AgencyLockForUpdate(tx).Where("id = ? AND ended_at_ms IS NULL", lockedCurrent.BindingID).First(&oldBinding).Error; err != nil {
 			return errors.New("active binding changed")
 		}
-		target := agencies[request.TargetAgencyID]
+		target := agencies[targetAgencyID]
 		if target.Status != AgencyStatusActive {
 			return errors.New("target agency is disabled")
+		}
+		var policyRow model.AgencyPricePolicyVersion
+		if err := tx.Where("id = ? AND agency_id = ? AND revision = ?", target.CurrentPolicyVersionID, target.ID, target.PriceRevision).First(&policyRow).Error; err != nil {
+			return errors.New("target agency has no valid published policy")
+		}
+		var policy agencycontract.Policy
+		if err := common.Unmarshal([]byte(policyRow.PolicyJSON), &policy); err != nil {
+			return errors.New("target agency policy is invalid")
+		}
+		if err := agencycontract.ValidatePolicy(policy); err != nil {
+			return err
+		}
+		var account model.AgencyFundingAccount
+		if err := model.AgencyLockForUpdate(tx).Where("user_id = ?", userID).First(&account).Error; err != nil {
+			return errors.New("customer funding account is unavailable")
+		}
+		if current.Revision == int64(^uint64(0)>>1) {
+			return errors.New("binding revision exhausted")
 		}
 		now := time.Now().UnixMilli()
 		ended := now
@@ -746,7 +814,7 @@ func (a *App) transferUser(c *gin.Context) {
 		respondError(c, http.StatusConflict, "transfer_failed", err.Error(), nil)
 		return
 	}
-	respondAccepted(c, result)
+	respondOK(c, gin.H{"user_id": strconv.FormatInt(result.UserID, 10), "agency_id": strconv.FormatInt(result.AgencyID, 10), "binding_id": strconv.FormatInt(result.BindingID, 10), "revision": strconv.FormatInt(result.Revision, 10)})
 }
 
 func (a *App) enterAgency(c *gin.Context) {

@@ -525,6 +525,11 @@ func RelayTask(c *gin.Context) {
 	var taskErr *taskdto.TaskError
 	defer func() {
 		if taskErr != nil && relayInfo.Billing != nil {
+			if reconcile, _ := c.Get("agency_task_reconcile_required"); reconcile == true {
+				// Provider outcome is unknown (or acceptance receipt was lost).
+				// Keep the durable reservation for reconciliation; do not refund.
+				return
+			}
 			relayInfo.Billing.Refund(c)
 		}
 	}()
@@ -580,6 +585,17 @@ func RelayTask(c *gin.Context) {
 		if taskErr == nil {
 			break
 		}
+		if reconcile, _ := c.Get("agency_task_reconcile_required"); reconcile == true {
+			// A transport/parser failure after provider submission cannot be
+			// safely retried. The attempt and journal remain pending for a
+			// provider lookup or operator reconciliation.
+			break
+		}
+		if rejected, _ := c.Get("agency_task_rejected"); rejected == true {
+			// A definitive provider validation/authentication rejection is safe
+			// to refund, but must never be retried against another channel.
+			break
+		}
 
 		if !taskErr.LocalError {
 			processChannelError(c,
@@ -601,11 +617,6 @@ func RelayTask(c *gin.Context) {
 
 	// ── 成功：结算 + 日志 + 插入任务 ──
 	if taskErr == nil {
-		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
-			common.SysError("settle task billing error: " + settleErr.Error())
-		}
-		service.LogTaskConsumption(c, relayInfo)
-
 		task := model.InitTask(result.Platform, relayInfo)
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 		task.PrivateData.BillingSource = relayInfo.BillingSource
@@ -629,6 +640,11 @@ func RelayTask(c *gin.Context) {
 			AgencyBillingEventID:     relayInfo.AgencyBillingEventID,
 		}
 		task.Quota = result.Quota
+		if model.IsAgencyDurableUser(relayInfo.UserId) {
+			// Provider acceptance retains the reservation. Final usage and
+			// commission are committed by the terminal task transaction.
+			task.Quota = relayInfo.FinalPreConsumedQuota
+		}
 		task.Data = result.TaskData
 		task.Action = relayInfo.Action
 		if result.ProviderBilling != nil && result.ProviderBilling.AsyncReconciliationRequired {
@@ -636,7 +652,31 @@ func RelayTask(c *gin.Context) {
 		}
 		if insertErr := task.Insert(); insertErr != nil {
 			common.SysError("insert task error: " + insertErr.Error())
-		} else if task.BillingReconciliationPending {
+			if model.IsAgencyDurableUser(relayInfo.UserId) {
+				// The provider receipt is already durable, but without the local
+				// task row we cannot safely finalize its charge. Leave the journal
+				// submitted for reconciliation and never turn it into a final bill.
+				_ = model.ResolveAgencyTaskSubmissionFailure(relayInfo.RequestId, false, "task_insert_failed")
+				c.Set("agency_task_reconcile_required", true)
+				relay.ReleaseAgencyTaskResponse(c, false)
+				taskErr = service.TaskErrorWrapperLocal(
+					fmt.Errorf("task accepted but local task persistence failed; public_task_id=%s", relayInfo.PublicTaskID),
+					"task_persistence_failed", http.StatusServiceUnavailable)
+			} else {
+				// Legacy tasks still need their pre-consume released when the local
+				// task row cannot be written; no provider receipt exists to recover.
+				taskErr = service.TaskErrorWrapperLocal(insertErr, "task_persistence_failed", http.StatusServiceUnavailable)
+			}
+		} else {
+			if !model.IsAgencyDurableUser(relayInfo.UserId) {
+				if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
+					common.SysError("settle task billing error: " + settleErr.Error())
+				}
+			}
+			service.LogTaskConsumption(c, relayInfo)
+			relay.ReleaseAgencyTaskResponse(c, true)
+		}
+		if task.BillingReconciliationPending {
 			if enqueueErr := model.EnqueueTaskBillingReconciliation(task, result.ProviderBilling.Provider); enqueueErr != nil {
 				common.SysError("enqueue task billing reconciliation error: " + enqueueErr.Error())
 			}

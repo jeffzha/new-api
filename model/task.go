@@ -97,19 +97,31 @@ type Properties struct {
 }
 
 func (m *Properties) Scan(val interface{}) error {
-	bytesValue, _ := val.([]byte)
-	if len(bytesValue) == 0 {
-		*m = Properties{}
+	*m = Properties{}
+	switch value := val.(type) {
+	case nil:
 		return nil
+	case []byte:
+		if len(value) == 0 {
+			return nil
+		}
+		return common.Unmarshal(value, m)
+	case string:
+		if value == "" {
+			return nil
+		}
+		return common.UnmarshalJsonStr(value, m)
+	default:
+		return errors.New("unsupported task properties database value")
 	}
-	return common.Unmarshal(bytesValue, m)
 }
 
 func (m Properties) Value() (driver.Value, error) {
 	if m == (Properties{}) {
 		return nil, nil
 	}
-	return common.Marshal(m)
+	encoded, err := common.Marshal(m)
+	return string(encoded), err
 }
 
 type TaskPrivateData struct {
@@ -188,18 +200,33 @@ func GenerateTaskID() string {
 }
 
 func (p *TaskPrivateData) Scan(val interface{}) error {
-	bytesValue, _ := val.([]byte)
-	if len(bytesValue) == 0 {
+	*p = TaskPrivateData{}
+	switch value := val.(type) {
+	case nil:
 		return nil
+	case []byte:
+		if len(value) == 0 {
+			return nil
+		}
+		return common.Unmarshal(value, p)
+	case string:
+		if value == "" {
+			return nil
+		}
+		return common.UnmarshalJsonStr(value, p)
+	default:
+		return errors.New("unsupported task private data database value")
 	}
-	return common.Unmarshal(bytesValue, p)
 }
 
 func (p TaskPrivateData) Value() (driver.Value, error) {
 	if (p == TaskPrivateData{}) {
 		return nil, nil
 	}
-	return common.Marshal(p)
+	// PostgreSQL's simple protocol interprets []byte as bytea (\\x...),
+	// which is not a JSON document. Text also works on MySQL and SQLite.
+	encoded, err := common.Marshal(p)
+	return string(encoded), err
 }
 
 // SyncTaskQueryParams 用于包含所有搜索条件的结构体，可以根据需求添加更多字段

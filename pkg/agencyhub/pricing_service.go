@@ -181,13 +181,41 @@ func (a *App) previewRootPricing(c *gin.Context) {
 		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", err.Error(), nil)
 		return
 	}
-	respondOK(c, pricePreview(policy))
+	preview, err := pricePreview(policy)
+	if err != nil {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", err.Error(), nil)
+		return
+	}
+	respondOK(c, preview)
 }
-func pricePreview(policy agencycontract.Policy) gin.H {
+func pricePreview(policy agencycontract.Policy) (gin.H, error) {
+	if err := agencycontract.ValidatePolicy(policy); err != nil {
+		return nil, err
+	}
 	standard := int64(10000)
-	resolved, _ := agencycontract.Resolve(policy, "preview")
-	result, _ := agencycontract.Calculate(standard, resolved, standard, true)
-	return gin.H{"standard_quota": standard, "customer_quota": result.ChargedQuota, "settlement_quota": result.SettlementCostQuota, "commission_quota": result.CommissionQuota, "sales_bps": resolved.SalesBPS, "settlement_bps": resolved.SettlementBPS}
+	resolved := agencycontract.ResolvedPolicy{SalesBPS: policy.DefaultSalesBPS, SettlementBPS: policy.DefaultSettlementBPS}
+	// A preview has no funding allocation. Show theoretical commission, not
+	// a fabricated paid allocation which can exceed discounted customer cost.
+	result, err := agencycontract.Calculate(standard, resolved, 0, true)
+	if err != nil {
+		return nil, err
+	}
+	models := make([]gin.H, 0, len(policy.ModelOverrides))
+	for _, override := range policy.ModelOverrides {
+		modelPolicy := resolved
+		if override.SalesBPS != nil {
+			modelPolicy.SalesBPS = *override.SalesBPS
+		}
+		if override.SettlementBPS != nil {
+			modelPolicy.SettlementBPS = *override.SettlementBPS
+		}
+		modelResult, err := agencycontract.Calculate(standard, modelPolicy, 0, true)
+		if err != nil {
+			return nil, err
+		}
+		models = append(models, gin.H{"origin_model_name": override.OriginModelName, "customer_quota": modelResult.ChargedQuota, "settlement_quota": modelResult.SettlementCostQuota, "commission_quota": modelResult.TheoreticalCommissionQuota, "sales_bps": modelPolicy.SalesBPS, "settlement_bps": modelPolicy.SettlementBPS})
+	}
+	return gin.H{"standard_quota": standard, "customer_quota": result.ChargedQuota, "settlement_quota": result.SettlementCostQuota, "commission_quota": result.TheoreticalCommissionQuota, "sales_bps": resolved.SalesBPS, "settlement_bps": resolved.SettlementBPS, "model_previews": models}, nil
 }
 
 func (a *App) previewSalesPricing(c *gin.Context) {
@@ -210,7 +238,12 @@ func (a *App) previewSalesPricing(c *gin.Context) {
 		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", err.Error(), nil)
 		return
 	}
-	respondOK(c, pricePreview(candidate))
+	preview, err := pricePreview(candidate)
+	if err != nil {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", err.Error(), nil)
+		return
+	}
+	respondOK(c, preview)
 }
 func (a *App) publishRootPricing(c *gin.Context) {
 	id, err := parseID(c.Param("id"))

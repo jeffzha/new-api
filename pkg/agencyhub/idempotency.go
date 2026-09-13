@@ -40,9 +40,23 @@ func (a *App) idempotencyMiddleware() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		// Reconciliation commits authorization, repair, audit and the replay
+		// response together; the generic middleware cannot provide that boundary.
+		if c.Request.Method == http.MethodPost && c.FullPath() == a.config.BasePath+"/api/v1/root/reconciliation/issues/:id/resolve" {
+			c.Next()
+			return
+		}
 		key := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
 		if len(key) < 8 || len(key) > 128 {
 			respondError(c, http.StatusBadRequest, "idempotency_key_required", "写请求必须提供有效的 Idempotency-Key", nil)
+			return
+		}
+		// Gateway commands own permanent command_id/proof idempotency. A Hub
+		// transport timeout may occur after acceptance; caching that 503 here
+		// would prevent a safe retry of the identical envelope after recovery.
+		if c.Request.Method == http.MethodPost && c.FullPath() == a.config.BasePath+"/api/v1/root/funding/reversals" {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+			c.Next()
 			return
 		}
 		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20+1))
@@ -62,6 +76,26 @@ func (a *App) idempotencyMiddleware() gin.HandlerFunc {
 		bodyForHash := normalizeIdempotencyBody(body)
 		bodyDigest := sha256.Sum256(bodyForHash)
 		bodyHash := hex.EncodeToString(bodyDigest[:])
+		// Revealing payout details is an audited sensitive read, not a business
+		// mutation. Never put its plaintext response in the idempotency journal,
+		// or replay an old journal entry without a fresh action-bound proof.
+		// Keep requiring a key for the write-shaped API, but re-authorize and
+		// re-audit every disclosure, including retries with that same key.
+		if c.Request.Method == http.MethodPost && c.FullPath() == a.config.BasePath+"/api/v1/root/withdrawal-accounts/:id/reveal" {
+			c.Header("Cache-Control", "no-store")
+			if !a.consumeOperatorProof(c, bodyHash) {
+				return
+			}
+			c.Next()
+			return
+		}
+		// Reconciliation resolution performs proof consumption, effect, audit
+		// and replay recording in one serializable transaction; the generic
+		// middleware would otherwise consume the proof before that transaction.
+		if c.Request.Method == http.MethodPost && strings.Contains(c.Request.URL.Path, "/root/reconciliation/issues/") && strings.HasSuffix(c.Request.URL.Path, "/resolve") {
+			c.Next()
+			return
+		}
 		agencyScope := ""
 		if identity.AgencyID != nil {
 			agencyScope = stringID(*identity.AgencyID)
@@ -81,9 +115,11 @@ func (a *App) idempotencyMiddleware() gin.HandlerFunc {
 			}
 			if record.ResultCode == 0 || record.ResponseJSON == "" {
 				respondAccepted(c, gin.H{"operation_id": record.ResourceID, "status": "processing"})
+				c.Abort()
 				return
 			}
 			c.Data(record.ResultCode, "application/json; charset=utf-8", []byte(record.ResponseJSON))
+			c.Abort()
 			return
 		}
 		if lookupErr != nil && !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
@@ -109,9 +145,11 @@ func (a *App) idempotencyMiddleware() gin.HandlerFunc {
 					}
 					if raced.ResultCode > 0 && raced.ResponseJSON != "" {
 						c.Data(raced.ResultCode, "application/json; charset=utf-8", []byte(raced.ResponseJSON))
+						c.Abort()
 						return
 					}
 					respondAccepted(c, gin.H{"operation_id": raced.ResourceID, "status": "processing"})
+					c.Abort()
 					return
 				}
 				// The unique-index winner may not be visible yet on a
@@ -119,6 +157,7 @@ func (a *App) idempotencyMiddleware() gin.HandlerFunc {
 				// processing response, but keep the submitted key as the
 				// operation handle rather than inventing a second one.
 				respondAccepted(c, gin.H{"operation_id": key, "status": "processing"})
+				c.Abort()
 				return
 			}
 			respondError(c, http.StatusInternalServerError, "database_error", "幂等记录写入失败", nil)
@@ -163,7 +202,7 @@ func requiresAgencyVerification(path string) bool {
 	if strings.HasSuffix(path, "/enter") || strings.HasSuffix(path, "/leave-agency") {
 		return false
 	}
-	for _, fragment := range []string{"/pricing/publish", "/root/agencies", "/root/deliveries/", "/root/users/", "/root/provisioning/", "/root/withdrawals/", "/root/reconciliation/", "/withdrawals", "/withdrawal-accounts"} {
+	for _, fragment := range []string{"/pricing/publish", "/pricing/sales/publish", "/root/agencies", "/root/deliveries/", "/root/users/", "/root/provisioning/", "/root/withdrawals/", "/root/reconciliation/", "/withdrawals", "/withdrawal-accounts"} {
 		if strings.Contains(path, fragment) {
 			return true
 		}
@@ -203,7 +242,7 @@ func (a *App) consumeOperatorProof(c *gin.Context, bodyHash string) bool {
 		return true
 	}
 	query := a.db.Model(&model.AgencyVerificationUse{}).
-		Where("jti = ? AND actor_type = ? AND actor_id = ? AND body_hash = ? AND expires_at > ? AND consumed_at IS NULL", tokenHash(raw), identity.ActorType, identity.ActorID, bodyHash, now)
+		Where("jti = ? AND actor_type = ? AND actor_id = ? AND session_id = ? AND body_hash = ? AND expires_at > ? AND consumed_at IS NULL", tokenHash(raw), identity.ActorType, identity.ActorID, identity.SessionID, bodyHash, now)
 	if action, objectID, ok := expectedProofScope(c, identity); ok {
 		query = query.Where("action = ? AND object_id = ?", action, objectID)
 	}
@@ -235,6 +274,13 @@ func expectedProofScope(c *gin.Context, identity *Identity) (string, string, boo
 		return "", "", false
 	}
 	path := c.Request.URL.Path
+	if c.Request.Method == http.MethodPost && strings.Contains(path, "/root/withdrawals/") {
+		for suffix, action := range map[string]string{"/review": "withdrawal.review", "/reject": "withdrawal.reject", "/transition": "withdrawal.transition", "/mark-paid": "withdrawal.mark_paid"} {
+			if strings.HasSuffix(path, suffix) {
+				return action, "withdrawal:" + strings.TrimSpace(c.Param("id")), true
+			}
+		}
+	}
 	if c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/withdrawals") {
 		if identity.AgencyID == nil {
 			return "", "", false
@@ -278,7 +324,10 @@ func expectedProofScope(c *gin.Context, identity *Identity) (string, string, boo
 		return "provisioning.cancel", "provisioning:" + strings.TrimSpace(c.Param("id")), true
 	}
 	if c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/resolve") && strings.Contains(path, "/root/reconciliation/issues/") {
-		return "reconciliation.resolve", "reconciliation:" + strings.TrimSpace(c.Param("id")), true
+		return "reconciliation.resolve", "reconciliation_issue:" + strings.TrimSpace(c.Param("id")), true
+	}
+	if c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/root/reconciliation/runs") {
+		return "reconciliation.run", "reconciliation:run", true
 	}
 	if c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/withdrawal-accounts") {
 		if identity.AgencyID == nil {

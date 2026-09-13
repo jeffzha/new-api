@@ -153,6 +153,10 @@ type RelayInfo struct {
 	// separate from the public pricing quote so internal arithmetic can be
 	// audited without exposing credentials or raw payloads.
 	AgencyBillingBasis string
+	// AgencySettlementCostQuota is the final cost evaluated by the original
+	// usage calculator at the accepted settlement coefficient. A pointer
+	// distinguishes an explicit zero cost from a path without this result.
+	AgencySettlementCostQuota *int64
 	// RealtimePreConsumedQuota tracks the sum of successfully reserved
 	// realtime segments. Final close settles only the difference, preventing
 	// the cumulative usage frame from being charged a second time.

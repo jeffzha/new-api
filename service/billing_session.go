@@ -627,7 +627,7 @@ func (s *BillingSession) syncAgencyFunding(actualQuota int) {
 // ---------------------------------------------------------------------------
 
 // NewBillingSession 根据用户计费偏好创建 BillingSession，处理 subscription_first / wallet_first 的回退。
-func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preConsumedQuota int) (*BillingSession, *types.NewAPIError) {
+func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preConsumedQuota int) (relaycommon.BillingSettler, *types.NewAPIError) {
 	if relayInfo == nil {
 		return nil, types.NewError(fmt.Errorf("relayInfo is nil"), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
@@ -635,7 +635,10 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 	pref := common.NormalizeBillingPreference(relayInfo.UserSetting.BillingPreference)
 
 	// 钱包路径需要先检查用户额度
-	tryWallet := func() (*BillingSession, *types.NewAPIError) {
+	tryWallet := func() (relaycommon.BillingSettler, *types.NewAPIError) {
+		if model.IsAgencyDurableUser(relayInfo.UserId) {
+			return NewAgencyBillingSession(relayInfo, preConsumedQuota)
+		}
 		if relayInfo.AgencyPricing != nil {
 			if err := model.EnsureAgencyFundingAccount(model.DB, int64(relayInfo.UserId)); err != nil {
 				return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())

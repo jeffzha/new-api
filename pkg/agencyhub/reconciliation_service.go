@@ -1,19 +1,180 @@
 package agencyhub
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
+// createReconciliationRun executes one auditable pass and stores its outcome.
+// A deterministic run key makes retries safe when the client loses its
+// response after the database commit.
+func (a *App) createReconciliationRun(c *gin.Context) {
+	now := time.Now()
+	key := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if key == "" {
+		key = "manual-" + strconv.FormatInt(now.UnixNano(), 10)
+	}
+	run, err := a.RunReconciliation(c.Request.Context(), "manual", key, 0)
+	if err != nil {
+		if errors.Is(err, errReconciliationRunExists) {
+			var existing model.AgencyReconciliationRun
+			if lookupErr := a.db.Where("run_key = ?", key).First(&existing).Error; lookupErr == nil {
+				respondOK(c, existing)
+				return
+			}
+		}
+		respondError(c, http.StatusServiceUnavailable, "reconciliation_failed", "对账执行失败", err.Error())
+		return
+	}
+	respondCreated(c, run)
+}
+
+var errReconciliationRunExists = errors.New("reconciliation run already exists")
+var errHistoricalReconciliationUnavailable = errors.New("historical reconciliation requires immutable snapshots at the requested money sequence; current-state reconciliation cannot certify the requested cutoff")
+
+// RunReconciliation is shared by the HTTP endpoint and the daily scheduler.
+// It records a durable run before checking any projections, so a crash leaves
+// an explicit running record for operators to investigate.
+// A zero cutoff explicitly requests the existing current-state checks. A
+// historical cutoff must never be labelled completed after those checks:
+// mutable accounts, lots and balances cannot reconstruct a historical close.
+func (a *App) RunReconciliation(parent context.Context, trigger, key string, cutoffAtMS int64) (model.AgencyReconciliationRun, error) {
+	if a == nil || a.db == nil {
+		return model.AgencyReconciliationRun{}, errors.New("agency database unavailable")
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	now := time.Now().UnixMilli()
+	run := model.AgencyReconciliationRun{RunKey: key, Trigger: trigger, Status: "running", CutoffAtMS: cutoffAtMS, StartedAtMS: now}
+	if err := a.db.Create(&run).Error; err != nil {
+		var existing model.AgencyReconciliationRun
+		if errors.Is(err, gorm.ErrDuplicatedKey) || a.db.WithContext(parent).Where("run_key = ?", key).First(&existing).Error == nil {
+			return model.AgencyReconciliationRun{}, errReconciliationRunExists
+		}
+		return model.AgencyReconciliationRun{}, err
+	}
+	var summary ReconcileSummary
+	var err error
+	if cutoffAtMS != 0 || trigger == "daily" {
+		err = errHistoricalReconciliationUnavailable
+	} else {
+		ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+		summary, err = a.Reconcile(ctx)
+		cancel()
+	}
+	finished := time.Now().UnixMilli()
+	updates := map[string]any{"finished_at_ms": finished}
+	if err != nil {
+		updates["status"] = "failed"
+		updates["error"] = err.Error()
+	} else {
+		payload, marshalErr := common.Marshal(struct {
+			ReconcileSummary
+			Consistency string `json:"consistency"`
+		}{ReconcileSummary: summary, Consistency: "current_state_per_page"})
+		if marshalErr != nil {
+			err = marshalErr
+			updates["status"] = "failed"
+			updates["error"] = marshalErr.Error()
+		} else {
+			updates["status"] = "completed"
+			updates["summary_json"] = string(payload)
+		}
+	}
+	if updateErr := a.db.Model(&run).Updates(updates).Error; updateErr != nil {
+		return model.AgencyReconciliationRun{}, updateErr
+	}
+	if reloadErr := a.db.First(&run, run.ID).Error; reloadErr != nil {
+		return run, reloadErr
+	}
+	if err != nil {
+		return run, err
+	}
+	return run, nil
+}
+
+func (a *App) listReconciliationRuns(c *gin.Context) {
+	identity := currentIdentity(c)
+	if hasCursorPagingConflict(c) {
+		respondError(c, http.StatusBadRequest, "invalid_cursor", "cursor不能与page或limit同时使用", nil)
+		return
+	}
+	limit, err := cursorPageSize(c)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_page_size", err.Error(), nil)
+		return
+	}
+	var cursor agencyCursor
+	rawCursor := strings.TrimSpace(c.Query("cursor"))
+	if rawCursor != "" {
+		cursor, err = a.decodeCursor(rawCursor, c, "root_reconciliation_runs", identity)
+		if err != nil {
+			respondError(c, http.StatusBadRequest, "invalid_cursor", "cursor无效或已过期", nil)
+			return
+		}
+	}
+	var total int64
+	query := a.db.Model(&model.AgencyReconciliationRun{})
+	if err := query.Count(&total).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取对账运行记录失败", nil)
+		return
+	}
+	if rawCursor != "" {
+		query = query.Where("id < ?", cursor.PositionID)
+	}
+	var rows []model.AgencyReconciliationRun
+	if err := query.Order("id DESC").Limit(limit + 1).Find(&rows).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取对账运行记录失败", nil)
+		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	nextCursor := ""
+	if hasMore && len(rows) > 0 {
+		nextCursor, err = a.encodeCursor(agencyCursor{
+			Kind: "root_reconciliation_runs", Scope: cursorScope(c, "root_reconciliation_runs", identity),
+			ActorType: identity.ActorType, ActorID: identity.ActorID,
+			PositionID: rows[len(rows)-1].ID,
+		})
+		if err != nil {
+			respondError(c, http.StatusServiceUnavailable, "cursor_unavailable", "分页服务暂不可用", nil)
+			return
+		}
+	}
+	items := make([]gin.H, 0, len(rows))
+	for _, row := range rows {
+		item := gin.H{
+			"id": stringID(row.ID), "run_key": row.RunKey, "trigger": row.Trigger,
+			"status": row.Status, "cutoff_at_ms": stringID(row.CutoffAtMS),
+			"started_at_ms": stringID(row.StartedAtMS), "summary_json": row.SummaryJSON,
+			"error": row.Error,
+		}
+		if row.FinishedAtMS != nil {
+			item["finished_at_ms"] = stringID(*row.FinishedAtMS)
+		}
+		items = append(items, item)
+	}
+	respondOK(c, gin.H{"items": items, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
+}
+
 func (a *App) listReconciliationIssues(c *gin.Context) {
 	identity := currentIdentity(c)
+	if identity == nil || identity.ActorType != ActorTypeRoot {
+		respondError(c, http.StatusForbidden, "root_required", "仅超级管理员可操作", nil)
+		return
+	}
 	if hasCursorPagingConflict(c) {
 		respondError(c, http.StatusBadRequest, "invalid_cursor", "cursor不能与page同时使用", nil)
 		return
@@ -70,60 +231,11 @@ func (a *App) listReconciliationIssues(c *gin.Context) {
 			return
 		}
 	}
-	respondOK(c, gin.H{"items": issues, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
-}
-
-func (a *App) resolveReconciliationIssue(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
-	if err != nil {
-		respondError(c, http.StatusBadRequest, "invalid_id", "无效的异常ID", nil)
-		return
+	items := make([]gin.H, 0, len(issues))
+	for _, issue := range issues {
+		items = append(items, reconciliationIssueView(issue))
 	}
-	var request struct {
-		Resolution string `json:"resolution"`
-		Status     string `json:"status"`
-	}
-	if err := c.ShouldBindJSON(&request); err != nil {
-		respondError(c, http.StatusBadRequest, "invalid_request", "请求格式错误", nil)
-		return
-	}
-	request.Resolution = strings.TrimSpace(request.Resolution)
-	if request.Resolution == "" || len(request.Resolution) > 2000 {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_resolution", "必须提供处理说明", nil)
-		return
-	}
-	status := strings.TrimSpace(request.Status)
-	if status == "" {
-		status = "resolved"
-	}
-	if status != "resolved" && status != "ignored" {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_status", "状态只能为 resolved 或 ignored", nil)
-		return
-	}
-	identity := currentIdentity(c)
-	now := time.Now().UnixMilli()
-	var issue model.AgencyReconciliationIssue
-	err = a.db.Transaction(func(tx *gorm.DB) error {
-		if err := model.AgencyLockForUpdate(tx).First(&issue, id).Error; err != nil {
-			return err
-		}
-		if issue.Status != "open" {
-			return errors.New("reconciliation issue is already closed")
-		}
-		if err := tx.Model(&issue).Updates(map[string]any{"status": status, "resolution": request.Resolution, "actor_id": identity.ActorID, "resolved_at_ms": now}).Error; err != nil {
-			return err
-		}
-		return tx.Create(&model.AgencyAuditLog{EventID: "reconcile-" + strconv.FormatInt(issue.ID, 10) + "-" + strconv.FormatInt(now, 10), ActorType: identity.ActorType, ActorID: identity.ActorID, Action: "reconciliation.resolve", ObjectType: issue.ObjectType, ObjectID: issue.ObjectID, RequestID: requestID(c), Reason: request.Resolution, CreatedAtMS: now}).Error
-	})
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			respondError(c, http.StatusNotFound, "not_found", "对账异常不存在", nil)
-		} else {
-			respondError(c, http.StatusConflict, "resolve_failed", err.Error(), nil)
-		}
-		return
-	}
-	respondOK(c, issue)
+	respondOK(c, gin.H{"items": items, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
 }
 
 func (a *App) syncStatus(c *gin.Context) {

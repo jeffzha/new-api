@@ -13,6 +13,15 @@ COPY ./VERSION /build/VERSION
 RUN version="${BUILD_VERSION:-$(cat /build/VERSION)}" \
     && DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION="$version" bun run build
 
+FROM oven/bun:1@sha256:0733e50325078969732ebe3b15ce4c4be5082f18c4ac1a0f0ca4839c2e4e42a7 AS agency-web-builder
+ARG BUN_REGISTRY=https://registry.npmjs.org
+ENV BUN_CONFIG_REGISTRY=${BUN_REGISTRY}
+WORKDIR /build/agency-web
+COPY agency-web/package.json agency-web/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY agency-web ./
+RUN bun run build
+
 FROM golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df AS builder2
 ARG BUILD_VERSION
 ARG GO_PROXY=https://proxy.golang.org,direct
@@ -33,6 +42,7 @@ RUN go mod download
 
 COPY . .
 COPY --from=builder /build/web/dist ./web/dist
+COPY --from=agency-web-builder /build/agency-web/dist ./pkg/agencyhub/webdist
 RUN version="${BUILD_VERSION:-$(cat VERSION)}" \
     && go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${version}'" -o new-api \
     && go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${version}'" -o hwdrama-proxy ./cmd/hwdrama-proxy \

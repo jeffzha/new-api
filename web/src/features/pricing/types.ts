@@ -63,6 +63,8 @@ export type PricingModel = {
   supported_endpoint_types?: string[]
   key?: string
   group_ratio?: Record<string, number>
+  /** Authenticated customer's sales coefficient; replaces all group ratios. */
+  sales_bps?: number
   /** Billing mode (e.g. "tiered_expr") used to flag dynamic pricing */
   billing_mode?: string
   /** Raw expression describing dynamic / tiered billing */
@@ -112,6 +114,7 @@ export type PricingData = {
   usable_group: Record<string, { desc: string; ratio: number }>
   supported_endpoint: Record<string, string>
   auto_groups: string[]
+  pricing_scope?: 'standard' | 'agency'
 }
 
 export type TokenUnit = 'M' | 'K'

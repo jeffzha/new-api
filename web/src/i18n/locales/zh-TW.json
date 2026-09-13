@@ -3781,6 +3781,7 @@
     "Price:": "價格：",
     "Price: High to Low": "價格：從高到低",
     "Price: Low to High": "價格：從低到高",
+    "Prices include your agency sales policy. Group selection changes model availability, not your sales rate.": "價格已依所屬代理商的銷售政策計算。選擇群組僅篩選可用模型，不會變更您的銷售倍率。",
     "Prices shown per": "價格顯示單位",
     "Prices synced successfully": "價格同步成功",
     "Prices vary by usage tier and request conditions": "價格根據用量檔位和請求條件動態調整",
@@ -3790,6 +3791,7 @@
     "Pricing Configuration": "定價設定",
     "Pricing group example": "定價分組示例",
     "Pricing groups": "定價分組",
+    "Pricing is temporarily unavailable. Please try again.": "價格資訊暫時無法取得，請重試。",
     "Pricing mode": "定價模式",
     "Pricing Ratios": "定價比例",
     "Pricing Type": "定價類型",
@@ -4373,6 +4375,7 @@
     "Seedance 2.0 API": "Seedance 2.0 API",
     "Seedance 2.0 Fast": "Seedance 2.0 極速版",
     "Seedance 2.0 Standard": "Seedance 2.0 標準版",
+    "Seedance 2.5": "Seedance 2.5",
     "Seedance CNY Pricing": "Seedance 人民幣定價",
     "Seedance Domestic": "Seedance 國內版",
     "Select": "選擇",
@@ -5645,6 +5648,7 @@
     "Your GitHub OAuth Client ID": "您的 GitHub OAuth 用戶端 ID",
     "Your GitHub OAuth Client Secret": "您的 GitHub OAuth 用戶端密鑰",
     "Your new backup codes are ready": "您的新備份代碼已準備就緒",
+    "Your price": "您的價格",
     "Your Referral Link": "您的推薦連結",
     "Your setup guide is collapsed so usage stays in focus.": "設定引導已收起，讓用量資訊保持在焦點位置。",
     "Your system access token for API authentication. Keep it secure and don't share it with others.": "您的系統存取令牌，用於 API 認證。請妥善保管，不要與他人分享。",
@@ -5656,7 +5660,6 @@
     "Zero retention": "零數據保留",
     "Zhipu": "智譜",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放",
-    "Seedance 2.5": "Seedance 2.5"
+    "Zoom": "縮放"
   }
 }

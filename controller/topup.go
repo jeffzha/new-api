@@ -449,7 +449,13 @@ func EpayNotify(c *gin.Context) {
 		// 数据库行锁 + 事务内状态校验保证（多实例部署下同样安全）。
 		LockOrder(verifyInfo.ServiceTradeNo)
 		defer UnlockOrder(verifyInfo.ServiceTradeNo)
-		alreadyDone, err := model.RechargeEpay(verifyInfo.ServiceTradeNo, verifyInfo.Type, c.ClientIP())
+		// Epay's signed money field is a CNY major-unit amount; trade_no is
+		// the provider's transaction, distinct from our out_trade_no.
+		var payment *model.TopupPaymentSnapshot
+		if params["trade_no"] != "" {
+			payment = &model.TopupPaymentSnapshot{ActualMoney: params["money"], CurrencyCode: "CNY", PaymentReference: params["trade_no"]}
+		}
+		alreadyDone, err := model.RechargeEpay(verifyInfo.ServiceTradeNo, verifyInfo.Type, c.ClientIP(), payment)
 		if err != nil {
 			switch {
 			case errors.Is(err, model.ErrTopUpNotFound):

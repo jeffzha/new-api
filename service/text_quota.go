@@ -444,6 +444,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if relayInfo.AgencyPricing != nil {
 		neutralGroupRatio := 1.0
 		standardSummary := calculateTextQuotaSummaryWithGroupRatio(ctx, relayInfo, billingUsage, &neutralGroupRatio)
+		settlementRatio := float64(relayInfo.AgencyPricing.SettlementBPS) / 10000
+		settlementSummary := calculateTextQuotaSummaryWithGroupRatio(ctx, relayInfo, billingUsage, &settlementRatio)
+		settlementQuota := int64(settlementSummary.Quota)
 		if tieredBillingApplied && tieredResult != nil {
 			// Tiered expressions expose their actual ungrouped result directly;
 			// only the separately-priced tool surcharge needs to be added.
@@ -453,9 +456,20 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 			)
 			noteQuotaClamp(relayInfo, clamp)
 			relayInfo.AgencyStandardQuota = int64(standardQuota)
+			// Reuse the expression result from this actual-usage evaluation.
+			// Re-running time/header expressions could produce another basis.
+			cost, costClamp := common.QuotaRoundChecked(tieredResult.ActualQuotaBeforeGroup * settlementRatio)
+			noteQuotaClamp(relayInfo, costClamp)
+			if !settlementSummary.ToolCallSurchargeQuota.IsZero() {
+				cost, costClamp = common.QuotaFromDecimalChecked(decimal.NewFromFloat(tieredResult.ActualQuotaBeforeGroup).
+					Mul(decimal.NewFromFloat(settlementRatio)).Add(settlementSummary.ToolCallSurchargeQuota))
+				noteQuotaClamp(relayInfo, costClamp)
+			}
+			settlementQuota = int64(cost)
 		} else {
 			relayInfo.AgencyStandardQuota = int64(standardSummary.Quota)
 		}
+		relayInfo.AgencySettlementCostQuota = &settlementQuota
 	}
 
 	for _, item := range summary.ToolSurchargeItems {

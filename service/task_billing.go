@@ -230,11 +230,13 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 
 	// 1. Record the compensating agency event only after the atomic wallet
 	// and token transaction has committed.
-	if err := RecordAgencyTaskRefundEvent(task, int64(-adjustment.QuotaDelta), reason); err != nil {
-		// The wallet refund has already committed. Keep the task refund
-		// successful, but surface the missing compensating event for durable
-		// reconciliation instead of silently retaining commission.
-		logger.LogError(ctx, fmt.Sprintf("记录代理商任务佣金冲正失败 task %s: %s", task.TaskID, err.Error()))
+	if !adjustment.AgencyRefundCommitted {
+		if err := RecordAgencyTaskRefundEvent(task, int64(-adjustment.QuotaDelta), reason); err != nil {
+			// The wallet refund has already committed. Keep the task refund
+			// successful, but surface the missing compensating event for durable
+			// reconciliation instead of silently retaining commission.
+			logger.LogError(ctx, fmt.Sprintf("记录代理商任务佣金冲正失败 task %s: %s", task.TaskID, err.Error()))
+		}
 	}
 
 	// 2. 回减预扣时累计的用户和渠道用量，请求次数保持不变.
@@ -285,7 +287,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 			task.TaskID, logger.LogQuota(adjustment.AppliedQuota), reason))
 		return
 	}
-	if adjustment.QuotaDelta < 0 {
+	if adjustment.QuotaDelta < 0 && !adjustment.AgencyRefundCommitted {
 		if err := RecordAgencyTaskRefundEvent(task, int64(-adjustment.QuotaDelta), reason); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("记录代理商任务差额佣金冲正失败 task %s: %s", task.TaskID, err.Error()))
 		}

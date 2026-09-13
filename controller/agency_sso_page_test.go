@@ -41,8 +41,30 @@ func TestAgencySSOPageOriginAllowlistAndPayload(t *testing.T) {
 	require.Contains(t, body, `"origin":"http://127.0.0.1:3201"`)
 	require.Contains(t, body, "/api/agency/sso-ticket")
 	require.Contains(t, body, "new-api-agency-sso")
-	require.Contains(t, body, "new_api_access_token")
+	require.Contains(t, body, "/api/user/auth/refresh")
+	require.NotContains(t, body, "localStorage")
 	require.Contains(t, body, "'Authorization':'Bearer '+token")
 	require.Equal(t, "", rec.Header().Get("X-Frame-Options"))
 	require.Contains(t, rec.Header().Get("Content-Security-Policy"), "frame-ancestors http://127.0.0.1:3201")
+}
+
+func TestAgencyVerificationBridgeRequiresAllowedParent(t *testing.T) {
+	t.Setenv("AGENCY_SSO_ALLOWED_ORIGIN", "https://hub.example")
+	router := gin.New()
+	router.GET("/api/agency/sso", AgencySSOPage)
+	for _, test := range []struct {
+		origin string
+		status int
+	}{
+		{"https://hub.example", http.StatusOK},
+		{"https://evil.example", http.StatusForbidden},
+	} {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/agency/sso?mode=verify&origin="+test.origin, nil))
+		require.Equal(t, test.status, recorder.Code)
+		if test.status == http.StatusOK {
+			require.Contains(t, recorder.Body.String(), `"mode":"verify"`)
+			require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+		}
+	}
 }

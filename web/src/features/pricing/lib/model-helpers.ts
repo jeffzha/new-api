@@ -61,6 +61,8 @@ export function getDisplayGroupRatio(
   model: PricingModel,
   selectedGroup?: string
 ): number {
+  const salesRatio = getCustomerSalesRatio(model)
+  if (salesRatio != null) return salesRatio
   const modelEnableGroups = Array.isArray(model.enable_groups)
     ? model.enable_groups
     : []
@@ -94,9 +96,24 @@ export function getDisplayGroupRatio(
   return minRatio === Number.POSITIVE_INFINITY ? 1 : minRatio
 }
 
-/**
- * Replace model placeholder in endpoint path
- */
+/** A zero sales coefficient is an intentional free customer price. */
+export function getCustomerSalesRatio(model: PricingModel): number | undefined {
+  if (model.sales_bps == null) return undefined
+  return model.sales_bps / 10000
+}
+
+/** Agency sales replaces the ordinary group multiplier, never stacks with it. */
+export function getEffectiveGroupRatio(
+  model: PricingModel,
+  groupRatio: Record<string, number>,
+  group: string
+): number {
+  return (
+    getCustomerSalesRatio(model) ?? getConfiguredGroupRatio(groupRatio, group)
+  )
+}
+
+/** Replace model placeholder in endpoint path. */
 export function replaceModelInPath(path: string, modelName: string): string {
   return path.replaceAll('{model}', modelName)
 }

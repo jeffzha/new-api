@@ -1,6 +1,7 @@
 package agencyhub
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/csv"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,8 +20,16 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
+
+var errExportLeaseLost = errors.New("export worker lease lost")
+var errExportRowLimit = errors.New("export exceeds 1000000 rows; narrow the time range")
+var errExportRateLimited = errors.New("export rate limit exceeded")
+var errExportScopeChanged = errors.New("export permission scope changed")
+var errExportCredentialChanged = errors.New("export download credential changed")
+var exportAttemptNamePattern = regexp.MustCompile(`^agency-export-([1-9][0-9]*)-([1-9][0-9]*)-([A-Za-z0-9_-]{32})\.csv(?:\.tmp)?$`)
 
 // ProcessExportJobs claims and materializes queued export jobs. It is safe to
 // call from more than one worker: the status CAS ensures one claimant per job.
@@ -33,21 +43,46 @@ func (a *App) ProcessExportJobs(limit int) (int, error) {
 		return 0, nil
 	}
 	processed := 0
+	// Recover jobs abandoned by a crashed worker. A lease makes the recovery
+	// decision deterministic and prevents cleanup from leaving a permanent
+	// processing row.
+	now := time.Now().Unix()
+	if _, err := a.CleanupExpiredExportJobs(limit); err != nil {
+		return 0, err
+	}
+	if err := a.db.Model(&model.AgencyExportJob{}).
+		Where("status = ? AND lease_until <= ? AND expires_at > 0 AND expires_at <= ?", "processing", now, now).
+		Updates(map[string]any{"status": "expired", "file_key": "", "file_hash": "", "lease_owner": "", "lease_until": 0}).Error; err != nil {
+		return 0, err
+	}
+	if err := a.db.Model(&model.AgencyExportJob{}).
+		Where("status = ? AND lease_until <= ? AND (expires_at = 0 OR expires_at > ?)", "processing", now, now).
+		Updates(map[string]any{"status": "queued", "lease_owner": "", "lease_until": 0}).Error; err != nil {
+		return 0, err
+	}
 	for processed < limit {
 		var job model.AgencyExportJob
 		claimed := false
-		err := a.db.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Where("status = ?", "queued").Order("id ASC").First(&job).Error; err != nil {
+		owner, err := randomToken(24)
+		if err != nil {
+			return processed, err
+		}
+		err = a.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Where("status = ? AND (expires_at = 0 OR expires_at > ?)", "queued", time.Now().Unix()).Order("id ASC").First(&job).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					return nil
 				}
 				return err
 			}
-			result := tx.Model(&model.AgencyExportJob{}).Where("id = ? AND status = ?", job.ID, "queued").Updates(map[string]any{"status": "processing"})
+			result := tx.Model(&model.AgencyExportJob{}).Where("id = ? AND status = ? AND attempts = ?", job.ID, "queued", job.Attempts).Updates(map[string]any{"status": "processing", "lease_owner": owner, "lease_until": time.Now().Unix() + 300, "attempts": gorm.Expr("attempts + 1")})
 			if result.Error != nil {
 				return result.Error
 			}
 			claimed = result.RowsAffected == 1
+			if claimed {
+				job.LeaseOwner = owner
+				job.Attempts++
+			}
 			return nil
 		})
 		if err != nil {
@@ -57,12 +92,51 @@ func (a *App) ProcessExportJobs(limit int) (int, error) {
 			break
 		}
 		if err := a.materializeExport(&job); err != nil {
-			_ = a.db.Model(&model.AgencyExportJob{}).Where("id = ?", job.ID).Updates(map[string]any{"status": "failed", "file_key": "", "file_hash": ""}).Error
+			if !errors.Is(err, errExportLeaseLost) {
+				if failureErr := a.failExport(&job, err); failureErr != nil {
+					return processed, errors.Join(err, failureErr)
+				}
+			}
 			return processed, err
 		}
 		processed++
 	}
 	return processed, nil
+}
+
+// Every state write includes the unique claim, attempt and a live lease. A
+// reused process ID cannot authorize a delayed worker after lease takeover.
+func (a *App) exportLease(job *model.AgencyExportJob) *gorm.DB {
+	return a.db.Model(&model.AgencyExportJob{}).Where("id = ? AND status = ? AND lease_owner = ? AND attempts = ? AND lease_until > ?", job.ID, "processing", job.LeaseOwner, job.Attempts, time.Now().Unix())
+}
+
+func (a *App) renewExportLease(job *model.AgencyExportJob) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result := a.exportLease(job).WithContext(ctx).Update("lease_until", time.Now().Unix()+300)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		// MySQL may report zero affected rows when a renewal within the same
+		// second writes the existing expiry. Distinguish that from lease loss.
+		var valid int64
+		if err := a.exportLease(job).WithContext(ctx).Count(&valid).Error; err != nil {
+			return err
+		}
+		if valid != 1 {
+			return errExportLeaseLost
+		}
+	}
+	return nil
+}
+
+func (a *App) failExport(job *model.AgencyExportJob, cause error) error {
+	code := "export_generation_failed"
+	if errors.Is(cause, errExportRowLimit) {
+		code = "export_row_limit"
+	}
+	return a.exportLease(job).Updates(map[string]any{"status": "failed", "error_code": code, "file_key": "", "file_hash": "", "lease_owner": "", "lease_until": 0}).Error
 }
 
 // CleanupExpiredExportJobs removes temporary export files only after the
@@ -74,16 +148,19 @@ func (a *App) CleanupExpiredExportJobs(limit int) (int, error) {
 	if a == nil || a.db == nil || limit <= 0 || strings.TrimSpace(a.config.ExportDir) == "" {
 		return 0, nil
 	}
+	if _, err := a.exportPath(".export-path-validation"); err != nil {
+		return 0, err
+	}
 	now := time.Now().Unix()
 	var jobs []model.AgencyExportJob
-	if err := a.db.Where("status IN ? AND expires_at > 0 AND expires_at <= ?", []string{"queued", "ready", "failed"}, now).
+	if err := a.db.Where("status IN ? AND expires_at > 0 AND expires_at <= ? AND (status <> ? OR lease_until <= ?)", []string{"queued", "ready", "failed", "processing"}, now, "processing", now).
 		Order("id ASC").Limit(limit).Find(&jobs).Error; err != nil {
 		return 0, err
 	}
 	cleaned := 0
 	for _, job := range jobs {
 		result := a.db.Model(&model.AgencyExportJob{}).
-			Where("id = ? AND status IN ? AND expires_at > 0 AND expires_at <= ?", job.ID, []string{"queued", "ready", "failed"}, now).
+			Where("id = ? AND status IN ? AND expires_at > 0 AND expires_at <= ? AND (status <> ? OR lease_until <= ?)", job.ID, []string{"queued", "ready", "failed", "processing"}, now, "processing", now).
 			Updates(map[string]any{
 				"status":                    "expired",
 				"file_key":                  "",
@@ -91,6 +168,8 @@ func (a *App) CleanupExpiredExportJobs(limit int) (int, error) {
 				"download_token_hash":       "",
 				"download_token_expires_at": 0,
 				"download_token_session_id": 0,
+				"lease_owner":               "",
+				"lease_until":               0,
 			})
 		if result.Error != nil {
 			return cleaned, result.Error
@@ -100,22 +179,135 @@ func (a *App) CleanupExpiredExportJobs(limit int) (int, error) {
 		}
 		if job.FileKey != "" {
 			if path, err := a.exportPath(job.FileKey); err == nil {
-				_ = os.Remove(path)
+				if info, statErr := os.Lstat(path); statErr == nil && info.Mode().IsRegular() {
+					if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+						return cleaned, err
+					}
+				}
 			}
 		}
 		cleaned++
 	}
+	if _, err := a.cleanupOrphanExportAttempts(limit); err != nil {
+		return cleaned, err
+	}
 	return cleaned, nil
 }
 
+// A process can die before publishing FileKey. Retain the expired job as
+// provenance, and remove only exact attempt names whose job is terminal,
+// whose attempt was actually claimed and whose modification predates expiry.
+// Unknown files, links, directories, unexpired jobs and active leases survive.
+func (a *App) cleanupOrphanExportAttempts(limit int) (int, error) {
+	if limit <= 0 || strings.TrimSpace(a.config.ExportDir) == "" {
+		return 0, nil
+	}
+	root, err := filepath.Abs(a.config.ExportDir)
+	if err != nil {
+		return 0, err
+	}
+	resolved, err := filepath.EvalSymlinks(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if root != resolved {
+		return 0, errors.New("export directory must not contain symbolic links")
+	}
+	directory, err := os.Open(root)
+	if err != nil {
+		return 0, err
+	}
+	defer directory.Close()
+	removed := 0
+	for removed < limit {
+		entries, readErr := directory.ReadDir(256)
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return removed, readErr
+		}
+		for _, entry := range entries {
+			matches := exportAttemptNamePattern.FindStringSubmatch(entry.Name())
+			if matches == nil || !entry.Type().IsRegular() {
+				continue
+			}
+			id, idErr := strconv.ParseInt(matches[1], 10, 64)
+			attempt, attemptErr := strconv.Atoi(matches[2])
+			if idErr != nil || attemptErr != nil {
+				continue
+			}
+			path, pathErr := a.exportPath(entry.Name())
+			if pathErr != nil {
+				return removed, pathErr
+			}
+			info, statErr := os.Lstat(path)
+			if errors.Is(statErr, os.ErrNotExist) {
+				continue
+			}
+			if statErr != nil {
+				return removed, statErr
+			}
+			if !info.Mode().IsRegular() {
+				continue
+			}
+			var job model.AgencyExportJob
+			now := time.Now().Unix()
+			lookup := a.db.Where("id = ? AND status = ? AND expires_at > 0 AND expires_at <= ? AND lease_until <= ? AND attempts >= ?", id, "expired", now, now, attempt).Limit(1).Find(&job)
+			if lookup.Error != nil {
+				return removed, lookup.Error
+			}
+			if lookup.RowsAffected == 0 {
+				continue
+			}
+			if job.LeaseOwner != "" || info.ModTime().Unix() > job.ExpiresAt {
+				continue
+			}
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return removed, err
+			}
+			removed++
+			if removed >= limit {
+				break
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+	}
+	return removed, nil
+}
+
 func (a *App) materializeExport(job *model.AgencyExportJob) error {
-	if job == nil || job.ID <= 0 || job.AgencyID == nil {
+	if job == nil || job.ID <= 0 || job.AgencyID == nil || job.LeaseOwner == "" {
 		return fmt.Errorf("invalid export job")
 	}
+	if err := a.renewExportLease(job); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := a.renewExportLease(job); err != nil {
+					cancel(err)
+					return
+				}
+			}
+		}
+	}()
+	defer func() { cancel(nil); <-heartbeatDone }()
 	if err := os.MkdirAll(a.config.ExportDir, 0o700); err != nil {
 		return err
 	}
-	fileKey := fmt.Sprintf("agency-export-%d.csv", job.ID)
+	fileKey := fmt.Sprintf("agency-export-%d-%d-%s.csv", job.ID, job.Attempts, job.LeaseOwner)
 	path, err := a.exportPath(fileKey)
 	if err != nil {
 		return err
@@ -125,12 +317,21 @@ func (a *App) materializeExport(job *model.AgencyExportJob) error {
 	if err != nil {
 		return err
 	}
+	published := false
+	defer func() {
+		_ = file.Close()
+		_ = os.Remove(tmpPath)
+		if !published {
+			_ = os.Remove(path)
+		}
+	}()
 	if _, err = file.Write([]byte{0xef, 0xbb, 0xbf}); err != nil {
 		_ = file.Close()
 		return err
 	}
 	writer := csv.NewWriter(file)
-	writeErr := a.writeExportRows(writer, job)
+	writer.UseCRLF = true
+	writeErr := a.writeExportRows(ctx, writer, job)
 	writer.Flush()
 	if writeErr == nil {
 		writeErr = writer.Error()
@@ -142,6 +343,9 @@ func (a *App) materializeExport(job *model.AgencyExportJob) error {
 		_ = os.Remove(tmpPath)
 		return writeErr
 	}
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		_ = os.Remove(tmpPath)
 		return err
@@ -150,13 +354,31 @@ func (a *App) materializeExport(job *model.AgencyExportJob) error {
 	if err != nil {
 		return err
 	}
-	return a.db.Model(&model.AgencyExportJob{}).Where("id = ? AND status = ?", job.ID, "processing").Updates(map[string]any{"status": "ready", "file_key": fileKey, "file_hash": hash, "row_count": rowCount}).Error
+	result := a.exportLease(job).Updates(map[string]any{"status": "ready", "file_key": fileKey, "file_hash": hash, "row_count": rowCount, "lease_owner": "", "lease_until": 0})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errExportLeaseLost
+	}
+	published = true
+	return nil
 }
 
 func (a *App) exportPath(fileKey string) (string, error) {
+	if fileKey == "" || fileKey == "." || fileKey == ".." || filepath.Base(fileKey) != fileKey || filepath.IsAbs(fileKey) {
+		return "", errors.New("invalid export file key")
+	}
 	root, err := filepath.Abs(a.config.ExportDir)
 	if err != nil {
 		return "", err
+	}
+	resolved, resolveErr := filepath.EvalSymlinks(root)
+	if resolveErr != nil && !errors.Is(resolveErr, os.ErrNotExist) {
+		return "", resolveErr
+	}
+	if resolveErr == nil && resolved != root {
+		return "", errors.New("export directory must not contain symbolic links")
 	}
 	path, err := filepath.Abs(filepath.Join(root, fileKey))
 	if err != nil || (path != root && !strings.HasPrefix(path, root+string(os.PathSeparator))) {
@@ -165,76 +387,99 @@ func (a *App) exportPath(fileKey string) (string, error) {
 	return path, nil
 }
 
-func (a *App) writeExportRows(writer *csv.Writer, job *model.AgencyExportJob) error {
+func (a *App) writeExportRows(ctx context.Context, writer *csv.Writer, job *model.AgencyExportJob) error {
 	filter, err := parseExportFilter(job.FilterJSON)
 	if err != nil {
 		return err
 	}
 	switch job.Kind {
 	case "usage":
-		if err := writer.Write([]string{"event_id", "user_id", "model", "business_status", "standard_quota", "charged_quota", "currency", "occurred_at"}); err != nil {
+		if err := writer.Write([]string{"event_id", "user_id", "model", "business_status", "standard_quota", "charged_quota", "currency", "occurred_at_Asia_Shanghai", "component_id", "endpoint", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "sales_bps", "skip_reason"}); err != nil {
 			return err
 		}
 		var rows []model.AgencyUsageFact
-		query, err := applyExportFilter(a.db.Where("agency_id = ?", *job.AgencyID), "usage", filter)
+		query, err := applyExportFilter(a.db.WithContext(ctx).Where("agency_id = ?", *job.AgencyID), "usage", filter)
 		if err != nil {
 			return err
 		}
 		if err := ensureExportRowLimit(query, model.AgencyUsageFact{}); err != nil {
 			return err
 		}
-		if err := query.Order("occurred_at_ms, id").Find(&rows).Error; err != nil {
-			return err
-		}
-		for _, row := range rows {
-			if err := writeExportRow(writer, []string{row.EventID, strconv.FormatInt(row.UserID, 10), row.OriginModelName, row.BusinessStatus, strconv.FormatInt(row.StandardQuota, 10), strconv.FormatInt(row.ChargedQuota, 10), row.CurrencyCode, formatExportTime(row.OccurredAtMS)}); err != nil {
-				return err
+		var count int64
+		return query.FindInBatches(&rows, 1000, func(tx *gorm.DB, _ int) error {
+			count += int64(len(rows))
+			if count > maxExportRows {
+				return errExportRowLimit
 			}
-		}
+			for _, row := range rows {
+				if err := context.Cause(ctx); err != nil {
+					return err
+				}
+				if err := writeExportRow(writer, []string{row.EventID, "'" + strconv.FormatInt(row.UserID, 10), row.OriginModelName, row.BusinessStatus, strconv.FormatInt(row.StandardQuota, 10), strconv.FormatInt(row.ChargedQuota, 10), row.CurrencyCode, formatExportTime(row.OccurredAtMS), row.ComponentID, row.Endpoint, stringID(row.InputTokens), stringID(row.OutputTokens), stringID(row.CacheReadTokens), stringID(row.CacheWriteTokens), strconv.Itoa(row.SalesBPS), row.SkipReason}); err != nil {
+					return err
+				}
+			}
+			return nil
+		}).Error
 	case "topups":
-		if err := writer.Write([]string{"source_operation_id", "user_id", "credited_quota", "paid_quota", "bonus_quota", "currency", "payment_status", "occurred_at"}); err != nil {
+		if err := writer.Write([]string{"source_operation_id", "user_id", "credited_quota", "paid_quota", "bonus_quota", "currency", "payment_status", "occurred_at_Asia_Shanghai", "actual_money", "refunded_quota"}); err != nil {
 			return err
 		}
 		var rows []model.AgencyTopupFact
-		query, err := applyExportFilter(a.db.Where("agency_id = ?", *job.AgencyID), "topups", filter)
+		query, err := applyExportFilter(a.db.WithContext(ctx).Where("agency_id = ?", *job.AgencyID), "topups", filter)
 		if err != nil {
 			return err
 		}
 		if err := ensureExportRowLimit(query, model.AgencyTopupFact{}); err != nil {
 			return err
 		}
-		if err := query.Order("occurred_at_ms, id").Find(&rows).Error; err != nil {
-			return err
-		}
-		for _, row := range rows {
-			if err := writeExportRow(writer, []string{row.SourceOperationID, strconv.FormatInt(row.UserID, 10), strconv.FormatInt(row.CreditedQuota, 10), strconv.FormatInt(row.PaidQuota, 10), strconv.FormatInt(row.BonusQuota, 10), row.CurrencyCode, row.PaymentStatus, formatExportTime(row.OccurredAtMS)}); err != nil {
-				return err
+		var count int64
+		return query.FindInBatches(&rows, 1000, func(tx *gorm.DB, _ int) error {
+			count += int64(len(rows))
+			if count > maxExportRows {
+				return errExportRowLimit
 			}
-		}
+			for _, row := range rows {
+				if err := context.Cause(ctx); err != nil {
+					return err
+				}
+				if err := writeExportRow(writer, []string{row.SourceOperationID, "'" + strconv.FormatInt(row.UserID, 10), strconv.FormatInt(row.CreditedQuota, 10), strconv.FormatInt(row.PaidQuota, 10), strconv.FormatInt(row.BonusQuota, 10), row.CurrencyCode, row.PaymentStatus, formatExportTime(row.OccurredAtMS), row.ActualMoney, stringID(row.RefundedQuota)}); err != nil {
+					return err
+				}
+			}
+			return nil
+		}).Error
 	case "commissions":
-		if err := writer.Write([]string{"event_id", "entry_type", "user_id", "model", "commission_quota", "amount_micros", "currency", "occurred_at"}); err != nil {
+		if err := writer.Write([]string{"event_id", "entry_type", "user_id", "model", "commission_quota", "amount_micros", "currency", "occurred_at_Asia_Shanghai", "amount"}); err != nil {
 			return err
 		}
 		var rows []model.AgencyCommissionLedger
-		query, err := applyExportFilter(a.db.Where("agency_id = ?", *job.AgencyID), "commissions", filter)
+		query, err := applyExportFilter(a.db.WithContext(ctx).Where("agency_id = ?", *job.AgencyID), "commissions", filter)
 		if err != nil {
 			return err
 		}
 		if err := ensureExportRowLimit(query, model.AgencyCommissionLedger{}); err != nil {
 			return err
 		}
-		if err := query.Order("occurred_at_ms, id").Find(&rows).Error; err != nil {
-			return err
-		}
-		for _, row := range rows {
-			if err := writeExportRow(writer, []string{row.EventID, row.EntryType, strconv.FormatInt(row.UserID, 10), row.OriginModelName, strconv.FormatInt(row.CommissionQuota, 10), strconv.FormatInt(row.AmountMicros, 10), row.CurrencyCode, formatExportTime(row.OccurredAtMS)}); err != nil {
-				return err
+		var count int64
+		return query.FindInBatches(&rows, 1000, func(tx *gorm.DB, _ int) error {
+			count += int64(len(rows))
+			if count > maxExportRows {
+				return errExportRowLimit
 			}
-		}
+			for _, row := range rows {
+				if err := context.Cause(ctx); err != nil {
+					return err
+				}
+				if err := writeExportRow(writer, []string{row.EventID, row.EntryType, "'" + strconv.FormatInt(row.UserID, 10), row.OriginModelName, strconv.FormatInt(row.CommissionQuota, 10), strconv.FormatInt(row.AmountMicros, 10), row.CurrencyCode, formatExportTime(row.OccurredAtMS), decimal.NewFromInt(row.AmountMicros).Shift(-6).StringFixed(6)}); err != nil {
+					return err
+				}
+			}
+			return nil
+		}).Error
 	default:
 		return fmt.Errorf("unsupported export kind %q", job.Kind)
 	}
-	return nil
 }
 
 const maxExportRows int64 = 1_000_000
@@ -249,7 +494,7 @@ func ensureExportRowLimit(query *gorm.DB, modelValue any) error {
 		return err
 	}
 	if count > maxExportRows {
-		return fmt.Errorf("export exceeds %d rows; narrow the time range", maxExportRows)
+		return errExportRowLimit
 	}
 	return nil
 }
@@ -462,9 +707,22 @@ func (a *App) listCustomers(c *gin.Context) {
 		for _, user := range users {
 			byID[int64(user.Id)] = user
 		}
+		bindingIDs := make([]int64, 0, len(bindings))
+		for _, binding := range bindings {
+			bindingIDs = append(bindingIDs, binding.BindingID)
+		}
+		var history []model.AgencyUserBinding
+		if err := a.db.Select("id, effective_at_ms").Where("id IN ?", bindingIDs).Find(&history).Error; err != nil {
+			respondError(c, http.StatusInternalServerError, "database_error", "读取客户归属失败", nil)
+			return
+		}
+		effectiveAt := make(map[int64]int64, len(history))
+		for _, binding := range history {
+			effectiveAt[binding.ID] = binding.EffectiveAtMS
+		}
 		for _, binding := range bindings {
 			user := byID[binding.UserID]
-			views = append(views, customerView{UserID: binding.UserID, Username: user.Username, BindingID: binding.BindingID, Revision: binding.Revision})
+			views = append(views, customerView{UserID: binding.UserID, Username: user.Username, BindingID: binding.BindingID, Revision: binding.Revision, EffectiveAtMS: effectiveAt[binding.BindingID]})
 		}
 	}
 	nextCursor := ""
@@ -477,6 +735,113 @@ func (a *App) listCustomers(c *gin.Context) {
 			ActorID:   identity.ActorID,
 			AgencyID:  agency.ID,
 			PositionU: last.UserID,
+		})
+		if err != nil {
+			respondError(c, http.StatusServiceUnavailable, "cursor_unavailable", "分页服务暂不可用", nil)
+			return
+		}
+	}
+	respondOK(c, gin.H{"items": views, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
+}
+
+// listRootCustomers is deliberately separate from listCustomers.  A Root
+// session has no acting agency until it enters one, while the management
+// contract requires a cross-agency view.  Returning only the active binding
+// and a whitelisted user projection keeps this endpoint from becoming an
+// accidental users/tokens dump.
+func (a *App) listRootCustomers(c *gin.Context) {
+	identity := currentIdentity(c)
+	if identity == nil || identity.ActorType != ActorTypeRoot {
+		respondError(c, http.StatusForbidden, "root_required", "仅超级管理员可操作", nil)
+		return
+	}
+	if hasCursorPagingConflict(c) {
+		respondError(c, http.StatusBadRequest, "invalid_cursor", "cursor不能与page或limit同时使用", nil)
+		return
+	}
+	pageSize, err := cursorPageSize(c)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_page_size", err.Error(), nil)
+		return
+	}
+	var cursor agencyCursor
+	rawCursor := strings.TrimSpace(c.Query("cursor"))
+	if rawCursor != "" {
+		cursor, err = a.decodeCursor(rawCursor, c, "root_customers", identity)
+		if err != nil {
+			respondError(c, http.StatusBadRequest, "invalid_cursor", "cursor无效或已过期", nil)
+			return
+		}
+	}
+	query := a.db.Model(&model.AgencyActiveUserBinding{})
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取客户失败", nil)
+		return
+	}
+	if rawCursor != "" {
+		query = query.Where("user_id < ?", cursor.PositionU)
+	}
+	var bindings []model.AgencyActiveUserBinding
+	if err := query.Order("user_id DESC").Limit(pageSize + 1).Find(&bindings).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取客户失败", nil)
+		return
+	}
+	hasMore := len(bindings) > pageSize
+	if hasMore {
+		bindings = bindings[:pageSize]
+	}
+	ids := make([]int64, 0, len(bindings))
+	for _, binding := range bindings {
+		ids = append(ids, binding.UserID)
+	}
+	type rootCustomerView struct {
+		UserID        string `json:"user_id"`
+		Username      string `json:"username"`
+		Status        int    `json:"status"`
+		AgencyID      string `json:"agency_id"`
+		BindingID     string `json:"binding_id"`
+		Revision      string `json:"revision"`
+		EffectiveAtMS string `json:"effective_at_ms"`
+	}
+	views := make([]rootCustomerView, 0, len(bindings))
+	if len(ids) > 0 {
+		var users []model.User
+		if err := a.db.Select("id, username, status").Where("id IN ?", ids).Find(&users).Error; err != nil {
+			respondError(c, http.StatusInternalServerError, "database_error", "读取客户失败", nil)
+			return
+		}
+		byID := make(map[int64]model.User, len(users))
+		for _, user := range users {
+			byID[int64(user.Id)] = user
+		}
+		bindingIDs := make([]int64, 0, len(bindings))
+		for _, binding := range bindings {
+			bindingIDs = append(bindingIDs, binding.BindingID)
+		}
+		var history []model.AgencyUserBinding
+		if err := a.db.Select("id, effective_at_ms").Where("id IN ?", bindingIDs).Find(&history).Error; err != nil {
+			respondError(c, http.StatusInternalServerError, "database_error", "读取客户归属失败", nil)
+			return
+		}
+		effectiveAt := make(map[int64]int64, len(history))
+		for _, binding := range history {
+			effectiveAt[binding.ID] = binding.EffectiveAtMS
+		}
+		for _, binding := range bindings {
+			user := byID[binding.UserID]
+			views = append(views, rootCustomerView{
+				UserID: strconv.FormatInt(binding.UserID, 10), Username: user.Username, Status: user.Status,
+				AgencyID: strconv.FormatInt(binding.AgencyID, 10), BindingID: strconv.FormatInt(binding.BindingID, 10),
+				Revision: strconv.FormatInt(binding.Revision, 10), EffectiveAtMS: strconv.FormatInt(effectiveAt[binding.BindingID], 10),
+			})
+		}
+	}
+	nextCursor := ""
+	if hasMore && len(bindings) > 0 {
+		nextCursor, err = a.encodeCursor(agencyCursor{
+			Kind: "root_customers", Scope: cursorScope(c, "root_customers", identity),
+			ActorType: identity.ActorType, ActorID: identity.ActorID, PositionU: bindings[len(bindings)-1].UserID,
 		})
 		if err != nil {
 			respondError(c, http.StatusServiceUnavailable, "cursor_unavailable", "分页服务暂不可用", nil)
@@ -778,7 +1143,7 @@ func (a *App) reportSummary(c *gin.Context) {
 		usageQuery = usageQuery.Where("currency_code = ?", currencyFilter)
 	}
 	var usageItems []reportAggregate
-	if err := usageQuery.Select("user_id, origin_model_name AS model, currency_code, COUNT(*) AS calls, COALESCE(SUM(charged_quota), 0) AS charged_quota").
+	if err := usageQuery.Select("user_id, origin_model_name AS model, currency_code, COUNT(DISTINCT event_id) AS calls, COALESCE(SUM(charged_quota), 0) AS charged_quota").
 		Group("user_id, origin_model_name, currency_code").Find(&usageItems).Error; err != nil {
 		respondError(c, http.StatusInternalServerError, "database_error", err.Error(), nil)
 		return
@@ -926,6 +1291,10 @@ func (a *App) createExport(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if agency.Status != AgencyStatusActive {
+		respondError(c, http.StatusForbidden, "agency_disabled", "代理商已停用", nil)
+		return
+	}
 	if strings.TrimSpace(a.config.ExportDir) == "" {
 		respondError(c, http.StatusServiceUnavailable, "export_unavailable", "导出服务未配置", nil)
 		return
@@ -953,17 +1322,124 @@ func (a *App) createExport(c *gin.Context) {
 		respondError(c, http.StatusUnprocessableEntity, "invalid_filter", err.Error(), nil)
 		return
 	}
+	if parsedFilter["start_date"] == "" && parsedFilter["end_date"] == "" && parsedFilter["start_at"] == "" && parsedFilter["end_at"] == "" {
+		today := time.Now().In(time.FixedZone("Asia/Shanghai", 8*60*60))
+		parsedFilter["start_date"] = today.AddDate(0, 0, -6).Format("2006-01-02")
+		parsedFilter["end_date"] = today.Format("2006-01-02")
+	}
+	if (parsedFilter["start_date"] == "") != (parsedFilter["end_date"] == "") || (parsedFilter["start_at"] == "") != (parsedFilter["end_at"] == "") {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_filter", "请同时提供开始与结束时间", nil)
+		return
+	}
 	if _, err := applyExportFilter(a.db, request.Kind, parsedFilter); err != nil {
 		respondError(c, http.StatusUnprocessableEntity, "invalid_filter", err.Error(), nil)
 		return
 	}
 	identity := currentIdentity(c)
+	encoded, err = marshalJSON(parsedFilter)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "invalid_filter", "筛选条件编码失败", nil)
+		return
+	}
 	job := model.AgencyExportJob{ActorType: identity.ActorType, ActorID: identity.ActorID, AgencyID: &agency.ID, Kind: request.Kind, FilterJSON: encoded, PermissionVersion: agency.StateRevision, Status: "queued", ExpiresAt: time.Now().Add(24 * time.Hour).Unix(), CreatedAtMS: now}
-	if err = a.db.Create(&job).Error; err != nil {
+	if err = a.db.Transaction(func(tx *gorm.DB) error {
+		var current model.Agency
+		if err := model.AgencyLockForUpdate(tx).First(&current, agency.ID).Error; err != nil {
+			return err
+		}
+		if current.Status != AgencyStatusActive || current.StateRevision != agency.StateRevision {
+			return errExportScopeChanged
+		}
+		var recent int64
+		if err := tx.Model(&model.AgencyExportJob{}).Where("actor_type = ? AND actor_id = ? AND agency_id = ? AND created_at_ms > ?", identity.ActorType, identity.ActorID, agency.ID, now-60_000).Count(&recent).Error; err != nil {
+			return err
+		}
+		if recent >= 5 {
+			return errExportRateLimited
+		}
+		if err := tx.Create(&job).Error; err != nil {
+			return err
+		}
+		return recordAuditTx(tx, c, identity, "export.create", "export", stringID(job.ID), "", nil, gin.H{"kind": job.Kind, "filter": parsedFilter})
+	}); err != nil {
+		if errors.Is(err, errExportRateLimited) {
+			c.Header("Retry-After", "60")
+			respondError(c, http.StatusTooManyRequests, "export_rate_limited", "导出请求过于频繁，请稍后再试", nil)
+			return
+		}
+		if errors.Is(err, errExportScopeChanged) {
+			respondError(c, http.StatusForbidden, "export_scope_changed", "导出权限或范围已变化，请重试", nil)
+			return
+		}
 		respondError(c, http.StatusInternalServerError, "database_error", err.Error(), nil)
 		return
 	}
-	respondAccepted(c, job)
+	respondAccepted(c, exportJobView(job))
+}
+
+// The public projection never contains private paths, lease claims or token
+// hashes. IDs remain decimal strings across create, list and detail APIs.
+func exportJobView(job model.AgencyExportJob) gin.H {
+	status := job.Status
+	if job.ExpiresAt > 0 && job.ExpiresAt <= time.Now().Unix() {
+		status = "expired"
+	}
+	filter, _ := parseExportFilter(job.FilterJSON)
+	return gin.H{"id": stringID(job.ID), "kind": job.Kind, "status": status, "error_code": job.ErrorCode, "row_count": stringID(job.RowCount), "file_hash": job.FileHash, "expires_at": stringID(job.ExpiresAt), "created_at_ms": stringID(job.CreatedAtMS), "filter": filter}
+}
+
+func (a *App) listExports(c *gin.Context) {
+	agency, _, ok := a.ownAgency(c)
+	if !ok {
+		return
+	}
+	if agency.Status != AgencyStatusActive {
+		respondError(c, http.StatusForbidden, "agency_disabled", "代理商已停用", nil)
+		return
+	}
+	identity := currentIdentity(c)
+	size, err := cursorPageSize(c)
+	if err != nil || hasCursorPagingConflict(c) {
+		respondError(c, http.StatusBadRequest, "invalid_page_size", "分页参数无效", nil)
+		return
+	}
+	var cursor agencyCursor
+	if raw := c.Query("cursor"); raw != "" {
+		cursor, err = a.decodeCursor(raw, c, "exports", identity)
+		if err != nil {
+			respondError(c, http.StatusBadRequest, "invalid_cursor", "分页游标无效", nil)
+			return
+		}
+	}
+	query := a.db.Model(&model.AgencyExportJob{}).Where("actor_id = ? AND actor_type = ? AND agency_id = ? AND permission_version = ?", identity.ActorID, identity.ActorType, agency.ID, agency.StateRevision)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取导出任务失败", nil)
+		return
+	}
+	if cursor.PositionID > 0 {
+		query = query.Where("id < ?", cursor.PositionID)
+	}
+	var jobs []model.AgencyExportJob
+	if err := query.Order("id DESC").Limit(size + 1).Find(&jobs).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取导出任务失败", nil)
+		return
+	}
+	next := ""
+	if len(jobs) > size {
+		jobs = jobs[:size]
+		next, err = a.encodeCursor(agencyCursor{Kind: "exports", Scope: cursorScope(c, "exports", identity), ActorType: identity.ActorType, ActorID: identity.ActorID, AgencyID: agency.ID, PositionID: jobs[len(jobs)-1].ID})
+		if err != nil {
+			respondError(c, http.StatusServiceUnavailable, "cursor_unavailable", "分页服务暂不可用", nil)
+			return
+		}
+	}
+	items := make([]gin.H, 0, len(jobs))
+	for _, job := range jobs {
+		items = append(items, exportJobView(job))
+	}
+	c.Header("Cache-Control", "no-store")
+	respondOK(c, gin.H{"items": items, "total": total, "meta": gin.H{"next_cursor": next}})
 }
 
 // ExportCSV writes RFC4180 rows and protects spreadsheet consumers from formula
@@ -1045,21 +1521,26 @@ func (a *App) getExport(c *gin.Context) {
 		respondError(c, http.StatusForbidden, "export_scope_changed", "导出权限或范围已变化，请重新导出", nil)
 		return
 	}
-	response := gin.H{"id": job.ID, "actor_type": job.ActorType, "actor_id": job.ActorID, "agency_id": job.AgencyID, "kind": job.Kind, "status": job.Status, "row_count": job.RowCount, "file_hash": job.FileHash, "expires_at": job.ExpiresAt, "created_at_ms": job.CreatedAtMS}
-	if job.Status == "ready" {
+	response := exportJobView(job)
+	c.Header("Cache-Control", "no-store")
+	if response["status"] == "ready" {
 		token, err := randomToken(32)
 		if err != nil {
 			respondError(c, http.StatusInternalServerError, "token_error", "生成下载凭据失败", nil)
 			return
 		}
 		tokenExpiry := time.Now().Add(10 * time.Minute).Unix()
+		if job.ExpiresAt > 0 && job.ExpiresAt < tokenExpiry {
+			tokenExpiry = job.ExpiresAt
+		}
 		identity := currentIdentity(c)
-		if err := a.db.Model(&model.AgencyExportJob{}).Where("id = ? AND actor_id = ? AND actor_type = ? AND status = ?", id, identity.ActorID, identity.ActorType, "ready").Updates(map[string]any{"download_token_hash": tokenHash(token), "download_token_expires_at": tokenExpiry, "download_token_session_id": identity.SessionID}).Error; err != nil {
-			respondError(c, http.StatusInternalServerError, "database_error", err.Error(), nil)
+		result := a.db.Model(&model.AgencyExportJob{}).Where("id = ? AND actor_id = ? AND actor_type = ? AND status = ? AND (expires_at = 0 OR expires_at > ?)", id, identity.ActorID, identity.ActorType, "ready", time.Now().Unix()).Updates(map[string]any{"download_token_hash": tokenHash(token), "download_token_expires_at": tokenExpiry, "download_token_session_id": identity.SessionID})
+		if result.Error != nil || result.RowsAffected != 1 {
+			respondError(c, http.StatusConflict, "export_unavailable", "导出状态已变化，请重新获取下载凭据", nil)
 			return
 		}
 		response["download_token"] = token
-		response["download_token_expires_at"] = tokenExpiry
+		response["download_token_expires_at"] = stringID(tokenExpiry)
 	}
 	respondOK(c, response)
 }
@@ -1122,8 +1603,72 @@ func (a *App) downloadExport(c *gin.Context) {
 		respondError(c, http.StatusGone, "export_integrity_failed", "导出文件完整性校验失败", nil)
 		return
 	}
+	if err := a.authorizeExportDownload(c, identity, &job, providedToken); err != nil {
+		switch {
+		case errors.Is(err, errExportRateLimited):
+			c.Header("Retry-After", "60")
+			respondError(c, http.StatusTooManyRequests, "export_rate_limited", "下载请求过于频繁，请稍后再试", nil)
+		case errors.Is(err, errExportScopeChanged):
+			respondError(c, http.StatusForbidden, "export_scope_changed", "导出权限或范围已变化，请重新导出", nil)
+		case errors.Is(err, errExportCredentialChanged):
+			respondError(c, http.StatusUnauthorized, "invalid_download_token", "下载凭据无效或已过期", nil)
+		default:
+			respondError(c, http.StatusServiceUnavailable, "export_authorization_unavailable", "下载授权暂不可用，请稍后重试", nil)
+		}
+		return
+	}
 	c.Header("Content-Type", "text/csv; charset=utf-8")
 	c.Header("Cache-Control", "no-store")
 	c.Header("Content-Disposition", `attachment; filename="agency-export.csv"`)
 	c.File(path)
+}
+
+// Admission and its audit occupy one transaction. The no-op UPDATE is an
+// intentional actor-level database lock: SQLite obtains a write reservation;
+// MySQL/PostgreSQL lock all existing sessions for this actor before the first
+// snapshot read. Different sessions, jobs and Root acting scopes therefore
+// share the same 20-per-minute budget without modifying core gateway tables.
+func (a *App) authorizeExportDownload(c *gin.Context, identity *Identity, job *model.AgencyExportJob, token string) error {
+	return a.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.AgencySession{}).Where("actor_type = ? AND actor_id = ?", identity.ActorType, identity.ActorID).
+			UpdateColumn("last_seen_at", gorm.Expr("last_seen_at")).Error; err != nil {
+			return err
+		}
+		now := time.Now().Unix()
+		var session model.AgencySession
+		if err := tx.Where("id = ? AND actor_type = ? AND actor_id = ? AND revoked_at IS NULL AND expires_at > ?", identity.SessionID, identity.ActorType, identity.ActorID, now).First(&session).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errExportCredentialChanged
+			}
+			return err
+		}
+		if session.AgencyID == nil || job.AgencyID == nil || *session.AgencyID != *job.AgencyID {
+			return errExportScopeChanged
+		}
+		var agency model.Agency
+		if err := model.AgencyLockForUpdate(tx).First(&agency, *job.AgencyID).Error; err != nil {
+			return err
+		}
+		if agency.Status != AgencyStatusActive || agency.StateRevision != job.PermissionVersion {
+			return errExportScopeChanged
+		}
+		var current model.AgencyExportJob
+		if err := model.AgencyLockForUpdate(tx).Where("id = ? AND actor_type = ? AND actor_id = ?", job.ID, identity.ActorType, identity.ActorID).First(&current).Error; err != nil {
+			return err
+		}
+		if current.Status != "ready" || current.AgencyID == nil || *current.AgencyID != agency.ID || current.PermissionVersion != agency.StateRevision || current.FileHash != job.FileHash || current.FileKey != job.FileKey || (current.ExpiresAt > 0 && current.ExpiresAt <= now) {
+			return errExportScopeChanged
+		}
+		if current.DownloadTokenSessionID != identity.SessionID || current.DownloadTokenExpiresAt <= now || subtle.ConstantTimeCompare([]byte(current.DownloadTokenHash), []byte(tokenHash(token))) != 1 {
+			return errExportCredentialChanged
+		}
+		var recent int64
+		if err := tx.Model(&model.AgencyAuditLog{}).Where("actor_type = ? AND actor_id = ? AND action = ? AND created_at_ms > ?", identity.ActorType, identity.ActorID, "export.download", time.Now().UnixMilli()-60_000).Count(&recent).Error; err != nil {
+			return err
+		}
+		if recent >= 20 {
+			return errExportRateLimited
+		}
+		return recordAuditTx(tx, c, identity, "export.download", "export", stringID(job.ID), "", nil, gin.H{"file_hash": job.FileHash, "row_count": stringID(job.RowCount)})
+	})
 }

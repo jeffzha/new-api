@@ -3781,6 +3781,7 @@
     "Price:": "Цена:",
     "Price: High to Low": "Цена: от высокой к низкой",
     "Price: Low to High": "Цена: от низкой к высокой",
+    "Prices include your agency sales policy. Group selection changes model availability, not your sales rate.": "Цены рассчитаны по условиям вашего агентства. Выбор группы меняет доступность моделей, но не ваш ценовой коэффициент.",
     "Prices shown per": "Цены указаны за",
     "Prices synced successfully": "Цены успешно синхронизированы",
     "Prices vary by usage tier and request conditions": "Цена зависит от уровня использования и условий запроса",
@@ -3790,6 +3791,7 @@
     "Pricing Configuration": "Конфигурация ценообразования",
     "Pricing group example": "Пример группы тарификации",
     "Pricing groups": "Группы тарификации",
+    "Pricing is temporarily unavailable. Please try again.": "Цены временно недоступны. Повторите попытку.",
     "Pricing mode": "Режим ценообразования",
     "Pricing Ratios": "Коэффициенты ценообразования",
     "Pricing Type": "Тип ценообразования",
@@ -4373,6 +4375,7 @@
     "Seedance 2.0 API": "API Seedance 2.0",
     "Seedance 2.0 Fast": "Seedance 2.0 Быстрый",
     "Seedance 2.0 Standard": "Seedance 2.0 Стандартный",
+    "Seedance 2.5": "Seedance 2.5",
     "Seedance CNY Pricing": "Тарифы Seedance в CNY",
     "Seedance Domestic": "Seedance для внутреннего рынка",
     "Select": "Выбрать",
@@ -5645,6 +5648,7 @@
     "Your GitHub OAuth Client ID": "Ваш ID клиента GitHub OAuth",
     "Your GitHub OAuth Client Secret": "Ваш секрет клиента GitHub OAuth",
     "Your new backup codes are ready": "Ваши новые резервные коды готовы",
+    "Your price": "Ваша цена",
     "Your Referral Link": "Ваша реферальная ссылка",
     "Your setup guide is collapsed so usage stays in focus.": "Руководство свернуто, чтобы основные показатели оставались в фокусе.",
     "Your system access token for API authentication. Keep it secure and don't share it with others.": "Ваш системный токен доступа для аутентификации API. Храните его в безопасности и не делитесь им с другими.",
@@ -5656,7 +5660,6 @@
     "Zero retention": "Без хранения данных",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "Seedance 2.5": "Seedance 2.5"
+    "Zoom": "Zoom"
   }
 }

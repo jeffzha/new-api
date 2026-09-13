@@ -191,6 +191,8 @@ func IssueAgencyCommandProof(c *gin.Context) {
 }
 
 func GetAgencyEffectivePricing(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("Vary", "Cookie, Authorization, New-Api-User")
 	modelName := c.Query("model")
 	if strings.TrimSpace(modelName) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "model is required"})
@@ -198,8 +200,14 @@ func GetAgencyEffectivePricing(c *gin.Context) {
 	}
 	snapshot, err := service.AgencyQuoteForUser(c.GetInt("id"), 0, modelName, time.Now().UnixMilli())
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"managed": false}})
-		return
+		var user model.User
+		lookup := model.DB.Select("id", "billing_mode").First(&user, c.GetInt("id"))
+		if lookup.Error == nil && user.BillingMode != model.AgencyDurableBillingMode && user.BillingMode != model.AgencyProvisioningBillingMode {
+			c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"managed": false}})
+			return
+		}
+		// Missing managed policy is unavailable pricing, not permission to
+		// show or use the unrelated ordinary group price.
 	}
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "pricing is unavailable"})

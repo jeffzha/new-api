@@ -1,0 +1,84 @@
+{
+  "actor": "first-login",
+  "scope": "Real served HTML and real Gin API; synthetic local SQLite; jsdom, not visual browser QA",
+  "checks": [
+    {
+      "name": "The server serves the agency UI",
+      "status": "PASS",
+      "details": {
+        "title": "代理商中心"
+      }
+    },
+    {
+      "name": "First login presents required password-change form",
+      "status": "FAIL",
+      "details": {
+        "content": "首次登录后必须先修改密码重试",
+        "calls": [
+          {
+            "method": "GET",
+            "path": "/agency/api/v1/auth/me",
+            "status": 200,
+            "response": {
+              "success": true,
+              "data": {
+                "actor_type": "agency_operator",
+                "actor_id": 1,
+                "agency_id": 1,
+                "username": "audit-operator",
+                "must_change_password": true
+              },
+              "request_id": "202609121518222265630008268d9d6cCMCVVqi"
+            }
+          },
+          {
+            "method": "GET",
+            "path": "/agency/api/v1/commissions/summary",
+            "status": 403,
+            "response": {
+              "success": false,
+              "error": {
+                "code": "password_change_required",
+                "message": "首次登录后必须先修改密码"
+              },
+              "request_id": "202609121518222355820008268d9d6dlU6L9Ye"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "calls": [
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/auth/me",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "actor_type": "agency_operator",
+          "actor_id": 1,
+          "agency_id": 1,
+          "username": "audit-operator",
+          "must_change_password": true
+        },
+        "request_id": "202609121518222265630008268d9d6cCMCVVqi"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/agency/api/v1/commissions/summary",
+      "status": 403,
+      "response": {
+        "success": false,
+        "error": {
+          "code": "password_change_required",
+          "message": "首次登录后必须先修改密码"
+        },
+        "request_id": "202609121518222355820008268d9d6dlU6L9Ye"
+      }
+    }
+  ],
+  "passed": 1,
+  "failed": 1
+}

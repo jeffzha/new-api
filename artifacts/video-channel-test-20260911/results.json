@@ -1,0 +1,241 @@
+[
+  {
+    "channel": 1,
+    "status": "SUCCESS",
+    "attempt": 0
+  },
+  {
+    "channel": 1,
+    "downstream_url": "https://gateway.nexus-reach.com/v1/video/generations/task_rzk2EthPPn1QllMjftsWN7v7OVLmT8i5",
+    "downstream_response": {
+      "code": "success",
+      "data": {
+        "task_id": "task_rzk2EthPPn1QllMjftsWN7v7OVLmT8i5",
+        "status": "SUCCESS",
+        "fail_reason": "",
+        "result_url": "https://s3.laomandi.com/file/ce/b6/ceb609d8c031cb60988b0a3eb786c5af.mp4",
+        "submit_time": 1789121766,
+        "start_time": 1789121770,
+        "finish_time": 1789121995,
+        "progress": "100%"
+      }
+    }
+  },
+  {
+    "channel_id": 1,
+    "status": "SUCCESS",
+    "quota": 274982,
+    "upstream_task_id": "3228",
+    "result_url": "https://s3.laomandi.com/file/ce/b6/ceb609d8c031cb60988b0a3eb786c5af.mp4",
+    "endpoint": {
+      "base_url": "https://api.laomandi.com",
+      "fetch_path": "/asset/SdToolApi/generate-info"
+    },
+    "billing": {
+      "group_ratio": 1,
+      "model_price": 6.301369863013699,
+      "provider_billing": {
+        "currency": "CNY",
+        "provider": "seedance_domestic",
+        "resolution": "720p",
+        "cny_per_usd": "7.3",
+        "group_ratio": 1,
+        "has_video_input": false,
+        "estimated_tokens": 86400,
+        "async_reconciliation_required": true,
+        "unit_price_per_million_tokens": "46"
+      },
+      "origin_model_name": "doubao-seedance-2-0-260128"
+    },
+    "billing_pending": false,
+    "stored_response": {
+      "data": {
+        "id": "task_rzk2EthPPn1QllMjftsWN7v7OVLmT8i5",
+        "usage": {
+          "total_tokens": 87277,
+          "completion_tokens": 87277
+        },
+        "status": 2,
+        "message": null,
+        "metadata": {
+          "ratio": "16:9",
+          "duration": 4,
+          "resolution": "720p",
+          "reference_video": false
+        },
+        "video_url": "https://s3.laomandi.com/file/ce/b6/ceb609d8c031cb60988b0a3eb786c5af.mp4",
+        "created_at": "2026-09-11 18:16:06"
+      },
+      "error": null,
+      "state": 1
+    }
+  },
+  {
+    "channel": 1,
+    "video_check_http": 200,
+    "content_type": "text/plain",
+    "content_length": "2681747"
+  },
+  {
+    "channel": 1,
+    "upstream_query_url": "https://api.laomandi.com/asset/SdToolApi/generate-info",
+    "upstream_query_body": {
+      "id": 3228
+    },
+    "upstream_response": {
+      "state": 1,
+      "data": {
+        "id": 3228,
+        "status": 2,
+        "video_url": "https://s3.laomandi.com/file/ce/b6/ceb609d8c031cb60988b0a3eb786c5af.mp4",
+        "message": null,
+        "usage": {
+          "completion_tokens": 87277,
+          "total_tokens": 87277
+        },
+        "metadata": {
+          "resolution": "720p",
+          "ratio": "16:9",
+          "duration": 4,
+          "reference_video": false
+        },
+        "created_at": "2026-09-11 18:16:06"
+      },
+      "error": null
+    }
+  },
+  {
+    "channel": 2,
+    "status": "SUCCESS",
+    "attempt": 0
+  },
+  {
+    "channel": 2,
+    "downstream_url": "https://gateway.nexus-reach.com/v1/video/generations/task_NDknYMegP1cR3ZMCUVgC3gwiZkVrJ2pW",
+    "downstream_response": {
+      "code": "success",
+      "message": "",
+      "data": {
+        "id": 10,
+        "created_at": 1789121789,
+        "updated_at": 1789122055,
+        "task_id": "task_NDknYMegP1cR3ZMCUVgC3gwiZkVrJ2pW",
+        "platform": "54",
+        "user_id": 1,
+        "group": "default",
+        "channel_id": 2,
+        "quota": 275055,
+        "action": "generate",
+        "status": "SUCCESS",
+        "fail_reason": "",
+        "result_url": "https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/doubao-seedance-2-0/02178912178971300000000000000000000ffffac19310d3d4c04.mp4?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Credential=AKLTYWJkZTExNjA1ZDUyNDc3YzhjNTM5OGIyNjBhNDcyOTQ%2F20260911%2Fcn-beijing%2Ftos%2Frequest&X-Tos-Date=20260911T101948Z&X-Tos-Expires=86400&X-Tos-Signature=863f9aaae6b0a09afe1eabc7d782de373ecf8d15319f4b634485890b7bfdb79d&X-Tos-SignedHeaders=host",
+        "submit_time": 1789121789,
+        "start_time": 1789121801,
+        "finish_time": 1789122055,
+        "progress": "100%",
+        "properties": {
+          "input": "",
+          "upstream_model_name": "doubao-seedance-2-0-260128",
+          "origin_model_name": "doubao-seedance-2-0-260128"
+        },
+        "data": {
+          "content": {
+            "video_url": "https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/doubao-seedance-2-0/02178912178971300000000000000000000ffffac19310d3d4c04.mp4?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Credential=AKLTYWJkZTExNjA1ZDUyNDc3YzhjNTM5OGIyNjBhNDcyOTQ%2F20260911%2Fcn-beijing%2Ftos%2Frequest&X-Tos-Date=20260911T101948Z&X-Tos-Expires=86400&X-Tos-Signature=863f9aaae6b0a09afe1eabc7d782de373ecf8d15319f4b634485890b7bfdb79d&X-Tos-SignedHeaders=host"
+          },
+          "created_at": 1789121789,
+          "duration": 4,
+          "generate_audio": false,
+          "id": "cgt-20260911181629-b5mrp",
+          "model": "doubao-seedance-2-0-260128",
+          "ratio": "16:9",
+          "resolution": "720p",
+          "seed": 99225,
+          "status": "succeeded",
+          "updated_at": 1789121993,
+          "usage": {
+            "completion_tokens": 87300,
+            "total_tokens": 87300
+          }
+        }
+      }
+    }
+  },
+  {
+    "channel_id": 2,
+    "status": "SUCCESS",
+    "quota": 275055,
+    "upstream_task_id": "cgt-20260911181629-b5mrp",
+    "result_url": "https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/doubao-seedance-2-0/02178912178971300000000000000000000ffffac19310d3d4c04.mp4?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Credential=AKLTYWJkZTExNjA1ZDUyNDc3YzhjNTM5OGIyNjBhNDcyOTQ%2F20260911%2Fcn-beijing%2Ftos%2Frequest&X-Tos-Date=20260911T101948Z&X-Tos-Expires=86400&X-Tos-Signature=863f9aaae6b0a09afe1eabc7d782de373ecf8d15319f4b634485890b7bfdb79d&X-Tos-SignedHeaders=host",
+    "endpoint": {
+      "base_url": "https://ai.hwdrama.com",
+      "fetch_path": "/api/v3/contents/generations/tasks/{task_id}"
+    },
+    "billing": {
+      "group_ratio": 1,
+      "model_price": 6.301369863014,
+      "provider_billing": {
+        "currency": "CNY",
+        "provider": "doubao_video_cny",
+        "resolution": "720p",
+        "cny_per_usd": "7.3",
+        "group_ratio": 1,
+        "has_video_input": false,
+        "estimated_tokens": 86400,
+        "async_reconciliation_required": false,
+        "unit_price_per_million_tokens": "46"
+      },
+      "origin_model_name": "doubao-seedance-2-0-260128"
+    },
+    "billing_pending": false,
+    "stored_response": {
+      "id": "cgt-20260911181629-b5mrp",
+      "seed": 99225,
+      "model": "doubao-seedance-2-0-260128",
+      "ratio": "16:9",
+      "usage": {
+        "total_tokens": 87300,
+        "completion_tokens": 87300
+      },
+      "status": "succeeded",
+      "content": {
+        "video_url": "https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/doubao-seedance-2-0/02178912178971300000000000000000000ffffac19310d3d4c04.mp4?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Credential=AKLTYWJkZTExNjA1ZDUyNDc3YzhjNTM5OGIyNjBhNDcyOTQ%2F20260911%2Fcn-beijing%2Ftos%2Frequest&X-Tos-Date=20260911T101948Z&X-Tos-Expires=86400&X-Tos-Signature=863f9aaae6b0a09afe1eabc7d782de373ecf8d15319f4b634485890b7bfdb79d&X-Tos-SignedHeaders=host"
+      },
+      "duration": 4,
+      "created_at": 1789121789,
+      "resolution": "720p",
+      "updated_at": 1789121993,
+      "generate_audio": false
+    }
+  },
+  {
+    "channel": 2,
+    "video_check_error": "HTTPError"
+  },
+  {
+    "channel": 2,
+    "upstream_query_url": "https://ai.hwdrama.com/api/v3/contents/generations/tasks/cgt-20260911181629-b5mrp",
+    "upstream_query_body": null,
+    "upstream_response": {
+      "content": {
+        "video_url": "https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/doubao-seedance-2-0/02178912178971300000000000000000000ffffac19310d3d4c04.mp4?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Credential=AKLTYWJkZTExNjA1ZDUyNDc3YzhjNTM5OGIyNjBhNDcyOTQ%2F20260911%2Fcn-beijing%2Ftos%2Frequest&X-Tos-Date=20260911T101948Z&X-Tos-Expires=86400&X-Tos-Signature=863f9aaae6b0a09afe1eabc7d782de373ecf8d15319f4b634485890b7bfdb79d&X-Tos-SignedHeaders=host"
+      },
+      "created_at": 1789121789,
+      "duration": 4,
+      "generate_audio": false,
+      "id": "cgt-20260911181629-b5mrp",
+      "model": "doubao-seedance-2-0-260128",
+      "ratio": "16:9",
+      "resolution": "720p",
+      "seed": 99225,
+      "status": "succeeded",
+      "updated_at": 1789121993,
+      "usage": {
+        "completion_tokens": 87300,
+        "total_tokens": 87300
+      }
+    }
+  },
+  {
+    "remaining": {}
+  }
+]

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -133,14 +134,8 @@ func (a *App) ReservePaid(tx *gorm.DB, userID int64, chargeID string, amount int
 // contains final B/T/P/K/M snapshots, so this method never recomputes model
 // prices and remains safe when the gateway is upgraded independently.
 func (a *App) ProcessBillingEvent(event agencycontract.BillingEvent) error {
-	if event.EventID == "" || event.UserID <= 0 || event.SchemaVersion != agencycontract.SchemaVersion {
-		return errors.New("invalid billing event")
-	}
-	if event.MoneySeq < 0 || event.StandardQuota < 0 || event.ChargedTotalQuota < 0 ||
-		event.CommissionableQuota < 0 || event.NoncommissionableQuota < 0 ||
-		event.CommissionableQuota > event.ChargedTotalQuota ||
-		event.NoncommissionableQuota > event.ChargedTotalQuota {
-		return errors.New("invalid billing event amounts")
+	if err := validateBillingEvent(event); err != nil {
+		return err
 	}
 	payload, err := common.Marshal(event)
 	if err != nil {
@@ -159,7 +154,36 @@ func (a *App) ProcessBillingEvent(event agencycontract.BillingEvent) error {
 	})
 }
 
+// Both direct recovery and leased delivery must enforce the same contract.
+func validateBillingEvent(event agencycontract.BillingEvent) error {
+	if event.EventID == "" || event.UserID <= 0 {
+		return errors.New("invalid billing event")
+	}
+	if err := agencycontract.ValidateBillingComponents(event); err != nil {
+		return err
+	}
+	if event.MoneySeq < 0 || event.StandardQuota < 0 || event.ChargedTotalQuota < 0 ||
+		event.CommissionableQuota < 0 || event.NoncommissionableQuota < 0 ||
+		event.CommissionableQuota > event.ChargedTotalQuota ||
+		event.NoncommissionableQuota > event.ChargedTotalQuota ||
+		event.SettlementCostQuota < 0 || event.TheoreticalCommissionQuota < 0 ||
+		event.PaidAllocatedQuota < 0 || event.CommissionQuota < 0 ||
+		event.CommissionAmountMicros < 0 || event.ReversedCommissionAmountMicros < 0 {
+		return errors.New("invalid billing event amounts")
+	}
+	if event.SchemaVersion == agencycontract.ComponentSchemaVersion &&
+		(strings.TrimSpace(event.FinancialChargeID) == "" || strings.TrimSpace(event.OperationID) == "" ||
+			event.JournalRevision <= 0 || event.MoneySeq <= 0 || event.EventCount != 1 || event.EventIndex != 0 ||
+			(event.EventType != "agency.billing_finalized" && event.EventType != "agency.billing_reversed")) {
+		return errors.New("invalid component billing event identity")
+	}
+	return nil
+}
+
 func (a *App) processBillingEventWithLease(ctx context.Context, event agencycontract.BillingEvent, delivery model.AgencyEventDelivery) error {
+	if err := validateBillingEvent(event); err != nil {
+		return err
+	}
 	payload, err := common.Marshal(event)
 	if err != nil {
 		return err
@@ -259,17 +283,48 @@ func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEve
 	}
 	isReversal := event.EventType == "agency.billing_reversed"
 	isFundingReversal := event.EventType == "agency.funding_reversed"
-	if !isReversal && !isFundingReversal {
-		if err := a.recordUsageFact(tx, event); err != nil {
+	// Reservations and funding credits are money-sequence evidence, not model
+	// calls. Their eventual finalization supplies the single usage record.
+	isFundingOnly := isFundingReversal || isReservationCancellation(event) || event.EventType == "agency.billing_reserved" ||
+		event.EventType == "agency.topup_completed" || event.EventType == "agency.funding_adjusted"
+	// New component events require authoritative evidence even when no part
+	// earns commission. This binds fee/free usage and refund source deltas too.
+	if event.SchemaVersion == agencycontract.ComponentSchemaVersion ||
+		(event.JournalRevision > 0 && strings.TrimSpace(event.FinancialChargeID) != "" &&
+			(event.EventType == "agency.billing_finalized" || isReversal || event.CommissionEligible)) {
+		if err := verifyAuthoritativeBillingEvent(tx, event, payloadHash); err != nil {
 			return err
 		}
 	}
-	if event.AgencyID == nil || isFundingReversal || !event.CommissionEligible || (!isReversal && event.CommissionAmountMicros <= 0) || (isReversal && event.ReversedCommissionAmountMicros <= 0) {
-		if event.AgencyID != nil && !isReversal && !isFundingReversal {
-			if err := a.recordDailyStat(tx, event, 0, false); err != nil {
+	amount := int64(0)
+	if !isFundingOnly {
+		if len(event.Components) == 0 {
+			var err error
+			amount, err = a.projectBillingComponent(tx, event, "default", now)
+			if err != nil {
+				return err
+			}
+		} else {
+			for _, component := range event.Components {
+				componentAmount, err := a.projectBillingComponent(tx, agencycontract.ComponentEvent(event, component), component.ComponentID, now)
+				if err != nil {
+					return err
+				}
+				amount, err = checkedAdd(amount, componentAmount)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		// Component rows share a single request. Count and sum the immutable
+		// envelope once instead of multiplying calls by the component count.
+		if !isReversal || amount != 0 {
+			if err := a.recordDailyStat(tx, event, amount, isReversal); err != nil {
 				return err
 			}
 		}
+	}
+	if amount == 0 && event.SchemaVersion != agencycontract.ComponentSchemaVersion {
 		source.ProcessingStatus = "skipped"
 		source.SkipReason = event.CommissionSkipReason
 		if source.SkipReason == "" {
@@ -286,6 +341,81 @@ func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEve
 		}
 		return tx.Model(source).Updates(map[string]any{"processing_status": source.ProcessingStatus, "skip_reason": source.SkipReason}).Error
 	}
+	source.ProcessingStatus = "done"
+	return tx.Model(source).Update("processing_status", "done").Error
+}
+
+// The immutable operation, not the journal's latest mutable totals, proves an
+// event. A refund may already have advanced the journal before delivery of the
+// original finalize event; its committed result must still match exactly.
+func verifyAuthoritativeBillingEvent(tx *gorm.DB, event agencycontract.BillingEvent, payloadHash string) error {
+	var journal model.AgencyBillingJournal
+	if err := model.AgencyLockForUpdate(tx).Where("charge_id = ? AND segment_no = ?", event.FinancialChargeID, event.SegmentNo).First(&journal).Error; err != nil {
+		return fmt.Errorf("authoritative billing journal unavailable: %w", err)
+	}
+	if journal.UserID != event.UserID || journal.Revision < event.JournalRevision {
+		return errors.New("authoritative billing journal identity mismatch")
+	}
+	if event.EventType == "agency.billing_finalized" || event.EventType == "agency.billing_reversed" {
+		cancelledReservation := journal.Status == "cancelled" && isReservationCancellation(event)
+		if journal.Status != "finalized" && journal.Status != "settled" && journal.Status != "partially_reversed" && journal.Status != "reversed" && !cancelledReservation {
+			return errors.New("authoritative billing journal is not finalized")
+		}
+	}
+	var operation model.AgencyBillingOperation
+	if err := tx.Where("charge_id = ? AND segment_no = ? AND revision = ?", event.FinancialChargeID, event.SegmentNo, event.JournalRevision).First(&operation).Error; err != nil {
+		return fmt.Errorf("authoritative billing operation unavailable: %w", err)
+	}
+	operationID := operation.OperationID
+	// Historical v1 refund operations did not duplicate operation_id or
+	// money_seq into columns. Their complete committed payload below remains
+	// authoritative; newly written v2 operations require both columns too.
+	if (operationID != "" && operationID != event.OperationID) ||
+		(operation.MoneySeq != 0 && operation.MoneySeq != event.MoneySeq) || operation.EventCount != event.EventCount ||
+		(event.SchemaVersion == agencycontract.ComponentSchemaVersion && (operationID != event.OperationID || operation.MoneySeq != event.MoneySeq)) {
+		return errors.New("authoritative billing operation identity mismatch")
+	}
+	var committed agencycontract.BillingEvent
+	if err := common.Unmarshal([]byte(operation.CommittedResult), &committed); err != nil {
+		return errors.New("authoritative billing operation has invalid committed result")
+	}
+	committedHash, err := agencycontract.CanonicalHash(committed)
+	if err != nil {
+		return err
+	}
+	if committedHash != payloadHash {
+		return errors.New("authoritative billing operation payload hash conflict")
+	}
+	return nil
+}
+
+// A cancelled reservation is a final financial receipt that releases frozen
+// funds. It neither billed a model nor earned commission. Still verify its
+// immutable operation before completing the user's money-sequence chain.
+func isReservationCancellation(event agencycontract.BillingEvent) bool {
+	return event.EventType == "agency.billing_finalized" && event.BusinessStatus == "cancelled" &&
+		event.BillingStatus == "cancelled" && !event.CommissionEligible &&
+		event.ChargedTotalQuota == 0 && event.CommissionableQuota == 0 && event.NoncommissionableQuota == 0 &&
+		event.SettlementCostQuota == 0 && event.TheoreticalCommissionQuota == 0 && event.PaidAllocatedQuota == 0 &&
+		event.CommissionQuota == 0 && event.CommissionAmountMicros == 0 && event.ReversedCommissionAmountMicros == 0
+}
+
+func (a *App) projectBillingComponent(tx *gorm.DB, event agencycontract.BillingEvent, componentID string, now int64) (int64, error) {
+	isReversal := event.EventType == "agency.billing_reversed"
+	if !isReversal {
+		if err := a.recordUsageFact(tx, event, componentID); err != nil {
+			return 0, err
+		}
+	}
+	zeroCommission := (!isReversal && event.CommissionAmountMicros == 0) || (isReversal && event.ReversedCommissionAmountMicros == 0)
+	// Quota and currency micros have independent cumulative rounding. A
+	// sub-micro refund can reverse nonzero K and still needs a ledger row.
+	if event.SchemaVersion == agencycontract.ComponentSchemaVersion && event.CommissionQuota > 0 {
+		zeroCommission = false
+	}
+	if event.AgencyID == nil || !event.CommissionEligible || zeroCommission {
+		return 0, nil
+	}
 	amount := event.CommissionAmountMicros
 	entryType := "earned"
 	originalID := (*int64)(nil)
@@ -294,50 +424,59 @@ func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEve
 		amount = -event.ReversedCommissionAmountMicros
 		var original model.AgencyCommissionLedger
 		if event.OriginalEventID == "" {
-			return errors.New("reversal event is missing original_event_id")
+			return 0, errors.New("reversal event is missing original_event_id")
 		}
-		if err := tx.Where("event_id = ? AND entry_type = ?", event.OriginalEventID, "earned").First(&original).Error; err != nil {
-			return err
+		if err := model.AgencyLockForUpdate(tx).Where("event_id = ? AND component_key = ? AND entry_type = ?", event.OriginalEventID, model.AgencyComponentKey(componentID), "earned").First(&original).Error; err != nil {
+			return 0, err
+		}
+		if original.ComponentID != componentID || original.UserID != event.UserID || original.AgencyID != *event.AgencyID || original.BindingID != valueOrZero(event.BindingID) ||
+			original.CurrencyCode != event.CurrencyCode || original.QuotaPerUnit != event.QuotaPerUnit || original.ExchangeRate != event.ExchangeRate {
+			return 0, errors.New("commission reversal does not match original owner and currency snapshot")
 		}
 		originalID = &original.ID
 		var reversed int64
 		if err := tx.Model(&model.AgencyCommissionLedger{}).Where("original_entry_id = ? AND entry_type = ?", original.ID, "reversal").Select("COALESCE(SUM(-amount_micros),0)").Scan(&reversed).Error; err != nil {
-			return err
+			return 0, err
 		}
-		if event.ReversedCommissionAmountMicros < 0 || reversed > original.AmountMicros-event.ReversedCommissionAmountMicros {
-			return errors.New("commission reversal exceeds original entry")
+		if original.AmountMicros < event.ReversedCommissionAmountMicros || reversed < 0 || reversed > original.AmountMicros-event.ReversedCommissionAmountMicros {
+			return 0, errors.New("commission reversal exceeds original entry")
+		}
+		if event.SchemaVersion == agencycontract.ComponentSchemaVersion {
+			var source model.AgencySourceEvent
+			if err := tx.Where("event_id = ? AND schema_version = ? AND processing_status = ?", event.OriginalEventID, agencycontract.ComponentSchemaVersion, "done").First(&source).Error; err != nil {
+				return 0, fmt.Errorf("original component billing receipt unavailable: %w", err)
+			}
+			var reversedQuota int64
+			if err := tx.Model(&model.AgencyCommissionLedger{}).Where("original_entry_id = ? AND entry_type = ?", original.ID, "reversal").Select("COALESCE(SUM(commission_quota),0)").Scan(&reversedQuota).Error; err != nil {
+				return 0, err
+			}
+			if original.CommissionQuota < event.CommissionQuota || reversedQuota < 0 || reversedQuota > original.CommissionQuota-event.CommissionQuota {
+				return 0, errors.New("commission quota reversal exceeds original entry")
+			}
 		}
 	}
-	if amount == 0 {
-		source.ProcessingStatus = "skipped"
-		return tx.Model(source).Update("processing_status", "skipped").Error
-	}
-	entry := &model.AgencyCommissionLedger{EventID: event.EventID, ComponentID: "default", EntryType: entryType, OriginalEntryID: originalID, AgencyID: *event.AgencyID, BindingID: valueOrZero(event.BindingID), UserID: event.UserID, OriginModelName: event.OriginModelName, StandardQuota: event.StandardQuota, SettlementCostQuota: event.SettlementCostQuota, TheoreticalCommissionQuota: event.TheoreticalCommissionQuota, PaidAllocatedQuota: event.PaidAllocatedQuota, CommissionQuota: event.CommissionQuota, AmountMicros: amount, CurrencyCode: event.CurrencyCode, QuotaPerUnit: event.QuotaPerUnit, ExchangeRate: event.ExchangeRate, OccurredAtMS: now}
+	entry := &model.AgencyCommissionLedger{EventID: event.EventID, ComponentID: componentID, EntryType: entryType, OriginalEntryID: originalID, AgencyID: *event.AgencyID, BindingID: valueOrZero(event.BindingID), UserID: event.UserID, OriginModelName: event.OriginModelName, StandardQuota: event.StandardQuota, SettlementCostQuota: event.SettlementCostQuota, TheoreticalCommissionQuota: event.TheoreticalCommissionQuota, PaidAllocatedQuota: event.PaidAllocatedQuota, CommissionQuota: event.CommissionQuota, AmountMicros: amount, CurrencyCode: event.CurrencyCode, QuotaPerUnit: event.QuotaPerUnit, ExchangeRate: event.ExchangeRate, OccurredAtMS: now}
 	if err := tx.Create(entry).Error; err != nil {
-		if errors.Is(err, gorm.ErrDuplicatedKey) {
-			return nil
-		}
-		return err
+		return 0, err
 	}
 	var balance model.AgencyCommissionBalance
 	if err := model.AgencyLockForUpdate(tx).Where("agency_id = ? AND currency_code = ?", *event.AgencyID, event.CurrencyCode).First(&balance).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
+			return 0, err
 		}
 		balance = model.AgencyCommissionBalance{AgencyID: *event.AgencyID, CurrencyCode: event.CurrencyCode, Version: 1}
 		if err := tx.Create(&balance).Error; err != nil {
-			return err
+			return 0, err
 		}
 	}
 	available, err := checkedAdd(balance.AvailableMicros, amount)
 	// A reversal may legitimately drive available below zero when the
-	// original commission has already been withdrawn. Positive entries may
-	// never create a negative balance.
-	if err != nil || (available < 0 && amount > 0) {
-		if err == nil {
-			err = errors.New("commission reversal exceeds balance")
-		}
-		return err
+	// original commission has already been withdrawn. A later positive earning
+	// must be able to replenish that negative balance, so the invariant is
+	// enforced by earned/reversed totals and withdrawal locks rather than by
+	// rejecting a negative available projection here.
+	if err != nil {
+		return 0, err
 	}
 	earned := balance.EarnedMicros
 	reversed := balance.ReversedMicros
@@ -347,24 +486,20 @@ func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEve
 		reversed, err = checkedAdd(reversed, -amount)
 	}
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if err = tx.Model(&balance).Updates(map[string]any{"available_micros": available, "earned_micros": earned, "reversed_micros": reversed, "version": balance.Version + 1, "updated_at_ms": now}).Error; err != nil {
-		return err
+		return 0, err
 	}
 	if isReversal {
 		if err := holdUnpaidWithdrawals(tx, *event.AgencyID, event.CurrencyCode, event.EventID, now); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	if err := a.recordDailyStat(tx, event, amount, isReversal); err != nil {
-		return err
-	}
-	source.ProcessingStatus = "done"
-	return tx.Model(source).Update("processing_status", "done").Error
+	return amount, nil
 }
 
-func (a *App) recordUsageFact(tx *gorm.DB, event agencycontract.BillingEvent) error {
+func (a *App) recordUsageFact(tx *gorm.DB, event agencycontract.BillingEvent, componentID string) error {
 	if event.AgencyID == nil {
 		return nil
 	}
@@ -381,7 +516,7 @@ func (a *App) recordUsageFact(tx *gorm.DB, event agencycontract.BillingEvent) er
 	}
 	fact := model.AgencyUsageFact{
 		EventID:         event.EventID,
-		ComponentID:     "default",
+		ComponentID:     componentID,
 		UsageHash:       event.UsageHash,
 		CumulativeUsage: event.CumulativeUsage,
 		UserID:          event.UserID,
@@ -402,9 +537,6 @@ func (a *App) recordUsageFact(tx *gorm.DB, event agencycontract.BillingEvent) er
 		fact.BusinessStatus = event.BillingStatus
 	}
 	if err := tx.Create(&fact).Error; err != nil {
-		if errors.Is(err, gorm.ErrDuplicatedKey) {
-			return nil
-		}
 		return err
 	}
 	return nil
@@ -456,14 +588,26 @@ func (a *App) recordDailyStat(tx *gorm.DB, event agencycontract.BillingEvent, am
 		stat = model.AgencyDailyStat{StatDate: statDate, AgencyID: *event.AgencyID, ModelKey: modelKey, CurrencyCode: event.CurrencyCode, BillingSource: source, Revision: 1}
 	}
 	if reversal {
-		stat.ReversalMicros += -amount
+		if stat.ReversalMicros, err = checkedAdd(stat.ReversalMicros, -amount); err != nil {
+			return err
+		}
 	} else {
-		stat.Calls++
-		stat.UsageQuota += event.ChargedTotalQuota
-		stat.ChargedQuota += event.ChargedTotalQuota
-		stat.CommissionMicros += amount
+		if stat.Calls, err = checkedAdd(stat.Calls, 1); err != nil {
+			return err
+		}
+		if stat.UsageQuota, err = checkedAdd(stat.UsageQuota, event.ChargedTotalQuota); err != nil {
+			return err
+		}
+		if stat.ChargedQuota, err = checkedAdd(stat.ChargedQuota, event.ChargedTotalQuota); err != nil {
+			return err
+		}
+		if stat.CommissionMicros, err = checkedAdd(stat.CommissionMicros, amount); err != nil {
+			return err
+		}
 	}
-	stat.Revision++
+	if stat.Revision, err = checkedAdd(stat.Revision, 1); err != nil {
+		return err
+	}
 	if stat.ID == 0 {
 		return tx.Create(&stat).Error
 	}
@@ -488,16 +632,20 @@ func (a *App) commissionSummary(c *gin.Context) {
 	}
 	items := make([]gin.H, 0, len(balances))
 	for _, balance := range balances {
+		// These are lifetime totals. Paying or locking a withdrawal only moves
+		// available funds and must not subtract the same earnings a second time.
+		netEarned := new(big.Int).Sub(big.NewInt(balance.EarnedMicros), big.NewInt(balance.ReversedMicros))
 		items = append(items, gin.H{
-			"agency_id":        strconv.FormatInt(balance.AgencyID, 10),
-			"currency_code":    balance.CurrencyCode,
-			"earned_micros":    strconv.FormatInt(balance.EarnedMicros, 10),
-			"reversed_micros":  strconv.FormatInt(balance.ReversedMicros, 10),
-			"available_micros": strconv.FormatInt(balance.AvailableMicros, 10),
-			"locked_micros":    strconv.FormatInt(balance.LockedMicros, 10),
-			"paid_micros":      strconv.FormatInt(balance.PaidMicros, 10),
-			"version":          strconv.FormatInt(balance.Version, 10),
-			"updated_at_ms":    strconv.FormatInt(balance.UpdatedAtMS, 10),
+			"agency_id":         strconv.FormatInt(balance.AgencyID, 10),
+			"currency_code":     balance.CurrencyCode,
+			"earned_micros":     strconv.FormatInt(balance.EarnedMicros, 10),
+			"reversed_micros":   strconv.FormatInt(balance.ReversedMicros, 10),
+			"net_earned_micros": netEarned.String(),
+			"available_micros":  strconv.FormatInt(balance.AvailableMicros, 10),
+			"locked_micros":     strconv.FormatInt(balance.LockedMicros, 10),
+			"paid_micros":       strconv.FormatInt(balance.PaidMicros, 10),
+			"version":           strconv.FormatInt(balance.Version, 10),
+			"updated_at_ms":     strconv.FormatInt(balance.UpdatedAtMS, 10),
 		})
 	}
 	respondOK(c, gin.H{"items": items})
@@ -865,6 +1013,10 @@ func (a *App) listRootWithdrawals(c *gin.Context) {
 		item["reviewer_id"] = row.ReviewerID
 		item["previous_status"] = row.PreviousStatus
 		item["payment_lease_until"] = row.PaymentLeaseUntil
+		// Only the current lease owner may resume its payment after a page reload.
+		if row.Status == "paying" && row.PaymentLeaseOwner == fmt.Sprintf("%s:%d", identity.ActorType, identity.ActorID) && row.PaymentLeaseUntil >= time.Now().Unix() {
+			item["payment_lease_token"] = strconv.FormatInt(row.PaymentLeaseToken, 10)
+		}
 		items = append(items, item)
 	}
 	nextCursor := ""
@@ -1012,7 +1164,8 @@ func (a *App) validateWithdrawalPayingGate(tx *gorm.DB, withdrawal model.AgencyW
 	}
 	var issueCount int64
 	if err := tx.Model(&model.AgencyReconciliationIssue{}).
-		Where("status = ? AND object_type IN ? AND (object_id = ? OR object_id = ?)", "open", []string{"agency", "commission_balance"}, strconv.FormatInt(withdrawal.AgencyID, 10), withdrawal.CurrencyCode).
+		Where("(status = ? OR (status IN ? AND (resolution_evidence IS NULL OR resolution_evidence = ?)))", "open", []string{"ignored", "resolved"}, "").
+		Where("object_type IN ? AND (object_id = ? OR object_id = ? OR object_id LIKE ?)", []string{"agency", "commission_balance", "withdrawal_lock"}, strconv.FormatInt(withdrawal.AgencyID, 10), withdrawal.CurrencyCode, strconv.FormatInt(withdrawal.AgencyID, 10)+":%").
 		Count(&issueCount).Error; err != nil {
 		return err
 	}
@@ -1024,20 +1177,34 @@ func (a *App) validateWithdrawalPayingGate(tx *gorm.DB, withdrawal model.AgencyW
 
 func (a *App) reviewWithdrawal(c *gin.Context) { a.transitionWithdrawal(c, "approved") }
 func (a *App) rejectWithdrawal(c *gin.Context) { a.transitionWithdrawal(c, "rejected") }
+
+// This is an attestation of the original bank investigation, not a command to
+// send money. The signed request and immutable transition bind it to one
+// withdrawal version and preserve its author for later financial review.
+type withdrawalUnpaidEvidence struct {
+	Outcome                   string `json:"outcome"`
+	PaymentChannel            string `json:"payment_channel"`
+	OriginalPaymentReference  string `json:"original_payment_reference"`
+	BankConfirmationReference string `json:"bank_confirmation_reference"`
+	ConfirmedAt               string `json:"confirmed_at"`
+}
+
+type withdrawalTransitionRequest struct {
+	TargetStatus    string                    `json:"target_status"`
+	ExpectedVersion int64                     `json:"expected_version"`
+	Reason          string                    `json:"reason"`
+	UnpaidEvidence  *withdrawalUnpaidEvidence `json:"unpaid_evidence,omitempty"`
+}
+
 func (a *App) transitionWithdrawalCommand(c *gin.Context) {
-	var request struct {
-		TargetStatus    string `json:"target_status"`
-		ExpectedVersion int64  `json:"expected_version"`
-		Reason          string `json:"reason"`
-	}
+	var request withdrawalTransitionRequest
 	if err := c.ShouldBindJSON(&request); err != nil || strings.TrimSpace(request.TargetStatus) == "" {
 		respondError(c, http.StatusBadRequest, "invalid_request", "必须提供目标状态", nil)
 		return
 	}
 	switch request.TargetStatus {
 	case "reviewing", "approved", "paying", "payment_unknown", "on_hold", "rejected", "cancelled":
-		c.Set("agency_transition_expected_version", request.ExpectedVersion)
-		c.Set("agency_transition_reason", request.Reason)
+		c.Set("agency_transition_request", request)
 		a.transitionWithdrawal(c, request.TargetStatus)
 	default:
 		respondError(c, http.StatusUnprocessableEntity, "invalid_status", "不支持的提现状态", nil)
@@ -1050,20 +1217,12 @@ func (a *App) transitionWithdrawal(c *gin.Context, target string) {
 		return
 	}
 	identity := currentIdentity(c)
-	var request struct {
-		ExpectedVersion int64  `json:"expected_version"`
-		Reason          string `json:"reason"`
-	}
-	_ = c.ShouldBindJSON(&request)
-	if value, exists := c.Get("agency_transition_expected_version"); exists {
-		if expected, ok := value.(int64); ok {
-			request.ExpectedVersion = expected
-		}
-	}
-	if value, exists := c.Get("agency_transition_reason"); exists {
-		if reason, ok := value.(string); ok {
-			request.Reason = reason
-		}
+	var request withdrawalTransitionRequest
+	if value, exists := c.Get("agency_transition_request"); exists {
+		request = value.(withdrawalTransitionRequest)
+	} else if err := c.ShouldBindJSON(&request); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_request", "无效的提现操作参数", nil)
+		return
 	}
 	if request.ExpectedVersion <= 0 {
 		respondError(c, http.StatusUnprocessableEntity, "expected_version_required", "必须提供当前提现版本", nil)
@@ -1082,17 +1241,59 @@ func (a *App) transitionWithdrawal(c *gin.Context, target string) {
 		allowed := map[string]map[string]bool{
 			"submitted":       {"reviewing": true, "approved": true, "rejected": true, "on_hold": true, "cancelled": true},
 			"reviewing":       {"approved": true, "rejected": true, "on_hold": true, "cancelled": true},
-			"approved":        {"paying": true, "on_hold": true, "cancelled": true},
+			"approved":        {"paying": true, "on_hold": true, "rejected": true},
 			"paying":          {"payment_unknown": true, "paid": true, "on_hold": true},
-			"payment_unknown": {"paid": true, "on_hold": true},
-			"on_hold":         {"reviewing": true, "cancelled": true},
+			"payment_unknown": {"paid": true, "on_hold": true, "approved": true},
+			"on_hold":         {"reviewing": true, "approved": true, "rejected": true},
 		}
 		if !allowed[withdrawal.Status][target] {
 			return errors.New("withdrawal status transition is not allowed")
 		}
 		before := withdrawal.Status
-		if before == "on_hold" && (withdrawal.PreviousStatus == "paying" || withdrawal.PreviousStatus == "payment_unknown") && (target == "reviewing" || target == "cancelled") {
+		if before == "paying" && withdrawal.PaymentLeaseToken != 0 && withdrawal.PaymentLeaseUntil >= time.Now().Unix() && withdrawal.PaymentLeaseOwner != fmt.Sprintf("%s:%d", identity.ActorType, identity.ActorID) {
+			return errors.New("payment is being processed by another root")
+		}
+		heldPayment := before == "on_hold" && (withdrawal.PreviousStatus == "paying" || withdrawal.PreviousStatus == "payment_unknown")
+		if heldPayment && (target == "reviewing" || target == "cancelled" || target == "rejected") {
 			return errors.New("payment status must be verified before moving this withdrawal")
+		}
+		recovery := target == "approved" && (before == "payment_unknown" || heldPayment)
+		if target == "approved" && before == "on_hold" && !heldPayment {
+			return errors.New("held withdrawal must be reviewed before approval")
+		}
+		evidence := request.Reason
+		if recovery {
+			if withdrawal.PaymentReference != "" {
+				return errors.New("withdrawal already has a confirmed payment reference")
+			}
+			bank := request.UnpaidEvidence
+			if bank == nil || bank.Outcome != "not_paid" || strings.TrimSpace(request.Reason) == "" || len(request.Reason) > 1000 {
+				return errors.New("structured bank evidence confirming the original payment was not paid is required")
+			}
+			bank.PaymentChannel = strings.TrimSpace(bank.PaymentChannel)
+			bank.OriginalPaymentReference = strings.TrimSpace(bank.OriginalPaymentReference)
+			bank.BankConfirmationReference = strings.TrimSpace(bank.BankConfirmationReference)
+			if bank.PaymentChannel == "" || len(bank.PaymentChannel) > 64 || bank.OriginalPaymentReference == "" || len(bank.OriginalPaymentReference) > 191 || bank.BankConfirmationReference == "" || len(bank.BankConfirmationReference) > 191 {
+				return errors.New("bank evidence requires the channel, original payment reference and bank confirmation reference")
+			}
+			var paidReferences int64
+			if err := tx.Model(&model.AgencyWithdrawalPaymentReference{}).Where("payment_channel = ? AND payment_reference = ?", bank.PaymentChannel, bank.OriginalPaymentReference).Count(&paidReferences).Error; err != nil {
+				return err
+			}
+			if paidReferences > 0 {
+				return errors.New("original payment reference is already recorded as paid")
+			}
+			confirmedAt, err := time.Parse(time.RFC3339, bank.ConfirmedAt)
+			if err != nil || confirmedAt.UnixMilli() > now || confirmedAt.UnixMilli() < withdrawal.UpdatedAtMS {
+				return errors.New("bank confirmation must be dated after the payment investigation started and not in the future")
+			}
+			encoded, err := common.Marshal(map[string]any{"schema_version": 1, "reason": strings.TrimSpace(request.Reason), "unpaid_evidence": bank})
+			if err != nil {
+				return err
+			}
+			evidence = string(encoded)
+		} else if request.UnpaidEvidence != nil {
+			return errors.New("unpaid evidence is only accepted when recovering an uncertain payment")
 		}
 		if target == "paying" {
 			if err := a.validateWithdrawalPayingGate(tx, withdrawal); err != nil {
@@ -1135,7 +1336,7 @@ func (a *App) transitionWithdrawal(c *gin.Context, target string) {
 		// Marking an already-attempted external payment as paid is a fact
 		// recording operation and must remain possible after the old lease
 		// expires; it must never create a second payment attempt.
-		if target == "payment_unknown" || target == "on_hold" {
+		if target == "payment_unknown" || target == "on_hold" || recovery {
 			updates["payment_lease_owner"] = ""
 			updates["payment_lease_token"] = 0
 			updates["payment_lease_until"] = 0
@@ -1145,10 +1346,24 @@ func (a *App) transitionWithdrawal(c *gin.Context, target string) {
 			updates["payment_lease_token"] = 0
 			updates["payment_lease_until"] = 0
 		}
-		if err := tx.Model(&withdrawal).Updates(updates).Error; err != nil {
+		result := tx.Model(&withdrawal).Where("version = ?", request.ExpectedVersion).Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("withdrawal version conflict")
+		}
+		if err := tx.Create(&model.AgencyWithdrawalTransition{WithdrawalID: withdrawal.ID, OperationID: requestID(c), BeforeStatus: before, AfterStatus: target, ActorType: identity.ActorType, ActorID: identity.ActorID, Evidence: evidence, CreatedAtMS: now}).Error; err != nil {
 			return err
 		}
-		return tx.Create(&model.AgencyWithdrawalTransition{WithdrawalID: withdrawal.ID, OperationID: requestID(c), BeforeStatus: before, AfterStatus: target, ActorType: identity.ActorType, ActorID: identity.ActorID, Evidence: request.Reason, CreatedAtMS: now}).Error
+		action := "withdrawal.transition"
+		after := gin.H{"status": target, "version": request.ExpectedVersion + 1}
+		if recovery {
+			action = "withdrawal.recover_unpaid"
+			after["unpaid_evidence"] = request.UnpaidEvidence
+		}
+		return recordAuditTx(tx, c, identity, action, "withdrawal", strconv.FormatInt(withdrawal.ID, 10), request.Reason,
+			gin.H{"status": before, "version": request.ExpectedVersion}, after)
 	})
 	if err != nil {
 		respondError(c, http.StatusConflict, "withdrawal_transition_failed", err.Error(), nil)
@@ -1156,7 +1371,7 @@ func (a *App) transitionWithdrawal(c *gin.Context, target string) {
 	}
 	response := gin.H{"status": target}
 	if target == "paying" {
-		response["payment_lease_token"] = paymentLeaseToken
+		response["payment_lease_token"] = strconv.FormatInt(paymentLeaseToken, 10)
 		response["payment_lease_until"] = time.Now().Add(10 * time.Minute).Unix()
 	}
 	respondOK(c, response)
@@ -1169,10 +1384,10 @@ func (a *App) markWithdrawalPaid(c *gin.Context) {
 	}
 	identity := currentIdentity(c)
 	var request struct {
-		ExpectedVersion   int64  `json:"expected_version"`
-		PaymentChannel    string `json:"payment_channel"`
-		PaymentLeaseToken int64  `json:"payment_lease_token"`
-		PaymentReference  string `json:"payment_reference"`
+		ExpectedVersion   int64        `json:"expected_version"`
+		PaymentChannel    string       `json:"payment_channel"`
+		PaymentLeaseToken decimalInt64 `json:"payment_lease_token"`
+		PaymentReference  string       `json:"payment_reference"`
 	}
 	if err = c.ShouldBindJSON(&request); err != nil || strings.TrimSpace(request.PaymentReference) == "" {
 		respondError(c, http.StatusBadRequest, "invalid_request", "必须提供付款凭证", nil)
@@ -1209,7 +1424,7 @@ func (a *App) markWithdrawalPaid(c *gin.Context) {
 		}
 		if withdrawal.Status == "paying" && withdrawal.PaymentLeaseToken != 0 {
 			owner := fmt.Sprintf("%s:%d", identity.ActorType, identity.ActorID)
-			if withdrawal.PaymentLeaseOwner != owner || request.PaymentLeaseToken != withdrawal.PaymentLeaseToken || withdrawal.PaymentLeaseUntil < time.Now().Unix() {
+			if withdrawal.PaymentLeaseOwner != owner || request.PaymentLeaseToken.Int64() != withdrawal.PaymentLeaseToken || withdrawal.PaymentLeaseUntil < time.Now().Unix() {
 				return errors.New("payment lease is invalid or expired")
 			}
 		}

@@ -22,6 +22,7 @@ import (
 
 func setupAgencyInviteControllerTest(t *testing.T) (*gorm.DB, *agencyhub.App) {
 	t.Helper()
+	t.Setenv("AGENCY_ONBOARDING_ENABLED", "true")
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousRedisEnabled := common.RedisEnabled
 	previousMainDatabaseType, previousLogDatabaseType := common.MainDatabaseType(), common.LogDatabaseType()
@@ -116,6 +117,29 @@ func TestAgencyInviteRegistrationCreatesDurableUserBindingFundingAndDefaultToken
 	require.NoError(t, db.Where("user_id = ?", user.Id).First(&token).Error)
 	assert.True(t, token.UnlimitedQuota)
 	assert.Equal(t, 500000, token.RemainQuota)
+}
+
+func TestAgencyOnboardingPausePreservesOrdinaryRegistrationAndExistingMode(t *testing.T) {
+	db, app := setupAgencyInviteControllerTest(t)
+	agency, _, err := app.CreateAgency(1, "Pause Agency", "pause_operator", agencyInviteTestPolicy())
+	require.NoError(t, err)
+	recorder := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":"existing_durable","password":"password123","invite":%q}`, agency.InviteCode))
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+	t.Setenv("AGENCY_ONBOARDING_ENABLED", "false")
+	recorder = postAgencyInviteRegister(t, fmt.Sprintf(`{"username":"paused_invitee","password":"password123","invite":%q}`, agency.InviteCode))
+	assert.Contains(t, recorder.Body.String(), `"success":false`)
+	var count int64
+	require.NoError(t, db.Model(&model.User{}).Where("username = ?", "paused_invitee").Count(&count).Error)
+	assert.Zero(t, count)
+	recorder = postAgencyInviteRegister(t, `{"username":"ordinary_customer","password":"password123"}`)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"success":true`)
+	var durable model.User
+	require.NoError(t, db.Where("username = ?", "existing_durable").First(&durable).Error)
+	assert.Equal(t, model.AgencyDurableBillingMode, durable.BillingMode)
+	var ordinary model.User
+	require.NoError(t, db.Where("username = ?", "ordinary_customer").First(&ordinary).Error)
+	assert.NotEqual(t, model.AgencyDurableBillingMode, ordinary.BillingMode)
 }
 
 func TestAgencyInviteRegistrationRollsBackUserWhenInviteIsInvalidOrDisabled(t *testing.T) {

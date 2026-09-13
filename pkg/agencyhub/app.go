@@ -14,6 +14,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -37,6 +38,8 @@ type App struct {
 	commandServicePublicKey  []byte
 	commandServicePrivateKey []byte
 	cursorSecret             []byte
+	commandClient            *http.Client
+	commandEndpoint          string
 }
 
 type Identity struct {
@@ -89,6 +92,7 @@ func (a *App) Router() *gin.Engine {
 	r.Use(gin.Recovery())
 	r.GET(a.config.BasePath, a.index)
 	r.GET(a.config.BasePath+"/", a.index)
+	r.GET(a.config.BasePath+"/assets/*filepath", a.staticAsset)
 	r.GET(a.config.BasePath+"/healthz", a.healthz)
 	r.GET(a.config.BasePath+"/livez", a.livez)
 	r.GET(a.config.BasePath+"/readyz", a.readyz)
@@ -98,16 +102,11 @@ func (a *App) Router() *gin.Engine {
 	r.POST(a.config.BasePath+"/sso/callback", a.ssoCallback)
 	r.GET(a.config.BasePath+"/api/v1/public/invitations/:code", a.publicInvitation)
 	r.GET(a.config.BasePath+"/api/v1/public/invitations/:code/qr", a.publicInvitationQR)
-	// Privileged Root commands are deliberately outside the browser session
-	// middleware. They require the hub service signature and the original Root
-	// proof in agency_command.go.
-	r.POST("/internal/agency/v1/commands", a.createInternalCommand)
-	r.GET("/internal/agency/v1/commands/:id", a.getInternalCommand)
-
 	api := r.Group(a.config.BasePath + "/api/v1")
 	api.Use(a.sessionMiddleware())
 	api.Use(a.idempotencyMiddleware())
 	api.GET("/auth/me", a.me)
+	api.GET("/invitation", a.getOwnInvitation)
 	api.POST("/auth/logout", a.logout)
 	api.POST("/auth/change-password", a.changePassword)
 	api.POST("/auth/verify", a.operatorVerify)
@@ -132,6 +131,7 @@ func (a *App) Router() *gin.Engine {
 	api.GET("/reports/summary", a.reportSummary)
 	api.GET("/audit", a.listOwnAudit)
 	api.POST("/exports", a.createExport)
+	api.GET("/exports", a.listExports)
 	api.GET("/exports/:id", a.getExport)
 	api.GET("/exports/:id/download", a.downloadExport)
 
@@ -151,10 +151,15 @@ func (a *App) Router() *gin.Engine {
 	root.POST("/agencies/:id/pricing/publish", a.publishRootPricing)
 	root.POST("/agencies/:id/enter", a.enterAgency)
 	root.POST("/leave-agency", a.leaveAgency)
+	root.GET("/customers", a.listRootCustomers)
+	root.GET("/users/:user_id/management", a.customerManagement)
 	root.POST("/users/:user_id/bind", a.bindExistingUser)
 	root.GET("/provisioning/:id", a.getProvisioning)
 	root.POST("/provisioning/:id/cancel", a.cancelProvisioning)
 	root.GET("/reconciliation/issues", a.listReconciliationIssues)
+	root.GET("/reconciliation/issues/:id", a.getReconciliationIssue)
+	root.POST("/reconciliation/runs", a.createReconciliationRun)
+	root.GET("/reconciliation/runs", a.listReconciliationRuns)
 	root.POST("/reconciliation/issues/:id/resolve", a.resolveReconciliationIssue)
 	root.GET("/sync/status", a.syncStatus)
 	root.GET("/audit", a.listAudit)
@@ -166,6 +171,16 @@ func (a *App) Router() *gin.Engine {
 	root.POST("/withdrawals/:id/mark-paid", a.markWithdrawalPaid)
 	root.POST("/withdrawals/:id/reject", a.rejectWithdrawal)
 	root.POST("/withdrawal-accounts/:id/reveal", a.revealWithdrawalAccount)
+	return r
+}
+
+// CommandRouter is mounted only by the gateway's dedicated internal mTLS
+// listener. Public Hub and gateway routers must never mount these handlers.
+func (a *App) CommandRouter() *gin.Engine {
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.POST("/internal/agency/v1/commands", a.createInternalCommand)
+	r.GET("/internal/agency/v1/commands/:id", a.getInternalCommand)
 	return r
 }
 
@@ -199,7 +214,7 @@ func (a *App) readyz(c *gin.Context) {
 		respondError(c, http.StatusServiceUnavailable, "schema_check_failed", "agency schema check failed", err.Error())
 		return
 	}
-	if missing, ok := schema["missing_tables"].([]string); ok && len(missing) > 0 {
+	if schema["ready"] != true {
 		respondError(c, http.StatusServiceUnavailable, "schema_unavailable", "agency schema is incomplete", schema)
 		return
 	}
@@ -229,6 +244,8 @@ func (a *App) agencySchemaStatus() (gin.H, error) {
 		return nil, errors.New("database unavailable")
 	}
 	missing := make([]string, 0)
+	missingColumns := make([]string, 0)
+	missingIndexes := make([]string, 0)
 	for _, item := range model.AgencyModels() {
 		statement := &gorm.Statement{DB: a.db}
 		if err := statement.Parse(item); err != nil {
@@ -238,17 +255,73 @@ func (a *App) agencySchemaStatus() (gin.H, error) {
 			missing = append(missing, statement.Schema.Table)
 		}
 	}
-	return gin.H{"ready": len(missing) == 0, "missing_tables": missing, "schema_version": "agency-hub-v1"}, nil
+	required := map[string][]string{
+		(model.Agency{}).TableName():                    {"price_revision", "state_revision", "current_policy_version_id"},
+		(model.AgencyPricePolicyVersion{}).TableName():  {"revision", "policy_hash", "created_at_ms"},
+		(model.AgencyBillingJournal{}).TableName():      {"charge_id", "status", "reserve_quota", "revision"},
+		(model.AgencyBillingOperation{}).TableName():    {"charge_id", "event_count", "committed_result"},
+		(model.AgencyFundingAccount{}).TableName():      {"paid_available", "nonpaid_available", "money_seq", "reconcile_blocked"},
+		(model.AgencyExportJob{}).TableName():           {"error_code", "lease_owner", "lease_until", "attempts"},
+		(model.AgencyTopupFact{}).TableName():           {"quota_conversion_snapshot", "actual_money", "currency_code", "payment_reference"},
+		(model.AgencyReconciliationIssue{}).TableName(): {"active_key", "resolution_evidence", "repair_event_id"},
+		(model.AgencyChargeComponent{}).TableName():     {"component_key", "original_result", "refunded_quota", "reversed_commission_micros"},
+		(model.AgencyComponentFunding{}).TableName():    {"charge_component_id", "allocation_id", "restored_paid_quota", "restored_nonpaid_quota", "restored_debt_quota"},
+		(model.AgencyUsageFact{}).TableName():           {"component_key"},
+		(model.AgencyFundingLot{}).TableName():          {"bonus_debt_repaid"},
+		(model.AgencyDebtRepayment{}).TableName():       {"source_kind"},
+		(model.AgencyFundingDebt{}).TableName():         {"allocation_id"},
+		(model.AgencyCommissionLedger{}).TableName():    {"component_key"},
+	}
+	for table, columns := range required {
+		if !a.db.Migrator().HasTable(table) {
+			continue
+		}
+		types, err := a.db.Migrator().ColumnTypes(table)
+		if err != nil {
+			return nil, err
+		}
+		seen := make(map[string]struct{}, len(types))
+		for _, column := range types {
+			seen[strings.ToLower(column.Name())] = struct{}{}
+		}
+		for _, column := range columns {
+			if _, ok := seen[strings.ToLower(column)]; !ok {
+				missingColumns = append(missingColumns, table+"."+column)
+			}
+		}
+	}
+	if a.db.Migrator().HasTable(&model.AgencyReconciliationIssue{}) &&
+		!a.db.Migrator().HasIndex(&model.AgencyReconciliationIssue{}, "uidx_agency_reconcile_active") {
+		missingIndexes = append(missingIndexes, "uidx_agency_reconcile_active")
+	}
+	for _, spec := range []struct {
+		item  any
+		index string
+	}{
+		{&model.AgencyUsageFact{}, "uidx_agency_usage_component_key"},
+		{&model.AgencyCommissionLedger{}, "uidx_agency_commission_component_key"},
+		{&model.AgencyChargeComponent{}, "uidx_agency_charge_component"},
+		{&model.AgencyComponentFunding{}, "uidx_agency_component_allocation"},
+		{&model.AgencyFundingDebt{}, "idx_agency_debt_allocation"},
+	} {
+		if a.db.Migrator().HasTable(spec.item) && !a.db.Migrator().HasIndex(spec.item, spec.index) {
+			missingIndexes = append(missingIndexes, spec.index)
+		}
+	}
+	return gin.H{"ready": len(missing) == 0 && len(missingColumns) == 0 && len(missingIndexes) == 0, "missing_tables": missing, "missing_columns": missingColumns, "missing_indexes": missingIndexes, "schema_version": "agency-hub-v1"}, nil
 }
 
 func (a *App) agencyCapabilities() gin.H {
 	return gin.H{
-		"agency_durable_v1":   true,
-		"pricing_snapshot_v1": true,
-		"outbox_v1":           true,
-		"commission_worker":   a.config.CommissionEnabled,
-		"withdrawals":         a.config.WithdrawalsEnabled,
-		"exports":             strings.TrimSpace(a.config.ExportDir) != "",
+		"agency_durable_v1":    true,
+		"pricing_snapshot_v1":  true,
+		"outbox_v1":            true,
+		"billing_component_v2": true,
+		"billing_schemas":      []string{agencycontract.SchemaVersion, agencycontract.ComponentSchemaVersion},
+		"onboarding":           common.AgencyOnboardingEnabled(),
+		"commission_worker":    a.config.CommissionEnabled,
+		"withdrawals":          a.config.WithdrawalsEnabled,
+		"exports":              strings.TrimSpace(a.config.ExportDir) != "",
 	}
 }
 
@@ -263,7 +336,8 @@ func (a *App) agencyBacklogStatus(ctx context.Context) (gin.H, error) {
 		deliveries[status] = count
 	}
 	var openIssues int64
-	if err := a.db.WithContext(ctx).Model(&model.AgencyReconciliationIssue{}).Where("status = ?", "open").Count(&openIssues).Error; err != nil {
+	if err := a.db.WithContext(ctx).Model(&model.AgencyReconciliationIssue{}).
+		Where("status = ? OR (status IN ? AND (resolution_evidence IS NULL OR resolution_evidence = ?))", "open", []string{"ignored", "resolved"}, "").Count(&openIssues).Error; err != nil {
 		return nil, err
 	}
 	var exportsInProgress int64

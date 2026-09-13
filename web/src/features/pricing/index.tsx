@@ -32,6 +32,10 @@ import {
   ModelCardGrid,
   ModelDetailsDrawer,
 } from './components'
+import {
+  CustomerPricingNotice,
+  PricingUnavailable,
+} from './components/customer-pricing-status'
 import { EXCLUDED_GROUPS, VIEW_MODES } from './constants'
 import { useFilters } from './hooks/use-filters'
 import { usePricingData } from './hooks/use-pricing-data'
@@ -46,10 +50,13 @@ export function Pricing() {
     models,
     vendors,
     groupRatio,
+    agencyPricing,
     usableGroup,
     endpointMap,
     autoGroups,
     isLoading,
+    error,
+    refetch,
     priceRate,
     usdExchangeRate,
   } = usePricingData()
@@ -111,6 +118,15 @@ export function Pricing() {
   }, [clearFilters, clearSearch])
 
   const renderPricingContent = () => {
+    if (error) {
+      return (
+        <PricingUnavailable
+          onRetry={() => {
+            void refetch()
+          }}
+        />
+      )
+    }
     if (filteredModels.length === 0) {
       return (
         <EmptyState
@@ -216,7 +232,7 @@ export function Pricing() {
               onTagChange={setTagFilter}
               vendors={vendors || []}
               groups={availableGroups}
-              groupRatios={groupRatio}
+              groupRatios={agencyPricing ? undefined : groupRatio}
               tags={availableTags}
               models={models || []}
               hasActiveFilters={hasActiveFilters}
@@ -225,6 +241,7 @@ export function Pricing() {
             />
 
             <main className='min-w-0 space-y-4'>
+              {agencyPricing && !error && <CustomerPricingNotice />}
               <PricingToolbar
                 filteredCount={filteredModels.length}
                 totalCount={models?.length}
@@ -248,7 +265,7 @@ export function Pricing() {
                 onTagChange={setTagFilter}
                 vendors={vendors || []}
                 groups={availableGroups}
-                groupRatios={groupRatio}
+                groupRatios={agencyPricing ? undefined : groupRatio}
                 tags={availableTags}
                 models={models || []}
                 hasActiveFilters={hasActiveFilters}

@@ -19,7 +19,7 @@ export default defineConfig(({ envMode }) => {
   const devProxy = Object.fromEntries(
     (['/api', '/mj', '/pg'] as const).map((key) => [
       key,
-      { target: serverUrl, changeOrigin: true },
+      { target: serverUrl, changeOrigin: false },
     ])
   ) as Record<string, { target: string; changeOrigin: boolean }>
   // Route the Reseller Hub sidecar through the gateway origin (same host) so the
@@ -27,6 +27,11 @@ export default defineConfig(({ envMode }) => {
   // changeOrigin:false preserves the browser Host so the sidecar's same-origin check passes.
   devProxy['/reseller'] = {
     target: process.env.VITE_RESELLER_HUB_URL || 'http://localhost:3200',
+    changeOrigin: false,
+  }
+  // Preserve the browser origin for Agency Hub SSO and authenticated writes.
+  devProxy['/agency'] = {
+    target: process.env.VITE_AGENCY_HUB_URL || 'http://localhost:3201',
     changeOrigin: false,
   }
 

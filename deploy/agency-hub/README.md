@@ -131,14 +131,27 @@ payment. Other monetary discrepancies require a separately designed source
 repair and remain unresolved. Current-state evidence verification is not the
 complete historical financial close required by the design document.
 
-The gateway also adds private TEXT columns `topups.payment_snapshot` and
-`topups.quota_conversion_snapshot`. Those core-table columns belong to the
+The gateway also adds private TEXT columns `top_ups.payment_snapshot` and
+`top_ups.quota_conversion_snapshot`. Those core-table columns belong to the
 gateway's schema migration path, not `agency-hub migrate`. Complete the normal
 gateway schema upgrade before admitting callbacks to the new gateway binary,
 and run the separate Agency migration before starting the new hub. Back up the
 whole shared primary database before either step; keep onboarding, commission
 processing and withdrawals disabled during rollout. Running only the hub
 migration does not upgrade the gateway's core tables.
+
+For an existing PostgreSQL installation, the narrowly scoped
+[`migrations/postgres-core-prerequisites.sql`](migrations/postgres-core-prerequisites.sql)
+can prepare the four nullable Agency prerequisites on `users` and `top_ups`
+without starting a gateway or running its full `AutoMigrate`. It requires the
+existing core tables, adds missing columns only, uses a five-second lock timeout
+and a transaction, and preserves existing columns and values. It does not create
+a database, migrate any other gateway tables, enable durable billing, or replace
+the separate `agency-hub migrate` command. Run it with PostgreSQL `psql -X -v
+ON_ERROR_STOP=1` using the migration credential only after backup and restore
+rehearsal. It is PostgreSQL-specific; SQLite and MySQL continue to use the
+gateway's GORM migration path. Rehearse the exact production schema and verify
+the new Hub's readiness before scheduling the writer shutdown and upgrade.
 
 The background worker performs the configured current-state reconciliation (five
 minutes by default) and attempts a separate daily run from 02:30 Asia/Shanghai.

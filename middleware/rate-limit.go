@@ -178,6 +178,13 @@ func CriticalRateLimit() func(c *gin.Context) {
 	return defNext
 }
 
+// AuthSessionRateLimit bounds refresh/logout traffic independently of credential
+// attempts. Each scope has its own IP budget so refresh retries cannot block logout.
+// Configurable via AUTH_SESSION_RATE_LIMIT / AUTH_SESSION_RATE_LIMIT_DURATION.
+func AuthSessionRateLimit(scope string) func(c *gin.Context) {
+	return rateLimitFactory(common.AuthSessionRateLimitNum, common.AuthSessionRateLimitDuration, "AS:"+scope)
+}
+
 func UserCriticalRateLimit(scope string) func(c *gin.Context) {
 	if !common.CriticalRateLimitEnable {
 		return defNext

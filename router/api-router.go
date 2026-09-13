@@ -21,9 +21,10 @@ func SetApiRouter(router *gin.Engine) {
 	registerWorkbenchIdentityRoutes(apiRouter)
 	agencyRoute := apiRouter.Group("/agency")
 	agencyRoute.GET("/sso", controller.AgencySSOPage)
-	agencyRoute.POST("/sso-ticket", middleware.RootAuth(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.IssueAgencySSOTicket)
-	agencyRoute.POST("/verify", middleware.RootAuth(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.IssueAgencyVerification)
-	agencyRoute.POST("/command-proof", middleware.RootAuth(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.IssueAgencyCommandProof)
+	agencyRoute.POST("/sso-ticket", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-sso"), middleware.DisableCache(), controller.IssueAgencySSOTicket)
+	// Both proof endpoints check the Root password and share one guessing budget.
+	agencyRoute.POST("/verify", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-verification"), middleware.DisableCache(), controller.IssueAgencyVerification)
+	agencyRoute.POST("/command-proof", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-verification"), middleware.DisableCache(), controller.IssueAgencyCommandProof)
 	agencyRoute.GET("/effective-pricing", middleware.UserAuth(), controller.GetAgencyEffectivePricing)
 	{
 		apiRouter.GET("/setup", controller.GetSetup)
@@ -74,8 +75,8 @@ func SetApiRouter(router *gin.Engine) {
 
 		userRoute := apiRouter.Group("/user")
 		{
-			userRoute.POST("/auth/refresh", middleware.SessionCookieOriginGuard(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.RefreshAuth)
-			userRoute.POST("/auth/logout", middleware.SessionCookieOriginGuard(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.AuthLogout)
+			userRoute.POST("/auth/refresh", middleware.SessionCookieOriginGuard(), middleware.AuthSessionRateLimit("refresh"), middleware.DisableCache(), controller.RefreshAuth)
+			userRoute.POST("/auth/logout", middleware.SessionCookieOriginGuard(), middleware.AuthSessionRateLimit("logout"), middleware.DisableCache(), controller.AuthLogout)
 			userRoute.POST("/register", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, middleware.TurnstileCheck(), controller.Register)
 			userRoute.POST("/login", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, middleware.TurnstileCheck(), controller.Login)
 			userRoute.POST("/login/2fa", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.Verify2FALogin)

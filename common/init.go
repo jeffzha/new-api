@@ -137,6 +137,13 @@ func InitEnv() {
 }
 
 func initUserSessionSettings() {
+	AuthSessionRateLimitNum = positiveUserSessionEnv("AUTH_SESSION_RATE_LIMIT", 120)
+	AuthSessionRateLimitDuration = int64(positiveUserSessionEnv("AUTH_SESSION_RATE_LIMIT_DURATION", 60))
+	maxRateLimitDuration := int64(RateLimitKeyExpirationDuration / time.Second)
+	if AuthSessionRateLimitDuration > maxRateLimitDuration {
+		SysError(fmt.Sprintf("AUTH_SESSION_RATE_LIMIT_DURATION exceeds rate limit key retention, using maximum: %d", maxRateLimitDuration))
+		AuthSessionRateLimitDuration = maxRateLimitDuration
+	}
 	UserSessionActiveLimit = positiveUserSessionEnv("USER_SESSION_ACTIVE_LIMIT", DefaultUserSessionActiveLimit)
 	UserSessionIssuanceLimit = positiveUserSessionEnv("USER_SESSION_ISSUANCE_LIMIT", DefaultUserSessionIssuanceLimit)
 	UserSessionIssuanceWindowSeconds = int64(positiveUserSessionEnv("USER_SESSION_ISSUANCE_WINDOW_SECONDS", DefaultUserSessionIssuanceWindowSeconds))

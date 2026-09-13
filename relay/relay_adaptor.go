@@ -40,6 +40,7 @@ import (
 	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
 	mobilecloudseedance "github.com/QuantumNous/new-api/relay/channel/task/mobilecloudseedance"
+	openaiseedance "github.com/QuantumNous/new-api/relay/channel/task/openaiseedance"
 	seedancedomestic "github.com/QuantumNous/new-api/relay/channel/task/seedancedomestic"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
@@ -166,6 +167,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskdoubao.TaskAdaptor{}
 		case constant.ChannelTypeSeedanceDomestic:
 			return &seedancedomestic.TaskAdaptor{}
+		case constant.ChannelTypeOpenAISeedance:
+			return &openaiseedance.TaskAdaptor{}
 		case constant.ChannelTypeMobileCloudSeedance:
 			return &mobilecloudseedance.TaskAdaptor{}
 		case constant.ChannelTypeSora, constant.ChannelTypeOpenAI:

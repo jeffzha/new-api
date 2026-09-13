@@ -105,6 +105,7 @@ export function getChannelTypeIcon(type: number): string {
     54: 'Doubao', // DoubaoVideo
     59: 'Doubao', // Seedance Domestic
     60: 'Doubao', // Mobile Cloud Seedance
+    1000: 'OpenAISeedance', // OpenAISeedance
     56: 'Replicate', // Replicate
 
     // Tools & Platforms

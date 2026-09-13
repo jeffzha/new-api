@@ -61,7 +61,13 @@ const (
 	ChannelTypeSub2API             = 61
 	ChannelTypeNewAPI              = 62
 	ChannelTypeDummy               // this one is only for count, do not add any channel after this
-
+	// ChannelTypeOpenAISeedance is an OpenAI-compatible seedance video channel:
+	// it accepts OpenAI /v1/video/generations (prompt) and proxies to an
+	// OpenAI-compatible seedance upstream (e.g. vedioapi.laomandi.com), billing
+	// via the shared seedance_video_pricing.prices_cny table like "Seedance
+	// Domestic". Its ID (1000) is deliberately outside the small contiguous
+	// range so the <ChannelTypeDummy> iteration loops keep their existing bounds.
+	ChannelTypeOpenAISeedance = 1000
 )
 
 var ChannelBaseURLs = []string{
@@ -130,6 +136,18 @@ var ChannelBaseURLs = []string{
 	"",                                          //62
 }
 
+func init() {
+	// ChannelBaseURLs is indexed directly by channel type, so any type added
+	// beyond the small contiguous range (e.g. ChannelTypeOpenAISeedance = 1000)
+	// must have a backing entry or indexing panics. Grow the slice, leaving ""
+	// as the default base URL for channel types that always carry their own.
+	if len(ChannelBaseURLs) <= ChannelTypeOpenAISeedance {
+		grown := make([]string, ChannelTypeOpenAISeedance+1)
+		copy(grown, ChannelBaseURLs)
+		ChannelBaseURLs = grown
+	}
+}
+
 var ChannelTypeNames = map[int]string{
 	ChannelTypeUnknown:             "Unknown",
 	ChannelTypeOpenAI:              "OpenAI",
@@ -190,6 +208,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeMobileCloudSeedance: "MobileCloudSeedance",
 	ChannelTypeSub2API:             "Sub2API",
 	ChannelTypeNewAPI:              "New API",
+	ChannelTypeOpenAISeedance:      "OpenAISeedance",
 }
 
 func GetChannelTypeName(channelType int) string {

@@ -460,6 +460,29 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	return nil
 }
 
+// extractVideoURLFromTaskData reads the upstream video URL from a task's nested
+// data object. Nested seedance/laomandi gateways return the finished video at
+// result_url / content.video_url / video_url inside the data object, which is
+// captured verbatim in model.Task.Data.
+func extractVideoURLFromTaskData(data []byte) string {
+	var m map[string]any
+	if len(data) == 0 || common.Unmarshal(data, &m) != nil {
+		return ""
+	}
+	if ru, ok := m["result_url"].(string); ok && ru != "" {
+		return ru
+	}
+	if content, ok := m["content"].(map[string]any); ok {
+		if v, ok := content["video_url"].(string); ok && v != "" {
+			return v
+		}
+	}
+	if v, ok := m["video_url"].(string); ok && v != "" {
+		return v
+	}
+	return ""
+}
+
 func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *model.Channel, taskId string, taskM map[string]*model.Task) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -521,9 +544,16 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		taskResult.TaskID = t.TaskID
 		taskResult.Status = string(t.Status)
 		taskResult.Url = t.GetResultURL()
+		// Some upstream gateways (e.g. nested seedance/laomandi) expose the video
+		// URL inside the task's nested data (content.video_url / result_url)
+		// rather than in private_data; fall back to it so the real upstream URL
+		// is stored instead of the self-referential proxy URL.
+		task.Data = t.Data
+		if taskResult.Url == "" {
+			taskResult.Url = extractVideoURLFromTaskData(t.Data)
+		}
 		taskResult.Progress = t.Progress
 		taskResult.Reason = t.FailReason
-		task.Data = t.Data
 	} else if taskResult, err = adaptor.ParseTaskResult(responseBody); err != nil {
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
 	}

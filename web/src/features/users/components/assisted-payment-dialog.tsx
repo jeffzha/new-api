@@ -24,13 +24,13 @@ export function AssistedPaymentDialog({
 }: AssistedPaymentDialogProps) {
   const { t } = useTranslation()
   const [amount, setAmount] = useState('')
-  const [paymentMethod, setPaymentMethod] = useState('alipay')
+  const [paymentMethod, setPaymentMethod] = useState('alipay_web')
   const [loading, setLoading] = useState(false)
   const [payment, setPayment] = useState<Awaited<ReturnType<typeof requestAssistedPayment>> | null>(null)
 
   const reset = () => {
     setAmount('')
-    setPaymentMethod('alipay')
+    setPaymentMethod('alipay_web')
     setPayment(null)
   }
 
@@ -55,7 +55,8 @@ export function AssistedPaymentDialog({
         money: normalizedAmount,
         payment_method: paymentMethod.trim(),
       })
-      if (!result.success || !result.url) {
+      const succeeded = result.success === true || result.message === 'success'
+      if (!succeeded || !result.url) {
         toast.error(result.message || t('Failed to create assisted payment'))
         return
       }
@@ -70,8 +71,43 @@ export function AssistedPaymentDialog({
 
   const copyURL = async () => {
     if (!payment?.url) return
-    await navigator.clipboard.writeText(payment.url)
+    await navigator.clipboard.writeText(paymentURL)
     toast.success(t('Copied'))
+  }
+
+  const paymentURL = (() => {
+    if (!payment?.url) return ''
+    try {
+      const url = new URL(payment.url)
+      Object.entries(payment.data ?? {}).forEach(([name, value]) => {
+        url.searchParams.set(name, String(value))
+      })
+      return url.toString()
+    } catch {
+      return payment.url
+    }
+  })()
+
+  const openPaymentPage = () => {
+    if (!payment?.url) return
+    const popup = window.open('', '_blank')
+    if (!popup) {
+      toast.error(t('Please allow pop-ups to open the payment page'))
+      return
+    }
+    const form = popup.document.createElement('form')
+    form.method = 'POST'
+    form.action = payment.url
+    form.style.display = 'none'
+    Object.entries(payment.data ?? {}).forEach(([name, value]) => {
+      const input = popup.document.createElement('input')
+      input.type = 'hidden'
+      input.name = name
+      input.value = String(value)
+      form.appendChild(input)
+    })
+    popup.document.body.appendChild(form)
+    form.submit()
   }
 
   return (
@@ -102,16 +138,17 @@ export function AssistedPaymentDialog({
       {payment ? (
         <div className='space-y-3'>
           <div className='flex justify-center rounded-md border bg-white p-4'>
-            <QRCodeSVG value={payment.url ?? ''} size={220} aria-label={t('Payment URL')} />
+            <QRCodeSVG value={paymentURL} size={220} aria-label={t('Payment URL')} />
           </div>
           <Label>{t('Payment URL')}</Label>
           <div className='flex gap-2'>
-            <Input value={payment.url} readOnly />
+            <Input value={paymentURL} readOnly />
             <Button type='button' size='icon' variant='outline' onClick={copyURL} title={t('Copy')}>
               <Copy className='h-4 w-4' />
             </Button>
-            <Button type='button' size='icon' variant='outline' onClick={() => window.open(payment.url, '_blank', 'noopener,noreferrer')} title={t('Open payment page')}>
+            <Button type='button' variant='outline' onClick={openPaymentPage} title={t('Open payment page')}>
               <ExternalLink className='h-4 w-4' />
+              <span className='sr-only'>{t('Open payment page')}</span>
             </Button>
           </div>
           {payment.trade_no && (
@@ -138,12 +175,14 @@ export function AssistedPaymentDialog({
           </div>
           <div className='space-y-2'>
             <Label htmlFor='assisted-payment-method'>{t('Payment method')}</Label>
-            <Input
+            <select
               id='assisted-payment-method'
               value={paymentMethod}
               onChange={(event) => setPaymentMethod(event.target.value)}
-              placeholder={t('For example, alipay')}
-            />
+            >
+              <option value='alipay_web'>{t('Alipay')}</option>
+              <option value='wxpay'>{t('WeChat Pay')}</option>
+            </select>
           </div>
         </div>
       )}

@@ -1054,6 +1054,7 @@ func (a *App) customerTopups(c *gin.Context) {
 		SourceID          string `json:"source_id,omitempty"`
 		FundingSource     string `json:"funding_source"`
 		InitiatedByUserID string `json:"initiated_by_user_id,omitempty"`
+		InitiatedBy       string `json:"initiated_by,omitempty"`
 		PaymentReference  string `json:"payment_reference,omitempty"`
 		ActualMoney       string `json:"actual_money,omitempty"`
 		CurrencyCode      string `json:"currency_code"`
@@ -1078,6 +1079,18 @@ func (a *App) customerTopups(c *gin.Context) {
 	for _, row := range rows {
 		fundingSource := reportTopupFundingSource(row.FundingSource)
 		total := lotTotals[topupLotKey(row.UserID, reportTopupSourceID(row))]
+		initiatedBy := "系统"
+		if row.InitiatedByUserID > 0 {
+			initiatedBy = fmt.Sprintf("账号 %d", row.InitiatedByUserID)
+			var actor model.User
+			if err := a.db.Select("username, display_name").First(&actor, row.InitiatedByUserID).Error; err == nil {
+				if strings.TrimSpace(actor.DisplayName) != "" {
+					initiatedBy = actor.DisplayName
+				} else if strings.TrimSpace(actor.Username) != "" {
+					initiatedBy = actor.Username
+				}
+			}
+		}
 		items = append(items, topupView{
 			SourceOperationID: row.SourceOperationID,
 			SourceID:          row.SourceID,
@@ -1088,6 +1101,7 @@ func (a *App) customerTopups(c *gin.Context) {
 				}
 				return ""
 			}(),
+			InitiatedBy:      initiatedBy,
 			PaymentReference: maskPaymentReference(row.PaymentReference),
 			ActualMoney:      row.ActualMoney,
 			CurrencyCode:     row.CurrencyCode,

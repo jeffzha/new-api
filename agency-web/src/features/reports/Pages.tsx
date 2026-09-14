@@ -11,14 +11,61 @@ import { ReconciliationRuns } from "../reconciliation/Runs";
 
 type Row = Record<string, string | number | null>;
 
+// Main-site quota is stored as USD-units scaled by quotaPerUnit. The default
+// system setting is 500,000 quota units per USD and 7.3 CNY per USD. Agency
+// reports intentionally show a stable RMB approximation for readable audit
+// tables; provider receipts still retain their exact source amount.
+const QUOTA_PER_YUAN = 500_000 / 7.3;
+function fundingSourceLabel(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  return {
+    admin_grant: "超级管理员调整",
+    redemption: "兑换码",
+    payment_self: "用户自行充值",
+    payment_assisted: "管理员代充",
+    payment_self_bonus: "用户自行充值赠送",
+    payment_unattributed: "未归属付费",
+    unattributed_nonpaid: "未归属赠送",
+    debt: "欠费",
+    legacy_unknown: "历史记录",
+  }[raw] ?? (raw || "未知来源");
+}
+
+function statusLabel(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  return { success: "成功", pending: "处理中", failed: "失败", completed: "已完成", paid: "已支付" }[raw] ?? (raw || "未知状态");
+}
+
+export function formatYuan(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return String(value);
+  return `¥${(number / QUOTA_PER_YUAN).toFixed(2)}`;
+}
+
+export function formatExpiry(value: unknown): string {
+  const number = Number(value);
+  return !Number.isFinite(number) || number <= 0 ? "永不过期" : new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai", dateStyle: "medium", timeStyle: "short",
+  }).format(new Date(number < 1e12 ? number * 1000 : number));
+}
+
+function formatActualMoney(value: unknown, currency: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return String(value);
+  const code = String(currency ?? "CNY").toUpperCase();
+  return `${code === "CNY" ? "¥" : code + " "}${amount.toFixed(2)}`;
+}
+
 function formatFundingBreakdown(value: unknown): string {
   if (!Array.isArray(value)) return "—";
   const parts = value.flatMap((entry) => {
     if (!entry || typeof entry !== "object") return [];
     const item = entry as { source?: unknown; quota?: unknown };
-    const source = String(item.source ?? "").trim();
-    const quota = String(item.quota ?? "").trim();
-    return source && quota ? [`${source}: ${quota}`] : [];
+    const source = fundingSourceLabel(item.source);
+    const quota = formatYuan(item.quota);
+    return source !== "—" && quota !== "—" ? [`${source}: ${quota}`] : [];
   });
   return parts.length ? parts.join(" · ") : "—";
 }
@@ -147,9 +194,8 @@ export function CustomersPage({
               rows={query.data?.items || []}
               rowKey={(row) => String(row.user_id)}
               columns={[
-                { key: "user_id", label: "User ID" },
-                { key: "username", label: "Username" },
-                ...(global ? [{ key: "agency_id", label: "Agency ID" }] : []),
+                { key: "username", label: "Customer account" },
+                ...(global ? [{ key: "agency_id", label: "Agency" }] : []),
                 {
                   key: "effective_at_ms",
                   label: "Bound at",
@@ -210,60 +256,56 @@ function CustomerHistory({ customer }: { customer: Customer }) {
       label: "Time",
       render: (row) => <Time value={row.occurred_at_ms || undefined} />,
     },
-    { key: "model", label: "Public model" },
+    { key: "model", label: "Model" },
     { key: "endpoint", label: "Endpoint" },
-    { key: "business_status", label: "Status" },
+    { key: "business_status", label: "Status", render: (row) => statusLabel(row.business_status) },
     { key: "input_tokens", label: "Input tokens" },
     { key: "output_tokens", label: "Output tokens" },
     { key: "cache_read_tokens", label: "Cache read tokens" },
     { key: "cache_write_tokens", label: "Cache write tokens" },
-    { key: "standard_quota", label: "Standard quota" },
-    { key: "sales_bps", label: "Sales coefficient (bps)" },
-    { key: "charged_quota", label: "Charged quota" },
-    { key: "paid_quota", label: "Paid quota" },
-    { key: "nonpaid_quota", label: "Non-paid quota" },
-    { key: "debt_quota", label: "Debt quota" },
+    { key: "standard_quota", label: "Standard quota", render: (row) => formatYuan(row.standard_quota) },
+    { key: "sales_bps", label: "Sales coefficient", render: (row) => row.sales_bps == null ? "—" : `${Number(row.sales_bps) / 100}%` },
+    { key: "charged_quota", label: "Charged amount", render: (row) => formatYuan(row.charged_quota) },
+    { key: "paid_quota", label: "Paid amount", render: (row) => formatYuan(row.paid_quota) },
+    { key: "nonpaid_quota", label: "Non-paid amount", render: (row) => formatYuan(row.nonpaid_quota) },
+    { key: "debt_quota", label: "Debt amount", render: (row) => formatYuan(row.debt_quota) },
     {
       key: "funding_breakdown",
       label: "Funding allocation",
       render: (row) => formatFundingBreakdown(row.funding_breakdown),
     },
     { key: "skip_reason", label: "Commission exclusion reason" },
-    { key: "charge_id", label: "Charge ID" },
-    { key: "event_id", label: "Event ID" },
   ];
   const topupColumns: Column<Row>[] = [
-    { key: "source_id", label: "Source ID" },
     {
       key: "occurred_at_ms",
       label: "Time",
       render: (row) => <Time value={row.occurred_at_ms || undefined} />,
     },
-    { key: "funding_source", label: "Funding source" },
-    { key: "initiated_by_user_id", label: "Initiated by" },
-    { key: "actual_money", label: "Actual payment" },
-    { key: "currency_code", label: "Currency" },
-    { key: "credited_quota", label: "Credited quota" },
-    { key: "paid_quota", label: "Paid quota" },
-    { key: "bonus_quota", label: "Bonus quota" },
-    { key: "consumed_quota", label: "Consumed quota" },
-    { key: "remaining_quota", label: "Remaining quota" },
-    { key: "expired_quota", label: "Expired quota" },
+    { key: "funding_source", label: "Funding source", render: (row) => fundingSourceLabel(row.funding_source) },
+    { key: "initiated_by", label: "Initiated by", render: (row) => String(row.initiated_by ?? "系统") },
+    { key: "actual_money", label: "Actual payment", render: (row) => formatActualMoney(row.actual_money, row.currency_code) },
+    { key: "currency_code", label: "Currency", render: () => "人民币" },
+    { key: "credited_quota", label: "Credited amount", render: (row) => formatYuan(row.credited_quota) },
+    { key: "paid_quota", label: "Paid amount", render: (row) => formatYuan(row.paid_quota) },
+    { key: "bonus_quota", label: "Bonus amount", render: (row) => formatYuan(row.bonus_quota) },
+    { key: "consumed_quota", label: "Consumed amount", render: (row) => formatYuan(row.consumed_quota) },
+    { key: "remaining_quota", label: "Remaining amount", render: (row) => formatYuan(row.remaining_quota) },
+    { key: "expired_quota", label: "Expired amount", render: (row) => formatYuan(row.expired_quota) },
     {
       key: "expires_at",
       label: "Expires at",
-      render: (row) => <Time value={row.expires_at || undefined} />,
+      render: (row) => formatExpiry(row.expires_at),
     },
-    { key: "refunded_quota", label: "Refunded quota" },
-    { key: "completion_source", label: "Completion source" },
-    { key: "payment_status", label: "Payment status" },
+    { key: "refunded_quota", label: "Refunded amount", render: (row) => formatYuan(row.refunded_quota) },
+    { key: "completion_source", label: "Completion source", render: (row) => fundingSourceLabel(row.completion_source) },
+    { key: "payment_status", label: "Payment status", render: (row) => statusLabel(row.payment_status) },
     { key: "payment_reference", label: "Payment reference" },
-    { key: "source_operation_id", label: "Operation ID" },
   ];
   return (
     <section>
       <h3>
-        {customer.username} · {customer.user_id}
+        客户：{customer.username}
       </h3>
       <div className="tabs">
         <button

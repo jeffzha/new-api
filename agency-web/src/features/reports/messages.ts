@@ -1,6 +1,21 @@
 import type { Locale } from "../../lib/types";
 
 const rows = [
+  ["Customer account", "客户账号", "客戶帳號", "Compte client", "顧客アカウント", "Аккаунт клиента", "Tài khoản khách hàng"],
+  ["Agency", "代理商", "代理商", "Agence", "代理店", "Агент", "Đại lý"],
+  ["Model", "模型", "模型", "Modèle", "モデル", "Модель", "Mô hình"],
+  ["Status", "状态", "狀態", "Statut", "ステータス", "Статус", "Trạng thái"],
+  ["Charged amount", "扣费金额", "扣費金額", "Montant facturé", "課金額", "Списанная сумма", "Số tiền tính phí"],
+  ["Paid amount", "付费金额", "付費金額", "Montant payé", "支払額", "Оплаченная сумма", "Số tiền đã trả"],
+  ["Non-paid amount", "非付费金额", "非付費金額", "Montant non payé", "無料分", "Неоплаченная сумма", "Số tiền không trả phí"],
+  ["Debt amount", "欠费金额", "欠費金額", "Montant dû", "未払い額", "Сумма долга", "Số tiền nợ"],
+  ["Top-up source", "充值来源", "充值來源", "Source de recharge", "チャージ元", "Источник пополнения", "Nguồn nạp"],
+  ["Credited amount", "到账金额", "到帳金額", "Montant crédité", "入金額", "Зачисленная сумма", "Số tiền ghi có"],
+  ["Bonus amount", "赠送金额", "贈送金額", "Bonus", "ボーナス額", "Бонусная сумма", "Số tiền tặng"],
+  ["Consumed amount", "已消费金额", "已消費金額", "Montant consommé", "消費額", "Израсходованная сумма", "Số tiền đã dùng"],
+  ["Remaining amount", "剩余金额", "剩餘金額", "Solde restant", "残高", "Оставшаяся сумма", "Số dư còn lại"],
+  ["Expired amount", "已过期金额", "已過期金額", "Montant expiré", "期限切れ額", "Истёкшая сумма", "Số tiền hết hạn"],
+  ["Refunded amount", "退款金额", "退款金額", "Montant remboursé", "返金額", "Возвращённая сумма", "Số tiền hoàn"],
   [
     "Export commission details",
     "导出佣金明细",

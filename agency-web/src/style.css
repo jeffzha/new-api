@@ -340,12 +340,27 @@ legend {
 }
 .table-wrap {
   margin: 16px 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.table-wrap table {
+  min-width: 980px;
+  table-layout: auto;
 }
 td {
   max-width: 380px;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   vertical-align: top;
+}
+
+td:nth-child(2),
+td:nth-child(3),
+td:nth-child(16),
+td:nth-child(17) {
+  max-width: 280px;
 }
 td .actions {
   min-width: 160px;

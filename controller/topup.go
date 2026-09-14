@@ -138,6 +138,17 @@ type AmountRequest struct {
 	Amount int64 `json:"amount"`
 }
 
+// normalizeEpayMethod keeps legacy clients that still send `alipay`
+// compatible with the configured Epay method name. New clients should send
+// the configured value directly (for example, alipay_web or wxpay).
+func normalizeEpayMethod(method string) string {
+	method = strings.TrimSpace(method)
+	if method == "alipay" {
+		return "alipay_web"
+	}
+	return method
+}
+
 func GetEpayClient() *epay.Client {
 	if operation_setting.PayAddress == "" || operation_setting.EpayId == "" || operation_setting.EpayKey == "" {
 		return nil
@@ -316,6 +327,7 @@ func RequestEpay(c *gin.Context) {
 		return
 	}
 
+	req.PaymentMethod = normalizeEpayMethod(req.PaymentMethod)
 	if !operation_setting.ContainsPayMethod(req.PaymentMethod) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "支付方式不存在"})
 		return
@@ -389,6 +401,7 @@ func RequestAssistedEpay(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "data": "invalid amount"})
 		return
 	}
+	req.PaymentMethod = normalizeEpayMethod(req.PaymentMethod)
 	if !operation_setting.ContainsPayMethod(req.PaymentMethod) {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "data": "支付方式不存在"})
 		return

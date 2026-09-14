@@ -20,12 +20,12 @@ export interface ExportForm {
   currency: string;
 }
 
-export function defaultExportForm(now = new Date()): ExportForm {
+export function defaultExportForm(now = new Date(), kind: ExportKind = "usage"): ExportForm {
   const localDay = new Date(now.getTime() + 8 * 60 * 60 * 1000);
   const endDate = localDay.toISOString().slice(0, 10);
   localDay.setUTCDate(localDay.getUTCDate() - 6);
   return {
-    kind: "usage",
+    kind,
     startDate: localDay.toISOString().slice(0, 10),
     endDate,
     userId: "",

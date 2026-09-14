@@ -2,6 +2,15 @@ import type { Locale } from "../../lib/types";
 
 const rows = [
   [
+    "Export commission details",
+    "导出佣金明细",
+    "匯出佣金明細",
+    "Exporter le détail des commissions",
+    "佣金明細をエクスポート",
+    "Экспортировать детализацию комиссий",
+    "Xuất chi tiết hoa hồng",
+  ],
+  [
     "Total earned commission",
     "累计获得",
     "累計獲得",

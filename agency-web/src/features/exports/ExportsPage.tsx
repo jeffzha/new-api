@@ -8,9 +8,9 @@ import type { Page } from "../../lib/types";
 import { defaultExportForm, exportKindLabel, exportRequest, exportStatusLabel } from "./contracts";
 import type { ExportForm, ExportJob, ExportKind } from "./contracts";
 
-export function ExportsPage() {
+export function ExportsPage({ initialKind = "usage" }: { initialKind?: ExportKind }) {
   const { t } = useTranslation();
-  const [form, setForm] = useState<ExportForm>(() => defaultExportForm());
+  const [form, setForm] = useState<ExportForm>(() => defaultExportForm(new Date(), initialKind));
   const [cursor, setCursor] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [downloading, setDownloading] = useState("");

@@ -11,6 +11,7 @@ import { PricingPage } from "./features/pricing/PricingPage";
 import { WithdrawalsPage } from "./features/finance/WithdrawalsPage";
 import { AccountsPage } from "./features/finance/AccountsPage";
 import { ExportsPage } from "./features/exports/ExportsPage";
+import type { ExportKind } from "./features/exports/contracts";
 import { InvitationsPage } from "./features/invitations/InvitationsPage";
 import {
   CustomersPage,
@@ -126,6 +127,7 @@ function Dashboard({
   const { t, i18n } = useTranslation();
   const root = identity.actor_type === "root";
   const [tab, setTab] = useState<Tab>("overview");
+  const [exportKind, setExportKind] = useState<ExportKind>("usage");
   const [pricingAgency, setPricingAgency] = useState<string | null>(
     identity.agency_id ? String(identity.agency_id) : null,
   );
@@ -188,13 +190,13 @@ function Dashboard({
       content = <PricingPage root={root} agencyId={pricingAgency} />;
       break;
     case "withdrawals":
-      content = <WithdrawalsPage identity={identity} />;
+      content = <WithdrawalsPage identity={identity} onAddAccount={() => setTab("accounts")} />;
       break;
     case "accounts":
       content = <AccountsPage identity={identity} />;
       break;
     case "exports":
-      content = <ExportsPage key={String(identity.agency_id)} />;
+      content = <ExportsPage key={`${identity.agency_id}:${exportKind}`} initialKind={exportKind} />;
       break;
     case "customers":
       content = <CustomersPage identity={identity} onEnter={enter} />;
@@ -203,7 +205,14 @@ function Dashboard({
       content = <InvitationsPage key={String(identity.agency_id)} />;
       break;
     case "ledger":
-      content = <LedgerPage />;
+      content = (
+        <LedgerPage
+          onExport={() => {
+            setExportKind("commissions");
+            setTab("exports");
+          }}
+        />
+      );
       break;
     case "sync":
       content = <SyncPage />;

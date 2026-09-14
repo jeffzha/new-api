@@ -108,8 +108,8 @@ export function PasswordChange({
       setError(new Error("The passwords do not match."));
       return;
     }
-    if (length < 12 || length > 72) {
-      setError(new Error("Use a password between 12 and 72 bytes."));
+    if (length < 8 || length > 20) {
+      setError(new Error("Use a password between 8 and 20 bytes."));
       return;
     }
     setBusy(true);
@@ -151,7 +151,7 @@ export function PasswordChange({
             required
           />
         </Field>
-        <Field label={t("New password")} hint={t("Use a password between 12 and 72 bytes.")}>
+        <Field label={t("New password")} hint={t("Use a password between 8 and 20 bytes.")}>
           <input
             type="password"
             autoComplete="new-password"

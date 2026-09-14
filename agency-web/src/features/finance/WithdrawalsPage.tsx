@@ -16,7 +16,7 @@ import type { PaymentLease, Withdrawal, WithdrawalAction } from "./contracts";
 import { RevealAccount } from "./AccountsPage";
 import { WithdrawalActionDialog, WithdrawalForm } from "./WithdrawalForms";
 
-export function WithdrawalsPage(props: { identity: Identity }) {
+export function WithdrawalsPage(props: { identity: Identity; onAddAccount?: () => void }) {
   const { t } = useTranslation();
   const isRoot = props.identity.actor_type === "root";
   const [filters, setFilters] = useState({ status: "", agency_id: "", currency_code: "" });
@@ -181,6 +181,10 @@ export function WithdrawalsPage(props: { identity: Identity }) {
         <WithdrawalForm
           agencyID={props.identity.agency_id}
           onClose={() => setCreate(false)}
+          onAddAccount={() => {
+            setCreate(false);
+            props.onAddAccount?.();
+          }}
           onSaved={() => {
             setCreate(false);
             setCursor("");

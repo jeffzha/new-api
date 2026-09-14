@@ -311,8 +311,8 @@ func (a *App) changePassword(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, "invalid_request", "请求格式错误", nil)
 		return
 	}
-	if len(request.NewPassword) < 12 || len(request.NewPassword) > 72 {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_password", "密码长度必须为12至72字节", nil)
+	if len(request.NewPassword) < 8 || len(request.NewPassword) > 20 {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_password", "密码长度必须为8至20字节", nil)
 		return
 	}
 	hash, err := common.Password2Hash(request.NewPassword)

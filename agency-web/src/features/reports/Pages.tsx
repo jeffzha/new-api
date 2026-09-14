@@ -313,11 +313,18 @@ function PagedReport({ path, columns }: { path: string; columns: Column<Row>[] }
   );
 }
 
-export function LedgerPage() {
+export function LedgerPage({ onExport }: { onExport?: () => void }) {
   const { t } = useTranslation();
   return (
     <section>
-      <h2>{t("Commission ledger")}</h2>
+      <div className="toolbar">
+        <h2>{t("Commission ledger")}</h2>
+        {onExport && (
+          <button type="button" className="secondary" onClick={onExport}>
+            {t("Export commission details")}
+          </button>
+        )}
+      </div>
       <PagedReport
         path="/commissions/ledger"
         columns={[

@@ -23,13 +23,14 @@ export function WithdrawalForm(props: {
   agencyID: number;
   onClose: () => void;
   onSaved: () => void;
+  onAddAccount: () => void;
 }) {
   const { t } = useTranslation();
   const mutate = useMutation();
   const accounts = useQuery<{ items: PayoutAccount[] }>("/withdrawal-accounts");
   const balances = useQuery<{ items: CommissionBalance[] }>("/commissions/summary");
   const [accountID, setAccountID] = useState("");
-  const [currency, setCurrency] = useState("");
+  const currency = "CNY";
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>();
@@ -86,8 +87,18 @@ export function WithdrawalForm(props: {
               ]}
             />
             {!accounts.data?.items.length && (
-              <p>{t("Add a payout account before requesting a withdrawal.")}</p>
+              <div className="actions">
+                <p>{t("Add a payout account before requesting a withdrawal.")}</p>
+                <button type="button" className="secondary" onClick={props.onAddAccount}>
+                  {t("Add payout account")}
+                </button>
+              </div>
             )}
+            {accounts.data?.items.length ? (
+              <button type="button" className="secondary" onClick={props.onAddAccount}>
+                {t("Add payout account")}
+              </button>
+            ) : null}
             <Field label={t("Payout account")}>
               <select
                 required
@@ -103,18 +114,7 @@ export function WithdrawalForm(props: {
               </select>
             </Field>
             <Field label={t("Currency")}>
-              <select
-                required
-                value={currency}
-                onChange={(event) => setCurrency(event.target.value)}
-              >
-                <option value="">{t("Choose a currency")}</option>
-                {balances.data?.items.map((row) => (
-                  <option key={row.currency_code} value={row.currency_code}>
-                    {row.currency_code}
-                  </option>
-                ))}
-              </select>
+              <output>{t("Chinese yuan (CNY)")}</output>
             </Field>
             <Field
               label={t("Withdrawal amount")}

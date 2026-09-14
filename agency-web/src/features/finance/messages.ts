@@ -4,6 +4,15 @@ import type { Locale, Messages } from "../../lib/types";
 // Japanese, Russian and Vietnamese UI copy, in that order.
 const rows: [string, string, string, string, string, string, string][] = [
   [
+    "Chinese yuan (CNY)",
+    "人民币（CNY）",
+    "人民幣（CNY）",
+    "Yuan chinois (CNY)",
+    "中国人民元（CNY）",
+    "Китайский юань (CNY)",
+    "Nhân dân tệ Trung Quốc (CNY)",
+  ],
+  [
     "Confirm unpaid and restore approval",
     "确认未支付并恢复审批",
     "確認未支付並恢復審批",

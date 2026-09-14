@@ -1228,7 +1228,7 @@ func ManageUser(c *gin.Context) {
 				common.ApiErrorI18n(c, i18n.MsgUserQuotaChangeZero)
 				return
 			}
-			if err := model.IncreaseUserQuota(user.Id, req.Value, true); err != nil {
+			if err := model.IncreaseUserQuotaWithActor(user.Id, req.Value, int64(c.GetInt("id"))); err != nil {
 				common.ApiError(c, err)
 				return
 			}
@@ -1240,7 +1240,7 @@ func ManageUser(c *gin.Context) {
 				common.ApiErrorI18n(c, i18n.MsgUserQuotaChangeZero)
 				return
 			}
-			if err := model.DecreaseUserQuota(user.Id, req.Value, true); err != nil {
+			if err := model.DecreaseUserQuotaWithActor(user.Id, req.Value, int64(c.GetInt("id"))); err != nil {
 				common.ApiError(c, err)
 				return
 			}
@@ -1253,7 +1253,7 @@ func ManageUser(c *gin.Context) {
 			if user.BillingMode == model.AgencyProvisioningBillingMode {
 				err = model.ErrAgencyProvisioning
 			} else if user.BillingMode == model.AgencyDurableBillingMode {
-				err = model.SetAgencyQuotaAbsolute(int64(user.Id), req.Value, "admin_override")
+				err = model.SetAgencyQuotaAbsoluteWithActor(int64(user.Id), req.Value, "admin_override", int64(c.GetInt("id")))
 			} else {
 				err = model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("quota", req.Value).Error
 			}

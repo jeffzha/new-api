@@ -470,6 +470,16 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 			relayInfo.AgencyStandardQuota = int64(standardSummary.Quota)
 		}
 		relayInfo.AgencySettlementCostQuota = &settlementQuota
+		inputTokens := summary.PromptTokens
+		if summary.IsClaudeUsageSemantic {
+			inputTokens += summary.CacheTokens + cacheWriteTokensTotal(summary)
+		} else if billingUsage != nil && billingUsage.UsageSource != "" && billingUsage.InputTokens > 0 {
+			inputTokens = billingUsage.InputTokens
+		}
+		relayInfo.AgencyInputTokens = int64(max(inputTokens, 0))
+		relayInfo.AgencyOutputTokens = int64(max(summary.CompletionTokens, 0))
+		relayInfo.AgencyCacheReadTokens = int64(max(summary.CacheTokens, 0))
+		relayInfo.AgencyCacheWriteTokens = int64(max(cacheWriteTokensTotal(summary), 0))
 	}
 
 	for _, item := range summary.ToolSurchargeItems {

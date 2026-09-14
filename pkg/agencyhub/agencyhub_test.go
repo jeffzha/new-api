@@ -439,7 +439,7 @@ func TestCustomerUsageAndTopupsAreScopedToEventAgency(t *testing.T) {
 	require.NoError(t, app.db.Create(&user).Error)
 	require.NoError(t, app.db.Create(&model.AgencyUserBinding{UserID: int64(user.Id), AgencyID: agencyA.ID, Revision: 1, InviteSnapshot: agencyA.InviteCode, CreatedSource: "test", EffectiveAtMS: 1, CreatedAt: 1}).Error)
 	require.NoError(t, app.db.Create(&model.AgencyUserBinding{UserID: int64(user.Id), AgencyID: agencyB.ID, Revision: 2, InviteSnapshot: agencyB.InviteCode, CreatedSource: "test", EffectiveAtMS: 2, CreatedAt: 2}).Error)
-	require.NoError(t, app.db.Create(&model.AgencyUsageFact{EventID: "evt-agency-a", ComponentID: "default", UserID: int64(user.Id), AgencyID: &agencyA.ID, OriginModelName: "model-a", BusinessStatus: "success", ChargedQuota: 10, CurrencyCode: "CNY", OccurredAtMS: 10}).Error)
+	require.NoError(t, app.db.Create(&model.AgencyUsageFact{EventID: "evt-agency-a", ComponentID: "default", UserID: int64(user.Id), AgencyID: &agencyA.ID, OriginModelName: "model-a", BusinessStatus: "success", InputTokens: 11, OutputTokens: 7, CacheReadTokens: 3, CacheWriteTokens: 2, ChargedQuota: 10, CurrencyCode: "CNY", OccurredAtMS: 10}).Error)
 	require.NoError(t, app.db.Create(&model.AgencyUsageFact{EventID: "evt-agency-b", ComponentID: "default", UserID: int64(user.Id), AgencyID: &agencyB.ID, OriginModelName: "model-b", BusinessStatus: "success", ChargedQuota: 20, CurrencyCode: "CNY", OccurredAtMS: 20}).Error)
 	require.NoError(t, app.db.Create(&model.AgencyTopupFact{SourceOperationID: "topup-agency-a", UserID: int64(user.Id), AgencyID: &agencyA.ID, CreditedQuota: 100, CurrencyCode: "CNY", OccurredAtMS: 10}).Error)
 	require.NoError(t, app.db.Create(&model.AgencyTopupFact{SourceOperationID: "topup-agency-b", UserID: int64(user.Id), AgencyID: &agencyB.ID, CreditedQuota: 200, CurrencyCode: "CNY", OccurredAtMS: 20}).Error)
@@ -454,6 +454,10 @@ func TestCustomerUsageAndTopupsAreScopedToEventAgency(t *testing.T) {
 	require.Equal(t, http.StatusOK, usageRecorder.Code, usageRecorder.Body.String())
 	require.Contains(t, usageRecorder.Body.String(), "evt-agency-a")
 	require.NotContains(t, usageRecorder.Body.String(), "evt-agency-b")
+	require.Contains(t, usageRecorder.Body.String(), `"input_tokens":"11"`)
+	require.Contains(t, usageRecorder.Body.String(), `"output_tokens":"7"`)
+	require.Contains(t, usageRecorder.Body.String(), `"cache_read_tokens":"3"`)
+	require.Contains(t, usageRecorder.Body.String(), `"cache_write_tokens":"2"`)
 
 	topupRecorder := httptest.NewRecorder()
 	topupContext, _ := gin.CreateTestContext(topupRecorder)
@@ -1080,8 +1084,9 @@ func TestDurableFundingReservationCountsNonpaidSegments(t *testing.T) {
 	require.Equal(t, 0, storedUser.Quota)
 	require.NoError(t, db.Model(&model.AgencyFundingAllocation{}).Where("charge_id = ?", "charge-1").Select("COALESCE(SUM(nonpaid_consumed + consumed + debt_consumed), 0)").Scan(&allocationTotal).Error)
 	require.Equal(t, int64(100), allocationTotal)
-	// A paid top-up followed by an administrative debit must reduce both the
-	// FIFO lot and the aggregate paid_available projection.
+	// An administrative debit may revoke an unused administrator grant, but it
+	// must never confiscate verified paid funding.
+	require.NoError(t, model.ApplyAgencyQuotaDelta(int64(user.Id), 30, "admin_grant"))
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&model.User{}).Where("id = ?", user.Id).Update("quota", gorm.Expr("quota + ?", 50)).Error; err != nil {
 			return err
@@ -1090,10 +1095,11 @@ func TestDurableFundingReservationCountsNonpaidSegments(t *testing.T) {
 	}))
 	require.NoError(t, model.ApplyAgencyQuotaDelta(int64(user.Id), -20, "admin_debit"))
 	require.NoError(t, db.First(&account, user.Id).Error)
-	require.Equal(t, int64(30), account.PaidAvailable)
+	require.Equal(t, int64(50), account.PaidAvailable)
+	require.Equal(t, int64(10), account.NonpaidAvailable)
 	var lot model.AgencyFundingLot
 	require.NoError(t, db.Where("source_id = ?", "topup-paid-1").First(&lot).Error)
-	require.Equal(t, int64(30), lot.PaidAvailable)
+	require.Equal(t, int64(50), lot.PaidAvailable)
 	debtUser := &model.User{Username: "durable-debt-user", AffCode: "durable-debt-aff", BillingMode: model.AgencyDurableBillingMode, Quota: -25}
 	require.NoError(t, db.Create(debtUser).Error)
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {

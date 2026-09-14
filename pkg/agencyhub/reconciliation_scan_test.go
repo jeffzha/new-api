@@ -111,7 +111,7 @@ func TestReconciliationScanProductionEvidenceAcrossDialects(t *testing.T) {
 			f.create(t, &user)
 			f.create(t, &model.AgencyFundingAccount{UserID: int64(user.Id), PaidAvailable: 80, NonpaidAvailable: 30, DebtQuota: 10, MoneySeq: 3, Version: 2})
 			f.observe("funding_account", stringID(int64(user.Id)))
-			lot := model.AgencyFundingLot{UserID: int64(user.Id), SourceKind: "topup", SourceID: common.GetUUID(), PaidInitial: 100, PaidAvailable: 20, PaidReserved: 20, PaidConsumed: 20, PaidRevoked: 20, PaidDebtRepaid: 20, BonusInitial: 10, BonusAvailable: 4, BonusReserved: 3, BonusConsumed: 2, BonusRevoked: 1, Version: 1}
+			lot := model.AgencyFundingLot{UserID: int64(user.Id), SourceKind: "topup", SourceID: common.GetUUID(), PaidInitial: 100, PaidAvailable: 20, PaidReserved: 20, PaidConsumed: 20, PaidRevoked: 20, PaidDebtRepaid: 20, BonusInitial: 12, BonusAvailable: 4, BonusReserved: 3, BonusConsumed: 2, BonusRevoked: 1, BonusExpired: 2, Version: 1}
 			f.create(t, &lot)
 			f.observe("funding_lot", stringID(lot.ID))
 			agencyID, err := strconv.ParseInt(common.GetUUID()[:12], 16, 64)

@@ -262,12 +262,13 @@ func (a *App) agencySchemaStatus() (gin.H, error) {
 		(model.AgencyBillingOperation{}).TableName():    {"charge_id", "event_count", "committed_result"},
 		(model.AgencyFundingAccount{}).TableName():      {"paid_available", "nonpaid_available", "money_seq", "reconcile_blocked"},
 		(model.AgencyExportJob{}).TableName():           {"error_code", "lease_owner", "lease_until", "attempts"},
-		(model.AgencyTopupFact{}).TableName():           {"quota_conversion_snapshot", "actual_money", "currency_code", "payment_reference"},
+		(model.AgencyTopupFact{}).TableName():           {"source_id", "quota_conversion_snapshot", "actual_money", "currency_code", "payment_reference", "expires_at", "expired_quota"},
 		(model.AgencyReconciliationIssue{}).TableName(): {"active_key", "resolution_evidence", "repair_event_id"},
 		(model.AgencyChargeComponent{}).TableName():     {"component_key", "original_result", "refunded_quota", "reversed_commission_micros"},
 		(model.AgencyComponentFunding{}).TableName():    {"charge_component_id", "allocation_id", "restored_paid_quota", "restored_nonpaid_quota", "restored_debt_quota"},
 		(model.AgencyUsageFact{}).TableName():           {"component_key"},
-		(model.AgencyFundingLot{}).TableName():          {"bonus_debt_repaid"},
+		(model.AgencyFundingLot{}).TableName():          {"actor_user_id", "source_snapshot_json", "bonus_debt_repaid", "expires_at", "bonus_expired"},
+		(model.AgencyFundingAllocation{}).TableName():   {"source_snapshot_json"},
 		(model.AgencyDebtRepayment{}).TableName():       {"source_kind"},
 		(model.AgencyFundingDebt{}).TableName():         {"allocation_id"},
 		(model.AgencyCommissionLedger{}).TableName():    {"component_key"},
@@ -303,6 +304,7 @@ func (a *App) agencySchemaStatus() (gin.H, error) {
 		{&model.AgencyChargeComponent{}, "uidx_agency_charge_component"},
 		{&model.AgencyComponentFunding{}, "uidx_agency_component_allocation"},
 		{&model.AgencyFundingDebt{}, "idx_agency_debt_allocation"},
+		{&model.AgencyFundingLot{}, "idx_agency_funding_lot_expiry"},
 	} {
 		if a.db.Migrator().HasTable(spec.item) && !a.db.Migrator().HasIndex(spec.item, spec.index) {
 			missingIndexes = append(missingIndexes, spec.index)
@@ -320,6 +322,7 @@ func (a *App) agencyCapabilities() gin.H {
 		"billing_schemas":      []string{agencycontract.SchemaVersion, agencycontract.ComponentSchemaVersion},
 		"onboarding":           common.AgencyOnboardingEnabled(),
 		"commission_worker":    a.config.CommissionEnabled,
+		"fact_projection":      a.config.FactProjectionEnabled,
 		"withdrawals":          a.config.WithdrawalsEnabled,
 		"exports":              strings.TrimSpace(a.config.ExportDir) != "",
 	}
@@ -344,7 +347,29 @@ func (a *App) agencyBacklogStatus(ctx context.Context) (gin.H, error) {
 	if err := a.db.WithContext(ctx).Model(&model.AgencyExportJob{}).Where("status IN ?", []string{"queued", "processing"}).Count(&exportsInProgress).Error; err != nil {
 		return nil, err
 	}
-	return gin.H{"deliveries": deliveries, "open_reconciliation_issues": openIssues, "exports_in_progress": exportsInProgress}, nil
+	commissionJobs := gin.H{}
+	for _, status := range []string{"pending", "deferred", "retry", "claimed", "done", "skipped"} {
+		var count int64
+		if err := a.db.WithContext(ctx).Model(&model.AgencyCommissionJob{}).Where("status = ?", status).Count(&count).Error; err != nil {
+			return nil, err
+		}
+		commissionJobs[status] = count
+	}
+	var lastProjected int64
+	if err := a.db.WithContext(ctx).Model(&model.AgencySourceEvent{}).
+		Where("processing_status IN ?", []string{"done", "facts_done", "skipped"}).
+		Select("COALESCE(MAX(created_at_ms), 0)").Scan(&lastProjected).Error; err != nil {
+		return nil, err
+	}
+	return gin.H{
+		"deliveries":                    deliveries,
+		"commission_jobs":               commissionJobs,
+		"open_reconciliation_issues":    openIssues,
+		"exports_in_progress":           exportsInProgress,
+		"fact_projection_enabled":       a.config.FactProjectionEnabled,
+		"commission_processing_enabled": a.config.CommissionEnabled,
+		"last_projected_at_ms":          lastProjected,
+	}, nil
 }
 
 func respondOK(c *gin.Context, data any) {

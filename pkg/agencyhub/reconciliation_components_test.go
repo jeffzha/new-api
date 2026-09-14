@@ -51,7 +51,7 @@ func newComponentReconciliationFixture(t *testing.T) componentReconciliationFixt
 	verifyComponentFundingEvidence(t, app, "matrix-charge")
 	f := componentReconciliationFixture{app: app}
 	require.NoError(t, app.db.Where("charge_id = ? AND component_key = ?", "matrix-charge", model.AgencyComponentKey("model")).First(&f.component).Error)
-	require.NoError(t, app.db.Where("charge_component_id = ?", f.component.ID).First(&f.funding).Error)
+	require.NoError(t, app.db.Where("charge_component_id = ? AND paid_quota > 0", f.component.ID).First(&f.funding).Error)
 	return f
 }
 

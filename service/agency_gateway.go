@@ -134,8 +134,10 @@ func RecordAgencyRealtimeSegment(relayInfo *relaycommon.RelayInfo, segmentNo int
 		QuotaPerUnit: snapshot.QuotaPerUnit, ExchangeRate: snapshot.ExchangeRate,
 		SettlementBPS: snapshot.SettlementBPS, SalesBPS: snapshot.SalesBPS,
 		CommissionEligible: commissionEligible, CommissionSkipReason: skipReason,
-		BillingBasis:  billingBasis,
-		StandardQuota: standard, ChargedTotalQuota: quota,
+		BillingBasis: billingBasis,
+		InputTokens:  int64(usage.InputTokens), OutputTokens: int64(usage.OutputTokens),
+		CacheReadTokens: int64(usage.InputTokenDetails.CachedTokens),
+		StandardQuota:   standard, ChargedTotalQuota: quota,
 		CommissionableQuota: commissionableQuota, NoncommissionableQuota: noncommissionableQuota, SettlementCostQuota: basis.SettlementCostQuota,
 		TheoreticalCommissionQuota: func() int64 {
 			if commissionEligible {
@@ -198,8 +200,8 @@ func RecordAgencyRealtimeSegment(relayInfo *relaycommon.RelayInfo, segmentNo int
 			UserID: event.UserID, AgencyID: event.AgencyID, BindingID: event.BindingID,
 			OriginModelName: event.OriginModelName, ModelKey: snapshot.ModelKey,
 			Endpoint: event.Endpoint, BusinessStatus: status,
-			InputTokens: int64(usage.InputTokens), OutputTokens: int64(usage.OutputTokens),
-			CacheReadTokens: int64(usage.InputTokenDetails.CachedTokens),
+			InputTokens: int64(max(usage.InputTokens, 0)), OutputTokens: int64(max(usage.OutputTokens, 0)),
+			CacheReadTokens: int64(max(usage.InputTokenDetails.CachedTokens, 0)),
 			StandardQuota:   event.StandardQuota, SalesBPS: event.SalesBPS,
 			ChargedQuota: event.ChargedTotalQuota, CurrencyCode: event.CurrencyCode,
 			OccurredAtMS: event.OccurredAtMS,
@@ -458,7 +460,7 @@ func RecordAgencyBillingEvent(relayInfo *relaycommon.RelayInfo, actualQuota int6
 			"rounding_policy_id":   "gateway-v1",
 		})
 	}
-	event := agencycontract.BillingEvent{SchemaVersion: agencycontract.SchemaVersion, EventID: eventID, EventType: "agency.billing_finalized", FinancialChargeID: chargeID, OperationID: operationID, SegmentNo: 0, JournalRevision: 1, MoneySeq: moneySeq, EventIndex: 0, EventCount: 1, OccurredAtMS: time.Now().UnixMilli(), UserID: int64(relayInfo.UserId), TokenID: int64Ptr(int64(relayInfo.TokenId)), AgencyID: &snapshot.AgencyID, BindingID: &snapshot.BindingID, OriginModelName: snapshot.OriginModelName, Endpoint: relayInfo.RequestURLPath, BusinessStatus: status, BillingStatus: "finalized", CurrencyCode: snapshot.CurrencyCode, QuotaPerUnit: snapshot.QuotaPerUnit, ExchangeRate: snapshot.ExchangeRate, SettlementBPS: snapshot.SettlementBPS, SalesBPS: snapshot.SalesBPS, CommissionEligible: commissionEligible, CommissionSkipReason: skipReason, BillingBasis: billingBasis, StandardQuota: standard, ChargedTotalQuota: charged, CommissionableQuota: commissionableQuota, NoncommissionableQuota: noncommissionableQuota, SettlementCostQuota: settlement, TheoreticalCommissionQuota: theoretical, PaidAllocatedQuota: relayInfo.AgencyPaidAllocatedQuota, CommissionQuota: commissionQuota, FinancialFinal: true}
+	event := agencycontract.BillingEvent{SchemaVersion: agencycontract.SchemaVersion, EventID: eventID, EventType: "agency.billing_finalized", FinancialChargeID: chargeID, OperationID: operationID, SegmentNo: 0, JournalRevision: 1, MoneySeq: moneySeq, EventIndex: 0, EventCount: 1, OccurredAtMS: time.Now().UnixMilli(), UserID: int64(relayInfo.UserId), TokenID: int64Ptr(int64(relayInfo.TokenId)), AgencyID: &snapshot.AgencyID, BindingID: &snapshot.BindingID, OriginModelName: snapshot.OriginModelName, Endpoint: relayInfo.RequestURLPath, BusinessStatus: status, BillingStatus: "finalized", CurrencyCode: snapshot.CurrencyCode, QuotaPerUnit: snapshot.QuotaPerUnit, ExchangeRate: snapshot.ExchangeRate, SettlementBPS: snapshot.SettlementBPS, SalesBPS: snapshot.SalesBPS, CommissionEligible: commissionEligible, CommissionSkipReason: skipReason, BillingBasis: billingBasis, InputTokens: relayInfo.AgencyInputTokens, OutputTokens: relayInfo.AgencyOutputTokens, CacheReadTokens: relayInfo.AgencyCacheReadTokens, CacheWriteTokens: relayInfo.AgencyCacheWriteTokens, StandardQuota: standard, ChargedTotalQuota: charged, CommissionableQuota: commissionableQuota, NoncommissionableQuota: noncommissionableQuota, SettlementCostQuota: settlement, TheoreticalCommissionQuota: theoretical, PaidAllocatedQuota: relayInfo.AgencyPaidAllocatedQuota, CommissionQuota: commissionQuota, FinancialFinal: true}
 	if commission == 0 {
 		commission, err = agencyCommissionMicros(commissionQuota, snapshot)
 		if err != nil {

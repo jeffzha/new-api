@@ -185,7 +185,7 @@ func (a *App) sessionMiddleware() gin.HandlerFunc {
 				respondError(c, http.StatusForbidden, "csrf_failed", "CSRF校验失败", nil)
 				return
 			}
-			if origin := strings.TrimSpace(c.GetHeader("Origin")); origin != "" && a.config.PublicBaseURL != "" && !sameConfiguredOrigin(origin, a.config.PublicBaseURL) {
+			if origin := strings.TrimSpace(c.GetHeader("Origin")); origin != "" && a.trustedBrowserOrigin() != "" && !sameConfiguredOrigin(origin, a.trustedBrowserOrigin()) {
 				respondError(c, http.StatusForbidden, "origin_failed", "请求来源不受信任", nil)
 				return
 			}
@@ -199,6 +199,13 @@ func passwordChangeAllowedPath(path string) bool {
 	return strings.HasSuffix(path, "/auth/me") ||
 		strings.HasSuffix(path, "/auth/change-password") ||
 		strings.HasSuffix(path, "/auth/logout")
+}
+
+func (a *App) trustedBrowserOrigin() string {
+	if strings.TrimSpace(a.config.BrowserOrigin) != "" {
+		return a.config.BrowserOrigin
+	}
+	return a.config.PublicBaseURL
 }
 
 func sameConfiguredOrigin(origin, configured string) bool {

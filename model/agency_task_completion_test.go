@@ -90,7 +90,7 @@ func TestAgencyTaskLifecycleAcrossDialects(t *testing.T) {
 			assert.Equal(t, "finalized", journal.Status)
 			assert.Equal(t, int64(80), journal.ChargedTotalQuota)
 			assert.Equal(t, int64(50), journal.SettlementCostQuota)
-			assert.Equal(t, int64(23), journal.CommissionAmountMicros, "paid-first final charge retains paid 60 of total 80; Round(30*60/80)=23")
+			assert.Equal(t, int64(15), journal.CommissionAmountMicros, "bonus quota is consumed first, leaving 40 paid quota of the final 80; Round(30*40/80)=15")
 			var outbox AgencyBillingOutbox
 			require.NoError(t, db.Where("event_id = ?", task.PrivateData.BillingContext.AgencyBillingEventID).First(&outbox).Error)
 			var event agencycontract.BillingEvent
@@ -282,7 +282,7 @@ func TestAgencyTaskProviderBillFinalizesFromFrozenBasis(t *testing.T) {
 	assert.Equal(t, 20, token.RemainQuota)
 	assert.Equal(t, "finalized", journal.Status)
 	assert.Equal(t, int64(50), journal.SettlementCostQuota)
-	assert.Equal(t, int64(23), journal.CommissionAmountMicros)
+	assert.Equal(t, int64(15), journal.CommissionAmountMicros)
 	assert.Equal(t, 80, receipt.ActualQuota)
 	assert.Equal(t, TaskBillingReconciliationSettled, receipt.Status)
 	statusReplay, err := CompleteAgencyTask(&task, TaskStatusSuccess, 0)

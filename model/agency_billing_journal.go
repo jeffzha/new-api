@@ -69,7 +69,8 @@ func agencyOperationInputHash(event agencycontract.BillingEvent) (string, error)
 	event.EventID, event.OperationID = "", ""
 	event.OccurredAtMS, event.MoneySeq, event.JournalRevision = 0, 0, 0
 	event.EventIndex, event.EventCount = 0, 0
-	event.PaidAllocatedQuota, event.CommissionQuota, event.CommissionAmountMicros = 0, 0, 0
+	event.PaidAllocatedQuota, event.NonpaidAllocatedQuota, event.DebtAllocatedQuota = 0, 0, 0
+	event.CommissionQuota, event.CommissionAmountMicros = 0, 0
 	event.Components = append([]agencycontract.BillingComponent(nil), event.Components...)
 	for i := range event.Components {
 		part := &event.Components[i]
@@ -216,7 +217,8 @@ func AgencyCommitWalletChargeTx(tx *gorm.DB, input agencycontract.BillingEvent, 
 	if tx == nil {
 		return agencycontract.BillingEvent{}, ErrAgencyFundingUnavailable
 	}
-	if input.UserID <= 0 || strings.TrimSpace(input.FinancialChargeID) == "" || len(input.FinancialChargeID) > 128 || input.ChargedTotalQuota < 0 || input.ChargedTotalQuota > int64(common.MaxQuota) {
+	if input.UserID <= 0 || strings.TrimSpace(input.FinancialChargeID) == "" || len(input.FinancialChargeID) > 128 || input.ChargedTotalQuota < 0 || input.ChargedTotalQuota > int64(common.MaxQuota) ||
+		input.InputTokens < 0 || input.OutputTokens < 0 || input.CacheReadTokens < 0 || input.CacheWriteTokens < 0 {
 		return agencycontract.BillingEvent{}, ErrAgencyFundingUnavailable
 	}
 	// Realtime uses its separate segment-aware transaction. This wallet API
@@ -271,7 +273,7 @@ func AgencyCommitWalletChargeTx(tx *gorm.DB, input agencycontract.BillingEvent, 
 		}
 		delta := input.ChargedTotalQuota - allocated
 		if delta != 0 {
-			if err := AdjustAgencyChargeTx(tx, user.Id, int(delta), journal.ChargeID, input.ChargedTotalQuota); err != nil {
+			if err := adjustAgencyChargeTxWithRule(tx, user.Id, int(delta), journal.ChargeID, input.ChargedTotalQuota, agencyFundingRuleVersion(&snapshot)); err != nil {
 				return err
 			}
 			if journal.TokenID != nil && *journal.TokenID > 0 {
@@ -287,7 +289,7 @@ func AgencyCommitWalletChargeTx(tx *gorm.DB, input agencycontract.BillingEvent, 
 		result.SettlementBPS, result.SalesBPS = snapshot.SettlementBPS, snapshot.SalesBPS
 		result.CurrencyCode, result.QuotaPerUnit, result.ExchangeRate = snapshot.CurrencyCode, snapshot.QuotaPerUnit, snapshot.ExchangeRate
 		result.CommissionEligible = snapshot.CommissionEligible && input.BusinessStatus == "success"
-		result.PaidAllocatedQuota = 0
+		result.PaidAllocatedQuota, result.NonpaidAllocatedQuota, result.DebtAllocatedQuota = 0, 0, 0
 		result.CommissionQuota = 0
 		result.CommissionAmountMicros = 0
 		componentBilling := len(input.Components) > 0 || common.GetEnvOrDefaultBool("AGENCY_COMPONENT_BILLING_ENABLED", false)
@@ -315,7 +317,7 @@ func AgencyCommitWalletChargeTx(tx *gorm.DB, input agencycontract.BillingEvent, 
 				return err
 			}
 			for _, allocation := range allocations {
-				paid, _, _, err := agencyFundingAllocationActiveParts(allocation)
+				paid, nonpaid, debt, err := agencyFundingAllocationActiveParts(allocation)
 				if err != nil {
 					return err
 				}
@@ -323,6 +325,14 @@ func AgencyCommitWalletChargeTx(tx *gorm.DB, input agencycontract.BillingEvent, 
 					return errors.New("agency paid allocation overflow")
 				}
 				result.PaidAllocatedQuota += paid
+				if nonpaid > int64(common.MaxQuota)-result.NonpaidAllocatedQuota {
+					return errors.New("agency nonpaid allocation overflow")
+				}
+				if debt > int64(common.MaxQuota)-result.DebtAllocatedQuota {
+					return errors.New("agency debt allocation overflow")
+				}
+				result.NonpaidAllocatedQuota += nonpaid
+				result.DebtAllocatedQuota += debt
 			}
 			if result.CommissionEligible {
 				result.CommissionQuota, err = agencycontract.CommissionForPaid(result.TheoreticalCommissionQuota, result.PaidAllocatedQuota, result.CommissionableQuota, true)

@@ -265,18 +265,18 @@ func TestAdminQuotaAddSubtractOverrideProjectsAgencyFunding(t *testing.T) {
 	require.NoError(t, DB.First(&stored, user.Id).Error)
 	assert.Equal(t, 120, stored.Quota)
 	require.NoError(t, DB.Where("user_id = ?", user.Id).First(&account).Error)
-	assert.Equal(t, int64(50), account.NonpaidAvailable)
-	assert.Equal(t, int64(70), account.PaidAvailable)
+	assert.Equal(t, int64(20), account.NonpaidAvailable)
+	assert.Equal(t, int64(100), account.PaidAvailable)
 	var debit AgencyFundingLedger
 	require.NoError(t, DB.Where("user_id = ? AND source_kind = ?", user.Id, "quota_debit").First(&debit).Error)
-	assert.Equal(t, int64(0), debit.NonpaidDelta)
-	assert.Equal(t, int64(-30), debit.PaidDelta)
+	assert.Equal(t, int64(-30), debit.NonpaidDelta)
+	assert.Equal(t, int64(0), debit.PaidDelta)
 
 	require.NoError(t, SetAgencyQuotaAbsolute(int64(user.Id), 200, "admin_override"))
 	require.NoError(t, DB.First(&stored, user.Id).Error)
 	assert.Equal(t, 200, stored.Quota)
 	require.NoError(t, DB.Where("user_id = ?", user.Id).First(&account).Error)
-	assert.Equal(t, int64(130), account.NonpaidAvailable)
+	assert.Equal(t, int64(100), account.NonpaidAvailable)
 	var override AgencyFundingLedger
 	require.NoError(t, DB.Where("user_id = ? AND source_kind = ?", user.Id, "admin_override").First(&override).Error)
 	assert.Equal(t, int64(80), override.NonpaidDelta)

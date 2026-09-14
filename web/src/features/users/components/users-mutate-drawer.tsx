@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
-import { Pencil } from 'lucide-react'
+import { CircleDollarSign, Pencil } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -86,11 +86,12 @@ import {
   userFormSchema,
   type UserFormValues,
   USER_FORM_DEFAULT_VALUES,
-  transformFormDataToPayload,
-  transformUserToFormDefaults,
+	transformFormDataToPayload,
+	transformUserToFormDefaults,
 } from '../lib'
-import { type User } from '../types'
+import type { User } from '../types'
 import { UserQuotaDialog } from './user-quota-dialog'
+import { AssistedPaymentDialog } from './assisted-payment-dialog'
 import { useUsers } from './users-provider'
 
 type UsersMutateDrawerProps = {
@@ -110,6 +111,7 @@ export function UsersMutateDrawer({
   const currentUser = useAuthStore((s) => s.auth.user)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [quotaDialogOpen, setQuotaDialogOpen] = useState(false)
+  const [assistedPaymentOpen, setAssistedPaymentOpen] = useState(false)
 
   // Fetch groups
   const { data: groupsData } = useQuery({
@@ -136,11 +138,13 @@ export function UsersMutateDrawer({
   useEffect(() => {
     if (open && isUpdate && currentRow) {
       // For update, fetch fresh data
-      getUser(currentRow.id).then((result) => {
-        if (result.success && result.data) {
-          form.reset(transformUserToFormDefaults(result.data))
-        }
-      })
+      void getUser(currentRow.id)
+        .then((result) => {
+          if (result.success && result.data) {
+            form.reset(transformUserToFormDefaults(result.data))
+          }
+        })
+        .catch(() => undefined)
     } else if (open && !isUpdate) {
       // For create, reset to defaults
       form.reset(USER_FORM_DEFAULT_VALUES)
@@ -195,7 +199,7 @@ export function UsersMutateDrawer({
               : t(ERROR_MESSAGES.CREATE_FAILED))
         )
       }
-    } catch (_error) {
+    } catch {
       toast.error(t(ERROR_MESSAGES.UNEXPECTED))
     } finally {
       setIsSubmitting(false)
@@ -278,7 +282,7 @@ export function UsersMutateDrawer({
                             { value: '10', label: t('Admin') },
                           ]}
                           onValueChange={(value) =>
-                            value !== null && field.onChange(parseInt(value))
+                            value !== null && field.onChange(Number.parseInt(value))
                           }
                           value={String(field.value)}
                         >
@@ -360,12 +364,10 @@ export function UsersMutateDrawer({
                       <FormItem>
                         <FormLabel>{t('Group')}</FormLabel>
                         <Select
-                          items={[
-                            ...groups.map((group) => ({
-                              value: group,
-                              label: group,
-                            })),
-                          ]}
+                          items={groups.map((group) => ({
+                            value: group,
+                            label: group,
+                          }))}
                           onValueChange={field.onChange}
                           value={field.value}
                         >
@@ -399,7 +401,7 @@ export function UsersMutateDrawer({
                             currency: currencyLabel,
                           })}
                         </FormLabel>
-                        <div className='flex gap-2'>
+                        <div className='flex flex-wrap gap-2'>
                           <FormControl>
                             <Input
                               value={
@@ -419,6 +421,17 @@ export function UsersMutateDrawer({
                             <Pencil className='mr-1 h-4 w-4' />
                             {t('Adjust Quota')}
                           </Button>
+                          {currentUser?.role === ROLE.SUPER_ADMIN && (
+                            <Button
+                              type='button'
+                              variant='outline'
+                              onClick={() => setAssistedPaymentOpen(true)}
+                              title={t('Create an assisted payment')}
+                            >
+                              <CircleDollarSign className='mr-1 h-4 w-4' />
+                              {t('Assisted payment')}
+                            </Button>
+                          )}
                         </div>
                         <FormDescription>
                           {formatQuota(parseQuotaFromDollars(field.value || 0))}
@@ -592,6 +605,13 @@ export function UsersMutateDrawer({
           userId={currentRow.id}
           currentQuota={parseQuotaFromDollars(currentQuotaRaw || 0)}
           onSuccess={refreshUserData}
+        />
+      )}
+      {currentRow && (
+        <AssistedPaymentDialog
+          open={assistedPaymentOpen}
+          onOpenChange={setAssistedPaymentOpen}
+          userId={currentRow.id}
         />
       )}
     </>

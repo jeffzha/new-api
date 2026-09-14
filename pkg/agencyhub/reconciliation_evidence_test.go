@@ -101,7 +101,7 @@ func TestReconciliationEvidenceAcrossDialects(t *testing.T) {
 							issue.ObjectID = "718291:CNY"
 							source, mutation = &balance, map[string]any{"locked_micros": 59, "version": 2}
 						case "funding_lot":
-							lot := model.AgencyFundingLot{UserID: 718291, SourceKind: "topup", SourceID: common.GetUUID(), PaidInitial: 100, PaidAvailable: 20, PaidReserved: 20, PaidConsumed: 20, PaidRevoked: 20, PaidDebtRepaid: 20, BonusInitial: 10, BonusAvailable: 4, BonusReserved: 3, BonusConsumed: 2, BonusRevoked: 1, Version: 1}
+							lot := model.AgencyFundingLot{UserID: 718291, SourceKind: "topup", SourceID: common.GetUUID(), PaidInitial: 100, PaidAvailable: 20, PaidReserved: 20, PaidConsumed: 20, PaidRevoked: 20, PaidDebtRepaid: 20, BonusInitial: 12, BonusAvailable: 4, BonusReserved: 3, BonusConsumed: 2, BonusRevoked: 1, BonusExpired: 2, Version: 1}
 							require.NoError(t, tx.Create(&lot).Error)
 							issue.ObjectID = stringID(lot.ID)
 							source, mutation = &lot, map[string]any{"bonus_available": 5, "version": 2}

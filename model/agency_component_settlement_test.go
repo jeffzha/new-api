@@ -54,8 +54,6 @@ func TestAgencyComponentSettlementAcrossDialects(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
 			db, user, input := agencyComponentSettlementFixture(t, dialect)
-			var originalAllocations []AgencyFundingAllocation
-			require.NoError(t, db.Where("charge_id = ?", input.FinancialChargeID).Order("id").Find(&originalAllocations).Error)
 			result, err := AgencyCommitWalletCharge(input, "")
 			require.NoError(t, err)
 			require.NoError(t, agencycontract.ValidateBillingComponents(result))
@@ -89,8 +87,18 @@ func TestAgencyComponentSettlementAcrossDialects(t *testing.T) {
 					paidIDs = append(paidIDs, row.AllocationID)
 				}
 			}
-			assert.Equal(t, []int64{40, 27}, paid, "paid source lots fill the first component in FIFO order")
-			assert.Equal(t, []int64{originalAllocations[0].ID, originalAllocations[1].ID}, paidIDs, "retain original allocation identities used by chargeback provenance")
+			assert.Equal(t, []int64{40, 10, 17}, paid, "bonus quota is consumed before paid lots and component allocation preserves the resulting source segments")
+			var frozenAllocations []AgencyFundingAllocation
+			require.NoError(t, db.Where("charge_id = ?", input.FinancialChargeID).Find(&frozenAllocations).Error)
+			frozenIDs := make(map[int64]struct{}, len(frozenAllocations))
+			for _, allocation := range frozenAllocations {
+				frozenIDs[allocation.ID] = struct{}{}
+			}
+			for _, allocationID := range paidIDs {
+				if _, ok := frozenIDs[allocationID]; !ok {
+					t.Errorf("component funding references allocation %d that is not part of the frozen reservation", allocationID)
+				}
+			}
 			var ops []AgencyBillingOperation
 			require.NoError(t, db.Where("charge_id = ? AND operation = ?", input.FinancialChargeID, "finalize").Find(&ops).Error)
 			require.Len(t, ops, 1)

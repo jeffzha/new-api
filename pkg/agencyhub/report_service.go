@@ -422,7 +422,7 @@ func (a *App) writeExportRows(ctx context.Context, writer *csv.Writer, job *mode
 			return nil
 		}).Error
 	case "topups":
-		if err := writer.Write([]string{"source_operation_id", "user_id", "credited_quota", "paid_quota", "bonus_quota", "currency", "payment_status", "occurred_at_Asia_Shanghai", "actual_money", "refunded_quota"}); err != nil {
+		if err := writer.Write([]string{"source_operation_id", "user_id", "credited_quota", "paid_quota", "bonus_quota", "consumed_quota", "remaining_quota", "expired_quota", "expires_at_Asia_Shanghai", "currency", "payment_status", "occurred_at_Asia_Shanghai", "actual_money", "refunded_quota"}); err != nil {
 			return err
 		}
 		var rows []model.AgencyTopupFact
@@ -439,11 +439,20 @@ func (a *App) writeExportRows(ctx context.Context, writer *csv.Writer, job *mode
 			if count > maxExportRows {
 				return errExportRowLimit
 			}
+			totals, err := loadTopupLotTotals(tx, rows)
+			if err != nil {
+				return err
+			}
 			for _, row := range rows {
 				if err := context.Cause(ctx); err != nil {
 					return err
 				}
-				if err := writeExportRow(writer, []string{row.SourceOperationID, "'" + strconv.FormatInt(row.UserID, 10), strconv.FormatInt(row.CreditedQuota, 10), strconv.FormatInt(row.PaidQuota, 10), strconv.FormatInt(row.BonusQuota, 10), row.CurrencyCode, row.PaymentStatus, formatExportTime(row.OccurredAtMS), row.ActualMoney, stringID(row.RefundedQuota)}); err != nil {
+				total := totals[topupLotKey(row.UserID, reportTopupSourceID(row))]
+				expiresAt := ""
+				if total.ExpiresAt > 0 && total.ExpiresAt <= 9223372036854775 {
+					expiresAt = formatExportTime(total.ExpiresAt * 1000)
+				}
+				if err := writeExportRow(writer, []string{row.SourceOperationID, "'" + strconv.FormatInt(row.UserID, 10), strconv.FormatInt(row.CreditedQuota, 10), strconv.FormatInt(row.PaidQuota, 10), strconv.FormatInt(row.BonusQuota, 10), strconv.FormatInt(total.ConsumedQuota, 10), strconv.FormatInt(total.RemainingQuota, 10), strconv.FormatInt(total.ExpiredQuota, 10), expiresAt, row.CurrencyCode, row.PaymentStatus, formatExportTime(row.OccurredAtMS), row.ActualMoney, stringID(row.RefundedQuota)}); err != nil {
 					return err
 				}
 			}
@@ -945,7 +954,31 @@ func (a *App) customerUsage(c *gin.Context) {
 	}
 	items := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, gin.H{"event_id": row.EventID, "user_id": strconv.FormatInt(row.UserID, 10), "model": row.OriginModelName, "endpoint": row.Endpoint, "business_status": row.BusinessStatus, "standard_quota": strconv.FormatInt(row.StandardQuota, 10), "sales_bps": strconv.Itoa(row.SalesBPS), "charged_quota": strconv.FormatInt(row.ChargedQuota, 10), "currency_code": row.CurrencyCode, "skip_reason": row.SkipReason, "occurred_at_ms": strconv.FormatInt(row.OccurredAtMS, 10)})
+		paid, nonpaid, debt := row.PaidQuota, row.NonpaidQuota, row.DebtQuota
+		if paid < 0 || nonpaid < 0 || debt < 0 || paid+nonpaid+debt < row.ChargedQuota {
+			// Legacy events did not carry all three allocation counters. Keep
+			// the report conservative and attribute the known remainder to the
+			// non-paid bucket instead of hiding consumed quota.
+			if paid < 0 {
+				paid = 0
+			}
+			if debt < 0 {
+				debt = 0
+			}
+			nonpaid = row.ChargedQuota - paid - debt
+			if nonpaid < 0 {
+				nonpaid = 0
+			}
+		}
+		breakdown, breakdownErr := a.fundingBreakdownForCharge(row.FinancialChargeID)
+		if breakdownErr != nil {
+			respondError(c, http.StatusInternalServerError, "database_error", "读取资金来源失败", nil)
+			return
+		}
+		if len(breakdown) == 0 {
+			breakdown = []gin.H{{"source": "wallet", "quota": strconv.FormatInt(paid, 10)}, {"source": "unattributed_nonpaid", "quota": strconv.FormatInt(nonpaid, 10)}, {"source": "debt", "quota": strconv.FormatInt(debt, 10)}}
+		}
+		items = append(items, gin.H{"event_id": row.EventID, "charge_id": row.FinancialChargeID, "user_id": strconv.FormatInt(row.UserID, 10), "model": row.OriginModelName, "endpoint": row.Endpoint, "business_status": row.BusinessStatus, "input_tokens": strconv.FormatInt(row.InputTokens, 10), "output_tokens": strconv.FormatInt(row.OutputTokens, 10), "cache_read_tokens": strconv.FormatInt(row.CacheReadTokens, 10), "cache_write_tokens": strconv.FormatInt(row.CacheWriteTokens, 10), "standard_quota": strconv.FormatInt(row.StandardQuota, 10), "sales_bps": strconv.Itoa(row.SalesBPS), "charged_quota": strconv.FormatInt(row.ChargedQuota, 10), "paid_quota": strconv.FormatInt(paid, 10), "nonpaid_quota": strconv.FormatInt(nonpaid, 10), "debt_quota": strconv.FormatInt(debt, 10), "funding_breakdown": breakdown, "currency_code": row.CurrencyCode, "skip_reason": row.SkipReason, "occurred_at_ms": strconv.FormatInt(row.OccurredAtMS, 10)})
 	}
 	nextCursor := ""
 	if hasMore && len(rows) > 0 {
@@ -960,7 +993,13 @@ func (a *App) customerUsage(c *gin.Context) {
 			return
 		}
 	}
-	respondOK(c, gin.H{"items": items, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
+	projection, projectionErr := a.customerProjectionMeta(c.Request.Context(), userID)
+	if projectionErr != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取同步状态失败", nil)
+		return
+	}
+	projection["next_cursor"] = nextCursor
+	respondOK(c, gin.H{"items": items, "total": total, "meta": projection})
 }
 
 func (a *App) customerTopups(c *gin.Context) {
@@ -1012,6 +1051,9 @@ func (a *App) customerTopups(c *gin.Context) {
 	}
 	type topupView struct {
 		SourceOperationID string `json:"source_operation_id"`
+		SourceID          string `json:"source_id,omitempty"`
+		FundingSource     string `json:"funding_source"`
+		InitiatedByUserID string `json:"initiated_by_user_id,omitempty"`
 		PaymentReference  string `json:"payment_reference,omitempty"`
 		ActualMoney       string `json:"actual_money,omitempty"`
 		CurrencyCode      string `json:"currency_code"`
@@ -1021,22 +1063,45 @@ func (a *App) customerTopups(c *gin.Context) {
 		CompletionSource  string `json:"completion_source"`
 		PaymentStatus     string `json:"payment_status"`
 		RefundedQuota     string `json:"refunded_quota"`
+		ConsumedQuota     string `json:"consumed_quota"`
+		RemainingQuota    string `json:"remaining_quota"`
+		ExpiredQuota      string `json:"expired_quota"`
+		ExpiresAt         string `json:"expires_at"`
 		OccurredAtMS      string `json:"occurred_at_ms"`
+	}
+	lotTotals, err := loadTopupLotTotals(a.db, rows)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取充值资金批次失败", nil)
+		return
 	}
 	items := make([]topupView, 0, len(rows))
 	for _, row := range rows {
+		fundingSource := reportTopupFundingSource(row.FundingSource)
+		total := lotTotals[topupLotKey(row.UserID, reportTopupSourceID(row))]
 		items = append(items, topupView{
 			SourceOperationID: row.SourceOperationID,
-			PaymentReference:  maskPaymentReference(row.PaymentReference),
-			ActualMoney:       row.ActualMoney,
-			CurrencyCode:      row.CurrencyCode,
-			CreditedQuota:     strconv.FormatInt(row.CreditedQuota, 10),
-			PaidQuota:         strconv.FormatInt(row.PaidQuota, 10),
-			BonusQuota:        strconv.FormatInt(row.BonusQuota, 10),
-			CompletionSource:  row.CompletionSource,
-			PaymentStatus:     row.PaymentStatus,
-			RefundedQuota:     strconv.FormatInt(row.RefundedQuota, 10),
-			OccurredAtMS:      strconv.FormatInt(row.OccurredAtMS, 10),
+			SourceID:          row.SourceID,
+			FundingSource:     fundingSource,
+			InitiatedByUserID: func() string {
+				if row.InitiatedByUserID > 0 {
+					return strconv.FormatInt(row.InitiatedByUserID, 10)
+				}
+				return ""
+			}(),
+			PaymentReference: maskPaymentReference(row.PaymentReference),
+			ActualMoney:      row.ActualMoney,
+			CurrencyCode:     row.CurrencyCode,
+			CreditedQuota:    strconv.FormatInt(row.CreditedQuota, 10),
+			PaidQuota:        strconv.FormatInt(row.PaidQuota, 10),
+			BonusQuota:       strconv.FormatInt(row.BonusQuota, 10),
+			CompletionSource: row.CompletionSource,
+			PaymentStatus:    row.PaymentStatus,
+			RefundedQuota:    strconv.FormatInt(row.RefundedQuota, 10),
+			ConsumedQuota:    strconv.FormatInt(total.ConsumedQuota, 10),
+			RemainingQuota:   strconv.FormatInt(total.RemainingQuota, 10),
+			ExpiredQuota:     strconv.FormatInt(total.ExpiredQuota, 10),
+			ExpiresAt:        strconv.FormatInt(total.ExpiresAt, 10),
+			OccurredAtMS:     strconv.FormatInt(row.OccurredAtMS, 10),
 		})
 	}
 	nextCursor := ""
@@ -1052,7 +1117,150 @@ func (a *App) customerTopups(c *gin.Context) {
 			return
 		}
 	}
-	respondOK(c, gin.H{"items": items, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
+	projection, projectionErr := a.customerProjectionMeta(c.Request.Context(), userID)
+	if projectionErr != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取同步状态失败", nil)
+		return
+	}
+	projection["next_cursor"] = nextCursor
+	respondOK(c, gin.H{"items": items, "total": total, "meta": projection})
+}
+
+// customerProjectionMeta makes an empty report distinguishable from a real
+// empty customer. Facts can be current while commission is intentionally
+// paused, so the two states are returned independently.
+func (a *App) customerProjectionMeta(ctx context.Context, userID int64) (gin.H, error) {
+	var progress struct {
+		MaxMoneySeq   int64
+		LastProjected int64
+	}
+	if err := a.db.WithContext(ctx).Model(&model.AgencySourceEvent{}).
+		Select("COALESCE(MAX(money_seq), 0) AS max_money_seq, COALESCE(MAX(created_at_ms), 0) AS last_projected").
+		Where("user_id = ? AND processing_status IN ?", userID, []string{"done", "facts_done", "skipped"}).Scan(&progress).Error; err != nil {
+		return nil, err
+	}
+	var pending, poison int64
+	outboxTable := (model.AgencyBillingOutbox{}).TableName()
+	deliveryQuery := a.db.WithContext(ctx).Model(&model.AgencyEventDelivery{}).
+		Joins("JOIN "+outboxTable+" AS outbox ON outbox.event_id = "+(model.AgencyEventDelivery{}).TableName()+".event_id").
+		Where("outbox.user_id = ?", userID)
+	if err := deliveryQuery.Where((model.AgencyEventDelivery{}).TableName()+".status IN ?", []string{"pending", "retry", "claimed"}).Count(&pending).Error; err != nil {
+		return nil, err
+	}
+	if err := deliveryQuery.Where((model.AgencyEventDelivery{}).TableName()+".status = ?", "poison").Count(&poison).Error; err != nil {
+		return nil, err
+	}
+	var commissionPending int64
+	if err := a.db.WithContext(ctx).Model(&model.AgencyCommissionJob{}).
+		Where("user_id = ? AND status IN ?", userID, []string{"pending", "deferred", "retry", "claimed"}).Count(&commissionPending).Error; err != nil {
+		return nil, err
+	}
+	projectionStatus := "current"
+	if !a.config.FactProjectionEnabled {
+		projectionStatus = "paused"
+	} else if poison > 0 {
+		projectionStatus = "error"
+	} else if pending > 0 {
+		projectionStatus = "lagging"
+	}
+	commissionStatus := "current"
+	if !a.config.CommissionEnabled {
+		commissionStatus = "paused"
+	} else if commissionPending > 0 {
+		commissionStatus = "pending"
+	}
+	return gin.H{
+		"next_cursor":              "",
+		"as_of_money_seq":          strconv.FormatInt(progress.MaxMoneySeq, 10),
+		"last_projected_at_ms":     strconv.FormatInt(progress.LastProjected, 10),
+		"generated_at_ms":          strconv.FormatInt(time.Now().UnixMilli(), 10),
+		"projection_status":        projectionStatus,
+		"commission_status":        commissionStatus,
+		"pending_delivery_count":   strconv.FormatInt(pending, 10),
+		"poison_delivery_count":    strconv.FormatInt(poison, 10),
+		"commission_pending_count": strconv.FormatInt(commissionPending, 10),
+	}, nil
+}
+
+type topupLotTotals struct {
+	ConsumedQuota  int64
+	RemainingQuota int64
+	ExpiredQuota   int64
+	ExpiresAt      int64
+}
+
+func topupLotKey(userID int64, sourceID string) string {
+	return strconv.FormatInt(userID, 10) + "\x00" + strings.TrimSpace(sourceID)
+}
+
+func reportTopupSourceID(fact model.AgencyTopupFact) string {
+	if sourceID := strings.TrimSpace(fact.SourceID); sourceID != "" {
+		return sourceID
+	}
+	return fact.SourceOperationID
+}
+
+func loadTopupLotTotals(db *gorm.DB, facts []model.AgencyTopupFact) (map[string]topupLotTotals, error) {
+	totals := make(map[string]topupLotTotals, len(facts))
+	if db == nil || len(facts) == 0 {
+		return totals, nil
+	}
+	userIDs := make([]int64, 0, len(facts))
+	sourceIDs := make([]string, 0, len(facts))
+	seenUsers := make(map[int64]struct{}, len(facts))
+	seenSources := make(map[string]struct{}, len(facts))
+	for _, fact := range facts {
+		sourceID := reportTopupSourceID(fact)
+		totals[topupLotKey(fact.UserID, sourceID)] = topupLotTotals{ExpiredQuota: fact.ExpiredQuota, ExpiresAt: fact.ExpiresAt}
+		if _, ok := seenUsers[fact.UserID]; !ok {
+			seenUsers[fact.UserID] = struct{}{}
+			userIDs = append(userIDs, fact.UserID)
+		}
+		if _, ok := seenSources[sourceID]; !ok {
+			seenSources[sourceID] = struct{}{}
+			sourceIDs = append(sourceIDs, sourceID)
+		}
+	}
+	var lots []model.AgencyFundingLot
+	if err := db.Where("user_id IN ? AND source_id IN ?", userIDs, sourceIDs).Find(&lots).Error; err != nil {
+		return nil, err
+	}
+	seenLots := make(map[string]bool, len(facts))
+	maxInt64 := int64(^uint64(0) >> 1)
+	for _, lot := range lots {
+		key := topupLotKey(lot.UserID, lot.SourceID)
+		if _, relevant := totals[key]; !relevant {
+			continue
+		}
+		total := totals[key]
+		if !seenLots[key] {
+			total = topupLotTotals{}
+			seenLots[key] = true
+		}
+		var consumed int64
+		for _, amount := range []int64{lot.PaidConsumed, lot.BonusConsumed, lot.PaidDebtRepaid, lot.BonusDebtRepaid} {
+			if amount < 0 || consumed > maxInt64-amount {
+				return nil, errors.New("top-up lot totals overflow")
+			}
+			consumed += amount
+		}
+		if lot.PaidAvailable < 0 || lot.BonusAvailable < 0 || lot.PaidAvailable > maxInt64-lot.BonusAvailable {
+			return nil, errors.New("top-up lot totals overflow")
+		}
+		remaining := lot.PaidAvailable + lot.BonusAvailable
+		if lot.BonusExpired < 0 || total.ConsumedQuota > maxInt64-consumed ||
+			total.RemainingQuota > maxInt64-remaining || total.ExpiredQuota > maxInt64-lot.BonusExpired {
+			return nil, errors.New("top-up lot totals overflow")
+		}
+		total.ConsumedQuota += consumed
+		total.RemainingQuota += remaining
+		total.ExpiredQuota += lot.BonusExpired
+		if lot.ExpiresAt > 0 && (total.ExpiresAt == 0 || lot.ExpiresAt < total.ExpiresAt) {
+			total.ExpiresAt = lot.ExpiresAt
+		}
+		totals[key] = total
+	}
+	return totals, nil
 }
 
 func maskPaymentReference(value string) string {
@@ -1065,6 +1273,100 @@ func maskPaymentReference(value string) string {
 		return "****"
 	}
 	return "****" + string(runes[len(runes)-4:])
+}
+
+func (a *App) fundingBreakdownForCharge(chargeID string) ([]gin.H, error) {
+	if strings.TrimSpace(chargeID) == "" {
+		return nil, nil
+	}
+	var allocations []model.AgencyFundingAllocation
+	if err := a.db.Where("charge_id = ? AND (consumed > 0 OR nonpaid_consumed > 0 OR debt_consumed > 0)", chargeID).Order("segment_no ASC, id ASC").Find(&allocations).Error; err != nil {
+		return nil, err
+	}
+	if len(allocations) == 0 {
+		return nil, nil
+	}
+	lotIDs := make([]int64, 0, len(allocations))
+	for _, allocation := range allocations {
+		if allocation.LotID > 0 {
+			lotIDs = append(lotIDs, allocation.LotID)
+		}
+	}
+	var lots []model.AgencyFundingLot
+	if len(lotIDs) > 0 {
+		if err := a.db.Where("id IN ?", lotIDs).Find(&lots).Error; err != nil {
+			return nil, err
+		}
+	}
+	lotByID := make(map[int64]model.AgencyFundingLot, len(lots))
+	for _, lot := range lots {
+		lotByID[lot.ID] = lot
+	}
+	items := make([]gin.H, 0, len(allocations))
+	for _, allocation := range allocations {
+		source := "unattributed_nonpaid"
+		sourceID := ""
+		if lot, ok := lotByID[allocation.LotID]; ok {
+			sourceID = lot.SourceID
+			source = reportFundingSource(lot.SourceKind, allocation.NonpaidConsumed > 0)
+		} else if allocation.Consumed > 0 {
+			source = "payment_unattributed"
+		}
+		if allocation.DebtConsumed > 0 {
+			source = "debt"
+		}
+		items = append(items, gin.H{"allocation_id": strconv.FormatInt(allocation.ID, 10), "source": source, "source_id": sourceID, "quota": strconv.FormatInt(allocation.Consumed+allocation.NonpaidConsumed+allocation.DebtConsumed, 10), "paid_quota": strconv.FormatInt(allocation.Consumed, 10), "nonpaid_quota": strconv.FormatInt(allocation.NonpaidConsumed, 10), "debt_quota": strconv.FormatInt(allocation.DebtConsumed, 10)})
+	}
+	return items, nil
+}
+
+func reportFundingSource(sourceKind string, nonpaid bool) string {
+	source := strings.ToLower(strings.TrimSpace(sourceKind))
+	switch source {
+	case "redemption", "redeem", "redemption_code":
+		return "redemption"
+	case "admin", "admin_grant", "admin_adjustment", "admin_override", "quota_grant", "quota_debit", "batch_quota", "other_grant", "checkin", "affiliate_transfer":
+		return "admin_grant"
+	case "payment_self", "payment", "epay", "stripe", "creem", "waffo", "waffo_pancake":
+		if nonpaid {
+			return "payment_self_bonus"
+		}
+		return "payment_self"
+	case "payment_assisted":
+		if nonpaid {
+			return "payment_assisted_bonus"
+		}
+		return "payment_assisted"
+	case "legacy_migration", "legacy_unknown":
+		return "legacy_unknown"
+	case "":
+		return "payment_unattributed"
+	default:
+		return source
+	}
+}
+
+// reportTopupFundingSource exposes the four product-level funding sources in
+// the Agency UI. The durable ledger keeps the original operation kind (for
+// example quota_grant or an individual payment provider) for auditability,
+// while this API field uses the stable user-facing vocabulary.
+func reportTopupFundingSource(sourceKind string) string {
+	switch strings.ToLower(strings.TrimSpace(sourceKind)) {
+	case "redemption", "redeem", "redemption_code":
+		return "redemption"
+	case "admin", "admin_grant", "admin_adjustment", "admin_override", "quota_grant", "quota_debit", "batch_quota", "other_grant", "checkin", "affiliate_transfer":
+		return "admin_grant"
+	case "payment_assisted":
+		return "payment_assisted"
+	case "payment_self", "payment", "epay", "stripe", "creem", "waffo", "waffo_pancake":
+		return "payment_self"
+	case "legacy_migration", "legacy_unknown":
+		return "legacy_unknown"
+	case "":
+		return "unknown"
+	default:
+		return sourceKind
+	}
 }
 
 func (a *App) reportSummary(c *gin.Context) {

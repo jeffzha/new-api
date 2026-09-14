@@ -139,6 +139,30 @@ export async function adjustUserQuota(
   return res.data
 }
 
+export interface AssistedPaymentResponse {
+  success: boolean
+  message?: string
+  data?: Record<string, string>
+  url?: string
+  trade_no?: string
+  beneficiary_user_id?: number
+  initiated_by_user_id?: number
+  funding_source?: string
+  credited_quota?: number
+  money?: string
+}
+
+/** Create a root-admin-assisted payment order for a beneficiary user. */
+export async function requestAssistedPayment(
+  userId: number,
+  payload: { money: string; payment_method: string }
+): Promise<AssistedPaymentResponse> {
+  const res = await api.post(`/api/user/${userId}/assisted-pay`, payload, {
+    skipBusinessError: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
 /**
  * Reset user's Passkey registration
  */

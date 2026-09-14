@@ -112,6 +112,43 @@ func TestReportRangeRejectsMixedFiltersAndMissingEndpoints(t *testing.T) {
 	}
 }
 
+func TestReportTopupFundingSourceUsesStableProductKinds(t *testing.T) {
+	tests := map[string]string{
+		"quota_grant":      "admin_grant",
+		"admin_override":   "admin_grant",
+		"redemption":       "redemption",
+		"payment_self":     "payment_self",
+		"epay":             "payment_self",
+		"payment_assisted": "payment_assisted",
+		"legacy_migration": "legacy_unknown",
+		"":                 "unknown",
+	}
+	for source, expected := range tests {
+		assert.Equal(t, expected, reportTopupFundingSource(source), source)
+	}
+}
+
+func TestLoadTopupLotTotalsReportsConsumedRemainingExpiredAndFrozenExpiry(t *testing.T) {
+	app := newAgencyTestApp(t)
+	facts := []model.AgencyTopupFact{
+		{SourceOperationID: "redemption-operation", SourceID: "redemption-code-1", UserID: 81, ExpiredQuota: 3, ExpiresAt: 1700000000},
+		{SourceOperationID: "legacy-operation", UserID: 82, ExpiredQuota: 7, ExpiresAt: 1800000000},
+	}
+	require.NoError(t, app.db.Create(&facts).Error)
+	require.NoError(t, app.db.Create(&[]model.AgencyFundingLot{
+		{UserID: 81, SourceKind: "redemption", SourceID: "redemption-code-1", PaidInitial: 20, PaidAvailable: 4, PaidConsumed: 6, PaidDebtRepaid: 10, BonusInitial: 30, BonusAvailable: 5, BonusConsumed: 7, BonusDebtRepaid: 8, BonusExpired: 10, ExpiresAt: 1700000000, MoneySeq: 1, Version: 1},
+		{UserID: 81, SourceKind: "redemption", SourceID: "redemption-code-1", BonusInitial: 5, BonusAvailable: 2, BonusConsumed: 3, ExpiresAt: 1750000000, MoneySeq: 2, Version: 1},
+		{UserID: 82, SourceKind: "legacy_migration", SourceID: "legacy-operation", PaidInitial: 12, PaidAvailable: 2, PaidConsumed: 10, MoneySeq: 1, Version: 1},
+	}).Error)
+
+	totals, err := loadTopupLotTotals(app.db, facts)
+	require.NoError(t, err)
+	assert.Equal(t, topupLotTotals{ConsumedQuota: 34, RemainingQuota: 11, ExpiredQuota: 10, ExpiresAt: 1700000000},
+		totals[topupLotKey(81, "redemption-code-1")])
+	assert.Equal(t, topupLotTotals{ConsumedQuota: 10, RemainingQuota: 2},
+		totals[topupLotKey(82, "legacy-operation")])
+}
+
 func TestCleanupExpiredExportJobsRemovesFileAndInvalidatesDownloadToken(t *testing.T) {
 	app := newAgencyTestApp(t)
 	app.config.ExportDir = t.TempDir()

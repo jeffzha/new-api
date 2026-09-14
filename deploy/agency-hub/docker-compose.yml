@@ -17,6 +17,9 @@ services:
       SQL_MAX_IDLE_CONNS: ${AGENCY_HUB_SQL_MAX_IDLE_CONNS:-5}
       SQL_MAX_LIFETIME: "60"
       AGENCY_HUB_AUTO_MIGRATE: "false"
+      # Keep fact projection running so usage/top-up reports stay current;
+      # commission settlement is independently disabled until finance signs off.
+      AGENCY_HUB_FACT_PROJECTION_ENABLED: "true"
       AGENCY_HUB_COMMISSION_PROCESSING_ENABLED: "false"
       AGENCY_HUB_WITHDRAWALS_ENABLED: "false"
       AGENCY_HUB_SSO_PUBLIC_KEY_FILE: /run/secrets/agency_sso_public_key

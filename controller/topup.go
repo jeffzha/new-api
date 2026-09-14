@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -125,7 +126,11 @@ func GetTopUpInfo(c *gin.Context) {
 }
 
 type EpayRequest struct {
-	Amount        int64  `json:"amount"`
+	Amount int64 `json:"amount"`
+	// Money is used by administrator-assisted checkout to request an exact
+	// decimal CNY amount. The legacy Amount field remains the public wallet
+	// display-unit input for ordinary self-service checkout.
+	Money         string `json:"money,omitempty"`
 	PaymentMethod string `json:"payment_method"`
 }
 
@@ -175,6 +180,27 @@ func getPayMoney(amount int64, group string) float64 {
 	payMoney := dAmount.Mul(dPrice).Mul(dTopupGroupRatio).Mul(dDiscount)
 
 	return payMoney.InexactFloat64()
+}
+
+func assistedPaymentQuote(rawMoney, group string) (decimal.Decimal, int, error) {
+	money, err := decimal.NewFromString(strings.TrimSpace(rawMoney))
+	if err != nil || !money.IsPositive() || money.Exponent() < -2 {
+		return decimal.Zero, 0, errors.New("代充金额必须是正数且最多两位小数")
+	}
+	price := decimal.NewFromFloat(operation_setting.Price)
+	ratio := decimal.NewFromFloat(common.GetTopupGroupRatio(group))
+	if ratio.IsZero() {
+		ratio = decimal.NewFromInt(1)
+	}
+	rate := price.Mul(ratio)
+	if !rate.IsPositive() {
+		return decimal.Zero, 0, errors.New("当前充值换算价格无效")
+	}
+	credited, err := common.QuotaFromDecimalStrict(money.Div(rate).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).Floor())
+	if err != nil || credited <= 0 {
+		return decimal.Zero, 0, errors.New("代充金额换算后的额度无效")
+	}
+	return money, credited, nil
 }
 
 func getMinTopup() int64 {
@@ -343,6 +369,108 @@ func RequestEpay(c *gin.Context) {
 	}
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 充值订单创建成功 user_id=%d trade_no=%s payment_method=%s amount=%d money=%.2f uri=%q params=%q", id, tradeNo, req.PaymentMethod, req.Amount, payMoney, uri, common.GetJsonString(params)))
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": params, "url": uri})
+}
+
+// RequestAssistedEpay creates a payment order for a selected beneficiary. The
+// administrator is recorded as initiator, while the target user remains the
+// order beneficiary and receives the verified callback credit.
+func RequestAssistedEpay(c *gin.Context) {
+	if c.GetInt("role") != common.RoleRootUser {
+		c.JSON(http.StatusForbidden, gin.H{"message": "error", "data": "仅超级管理员可以发起代充"})
+		return
+	}
+	targetID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || targetID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "data": "invalid beneficiary"})
+		return
+	}
+	var req EpayRequest
+	if err := c.ShouldBindJSON(&req); err != nil || (req.Amount <= 0 && strings.TrimSpace(req.Money) == "") {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "data": "invalid amount"})
+		return
+	}
+	if !operation_setting.ContainsPayMethod(req.PaymentMethod) {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "data": "支付方式不存在"})
+		return
+	}
+	group, err := model.GetUserGroup(targetID, true)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "data": "获取受益用户分组失败"})
+		return
+	}
+	var creditedQuota int
+	var payMoneyDecimal decimal.Decimal
+	if strings.TrimSpace(req.Money) != "" {
+		var quoteErr error
+		payMoneyDecimal, creditedQuota, quoteErr = assistedPaymentQuote(req.Money, group)
+		if quoteErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"message": "error", "data": quoteErr.Error()})
+			return
+		}
+	} else {
+		if req.Amount < getMinTopup() {
+			c.JSON(http.StatusBadRequest, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", getMinTopup())})
+			return
+		}
+		if rejectInvalidTopUpQuota(c, targetID, req.Amount) {
+			return
+		}
+		creditedQuota, _ = getTopUpQuota(req.Amount)
+		payMoneyDecimal = decimal.NewFromFloat(getPayMoney(req.Amount, group))
+	}
+	if creditedQuota <= 0 || payMoneyDecimal.Cmp(decimal.NewFromFloat(0.01)) < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "data": "充值金额过低"})
+		return
+	}
+	if err := model.ValidateTopUpQuotaCapacity(targetID, creditedQuota); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "data": err.Error()})
+		return
+	}
+	client := GetEpayClient()
+	if client == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "error", "data": "当前管理员未配置支付信息"})
+		return
+	}
+	initiatorID := c.GetInt("id")
+	tradeNo := fmt.Sprintf("ADM%dNO%s%d", targetID, common.GetRandomString(8), time.Now().UnixNano())
+	callBackAddress := service.GetCallbackAddress()
+	returnURL, _ := url.Parse(paymentReturnPath("/usage-logs"))
+	notifyURL, _ := url.Parse(callBackAddress + "/api/user/epay/notify")
+	amount := req.Amount
+	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
+		amount = decimal.NewFromInt(amount).Div(decimal.NewFromFloat(common.QuotaPerUnit)).IntPart()
+	}
+	if strings.TrimSpace(req.Money) != "" {
+		// Settle from the immutable override so a decimal quote never loses
+		// quota to the legacy display-unit conversion.
+		amount = int64(creditedQuota)
+	}
+	payMoney := payMoneyDecimal.InexactFloat64()
+	order := &model.TopUp{UserId: targetID, InitiatedByUserId: initiatorID, FundingSource: "payment_assisted", CreditedQuota: int64(creditedQuota), Amount: amount, Money: payMoney, MoneyDecimal: payMoneyDecimal.StringFixed(2), TradeNo: tradeNo, PaymentMethod: req.PaymentMethod, PaymentProvider: model.PaymentProviderEpay, CreateTime: time.Now().Unix(), Status: common.TopUpStatusPending}
+	if err := order.Insert(); err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("assisted epay order insert failed target=%d initiator=%d trade_no=%s error=%q", targetID, initiatorID, tradeNo, err.Error()))
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "data": "创建支付订单失败"})
+		return
+	}
+	uri, params, err := client.Purchase(&epay.PurchaseArgs{Type: req.PaymentMethod, ServiceTradeNo: tradeNo, Name: fmt.Sprintf("TUC%d", creditedQuota), Money: payMoneyDecimal.StringFixed(2), Device: epay.PC, NotifyUrl: notifyURL, ReturnUrl: returnURL})
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("assisted epay purchase failed target=%d initiator=%d trade_no=%s error=%q", targetID, initiatorID, tradeNo, err.Error()))
+		_ = model.DB.Model(&model.TopUp{}).Where("trade_no = ? AND status = ?", tradeNo, common.TopUpStatusPending).Update("status", common.TopUpStatusFailed).Error
+		c.JSON(http.StatusBadGateway, gin.H{"message": "error", "data": "拉起支付失败"})
+		return
+	}
+	paramsJSON, marshalErr := common.Marshal(params)
+	if marshalErr != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("assisted epay params encode failed trade_no=%s error=%q", tradeNo, marshalErr.Error()))
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "data": "保存支付参数失败"})
+		return
+	}
+	if err := model.DB.Model(&model.TopUp{}).Where("trade_no = ? AND status = ?", tradeNo, common.TopUpStatusPending).Updates(map[string]any{"payment_url": uri, "payment_params": string(paramsJSON)}).Error; err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("assisted epay order update failed trade_no=%s error=%q", tradeNo, err.Error()))
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "data": "保存支付参数失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": params, "url": uri, "trade_no": tradeNo, "beneficiary_user_id": targetID, "initiated_by_user_id": initiatorID, "funding_source": "payment_assisted", "credited_quota": creditedQuota, "money": payMoneyDecimal.StringFixed(2)})
 }
 
 // tradeNo lock

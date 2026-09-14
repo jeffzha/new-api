@@ -32,6 +32,10 @@ type TopupQuotaConversion struct {
 type TopupFundingSnapshot struct {
 	Payment    *TopupPaymentSnapshot `json:"payment,omitempty"`
 	Conversion *TopupQuotaConversion `json:"conversion,omitempty"`
+	// InitiatedByUserID is internal provenance for administrator-assisted
+	// payments. It is never copied into provider evidence or exposed to the
+	// payment gateway.
+	InitiatedByUserID int64 `json:"-"`
 }
 
 var ErrTopupPaymentSnapshot = errors.New("invalid top-up payment snapshot")
@@ -113,6 +117,12 @@ func (topUp *TopUp) fundingSnapshot(creditedQuota int) (*TopupFundingSnapshot, e
 		}
 	}
 	conversion := TopupQuotaConversion{SchemaVersion: 1, BasisField: "topup.amount", BasisValue: strconv.FormatInt(topUp.Amount, 10), Calculation: "multiply_quota_per_unit", QuotaPerUnit: decimal.NewFromFloat(common.QuotaPerUnit).String(), CreditedQuota: strconv.Itoa(creditedQuota)}
+	if topUp.CreditedQuota > 0 && strings.TrimSpace(topUp.MoneyDecimal) != "" {
+		conversion.BasisField = "topup.money_decimal"
+		conversion.BasisValue = topUp.MoneyDecimal
+		conversion.Calculation = "assisted_exact_quote"
+		conversion.QuotaPerUnit = ""
+	}
 	switch topUp.PaymentProvider {
 	case PaymentProviderStripe:
 		conversion.BasisField = "topup.money"

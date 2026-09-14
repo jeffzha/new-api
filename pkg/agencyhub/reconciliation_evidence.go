@@ -151,7 +151,7 @@ func reconciliationEvidence(tx *gorm.DB, issue model.AgencyReconciliationIssue, 
 		for _, amount := range []int64{lot.PaidAvailable, lot.PaidReserved, lot.PaidConsumed, lot.PaidRevoked, lot.PaidDebtRepaid} {
 			paid.Add(paid, big.NewInt(amount))
 		}
-		for _, amount := range []int64{lot.BonusAvailable, lot.BonusReserved, lot.BonusConsumed, lot.BonusRevoked, lot.BonusDebtRepaid} {
+		for _, amount := range []int64{lot.BonusAvailable, lot.BonusReserved, lot.BonusConsumed, lot.BonusRevoked, lot.BonusDebtRepaid, lot.BonusExpired} {
 			bonus.Add(bonus, big.NewInt(amount))
 		}
 		v.check("paid_lot_conservation", stringID(lot.PaidInitial), paid.String())
@@ -164,6 +164,7 @@ func reconciliationEvidence(tx *gorm.DB, issue model.AgencyReconciliationIssue, 
 			{"paid_consumed", lot.PaidConsumed}, {"paid_revoked", lot.PaidRevoked}, {"paid_debt_repaid", lot.PaidDebtRepaid},
 			{"bonus_initial", lot.BonusInitial}, {"bonus_available", lot.BonusAvailable}, {"bonus_reserved", lot.BonusReserved},
 			{"bonus_consumed", lot.BonusConsumed}, {"bonus_revoked", lot.BonusRevoked}, {"bonus_debt_repaid", lot.BonusDebtRepaid},
+			{"bonus_expired", lot.BonusExpired},
 		} {
 			v.nonnegative(bucket.name, bucket.amount)
 		}

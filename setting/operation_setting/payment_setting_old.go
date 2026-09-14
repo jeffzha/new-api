@@ -21,7 +21,7 @@ var PayMethods = []map[string]string{
 	{
 		"name": "支付宝",
 		"icon": "SiAlipay",
-		"type": "alipay",
+		"type": "alipay_web",
 	},
 	{
 		"name": "微信",

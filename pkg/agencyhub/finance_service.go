@@ -150,7 +150,10 @@ func (a *App) ProcessBillingEvent(event agencycontract.BillingEvent) error {
 		now = time.Now().UnixMilli()
 	}
 	return a.db.Transaction(func(tx *gorm.DB) error {
-		return a.processBillingEventTx(tx, event, string(payload), payloadHash, now)
+		// Keep the direct recovery API consistent with the leased consumer:
+		// usage/top-up facts may continue while commission settlement is paused,
+		// but the commission job must remain deferred until its switch is enabled.
+		return a.processBillingEventTx(tx, event, string(payload), payloadHash, now, a.commissionProcessingEnabled())
 	})
 }
 
@@ -163,11 +166,12 @@ func validateBillingEvent(event agencycontract.BillingEvent) error {
 		return err
 	}
 	if event.MoneySeq < 0 || event.StandardQuota < 0 || event.ChargedTotalQuota < 0 ||
+		event.InputTokens < 0 || event.OutputTokens < 0 || event.CacheReadTokens < 0 || event.CacheWriteTokens < 0 ||
 		event.CommissionableQuota < 0 || event.NoncommissionableQuota < 0 ||
 		event.CommissionableQuota > event.ChargedTotalQuota ||
 		event.NoncommissionableQuota > event.ChargedTotalQuota ||
 		event.SettlementCostQuota < 0 || event.TheoreticalCommissionQuota < 0 ||
-		event.PaidAllocatedQuota < 0 || event.CommissionQuota < 0 ||
+		event.PaidAllocatedQuota < 0 || event.NonpaidAllocatedQuota < 0 || event.DebtAllocatedQuota < 0 || event.CommissionQuota < 0 ||
 		event.CommissionAmountMicros < 0 || event.ReversedCommissionAmountMicros < 0 {
 		return errors.New("invalid billing event amounts")
 	}
@@ -207,14 +211,25 @@ func (a *App) processBillingEventWithLease(ctx context.Context, event agencycont
 			}
 			return err
 		}
-		if err := a.processBillingEventTx(tx, event, string(payload), payloadHash, now); err != nil {
+		if err := a.processBillingEventTx(tx, event, string(payload), payloadHash, now, a.commissionProcessingEnabled()); err != nil {
 			return err
 		}
 		return a.markDeliveryTx(tx, current, "done", nil)
 	})
 }
 
-func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEvent, payload string, payloadHash string, now int64) error {
+// commissionProcessingEnabled keeps Config literals created by older callers
+// working as they did before fact projection was split from commission
+// projection. Production configuration always sets FactProjectionEnabled via
+// LoadConfig, so a false value here is only the legacy zero-value shape.
+func (a *App) commissionProcessingEnabled() bool {
+	if a == nil {
+		return false
+	}
+	return a.config.CommissionEnabled || !a.config.FactProjectionEnabled
+}
+
+func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEvent, payload string, payloadHash string, now int64, commissionEnabled bool) error {
 	if event.OccurredAtMS == 0 {
 		event.OccurredAtMS = now
 	}
@@ -300,13 +315,20 @@ func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEve
 	if !isFundingOnly {
 		if len(event.Components) == 0 {
 			var err error
-			amount, err = a.projectBillingComponent(tx, event, "default", now)
+			amount, err = a.projectBillingComponentMode(tx, event, "default", now, true, commissionEnabled)
 			if err != nil {
 				return err
 			}
 		} else {
-			for _, component := range event.Components {
-				componentAmount, err := a.projectBillingComponent(tx, agencycontract.ComponentEvent(event, component), component.ComponentID, now)
+			for index, component := range event.Components {
+				componentEvent := agencycontract.ComponentEvent(event, component)
+				if index > 0 {
+					componentEvent.InputTokens = 0
+					componentEvent.OutputTokens = 0
+					componentEvent.CacheReadTokens = 0
+					componentEvent.CacheWriteTokens = 0
+				}
+				componentAmount, err := a.projectBillingComponentMode(tx, componentEvent, component.ComponentID, now, true, commissionEnabled)
 				if err != nil {
 					return err
 				}
@@ -323,6 +345,14 @@ func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEve
 				return err
 			}
 		}
+	}
+	commissionAmountPending := event.CommissionAmountMicros > 0 || event.ReversedCommissionAmountMicros > 0
+	if !commissionEnabled && event.AgencyID != nil && event.CommissionEligible && commissionAmountPending && !isFundingOnly {
+		if err := a.ensureCommissionJobTx(tx, event, payload, payloadHash, now); err != nil {
+			return err
+		}
+		source.ProcessingStatus = "facts_done"
+		return tx.Model(source).Updates(map[string]any{"processing_status": source.ProcessingStatus, "skip_reason": "commission_deferred"}).Error
 	}
 	if amount == 0 && event.SchemaVersion != agencycontract.ComponentSchemaVersion {
 		source.ProcessingStatus = "skipped"
@@ -343,6 +373,81 @@ func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEve
 	}
 	source.ProcessingStatus = "done"
 	return tx.Model(source).Update("processing_status", "done").Error
+}
+
+func (a *App) ensureCommissionJobTx(tx *gorm.DB, event agencycontract.BillingEvent, payload, payloadHash string, now int64) error {
+	var job model.AgencyCommissionJob
+	err := tx.Where("event_id = ?", event.EventID).First(&job).Error
+	if err == nil {
+		if job.PayloadHash != payloadHash {
+			return errors.New("commission job payload hash conflict")
+		}
+		if job.Status == "done" || job.Status == "skipped" {
+			return nil
+		}
+		return tx.Model(&job).Updates(map[string]any{"status": "deferred", "last_error": ""}).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return tx.Create(&model.AgencyCommissionJob{
+		EventID: event.EventID, Payload: payload, PayloadHash: payloadHash,
+		UserID: event.UserID, MoneySeq: event.MoneySeq, EventIndex: event.EventIndex,
+		Status: "deferred", NextRetryAt: time.Now().Unix(), CreatedAtMS: now,
+	}).Error
+}
+
+func (a *App) processCommissionJobTx(tx *gorm.DB, job *model.AgencyCommissionJob, event agencycontract.BillingEvent, payloadHash string, now int64) error {
+	if job == nil {
+		return errors.New("commission job is required")
+	}
+	if job.PayloadHash != payloadHash || job.EventID != event.EventID {
+		return errors.New("commission job payload hash conflict")
+	}
+	if event.SchemaVersion == agencycontract.ComponentSchemaVersion || event.JournalRevision > 0 || strings.TrimSpace(event.FinancialChargeID) != "" {
+		if err := verifyAuthoritativeBillingEvent(tx, event, payloadHash); err != nil {
+			return err
+		}
+	}
+	amount := int64(0)
+	if event.SchemaVersion == agencycontract.ComponentSchemaVersion && len(event.Components) > 0 {
+		for _, component := range event.Components {
+			part, err := a.projectBillingComponentMode(tx, agencycontract.ComponentEvent(event, component), component.ComponentID, now, false, true)
+			if err != nil {
+				return err
+			}
+			amount, err = checkedAdd(amount, part)
+			if err != nil {
+				return err
+			}
+		}
+	} else if !isFundingOnlyEvent(event) {
+		var err error
+		amount, err = a.projectBillingComponentMode(tx, event, "default", now, false, true)
+		if err != nil {
+			return err
+		}
+	}
+	if event.EventType == "agency.billing_reversed" && amount != 0 {
+		if err := a.recordDailyStat(tx, event, amount, true); err != nil {
+			return err
+		}
+	}
+	var source model.AgencySourceEvent
+	if err := model.AgencyLockForUpdate(tx).Where("event_id = ?", event.EventID).First(&source).Error; err != nil {
+		return err
+	}
+	if err := tx.Model(&source).Updates(map[string]any{"processing_status": "done", "skip_reason": ""}).Error; err != nil {
+		return err
+	}
+	completed := time.Now().UnixMilli()
+	return tx.Model(job).Updates(map[string]any{"status": "done", "completed_at_ms": completed, "last_error": "", "lease_until": 0}).Error
+}
+
+func isFundingOnlyEvent(event agencycontract.BillingEvent) bool {
+	return event.EventType == "agency.funding_reversed" || isReservationCancellation(event) ||
+		event.EventType == "agency.billing_reserved" || event.EventType == "agency.topup_completed" ||
+		event.EventType == "agency.funding_adjusted"
 }
 
 // The immutable operation, not the journal's latest mutable totals, proves an
@@ -401,8 +506,12 @@ func isReservationCancellation(event agencycontract.BillingEvent) bool {
 }
 
 func (a *App) projectBillingComponent(tx *gorm.DB, event agencycontract.BillingEvent, componentID string, now int64) (int64, error) {
+	return a.projectBillingComponentMode(tx, event, componentID, now, true, true)
+}
+
+func (a *App) projectBillingComponentMode(tx *gorm.DB, event agencycontract.BillingEvent, componentID string, now int64, recordUsage bool, commissionEnabled bool) (int64, error) {
 	isReversal := event.EventType == "agency.billing_reversed"
-	if !isReversal {
+	if recordUsage && !isReversal {
 		if err := a.recordUsageFact(tx, event, componentID); err != nil {
 			return 0, err
 		}
@@ -412,6 +521,9 @@ func (a *App) projectBillingComponent(tx *gorm.DB, event agencycontract.BillingE
 	// sub-micro refund can reverse nonzero K and still needs a ledger row.
 	if event.SchemaVersion == agencycontract.ComponentSchemaVersion && event.CommissionQuota > 0 {
 		zeroCommission = false
+	}
+	if !commissionEnabled {
+		return 0, nil
 	}
 	if event.AgencyID == nil || !event.CommissionEligible || zeroCommission {
 		return 0, nil
@@ -515,23 +627,31 @@ func (a *App) recordUsageFact(tx *gorm.DB, event agencycontract.BillingEvent, co
 		skipReason = "zero_commission"
 	}
 	fact := model.AgencyUsageFact{
-		EventID:         event.EventID,
-		ComponentID:     componentID,
-		UsageHash:       event.UsageHash,
-		CumulativeUsage: event.CumulativeUsage,
-		UserID:          event.UserID,
-		AgencyID:        event.AgencyID,
-		BindingID:       event.BindingID,
-		OriginModelName: event.OriginModelName,
-		ModelKey:        modelKey,
-		Endpoint:        event.Endpoint,
-		BusinessStatus:  event.BusinessStatus,
-		StandardQuota:   event.StandardQuota,
-		SalesBPS:        event.SalesBPS,
-		ChargedQuota:    event.ChargedTotalQuota,
-		CurrencyCode:    event.CurrencyCode,
-		OccurredAtMS:    event.OccurredAtMS,
-		SkipReason:      skipReason,
+		EventID:           event.EventID,
+		FinancialChargeID: event.FinancialChargeID,
+		ComponentID:       componentID,
+		UsageHash:         event.UsageHash,
+		CumulativeUsage:   event.CumulativeUsage,
+		UserID:            event.UserID,
+		AgencyID:          event.AgencyID,
+		BindingID:         event.BindingID,
+		OriginModelName:   event.OriginModelName,
+		ModelKey:          modelKey,
+		Endpoint:          event.Endpoint,
+		BusinessStatus:    event.BusinessStatus,
+		InputTokens:       event.InputTokens,
+		OutputTokens:      event.OutputTokens,
+		CacheReadTokens:   event.CacheReadTokens,
+		CacheWriteTokens:  event.CacheWriteTokens,
+		StandardQuota:     event.StandardQuota,
+		SalesBPS:          event.SalesBPS,
+		ChargedQuota:      event.ChargedTotalQuota,
+		PaidQuota:         event.PaidAllocatedQuota,
+		NonpaidQuota:      event.NonpaidAllocatedQuota,
+		DebtQuota:         event.DebtAllocatedQuota,
+		CurrencyCode:      event.CurrencyCode,
+		OccurredAtMS:      event.OccurredAtMS,
+		SkipReason:        skipReason,
 	}
 	if fact.BusinessStatus == "" {
 		fact.BusinessStatus = event.BillingStatus

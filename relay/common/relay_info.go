@@ -157,6 +157,12 @@ type RelayInfo struct {
 	// usage calculator at the accepted settlement coefficient. A pointer
 	// distinguishes an explicit zero cost from a path without this result.
 	AgencySettlementCostQuota *int64
+	// Agency usage counters are captured from the same normalized usage used
+	// for final billing and copied into the immutable billing event.
+	AgencyInputTokens      int64
+	AgencyOutputTokens     int64
+	AgencyCacheReadTokens  int64
+	AgencyCacheWriteTokens int64
 	// RealtimePreConsumedQuota tracks the sum of successfully reserved
 	// realtime segments. Final close settles only the difference, preventing
 	// the cumulative usage frame from being charged a second time.

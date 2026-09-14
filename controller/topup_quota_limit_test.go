@@ -73,6 +73,25 @@ func TestTopUpQuotaValidation(t *testing.T) {
 	}
 }
 
+func TestAssistedPaymentQuoteUsesExactDecimalMoney(t *testing.T) {
+	oldQuotaPerUnit := common.QuotaPerUnit
+	oldPrice := operation_setting.Price
+	common.QuotaPerUnit = 500000
+	operation_setting.Price = 1
+	t.Cleanup(func() {
+		common.QuotaPerUnit = oldQuotaPerUnit
+		operation_setting.Price = oldPrice
+	})
+
+	money, quota, err := assistedPaymentQuote("12.34", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "12.34", money.String())
+	assert.Equal(t, 6170000, quota)
+
+	_, _, err = assistedPaymentQuote("12.345", "default")
+	assert.Error(t, err)
+}
+
 func TestValidateTopUpQuotaReturnsMaximumAmount(t *testing.T) {
 	oldQuotaPerUnit := common.QuotaPerUnit
 	oldDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType

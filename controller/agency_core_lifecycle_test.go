@@ -107,16 +107,17 @@ func TestAgencyCoreLifecycleFromInvitationToAuthenticatedCommissionReport(t *tes
 			require.NoError(t, db.Model(&model.AgencyCommissionLedger{}).Count(&earnedBeforeSettlement).Error)
 			assert.Zero(t, earnedBeforeSettlement)
 
-			// Actual Q=100+20*2=140, B=126, T=105 and G=21. Only paid
-			// P=100 counts, so K=round(21*100/126)=17 and M=$0.17.
+			// Actual Q=100+20*2=140, B=126, T=105 and G=21. The
+			// administrator grant is consumed before paid funding, so only
+			// P=26 counts and K=round(21*26/126)=4.
 			service.PostTextConsumeQuota(ctx, info, &dto.Usage{PromptTokens: 100, CompletionTokens: 20, TotalTokens: 120}, nil)
 			require.NoError(t, db.First(&journal, journal.ID).Error)
 			require.Equal(t, "finalized", journal.Status)
 			assert.Equal(t, int64(126), journal.ChargedTotalQuota)
 			assert.Equal(t, int64(105), journal.SettlementCostQuota)
-			assert.Equal(t, int64(100), journal.PaidAllocatedQuota)
-			assert.Equal(t, int64(17), journal.CommissionQuota)
-			assert.Equal(t, int64(170000), journal.CommissionAmountMicros)
+			assert.Equal(t, int64(26), journal.PaidAllocatedQuota)
+			assert.Equal(t, int64(4), journal.CommissionQuota)
+			assert.Equal(t, int64(40000), journal.CommissionAmountMicros)
 			require.NoError(t, service.SettleBilling(ctx, info, 126), "finalization replay must return the same receipt")
 			assert.ErrorIs(t, service.SettleBilling(ctx, info, 127), model.ErrAgencyChargeConflict, "a replay with changed final usage must not silently succeed")
 			require.NoError(t, db.First(&customer, customer.Id).Error)
@@ -126,8 +127,8 @@ func TestAgencyCoreLifecycleFromInvitationToAuthenticatedCommissionReport(t *tes
 			assert.Equal(t, 126, token.UsedQuota)
 			var account model.AgencyFundingAccount
 			require.NoError(t, db.First(&account, customer.Id).Error)
-			assert.Zero(t, account.PaidAvailable)
-			assert.Equal(t, int64(74), account.NonpaidAvailable)
+			assert.Equal(t, int64(74), account.PaidAvailable)
+			assert.Zero(t, account.NonpaidAvailable)
 			assert.Zero(t, account.DebtQuota)
 			var envelopes []model.AgencyBillingOutbox
 			require.NoError(t, db.Where("user_id = ?", customer.Id).Order("money_seq").Find(&envelopes).Error)
@@ -144,17 +145,21 @@ func TestAgencyCoreLifecycleFromInvitationToAuthenticatedCommissionReport(t *tes
 			require.NoError(t, app.RunConsumerOnce(context.Background(), 20), "consumer replay cannot duplicate earnings")
 			var balance model.AgencyCommissionBalance
 			require.NoError(t, db.Where("agency_id = ? AND currency_code = ?", agency.ID, "USD").First(&balance).Error)
-			assert.Equal(t, int64(170000), balance.EarnedMicros)
+			assert.Equal(t, int64(40000), balance.EarnedMicros)
 			assert.Equal(t, balance.EarnedMicros, balance.AvailableMicros)
 			var entries []model.AgencyCommissionLedger
 			require.NoError(t, db.Where("agency_id = ?", agency.ID).Find(&entries).Error)
 			require.Len(t, entries, 1)
-			assert.Equal(t, int64(17), entries[0].CommissionQuota)
+			assert.Equal(t, int64(4), entries[0].CommissionQuota)
 			assert.Equal(t, "agency-public-model", entries[0].OriginModelName)
 			var usageFacts []model.AgencyUsageFact
 			require.NoError(t, db.Where("user_id = ?", customer.Id).Find(&usageFacts).Error)
 			require.Len(t, usageFacts, 1, "topups, grants and reservations are not model calls")
 			assert.Equal(t, int64(126), usageFacts[0].ChargedQuota)
+			assert.Equal(t, int64(100), usageFacts[0].InputTokens)
+			assert.Equal(t, int64(20), usageFacts[0].OutputTokens)
+			assert.Zero(t, usageFacts[0].CacheReadTokens)
+			assert.Zero(t, usageFacts[0].CacheWriteTokens)
 			for _, envelope := range envelopes {
 				var receipt model.AgencySourceEvent
 				require.NoError(t, db.Where("event_id = ?", envelope.EventID).First(&receipt).Error)
@@ -212,21 +217,21 @@ func TestAgencyCoreLifecycleFromInvitationToAuthenticatedCommissionReport(t *tes
 			require.NoError(t, common.Unmarshal(reportResponse.Body.Bytes(), &report))
 			assert.Equal(t, "1", report.Data.Calls)
 			assert.Equal(t, "126", report.Data.ChargedQuota)
-			assert.Equal(t, "170000", report.Data.CommissionMicros)
+			assert.Equal(t, "40000", report.Data.CommissionMicros)
 			if components {
 				input := model.AgencyComponentRefundInput{UserID: int64(customer.Id), ChargeID: info.RequestId,
 					RefundID: "core-half-refund", CumulativeQuota: 63, Reason: "model_after_sale"}
 				refund, err := service.RefundAgencyModelCharge(input, token.Key)
 				require.NoError(t, err)
 				assert.Equal(t, agencycontract.ComponentSchemaVersion, refund.SchemaVersion)
-				assert.Equal(t, int64(85000), refund.ReversedCommissionAmountMicros)
+				assert.Equal(t, int64(20000), refund.ReversedCommissionAmountMicros)
 				replayed, err := service.RefundAgencyModelCharge(input, token.Key)
 				require.NoError(t, err)
 				assert.Equal(t, refund.EventID, replayed.EventID)
 				require.NoError(t, app.RunConsumerOnce(context.Background(), 20))
 				require.NoError(t, db.First(&balance, balance.ID).Error)
-				assert.Equal(t, int64(85000), balance.AvailableMicros)
-				assert.Equal(t, int64(85000), balance.ReversedMicros)
+				assert.Equal(t, int64(20000), balance.AvailableMicros)
+				assert.Equal(t, int64(20000), balance.ReversedMicros)
 				require.NoError(t, db.First(&customer, customer.Id).Error)
 				require.NoError(t, db.First(&token, token.Id).Error)
 				assert.Equal(t, 137, customer.Quota)

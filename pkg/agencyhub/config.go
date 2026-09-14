@@ -12,6 +12,7 @@ type Config struct {
 	BasePath                     string
 	PublicBaseURL                string
 	PlatformBaseURL              string
+	BrowserOrigin                string
 	CookieName                   string
 	CookieSecure                 bool
 	SessionIdle                  time.Duration
@@ -20,6 +21,7 @@ type Config struct {
 	MaxLoginAttempts             int
 	MinSpreadBPS                 int
 	SalesCapBPS                  int
+	FactProjectionEnabled        bool
 	CommissionEnabled            bool
 	WithdrawalsEnabled           bool
 	AutoMigrate                  bool
@@ -51,6 +53,7 @@ func LoadConfig() Config {
 		BasePath:                     normalizeBasePath(envString("AGENCY_HUB_BASE_PATH", "/agency")),
 		PublicBaseURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("AGENCY_HUB_PUBLIC_BASE_URL")), "/"),
 		PlatformBaseURL:              strings.TrimRight(strings.TrimSpace(os.Getenv("AGENCY_HUB_PLATFORM_BASE_URL")), "/"),
+		BrowserOrigin:                strings.TrimRight(strings.TrimSpace(os.Getenv("AGENCY_HUB_BROWSER_ORIGIN")), "/"),
 		CookieName:                   envString("AGENCY_HUB_COOKIE_NAME", "agency_session"),
 		CookieSecure:                 envBool("AGENCY_HUB_COOKIE_SECURE", true),
 		SessionIdle:                  envDuration("AGENCY_HUB_SESSION_IDLE_SECONDS", 1800),
@@ -59,6 +62,7 @@ func LoadConfig() Config {
 		MaxLoginAttempts:             envInt("AGENCY_HUB_MAX_LOGIN_ATTEMPTS", 5),
 		MinSpreadBPS:                 envInt("AGENCY_HUB_MIN_SPREAD_BPS", 500),
 		SalesCapBPS:                  envInt("AGENCY_HUB_SALES_CAP_BPS", 30000),
+		FactProjectionEnabled:        envBoolAny(true, "AGENCY_HUB_FACT_PROJECTION_ENABLED", "AGENCY_FACT_PROJECTION_ENABLED"),
 		CommissionEnabled:            envBoolAny(false, "AGENCY_HUB_COMMISSION_PROCESSING_ENABLED", "AGENCY_COMMISSION_PROCESSING_ENABLED"),
 		WithdrawalsEnabled:           envBoolAny(false, "AGENCY_HUB_WITHDRAWALS_ENABLED", "AGENCY_WITHDRAWALS_ENABLED"),
 		AutoMigrate:                  envBool("AGENCY_HUB_AUTO_MIGRATE", false),

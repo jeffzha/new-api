@@ -39,6 +39,7 @@ __pycache__/
 
 # Local-only live probes and scratch test workspaces.
 .local-tests/
+.local-dev/
 .deploy/
 .understand-anything/
 service/relayconvert/chat_responses_live_local_test.go

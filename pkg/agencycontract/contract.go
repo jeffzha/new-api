@@ -17,10 +17,14 @@ import (
 const (
 	SchemaVersion          = "agency-billing-v1"
 	ComponentSchemaVersion = "agency-billing-v2"
-	FundingRuleVersion     = "paid_first_v1"
-	DefaultSalesCapBPS     = 30000
-	MinCoefficientBPS      = 0
-	MaxCoefficientBPS      = 100000
+	// Keep the historical value available because old pricing snapshots are
+	// immutable and must continue to settle with their original ordering.
+	FundingRuleVersionV1 = "paid_first_v1"
+	FundingRuleVersionV2 = "redeem_admin_paid_v2"
+	FundingRuleVersion   = FundingRuleVersionV2
+	DefaultSalesCapBPS   = 30000
+	MinCoefficientBPS    = 0
+	MaxCoefficientBPS    = 100000
 )
 
 var (
@@ -160,6 +164,8 @@ type ChargeResult struct {
 	SettlementCostQuota        int64 `json:"settlement_cost_quota"`
 	TheoreticalCommissionQuota int64 `json:"theoretical_commission_quota"`
 	PaidAllocatedQuota         int64 `json:"paid_allocated_quota"`
+	NonpaidAllocatedQuota      int64 `json:"nonpaid_allocated_quota"`
+	DebtAllocatedQuota         int64 `json:"debt_allocated_quota"`
 	CommissionQuota            int64 `json:"commission_quota"`
 }
 
@@ -207,6 +213,10 @@ type BillingEvent struct {
 	// needed to explain the charge. It must not contain credentials or raw
 	// request/response bodies.
 	BillingBasis                   string `json:"billing_basis,omitempty"`
+	InputTokens                    int64  `json:"input_tokens,omitempty"`
+	OutputTokens                   int64  `json:"output_tokens,omitempty"`
+	CacheReadTokens                int64  `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens               int64  `json:"cache_write_tokens,omitempty"`
 	StandardQuota                  int64  `json:"standard_quota"`
 	ChargedTotalQuota              int64  `json:"charged_total_quota"`
 	CommissionableQuota            int64  `json:"commissionable_charged_quota"`
@@ -214,6 +224,8 @@ type BillingEvent struct {
 	SettlementCostQuota            int64  `json:"settlement_cost_quota"`
 	TheoreticalCommissionQuota     int64  `json:"theoretical_commission_quota"`
 	PaidAllocatedQuota             int64  `json:"paid_allocated_quota"`
+	NonpaidAllocatedQuota          int64  `json:"nonpaid_allocated_quota"`
+	DebtAllocatedQuota             int64  `json:"debt_allocated_quota"`
 	CommissionQuota                int64  `json:"commission_quota"`
 	CommissionAmountMicros         int64  `json:"commission_amount_micros"`
 	ReversedCommissionAmountMicros int64  `json:"reversed_commission_amount_micros"`

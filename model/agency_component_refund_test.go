@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
@@ -407,4 +408,80 @@ func TestAgencyComponentRefundRestoresRepaidDebtToActualRepaymentLot(t *testing.
 	}))
 	require.NoError(t, db.First(&debt, debt.ID).Error)
 	assert.Zero(t, debt.OutstandingQuota)
+}
+
+func TestAgencyComponentRefundDoesNotResurrectExpiredRedemption(t *testing.T) {
+	db, user, token, original := agencyComponentRefundFixture(t, 0, 100, []agencycontract.BillingComponent{
+		{ComponentID: "model", ChargedTotalQuota: 100, CommissionableQuota: 100, SettlementCostQuota: 60, TheoreticalCommissionQuota: 40, CommissionEligible: true},
+	})
+	expiresAt := time.Now().Unix() - 1
+	require.NoError(t, db.Model(&AgencyFundingLot{}).Where("source_id = ?", "component-refund-source-1").
+		Updates(map[string]any{"source_kind": "redemption", "expires_at": expiresAt}).Error)
+	require.NoError(t, db.Model(&AgencyTopupFact{}).Where("source_id = ?", "component-refund-source-1").
+		Updates(map[string]any{"funding_source": "redemption", "expires_at": expiresAt}).Error)
+
+	event, err := AgencyRefundWalletCharge(AgencyComponentRefundInput{UserID: int64(user.Id), ChargeID: original.FinancialChargeID,
+		RefundID: "expired-redemption-refund", CumulativeQuota: 100, Reason: "model_after_sale"}, token.Key)
+	require.NoError(t, err)
+	assert.Equal(t, int64(100), event.ChargedTotalQuota)
+
+	var wallet User
+	var account AgencyFundingAccount
+	var lot AgencyFundingLot
+	var fact AgencyTopupFact
+	var storedToken Token
+	require.NoError(t, db.First(&wallet, user.Id).Error)
+	require.NoError(t, db.Where("user_id = ?", user.Id).First(&account).Error)
+	require.NoError(t, db.Where("source_id = ?", "component-refund-source-1").First(&lot).Error)
+	require.NoError(t, db.Where("source_id = ?", "component-refund-source-1").First(&fact).Error)
+	require.NoError(t, db.First(&storedToken, token.Id).Error)
+	assert.Zero(t, wallet.Quota)
+	assert.Zero(t, account.NonpaidAvailable)
+	assert.Zero(t, lot.BonusAvailable)
+	assert.Zero(t, lot.BonusConsumed)
+	assert.Equal(t, int64(100), lot.BonusExpired)
+	assert.Equal(t, int64(100), fact.ExpiredQuota)
+	assert.Zero(t, storedToken.UsedQuota)
+}
+
+func TestAgencyComponentRefundKeepsExpiredRedemptionDebtRepaymentUnavailable(t *testing.T) {
+	db, user, token, original := agencyComponentRefundFixture(t, 0, 0, []agencycontract.BillingComponent{
+		{ComponentID: "model", ChargedTotalQuota: 100, CommissionableQuota: 100, SettlementCostQuota: 60, TheoreticalCommissionQuota: 40, CommissionEligible: true},
+	})
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		if err := RecordAgencyTopup(tx, int64(user.Id), "redemption", "expired-debt-redemption", "redemption", 0, 100); err != nil {
+			return err
+		}
+		return tx.Model(&User{}).Where("id = ?", user.Id).Update("quota", gorm.Expr("quota + ?", 100)).Error
+	}))
+	expiresAt := time.Now().Unix() - 1
+	require.NoError(t, db.Model(&AgencyFundingLot{}).Where("source_id = ?", "expired-debt-redemption").Update("expires_at", expiresAt).Error)
+	require.NoError(t, db.Model(&AgencyTopupFact{}).Where("source_id = ?", "expired-debt-redemption").Update("expires_at", expiresAt).Error)
+
+	_, err := AgencyRefundWalletCharge(AgencyComponentRefundInput{UserID: int64(user.Id), ChargeID: original.FinancialChargeID,
+		RefundID: "expired-debt-redemption-refund", CumulativeQuota: 100, Reason: "model_after_sale"}, token.Key)
+	require.NoError(t, err)
+
+	var wallet User
+	var account AgencyFundingAccount
+	var lot AgencyFundingLot
+	var fact AgencyTopupFact
+	var debt AgencyFundingDebt
+	var storedToken Token
+	require.NoError(t, db.First(&wallet, user.Id).Error)
+	require.NoError(t, db.Where("user_id = ?", user.Id).First(&account).Error)
+	require.NoError(t, db.Where("source_id = ?", "expired-debt-redemption").First(&lot).Error)
+	require.NoError(t, db.Where("source_id = ?", "expired-debt-redemption").First(&fact).Error)
+	require.NoError(t, db.Where("user_id = ? AND debt_kind = ?", user.Id, "model_charge").First(&debt).Error)
+	require.NoError(t, db.First(&storedToken, token.Id).Error)
+	assert.Zero(t, wallet.Quota)
+	assert.Zero(t, account.NonpaidAvailable)
+	assert.Zero(t, account.DebtQuota)
+	assert.Zero(t, debt.OutstandingQuota)
+	assert.Equal(t, int64(100), debt.ReversedQuota)
+	assert.Zero(t, lot.BonusAvailable)
+	assert.Zero(t, lot.BonusDebtRepaid)
+	assert.Equal(t, int64(100), lot.BonusExpired)
+	assert.Equal(t, int64(100), fact.ExpiredQuota)
+	assert.Zero(t, storedToken.UsedQuota)
 }

@@ -1348,7 +1348,7 @@ func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 	if isAgencyProvisioningUser(id) {
 		return ErrAgencyProvisioning
 	}
-	if db && isAgencyDurableUser(id) {
+	if db {
 		return ApplyAgencyQuotaDelta(int64(id), int64(quota), "quota_grant")
 	}
 	if !db && isAgencyDurableUser(id) {
@@ -1367,12 +1367,20 @@ func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 	if err := increaseUserQuota(id, quota); err != nil {
 		return err
 	}
-	if db {
-		if err := MirrorAgencyNonpaidCredit(int64(id), int64(quota), "quota_grant"); err != nil {
-			common.SysError("failed to mirror agency nonpaid credit: " + err.Error())
-		}
-	}
 	return nil
+}
+
+// IncreaseUserQuotaWithActor is the Root-facing variant that preserves the
+// operator identity in the durable agency funding projection. Legacy users
+// continue through the existing quota update path.
+func IncreaseUserQuotaWithActor(id int, quota int, actorID int64) error {
+	if quota <= 0 {
+		return errors.New("quota cannot be non-positive")
+	}
+	if isAgencyProvisioningUser(id) {
+		return ErrAgencyProvisioning
+	}
+	return ApplyAgencyQuotaDeltaWithActor(int64(id), int64(quota), "quota_grant", actorID)
 }
 
 func increaseUserQuota(id int, quota int) (err error) {
@@ -1390,7 +1398,7 @@ func DecreaseUserQuota(id int, quota int, db bool) (err error) {
 	if isAgencyProvisioningUser(id) {
 		return ErrAgencyProvisioning
 	}
-	if db && isAgencyDurableUser(id) {
+	if db {
 		return ApplyAgencyQuotaDelta(int64(id), -int64(quota), "quota_debit")
 	}
 	if !db && isAgencyDurableUser(id) {
@@ -1407,6 +1415,16 @@ func DecreaseUserQuota(id int, quota int, db bool) (err error) {
 		return nil
 	}
 	return decreaseUserQuota(id, quota)
+}
+
+func DecreaseUserQuotaWithActor(id int, quota int, actorID int64) error {
+	if quota < 0 {
+		return errors.New("quota cannot be negative")
+	}
+	if isAgencyProvisioningUser(id) {
+		return ErrAgencyProvisioning
+	}
+	return ApplyAgencyQuotaDeltaWithActor(int64(id), -int64(quota), "quota_debit", actorID)
 }
 
 func decreaseUserQuota(id int, quota int) (err error) {

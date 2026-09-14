@@ -104,6 +104,7 @@ func TestProviderTopupSnapshotsPreserveActualPaymentAndDistinctQuotaUnits(t *tes
 				require.Len(t, facts, 1)
 				assert.Equal(t, int64(provider.quota), facts[0].CreditedQuota)
 				assert.Equal(t, int64(provider.quota), facts[0].PaidQuota)
+				assert.Equal(t, "payment_self", facts[0].FundingSource)
 				assert.Equal(t, "12.34", facts[0].ActualMoney)
 				assert.Equal(t, "USD", facts[0].CurrencyCode)
 				assert.Equal(t, "provider-payment-123", facts[0].PaymentReference)
@@ -121,6 +122,33 @@ func TestProviderTopupSnapshotsPreserveActualPaymentAndDistinctQuotaUnits(t *tes
 			})
 		}
 	}
+}
+
+func TestAssistedTopupUsesImmutableQuotaOverrideAndActor(t *testing.T) {
+	user := setupPaymentSnapshotDB(t, AgencyDurableBillingMode)
+	order := TopUp{UserId: user.Id, InitiatedByUserId: 99, FundingSource: "payment_assisted", CreditedQuota: 1234, Amount: 2, Money: 1, MoneyDecimal: "1.00", TradeNo: "assisted-override", PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusPending}
+	require.NoError(t, order.Insert())
+	_, err := RechargeEpay(order.TradeNo, "alipay", "127.0.0.1", &TopupPaymentSnapshot{ActualMoney: "1.00", CurrencyCode: "CNY", PaymentReference: "assisted-receipt"})
+	require.NoError(t, err)
+	require.NoError(t, DB.First(user, user.Id).Error)
+	assert.Equal(t, 1234, user.Quota)
+	var fact AgencyTopupFact
+	require.NoError(t, DB.First(&fact).Error)
+	assert.Equal(t, "payment_assisted", fact.FundingSource)
+	assert.Equal(t, int64(99), fact.InitiatedByUserID)
+	assert.Equal(t, int64(1234), fact.CreditedQuota)
+	var conversion TopupQuotaConversion
+	require.NoError(t, common.UnmarshalJsonStr(fact.QuotaConversionSnapshot, &conversion))
+	assert.Equal(t, "assisted_exact_quote", conversion.Calculation)
+}
+
+func TestAssistedTopupRejectsCallbackAmountMismatch(t *testing.T) {
+	user := setupPaymentSnapshotDB(t, AgencyDurableBillingMode)
+	order := TopUp{UserId: user.Id, InitiatedByUserId: 99, FundingSource: "payment_assisted", CreditedQuota: 1234, Amount: 2, Money: 1, MoneyDecimal: "1.00", TradeNo: "assisted-mismatch", PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusPending}
+	require.NoError(t, order.Insert())
+	_, err := RechargeEpay(order.TradeNo, "alipay", "127.0.0.1", &TopupPaymentSnapshot{ActualMoney: "0.99", CurrencyCode: "CNY", PaymentReference: "bad-assist-receipt"})
+	require.ErrorIs(t, err, ErrTopUpPaymentAmountMismatch)
+	assert.Equal(t, common.TopUpStatusPending, GetTopUpByTradeNo(order.TradeNo).Status)
 }
 
 func TestTopupWithoutPaymentEvidenceKeepsUnknownMoneyAndManualCompletionNonpaid(t *testing.T) {

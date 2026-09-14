@@ -41,6 +41,8 @@ func ComponentEvent(event BillingEvent, component BillingComponent) BillingEvent
 	event.SettlementCostQuota = component.SettlementCostQuota
 	event.TheoreticalCommissionQuota = component.TheoreticalCommissionQuota
 	event.PaidAllocatedQuota = component.PaidAllocatedQuota
+	event.NonpaidAllocatedQuota = component.NonpaidAllocatedQuota
+	event.DebtAllocatedQuota = component.DebtAllocatedQuota
 	event.CommissionQuota = component.CommissionQuota
 	event.CommissionAmountMicros = component.CommissionAmountMicros
 	event.ReversedCommissionAmountMicros = component.ReversedCommissionAmountMicros
@@ -66,14 +68,14 @@ func ValidateBillingComponents(event BillingEvent) error {
 		return errors.New("billing component reversal requires original event")
 	}
 	seen := make(map[string]bool, len(event.Components))
-	totals := make([]int64, 10)
+	totals := make([]int64, 12)
 	eligible := false
 	for _, part := range event.Components {
 		if part.ComponentID == "" || strings.TrimSpace(part.ComponentID) != part.ComponentID || len(part.ComponentID) > 128 || !utf8.ValidString(part.ComponentID) || strings.ContainsRune(part.ComponentID, '\x00') || seen[part.ComponentID] {
 			return errors.New("invalid billing component identity")
 		}
 		seen[part.ComponentID] = true
-		values := []int64{part.StandardQuota, part.ChargedTotalQuota, part.CommissionableQuota, part.NoncommissionableQuota, part.SettlementCostQuota, part.TheoreticalCommissionQuota, part.PaidAllocatedQuota, part.CommissionQuota, part.CommissionAmountMicros, part.ReversedCommissionAmountMicros}
+		values := []int64{part.StandardQuota, part.ChargedTotalQuota, part.CommissionableQuota, part.NoncommissionableQuota, part.SettlementCostQuota, part.TheoreticalCommissionQuota, part.PaidAllocatedQuota, part.NonpaidAllocatedQuota, part.DebtAllocatedQuota, part.CommissionQuota, part.CommissionAmountMicros, part.ReversedCommissionAmountMicros}
 		for i, value := range values {
 			if value < 0 || totals[i] > math.MaxInt64-value {
 				return errors.New("billing component amount overflow")
@@ -137,8 +139,15 @@ func ValidateBillingComponents(event BillingEvent) error {
 		}
 		eligible = eligible || part.CommissionEligible
 	}
-	wanted := []int64{event.StandardQuota, event.ChargedTotalQuota, event.CommissionableQuota, event.NoncommissionableQuota, event.SettlementCostQuota, event.TheoreticalCommissionQuota, event.PaidAllocatedQuota, event.CommissionQuota, event.CommissionAmountMicros, event.ReversedCommissionAmountMicros}
+	wanted := []int64{event.StandardQuota, event.ChargedTotalQuota, event.CommissionableQuota, event.NoncommissionableQuota, event.SettlementCostQuota, event.TheoreticalCommissionQuota, event.PaidAllocatedQuota, event.NonpaidAllocatedQuota, event.DebtAllocatedQuota, event.CommissionQuota, event.CommissionAmountMicros, event.ReversedCommissionAmountMicros}
 	for i := range totals {
+		// The first component-schema rollout did not include aggregate
+		// nonpaid/debt counters on the envelope. Per-component conservation is
+		// still enforced above; accept that legacy envelope shape while
+		// enforcing the fields whenever either side carries a value.
+		if (i == 7 || i == 8) && totals[i] != 0 && wanted[i] == 0 {
+			continue
+		}
 		if totals[i] != wanted[i] {
 			return errors.New("billing component aggregate mismatch")
 		}

@@ -86,7 +86,8 @@ func TestReleaseAgencyWalletAndTokenRestoresTotalReservationForNonpaidQuota(t *t
 		user.Id, token.Id, 120, token.Key, "charge-wallet-token-release", 120, true,
 	)
 	require.NoError(t, err)
-	require.Equal(t, int64(100), paid)
+	// Bonus quota is consumed before verified paid quota.
+	require.Equal(t, int64(70), paid)
 
 	var reservedUser User
 	require.NoError(t, db.First(&reservedUser, user.Id).Error)
@@ -99,7 +100,7 @@ func TestReleaseAgencyWalletAndTokenRestoresTotalReservationForNonpaidQuota(t *t
 		user.Id, token.Id, 120, token.Key, "charge-wallet-token-release",
 	)
 	require.NoError(t, err)
-	require.Equal(t, int64(100), releasedPaid)
+	require.Equal(t, int64(70), releasedPaid)
 
 	var restoredUser User
 	require.NoError(t, db.First(&restoredUser, user.Id).Error)
@@ -348,8 +349,8 @@ func TestReverseAgencyTopupMixedPaidBonusAllocationsAndOutbox(t *testing.T) {
 	var allocationRows []AgencyFundingAllocation
 	require.NoError(t, db.Where("charge_id = ?", "charge-mixed-1").Order("id ASC").Find(&allocationRows).Error)
 	require.Len(t, allocationRows, 2)
-	require.Equal(t, int64(100), allocationRows[0].Consumed)
-	require.Equal(t, int64(20), allocationRows[1].NonpaidConsumed)
+	require.Equal(t, int64(50), allocationRows[0].NonpaidConsumed)
+	require.Equal(t, int64(70), allocationRows[1].Consumed)
 
 	input := AgencyFundingReversalInput{
 		RefundID: "refund-mixed-1", SourceOperationID: "topup-mixed-1",
@@ -364,7 +365,7 @@ func TestReverseAgencyTopupMixedPaidBonusAllocationsAndOutbox(t *testing.T) {
 	}))
 	require.Len(t, charges, 1)
 	require.Equal(t, "charge-mixed-1", charges[0].ChargeID)
-	require.Equal(t, int64(100), charges[0].Quota)
+	require.Equal(t, int64(70), charges[0].Quota)
 
 	require.NoError(t, db.First(&stored, user.Id).Error)
 	require.Equal(t, -120, stored.Quota)
@@ -382,9 +383,9 @@ func TestReverseAgencyTopupMixedPaidBonusAllocationsAndOutbox(t *testing.T) {
 	require.Equal(t, int64(0), lot.BonusConsumed)
 	var paidAllocation, bonusAllocation AgencyFundingAllocation
 	require.NoError(t, db.Where("charge_id = ? AND consumed > 0", "charge-mixed-1").First(&paidAllocation).Error)
-	require.Equal(t, int64(100), paidAllocation.RevokedReservedDebt)
+	require.Equal(t, int64(70), paidAllocation.RevokedReservedDebt)
 	require.NoError(t, db.Where("charge_id = ? AND nonpaid_consumed > 0", "charge-mixed-1").First(&bonusAllocation).Error)
-	require.Equal(t, int64(20), bonusAllocation.RevokedNonpaid)
+	require.Equal(t, int64(50), bonusAllocation.RevokedNonpaid)
 
 	var outbox AgencyBillingOutbox
 	require.NoError(t, db.Where("event_id = ?", "agency-funding-reversal-refund-mixed-1").First(&outbox).Error)
@@ -475,7 +476,8 @@ func TestReleaseAgencyWalletAndTokenIsAtomic(t *testing.T) {
 
 	paid, err := TryReserveAgencyWalletAndToken(user.Id, token.Id, 40, token.Key, "realtime-atomic-1", 40, false)
 	require.NoError(t, err)
-	require.Equal(t, int64(40), paid)
+	// Legacy opening balances are intentionally non-commissionable.
+	require.Equal(t, int64(0), paid)
 
 	var storedUser User
 	require.NoError(t, db.First(&storedUser, user.Id).Error)
@@ -487,6 +489,8 @@ func TestReleaseAgencyWalletAndTokenIsAtomic(t *testing.T) {
 
 	released, err := ReleaseAgencyWalletAndToken(user.Id, token.Id, 10, token.Key, "realtime-atomic-1")
 	require.NoError(t, err)
+	// Legacy opening balances remain paid in the allocation ledger, even
+	// though they are excluded from new commission attribution.
 	require.Equal(t, int64(10), released)
 	require.NoError(t, db.First(&storedUser, user.Id).Error)
 	require.Equal(t, 70, storedUser.Quota)
@@ -556,7 +560,7 @@ func TestAdjustAgencyChargeSettlesDurableDeltaAccurately(t *testing.T) {
 	require.Equal(t, 90, refundedUser.Quota, "refunded 40 back into available")
 	var refundedAccount AgencyFundingAccount
 	require.NoError(t, db.Where("user_id = ?", user.Id).First(&refundedAccount).Error)
-	require.Equal(t, int64(40), refundedAccount.PaidAvailable, "refund restores paid availability first")
+	require.Equal(t, int64(90), refundedAccount.PaidAvailable, "refund restores the paid remainder after bonus-first consumption")
 	allocated, err := agencyFundingAllocatedTx(db, int64(user.Id), "delta-charge-1")
 	require.NoError(t, err)
 	require.Equal(t, int64(60), allocated, "allocation shrinks to the settled amount")

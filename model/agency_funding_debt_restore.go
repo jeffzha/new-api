@@ -66,18 +66,18 @@ func lockAgencyAllocationDebtTx(tx *gorm.DB, allocation AgencyFundingAllocation,
 // restores the actual repayment lots. It never recreates the revoked origin
 // topup and never converts paid repayments into bonus quota. The caller adjusts
 // account/wallet and allocation totals within the same transaction.
-func restoreAgencyAllocationDebtTx(tx *gorm.DB, allocation AgencyFundingAllocation, amount int64, allowLegacy bool) (sources []agencyFundingSource, debtReduced int64, err error) {
+func restoreAgencyAllocationDebtTx(tx *gorm.DB, allocation AgencyFundingAllocation, amount int64, allowLegacy bool) (sources []agencyFundingSource, debtReduced, expiredNonpaid int64, err error) {
 	if amount <= 0 || amount > allocation.DebtConsumed {
-		return nil, 0, ErrAgencyComponentRefundProvenance
+		return nil, 0, 0, ErrAgencyComponentRefundProvenance
 	}
 	origin, kind := fmt.Sprintf("allocation-%d", allocation.ID), "model_charge"
 	if allocation.LotID > 0 {
 		var originLot AgencyFundingLot
 		if err := tx.First(&originLot, allocation.LotID).Error; err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
 		if originLot.UserID != allocation.UserID {
-			return nil, 0, ErrAgencyComponentRefundProvenance
+			return nil, 0, 0, ErrAgencyComponentRefundProvenance
 		}
 		origin, kind = originLot.SourceID, "payment_chargeback"
 	}
@@ -86,22 +86,22 @@ func restoreAgencyAllocationDebtTx(tx *gorm.DB, allocation AgencyFundingAllocati
 		// Historical allocations predate debt-lot tracking. Their old release
 		// path can only reduce still-outstanding account debt; the caller keeps
 		// its nonnegative account invariant and cannot restore repaid sources.
-		return nil, amount, nil
+		return nil, amount, 0, nil
 	}
 	if err != nil {
-		return nil, 0, ErrAgencyComponentRefundProvenance
+		return nil, 0, 0, ErrAgencyComponentRefundProvenance
 	}
 	if debt.OriginalQuota < 0 || debt.ReversedQuota < 0 || debt.ReversedQuota > debt.OriginalQuota ||
 		amount > debt.OriginalQuota-debt.ReversedQuota || debt.OutstandingQuota < 0 || debt.OutstandingQuota > debt.OriginalQuota-debt.ReversedQuota ||
 		debt.OriginalQuota-debt.ReversedQuota != allocation.DebtConsumed {
-		return nil, 0, ErrAgencyComponentRefundProvenance
+		return nil, 0, 0, ErrAgencyComponentRefundProvenance
 	}
 	debtReduced = min(amount, debt.OutstandingQuota)
 	remaining := amount - debtReduced
 	if remaining > 0 {
 		var repayments []AgencyDebtRepayment
 		if err := AgencyLockForUpdate(tx).Where("debt_id = ? AND quota > reversed_quota", debt.ID).Order("money_seq ASC, id ASC").Find(&repayments).Error; err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
 		for _, repayment := range repayments {
 			if remaining == 0 {
@@ -113,7 +113,7 @@ func restoreAgencyAllocationDebtTx(tx *gorm.DB, allocation AgencyFundingAllocati
 			}
 			if repayment.ReversedQuota < 0 || repayment.Quota < repayment.ReversedQuota ||
 				(kind != "paid" && kind != "nonpaid") || (repayment.FundingLotID == nil && kind != "nonpaid") {
-				return nil, 0, ErrAgencyComponentRefundProvenance
+				return nil, 0, 0, ErrAgencyComponentRefundProvenance
 			}
 			take := min(remaining, repayment.Quota-repayment.ReversedQuota)
 			source := agencyFundingSource{}
@@ -125,53 +125,59 @@ func restoreAgencyAllocationDebtTx(tx *gorm.DB, allocation AgencyFundingAllocati
 			if repayment.FundingLotID != nil {
 				var lot AgencyFundingLot
 				if err := AgencyLockForUpdate(tx).First(&lot, *repayment.FundingLotID).Error; err != nil {
-					return nil, 0, err
+					return nil, 0, 0, err
 				}
 				if lot.UserID != allocation.UserID {
-					return nil, 0, ErrAgencyComponentRefundProvenance
+					return nil, 0, 0, ErrAgencyComponentRefundProvenance
 				}
 				updates := map[string]any{"version": lot.Version + 1}
 				if kind == "paid" {
 					if lot.PaidDebtRepaid < take || lot.PaidAvailable > int64(common.MaxQuota)-take {
-						return nil, 0, ErrAgencyComponentRefundProvenance
+						return nil, 0, 0, ErrAgencyComponentRefundProvenance
 					}
 					updates["paid_debt_repaid"], updates["paid_available"] = lot.PaidDebtRepaid-take, lot.PaidAvailable+take
 				} else {
-					if lot.BonusDebtRepaid < take || lot.BonusAvailable > int64(common.MaxQuota)-take {
-						return nil, 0, ErrAgencyComponentRefundProvenance
+					expired, err := restoreAgencyBonusTx(tx, &lot, take, true, common.GetTimestamp())
+					if err != nil {
+						return nil, 0, 0, err
 					}
-					updates["bonus_debt_repaid"], updates["bonus_available"] = lot.BonusDebtRepaid-take, lot.BonusAvailable+take
+					if expired {
+						expiredNonpaid += take
+						source.Nonpaid = 0
+					}
 				}
-				result := tx.Model(&lot).Updates(updates)
-				if result.Error != nil {
-					return nil, 0, result.Error
-				}
-				if result.RowsAffected != 1 {
-					return nil, 0, ErrAgencyComponentRefundProvenance
+				if kind == "paid" {
+					result := tx.Model(&lot).Updates(updates)
+					if result.Error != nil {
+						return nil, 0, 0, result.Error
+					}
+					if result.RowsAffected != 1 {
+						return nil, 0, 0, ErrAgencyComponentRefundProvenance
+					}
 				}
 				source.LotID = lot.ID
 			}
 			result := tx.Model(&repayment).Update("reversed_quota", repayment.ReversedQuota+take)
 			if result.Error != nil {
-				return nil, 0, result.Error
+				return nil, 0, 0, result.Error
 			}
 			if result.RowsAffected != 1 {
-				return nil, 0, ErrAgencyComponentRefundProvenance
+				return nil, 0, 0, ErrAgencyComponentRefundProvenance
 			}
 			sources = append(sources, source)
 			remaining -= take
 		}
 		if remaining != 0 {
-			return nil, 0, ErrAgencyComponentRefundProvenance
+			return nil, 0, 0, ErrAgencyComponentRefundProvenance
 		}
 	}
 	result := tx.Model(&debt).Updates(map[string]any{"outstanding_quota": debt.OutstandingQuota - debtReduced,
 		"reversed_quota": debt.ReversedQuota + amount})
 	if result.Error != nil {
-		return nil, 0, result.Error
+		return nil, 0, 0, result.Error
 	}
 	if result.RowsAffected != 1 {
-		return nil, 0, ErrAgencyComponentRefundProvenance
+		return nil, 0, 0, ErrAgencyComponentRefundProvenance
 	}
-	return sources, debtReduced, nil
+	return sources, debtReduced, expiredNonpaid, nil
 }

@@ -10,6 +10,18 @@ import { ReconciliationIssues } from "../reconciliation/Issues";
 import { ReconciliationRuns } from "../reconciliation/Runs";
 
 type Row = Record<string, string | number | null>;
+
+function formatFundingBreakdown(value: unknown): string {
+  if (!Array.isArray(value)) return "—";
+  const parts = value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry as { source?: unknown; quota?: unknown };
+    const source = String(item.source ?? "").trim();
+    const quota = String(item.quota ?? "").trim();
+    return source && quota ? [`${source}: ${quota}`] : [];
+  });
+  return parts.length ? parts.join(" · ") : "—";
+}
 interface Customer {
   user_id: string | number;
   username: string;
@@ -201,25 +213,51 @@ function CustomerHistory({ customer }: { customer: Customer }) {
     { key: "model", label: "Public model" },
     { key: "endpoint", label: "Endpoint" },
     { key: "business_status", label: "Status" },
+    { key: "input_tokens", label: "Input tokens" },
+    { key: "output_tokens", label: "Output tokens" },
+    { key: "cache_read_tokens", label: "Cache read tokens" },
+    { key: "cache_write_tokens", label: "Cache write tokens" },
     { key: "standard_quota", label: "Standard quota" },
     { key: "sales_bps", label: "Sales coefficient (bps)" },
     { key: "charged_quota", label: "Charged quota" },
+    { key: "paid_quota", label: "Paid quota" },
+    { key: "nonpaid_quota", label: "Non-paid quota" },
+    { key: "debt_quota", label: "Debt quota" },
+    {
+      key: "funding_breakdown",
+      label: "Funding allocation",
+      render: (row) => formatFundingBreakdown(row.funding_breakdown),
+    },
     { key: "skip_reason", label: "Commission exclusion reason" },
+    { key: "charge_id", label: "Charge ID" },
     { key: "event_id", label: "Event ID" },
   ];
   const topupColumns: Column<Row>[] = [
+    { key: "source_id", label: "Source ID" },
     {
       key: "occurred_at_ms",
       label: "Time",
       render: (row) => <Time value={row.occurred_at_ms || undefined} />,
     },
+    { key: "funding_source", label: "Funding source" },
+    { key: "initiated_by_user_id", label: "Initiated by" },
     { key: "actual_money", label: "Actual payment" },
     { key: "currency_code", label: "Currency" },
     { key: "credited_quota", label: "Credited quota" },
     { key: "paid_quota", label: "Paid quota" },
     { key: "bonus_quota", label: "Bonus quota" },
+    { key: "consumed_quota", label: "Consumed quota" },
+    { key: "remaining_quota", label: "Remaining quota" },
+    { key: "expired_quota", label: "Expired quota" },
+    {
+      key: "expires_at",
+      label: "Expires at",
+      render: (row) => <Time value={row.expires_at || undefined} />,
+    },
     { key: "refunded_quota", label: "Refunded quota" },
+    { key: "completion_source", label: "Completion source" },
     { key: "payment_status", label: "Payment status" },
+    { key: "payment_reference", label: "Payment reference" },
     { key: "source_operation_id", label: "Operation ID" },
   ];
   return (

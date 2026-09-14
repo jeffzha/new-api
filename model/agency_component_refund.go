@@ -77,6 +77,9 @@ func AgencyRefundWalletChargeTx(tx *gorm.DB, input AgencyComponentRefundInput, t
 	if user.BillingMode != AgencyDurableBillingMode {
 		return agencycontract.BillingEvent{}, ErrAgencyFundingUnavailable
 	}
+	if _, err := expireAgencyRedemptionLotsTx(tx, input.UserID, common.GetTimestamp()); err != nil {
+		return agencycontract.BillingEvent{}, err
+	}
 	var before AgencyFundingAccount
 	if err := AgencyLockForUpdate(tx).Where("user_id = ?", input.UserID).First(&before).Error; err != nil {
 		return agencycontract.BillingEvent{}, err
@@ -246,11 +249,11 @@ func AgencyRefundWalletChargeTx(tx *gorm.DB, input AgencyComponentRefundInput, t
 			return agencycontract.BillingEvent{}, err
 		}
 	}
-	if debtRestoration.PaidRestored+debtRestoration.NonpaidRestored+debtRestoration.DebtReduced != debtDelta || before.DebtQuota < debtRestoration.DebtReduced {
+	if debtRestoration.PaidRestored+debtRestoration.NonpaidRestored+debtRestoration.ExpiredDebtNonpaid+debtRestoration.DebtReduced != debtDelta || before.DebtQuota < debtRestoration.DebtReduced {
 		return agencycontract.BillingEvent{}, ErrAgencyComponentRefundProvenance
 	}
 	paidDelta += debtRestoration.PaidRestored
-	nonpaidDelta += debtRestoration.NonpaidRestored
+	nonpaidDelta += debtRestoration.NonpaidRestored - debtRestoration.ExpiredDirectNonpaid
 	debtDelta = debtRestoration.DebtReduced
 	repaymentOperation := fmt.Sprintf("%s:%d:%s", journal.ChargeID, journal.SegmentNo, refundKey)
 	paidRepaid, nonpaidRepaid, err := repayAgencyFundingSourcesTx(tx, input.UserID, repaymentOperation, before.MoneySeq+1, before.DebtQuota-debtDelta, debtRestoration.Sources)
@@ -260,13 +263,15 @@ func AgencyRefundWalletChargeTx(tx *gorm.DB, input AgencyComponentRefundInput, t
 	paidDelta -= paidRepaid
 	nonpaidDelta -= nonpaidRepaid
 	debtDelta += paidRepaid + nonpaidRepaid
-	if int64(user.Quota) > int64(common.MaxQuota)-refundDelta || before.PaidAvailable > int64(common.MaxQuota)-paidDelta || before.NonpaidAvailable > int64(common.MaxQuota)-nonpaidDelta {
+	expiredNonpaid := debtRestoration.ExpiredDebtNonpaid + debtRestoration.ExpiredDirectNonpaid
+	walletRefund := refundDelta - expiredNonpaid
+	if walletRefund < 0 || int64(user.Quota) > int64(common.MaxQuota)-walletRefund || before.PaidAvailable > int64(common.MaxQuota)-paidDelta || before.NonpaidAvailable > int64(common.MaxQuota)-nonpaidDelta {
 		return agencycontract.BillingEvent{}, ErrAgencyFundingUnavailable
 	}
 	if int64(user.Quota) != before.PaidAvailable+before.NonpaidAvailable-before.DebtQuota {
 		return agencycontract.BillingEvent{}, ErrAgencyComponentRefundProvenance
 	}
-	if err := tx.Model(&user).Update("quota", int64(user.Quota)+refundDelta).Error; err != nil {
+	if err := tx.Model(&user).Update("quota", int64(user.Quota)+walletRefund).Error; err != nil {
 		return agencycontract.BillingEvent{}, err
 	}
 	if journal.TokenID != nil && *journal.TokenID > 0 {
@@ -318,10 +323,12 @@ func agencyRefundProportion(original, refund, charge int64) int64 {
 // restoreAgencyComponentSourcesTx returns cumulative source targets in the
 // original per-source FIFO matrix order. Allocation IDs are never replaced.
 type agencyComponentDebtRestoration struct {
-	PaidRestored    int64
-	NonpaidRestored int64
-	DebtReduced     int64
-	Sources         []agencyFundingSource
+	PaidRestored         int64
+	NonpaidRestored      int64
+	ExpiredDebtNonpaid   int64
+	ExpiredDirectNonpaid int64
+	DebtReduced          int64
+	Sources              []agencyFundingSource
 }
 
 func restoreAgencyComponentSourcesTx(tx *gorm.DB, journal AgencyBillingJournal, component AgencyChargeComponent, target agencycontract.ComponentRefund, debtRestoration *agencyComponentDebtRestoration) error {
@@ -376,7 +383,7 @@ func restoreAgencyComponentSourcesTx(tx *gorm.DB, journal AgencyBillingJournal, 
 			return ErrAgencyComponentRefundProvenance
 		}
 		if delta[2] > 0 {
-			sources, debt, err := restoreAgencyAllocationDebtTx(tx, allocation, delta[2], false)
+			sources, debt, expired, err := restoreAgencyAllocationDebtTx(tx, allocation, delta[2], false)
 			if err != nil {
 				return err
 			}
@@ -386,6 +393,7 @@ func restoreAgencyComponentSourcesTx(tx *gorm.DB, journal AgencyBillingJournal, 
 			}
 			debtRestoration.Sources = append(debtRestoration.Sources, sources...)
 			debtRestoration.DebtReduced += debt
+			debtRestoration.ExpiredDebtNonpaid += expired
 		}
 		if row.LotID > 0 {
 			var lot AgencyFundingLot
@@ -393,16 +401,32 @@ func restoreAgencyComponentSourcesTx(tx *gorm.DB, journal AgencyBillingJournal, 
 				return err
 			}
 			if lot.UserID != journal.UserID || lot.PaidConsumed < delta[0] || lot.BonusConsumed < delta[1] ||
-				lot.PaidAvailable > int64(common.MaxQuota)-delta[0] || lot.BonusAvailable > int64(common.MaxQuota)-delta[1] {
+				lot.PaidAvailable > int64(common.MaxQuota)-delta[0] {
 				return ErrAgencyComponentRefundProvenance
 			}
-			if err := tx.Model(&lot).Updates(map[string]any{"paid_consumed": lot.PaidConsumed - delta[0], "bonus_consumed": lot.BonusConsumed - delta[1],
-				"paid_available": lot.PaidAvailable + delta[0], "bonus_available": lot.BonusAvailable + delta[1], "version": lot.Version + 1}).Error; err != nil {
-				return err
+			if delta[0] > 0 {
+				if err := tx.Model(&lot).Updates(map[string]any{"paid_consumed": lot.PaidConsumed - delta[0],
+					"paid_available": lot.PaidAvailable + delta[0], "version": lot.Version + 1}).Error; err != nil {
+					return err
+				}
+				lot.PaidConsumed -= delta[0]
+				lot.PaidAvailable += delta[0]
+				lot.Version++
 			}
-		}
-		if delta[0]+delta[1] > 0 {
-			debtRestoration.Sources = append(debtRestoration.Sources, agencyFundingSource{LotID: row.LotID, Paid: delta[0], Nonpaid: delta[1]})
+			restoredNonpaid := delta[1]
+			if delta[1] > 0 {
+				expired, err := restoreAgencyBonusTx(tx, &lot, delta[1], false, common.GetTimestamp())
+				if err != nil {
+					return err
+				}
+				if expired {
+					debtRestoration.ExpiredDirectNonpaid += delta[1]
+					restoredNonpaid = 0
+				}
+			}
+			if delta[0]+restoredNonpaid > 0 {
+				debtRestoration.Sources = append(debtRestoration.Sources, agencyFundingSource{LotID: row.LotID, Paid: delta[0], Nonpaid: restoredNonpaid})
+			}
 		}
 		if err := tx.Model(&allocation).Updates(map[string]any{"consumed": allocation.Consumed - delta[0], "nonpaid_consumed": allocation.NonpaidConsumed - delta[1],
 			"debt_consumed": allocation.DebtConsumed - delta[2], "released": allocation.Released + delta[0] + delta[1] + delta[2], "version": allocation.Version + 1}).Error; err != nil {

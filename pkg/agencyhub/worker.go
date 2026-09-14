@@ -78,9 +78,18 @@ func (a *App) StartBackground(ctx context.Context) {
 				if err := a.CleanupExpiredDeliverySecrets(time.Now().Unix()); err != nil {
 					common.SysError("agency delivery-secret cleanup failed: " + err.Error())
 				}
-				if a.config.CommissionEnabled {
+				// Commission settlement depends on the same source-event receipt
+				// and usage projection. If either capability is enabled, drain the
+				// delivery queue; the per-event switch decides whether commission is
+				// posted or left as a deferred job.
+				if a.config.FactProjectionEnabled || a.config.CommissionEnabled {
 					if err := a.drainConsumerBudget(ctx); err != nil {
 						common.SysError("agency billing consumer failed: " + err.Error())
+					}
+				}
+				if a.config.CommissionEnabled {
+					if err := a.drainCommissionJobs(ctx); err != nil {
+						common.SysError("agency commission worker failed: " + err.Error())
 					}
 				}
 				if _, err := a.ProcessProvisioningJobs(20); err != nil {
@@ -127,6 +136,56 @@ func (a *App) drainConsumerBudget(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// drainCommissionJobs handles only the commission projection. Facts are
+// committed by the normal delivery consumer even when this worker is paused.
+func (a *App) drainCommissionJobs(ctx context.Context) error {
+	const limit = 200
+	var jobs []model.AgencyCommissionJob
+	now := time.Now().Unix()
+	if err := a.db.WithContext(ctx).Where("status IN ? AND next_retry_at <= ?", []string{"pending", "deferred", "retry"}, now).
+		Order("next_retry_at ASC, id ASC").Limit(limit).Find(&jobs).Error; err != nil {
+		return err
+	}
+	for _, job := range jobs {
+		claimed, err := a.claimCommissionJob(job.ID, now)
+		if err != nil || !claimed {
+			continue
+		}
+		if err := a.processClaimedCommissionJob(ctx, job.ID); err != nil {
+			common.SysError("agency commission job failed: " + err.Error())
+			_ = a.db.Model(&model.AgencyCommissionJob{}).Where("id = ? AND status = ?", job.ID, "claimed").Updates(map[string]any{
+				"status": "retry", "attempts": job.Attempts + 1, "next_retry_at": time.Now().Unix() + retryDelay(job.Attempts+1), "lease_until": 0, "last_error": err.Error(),
+			})
+		}
+	}
+	return nil
+}
+
+func (a *App) claimCommissionJob(id int64, now int64) (bool, error) {
+	token := time.Now().UnixNano()
+	result := a.db.Model(&model.AgencyCommissionJob{}).Where("id = ? AND status IN ? AND next_retry_at <= ?", id, []string{"pending", "deferred", "retry"}, now).
+		Updates(map[string]any{"status": "claimed", "lease_owner": a.config.InstanceID, "lease_token": token, "lease_until": now + 60})
+	return result.RowsAffected == 1, result.Error
+}
+
+func (a *App) processClaimedCommissionJob(ctx context.Context, id int64) error {
+	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var job model.AgencyCommissionJob
+		if err := model.AgencyLockForUpdate(tx).Where("id = ? AND status = ? AND lease_owner = ?", id, "claimed", a.config.InstanceID).First(&job).Error; err != nil {
+			return err
+		}
+		var event agencycontract.BillingEvent
+		if err := common.Unmarshal([]byte(job.Payload), &event); err != nil {
+			return err
+		}
+		hash, err := agencycontract.CanonicalHash(event)
+		if err != nil {
+			return err
+		}
+		return a.processCommissionJobTx(tx, &job, event, hash, time.Now().UnixMilli())
+	})
 }
 
 // RunConsumerOnce claims a bounded batch through event_deliveries. The

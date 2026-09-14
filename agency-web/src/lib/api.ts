@@ -12,7 +12,8 @@ export function hubConfig(): HubConfig {
   const config = window.__AGENCY_CONFIG__;
   return {
     base_path: config?.base_path?.replace(/\/$/, "") || "/agency",
-    platform_base_url: config?.platform_base_url || "",
+    platform_base_url:
+      config?.platform_base_url || import.meta.env.VITE_AGENCY_PLATFORM_BASE_URL || "",
   };
 }
 

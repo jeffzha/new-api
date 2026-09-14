@@ -203,23 +203,34 @@ type AgencyFundingAccount struct {
 func (AgencyFundingAccount) TableName() string { return AgencyTablePrefix + "funding_accounts" }
 
 type AgencyFundingLot struct {
-	ID               int64  `gorm:"primaryKey"`
-	UserID           int64  `gorm:"not null;index:idx_agency_funding_lot_user_seq"`
-	SourceKind       string `gorm:"size:32;not null"`
-	SourceID         string `gorm:"size:191;not null"`
-	CompletionSource string `gorm:"size:32;not null"`
-	PaidInitial      int64  `gorm:"not null"`
-	BonusInitial     int64  `gorm:"not null"`
-	PaidAvailable    int64  `gorm:"not null"`
-	PaidReserved     int64  `gorm:"not null"`
-	PaidConsumed     int64  `gorm:"not null"`
-	PaidRevoked      int64  `gorm:"not null"`
+	ID          int64  `gorm:"primaryKey"`
+	UserID      int64  `gorm:"not null;index:idx_agency_funding_lot_user_seq"`
+	SourceKind  string `gorm:"size:32;not null;index:idx_agency_funding_lot_expiry,priority:1"`
+	SourceID    string `gorm:"size:191;not null"`
+	ActorUserID int64  `gorm:"index:idx_agency_funding_lot_actor"`
+	// SourceSnapshotJSON is an immutable, redacted description of the
+	// operation that created this lot. It is intentionally not used for
+	// accounting; it only makes historical reports auditable after an
+	// administrator or payment order changes state.
+	SourceSnapshotJSON string `gorm:"type:text"`
+	CompletionSource   string `gorm:"size:32;not null"`
+	PaidInitial        int64  `gorm:"not null"`
+	BonusInitial       int64  `gorm:"not null"`
+	PaidAvailable      int64  `gorm:"not null"`
+	PaidReserved       int64  `gorm:"not null"`
+	PaidConsumed       int64  `gorm:"not null"`
+	PaidRevoked        int64  `gorm:"not null"`
 	// Keep bonus balances on the originating lot as well as in the account
 	// aggregate so a payment refund remains attributable to its top-up.
-	BonusAvailable  int64 `gorm:"not null;default:0"`
-	BonusReserved   int64 `gorm:"not null;default:0"`
-	BonusConsumed   int64 `gorm:"not null;default:0"`
-	BonusRevoked    int64 `gorm:"not null;default:0"`
+	BonusAvailable int64 `gorm:"not null;default:0"`
+	BonusReserved  int64 `gorm:"not null;default:0"`
+	BonusConsumed  int64 `gorm:"not null;default:0"`
+	BonusRevoked   int64 `gorm:"not null;default:0"`
+	// ExpiresAt freezes the original redemption-code deadline in Unix
+	// seconds. BonusExpired is separate from BonusRevoked because expiry is
+	// automatic lifecycle accounting, not an administrator reversal.
+	ExpiresAt       int64 `gorm:"not null;default:0;index:idx_agency_funding_lot_expiry,priority:2"`
+	BonusExpired    int64 `gorm:"not null;default:0"`
 	PaidDebtRepaid  int64 `gorm:"not null;default:0"`
 	BonusDebtRepaid int64 `gorm:"not null;default:0"`
 	MoneySeq        int64 `gorm:"not null;index:idx_agency_funding_lot_user_seq"`
@@ -230,18 +241,22 @@ type AgencyFundingLot struct {
 func (AgencyFundingLot) TableName() string { return AgencyTablePrefix + "funding_lots" }
 
 type AgencyFundingAllocation struct {
-	ID              int64  `gorm:"primaryKey"`
-	ChargeID        string `gorm:"size:128;not null;index:idx_agency_alloc_charge"`
-	SegmentNo       int    `gorm:"not null"`
-	ComponentID     string `gorm:"size:128;not null"`
-	UserID          int64  `gorm:"not null;index:idx_agency_alloc_user"`
-	LotID           int64  `gorm:"not null;index:idx_agency_alloc_lot"`
-	Reserved        int64  `gorm:"not null"`
-	Consumed        int64  `gorm:"not null"`
-	NonpaidConsumed int64  `gorm:"not null"`
-	DebtConsumed    int64  `gorm:"not null"`
-	Released        int64  `gorm:"not null"`
-	Reversed        int64  `gorm:"not null"`
+	ID          int64  `gorm:"primaryKey"`
+	ChargeID    string `gorm:"size:128;not null;index:idx_agency_alloc_charge"`
+	SegmentNo   int    `gorm:"not null"`
+	ComponentID string `gorm:"size:128;not null"`
+	UserID      int64  `gorm:"not null;index:idx_agency_alloc_user"`
+	LotID       int64  `gorm:"not null;index:idx_agency_alloc_lot"`
+	// SourceSnapshotJSON freezes the lot provenance used by this charge. The
+	// lot remains the accounting source of truth; this copy prevents a later
+	// metadata edit from changing an historical usage report.
+	SourceSnapshotJSON string `gorm:"type:text"`
+	Reserved           int64  `gorm:"not null"`
+	Consumed           int64  `gorm:"not null"`
+	NonpaidConsumed    int64  `gorm:"not null"`
+	DebtConsumed       int64  `gorm:"not null"`
+	Released           int64  `gorm:"not null"`
+	Reversed           int64  `gorm:"not null"`
 	// RevokedReservedDebt records paid quota that was already allocated to a
 	// charge when its source payment was reversed. It remains part of the
 	// original charge for audit/reconciliation, but must not become available
@@ -381,39 +396,74 @@ type AgencySourceEvent struct {
 
 func (AgencySourceEvent) TableName() string { return AgencyTablePrefix + "source_events" }
 
+// AgencyCommissionJob is the independent commission projection receipt. A
+// facts projection may complete while commission processing is intentionally
+// paused; keeping the original event payload here lets the commission worker
+// resume without replaying usage or funding facts.
+type AgencyCommissionJob struct {
+	ID            int64  `gorm:"primaryKey"`
+	EventID       string `gorm:"size:128;not null;uniqueIndex:uidx_agency_commission_job_event"`
+	Payload       string `gorm:"type:text;not null"`
+	PayloadHash   string `gorm:"size:128;not null"`
+	UserID        int64  `gorm:"not null;index:idx_agency_commission_job_user_seq"`
+	MoneySeq      int64  `gorm:"not null;index:idx_agency_commission_job_user_seq"`
+	EventIndex    int    `gorm:"not null"`
+	Status        string `gorm:"size:32;not null;index:idx_agency_commission_job_status_retry"`
+	Attempts      int
+	NextRetryAt   int64  `gorm:"index:idx_agency_commission_job_status_retry"`
+	LeaseOwner    string `gorm:"size:191"`
+	LeaseToken    int64
+	LeaseUntil    int64
+	LastError     string `gorm:"type:text"`
+	CompletedAtMS *int64
+	CreatedAtMS   int64 `gorm:"not null"`
+}
+
+func (AgencyCommissionJob) TableName() string { return AgencyTablePrefix + "commission_jobs" }
+
 type AgencyUsageFact struct {
-	ID               int64  `gorm:"primaryKey"`
-	EventID          string `gorm:"size:128;not null;index:idx_agency_usage_event"`
-	ComponentID      string `gorm:"size:128;not null"`
-	ComponentKey     string `gorm:"size:64"`
-	UsageHash        string `gorm:"size:128;index:idx_agency_usage_hash"`
-	CumulativeUsage  string `gorm:"type:text"`
-	UserID           int64  `gorm:"not null;index:idx_agency_usage_user_time"`
-	AgencyID         *int64 `gorm:"index:idx_agency_usage_agency_time"`
-	BindingID        *int64
-	OriginModelName  string `gorm:"size:764;not null"`
-	ModelKey         string `gorm:"size:64;not null;index:idx_agency_usage_model_time"`
-	Endpoint         string `gorm:"size:191"`
-	BusinessStatus   string `gorm:"size:32;not null"`
-	InputTokens      int64
-	OutputTokens     int64
-	CacheReadTokens  int64
-	CacheWriteTokens int64
-	StandardQuota    int64
-	SalesBPS         int
-	ChargedQuota     int64
-	CurrencyCode     string `gorm:"size:16"`
-	OccurredAtMS     int64  `gorm:"not null;index:idx_agency_usage_agency_time"`
-	SkipReason       string `gorm:"type:text"`
-	LogID            *int64
+	ID                int64  `gorm:"primaryKey"`
+	EventID           string `gorm:"size:128;not null;index:idx_agency_usage_event"`
+	FinancialChargeID string `gorm:"size:128;index:idx_agency_usage_charge"`
+	ComponentID       string `gorm:"size:128;not null"`
+	ComponentKey      string `gorm:"size:64"`
+	UsageHash         string `gorm:"size:128;index:idx_agency_usage_hash"`
+	CumulativeUsage   string `gorm:"type:text"`
+	UserID            int64  `gorm:"not null;index:idx_agency_usage_user_time"`
+	AgencyID          *int64 `gorm:"index:idx_agency_usage_agency_time"`
+	BindingID         *int64
+	OriginModelName   string `gorm:"size:764;not null"`
+	ModelKey          string `gorm:"size:64;not null;index:idx_agency_usage_model_time"`
+	Endpoint          string `gorm:"size:191"`
+	BusinessStatus    string `gorm:"size:32;not null"`
+	InputTokens       int64
+	OutputTokens      int64
+	CacheReadTokens   int64
+	CacheWriteTokens  int64
+	StandardQuota     int64
+	SalesBPS          int
+	ChargedQuota      int64
+	PaidQuota         int64
+	NonpaidQuota      int64
+	DebtQuota         int64
+	CurrencyCode      string `gorm:"size:16"`
+	OccurredAtMS      int64  `gorm:"not null;index:idx_agency_usage_agency_time"`
+	SkipReason        string `gorm:"type:text"`
+	LogID             *int64
 }
 
 func (AgencyUsageFact) TableName() string { return AgencyTablePrefix + "usage_facts" }
 
 type AgencyTopupFact struct {
-	ID                      int64  `gorm:"primaryKey"`
-	SourceOperationID       string `gorm:"size:128;not null;uniqueIndex:uidx_agency_topup_source"`
+	ID                int64  `gorm:"primaryKey"`
+	SourceOperationID string `gorm:"size:128;not null;uniqueIndex:uidx_agency_topup_source"`
+	// SourceID is the immutable business identifier inside the operation, such
+	// as a redemption-code ID or the originating payment trade number. Keep it
+	// separate from SourceOperationID so reports can show the auditable source
+	// without exposing provider-specific operation naming.
+	SourceID                string `gorm:"size:191;index:idx_agency_topup_source_id"`
 	UserID                  int64  `gorm:"not null;index:idx_agency_topup_user_time"`
+	InitiatedByUserID       int64  `gorm:"index:idx_agency_topup_initiator"`
 	AgencyID                *int64 `gorm:"index:idx_agency_topup_agency_time"`
 	BindingID               *int64
 	PaymentReference        string `gorm:"size:191"`
@@ -423,9 +473,12 @@ type AgencyTopupFact struct {
 	CreditedQuota           int64
 	PaidQuota               int64
 	BonusQuota              int64
+	FundingSource           string `gorm:"size:32;index:idx_agency_topup_source_kind"`
 	CompletionSource        string `gorm:"size:32"`
 	PaymentStatus           string `gorm:"size:32"`
 	RefundedQuota           int64
+	ExpiredQuota            int64
+	ExpiresAt               int64
 	OccurredAtMS            int64 `gorm:"not null;index:idx_agency_topup_agency_time;index:idx_agency_topup_user_time"`
 }
 
@@ -818,7 +871,7 @@ func AgencyModels() []any {
 		&AgencyFundingAccount{}, &AgencyFundingLot{}, &AgencyFundingAllocation{}, &AgencyFundingLedger{}, &AgencyFundingDebt{}, &AgencyDebtRepayment{}, &AgencyFundingReversal{}, &AgencyFundingReversalChargeRecord{},
 		&AgencyBillingJournal{}, &AgencyBillingOperation{}, &AgencyBillingOutbox{}, &AgencyEventDelivery{}, &AgencyTaskSubmissionAttempt{},
 		&AgencyChargeComponent{}, &AgencyComponentFunding{},
-		&AgencySourceEvent{}, &AgencyUsageFact{}, &AgencyTopupFact{}, &AgencyCommissionLedger{}, &AgencyCommissionBalance{},
+		&AgencySourceEvent{}, &AgencyUsageFact{}, &AgencyTopupFact{}, &AgencyCommissionJob{}, &AgencyCommissionLedger{}, &AgencyCommissionBalance{},
 		&AgencyWithdrawalAccount{}, &AgencyWithdrawal{}, &AgencyWithdrawalPaymentReference{}, &AgencyWithdrawalTransition{}, &AgencyAuditLog{}, &AgencyDailyStat{},
 		&AgencyExportJob{}, &AgencyArchiveManifest{}, &AgencyWorkerLease{}, &AgencyReconciliationIssue{}, &AgencyReconciliationRun{}, &AgencyProvisioningJob{},
 		&AgencyCommand{},

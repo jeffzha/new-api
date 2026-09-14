@@ -4,5 +4,10 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   base: '/agency/',
-  server: { proxy: { '/agency/api': 'http://localhost:3201' } },
+  server: {
+    proxy: {
+      '/agency/api': 'http://localhost:3201',
+      '/agency/sso': 'http://localhost:3201',
+    },
+  },
 })

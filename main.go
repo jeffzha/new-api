@@ -397,6 +397,7 @@ func InitResources() error {
 	}
 
 	service.StartAuthArtifactCleanup()
+	service.StartAgencyRedemptionExpiry()
 
 	return nil
 }

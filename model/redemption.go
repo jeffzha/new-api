@@ -175,7 +175,7 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if result.RowsAffected == 0 {
 			return errors.New("该兑换码已被使用")
 		}
-		return ApplyAgencyQuotaDeltaTx(tx, int64(userId), int64(redemption.Quota), "redemption")
+		return ApplyAgencyRedemptionQuotaTx(tx, int64(userId), int64(redemption.Quota), strconv.Itoa(redemption.Id), int64(userId), redemption.ExpiredTime)
 	})
 	if err != nil {
 		common.SysError("redemption failed: " + err.Error())

@@ -22,6 +22,7 @@ func componentBillingFixture() agencycontract.BillingEvent {
 		UserID: 718393, AgencyID: &agencyID, BindingID: &bindingID, OriginModelName: "Hunyuan/hy3", Endpoint: "/v1/chat/completions",
 		BusinessStatus: "success", BillingStatus: "finalized", FinancialFinal: true, OccurredAtMS: 1789272000000,
 		CurrencyCode: "CNY", QuotaPerUnit: "100000", ExchangeRate: "1", CommissionEligible: true,
+		InputTokens: 120, OutputTokens: 30, CacheReadTokens: 20, CacheWriteTokens: 10,
 		StandardQuota: 210, ChargedTotalQuota: 180, CommissionableQuota: 150, NoncommissionableQuota: 30,
 		SettlementCostQuota: 120, TheoreticalCommissionQuota: 30, PaidAllocatedQuota: 120, CommissionQuota: 20, CommissionAmountMicros: 200,
 		Components: []agencycontract.BillingComponent{
@@ -144,6 +145,17 @@ func TestComponentBillingProjectsOneReceiptAndRequestAcrossDialects(t *testing.T
 			require.Len(t, usage, 4)
 			assert.Equal(t, []string{"fee", "free", "model-a", "model-b"}, []string{usage[0].ComponentID, usage[1].ComponentID, usage[2].ComponentID, usage[3].ComponentID})
 			assert.Equal(t, int64(180), usage[0].ChargedQuota+usage[1].ChargedQuota+usage[2].ChargedQuota+usage[3].ChargedQuota)
+			var inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64
+			for _, row := range usage {
+				inputTokens += row.InputTokens
+				outputTokens += row.OutputTokens
+				cacheReadTokens += row.CacheReadTokens
+				cacheWriteTokens += row.CacheWriteTokens
+			}
+			assert.Equal(t, event.InputTokens, inputTokens)
+			assert.Equal(t, event.OutputTokens, outputTokens)
+			assert.Equal(t, event.CacheReadTokens, cacheReadTokens)
+			assert.Equal(t, event.CacheWriteTokens, cacheWriteTokens)
 			var ledger []model.AgencyCommissionLedger
 			require.NoError(t, tx.Where("event_id = ?", event.EventID).Order("component_id").Find(&ledger).Error)
 			require.Len(t, ledger, 2)

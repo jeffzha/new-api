@@ -1,5 +1,3 @@
-import { Copy, ExternalLink } from 'lucide-react'
-import { QRCodeSVG } from 'qrcode.react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -26,12 +24,10 @@ export function AssistedPaymentDialog({
   const [amount, setAmount] = useState('')
   const [paymentMethod, setPaymentMethod] = useState('alipay_web')
   const [loading, setLoading] = useState(false)
-  const [payment, setPayment] = useState<Awaited<ReturnType<typeof requestAssistedPayment>> | null>(null)
 
   const reset = () => {
     setAmount('')
     setPaymentMethod('alipay_web')
-    setPayment(null)
   }
 
   const handleOpenChange = (next: boolean) => {
@@ -60,8 +56,9 @@ export function AssistedPaymentDialog({
         toast.error(result.message || t('Failed to create assisted payment'))
         return
       }
-      setPayment(result)
-      toast.success(t('Payment order created'))
+      // Match the normal wallet top-up flow: submit the signed order to Epay
+      // in the current tab so Epay renders its own WeChat/Alipay checkout QR.
+      submitPaymentForm(result)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Failed to create assisted payment'))
     } finally {
@@ -69,44 +66,22 @@ export function AssistedPaymentDialog({
     }
   }
 
-  const copyURL = async () => {
-    if (!payment?.url) return
-    await navigator.clipboard.writeText(paymentURL)
-    toast.success(t('Copied'))
-  }
-
-  const paymentURL = (() => {
-    if (!payment?.url) return ''
-    try {
-      const url = new URL(payment.url)
-      Object.entries(payment.data ?? {}).forEach(([name, value]) => {
-        url.searchParams.set(name, String(value))
-      })
-      return url.toString()
-    } catch {
-      return payment.url
-    }
-  })()
-
-  const openPaymentPage = () => {
-    if (!payment?.url) return
-    const popup = window.open('', '_blank')
-    if (!popup) {
-      toast.error(t('Please allow pop-ups to open the payment page'))
-      return
-    }
-    const form = popup.document.createElement('form')
+  const submitPaymentForm = (order: {
+    url: string
+    data?: Record<string, string>
+  }) => {
+    const form = document.createElement('form')
     form.method = 'POST'
-    form.action = payment.url
+    form.action = order.url
     form.style.display = 'none'
-    Object.entries(payment.data ?? {}).forEach(([name, value]) => {
-      const input = popup.document.createElement('input')
+    Object.entries(order.data ?? {}).forEach(([name, value]) => {
+      const input = document.createElement('input')
       input.type = 'hidden'
       input.name = name
       input.value = String(value)
       form.appendChild(input)
     })
-    popup.document.body.appendChild(form)
+    document.body.appendChild(form)
     form.submit()
   }
 
@@ -119,46 +94,17 @@ export function AssistedPaymentDialog({
       contentHeight='auto'
       bodyClassName='space-y-4'
       footer={
-        payment ? (
+        <>
           <Button variant='outline' onClick={() => handleOpenChange(false)}>
-            {t('Close')}
+            {t('Cancel')}
           </Button>
-        ) : (
-          <>
-            <Button variant='outline' onClick={() => handleOpenChange(false)}>
-              {t('Cancel')}
-            </Button>
-            <Button onClick={handleSubmit} disabled={loading}>
-              {loading ? t('Processing...') : t('Create payment order')}
-            </Button>
-          </>
-        )
+          <Button onClick={handleSubmit} disabled={loading}>
+            {loading ? t('Processing...') : t('Create payment order')}
+          </Button>
+        </>
       }
     >
-      {payment ? (
-        <div className='space-y-3'>
-          <div className='flex justify-center rounded-md border bg-white p-4'>
-            <QRCodeSVG value={paymentURL} size={220} aria-label={t('Payment URL')} />
-          </div>
-          <Label>{t('Payment URL')}</Label>
-          <div className='flex gap-2'>
-            <Input value={paymentURL} readOnly />
-            <Button type='button' size='icon' variant='outline' onClick={copyURL} title={t('Copy')}>
-              <Copy className='h-4 w-4' />
-            </Button>
-            <Button type='button' variant='outline' onClick={openPaymentPage} title={t('Open payment page')}>
-              <ExternalLink className='h-4 w-4' />
-              <span className='sr-only'>{t('Open payment page')}</span>
-            </Button>
-          </div>
-          {payment.trade_no && (
-            <p className='text-muted-foreground text-xs'>
-              {t('Trade number')}: {payment.trade_no}
-            </p>
-          )}
-        </div>
-      ) : (
-        <div className='space-y-4'>
+      <div className='space-y-4'>
           <div className='space-y-2'>
             <Label htmlFor='assisted-payment-amount'>
               {t('Amount')} (CNY)
@@ -184,8 +130,7 @@ export function AssistedPaymentDialog({
               <option value='wxpay'>{t('WeChat Pay')}</option>
             </select>
           </div>
-        </div>
-      )}
+      </div>
     </Dialog>
   )
 }

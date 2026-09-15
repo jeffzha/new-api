@@ -47,7 +47,7 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.apiKey = strings.TrimSpace(info.ApiKey)
 	a.baseURL = info.ChannelBaseUrl
 	if a.baseURL == "" {
-		a.baseURL = constant.ChannelBaseURLs[constant.ChannelTypeSeedanceDomestic]
+		a.baseURL = constant.GetChannelBaseURL(constant.ChannelTypeSeedanceDomestic)
 	}
 	a.proxy = info.ChannelSetting.Proxy
 }

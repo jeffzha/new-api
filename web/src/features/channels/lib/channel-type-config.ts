@@ -144,23 +144,37 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'Models exposed by this channel',
     },
   },
-  59: {
-    id: 59,
-    name: CHANNEL_TYPES[59],
+  54: {
+    id: 54,
+    name: CHANNEL_TYPES[54],
+    icon: 'doubao',
+    defaultBaseUrl: 'https://ark.cn-beijing.volces.com',
+    supportedModels: [],
+  },
+  1002: {
+    id: 1002,
+    name: CHANNEL_TYPES[1002],
     icon: 'doubao',
     defaultBaseUrl: 'https://api.laomandi.com',
     supportedModels: ['doubao-seedance-2-0-260128'],
   },
-  60: {
-    id: 60,
-    name: CHANNEL_TYPES[60],
+  1003: {
+    id: 1003,
+    name: CHANNEL_TYPES[1003],
     icon: 'doubao',
     defaultBaseUrl: 'https://zhenze-huhehaote.cmecloud.cn/api/v3',
     supportedModels: ['doubao-seedance-2.0'],
   },
-  61: {
-    id: 61,
-    name: CHANNEL_TYPES[61],
+  1000: {
+    id: 1000,
+    name: CHANNEL_TYPES[1000],
+    icon: 'openai',
+    defaultBaseUrl: 'https://api.openai.com',
+    supportedModels: ['doubao-seedance-2-0-260128'],
+  },
+  59: {
+    id: 59,
+    name: CHANNEL_TYPES[59],
     icon: 'Sub2API',
     hints: {
       baseUrl: 'Sub2API gateway base URL',
@@ -168,15 +182,30 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'Models fetched from upstream /v1/models',
     },
   },
-  62: {
-    id: 62,
-    name: CHANNEL_TYPES[62],
+  60: {
+    id: 60,
+    name: CHANNEL_TYPES[60],
     icon: 'NewAPI',
     hints: {
       baseUrl: 'Base URL is required for this channel type',
       key: 'Enter API key for this channel',
       models: 'Models',
     },
+  },
+  61: {
+    id: 61,
+    name: CHANNEL_TYPES[61],
+    icon: 'openai',
+  },
+  62: {
+    id: 62,
+    name: CHANNEL_TYPES[62],
+    icon: 'openai',
+  },
+  63: {
+    id: 63,
+    name: CHANNEL_TYPES[63],
+    icon: 'openai',
   },
 }
 

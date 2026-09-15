@@ -307,6 +307,9 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	if err := migratePrivateChannelTypeIDs(); err != nil {
+		return err
+	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
 	}
@@ -398,6 +401,9 @@ func migrateDBFast() error {
 		if err != nil {
 			return err
 		}
+	}
+	if err := migratePrivateChannelTypeIDs(); err != nil {
+		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err

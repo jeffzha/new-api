@@ -52,8 +52,11 @@ export function getChannelTypeIcon(type: number): string {
     7: 'OpenAI', // OhMyGPT
     8: 'OpenAI', // Custom
     58: 'NewAPI', // Advanced Custom
-    61: 'Sub2API', // Sub2API
-    62: 'NewAPI', // New API
+    59: 'Sub2API', // Sub2API
+    60: 'NewAPI', // New API
+    61: 'OpenAI', // Task Plugin
+    62: 'OpenAI', // vLLM
+    63: 'OpenAI', // SGLang
     3: 'Azure', // Azure
 
     // Anthropic
@@ -102,9 +105,14 @@ export function getChannelTypeIcon(type: number): string {
     52: 'Vidu', // Vidu
     36: 'Suno', // SunoAPI
     55: 'OpenAI', // Sora
-    54: 'Doubao', // DoubaoVideo
-    59: 'Doubao', // Seedance Domestic
-    60: 'Doubao', // Mobile Cloud Seedance
+    54: 'Doubao', // upstream DoubaoVideo
+    59: 'OpenAI', // Sub2API
+    60: 'OpenAI', // New API
+    61: 'OpenAI', // Task Plugin
+    62: 'OpenAI', // vLLM
+    63: 'OpenAI', // SGLang
+    1002: 'Doubao', // Seedance Domestic
+    1003: 'Doubao', // Mobile Cloud Seedance
     1000: 'OpenAISeedance', // OpenAISeedance
     56: 'Replicate', // Replicate
 

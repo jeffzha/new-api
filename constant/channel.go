@@ -1,72 +1,79 @@
 package constant
 
 const (
-	ChannelTypeUnknown             = 0
-	ChannelTypeOpenAI              = 1
-	ChannelTypeMidjourney          = 2
-	ChannelTypeAzure               = 3
-	ChannelTypeOllama              = 4
-	ChannelTypeMidjourneyPlus      = 5
-	ChannelTypeOpenAIMax           = 6
-	ChannelTypeOhMyGPT             = 7
-	ChannelTypeCustom              = 8
-	ChannelTypeAILS                = 9
-	ChannelTypeAIProxy             = 10
-	ChannelTypePaLM                = 11
-	ChannelTypeAPI2GPT             = 12
-	ChannelTypeAIGC2D              = 13
-	ChannelTypeAnthropic           = 14
-	ChannelTypeBaidu               = 15
-	ChannelTypeZhipu               = 16
-	ChannelTypeAli                 = 17
-	ChannelTypeXunfei              = 18
-	ChannelType360                 = 19
-	ChannelTypeOpenRouter          = 20
-	ChannelTypeAIProxyLibrary      = 21
-	ChannelTypeFastGPT             = 22
-	ChannelTypeTencent             = 23
-	ChannelTypeGemini              = 24
-	ChannelTypeMoonshot            = 25
-	ChannelTypeZhipu_v4            = 26
-	ChannelTypePerplexity          = 27
-	ChannelTypeLingYiWanWu         = 31
-	ChannelTypeAws                 = 33
-	ChannelTypeCohere              = 34
-	ChannelTypeMiniMax             = 35
-	ChannelTypeSunoAPI             = 36
-	ChannelTypeDify                = 37
-	ChannelTypeJina                = 38
-	ChannelCloudflare              = 39
-	ChannelTypeSiliconFlow         = 40
-	ChannelTypeVertexAi            = 41
-	ChannelTypeMistral             = 42
-	ChannelTypeDeepSeek            = 43
-	ChannelTypeMokaAI              = 44
-	ChannelTypeVolcEngine          = 45
-	ChannelTypeBaiduV2             = 46
-	ChannelTypeXinference          = 47
-	ChannelTypeXai                 = 48
-	ChannelTypeCoze                = 49
-	ChannelTypeKling               = 50
-	ChannelTypeJimeng              = 51
-	ChannelTypeVidu                = 52
-	ChannelTypeSubmodel            = 53
-	ChannelTypeDoubaoVideo         = 54
-	ChannelTypeSora                = 55
-	ChannelTypeReplicate           = 56
-	ChannelTypeCodex               = 57
-	ChannelTypeAdvancedCustom      = 58
-	ChannelTypeSeedanceDomestic    = 59
-	ChannelTypeMobileCloudSeedance = 60
-	ChannelTypeSub2API             = 61
-	ChannelTypeNewAPI              = 62
-	ChannelTypeDummy               // this one is only for count, do not add any channel after this
+	ChannelTypeUnknown        = 0
+	ChannelTypeOpenAI         = 1
+	ChannelTypeMidjourney     = 2
+	ChannelTypeAzure          = 3
+	ChannelTypeOllama         = 4
+	ChannelTypeMidjourneyPlus = 5
+	ChannelTypeOpenAIMax      = 6
+	ChannelTypeOhMyGPT        = 7
+	ChannelTypeCustom         = 8
+	ChannelTypeAILS           = 9
+	ChannelTypeAIProxy        = 10
+	ChannelTypePaLM           = 11
+	ChannelTypeAPI2GPT        = 12
+	ChannelTypeAIGC2D         = 13
+	ChannelTypeAnthropic      = 14
+	ChannelTypeBaidu          = 15
+	ChannelTypeZhipu          = 16
+	ChannelTypeAli            = 17
+	ChannelTypeXunfei         = 18
+	ChannelType360            = 19
+	ChannelTypeOpenRouter     = 20
+	ChannelTypeAIProxyLibrary = 21
+	ChannelTypeFastGPT        = 22
+	ChannelTypeTencent        = 23
+	ChannelTypeGemini         = 24
+	ChannelTypeMoonshot       = 25
+	ChannelTypeZhipu_v4       = 26
+	ChannelTypePerplexity     = 27
+	ChannelTypeLingYiWanWu    = 31
+	ChannelTypeAws            = 33
+	ChannelTypeCohere         = 34
+	ChannelTypeMiniMax        = 35
+	ChannelTypeSunoAPI        = 36
+	ChannelTypeDify           = 37
+	ChannelTypeJina           = 38
+	ChannelCloudflare         = 39
+	ChannelTypeSiliconFlow    = 40
+	ChannelTypeVertexAi       = 41
+	ChannelTypeMistral        = 42
+	ChannelTypeDeepSeek       = 43
+	ChannelTypeMokaAI         = 44
+	ChannelTypeVolcEngine     = 45
+	ChannelTypeBaiduV2        = 46
+	ChannelTypeXinference     = 47
+	ChannelTypeXai            = 48
+	ChannelTypeCoze           = 49
+	ChannelTypeKling          = 50
+	ChannelTypeJimeng         = 51
+	ChannelTypeVidu           = 52
+	ChannelTypeSubmodel       = 53
+	ChannelTypeDoubaoVideo    = 54
+	ChannelTypeSora           = 55
+	ChannelTypeReplicate      = 56
+	ChannelTypeCodex          = 57
+	ChannelTypeAdvancedCustom = 58
+	// 59-63 are reserved for upstream-compatible channel types.
+	ChannelTypeSub2API    = 59
+	ChannelTypeNewAPI     = 60
+	ChannelTypeTaskPlugin = 61
+	ChannelTypeVLLM       = 62
+	ChannelTypeSGLang     = 63
+	ChannelTypeDummy      // this one is only for count, do not add any channel after this
+
+	// 1002+ is the private namespace for new fork channel types. IDs 1000 and
+	// 1001 are already reserved by earlier fork releases and remain stable.
+	ChannelTypePrivateBase         = 1002
+	ChannelTypeSeedanceDomestic    = 1002
+	ChannelTypeMobileCloudSeedance = 1003
 	// ChannelTypeOpenAISeedance is an OpenAI-compatible seedance video channel:
 	// it accepts OpenAI /v1/video/generations (prompt) and proxies to an
 	// OpenAI-compatible seedance upstream (e.g. vedioapi.laomandi.com), billing
 	// via the shared seedance_video_pricing.prices_cny table like "Seedance
-	// Domestic". Its ID (1000) is deliberately outside the small contiguous
-	// range so the <ChannelTypeDummy> iteration loops keep their existing bounds.
+	// Domestic".
 	ChannelTypeOpenAISeedance = 1000
 )
 
@@ -130,22 +137,34 @@ var ChannelBaseURLs = []string{
 	"https://api.replicate.com",                 //56
 	"https://chatgpt.com",                       //57
 	"",                                          //58
-	"https://api.laomandi.com",                  //59
-	"",                                          //60
-	"",                                          //61
-	"",                                          //62
+	"",                                          //59 (Sub2API)
+	"",                                          //60 (New API)
+	"",                                          //61 (Task Plugin)
+	"",                                          //62 (vLLM)
+	"",                                          //63 (SGLang)
 }
 
 func init() {
-	// ChannelBaseURLs is indexed directly by channel type, so any type added
-	// beyond the small contiguous range (e.g. ChannelTypeOpenAISeedance = 1000)
-	// must have a backing entry or indexing panics. Grow the slice, leaving ""
-	// as the default base URL for channel types that always carry their own.
-	if len(ChannelBaseURLs) <= ChannelTypeOpenAISeedance {
-		grown := make([]string, ChannelTypeOpenAISeedance+1)
+	// Keep direct indexing safe for private IDs used by existing relay code.
+	maxPrivateType := ChannelTypeMobileCloudSeedance
+	if ChannelTypeOpenAISeedance > maxPrivateType {
+		maxPrivateType = ChannelTypeOpenAISeedance
+	}
+	if len(ChannelBaseURLs) <= maxPrivateType {
+		grown := make([]string, maxPrivateType+1)
 		copy(grown, ChannelBaseURLs)
 		ChannelBaseURLs = grown
 	}
+	ChannelBaseURLs[ChannelTypeSeedanceDomestic] = "https://api.laomandi.com"
+}
+
+// GetChannelBaseURL safely resolves a built-in URL. Private channel IDs carry
+// their own base URL and intentionally have no legacy slice entry.
+func GetChannelBaseURL(channelType int) string {
+	if channelType < 0 || channelType >= len(ChannelBaseURLs) {
+		return ""
+	}
+	return ChannelBaseURLs[channelType]
 }
 
 var ChannelTypeNames = map[int]string{
@@ -204,10 +223,13 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeReplicate:           "Replicate",
 	ChannelTypeCodex:               "ChatGPT Subscription (Codex)",
 	ChannelTypeAdvancedCustom:      "Advanced Custom",
-	ChannelTypeSeedanceDomestic:    "Seedance Domestic",
-	ChannelTypeMobileCloudSeedance: "MobileCloudSeedance",
 	ChannelTypeSub2API:             "Sub2API",
 	ChannelTypeNewAPI:              "New API",
+	ChannelTypeTaskPlugin:          "Task Plugin",
+	ChannelTypeVLLM:                "vLLM",
+	ChannelTypeSGLang:              "SGLang",
+	ChannelTypeSeedanceDomestic:    "Seedance Domestic",
+	ChannelTypeMobileCloudSeedance: "MobileCloudSeedance",
 	ChannelTypeOpenAISeedance:      "OpenAISeedance",
 }
 

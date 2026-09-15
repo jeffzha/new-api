@@ -106,6 +106,26 @@ func init() {
 		adaptor.Init(meta)
 		channelId2Models[i] = adaptor.GetModelList()
 	}
+	// Private fork channel types live outside the upstream contiguous range
+	// (ChannelTypeDummy). Register their model lists explicitly so they remain
+	// available in the model catalogue after ID migration.
+	for _, channelType := range []int{
+		constant.ChannelTypeSeedanceDomestic,
+		constant.ChannelTypeMobileCloudSeedance,
+		constant.ChannelTypeOpenAISeedance,
+	} {
+		apiType, success := common.ChannelType2APIType(channelType)
+		if !success {
+			continue
+		}
+		adaptor := relay.GetAdaptor(apiType)
+		if adaptor == nil {
+			continue
+		}
+		meta := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: channelType}}
+		adaptor.Init(meta)
+		channelId2Models[channelType] = adaptor.GetModelList()
+	}
 	openAIModels = lo.UniqBy(openAIModels, func(m dto.OpenAIModels) string {
 		return m.Id
 	})

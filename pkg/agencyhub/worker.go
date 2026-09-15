@@ -180,10 +180,7 @@ func (a *App) processClaimedCommissionJob(ctx context.Context, id int64) error {
 		if err := common.Unmarshal([]byte(job.Payload), &event); err != nil {
 			return err
 		}
-		hash, err := agencycontract.CanonicalHash(event)
-		if err != nil {
-			return err
-		}
+		hash := billingPayloadHash(job.Payload)
 		return a.processCommissionJobTx(tx, &job, event, hash, time.Now().UnixMilli())
 	})
 }
@@ -281,17 +278,13 @@ func (a *App) processDelivery(ctx context.Context, delivery model.AgencyEventDel
 		_ = a.markDelivery(delivery, "poison", err)
 		return err
 	}
-	payloadHash, err := agencycontract.CanonicalHash(event)
-	if err != nil {
-		_ = a.markDelivery(delivery, "poison", err)
-		return err
-	}
+	payloadHash := billingPayloadHash(outbox.Payload)
 	if !strings.EqualFold(strings.TrimSpace(outbox.PayloadHash), payloadHash) {
 		err := errors.New("billing event outbox payload hash mismatch")
 		_ = a.markDelivery(delivery, "poison", err)
 		return err
 	}
-	if err := a.processBillingEventWithLease(ctx, event, delivery); err != nil {
+	if err := a.processBillingPayloadWithLease(ctx, event, outbox.Payload, payloadHash, delivery); err != nil {
 		if strings.Contains(err.Error(), "payload hash conflict") {
 			_ = a.markDelivery(delivery, "poison", err)
 			return err

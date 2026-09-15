@@ -196,6 +196,14 @@ func (a *App) processBillingEventWithLease(ctx context.Context, event agencycont
 	if err != nil {
 		return err
 	}
+	return a.processBillingPayloadWithLease(ctx, event, string(payload), payloadHash, delivery)
+}
+
+// processBillingPayloadWithLease preserves the immutable bytes stored by the
+// producer. Re-marshalling an old event with a newer BillingEvent struct can
+// add newly introduced zero-value fields and must not make a valid historical
+// event look tampered.
+func (a *App) processBillingPayloadWithLease(ctx context.Context, event agencycontract.BillingEvent, payload, payloadHash string, delivery model.AgencyEventDelivery) error {
 	now := event.OccurredAtMS
 	if now == 0 {
 		now = time.Now().UnixMilli()
@@ -211,7 +219,7 @@ func (a *App) processBillingEventWithLease(ctx context.Context, event agencycont
 			}
 			return err
 		}
-		if err := a.processBillingEventTx(tx, event, string(payload), payloadHash, now, a.commissionProcessingEnabled()); err != nil {
+		if err := a.processBillingEventTx(tx, event, payload, payloadHash, now, a.commissionProcessingEnabled()); err != nil {
 			return err
 		}
 		return a.markDeliveryTx(tx, current, "done", nil)
@@ -484,14 +492,16 @@ func verifyAuthoritativeBillingEvent(tx *gorm.DB, event agencycontract.BillingEv
 	if err := common.Unmarshal([]byte(operation.CommittedResult), &committed); err != nil {
 		return errors.New("authoritative billing operation has invalid committed result")
 	}
-	committedHash, err := agencycontract.CanonicalHash(committed)
-	if err != nil {
-		return err
-	}
+	committedHash := billingPayloadHash(operation.CommittedResult)
 	if committedHash != payloadHash {
 		return errors.New("authoritative billing operation payload hash conflict")
 	}
 	return nil
+}
+
+func billingPayloadHash(payload string) string {
+	digest := sha256.Sum256([]byte(payload))
+	return hex.EncodeToString(digest[:])
 }
 
 // A cancelled reservation is a final financial receipt that releases frozen

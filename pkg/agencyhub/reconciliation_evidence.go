@@ -235,10 +235,7 @@ func reconciliationEvidence(tx *gorm.DB, issue model.AgencyReconciliationIssue, 
 			if !validResult || op.EventCount != 1 {
 				continue
 			}
-			expectedHash, err := agencycontract.CanonicalHash(committed)
-			if err != nil {
-				return v, err
-			}
+			expectedHash := billingPayloadHash(op.CommittedResult)
 			v.check("committed_event_id", committed.EventID, row.EventID)
 			v.check("committed_outbox_hash", expectedHash, strings.ToLower(strings.TrimSpace(row.PayloadHash)))
 			v.check("event_operation", committed.OperationID, row.OperationID)
@@ -251,10 +248,7 @@ func reconciliationEvidence(tx *gorm.DB, issue model.AgencyReconciliationIssue, 
 				v.check("outbox_payload_decodes", "true", "false")
 				continue
 			}
-			actualHash, err := agencycontract.CanonicalHash(emitted)
-			if err != nil {
-				return v, err
-			}
+			actualHash := billingPayloadHash(row.Payload)
 			v.check("committed_payload_hash", expectedHash, actualHash)
 		}
 	case "billing_outbox":
@@ -268,10 +262,7 @@ func reconciliationEvidence(tx *gorm.DB, issue model.AgencyReconciliationIssue, 
 			v.check("outbox_payload_decodes", "true", "false")
 			break
 		}
-		hash, err := agencycontract.CanonicalHash(event)
-		if err != nil {
-			return v, err
-		}
+		hash := billingPayloadHash(outbox.Payload)
 		v.check("outbox_payload_hash", strings.ToLower(strings.TrimSpace(outbox.PayloadHash)), hash)
 		v.check("event_schema_supported", "true", strconv.FormatBool(event.SchemaVersion == agencycontract.SchemaVersion || event.SchemaVersion == agencycontract.ComponentSchemaVersion))
 		v.check("event_components_valid", "true", strconv.FormatBool(agencycontract.ValidateBillingComponents(event) == nil))

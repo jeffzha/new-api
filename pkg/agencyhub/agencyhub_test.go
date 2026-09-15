@@ -622,6 +622,42 @@ func TestConsumerPoisonsOutboxPayloadHashMismatch(t *testing.T) {
 	require.Equal(t, int64(0), count)
 }
 
+func TestConsumerAcceptsHistoricalPayloadWithoutNewZeroValueFields(t *testing.T) {
+	app := newAgencyTestApp(t)
+	event := agencycontract.BillingEvent{
+		SchemaVersion: agencycontract.SchemaVersion, EventID: "evt-legacy-funding",
+		EventType: "agency.funding_adjusted", FinancialChargeID: "quota_grant-31-1",
+		OperationID: "quota_grant-31-1", JournalRevision: 1, MoneySeq: 1,
+		EventCount: 1, OccurredAtMS: 1, UserID: 31, BusinessStatus: "quota_grant",
+		BillingStatus: "funding_adjusted", CommissionSkipReason: "noncommissionable_funding_adjustment",
+	}
+	encoded, err := common.Marshal(event)
+	require.NoError(t, err)
+	// Simulate an immutable event written before these fields were added to
+	// BillingEvent without omitempty. A newer consumer must hash the stored
+	// payload bytes instead of silently adding zero-value fields.
+	payload := strings.ReplaceAll(string(encoded), ",\"nonpaid_allocated_quota\":0", "")
+	payload = strings.ReplaceAll(payload, ",\"debt_allocated_quota\":0", "")
+	require.NotEqual(t, billingPayloadHash(string(encoded)), billingPayloadHash(payload))
+	require.NoError(t, app.db.Create(&model.AgencyBillingOutbox{
+		EventID: event.EventID, OperationID: event.OperationID, EventIndex: 0, EventCount: 1,
+		EventKind: event.EventType, UserID: event.UserID, MoneySeq: event.MoneySeq,
+		Payload: payload, PayloadHash: billingPayloadHash(payload),
+		SchemaVersion: event.SchemaVersion, CreatedAtMS: event.OccurredAtMS,
+	}).Error)
+	require.NoError(t, app.db.Create(&model.AgencyEventDelivery{
+		EventID: event.EventID, Status: "pending", NextRetryAt: 1, CreatedAt: 1,
+	}).Error)
+
+	require.NoError(t, app.RunConsumerOnce(t.Context(), 1))
+	var delivery model.AgencyEventDelivery
+	require.NoError(t, app.db.Where("event_id = ?", event.EventID).First(&delivery).Error)
+	require.Equal(t, "done", delivery.Status)
+	var source model.AgencySourceEvent
+	require.NoError(t, app.db.Where("event_id = ?", event.EventID).First(&source).Error)
+	require.Equal(t, "skipped", source.ProcessingStatus)
+}
+
 func TestConsumerProcessesLateLowIDDeliveryAfterHigherIDDone(t *testing.T) {
 	app := newAgencyTestApp(t)
 	agencyID := int64(21)

@@ -208,6 +208,13 @@ func applyAgencyQuotaDeltaTx(tx *gorm.DB, userID, delta int64, sourceKind, sourc
 	if user.BillingMode == AgencyProvisioningBillingMode {
 		return ErrAgencyProvisioning
 	}
+	// Wallet credits share the JavaScript-safe quota ceiling regardless of
+	// whether the user is still on the legacy wallet path or the agency
+	// durable funding path. Validate before the legacy fast path so a normal
+	// redemption cannot wrap or exceed the supported wallet domain.
+	if delta > 0 && int64(user.Quota) > int64(common.MaxWalletQuota)-delta {
+		return errors.New("agency user wallet quota overflow")
+	}
 	if user.BillingMode != AgencyDurableBillingMode {
 		result := tx.Model(&User{}).Where("id = ?", userID).Update("quota", gorm.Expr("quota + ?", delta))
 		if result.Error != nil {

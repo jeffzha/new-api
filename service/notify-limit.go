@@ -33,7 +33,7 @@ func startCleanupTask() {
 		for {
 			time.Sleep(time.Hour)
 			now := time.Now()
-			notifyLimitStore.Range(func(key, value interface{}) bool {
+			notifyLimitStore.Range(func(key, value any) bool {
 				if limit, ok := value.(limitCount); ok {
 					if now.Sub(limit.Timestamp) >= getDuration() {
 						notifyLimitStore.Delete(key)
@@ -48,7 +48,10 @@ func startCleanupTask() {
 // CheckNotificationLimit checks if the user has exceeded their notification limit
 // Returns true if the user can send notification, false if limit exceeded
 func CheckNotificationLimit(userId int, notifyType string) (bool, error) {
-	if common.RedisEnabled {
+	// RedisEnabled is configured before the client is initialized. During
+	// startup and in isolated command/test paths the flag can still be true
+	// while RDB is nil, so use the in-memory limiter instead of panicking.
+	if common.RedisEnabled && common.RDB != nil {
 		return checkRedisLimit(userId, notifyType)
 	}
 	return checkMemoryLimit(userId, notifyType)

@@ -28,7 +28,7 @@ type agencyTerminalPollingAdaptor struct {
 }
 
 func (a *agencyTerminalPollingAdaptor) Init(*relaycommon.RelayInfo) {}
-func (a *agencyTerminalPollingAdaptor) FetchTask(string, string, map[string]any, string) (*http.Response, error) {
+func (a *agencyTerminalPollingAdaptor) FetchTask(string, string, *model.Task, string) (*http.Response, error) {
 	if a.fetchError != nil {
 		return nil, a.fetchError
 	}
@@ -38,7 +38,7 @@ func (a *agencyTerminalPollingAdaptor) FetchTask(string, string, map[string]any,
 	}
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
 }
-func (a *agencyTerminalPollingAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
+func (a *agencyTerminalPollingAdaptor) ParseTaskResult(*model.Task, *http.Response, []byte) (*relaycommon.TaskInfo, error) {
 	result := a.result
 	return &result, nil
 }
@@ -59,12 +59,12 @@ func TestAgencyTaskSunoPollingRequiresExplicitFailure(t *testing.T) {
 	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return adaptor }
 	tasks := map[string]*model.Task{task.GetUpstreamTaskID(): task}
 	ids := []string{task.GetUpstreamTaskID()}
-	require.NoError(t, updateSunoTasks(context.Background(), channel.Id, ids, tasks))
+	require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, &channel, ids[0], tasks))
 	require.NoError(t, db.First(task, task.ID).Error)
 	assert.Equal(t, model.TaskStatus(model.TaskStatusInProgress), task.Status)
 	assert.Equal(t, 100, task.Quota)
 	adaptor.fetchError = errors.New("provider lookup transport interrupted")
-	require.Error(t, updateSunoTasks(context.Background(), channel.Id, ids, tasks))
+	require.Error(t, updateVideoSingleTask(context.Background(), adaptor, &channel, ids[0], tasks))
 	var journal model.AgencyBillingJournal
 	require.NoError(t, db.Where("charge_id = ?", task.PrivateData.BillingContext.AgencyChargeID).First(&journal).Error)
 	assert.Equal(t, "reconcile_required", journal.Status)
@@ -75,7 +75,7 @@ func TestAgencyTaskSunoPollingRequiresExplicitFailure(t *testing.T) {
 		Data: []taskdto.SunoDataResponse{{TaskID: task.GetUpstreamTaskID(), Status: model.TaskStatusFailure, FailReason: "generation failed"}}})
 	require.NoError(t, err)
 	adaptor.fetchError, adaptor.responseBody = nil, string(response)
-	require.NoError(t, updateSunoTasks(context.Background(), channel.Id, ids, tasks))
+	require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, &channel, ids[0], tasks))
 	require.NoError(t, db.First(&user, user.Id).Error)
 	require.NoError(t, db.First(&token, token.Id).Error)
 	require.NoError(t, db.First(&journal, journal.ID).Error)

@@ -20,21 +20,18 @@ import { useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
 
 import { useStatus } from '@/hooks/use-status'
-import { useAuthStore } from '@/stores/auth-store'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { getPricing } from '../api'
 
-export function usePricingData() {
+export function usePricingData(enabled = true) {
   const { status } = useStatus()
-  const userID = useAuthStore((state) => state.auth.user?.id ?? null)
-  const userGroup = useAuthStore((state) => state.auth.user?.group ?? null)
-  const sessionID = useAuthStore((state) => state.auth.session?.sid ?? null)
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['pricing', userID, userGroup, sessionID],
-    queryFn: ({ signal }) => getPricing(signal),
-    staleTime: userID == null ? 5 * 60 * 1000 : 0,
-    gcTime: userID == null ? 5 * 60 * 1000 : 0,
+    queryKey: ['pricing'],
+    queryFn: async () => requireServerSuccess(await getPricing()),
+    staleTime: 5 * 60 * 1000,
+    enabled,
   })
 
   // Ensure rates never reach zero to prevent division errors
@@ -48,7 +45,7 @@ export function usePricingData() {
   )
 
   const models = useMemo(() => {
-    if (error || !data?.data || !data?.vendors) return []
+    if (!data?.data || !data?.vendors) return []
 
     const vendorMap = new Map(data.vendors.map((v) => [v.id, v]))
 
@@ -65,13 +62,14 @@ export function usePricingData() {
         group_ratio: data.group_ratio,
       }
     })
-  }, [data, error])
+  }, [data])
+  const agencyPricing = data?.pricing_scope === 'agency'
 
   return {
     models,
     vendors: data?.vendors ?? [],
     groupRatio: data?.group_ratio ?? {},
-    agencyPricing: data?.pricing_scope === 'agency',
+    agencyPricing,
     usableGroup: data?.usable_group ?? {},
     endpointMap: data?.supported_endpoint ?? {},
     autoGroups: data?.auto_groups ?? [],

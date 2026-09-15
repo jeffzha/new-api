@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relaydto "github.com/QuantumNous/new-api/relaykit/dto"
@@ -160,12 +161,30 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	return result.ID, responseBody, nil
 }
 
-func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy string) (*http.Response, error) {
+func (a *TaskAdaptor) ParseResponse(_ *gin.Context, resp *http.Response, _ *relaycommon.RelayInfo) (*channel.TaskSubmitResponse, *taskdto.TaskError) {
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
+	}
+	var result createTaskResponse
+	if err := common.Unmarshal(responseBody, &result); err != nil {
+		return nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
+	}
+	if strings.TrimSpace(result.ID) == "" {
+		return nil, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
+	}
+	return &channel.TaskSubmitResponse{UpstreamTaskID: result.ID, TaskData: responseBody}, nil
+}
+
+func (a *TaskAdaptor) FetchTask(baseURL, key string, task *model.Task, proxy string) (*http.Response, error) {
 	if strings.TrimSpace(proxy) != "" {
 		return nil, fmt.Errorf("Mobile Cloud Seedance SDK does not support channel proxy configuration")
 	}
-	taskID, ok := body["task_id"].(string)
-	if !ok || strings.TrimSpace(taskID) == "" {
+	if task == nil {
+		return nil, fmt.Errorf("task is required")
+	}
+	taskID := task.GetUpstreamTaskID()
+	if strings.TrimSpace(taskID) == "" {
 		return nil, fmt.Errorf("invalid task_id")
 	}
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -183,14 +202,14 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	return jsonResponse(http.StatusOK, result)
 }
 
-func (a *TaskAdaptor) FetchTaskAt(baseURL, key, fetchPath string, body map[string]any, proxy string) (*http.Response, error) {
+func (a *TaskAdaptor) FetchTaskAt(baseURL, key, fetchPath string, task *model.Task, proxy string) (*http.Response, error) {
 	if fetchPath != fetchTaskPath {
 		return nil, fmt.Errorf("unsupported Mobile Cloud Seedance fetch path %q", fetchPath)
 	}
-	return a.FetchTask(baseURL, key, body, proxy)
+	return a.FetchTask(baseURL, key, task, proxy)
 }
 
-func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+func (a *TaskAdaptor) ParseTaskResult(_ *model.Task, _ *http.Response, respBody []byte) (*relaycommon.TaskInfo, error) {
 	var result taskResponse
 	if err := common.Unmarshal(respBody, &result); err != nil {
 		return nil, errors.Wrap(err, "unmarshal Mobile Cloud Seedance task result")

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -22,11 +23,11 @@ func (a *taskBillingReconciliationAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.initializedBaseURL = info.ChannelMeta.ChannelBaseUrl
 }
 
-func (a *taskBillingReconciliationAdaptor) FetchTask(_ string, _ string, _ map[string]any, _ string) (*http.Response, error) {
+func (a *taskBillingReconciliationAdaptor) FetchTask(_ string, _ string, _ *model.Task, _ string) (*http.Response, error) {
 	return nil, nil
 }
 
-func (a *taskBillingReconciliationAdaptor) ParseTaskResult(_ []byte) (*relaycommon.TaskInfo, error) {
+func (a *taskBillingReconciliationAdaptor) ParseTaskResult(_ *model.Task, _ *http.Response, _ []byte) (*relaycommon.TaskInfo, error) {
 	return nil, nil
 }
 
@@ -107,7 +108,7 @@ END`).Error)
 
 	summary := RunTaskBillingReconciliationOnce(context.Background(), 10)
 	assert.Equal(t, 1, summary.Settled)
-	assert.Equal(t, constant.TaskPlatform("59"), selectedPlatform)
+	assert.Equal(t, constant.TaskPlatform(fmt.Sprintf("%d", constant.ChannelTypeSeedanceDomestic)), selectedPlatform)
 	assert.Equal(t, "https://frozen-seedance.example", adaptor.initializedBaseURL)
 	assert.Equal(t, 10_050, getUserQuota(t, userID))
 	assert.Equal(t, 5_050, getTokenRemainQuota(t, tokenID))

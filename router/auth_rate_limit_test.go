@@ -137,6 +137,17 @@ func (f *authRateLimitFixture) post(path, body, token, remoteAddr string, refres
 	return response
 }
 
+func findRefreshCookie(t *testing.T, cookies []*http.Cookie) *http.Cookie {
+	t.Helper()
+	for _, cookie := range cookies {
+		if cookie.Name == service.RefreshCookieName {
+			return cookie
+		}
+	}
+	require.FailNow(t, "refresh cookie was not returned")
+	return nil
+}
+
 func TestAuthSessionRoutesHaveIndependentLimitsFromCredentialAttempts(t *testing.T) {
 	for _, useRedis := range []bool{false, true} {
 		t.Run(fmt.Sprintf("redis=%t", useRedis), func(t *testing.T) {
@@ -158,8 +169,7 @@ func TestAuthSessionRoutesHaveIndependentLimitsFromCredentialAttempts(t *testing
 
 			response := fixture.post(refreshPath, "", "", fixture.remoteAddr, refreshCookie)
 			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-			require.Len(t, response.Result().Cookies(), 1)
-			refreshCookie = response.Result().Cookies()[0]
+			refreshCookie = findRefreshCookie(t, response.Result().Cookies())
 			assert.Equal(t, http.StatusOK, fixture.post(logoutPath, "", "", fixture.remoteAddr, nil).Code)
 
 			loginBody := fmt.Sprintf(`{"username":%q,"password":"incorrect-password"}`, user.Username)
@@ -178,8 +188,7 @@ func TestAuthSessionRoutesHaveIndependentLimitsFromCredentialAttempts(t *testing
 			for range 2 {
 				response = fixture.post(refreshPath, "", "", fixture.remoteAddr, refreshCookie)
 				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-				require.Len(t, response.Result().Cookies(), 1)
-				refreshCookie = response.Result().Cookies()[0]
+				refreshCookie = findRefreshCookie(t, response.Result().Cookies())
 			}
 			response = fixture.post(refreshPath, "", "", fixture.remoteAddr, refreshCookie)
 			assert.Equal(t, http.StatusTooManyRequests, response.Code)

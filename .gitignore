@@ -1,4 +1,5 @@
 .idea
+.review
 .vscode
 .zed
 .history
@@ -7,6 +8,8 @@ upload
 *.db
 build
 *.db-journal
+*.db-shm
+*.db-wal
 logs
 web/dist
 web/node_modules
@@ -20,7 +23,7 @@ tiktoken_cache
 .gocache
 .gomodcache/
 .cache
-plans
+.plans
 .claude
 .cursor
 

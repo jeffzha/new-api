@@ -5,18 +5,20 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
 
 const (
 	AccessTokenTTL        = 15 * time.Minute
-	SecurityProofTTL      = 5 * time.Minute
+	SecurityProofTTL      = time.Minute
 	LoginSessionTTL       = 30 * 24 * time.Hour
 	RefreshReplayWindow   = 30 * time.Second
 	accessTokenUse        = "access"
@@ -30,16 +32,13 @@ var (
 	ErrAuthTokenExpired = errors.New("authentication token has expired")
 	ErrProofScope       = errors.New("security proof scope mismatch")
 	ErrProofMethod      = errors.New("security proof method mismatch")
+	ErrProofContext     = errors.New("security proof context mismatch")
+	ErrProofConsumed    = errors.New("security proof has already been consumed")
 )
 
 // AuthIdentity is the server-validated identity attached to dashboard requests.
 // Role, status and group are deliberately loaded from the user cache instead of JWT claims.
-type AuthIdentity struct {
-	UserID          int
-	SessionID       string
-	UserAuthVersion int64
-	SessionVersion  int64
-}
+type AuthIdentity = model.AuthSessionIdentity
 
 type SecurityProofDetails struct {
 	Method   string
@@ -54,6 +53,7 @@ type authClaims struct {
 	SessionVersion  int64    `json:"sv"`
 	Method          string   `json:"method,omitempty"`
 	Scopes          []string `json:"scopes,omitempty"`
+	ContextHash     string   `json:"context_hash,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -120,13 +120,7 @@ func ParseDashboardAccessToken(raw string) (identity AuthIdentity, internal bool
 	if parseErr != nil || parsed == nil {
 		return AuthIdentity{}, false, nil
 	}
-	audienceMatches := false
-	for _, audience := range claims.Audience {
-		if audience == authTokenAudience {
-			audienceMatches = true
-			break
-		}
-	}
+	audienceMatches := slices.Contains(claims.Audience, authTokenAudience)
 	knownTokenUse := claims.TokenUse == accessTokenUse || claims.TokenUse == securityProofTokenUse
 	if claims.Issuer != authTokenIssuer || !audienceMatches || !knownTokenUse {
 		return AuthIdentity{}, false, nil
@@ -135,20 +129,28 @@ func ParseDashboardAccessToken(raw string) (identity AuthIdentity, internal bool
 	return identity, true, err
 }
 
-func IssueSecurityProof(identity AuthIdentity, method string, scopes []string) (string, int64, error) {
+func IssueSecurityProof(identity AuthIdentity, method string, binding VerificationBinding) (string, int64, error) {
 	method = strings.TrimSpace(method)
-	if identity.UserID <= 0 || identity.SessionID == "" || identity.UserAuthVersion <= 0 || identity.SessionVersion <= 0 || method == "" || len(scopes) == 0 {
+	if identity.UserID <= 0 || identity.SessionID == "" || identity.UserAuthVersion <= 0 || identity.SessionVersion <= 0 || method == "" || binding.Scope == "" || binding.ContextHash == "" {
 		return "", 0, ErrAuthTokenInvalid
 	}
 	now := time.Now()
-	expiresAt := now.Add(SecurityProofTTL)
+	expiresAt := now.Add(SecurityProofTTL).Truncate(time.Second)
+	proofID, _, err := model.CreateAuthFlow(model.AuthFlowCreate{
+		Purpose: model.AuthFlowPurposeSecurityProof, UserId: identity.UserID,
+		SessionId: identity.SessionID, ExpiresAt: expiresAt,
+	})
+	if err != nil {
+		return "", 0, err
+	}
 	claims := authClaims{
 		TokenUse:        securityProofTokenUse,
 		SessionID:       identity.SessionID,
 		UserAuthVersion: identity.UserAuthVersion,
 		SessionVersion:  identity.SessionVersion,
 		Method:          method,
-		Scopes:          append([]string(nil), scopes...),
+		Scopes:          []string{binding.Scope},
+		ContextHash:     binding.ContextHash,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    authTokenIssuer,
 			Subject:   strconv.Itoa(identity.UserID),
@@ -156,7 +158,7 @@ func IssueSecurityProof(identity AuthIdentity, method string, scopes []string) (
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			NotBefore: jwt.NewNumericDate(now.Add(-5 * time.Second)),
 			IssuedAt:  jwt.NewNumericDate(now),
-			ID:        uuid.NewString(),
+			ID:        proofID,
 		},
 	}
 	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(authSigningKey(securityProofTokenUse))
@@ -207,6 +209,27 @@ func VerifySecurityProofDetails(raw string, identity AuthIdentity, requiredScope
 		IssuedAt: claims.IssuedAt.Time,
 		ID:       claims.ID,
 	}, nil
+}
+
+func verifySecurityProof(raw string, identity AuthIdentity, binding VerificationBinding) (*authClaims, error) {
+	claims, err := parseAuthClaims(raw, securityProofTokenUse, authSigningKey(securityProofTokenUse))
+	if err != nil {
+		return nil, err
+	}
+	userID, err := strconv.Atoi(claims.Subject)
+	if err != nil || userID != identity.UserID || claims.SessionID != identity.SessionID || claims.UserAuthVersion != identity.UserAuthVersion || claims.SessionVersion != identity.SessionVersion {
+		return nil, ErrAuthTokenInvalid
+	}
+	if len(claims.Scopes) != 1 || claims.Scopes[0] != binding.Scope {
+		return nil, ErrProofScope
+	}
+	if claims.ContextHash == "" {
+		return nil, ErrAuthTokenInvalid
+	}
+	if !hmac.Equal([]byte(claims.ContextHash), []byte(binding.ContextHash)) {
+		return nil, ErrProofContext
+	}
+	return claims, nil
 }
 
 func parseAuthClaims(raw, expectedUse string, key []byte) (*authClaims, error) {

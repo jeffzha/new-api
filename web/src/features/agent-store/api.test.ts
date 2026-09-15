@@ -38,6 +38,22 @@ describe('Agent Store CSRF cookie', () => {
 })
 
 describe('Agent Store catalog contract', () => {
+  test('treats a missing optional sidecar status route as disabled', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ success: false }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+    try {
+      assert.deepEqual(await agentStoreApi.status(), { enabled: false })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   test('binds opaque pagination and server-side filters to the request URL', async () => {
     const originalFetch = globalThis.fetch
     let requestedURL = ''

@@ -178,7 +178,9 @@ func TestAdminStepUpTicketBindsTrustedSecureVerificationToDeterministicNonce(t *
 	})
 	router := gin.New()
 	identity := service.AuthIdentity{UserID: 42, SessionID: "session-42", UserAuthVersion: 1, SessionVersion: 1}
-	proof, _, err := service.IssueSecurityProof(identity, secureVerificationMethodPasskey, []string{securityProofScopeWorkbenchStepUp})
+	binding, err := service.BindVerificationOperation(service.VerificationOperation{Scope: securityProofScopeWorkbenchStepUp})
+	require.NoError(t, err)
+	proof, _, err := service.IssueSecurityProof(identity, service.VerificationMethodPasskey, binding)
 	require.NoError(t, err)
 	router.POST("/api/admin/workbench/step-up-ticket", func(c *gin.Context) {
 		c.Set("id", 42)

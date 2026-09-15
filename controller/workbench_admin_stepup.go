@@ -70,7 +70,7 @@ func (bridge *WorkbenchIdentityBridge) AdminStepUpTicket(c *gin.Context) {
 			respondWorkbenchError(c, http.StatusForbidden, "recent 2FA or Passkey verification is required")
 			return
 		}
-		details, err := service.VerifySecurityProofDetails(rawProof, identity, securityProofScopeWorkbenchStepUp, []string{secureVerificationMethod2FA, secureVerificationMethodPasskey})
+		details, err := service.VerifySecurityProofDetails(rawProof, identity, securityProofScopeWorkbenchStepUp, []string{service.VerificationMethodTwoFA, service.VerificationMethodPasskey})
 		if err != nil {
 			respondWorkbenchError(c, http.StatusForbidden, "recent 2FA or Passkey verification is required")
 			return
@@ -78,8 +78,8 @@ func (bridge *WorkbenchIdentityBridge) AdminStepUpTicket(c *gin.Context) {
 		digest := sha256.Sum256([]byte(rawProof))
 		authenticatedAt = details.IssuedAt.UTC()
 		amr = map[string]string{
-			secureVerificationMethod2FA:     "otp",
-			secureVerificationMethodPasskey: "webauthn",
+			service.VerificationMethodTwoFA:   "otp",
+			service.VerificationMethodPasskey: "webauthn",
 		}[details.Method]
 		reauthNonce = base64.RawURLEncoding.EncodeToString(digest[:])
 	default:

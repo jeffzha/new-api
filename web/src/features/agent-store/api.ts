@@ -63,8 +63,20 @@ async function requestAgentStore<T>(
 }
 
 export const agentStoreApi = {
-  status: (signal?: AbortSignal) =>
-    requestAgentStore<{ enabled: boolean }>('/status', { signal }),
+  status: async (signal?: AbortSignal) => {
+    try {
+      return await requestAgentStore<{ enabled: boolean }>('/status', { signal })
+    } catch (error) {
+      // Agent Store is served by an optional workbench sidecar. Older or
+      // locally minimal deployments do not register this route; treat only
+      // that explicit absence as the feature being disabled. Authentication
+      // and operational errors must remain visible to the caller.
+      if (error instanceof AgentStoreApiError && error.status === 404) {
+        return { enabled: false }
+      }
+      throw error
+    }
+  },
   list: (
     params: { cursor?: string; category?: string; query?: string } = {},
     signal?: AbortSignal

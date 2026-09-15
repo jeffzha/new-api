@@ -352,9 +352,31 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, response *http.Response, info *
 	return strconv.FormatInt(id, 10), publicTaskData, nil
 }
 
-func (a *TaskAdaptor) FetchTask(baseURL string, key string, body map[string]any, proxy string) (*http.Response, error) {
-	taskID, ok := body["task_id"].(string)
-	if !ok {
+func (a *TaskAdaptor) ParseResponse(_ *gin.Context, response *http.Response, _ *relaycommon.RelayInfo) (*channel.TaskSubmitResponse, *taskdto.TaskError) {
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
+	}
+	var envelope upstreamEnvelope[*generateResponse]
+	if err := common.Unmarshal(body, &envelope); err != nil {
+		return nil, service.TaskErrorWrapper(err, "unmarshal_response_body_failed", http.StatusBadGateway)
+	}
+	if envelope.State != 1 || envelope.Data == nil {
+		return nil, service.TaskErrorWrapper(fmt.Errorf("upstream rejected request: %v", envelope.Error), "upstream_error", http.StatusBadRequest)
+	}
+	id, err := rawInt64(envelope.Data.ID)
+	if err != nil || id <= 0 {
+		return nil, service.TaskErrorWrapper(fmt.Errorf("invalid upstream task id"), "invalid_response", http.StatusBadGateway)
+	}
+	return &channel.TaskSubmitResponse{UpstreamTaskID: strconv.FormatInt(id, 10), TaskData: body}, nil
+}
+
+func (a *TaskAdaptor) FetchTask(baseURL string, key string, task *model.Task, proxy string) (*http.Response, error) {
+	if task == nil {
+		return nil, fmt.Errorf("task is required")
+	}
+	taskID := task.GetUpstreamTaskID()
+	if strings.TrimSpace(taskID) == "" {
 		return nil, fmt.Errorf("invalid task_id")
 	}
 	id, err := strconv.ParseInt(taskID, 10, 64)
@@ -364,7 +386,7 @@ func (a *TaskAdaptor) FetchTask(baseURL string, key string, body map[string]any,
 	return postJSON(baseURL, generateInfoPath, key, proxy, map[string]any{"id": id})
 }
 
-func (a *TaskAdaptor) ParseTaskResult(body []byte) (*relaycommon.TaskInfo, error) {
+func (a *TaskAdaptor) ParseTaskResult(_ *model.Task, _ *http.Response, body []byte) (*relaycommon.TaskInfo, error) {
 	var envelope upstreamEnvelope[*generateInfoResponse]
 	if err := common.Unmarshal(body, &envelope); err != nil {
 		return nil, err
@@ -403,6 +425,12 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	}
 	video := task.ToOpenAIVideo()
 	video.TaskID = task.TaskID
+	if task.Status == model.TaskStatusSuccess && task.GetResultURL() != "" {
+		if video.Metadata == nil {
+			video.Metadata = make(map[string]any)
+		}
+		video.Metadata["url"] = task.GetResultURL()
+	}
 	if task.Status == model.TaskStatusFailure {
 		video.Error = &relaydto.OpenAIVideoError{
 			Code:    "generation_failed",

@@ -58,7 +58,7 @@ export function AssistedPaymentDialog({
       }
       // Match the normal wallet top-up flow: submit the signed order to Epay
       // in the current tab so Epay renders its own WeChat/Alipay checkout QR.
-      submitPaymentForm(result)
+      submitPaymentForm({ url: result.url, data: result.data })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Failed to create assisted payment'))
     } finally {

@@ -93,9 +93,7 @@ export function AdminWorkbenchEntry() {
   const [passwordPending, setPasswordPending] = useState(false)
   const stepUpMode =
     new URLSearchParams(window.location.search).get('step_up') === '1'
-  const verification = useSecureVerification({
-    onSuccess: (result) => enterWorkbenchAdmin(result as string),
-  })
+  const verification = useSecureVerification()
 
   useEffect(() => {
     if (stepUpMode) return
@@ -123,6 +121,29 @@ export function AdminWorkbenchEntry() {
       setFailed(true)
     } finally {
       setPasswordPending(false)
+    }
+  }
+
+  const verifyWithSecurityProof = async () => {
+    setFailed(false)
+    try {
+      const proof = await verification.requestVerification({
+        scope: 'workbench.admin.step_up',
+        title: t('Security verification'),
+        description: t(
+          'Confirm your identity before changing Workbench settings.'
+        ),
+      })
+      if (!proof) return
+      enterWorkbenchAdmin(
+        await requestAdminStepUpTicket(
+          'secure_verification',
+          undefined,
+          proof.proof_token
+        )
+      )
+    } catch {
+      setFailed(true)
     }
   }
 
@@ -158,40 +179,13 @@ export function AdminWorkbenchEntry() {
           </Button>
           <Button
             variant='outline'
-            onClick={() =>
-              verification.startVerification(
-                (proofToken) =>
-                  requestAdminStepUpTicket(
-                    'secure_verification',
-                    undefined,
-                    proofToken
-                  ),
-                {
-                  scope: 'workbench.admin.step_up',
-                  title: t('Security verification'),
-                  description: t(
-                    'Confirm your identity before changing Workbench settings.'
-                  ),
-                }
-              )
-            }
+            onClick={() => void verifyWithSecurityProof()}
           >
             {t('Verify with 2FA or Passkey')}
           </Button>
           {failed && <ErrorState onRetry={verifyPassword} />}
         </div>
-        <SecureVerificationDialog
-          open={verification.open}
-          onOpenChange={verification.setOpen}
-          methods={verification.methods}
-          state={verification.state}
-          onVerify={async (method, code) => {
-            await verification.executeVerification(method, code)
-          }}
-          onCancel={verification.cancel}
-          onCodeChange={verification.setCode}
-          onMethodChange={verification.switchMethod}
-        />
+        <SecureVerificationDialog {...verification.dialogProps} />
       </Main>
     )
   }

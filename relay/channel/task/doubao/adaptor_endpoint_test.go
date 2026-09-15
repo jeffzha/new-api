@@ -43,9 +43,7 @@ func TestTaskAdaptorUsesChannelEndpoints(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, server.URL+"/v1/seedance/video/generations", submitURL)
 
-	resp, err := adaptor.FetchTask(server.URL, "upstream-secret", map[string]any{
-		"task_id": "task-123",
-	}, "")
+	resp, err := adaptor.FetchTask(server.URL, "upstream-secret", &model.Task{TaskID: "task-123"}, "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = resp.Body.Close() })
 
@@ -93,7 +91,7 @@ func TestTaskAdaptorIgnoresDoubaoEndpointOverrideForVolcEngine(t *testing.T) {
 
 func TestTaskAdaptorParsesStringSeedFromCompatibleUpstream(t *testing.T) {
 	adaptor := &TaskAdaptor{}
-	taskResult, err := adaptor.ParseTaskResult([]byte(`{
+	taskResult, err := adaptor.ParseTaskResult(nil, nil, []byte(`{
 		"id":"upstream-task",
 		"status":"succeeded",
 		"seed":"10785",

@@ -85,13 +85,13 @@ func TestTaskAdaptorCreateAndQueryUseOfficialSDKClient(t *testing.T) {
 	queryResponse, err := adaptor.FetchTask(
 		adaptor.baseURL,
 		adaptor.apiKey,
-		map[string]any{"task_id": "cgt-upstream"},
+		&model.Task{TaskID: "cgt-upstream"},
 		"",
 	)
 	require.NoError(t, err)
 	queryBody, err := io.ReadAll(queryResponse.Body)
 	require.NoError(t, err)
-	taskInfo, err := adaptor.ParseTaskResult(queryBody)
+	taskInfo, err := adaptor.ParseTaskResult(nil, queryResponse, queryBody)
 	require.NoError(t, err)
 	assert.Equal(t, "cgt-upstream", sdk.queryTaskID)
 	assert.Equal(t, model.TaskStatusSuccess, taskInfo.Status)
@@ -123,7 +123,7 @@ func TestParseTaskResultRejectsUnknownStatusAndMissingSuccessURL(t *testing.T) {
 
 	unknown, err := common.Marshal(map[string]interface{}{"status": "mystery"})
 	require.NoError(t, err)
-	_, err = adaptor.ParseTaskResult(unknown)
+	_, err = adaptor.ParseTaskResult(nil, nil, unknown)
 	require.EqualError(t, err, `Mobile Cloud Seedance returned unknown task status "mystery"`)
 
 	succeeded, err := common.Marshal(map[string]interface{}{
@@ -131,7 +131,7 @@ func TestParseTaskResultRejectsUnknownStatusAndMissingSuccessURL(t *testing.T) {
 		"usage":  map[string]interface{}{"total_tokens": 1},
 	})
 	require.NoError(t, err)
-	_, err = adaptor.ParseTaskResult(succeeded)
+	_, err = adaptor.ParseTaskResult(nil, nil, succeeded)
 	require.EqualError(t, err, "Mobile Cloud Seedance succeeded without content.video_url")
 }
 

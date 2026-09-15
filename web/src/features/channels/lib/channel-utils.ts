@@ -106,11 +106,6 @@ export function getChannelTypeIcon(type: number): string {
     36: 'Suno', // SunoAPI
     55: 'OpenAI', // Sora
     54: 'Doubao', // upstream DoubaoVideo
-    59: 'OpenAI', // Sub2API
-    60: 'OpenAI', // New API
-    61: 'OpenAI', // Task Plugin
-    62: 'OpenAI', // vLLM
-    63: 'OpenAI', // SGLang
     1002: 'Doubao', // Seedance Domestic
     1003: 'Doubao', // Mobile Cloud Seedance
     1000: 'OpenAISeedance', // OpenAISeedance

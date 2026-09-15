@@ -240,6 +240,18 @@ func GetChannelTypeName(channelType int) string {
 	return "Unknown"
 }
 
+// IsAdvancedCustomChannel reports whether a channel uses the advanced custom
+// route-preset protocol. Keep this helper centralized so validation and relay
+// discovery treat the upstream vLLM/SGLang channel types consistently.
+func IsAdvancedCustomChannel(channelType int) bool {
+	switch channelType {
+	case ChannelTypeAdvancedCustom, ChannelTypeVLLM, ChannelTypeSGLang:
+		return true
+	default:
+		return false
+	}
+}
+
 type ChannelSpecialBase struct {
 	ClaudeBaseURL string
 	OpenAIBaseURL string

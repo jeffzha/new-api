@@ -20,6 +20,7 @@ import { describe, expect, test } from 'vitest'
 
 import {
   CHANNEL_TYPE_NEW_API,
+  CHANNEL_TYPE_SUB2API,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_OPTIONS,
@@ -89,7 +90,7 @@ describe('New API channel', () => {
   test('keeps Sub2API Base URL validation unchanged', () => {
     const result = channelFormSchema.safeParse({
       ...newAPIForm(''),
-      type: 61,
+      type: CHANNEL_TYPE_SUB2API,
     })
 
     expect(result.success).toBe(true)

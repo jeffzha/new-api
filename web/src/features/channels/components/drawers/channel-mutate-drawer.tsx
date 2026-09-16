@@ -2835,13 +2835,23 @@ export function ChannelMutateDrawer({
                   {canBindTaskPlugin &&
                     canHavePluginExtensions &&
                     !showProviderPicker && (
-                      <ChannelPluginExtensions
-                        plugins={pluginExtensions}
-                        selected={currentModelsArray}
-                        onConfigure={(pluginKey) =>
-                          setModelConfiguration({ pluginKey })
-                        }
-                      />
+                      taskPluginOptionsQuery.isError ? (
+                        <ErrorState
+                          className='min-h-0 p-3'
+                          title={t('Failed to load plugins')}
+                          onRetry={() => {
+                            void taskPluginOptionsQuery.refetch()
+                          }}
+                        />
+                      ) : (
+                        <ChannelPluginExtensions
+                          plugins={pluginExtensions}
+                          selected={currentModelsArray}
+                          onConfigure={(pluginKey) =>
+                            setModelConfiguration({ pluginKey })
+                          }
+                        />
+                      )
                     )}
                   {modelMappingGuardrail.exposedTargetModels.length > 0 && (
                     <Alert className='border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
@@ -4088,7 +4098,8 @@ export function ChannelMutateDrawer({
                 />
               )}
 
-              {!isEditing && multiKeyMode === 'multi_to_single' && (
+              {(isMultiKeyChannel ||
+                (!isEditing && multiKeyMode === 'multi_to_single')) && (
                 <FormField
                   control={form.control}
                   name='multi_key_type'
@@ -4378,6 +4389,7 @@ export function ChannelMutateDrawer({
 
           {showProviderPicker && (
             <ChannelProviderPicker
+              isCreating={!isEditing}
               plugins={taskPluginOptionsQuery.data ?? []}
               currentProvider={providerTarget}
               canBindPlugin={canBindTaskPlugin}

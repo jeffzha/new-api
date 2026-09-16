@@ -59,6 +59,8 @@ type Channel struct {
 	Keys []string `json:"-" gorm:"-"`
 }
 
+const ChannelStatusReasonAllKeysDisabled = "All keys are disabled"
+
 type ChannelInfo struct {
 	IsMultiKey             bool                  `json:"is_multi_key"`                        // 是否多Key模式
 	MultiKeySize           int                   `json:"multi_key_size"`                      // 多Key模式下的Key数量
@@ -783,6 +785,23 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 		return false
 	} else {
 		if channel.Status == status {
+			// A manual status update can intentionally override the automatic
+			// all-keys-disabled marker without changing the numeric status.
+			// Persist the reason so a subsequent key recovery does not
+			// accidentally re-enable a channel that an administrator disabled.
+			if reason != "" {
+				info := channel.GetOtherInfo()
+				if info["status_reason"] != reason {
+					info["status_reason"] = reason
+					info["status_time"] = common.GetTimestamp()
+					channel.SetOtherInfo(info)
+					if saveErr := channel.saveStatusState(); saveErr != nil {
+						common.SysLog(fmt.Sprintf("failed to update channel status reason: channel_id=%d, error=%v", channel.Id, saveErr))
+						return false
+					}
+					return true
+				}
+			}
 			return false
 		}
 
@@ -810,21 +829,41 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 }
 
 func EnableChannelByTag(tag string) error {
-	err := DB.Model(&Channel{}).Where("tag = ?", tag).Update("status", common.ChannelStatusEnabled).Error
-	if err != nil {
+	var channels []Channel
+	if err := DB.Where("tag = ?", tag).Find(&channels).Error; err != nil {
 		return err
 	}
-	err = UpdateAbilityStatusByTag(tag, true)
-	return err
+	for i := range channels {
+		channel := &channels[i]
+		channel.Status = common.ChannelStatusEnabled
+		info := channel.GetOtherInfo()
+		delete(info, "status_reason")
+		delete(info, "status_time")
+		channel.SetOtherInfo(info)
+		if err := channel.saveStatusState(); err != nil {
+			return err
+		}
+	}
+	return UpdateAbilityStatusByTag(tag, true)
 }
 
 func DisableChannelByTag(tag string) error {
-	err := DB.Model(&Channel{}).Where("tag = ?", tag).Update("status", common.ChannelStatusManuallyDisabled).Error
-	if err != nil {
+	var channels []Channel
+	if err := DB.Where("tag = ?", tag).Find(&channels).Error; err != nil {
 		return err
 	}
-	err = UpdateAbilityStatusByTag(tag, false)
-	return err
+	for i := range channels {
+		channel := &channels[i]
+		channel.Status = common.ChannelStatusManuallyDisabled
+		info := channel.GetOtherInfo()
+		info["status_reason"] = "Manually disabled"
+		info["status_time"] = common.GetTimestamp()
+		channel.SetOtherInfo(info)
+		if err := channel.saveStatusState(); err != nil {
+			return err
+		}
+	}
+	return UpdateAbilityStatusByTag(tag, false)
 }
 
 func EditChannelByTag(tag string, newTag *string, modelMapping *string, models *string, group *string, priority *int64, weight *uint, paramOverride *string, headerOverride *string) error {
@@ -1046,6 +1085,9 @@ func (channel *Channel) GetOtherSettings() dto.ChannelOtherSettings {
 			channel.OtherSettings = "{}" // 清空设置以避免后续错误
 			_ = channel.Save()           // 保存修改
 		}
+	}
+	if channel.Type == constant.ChannelTypeVLLM || channel.Type == constant.ChannelTypeSGLang {
+		setting.AdvancedCustom = common.GetAdvancedCustomPreset(channel.Type)
 	}
 	return setting
 }

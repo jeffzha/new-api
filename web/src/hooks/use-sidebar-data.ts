@@ -56,8 +56,8 @@ import {
   Users,
   Wallet,
 } from 'lucide-react'
-import { createElement } from 'react'
 import { useTranslation } from 'react-i18next'
+import { createElement } from 'react'
 
 import type { SidebarData } from '@/components/layout/types'
 import { useAgentStoreAvailability } from '@/features/agent-store/availability'
@@ -72,7 +72,6 @@ import { ROLE } from '@/lib/roles'
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
   const agentStoreEnabled = useAgentStoreAvailability().data?.enabled === true
-
   return {
     navGroups: [
       {

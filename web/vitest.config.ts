@@ -34,7 +34,7 @@ export default defineConfig({
     // This browser UI package imports emoji JSON without Node import
     // attributes. Transform it as app code so real catalog components can be
     // rendered in jsdom instead of mocking the production UI dependency.
-    server: { deps: { inline: ['@lobehub/ui'] } },
+    server: { deps: { inline: ['@lobehub/ui', 'zod'] } },
     setupFiles: ['./src/test-setup.ts'],
     // Several heavy jsdom suites (channel-configuration, visual-billing-editor)
     // legitimately take >5s per test on contended CI runners; the vitest

@@ -177,3 +177,14 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 	return nil
 }
+
+// ConsumeResponsesQuota applies the same settlement dispatch to HTTP and
+// WebSocket Responses usage. Audio-capable models use the audio accounting
+// path; all other Responses requests use text accounting.
+func ConsumeResponsesQuota(c *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage) {
+	if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
+		service.PostAudioConsumeQuota(c, info, usage, "")
+		return
+	}
+	service.PostTextConsumeQuota(c, info, usage, nil)
+}

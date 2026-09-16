@@ -49,7 +49,7 @@ func extractOpenAIChatRequest(request any) (any, Set, error) {
 			set.Definitions = append(set.Definitions, Definition{
 				Kind:      KindFunction,
 				Execution: ExecutionClient,
-				Function:  &Function{Name: function.Name, Description: function.Description, Parameters: function.Parameters, Strict: function.Strict},
+				Function:  &Function{Name: function.Name, Description: function.Description, Parameters: function.Parameters, Strict: function.Strict, CacheControl: function.CacheControl},
 			})
 		}
 	}
@@ -63,10 +63,11 @@ func extractOpenAIChatRequest(request any) (any, Set, error) {
 				Kind:      KindFunction,
 				Execution: ExecutionClient,
 				Function: &Function{
-					Name:        tool.Function.Name,
-					Description: tool.Function.Description,
-					Parameters:  tool.Function.Parameters,
-					Strict:      tool.Function.Strict,
+					Name:         tool.Function.Name,
+					Description:  tool.Function.Description,
+					Parameters:   tool.Function.Parameters,
+					Strict:       tool.Function.Strict,
+					CacheControl: tool.CacheControl,
 				},
 			})
 			continue
@@ -275,10 +276,11 @@ func decodeOpenAIResponsesDefinition(raw json.RawMessage) (Definition, error) {
 			Name:      strings.TrimSpace(kitutil.Interface2String(tool["name"])),
 			Raw:       cloneRaw(raw),
 			Function: &Function{
-				Name:        strings.TrimSpace(kitutil.Interface2String(tool["name"])),
-				Description: kitutil.Interface2String(tool["description"]),
-				Parameters:  tool["parameters"],
-				Strict:      boolPointer(tool, "strict"),
+				Name:         strings.TrimSpace(kitutil.Interface2String(tool["name"])),
+				Description:  kitutil.Interface2String(tool["description"]),
+				Parameters:   tool["parameters"],
+				Strict:       boolPointer(tool, "strict"),
+				CacheControl: cacheControlRaw(tool["cache_control"]),
 			},
 		}, nil
 	}
@@ -314,6 +316,17 @@ func decodeOpenAIResponsesDefinition(raw json.RawMessage) (Definition, error) {
 		NativeType: toolType,
 		Raw:        cloneRaw(raw),
 	}, nil
+}
+
+func cacheControlRaw(value any) json.RawMessage {
+	if value == nil {
+		return nil
+	}
+	encoded, err := rawJSON(value)
+	if err != nil || string(encoded) == "null" {
+		return nil
+	}
+	return encoded
 }
 
 func decodeClaudeDefinition(raw json.RawMessage) (Definition, error) {

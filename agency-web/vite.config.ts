@@ -6,8 +6,8 @@ export default defineConfig({
   base: '/agency/',
   server: {
     proxy: {
-      '/agency/api': 'http://localhost:3201',
-      '/agency/sso': 'http://localhost:3201',
+      '/agency/api': 'http://127.0.0.1:3201',
+      '/agency/sso': 'http://127.0.0.1:3201',
     },
   },
 })

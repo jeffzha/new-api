@@ -25,6 +25,7 @@ import {
 } from '../constants'
 import type { PricingModel } from '../types'
 import { hasTaskUsageSchema } from './dynamic-price'
+import { getLowestVideoTokenMatrixPrice, getVideoTokenMatrixPricing } from './provider-pricing'
 
 // ----------------------------------------------------------------------------
 // Filter Utilities
@@ -109,6 +110,11 @@ export function filterByEndpointType(
  * Get model price for sorting
  */
 function getModelPrice(model: PricingModel): number {
+  const providerPricing = getVideoTokenMatrixPricing(model)
+  if (providerPricing) {
+    const lowest = getLowestVideoTokenMatrixPrice(providerPricing)
+    if (lowest !== null) return lowest
+  }
   return model.quota_type === 0 ? model.model_ratio : model.model_price || 0
 }
 
@@ -190,7 +196,7 @@ export function extractAllTags(models: PricingModel[]): string[] {
     }
   })
 
-  return Array.from(tagSet).sort((a, b) => a.localeCompare(b))
+  return [...tagSet].sort((a, b) => a.localeCompare(b))
 }
 
 /**

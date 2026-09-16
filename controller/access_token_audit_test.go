@@ -437,9 +437,23 @@ func (releasedAuditLog) TableName() string { return "logs" }
 func newAuditTestDatabase(t *testing.T, kind, dsn string) (*gorm.DB, string) {
 	t.Helper()
 	if kind == "sqlite" {
-		path := t.TempDir() + "/audit.db"
+		// Use a uniquely named shared in-memory database. A file-backed SQLite
+		// pool can keep the temporary file locked on Windows while asynchronous
+		// audit callbacks are still draining; the matrix contract does not
+		// depend on persistence beyond this test case.
+		path := fmt.Sprintf("file:audit_%d?mode=memory&cache=shared", time.Now().UnixNano())
 		db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
 		require.NoError(t, err)
+		// SQLite in-memory databases are scoped to a connection. Keep one
+		// pooled connection so migrations and subsequent reads observe the
+		// same schema/data throughout a test case.
+		if pool, poolErr := db.DB(); poolErr == nil {
+			// Keep several connections so tests that intentionally exercise
+			// concurrent transactions can make progress. Shared-cache SQLite
+			// keeps schema/data visible across those connections.
+			pool.SetMaxOpenConns(4)
+			pool.SetMaxIdleConns(4)
+		}
 		return db, path
 	}
 	require.NotEmpty(t, dsn)

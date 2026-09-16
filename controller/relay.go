@@ -626,7 +626,8 @@ func executeTaskSubmissionWith(
 	stage = "before_attempt"
 	if requestErr := c.Request.Context().Err(); requestErr != nil {
 		diagnostics.cancelled("before_attempt", 0)
-		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
+		taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
+		return nil, taskErr
 	}
 
 	retryParam := &service.RetryParam{
@@ -686,6 +687,12 @@ func executeTaskSubmissionWith(
 		stage = "submit"
 		result, taskErr = submit(c, relayInfo)
 		attempt.FinishTask(taskErr)
+		if requestErr := c.Request.Context().Err(); requestErr != nil {
+			// A caller disconnect during submission must be reported as a
+			// cancellation, regardless of the adaptor's transport error.
+			taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
+			break
+		}
 		if taskErr == nil {
 			diagnostics.attemptSucceeded(retryParam.GetRetry()+1, result)
 			break
@@ -737,7 +744,8 @@ func executeTaskSubmissionWith(
 	}
 	if requestErr := c.Request.Context().Err(); requestErr != nil {
 		diagnostics.cancelled("before_reserve", retryParam.GetRetry()+1)
-		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
+		taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
+		return nil, taskErr
 	}
 
 	// Reserve any submit-time upward billing adjustment before persistence.
@@ -756,7 +764,8 @@ func executeTaskSubmissionWith(
 	}
 	if requestErr := c.Request.Context().Err(); requestErr != nil {
 		diagnostics.cancelled("before_insert", retryParam.GetRetry()+1)
-		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
+		taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
+		return nil, taskErr
 	}
 
 	stage = "insert"

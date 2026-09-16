@@ -604,6 +604,18 @@ func TestAPITokenAuditDatabaseMatrix(t *testing.T) {
 				previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
 				previousRedis, previousMaster, previousSecret := common.RedisEnabled, common.IsMasterNode, common.SessionSecret
 				t.Cleanup(func() {
+					// Close both handles before TempDir cleanup; SQLite keeps the
+					// database file locked while a pooled connection remains open.
+					closed := map[*gorm.DB]bool{}
+					for _, handle := range []*gorm.DB{model.LOG_DB, model.DB} {
+						if handle == nil || closed[handle] {
+							continue
+						}
+						if sqlDB, closeErr := handle.DB(); closeErr == nil {
+							_ = sqlDB.Close()
+						}
+						closed[handle] = true
+					}
 					model.DB, model.LOG_DB = previousDB, previousLogDB
 					common.SetDatabaseTypes(previousMain, previousLog)
 					common.RedisEnabled, common.IsMasterNode, common.SessionSecret = previousRedis, previousMaster, previousSecret

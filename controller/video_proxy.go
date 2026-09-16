@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -721,10 +722,15 @@ func writeVideoDataURL(c *gin.Context, dataURL string) error {
 	}
 
 	var encoding *base64.Encoding
+	var decodedLength int
 	for _, candidate := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding} {
 		_, err := io.Copy(io.Discard, base64.NewDecoder(candidate, strings.NewReader(payload)))
 		if err == nil {
 			encoding = candidate
+			decodedLength = candidate.DecodedLen(len(payload))
+			// Encoding.DecodedLen includes bytes represented by padding.
+			// Remove that padding so Content-Length matches the streamed body.
+			decodedLength -= strings.Count(payload, "=")
 			break
 		}
 	}
@@ -734,6 +740,7 @@ func writeVideoDataURL(c *gin.Context, dataURL string) error {
 
 	c.Writer.Header().Set("Content-Type", mimeType)
 	c.Writer.Header().Set("Cache-Control", privateVideoCacheControl)
+	c.Writer.Header().Set("Content-Length", strconv.Itoa(decodedLength))
 	c.Writer.WriteHeader(http.StatusOK)
 	if c.Request != nil && c.Request.Method == http.MethodHead {
 		return nil

@@ -93,6 +93,26 @@ type TaskAdaptor struct {
 func New(plugin *pluginruntime.LoadedPlugin) *TaskAdaptor { return &TaskAdaptor{plugin: plugin} }
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo)   { a.info = info }
 
+// SupportsTaskBilling exposes whether this factory plugin declares a complete
+// usage schema for the requested channel/model pair. The model-list endpoint
+// uses this capability to keep provider-metered models visible even when no
+// legacy model ratio is configured. Actual task settlement still uses the
+// plugin usage-expression path in relay_task.go.
+func (a *TaskAdaptor) SupportsTaskBilling(channelType int, modelName string) bool {
+	if a == nil || a.plugin == nil {
+		return false
+	}
+	if !slices.Contains(a.plugin.Meta.ChannelTypes, channelType) {
+		return false
+	}
+	for _, declared := range a.plugin.Meta.Models {
+		if strings.EqualFold(strings.TrimSpace(declared), strings.TrimSpace(modelName)) {
+			return len(a.plugin.Meta.UsageSchema) > 0 || len(a.plugin.Meta.UsageProfiles) > 0
+		}
+	}
+	return false
+}
+
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
 	if pinnedValue, exists := c.Get(pluginruntime.ContextKeyPinnedEndpoint); exists {
 		if pinned, ok := pinnedValue.(pluginruntime.PinnedEndpoint); ok && pinned.Plugin == a.plugin {

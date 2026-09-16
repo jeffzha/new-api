@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useState } from 'react'
+import axios from 'axios'
 import { useTranslation } from 'react-i18next'
 
 import { ErrorState } from '@/components/error-state'
@@ -88,6 +89,7 @@ function enterWorkbenchAdmin(ticket: string) {
 export function AdminWorkbenchEntry() {
   const { t } = useTranslation()
   const [failed, setFailed] = useState(false)
+  const [disabled, setDisabled] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const [password, setPassword] = useState('')
   const [passwordPending, setPasswordPending] = useState(false)
@@ -99,13 +101,19 @@ export function AdminWorkbenchEntry() {
     if (stepUpMode) return
     let active = true
     setFailed(false)
+    setDisabled(false)
     void requestAdminSessionTicket()
       .then((ticket) => {
         if (!active) return
         enterWorkbenchAdmin(ticket)
       })
-      .catch(() => {
-        if (active) setFailed(true)
+      .catch((error: unknown) => {
+        if (!active) return
+        if (axios.isAxiosError(error) && error.response?.status === 404) {
+          setDisabled(true)
+          return
+        }
+        setFailed(true)
       })
     return () => {
       active = false
@@ -192,7 +200,14 @@ export function AdminWorkbenchEntry() {
 
   return (
     <Main>
-      {failed ? (
+      {disabled ? (
+        <ErrorState
+          title={t('Workbench is not enabled')}
+          description={t(
+            'Enable the Workbench sidecar to use this page.'
+          )}
+        />
+      ) : failed ? (
         <ErrorState onRetry={() => setAttempt((value) => value + 1)} />
       ) : (
         <div className='flex min-h-[300px] items-center justify-center'>

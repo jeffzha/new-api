@@ -78,7 +78,12 @@ import {
   type DynamicPriceEntry,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { getAvailableGroups, isTokenBasedModel } from '../lib/model-helpers'
+import {
+  getAvailableGroups,
+  getEffectiveGroupRatio,
+  isTokenBasedModel,
+} from '../lib/model-helpers'
+import { getVideoTokenMatrixPricing } from '../lib/provider-pricing'
 import { withPluginPricing } from '../lib/plugin-pricing'
 import { formatFixedPrice, formatGroupPrice } from '../lib/price'
 import {
@@ -100,6 +105,8 @@ import type {
   TokenUnit,
 } from '../types'
 import { DynamicPricingBreakdown } from './dynamic-pricing-breakdown'
+import { CustomerPricingNotice } from './customer-pricing-status'
+import { VideoTokenMatrixPricing } from './video-token-matrix-pricing'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelDetailsApi } from './model-details-api'
 import { ModelDetailsPerformance } from './model-details-performance'
@@ -679,7 +686,11 @@ function PriceSection(props: {
         showRechargePrice: props.showRechargePrice,
         priceRate: props.priceRate,
         usdExchangeRate: props.usdExchangeRate,
-        groupRatioMultiplier: 1,
+        groupRatioMultiplier: getEffectiveGroupRatio(
+          props.model,
+          {},
+          '_base'
+        ),
       }),
     // Currency is read indirectly by the price formatter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -693,6 +704,21 @@ function PriceSection(props: {
       currency,
     ]
   )
+  const providerVideoPricing = getVideoTokenMatrixPricing(props.model)
+  if (providerVideoPricing) {
+    return (
+      <section>
+        <SectionTitle>
+          {t(props.model.sales_bps == null ? 'Base Price' : 'Your price')}
+        </SectionTitle>
+        <VideoTokenMatrixPricing
+          pricing={providerVideoPricing}
+          groupRatio={getEffectiveGroupRatio(props.model, {}, '_base')}
+          variant='table'
+        />
+      </section>
+    )
+  }
 
   const primaryPriceTypes: { label: string; type: PriceType }[] = [
     { label: t('Input'), type: 'input' },
@@ -736,7 +762,9 @@ function PriceSection(props: {
     if (dynamicSummary.isSpecialExpression) {
       return (
         <section>
-          <SectionTitle>{t('Base Price')}</SectionTitle>
+          <SectionTitle>
+            {t(props.model.sales_bps == null ? 'Base Price' : 'Your price')}
+          </SectionTitle>
           <div className='rounded-lg border border-amber-200/70 bg-amber-50/70 p-3 dark:border-amber-500/20 dark:bg-amber-500/10'>
             <div className='text-sm font-medium text-amber-800 dark:text-amber-200'>
               {t('Special billing expression')}
@@ -759,7 +787,9 @@ function PriceSection(props: {
 
     return (
       <section>
-        <SectionTitle>{t('Base Price')}</SectionTitle>
+        <SectionTitle>
+          {t(props.model.sales_bps == null ? 'Base Price' : 'Your price')}
+        </SectionTitle>
         {dynamicSummary.providerCount && (
           <p className='text-muted-foreground mb-2 text-xs'>
             {t('{{count}} providers', { count: dynamicSummary.providerCount })}
@@ -848,7 +878,9 @@ function PriceSection(props: {
   if (isUnconfiguredTaskUsageModel(props.model)) {
     return (
       <section>
-        <SectionTitle>{t('Base Price')}</SectionTitle>
+        <SectionTitle>
+          {t(props.model.sales_bps == null ? 'Base Price' : 'Your price')}
+        </SectionTitle>
         <UnconfiguredTaskPricingNotice model={props.model} />
       </section>
     )
@@ -857,7 +889,9 @@ function PriceSection(props: {
   if (!isTokenBased) {
     return (
       <section>
-        <SectionTitle>{t('Base Price')}</SectionTitle>
+        <SectionTitle>
+          {t(props.model.sales_bps == null ? 'Base Price' : 'Your price')}
+        </SectionTitle>
         <div className='flex items-baseline justify-between'>
           <span className='text-muted-foreground text-sm'>
             {t('Per request')}
@@ -898,7 +932,9 @@ function PriceSection(props: {
 
   return (
     <section>
-      <SectionTitle>{t('Base Price')}</SectionTitle>
+      <SectionTitle>
+        {t(props.model.sales_bps == null ? 'Base Price' : 'Your price')}
+      </SectionTitle>
       <div className='grid grid-cols-2 gap-2'>
         {primaryPriceTypes.map((item) => (
           <div key={item.type} className='bg-muted/20 rounded-lg border p-3'>
@@ -1103,6 +1139,39 @@ function ProviderGroupPricingSection(
     return types
   }, [props.model, t])
 
+  const providerVideoPricing = getVideoTokenMatrixPricing(props.model)
+  if (providerVideoPricing) {
+    return (
+      <section>
+        {!props.hideTitle && (
+          <SectionTitle>{t('Pricing by Group')}</SectionTitle>
+        )}
+        <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
+        <div className='space-y-3'>
+          {availableGroups.map((group) => (
+            <div key={group} className='overflow-hidden rounded-lg border'>
+              <div className='bg-muted/20 flex items-center justify-between border-b px-3 py-2'>
+                <GroupBadge group={group} size='sm' />
+                <span className='text-muted-foreground font-mono text-xs'>
+                  {getEffectiveGroupRatio(props.model, props.groupRatio, group)}x
+                </span>
+              </div>
+              <VideoTokenMatrixPricing
+                pricing={providerVideoPricing}
+                groupRatio={getEffectiveGroupRatio(
+                  props.model,
+                  props.groupRatio,
+                  group
+                )}
+                variant='table'
+              />
+            </div>
+          ))}
+        </div>
+      </section>
+    )
+  }
+
   if (availableGroups.length === 0) {
     return (
       <section>
@@ -1179,7 +1248,11 @@ function ProviderGroupPricingSection(
     })
     const formattedPricesByGroup = new Map(
       availableGroups.map((group) => {
-        const ratio = props.groupRatio[group] || 1
+        const ratio = getEffectiveGroupRatio(
+          props.model,
+          props.groupRatio,
+          group
+        )
         return [
           group,
           getDynamicFormattedPricesByTier(dynamicTiers, {
@@ -1202,7 +1275,11 @@ function ProviderGroupPricingSection(
         <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
         <div className='space-y-3'>
           {availableGroups.map((group) => {
-            const ratio = props.groupRatio[group] || 1
+            const ratio = getEffectiveGroupRatio(
+              props.model,
+              props.groupRatio,
+              group
+            )
             const formattedPricesByTier =
               formattedPricesByGroup.get(group) ??
               new Map<DynamicPricingTier, Map<string, string>>()
@@ -1408,7 +1485,8 @@ function ProviderGroupPricingSection(
             header: t('Ratio'),
             className: thClass,
             cellClassName: 'text-muted-foreground py-2.5 font-mono',
-            cell: (group) => `${props.groupRatio[group] || 1}x`,
+            cell: (group) =>
+              `${getEffectiveGroupRatio(props.model, props.groupRatio, group)}x`,
           },
           ...(isTokenBased
             ? [
@@ -1521,6 +1599,7 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
 
         <TabsContent value='overview' className='space-y-6 outline-none'>
           <OverviewSummaryGrid model={props.model} />
+          {props.model.sales_bps != null && <CustomerPricingNotice />}
 
           <section className='bg-card/60 space-y-5 rounded-xl border p-4 shadow-sm'>
             <SectionTitle>{t('Pricing')}</SectionTitle>
@@ -1541,6 +1620,11 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
                   showRechargePrice,
                   priceRate: props.priceRate,
                   usdExchangeRate: props.usdExchangeRate,
+                  groupRatioMultiplier: getEffectiveGroupRatio(
+                    props.model,
+                    {},
+                    '_base'
+                  ),
                 }}
               />
             )}

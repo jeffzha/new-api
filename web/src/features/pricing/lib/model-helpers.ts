@@ -62,38 +62,41 @@ export function getDisplayGroupRatio(
   selectedGroup?: string
 ): number {
   const salesRatio = getCustomerSalesRatio(model)
+  // Agency customers receive the sales coefficient as their complete
+  // effective multiplier. The normal group ratio is the base-user price and
+  // must not be stacked a second time on customer-facing pricing.
   if (salesRatio != null) return salesRatio
   const modelEnableGroups = Array.isArray(model.enable_groups)
     ? model.enable_groups
     : []
   const groupRatio = model.group_ratio || {}
 
+  let ratio: number
   if (
     selectedGroup &&
     selectedGroup !== FILTER_ALL &&
     modelEnableGroups.includes(selectedGroup)
   ) {
-    return getConfiguredGroupRatio(groupRatio, selectedGroup)
-  }
-
-  if (modelEnableGroups.length === 0) {
-    return 1
-  }
-
-  let minRatio = Number.POSITIVE_INFINITY
-
-  for (const group of modelEnableGroups) {
-    const ratio = groupRatio[group]
-    if (
-      typeof ratio === 'number' &&
-      Number.isFinite(ratio) &&
-      ratio < minRatio
-    ) {
-      minRatio = ratio
+    ratio = getConfiguredGroupRatio(groupRatio, selectedGroup)
+  } else {
+    if (modelEnableGroups.length === 0) {
+      ratio = 1
+    } else {
+      let minRatio = Number.POSITIVE_INFINITY
+      for (const group of modelEnableGroups) {
+        const groupValue = groupRatio[group]
+        if (
+          typeof groupValue === 'number' &&
+          Number.isFinite(groupValue) &&
+          groupValue < minRatio
+        ) {
+          minRatio = groupValue
+        }
+      }
+      ratio = minRatio === Number.POSITIVE_INFINITY ? 1 : minRatio
     }
   }
-
-  return minRatio === Number.POSITIVE_INFINITY ? 1 : minRatio
+  return ratio
 }
 
 /** A zero sales coefficient is an intentional free customer price. */
@@ -102,15 +105,13 @@ export function getCustomerSalesRatio(model: PricingModel): number | undefined {
   return model.sales_bps / 10000
 }
 
-/** Agency sales replaces the ordinary group multiplier, never stacks with it. */
+/** Agency sales replaces the ordinary group multiplier for customer pricing. */
 export function getEffectiveGroupRatio(
   model: PricingModel,
   groupRatio: Record<string, number>,
   group: string
 ): number {
-  return (
-    getCustomerSalesRatio(model) ?? getConfiguredGroupRatio(groupRatio, group)
-  )
+  return getCustomerSalesRatio(model) ?? getConfiguredGroupRatio(groupRatio, group)
 }
 
 /** Replace model placeholder in endpoint path. */

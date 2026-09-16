@@ -33,6 +33,7 @@ export interface ChannelTypeConfig {
   requiresOrganization?: boolean
   requiresRegion?: boolean
   supportedModels?: string[]
+  defaultBaseUrl?: string
   hints?: {
     baseUrl?: string
     key?: string
@@ -211,16 +212,6 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
   61: {
     id: 61,
     name: CHANNEL_TYPES[61],
-    icon: 'openai',
-  },
-  62: {
-    id: 62,
-    name: CHANNEL_TYPES[62],
-    icon: 'openai',
-  },
-  63: {
-    id: 63,
-    name: CHANNEL_TYPES[63],
     icon: 'openai',
   },
 }

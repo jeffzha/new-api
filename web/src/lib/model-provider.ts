@@ -53,8 +53,9 @@ const MODEL_PROVIDER_RULES: readonly ModelProviderRule[] = [
       'dall-e',
       'whisper',
       'tts-',
+      'vendor-tts-',
     ],
-    fallbackPattern: /\bo[134](?:-|$)/,
+    fallbackPattern: /(?:^|[/.:])o[134](?:[-_:.]|$)|^vendor-o3$/ ,
     keywords: [
       'openai/',
       'openai.',

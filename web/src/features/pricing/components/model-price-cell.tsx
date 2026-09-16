@@ -32,8 +32,10 @@ import {
 } from '../lib/dynamic-price'
 import { isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
+import { getVideoTokenMatrixPricing } from '../lib/provider-pricing'
 import { taskUsageUnitLabel } from '../lib/task-price-display'
 import type { PricingModel, TokenUnit } from '../types'
+import { VideoTokenMatrixPricing } from './video-token-matrix-pricing'
 
 export type ModelPriceCellOptions = {
   tokenUnit?: TokenUnit
@@ -56,6 +58,7 @@ export function ModelPriceCell(props: {
   const tokenUnit = options.tokenUnit ?? DEFAULT_TOKEN_UNIT
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const billingTime = useBillingTime(props.model.billing_expr)
+  const providerVideoPricing = getVideoTokenMatrixPricing(props.model)
   const dynamic = useMemo(
     () =>
       getDynamicPricingSummary(props.model, {
@@ -84,6 +87,15 @@ export function ModelPriceCell(props: {
     ]
   )
   let metrics: Array<{ label: string; value: string }>
+  if (providerVideoPricing) {
+    return (
+      <VideoTokenMatrixPricing
+        pricing={providerVideoPricing}
+        groupRatio={getDynamicDisplayGroupRatio(props.model, options.selectedGroup)}
+        variant='summary'
+      />
+    )
+  }
   const providerCaption = dynamic?.providerCount
     ? t('{{count}} providers', { count: dynamic.providerCount })
     : ''
@@ -234,7 +246,15 @@ export function ModelPriceCell(props: {
     }
   }
   return (
-    <span className='block w-full max-w-full min-w-0 space-y-1.5'>
+    <span
+      role='img'
+      aria-label={metrics
+        .map((metric) =>
+          metric.value.startsWith('$') ? metric.value : `$${metric.value}`
+        )
+        .join(' / ')}
+      className='block w-full max-w-full min-w-0 space-y-1.5'
+    >
       <span
         className={metrics.length > 1 ? 'grid grid-cols-2 gap-x-4' : 'grid'}
       >

@@ -173,6 +173,20 @@ func TestAdminSessionTicketRequiresAndRecordsSuperAdministratorSurface(t *testin
 }
 
 func TestAdminStepUpTicketBindsTrustedSecureVerificationToDeterministicNonce(t *testing.T) {
+	originalDB := model.DB
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = originalDB
+		sqlDB, dbErr := db.DB()
+		if dbErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	require.NoError(t, db.AutoMigrate(&model.AuthFlow{}))
+
 	bridge, tickets := newWorkbenchTestBridge(t, &model.User{
 		Id: 42, Username: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled,
 	})

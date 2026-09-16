@@ -260,8 +260,8 @@ test("root creates an agency, acknowledges delivery and the operator must change
     ).toBeVisible();
     expect((await operator.request.get("/agency/api/v1/pricing")).status()).toBe(403);
     await operator.getByLabel("Current password", { exact: true }).fill(temporaryPassword);
-    await operator.getByLabel("New password", { exact: true }).fill("Browser-created-2026!");
-    await operator.getByLabel("Confirm password", { exact: true }).fill("Browser-created-2026!");
+    await operator.getByLabel("New password", { exact: true }).fill("Browser-2026!");
+    await operator.getByLabel("Confirm password", { exact: true }).fill("Browser-2026!");
     await operator.getByRole("button", { name: "Save password", exact: true }).click();
     await expect(operator.getByRole("navigation", { name: "Agency navigation" })).toBeVisible();
     expect((await operator.request.get("/agency/api/v1/pricing")).status()).toBe(200);
@@ -370,9 +370,7 @@ test("withdrawal uses a real account and exact decimal lease through review and 
   await withdrawalDialog
     .getByRole("combobox", { name: "Payout account", exact: true })
     .selectOption({ index: 1 });
-  await withdrawalDialog
-    .getByRole("combobox", { name: "Currency", exact: true })
-    .selectOption("CNY");
+  await expect(withdrawalDialog.getByText("Chinese yuan (CNY)", { exact: true })).toBeVisible();
   await withdrawalDialog.getByLabel("Withdrawal amount", { exact: true }).fill("12.34");
   const created = page.waitForResponse(
     (response) =>

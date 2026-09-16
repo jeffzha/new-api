@@ -29,10 +29,11 @@ const (
 )
 
 type Function struct {
-	Name        string
-	Description string
-	Parameters  any
-	Strict      *bool
+	Name         string
+	Description  string
+	Parameters   any
+	Strict       *bool
+	CacheControl json.RawMessage
 }
 
 type ApproximateLocation struct {

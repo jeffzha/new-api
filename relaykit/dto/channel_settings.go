@@ -11,13 +11,14 @@ import (
 )
 
 type ChannelSettings struct {
-	TaskPluginKey          string `json:"task_plugin_key,omitempty"`
-	ForceFormat            bool   `json:"force_format,omitempty"`
-	ThinkingToContent      bool   `json:"thinking_to_content,omitempty"`
-	Proxy                  string `json:"proxy"`
-	PassThroughBodyEnabled bool   `json:"pass_through_body_enabled,omitempty"`
-	SystemPrompt           string `json:"system_prompt,omitempty"`
-	SystemPromptOverride   bool   `json:"system_prompt_override,omitempty"`
+	TaskPluginKey             string `json:"task_plugin_key,omitempty"`
+	ForceFormat               bool   `json:"force_format,omitempty"`
+	ThinkingToContent         bool   `json:"thinking_to_content,omitempty"`
+	Proxy                     string `json:"proxy"`
+	PassThroughBodyEnabled    bool   `json:"pass_through_body_enabled,omitempty"`
+	ResponsesWebSocketEnabled bool   `json:"responses_websocket_enabled,omitempty"`
+	SystemPrompt              string `json:"system_prompt,omitempty"`
+	SystemPromptOverride      bool   `json:"system_prompt_override,omitempty"`
 	// HTTPProtocol controls outbound HTTP version negotiation for this channel.
 	// Accepted values: "", "auto" (default), "http1".
 	HTTPProtocol string `json:"http_protocol,omitempty"`
@@ -87,6 +88,8 @@ type ChannelOtherSettings struct {
 	UpstreamModelUpdateLastRemovedModels  []string                     `json:"upstream_model_update_last_removed_models,omitempty"`  // 上次检测到的可删除模型
 	UpstreamModelUpdateIgnoredModels      []string                     `json:"upstream_model_update_ignored_models,omitempty"`       // 手动忽略的模型
 	AdvancedCustom                        *AdvancedCustomConfig        `json:"advanced_custom,omitempty"`
+	// OllamaOpenAIChat routes Ollama chat requests through its OpenAI-compatible endpoint.
+	OllamaOpenAIChat bool `json:"ollama_openai_chat,omitempty"`
 	// ToolLossPolicy is a channel-level opt-in for request-phase conversion
 	// rejection. Empty follows the default allow policy. Accepted values:
 	// "", "allow", "safe", "strict".
@@ -158,6 +161,10 @@ func (s *ChannelOtherSettings) ValidateToolLossPolicy() error {
 }
 
 const (
+	// AdvancedCustomConverterSGLangRerank adapts Jina-style rerank requests
+	// to the SGLang rerank endpoint. It is exported because the host module
+	// provides the built-in SGLang preset.
+	AdvancedCustomConverterSGLangRerank                = "jina_rerank_to_sglang"
 	advancedCustomConverterNone                        = "none"
 	advancedCustomConverterClaudeMessagesToOpenAIChat  = "anthropic_messages_to_openai_chat_completions"
 	advancedCustomConverterOpenAIChatToClaudeMessages  = "openai_chat_completions_to_anthropic_messages"
@@ -179,11 +186,23 @@ type AdvancedCustomConfig struct {
 }
 
 type AdvancedCustomRoute struct {
-	IncomingPath string                   `json:"incoming_path,omitempty"`
-	UpstreamPath string                   `json:"upstream_path,omitempty"`
-	Converter    string                   `json:"converter,omitempty"`
-	Models       []string                 `json:"models,omitempty"`
-	Auth         *AdvancedCustomRouteAuth `json:"auth,omitempty"`
+	IncomingPath           string                   `json:"incoming_path,omitempty"`
+	UpstreamPath           string                   `json:"upstream_path,omitempty"`
+	Converter              string                   `json:"converter,omitempty"`
+	Models                 []string                 `json:"models,omitempty"`
+	Auth                   *AdvancedCustomRouteAuth `json:"auth,omitempty"`
+	PassThroughBodyEnabled bool                     `json:"pass_through_body_enabled,omitempty"`
+}
+
+// SupportsPassThroughBody reports whether the route can forward the original
+// request body without protocol conversion.
+func (r AdvancedCustomRoute) SupportsPassThroughBody() bool {
+	switch strings.TrimSpace(r.Converter) {
+	case "", advancedCustomConverterNone, AdvancedCustomConverterSGLangRerank:
+		return true
+	default:
+		return false
+	}
 }
 
 type AdvancedCustomRouteAuth struct {
@@ -417,6 +436,7 @@ func matchAdvancedCustomIncomingPathTemplate(configuredPath string, requestPath 
 func IsAdvancedCustomConverterAllowed(converter string) bool {
 	switch converter {
 	case advancedCustomConverterNone,
+		AdvancedCustomConverterSGLangRerank,
 		advancedCustomConverterClaudeMessagesToOpenAIChat,
 		advancedCustomConverterOpenAIChatToClaudeMessages,
 		advancedCustomConverterOpenAIChatToOpenAIResponses,
@@ -479,6 +499,9 @@ func (c *AdvancedCustomConfig) Validate() error {
 			if route.Converter != advancedCustomConverterNone {
 				return fmt.Errorf("advanced_custom.advanced_routes[%d].converter must be none for %s", i, managementRouteName)
 			}
+			if route.PassThroughBodyEnabled {
+				return fmt.Errorf("advanced_custom.advanced_routes[%d].pass_through_body_enabled must be false for %s", i, managementRouteName)
+			}
 			if strings.Contains(upstreamPath, advancedCustomModelPlaceholder) {
 				return fmt.Errorf("advanced_custom.advanced_routes[%d].upstream_path must not contain %s for %s", i, advancedCustomModelPlaceholder, managementRouteName)
 			}
@@ -499,6 +522,9 @@ func (c *AdvancedCustomConfig) Validate() error {
 		}
 		if err := validateAdvancedCustomConverterPath(i, route.IncomingPath, route.Converter); err != nil {
 			return err
+		}
+		if route.PassThroughBodyEnabled && !route.SupportsPassThroughBody() {
+			return fmt.Errorf("advanced_custom.advanced_routes[%d].pass_through_body_enabled requires converter none: %s", i, route.Converter)
 		}
 		if err := validateAdvancedCustomRouteAuth(i, route.Auth); err != nil {
 			return err
@@ -629,6 +655,10 @@ func validateAdvancedCustomConverterPath(index int, incomingPath string, convert
 		}
 	case advancedCustomConverterGeminiContentToOpenAIChat:
 		if strings.Contains(incomingPath, ":generateContent") || strings.Contains(incomingPath, ":streamGenerateContent") {
+			return nil
+		}
+	case AdvancedCustomConverterSGLangRerank:
+		if incomingPath == "/v1/rerank" || incomingPath == "/rerank" {
 			return nil
 		}
 	}

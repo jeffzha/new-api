@@ -62,6 +62,223 @@ import {
 } from './components/details-panels'
 import { OverviewPanel } from './components/overview-panel'
 import { SettingsPanel } from './components/settings-panel'
+import type { OpsSnapshot } from './types'
+
+function arrayOrEmpty<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : []
+}
+
+function recordOrEmpty(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function numericRecord(
+  value: unknown,
+  keys: readonly string[]
+): Record<string, unknown> {
+  const record = { ...recordOrEmpty(value) }
+  for (const key of keys) {
+    const numeric = record[key]
+    record[key] =
+      typeof numeric === 'number' && Number.isFinite(numeric) ? numeric : 0
+  }
+  return record
+}
+
+function normalizeOpsSnapshot(snapshot: OpsSnapshot): OpsSnapshot {
+  const value = recordOrEmpty(snapshot)
+  const overview = {
+    request_count: 0,
+    success_count: 0,
+    error_count: 0,
+    sla_error_count: 0,
+    business_limit_count: 0,
+    upstream_error_count: 0,
+    sla: 0,
+    request_error_rate: 0,
+    upstream_error_rate: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    cache_creation_tokens: 0,
+    total_tokens: 0,
+    average_qps: 0,
+    average_tps: 0,
+    average_switches: 0,
+    ...numericRecord(value.overview, [
+      'request_count',
+      'success_count',
+      'error_count',
+      'sla_error_count',
+      'business_limit_count',
+      'upstream_error_count',
+      'sla',
+      'request_error_rate',
+      'upstream_error_rate',
+      'input_tokens',
+      'output_tokens',
+      'cache_read_tokens',
+      'cache_creation_tokens',
+      'total_tokens',
+      'average_qps',
+      'average_tps',
+      'average_switches',
+    ]),
+  } as OpsSnapshot['overview']
+  const realtime = {
+    current_qps: 0,
+    current_tps: 0,
+    peak_qps: 0,
+    peak_tps: 0,
+    approximate: false,
+    ...numericRecord(value.realtime, [
+      'current_qps',
+      'current_tps',
+      'peak_qps',
+      'peak_tps',
+    ]),
+  } as OpsSnapshot['realtime']
+  const percentileDefaults = {
+    p50: 0,
+    p90: 0,
+    p95: 0,
+    p99: 0,
+    avg: 0,
+    max: 0,
+    samples: 0,
+  }
+  const latencyValue = recordOrEmpty(value.latency)
+  const latency = {
+    duration: {
+      ...percentileDefaults,
+      ...numericRecord(latencyValue.duration, [
+        'p50',
+        'p90',
+        'p95',
+        'p99',
+        'avg',
+        'max',
+        'samples',
+      ]),
+    },
+    ttft: {
+      ...percentileDefaults,
+      ...numericRecord(latencyValue.ttft, [
+        'p50',
+        'p90',
+        'p95',
+        'p99',
+        'avg',
+        'max',
+        'samples',
+      ]),
+    },
+    histogram: arrayOrEmpty(latencyValue.histogram),
+    approximate: Boolean(latencyValue.approximate),
+  } as OpsSnapshot['latency']
+  const health = {
+    state: 'unknown',
+    score: 0,
+    business_score: 0,
+    infra_score: 0,
+    error_score: 0,
+    ttft_score: 0,
+    storage_score: 0,
+    compute_score: 0,
+    job_score: 0,
+    ...numericRecord(value.health, [
+      'score',
+      'business_score',
+      'infra_score',
+      'error_score',
+      'ttft_score',
+      'storage_score',
+      'compute_score',
+      'job_score',
+    ]),
+  } as OpsSnapshot['health']
+  const tasks = {
+    submitted: 0,
+    submit_succeeded: 0,
+    terminal: 0,
+    succeeded: 0,
+    failed: 0,
+    submit_success_rate: 0,
+    generation_success_rate: 0,
+    average_queue_ms: 0,
+    average_generation_ms: 0,
+    average_end_to_end_ms: 0,
+    ...numericRecord(value.tasks, [
+      'submitted',
+      'submit_succeeded',
+      'terminal',
+      'succeeded',
+      'failed',
+      'submit_success_rate',
+      'generation_success_rate',
+      'average_queue_ms',
+      'average_generation_ms',
+      'average_end_to_end_ms',
+    ]),
+  } as OpsSnapshot['tasks']
+  const telemetry = {
+    request_queue_depth: 0,
+    attempt_queue_depth: 0,
+    dropped_requests: 0,
+    dropped_attempts: 0,
+    ...numericRecord(value.telemetry, [
+      'request_queue_depth',
+      'attempt_queue_depth',
+      'dropped_requests',
+      'dropped_attempts',
+    ]),
+  } as OpsSnapshot['telemetry']
+  const concurrency = recordOrEmpty(value.concurrency)
+  const system = recordOrEmpty(value.system)
+  const errors = recordOrEmpty(value.errors)
+  const options = recordOrEmpty(value.options)
+  return {
+    ...snapshot,
+    overview,
+    realtime,
+    health,
+    tasks,
+    telemetry,
+    throughput_trend: arrayOrEmpty(value.throughput_trend),
+    switch_trend: arrayOrEmpty(value.switch_trend),
+    error_trend: arrayOrEmpty(value.error_trend),
+    model_token_stats: arrayOrEmpty(value.model_token_stats),
+    recent_errors: arrayOrEmpty(value.recent_errors),
+    jobs: arrayOrEmpty(value.jobs),
+    diagnostics: arrayOrEmpty(value.diagnostics),
+    system: {
+      ...(system as OpsSnapshot['system']),
+      latest_by_node: arrayOrEmpty(system.latest_by_node),
+      trend: arrayOrEmpty(system.trend),
+    },
+    errors: {
+      ...(errors as OpsSnapshot['errors']),
+      distribution: arrayOrEmpty(errors.distribution),
+    },
+    concurrency: {
+      ...(concurrency as OpsSnapshot['concurrency']),
+      channels: arrayOrEmpty(concurrency.channels),
+      platforms: arrayOrEmpty(concurrency.platforms),
+      groups: arrayOrEmpty(concurrency.groups),
+      users: arrayOrEmpty(concurrency.users),
+    },
+    options: {
+      ...(options as OpsSnapshot['options']),
+      models: arrayOrEmpty(options.models),
+      groups: arrayOrEmpty(options.groups),
+      endpoint_types: arrayOrEmpty(options.endpoint_types),
+      nodes: arrayOrEmpty(options.nodes),
+    },
+    latency,
+  } as OpsSnapshot
+}
 
 const WINDOW_SECONDS = {
   '5m': 5 * 60,
@@ -118,7 +335,7 @@ export function OperationsDashboard() {
       if (!response.success || !response.data) {
         throw new Error(response.message || t('Could not load operations data'))
       }
-      return response.data
+      return normalizeOpsSnapshot(response.data)
     },
     refetchInterval: 30 * 1000,
     staleTime: 10 * 1000,

@@ -42,6 +42,10 @@ func newSecurityLoginPasskey(t *testing.T, userID int) *ecdsa.PrivateKey {
 		UserID: userID, CredentialID: base64.StdEncoding.EncodeToString(credentialID[:]), PublicKey: base64.StdEncoding.EncodeToString(publicKey),
 		UserPresent: true, UserVerified: true,
 	}).Error)
+	var count int64
+	if err := model.DB.Model(&model.PasskeyCredential{}).Where("user_id = ?", userID).Count(&count).Error; err != nil || count == 0 {
+		t.Fatalf("passkey insert verification failed: count=%d err=%v db=%p", count, err, model.DB)
+	}
 	return key
 }
 
@@ -719,7 +723,10 @@ func TestGenerateOAuthCodeRejectsAgencyInvite(t *testing.T) {
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.False(t, response.Success)
-	assert.Equal(t, i18n.MsgInvalidParams, response.Message)
+	// Depending on whether the package-wide i18n bundle has been initialized
+	// by an earlier test, the API returns either the stable message key or its
+	// English translation. Both represent the same invalid-parameter contract.
+	assert.Contains(t, []string{i18n.MsgInvalidParams, "Invalid parameters"}, response.Message)
 	var count int64
 	require.NoError(t, model.DB.Model(&model.AuthFlow{}).Count(&count).Error)
 	assert.Zero(t, count)

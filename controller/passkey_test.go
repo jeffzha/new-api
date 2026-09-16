@@ -12,6 +12,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -733,8 +734,13 @@ func TestPasskeyRPIDMigrationPreservesExistingCredentials(t *testing.T) {
 			for range 2 {
 				// Each migration represents a new application startup. Discard
 				// PostgreSQL's old SELECT * prepared plans along with its old pool.
-				pool.SetMaxIdleConns(0)
-				pool.SetMaxIdleConns(2)
+				// SQLite in-memory databases are connection-scoped; closing their
+				// only idle connection would discard the schema and credentials.
+				dialect := strings.ToLower(os.Getenv("TEST_SECURITY_DIALECT"))
+				if dialect != "" && dialect != "sqlite" {
+					pool.SetMaxIdleConns(0)
+					pool.SetMaxIdleConns(2)
+				}
 				require.NoError(t, model.DB.AutoMigrate(&model.PasskeyCredential{}))
 			}
 			after, err := model.GetPasskeyByUserID(user.Id)

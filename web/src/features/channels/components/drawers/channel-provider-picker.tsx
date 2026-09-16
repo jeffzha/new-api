@@ -164,7 +164,7 @@ export function ChannelProviderPicker(props: ChannelProviderPickerProps) {
           target: { kind: 'builtin', type: option.value },
           description: presentation
             ? t(presentation.descriptionKey)
-            : undefined,
+            : t('Configure a connection to this provider'),
           detail: presentation?.detailKey
             ? t(presentation.detailKey)
             : undefined,

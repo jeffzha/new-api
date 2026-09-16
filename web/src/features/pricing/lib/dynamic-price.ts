@@ -56,6 +56,15 @@ export type DynamicPriceOptions = {
   now?: Date
 }
 
+function getPricingGroupMultiplier(
+  model: PricingModel,
+  fallback: number | undefined
+): number {
+  return model.sales_bps == null
+    ? (fallback ?? 1)
+    : getDisplayGroupRatio(model)
+}
+
 export type DynamicPriceLabelKind = 'i18n' | 'schema'
 
 export type DynamicPriceEntry = {
@@ -508,6 +517,10 @@ export function getDynamicPricingSummary(
     : (summaryTiers[0] ?? null)
   let entries = getDynamicPriceEntries(tier, {
     ...options,
+    groupRatioMultiplier: getPricingGroupMultiplier(
+      model,
+      options.groupRatioMultiplier
+    ),
     usageSchema: model.billing_usage_schema,
   })
   let isMixedBilling = false

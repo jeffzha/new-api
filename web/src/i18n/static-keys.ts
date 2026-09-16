@@ -28,6 +28,7 @@ export const STATIC_I18N_KEYS = [
   'Invalid channel proxy',
   'For this channel, map the model name in client requests to the model name sent upstream.',
   // Channel provider labels, descriptions and presentation badges.
+  'Configure a connection to this provider',
   'Zhipu GLM',
   'Connect to the OpenAI API or compatible services',
   'Generate Midjourney images through MjProxy',

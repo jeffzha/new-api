@@ -267,6 +267,15 @@ func TaskAdaptorUsesProviderBilling(channelType int, modelName string) bool {
 	if adaptor == nil {
 		return false
 	}
+	// Factory task plugins expose their usage schema independently of the
+	// legacy Go TaskBillingEstimator. This capability is used by model listing
+	// to retain provider-metered models without forcing the runtime billing
+	// path onto the legacy estimator interface.
+	if provider, ok := adaptor.(interface {
+		SupportsTaskBilling(int, string) bool
+	}); ok && provider.SupportsTaskBilling(channelType, modelName) {
+		return true
+	}
 	estimator, ok := adaptor.(channel.TaskBillingEstimator)
 	return ok && estimator.SupportsTaskBilling(channelType, modelName)
 }

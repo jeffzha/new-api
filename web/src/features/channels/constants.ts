@@ -26,6 +26,7 @@ export const CHANNEL_TYPE_NEW_API = 60
 export const CHANNEL_TYPE_TASK_PLUGIN = 61
 export const CHANNEL_TYPE_VLLM = 62
 export const CHANNEL_TYPE_SGLANG = 63
+export const CHANNEL_TYPE_OLLAMA = 4
 
 export const CHANNEL_TYPES = {
   0: 'Unknown',
@@ -176,9 +177,9 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
 >>
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
-  1, 14, 33, 24, 43, 3, 41, 48, 58, 42, 34, 20, 4, 40, 27, 25, 17, 26, 15,
-  46, 23, 18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 59, 60, 61, 62, 63, 22, 21, 44, 2,
-  5, 36, 50, 51, 52, 53, 1002, 1003, 55, 56, 1000,
+  1, 14, 24, 33, 43, 3, 41, 17, 45, 25, 26, 23, 48, 60, 58, 59, 61, 42, 34, 20,
+  4, 62, 40, 27, 15, 46, 18, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 22, 21,
+  44, 2, 5, 36, 50, 51, 52, 53, 54, 55, 56, 1002, 1003, 1000, 63,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -513,6 +514,8 @@ export const MODEL_FETCHABLE_TYPES = new Set([
   58,
   CHANNEL_TYPE_SUB2API,
   CHANNEL_TYPE_NEW_API,
+  CHANNEL_TYPE_VLLM,
+  CHANNEL_TYPE_SGLANG,
 ])
 
 export const FIELD_PASSTHROUGH_TYPES = new Set([
@@ -552,8 +555,8 @@ export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
   1003: 'Enter API key for this channel',
   1000: 'Enter API key for this channel',
   61: 'Enter API key for this channel',
-  62: 'Enter API key for this channel',
-  63: 'Enter API key for this channel',
+  62: 'vLLM API key, or EMPTY if authentication is disabled',
+  63: 'SGLang API key, or EMPTY if authentication is disabled',
 }
 
 export const CHANNEL_TYPE_WARNINGS: Record<number, string> = {

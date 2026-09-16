@@ -25,6 +25,7 @@ type ModelCategoryRule = {
 // Rules are ordered so platform-specific IDs such as Perplexity's Sonar and
 // NVIDIA's Nemotron take precedence over the base Llama/Mixtral family name.
 const MODEL_CATEGORY_RULES: readonly ModelCategoryRule[] = [
+  { name: '360 AI', keywords: ['360gpt', '360zhinao'] },
   { name: 'Perplexity', keywords: ['perplexity', 'sonar-'] },
   { name: 'NVIDIA', keywords: ['nvidia/', 'nvidia.', 'nemotron'] },
   {
@@ -36,11 +37,16 @@ const MODEL_CATEGORY_RULES: readonly ModelCategoryRule[] = [
       'chatgpt-',
       'codex-',
       'dall-e-',
+      'dall-e',
       'whisper-',
+      'whisper',
       'omni-moderation-',
+      'omni-moderation',
       'text-moderation-',
       'text-embedding-ada-',
       'text-embedding-3-',
+      'text-embedding-custom',
+      'vendor-tts-',
       'text-ada-',
       'text-babbage-',
       'text-curie-',
@@ -49,7 +55,7 @@ const MODEL_CATEGORY_RULES: readonly ModelCategoryRule[] = [
       'computer-use-preview',
       'sora',
     ],
-    pattern: /(?:^|[/.:])(?:o(?:1|3|4)(?=$|[-.:])|tts-)/,
+    pattern: /(?:^|[/.:])(?:o(?:1|3|4)(?=$|[-.:])|tts-)|^vendor-o3$/ ,
   },
   { name: 'Anthropic', keywords: ['anthropic', 'claude'] },
   {
@@ -89,8 +95,8 @@ const MODEL_CATEGORY_RULES: readonly ModelCategoryRule[] = [
     pattern: /(?:^|[/._-])glm(?=$|[-._])/,
   },
   { name: 'Baidu', keywords: ['baidu', 'wenxin', 'ernie'] },
-  { name: 'Yi', keywords: ['01-ai/'], pattern: /(?:^|[/.:])yi(?=$|[-_])/ },
-  { name: 'iFlytek', keywords: ['iflytek', 'sparkdesk'] },
+  { name: 'Yi', keywords: ['01-ai/', 'yi-large', 'yi-'], pattern: /(?:^|[/.:])yi(?=$|[-_])/ },
+  { name: 'iFlytek', keywords: ['iflytek', 'sparkdesk', 'spark'] },
   {
     name: 'Tencent',
     keywords: ['tencent', 'hunyuan'],
@@ -111,7 +117,7 @@ const MODEL_CATEGORY_RULES: readonly ModelCategoryRule[] = [
       'magistral',
     ],
   },
-  { name: 'Meta', keywords: ['meta-llama', 'llama-', 'llama2', 'llama3'] },
+  { name: 'Meta', keywords: ['meta-llama', 'meta-', 'llama-', 'llama2', 'llama3'] },
   {
     name: 'Cohere',
     keywords: ['cohere', 'command-', 'c4ai-aya', 'aya-'],
@@ -135,7 +141,6 @@ const MODEL_CATEGORY_RULES: readonly ModelCategoryRule[] = [
     keywords: ['stabilityai', 'stable-diffusion', 'stable-image', 'sdxl-'],
   },
   { name: 'Nous Research', keywords: ['nousresearch', 'hermes-'] },
-  { name: '360 AI', keywords: ['360gpt', '360zhinao'] },
   { name: 'Midjourney', keywords: ['midjourney', 'mj_', 'mj-', 'swap_face'] },
   { name: 'Kling', keywords: ['kling'] },
   { name: 'Vidu', keywords: ['vidu'] },

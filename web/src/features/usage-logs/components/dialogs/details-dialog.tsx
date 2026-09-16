@@ -1216,6 +1216,21 @@ export function DetailsDialog(props: DetailsDialogProps) {
           <TokenBreakdown log={props.log} other={other} />
         )}
 
+        {isConsume &&
+          other?.usage_facts &&
+          Object.keys(other.usage_facts).length > 0 && (
+            <DetailSection label={t('Usage parameters')}>
+              {Object.entries(other.usage_facts).map(([key, value]) => (
+                <DetailRow
+                  key={key}
+                  label={key}
+                  value={String(value)}
+                  mono
+                />
+              ))}
+            </DetailSection>
+          )}
+
         {/* Billing breakdown (consume type) */}
         {isConsume && other && !isViolation && (
           <BillingBreakdown

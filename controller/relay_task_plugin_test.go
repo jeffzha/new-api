@@ -359,17 +359,30 @@ func TestExecuteTaskSubmissionDisconnectAfterDurableInsertDoesNotRefund(t *testi
 
 func setupTaskSubmissionDatabase(t *testing.T, migrate bool, events *[]string) *gorm.DB {
 	t.Helper()
-	previousDB := model.DB
+	previousDB, previousLogDB := model.DB, model.LOG_DB
 	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, database.Callback().Create().Before("gorm:create").Register("test:task-submit-order", func(*gorm.DB) {
-		*events = append(*events, "insert")
-	}))
 	if migrate {
-		require.NoError(t, database.AutoMigrate(&model.Task{}))
+		// Task settlement touches the user, channel and log tables in addition
+		// to tasks. Keep this fixture representative so the lifecycle tests
+		// exercise settlement rather than silently taking a fail-closed path
+		// caused by missing production tables.
+		require.NoError(t, database.AutoMigrate(&model.User{}, &model.Channel{}, &model.Task{}, &model.Log{}))
 	}
 	model.DB = database
-	t.Cleanup(func() { model.DB = previousDB })
+	model.LOG_DB = database
+	require.NoError(t, database.Callback().Create().Before("gorm:create").Register("test:task-submit-order", func(tx *gorm.DB) {
+		if tx.Statement != nil && tx.Statement.Schema != nil && tx.Statement.Schema.Name == "Task" {
+			*events = append(*events, "insert")
+		}
+	}))
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = previousDB, previousLogDB
+		sqlDB, dbErr := database.DB()
+		if dbErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
 	return database
 }
 

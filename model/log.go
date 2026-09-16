@@ -100,6 +100,9 @@ func ensureLogRequestId(log *Log) {
 
 func createLog(log *Log) error {
 	ensureLogRequestId(log)
+	if LOG_DB == nil {
+		return errors.New("log database is not initialized")
+	}
 	return LOG_DB.Create(log).Error
 }
 

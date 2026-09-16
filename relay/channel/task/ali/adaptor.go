@@ -237,6 +237,17 @@ func ProcessAliOtherRatios(aliReq *AliVideoRequest) (map[string]float64, error) 
 			"480P": 1,
 			"720P": 0.9 / 0.5,
 		},
+		// Wan3 model prices are configured as the 720p per-second baseline.
+		"wan3.0-video": {
+			"480P":  0.5,
+			"720P":  1,
+			"1080P": 2,
+		},
+		"wan3.0-video-prime": {
+			"480P":  0.5,
+			"720P":  1,
+			"1080P": 2,
+		},
 	}
 	var resolution string
 

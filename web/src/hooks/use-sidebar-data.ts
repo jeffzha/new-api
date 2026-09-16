@@ -58,7 +58,6 @@ import { createElement } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { SidebarData } from '@/components/layout/types'
-import { useAgentStoreAvailability } from '@/features/agent-store/availability'
 import { ROLE } from '@/lib/roles'
 
 /**
@@ -69,20 +68,12 @@ import { ROLE } from '@/lib/roles'
  */
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
-  const agentStoreEnabled = useAgentStoreAvailability().data?.enabled === true
-
   return {
     navGroups: [
       {
         id: 'chat',
         title: t('Chat'),
         items: [
-          {
-            title: agentStoreEnabled ? t('Agent Store') : t('Playground'),
-            url: agentStoreEnabled ? '/agent-store' : '/playground',
-            activeUrls: agentStoreEnabled ? ['/playground'] : ['/agent-store'],
-            icon: AgentStoreIcon,
-          },
           {
             title: t('Chat'),
             icon: MessageSquare,

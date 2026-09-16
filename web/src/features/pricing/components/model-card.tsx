@@ -82,7 +82,10 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
       })
     : null
 
-  const primaryGroup = groups[0]
+  const primaryGroup =
+    props.selectedGroup && groups.includes(props.selectedGroup)
+      ? props.selectedGroup
+      : groups[0]
   const bottomTags = [...endpoints.slice(0, 2), ...tags.slice(0, 2)]
   const hiddenCount =
     Math.max(groups.length - 1, 0) +

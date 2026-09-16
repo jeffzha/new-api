@@ -181,7 +181,7 @@ export function SignUpForm({
 
       if (res?.success) {
         toast.success(t('Account created! Please sign in'))
-        redirectToLogin()
+        redirectToLogin('/wallet')
       } else {
         toast.error(res?.message || t('Failed to create account'))
       }

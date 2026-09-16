@@ -46,6 +46,7 @@ type responseTask struct {
 		TotalTokens      int `json:"total_tokens"`
 	} `json:"usage"`
 	CreatedAt int64 `json:"created_at"`
+	ResultURL string `json:"result_url"`
 	Error     *struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`

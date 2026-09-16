@@ -350,7 +350,7 @@ func RequestEpay(c *gin.Context) {
 	uri, params, err := client.Purchase(&epay.PurchaseArgs{
 		Type:           req.PaymentMethod,
 		ServiceTradeNo: tradeNo,
-		Name:           fmt.Sprintf("TUC%d", req.Amount),
+		Name:           "Account Top Up",
 		Money:          strconv.FormatFloat(payMoney, 'f', 2, 64),
 		Device:         epay.PC,
 		NotifyUrl:      notifyUrl,
@@ -469,7 +469,7 @@ func RequestAssistedEpay(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "data": "创建支付订单失败"})
 		return
 	}
-	uri, params, err := client.Purchase(&epay.PurchaseArgs{Type: req.PaymentMethod, ServiceTradeNo: tradeNo, Name: fmt.Sprintf("TUC%d", creditedQuota), Money: payMoneyDecimal.StringFixed(2), Device: epay.PC, NotifyUrl: notifyURL, ReturnUrl: returnURL})
+	uri, params, err := client.Purchase(&epay.PurchaseArgs{Type: req.PaymentMethod, ServiceTradeNo: tradeNo, Name: "Account Top Up", Money: payMoneyDecimal.StringFixed(2), Device: epay.PC, NotifyUrl: notifyURL, ReturnUrl: returnURL})
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("assisted epay purchase failed target=%d initiator=%d trade_no=%s error=%q", targetID, initiatorID, tradeNo, err.Error()))
 		_ = model.DB.Model(&model.TopUp{}).Where("trade_no = ? AND status = ?", tradeNo, common.TopUpStatusPending).Update("status", common.TopUpStatusFailed).Error

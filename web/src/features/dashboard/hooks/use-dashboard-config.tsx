@@ -55,8 +55,8 @@ export function useModelStatCardsConfig(): StatCardConfig[] {
     },
     {
       key: 'quota',
-      title: t('Total Quota'),
-      description: t('Statistical quota'),
+      title: t('Total Consumption'),
+      description: t('Statistical consumption'),
       icon: Coins,
       iconTone: 'success',
       getValue: (stat) => stat?.quota ?? 0,

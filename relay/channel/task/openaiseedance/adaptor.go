@@ -250,6 +250,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		"model":    info.UpstreamModelName,
 		"metadata": metadata,
 	}
+	if isAimodelGateway(a.baseURL) {
+		// aimodel requires the prompt in its content array as well.
+		outbound["content"] = []map[string]string{{"type": "text", "text": request.Prompt}}
+	}
 	if request.Image != "" {
 		outbound["image"] = request.Image
 	}
@@ -346,6 +350,9 @@ func (a *TaskAdaptor) ParseTaskResult(_ *model.Task, _ *http.Response, respBody 
 	case "completed", "succeeded":
 		result.Status = model.TaskStatusSuccess
 		result.Url = resTask.Content.VideoURL
+		if result.Url == "" {
+			result.Url = resTask.ResultURL
+		}
 		result.Progress = taskcommon.ProgressComplete
 	case "failed", "cancelled", "error":
 		result.Status = model.TaskStatusFailure
@@ -502,4 +509,9 @@ func buildFetchURL(baseURL string, taskID string) string {
 		baseURL = "https://" + baseURL
 	}
 	return baseURL + strings.Replace(fetchPath, "{task_id}", taskID, 1)
+}
+
+func isAimodelGateway(baseURL string) bool {
+	baseURL = strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(baseURL), "https://"), "http://")
+	return strings.EqualFold(strings.TrimRight(baseURL, "/"), "aimodel.szhtp.com")
 }

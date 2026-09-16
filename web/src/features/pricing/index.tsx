@@ -61,6 +61,25 @@ export function Pricing() {
     usdExchangeRate,
   } = usePricingData()
 
+  const availableGroups = useMemo(
+    () =>
+      Object.keys(usableGroup || {}).filter(
+        (group) => !EXCLUDED_GROUPS.includes(group)
+      ),
+    [usableGroup]
+  )
+
+  // The catalog is public. Never expose internal-only routing groups here.
+  const publicModels = useMemo(() => {
+    const visibleGroups = new Set(availableGroups)
+    return (models || []).flatMap((model) => {
+      const enableGroups = (model.enable_groups || []).filter((group) =>
+        visibleGroups.has(group)
+      )
+      return enableGroups.length > 0 ? [{ ...model, enable_groups: enableGroups }] : []
+    })
+  }, [availableGroups, models])
+
   const {
     searchInput,
     sortBy,
@@ -88,7 +107,7 @@ export function Pricing() {
     availableTags,
     clearFilters,
     clearSearch,
-  } = useFilters(models || [])
+  } = useFilters(publicModels)
 
   const handleModelClick = useCallback((modelName: string) => {
     setSelectedModelName(modelName)
@@ -97,19 +116,11 @@ export function Pricing() {
   const selectedModel = useMemo(
     () =>
       selectedModelName
-        ? (models || []).find(
+        ? publicModels.find(
             (model) => model.model_name === selectedModelName
           ) || null
         : null,
-    [models, selectedModelName]
-  )
-
-  const availableGroups = useMemo(
-    () =>
-      Object.keys(usableGroup || {}).filter(
-        (g) => !EXCLUDED_GROUPS.includes(g)
-      ),
-    [usableGroup]
+    [publicModels, selectedModelName]
   )
 
   const handleClearAll = useCallback(() => {

@@ -32,6 +32,8 @@ func TestDefaultPricesCNYAreComplete(t *testing.T) {
 		{name: "2.5 720p video", model: Seedance25Model, resolution: "720p", hasVideo: true, want: 42},
 		{name: "2.5 1080p list price", model: Seedance25Model, resolution: "1080p", want: 77},
 		{name: "2.5 1080p video list price", model: Seedance25Model, resolution: "1080p", hasVideo: true, want: 46},
+		{name: "aimodel 2.0 pricing alias", model: AimodelSeedance20Model, resolution: "720p", want: 46},
+		{name: "aimodel 2.5 pricing alias", model: AimodelSeedance25Model, resolution: "480p", want: 70},
 	}
 
 	for _, tt := range tests {
@@ -54,7 +56,7 @@ func TestSeedance25RejectsUnsupportedResolutionWithoutChangingSeedance20Fallback
 	assert.Equal(t, 46.0, price.InexactFloat64())
 }
 
-func TestRebuildPriceIndexMigratesLegacySeedance20Matrix(t *testing.T) {
+func TestRebuildPriceIndexMigratesLegacySeedanceMatrix(t *testing.T) {
 	original := clonePrices(seedanceVideoPricing.PricesCNY)
 	t.Cleanup(func() {
 		seedanceVideoPricing.PricesCNY = original
@@ -73,6 +75,9 @@ func TestRebuildPriceIndexMigratesLegacySeedance20Matrix(t *testing.T) {
 	seedance25Price, ok := GetUnitPriceCNY(Seedance25Model, "1080p", false)
 	require.True(t, ok)
 	assert.Equal(t, 77.0, seedance25Price.InexactFloat64())
+	aimodelPrice, ok := GetUnitPriceCNY(AimodelSeedance20Model, "720p", false)
+	require.True(t, ok)
+	assert.Equal(t, 46.0, aimodelPrice.InexactFloat64())
 }
 
 func TestValidatePricesCNYRejectsIncompleteOrUnsafeMatrices(t *testing.T) {

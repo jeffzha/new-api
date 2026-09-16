@@ -16,6 +16,8 @@ const (
 	StandardSeedanceModel = "doubao-seedance-2-0-260128"
 	FastSeedanceModel     = "doubao-seedance-2-0-fast-260128"
 	Seedance25Model       = "doubao-seedance-2-5-260628"
+	AimodelSeedance20Model = "doubao-seedance-2.0"
+	AimodelSeedance25Model = "doubao-seedance-2.5"
 	MaxPriceCNYPerMillion = 1_000_000.0
 
 	WithoutVideoKey = "without_video"
@@ -32,9 +34,12 @@ var requiredResolutions = map[string][]string{
 	StandardSeedanceModel: {"720p", "1080p", "4k"},
 	FastSeedanceModel:     {"default"},
 	Seedance25Model:       {"720p", "1080p"},
+	AimodelSeedance20Model: {"720p", "1080p", "4k"},
+	AimodelSeedance25Model: {"720p", "1080p"},
 }
 
-var defaultPricesCNY = PricesCNY{
+var defaultPricesCNY = func() PricesCNY {
+	prices := PricesCNY{
 	StandardSeedanceModel: {
 		"720p": {
 			WithoutVideoKey: 46,
@@ -70,7 +75,13 @@ var defaultPricesCNY = PricesCNY{
 			WithVideoKey:    46,
 		},
 	},
-}
+	}
+	// aimodel uses the vendor's dotted model IDs. Keep their public pricing
+	// aligned with the equivalent dated Seedance models.
+	prices[AimodelSeedance20Model] = cloneModelPrices(prices[StandardSeedanceModel])
+	prices[AimodelSeedance25Model] = cloneModelPrices(prices[Seedance25Model])
+	return prices
+}()
 
 var seedanceVideoPricing = Setting{
 	PricesCNY: clonePrices(defaultPricesCNY),
@@ -137,19 +148,16 @@ func ValidatePricesCNY(prices PricesCNY) error {
 }
 
 func RebuildPriceIndex() error {
-	// Deployments upgraded from the Seedance 2.0-only schema must retain all
-	// customized 2.0 prices. Add only the new 2.5 defaults in memory; future
-	// saves from the settings page write the complete three-model matrix.
-	if len(seedanceVideoPricing.PricesCNY) == 2 {
-		_, hasStandard := seedanceVideoPricing.PricesCNY[StandardSeedanceModel]
-		_, hasFast := seedanceVideoPricing.PricesCNY[FastSeedanceModel]
-		_, hasSeedance25 := seedanceVideoPricing.PricesCNY[Seedance25Model]
-		if hasStandard && hasFast && !hasSeedance25 {
-			prices := clonePrices(seedanceVideoPricing.PricesCNY)
-			prices[Seedance25Model] = clonePrices(defaultPricesCNY)[Seedance25Model]
-			seedanceVideoPricing.PricesCNY = prices
+	// Preserve all existing custom prices during schema upgrades and add only
+	// newly supported model matrices from defaults.
+	prices := clonePrices(seedanceVideoPricing.PricesCNY)
+	defaults := clonePrices(defaultPricesCNY)
+	for modelName := range requiredResolutions {
+		if _, ok := prices[modelName]; !ok {
+			prices[modelName] = defaults[modelName]
 		}
 	}
+	seedanceVideoPricing.PricesCNY = prices
 	if err := ValidatePricesCNY(seedanceVideoPricing.PricesCNY); err != nil {
 		return err
 	}
@@ -196,7 +204,7 @@ func NormalizeResolution(modelName string, resolution string) (string, bool) {
 	if modelName == FastSeedanceModel {
 		return "default", true
 	}
-	if modelName == Seedance25Model {
+	if modelName == Seedance25Model || modelName == AimodelSeedance25Model {
 		switch strings.ToLower(strings.TrimSpace(resolution)) {
 		case "", "480p", "720p":
 			return "720p", true
@@ -238,4 +246,8 @@ func clonePrices(source PricesCNY) PricesCNY {
 		cloned[modelName] = clonedResolutions
 	}
 	return cloned
+}
+
+func cloneModelPrices(source map[string]map[string]float64) map[string]map[string]float64 {
+	return clonePrices(PricesCNY{"model": source})["model"]
 }

@@ -35,8 +35,8 @@ func getProviderPricing(modelName string) *ProviderPricing {
 	case seedancepricing.FastSeedanceModel:
 		priceModel = seedancepricing.FastSeedanceModel
 		resolutions = []string{"default"}
-	case seedancepricing.Seedance25Model:
-		priceModel = seedancepricing.Seedance25Model
+	case seedancepricing.Seedance25Model, seedancepricing.AimodelSeedance25Model:
+		priceModel = modelName
 		resolutions = []string{"480p", "720p", "1080p"}
 	default:
 		return nil

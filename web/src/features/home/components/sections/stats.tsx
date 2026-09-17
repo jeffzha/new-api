@@ -16,8 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useRef, useEffect, useCallback } from 'react'
+import { useRef, useEffect, useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { getHomePageStats } from '../../api'
 
 interface CounterProps {
   end: number
@@ -96,9 +97,15 @@ interface StatItem {
 
 export function Stats(_props: StatsProps) {
   const { t } = useTranslation()
+  const [monthlyTokens, setMonthlyTokens] = useState(0)
+  useEffect(() => {
+    let active = true
+    void getHomePageStats().then((value) => { if (active) setMonthlyTokens(value) }).catch(() => undefined)
+    return () => { active = false }
+  }, [])
 
   const stats: StatItem[] = [
-    { end: 50, suffix: '+', label: t('upstream services integrated') },
+    { end: monthlyTokens, suffix: '', label: t('Monthly tokens') },
     { end: 100, suffix: '+', label: t('model billing support') },
     { end: 50, suffix: '+', label: t('compatible API routes') },
     { end: 10, suffix: '+', label: t('scheduling controls') },

@@ -48,14 +48,16 @@ func TestCommissionSummarySeparatesLifetimeTotalsFromWithdrawalBalances(t *testi
 			var response struct {
 				Data struct {
 					Items []struct {
-						AgencyID  string `json:"agency_id"`
-						Currency  string `json:"currency_code"`
-						Earned    string `json:"earned_micros"`
-						Reversed  string `json:"reversed_micros"`
-						Net       string `json:"net_earned_micros"`
-						Available string `json:"available_micros"`
-						Locked    string `json:"locked_micros"`
-						Paid      string `json:"paid_micros"`
+						AgencyID     string `json:"agency_id"`
+						Currency     string `json:"currency_code"`
+						Earned       string `json:"earned_micros"`
+						Reversed     string `json:"reversed_micros"`
+						Net          string `json:"net_earned_micros"`
+						Available    string `json:"available_micros"`
+						Tax          string `json:"tax_micros"`
+						Withdrawable string `json:"withdrawable_micros"`
+						Locked       string `json:"locked_micros"`
+						Paid         string `json:"paid_micros"`
 					} `json:"items"`
 				} `json:"data"`
 			}
@@ -68,6 +70,9 @@ func TestCommissionSummarySeparatesLifetimeTotalsFromWithdrawalBalances(t *testi
 			assert.Equal(t, strconv.FormatInt(test.reversed, 10), item.Reversed)
 			assert.Equal(t, test.net, item.Net)
 			assert.Equal(t, strconv.FormatInt(test.available, 10), item.Available)
+			tax, withdrawable := commissionTaxAndWithdrawable(balance)
+			assert.Equal(t, strconv.FormatInt(tax, 10), item.Tax)
+			assert.Equal(t, strconv.FormatInt(withdrawable, 10), item.Withdrawable)
 			assert.Equal(t, strconv.FormatInt(test.locked, 10), item.Locked)
 			assert.Equal(t, strconv.FormatInt(test.paid, 10), item.Paid)
 			assert.Equal(t, "USD", response.Data.Items[1].Currency)

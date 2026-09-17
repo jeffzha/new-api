@@ -17,6 +17,8 @@ export interface RevealedAccount extends PayoutAccount {
 export interface CommissionBalance {
   currency_code: string;
   available_micros: string;
+  tax_micros: string;
+  withdrawable_micros: string;
   locked_micros: string;
   earned_micros: string;
   reversed_micros: string;
@@ -145,8 +147,8 @@ export function createWithdrawalRequest(
   balance: CommissionBalance,
 ): MutationRequest {
   const micros = amountToMicros(amount, balance.currency_code);
-  if (BigInt(micros) > BigInt(balance.available_micros))
-    throw new Error("The amount exceeds the available commission balance.");
+  if (BigInt(micros) > BigInt(balance.withdrawable_micros))
+    throw new Error("The amount exceeds the withdrawable commission balance.");
   return {
     path: "/withdrawals",
     action: "withdrawal.create",

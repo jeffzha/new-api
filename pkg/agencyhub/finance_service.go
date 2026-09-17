@@ -22,6 +22,28 @@ import (
 
 var errBalanceOverflow = errors.New("agency financial balance overflow")
 
+const commissionTaxBasisPoints int64 = 672
+
+func commissionTaxAndWithdrawable(balance model.AgencyCommissionBalance) (int64, int64) {
+	netEarned := new(big.Int).Sub(big.NewInt(balance.EarnedMicros), big.NewInt(balance.ReversedMicros))
+	if netEarned.Sign() <= 0 {
+		return 0, 0
+	}
+	// Ceil(net earned * 6.72%) using big.Int to avoid both floating point
+	// drift and overflow for valid int64 ledger balances.
+	taxNumerator := new(big.Int).Mul(netEarned, big.NewInt(commissionTaxBasisPoints))
+	taxNumerator.Add(taxNumerator, big.NewInt(9999))
+	taxBig := taxNumerator.Quo(taxNumerator, big.NewInt(10000))
+	tax := taxBig.Int64()
+	withdrawableBig := new(big.Int).Sub(netEarned, taxBig)
+	withdrawableBig.Sub(withdrawableBig, big.NewInt(balance.PaidMicros))
+	withdrawableBig.Sub(withdrawableBig, big.NewInt(balance.LockedMicros))
+	if withdrawableBig.Sign() <= 0 {
+		return tax, 0
+	}
+	return tax, withdrawableBig.Int64()
+}
+
 func checkedAdd(left, right int64) (int64, error) {
 	if right > 0 && left > math.MaxInt64-right {
 		return 0, errBalanceOverflow
@@ -765,17 +787,20 @@ func (a *App) commissionSummary(c *gin.Context) {
 		// These are lifetime totals. Paying or locking a withdrawal only moves
 		// available funds and must not subtract the same earnings a second time.
 		netEarned := new(big.Int).Sub(big.NewInt(balance.EarnedMicros), big.NewInt(balance.ReversedMicros))
+		tax, withdrawable := commissionTaxAndWithdrawable(balance)
 		items = append(items, gin.H{
-			"agency_id":         strconv.FormatInt(balance.AgencyID, 10),
-			"currency_code":     balance.CurrencyCode,
-			"earned_micros":     strconv.FormatInt(balance.EarnedMicros, 10),
-			"reversed_micros":   strconv.FormatInt(balance.ReversedMicros, 10),
-			"net_earned_micros": netEarned.String(),
-			"available_micros":  strconv.FormatInt(balance.AvailableMicros, 10),
-			"locked_micros":     strconv.FormatInt(balance.LockedMicros, 10),
-			"paid_micros":       strconv.FormatInt(balance.PaidMicros, 10),
-			"version":           strconv.FormatInt(balance.Version, 10),
-			"updated_at_ms":     strconv.FormatInt(balance.UpdatedAtMS, 10),
+			"agency_id":           strconv.FormatInt(balance.AgencyID, 10),
+			"currency_code":       balance.CurrencyCode,
+			"earned_micros":       strconv.FormatInt(balance.EarnedMicros, 10),
+			"reversed_micros":     strconv.FormatInt(balance.ReversedMicros, 10),
+			"net_earned_micros":   netEarned.String(),
+			"available_micros":    strconv.FormatInt(balance.AvailableMicros, 10),
+			"tax_micros":          strconv.FormatInt(tax, 10),
+			"withdrawable_micros": strconv.FormatInt(withdrawable, 10),
+			"locked_micros":       strconv.FormatInt(balance.LockedMicros, 10),
+			"paid_micros":         strconv.FormatInt(balance.PaidMicros, 10),
+			"version":             strconv.FormatInt(balance.Version, 10),
+			"updated_at_ms":       strconv.FormatInt(balance.UpdatedAtMS, 10),
 		})
 	}
 	respondOK(c, gin.H{"items": items})
@@ -941,8 +966,9 @@ func (a *App) createWithdrawal(c *gin.Context) {
 		if err := model.AgencyLockForUpdate(tx).Where("agency_id = ? AND currency_code = ?", agency.ID, request.CurrencyCode).First(&balance).Error; err != nil {
 			return err
 		}
-		if balance.AvailableMicros < amountMicros {
-			return errors.New("insufficient commission balance")
+		_, withdrawable := commissionTaxAndWithdrawable(balance)
+		if withdrawable < amountMicros {
+			return errors.New("withdrawal amount exceeds commission after tax")
 		}
 		locked, err := checkedAdd(balance.LockedMicros, amountMicros)
 		if err != nil {

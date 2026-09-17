@@ -53,20 +53,22 @@ describe("withdrawal amounts", () => {
     const balance = {
       currency_code: "CNY",
       available_micros: "100010000",
+      tax_micros: "6720672",
+      withdrawable_micros: "93289328",
       locked_micros: "0",
       earned_micros: "100010000",
       reversed_micros: "0",
       net_earned_micros: "100010000",
       paid_micros: "0",
     };
-    const request = createWithdrawalRequest(3, account, "100.01", balance);
+    const request = createWithdrawalRequest(3, account, "93.28", balance);
     expect(request).toEqual({
       path: "/withdrawals",
       action: "withdrawal.create",
       objectId: "agency:3",
-      body: { account_id: "7", currency_code: "CNY", amount_micros: "100010000" },
+      body: { account_id: "7", currency_code: "CNY", amount_micros: "93280000" },
     });
-    expect(() => createWithdrawalRequest(3, account, "100.02", balance)).toThrow();
+    expect(() => createWithdrawalRequest(3, account, "93.30", balance)).toThrow();
   });
 });
 

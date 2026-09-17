@@ -80,6 +80,16 @@ export function WithdrawalForm(props: {
                   render: (row) => formatMoney(row.available_micros, row.currency_code),
                 },
                 {
+                  key: "tax_micros",
+                  label: "Tax",
+                  render: (row) => formatMoney(row.tax_micros, row.currency_code),
+                },
+                {
+                  key: "withdrawable_micros",
+                  label: "Withdrawable amount",
+                  render: (row) => formatMoney(row.withdrawable_micros, row.currency_code),
+                },
+                {
                   key: "locked_micros",
                   label: "Locked commission",
                   render: (row) => formatMoney(row.locked_micros, row.currency_code),

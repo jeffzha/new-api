@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -213,6 +214,19 @@ func GetHomePageContent(c *gin.Context) {
 	homePageContent := common.OptionMap["HomePageContent"]
 	common.OptionMapRWMutex.RUnlock()
 	serveRevalidatedJSON(c, homePageContent)
+}
+
+func GetHomePageStats(c *gin.Context) {
+	now := time.Now()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Unix()
+	var total int64
+	err := model.LOG_DB.Model(&model.Log{}).Where("created_at >= ? AND type = ?", monthStart, model.LogTypeConsume).Select("COALESCE(SUM(prompt_tokens + completion_tokens), 0)").Scan(&total).Error
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "public, max-age=300")
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"monthly_tokens": total}})
 }
 
 func SendEmailVerification(c *gin.Context) {

@@ -37,3 +37,8 @@ export async function getHomePageContent(): Promise<HomePageContentResponse> {
   })
   return res.data
 }
+
+export async function getHomePageStats(): Promise<number> {
+  const res = await api.get('/api/home_page_stats')
+  return Number(res.data?.data?.monthly_tokens) || 0
+}

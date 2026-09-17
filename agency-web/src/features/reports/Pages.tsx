@@ -40,7 +40,12 @@ export function formatYuan(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
   const number = Number(value);
   if (!Number.isFinite(number)) return String(value);
-  return `¥${(number / QUOTA_PER_YUAN).toFixed(2)}`;
+  const yuan = number / QUOTA_PER_YUAN;
+  const digits = Math.abs(yuan) > 0 && Math.abs(yuan) < 0.01 ? 6 : 2;
+  return `¥${yuan.toLocaleString("zh-CN", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })}`;
 }
 
 export function formatExpiry(value: unknown): string {
@@ -112,6 +117,8 @@ export function OverviewPage({ identity }: { identity: Identity }) {
             {(
               [
                 { key: "available_micros", label: "Available commission" },
+                { key: "tax_micros", label: "Tax" },
+                { key: "withdrawable_micros", label: "Withdrawable amount" },
                 { key: "paid_micros", label: "Withdrawn commission" },
                 { key: "net_earned_micros", label: "Net total commission" },
                 { key: "earned_micros", label: "Total earned commission" },

@@ -59,6 +59,19 @@ type ModelPricingSnapshot struct {
 	EmptyVersion string              `json:"empty_version"`
 }
 
+func nativeTaskUsageSchema(name string) map[string]jsplugin.UsageFieldSchema {
+	switch name {
+	case "HappyHorse1.1", "happyhorse-1.1-t2v", "happyhorse-1.1-i2v", "happyhorse-1.1-r2v", "happyhorse-1.0-video-edit":
+	default:
+		return nil
+	}
+	return map[string]jsplugin.UsageFieldSchema{
+		"seconds":    {Type: "number", Unit: "second", Description: jsplugin.LocalizedText{"en": "Video generation unit price", "zh": "视频生成单价"}},
+		"resolution": {Enum: []string{"480P", "720P", "1080P"}, Description: jsplugin.LocalizedText{"en": "Output video resolution", "zh": "输出视频分辨率"}},
+		"kind":       {Enum: []string{"video", "edit"}, Description: jsplugin.LocalizedText{"en": "Video operation type", "zh": "视频操作类型"}},
+	}
+}
+
 var ErrModelPricingConflict = errors.New("model pricing changed; reload before saving")
 
 // Lock order is stable across instances. Creating missing option rows inside
@@ -277,6 +290,9 @@ func GetModelPricingSnapshot(names []string) (*ModelPricingSnapshot, error) {
 			if plugin, ok := generation.Get(target.PluginKey); ok {
 				entry.UsageSchema, _ = plugin.Meta.UsageForModel(target.Declared)
 			}
+		}
+		if entry.UsageSchema == nil {
+			entry.UsageSchema = nativeTaskUsageSchema(name)
 		}
 		plugins := generation.PluginsByModel(name)
 		configuredVariants, _ := configured[billing_setting.PluginBillingExprOption].(map[string]any)

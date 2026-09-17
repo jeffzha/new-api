@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useNavigate } from '@tanstack/react-router'
 import i18n from 'i18next'
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
 import {
   getSavedLanguage,
@@ -35,6 +35,14 @@ import { isLoginChallenge } from '../secure-verification/api'
  */
 export function useAuthRedirect() {
   const navigate = useNavigate()
+  const sessionID = useAuthStore((state) => state.auth.session?.sid)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   /**
    * Handle successful login
@@ -43,6 +51,12 @@ export function useAuthRedirect() {
    */
   const handleLoginSuccess = useCallback(
     async (bundle: AuthBundle, redirectTo?: string) => {
+      if (
+        !mounted.current ||
+        useAuthStore.getState().auth.session?.sid !== sessionID
+      ) {
+        return
+      }
       applyAuthBundle(bundle)
       const savedLang = getSavedLanguage(bundle.user)
       if (savedLang && savedLang !== i18n.language) {
@@ -53,11 +67,20 @@ export function useAuthRedirect() {
         sanitizeAuthRedirect(redirectTo, window.location.origin) ?? '/dashboard'
       await navigate({ href: targetPath, replace: true })
     },
-    [navigate]
+    [navigate, sessionID]
   )
 
+  /**
+   * Every primary login transport returns the same bundle-or-challenge contract.
+   */
   const handleLoginResult = useCallback(
     async (result: unknown, redirectTo?: string): Promise<boolean> => {
+      if (
+        !mounted.current ||
+        useAuthStore.getState().auth.session?.sid !== sessionID
+      ) {
+        return false
+      }
       if (isAuthBundle(result)) {
         await handleLoginSuccess(result, redirectTo)
         return true
@@ -66,7 +89,9 @@ export function useAuthRedirect() {
         throw new AuthOperationError('Login failed')
       }
       if (result.expires_at * 1000 <= Date.now()) {
-        throw new AuthOperationError('Login flow expired. Please sign in again.')
+        throw new AuthOperationError(
+          'Login flow expired. Please sign in again.'
+        )
       }
       useAuthStore.getState().auth.setPendingLoginVerification({
         challenge: result,
@@ -76,7 +101,7 @@ export function useAuthRedirect() {
       await navigate({ to: '/otp', replace: true })
       return false
     },
-    [handleLoginSuccess, navigate]
+    [handleLoginSuccess, navigate, sessionID]
   )
 
   /**
@@ -93,9 +118,9 @@ export function useAuthRedirect() {
   /**
    * Redirect to register page
    */
-  const redirectToRegister = () => {
-    navigate({ to: '/sign-up', replace: true })
-  }
+  const redirectToRegister = useCallback(() => {
+    void navigate({ to: '/sign-up', replace: true })
+  }, [navigate])
 
   return {
     handleLoginSuccess,

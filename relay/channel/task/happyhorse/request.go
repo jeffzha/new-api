@@ -8,10 +8,13 @@ type request struct {
 	Parameters *parameters `json:"parameters,omitempty"`
 }
 type input struct {
-	Prompt          string   `json:"prompt,omitempty"`
-	FirstFrame      string   `json:"first_frame,omitempty"`
-	ReferenceImages []string `json:"reference_image,omitempty"`
-	Video           string   `json:"video,omitempty"`
+	Prompt string  `json:"prompt,omitempty"`
+	Media  []media `json:"media,omitempty"`
+}
+
+type media struct {
+	Type string `json:"type"`
+	URL  string `json:"url"`
 }
 type parameters struct {
 	Resolution   string `json:"resolution,omitempty"`
@@ -31,6 +34,7 @@ type response struct {
 type output struct {
 	TaskID     string `json:"task_id"`
 	TaskStatus string `json:"task_status"`
+	Resolution string `json:"resolution,omitempty"`
 	VideoURL   string `json:"video_url,omitempty"`
 	Code       string `json:"code,omitempty"`
 	Message    string `json:"message,omitempty"`
@@ -39,6 +43,7 @@ type usage struct {
 	Duration            float64 `json:"duration,omitempty"`
 	InputVideoDuration  float64 `json:"input_video_duration,omitempty"`
 	OutputVideoDuration float64 `json:"output_video_duration,omitempty"`
+	Resolution          string  `json:"resolution,omitempty"`
 }
 
 func decodeResponse(body []byte) (response, error) {

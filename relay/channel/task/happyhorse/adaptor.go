@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -59,19 +60,24 @@ type requestMetadata struct {
 }
 
 func validate(req relaycommon.TaskSubmitReq, modelName string) error {
-	modelName = resolveModel(strings.TrimSpace(modelName))
+	modelName = strings.TrimSpace(modelName)
 	if modelName == "" {
-		modelName = resolveModel(strings.TrimSpace(req.Model))
-	}
-	if !contains(ModelList, modelName) {
-		return fmt.Errorf("unsupported HappyHorse model %q", modelName)
-	}
-	if strings.TrimSpace(req.Prompt) == "" && modelName != modelI2V {
-		return fmt.Errorf("prompt is required")
+		modelName = strings.TrimSpace(req.Model)
 	}
 	meta, err := metadataForRequest(req)
 	if err != nil {
 		return err
+	}
+	assignInputReference(req, modelName, &meta)
+	if meta.FirstFrame == "" && len(req.Images) == 1 && !strings.Contains(req.Prompt, "[Image ") && !likelyVideoReference(req.Images[0]) {
+		meta.FirstFrame = strings.TrimSpace(req.Images[0])
+	}
+	modelName = resolveModelForRequest(modelName, meta, req.Prompt)
+	if !supportedModel(modelName) {
+		return fmt.Errorf("unsupported HappyHorse model %q", modelName)
+	}
+	if strings.TrimSpace(req.Prompt) == "" && modelName != modelI2V {
+		return fmt.Errorf("prompt is required")
 	}
 	meta.Resolution = strings.ToUpper(strings.TrimSpace(meta.Resolution))
 	if meta.Resolution == "" {
@@ -87,7 +93,14 @@ func validate(req relaycommon.TaskSubmitReq, modelName string) error {
 		return fmt.Errorf("seed must be between 0 and 2147483647")
 	}
 	switch modelName {
-	case modelEdit, modelEdit11:
+	case modelT2V:
+		if strings.TrimSpace(meta.FirstFrame) != "" || len(meta.ReferenceImages) > 0 || strings.TrimSpace(meta.Video) != "" {
+			return fmt.Errorf("text-to-video does not accept image or video media")
+		}
+	case modelEdit:
+		if strings.TrimSpace(meta.FirstFrame) != "" {
+			return fmt.Errorf("video edit does not accept first_frame")
+		}
 		if meta.Resolution != "720P" && meta.Resolution != "1080P" {
 			return fmt.Errorf("video edit supports only 720P or 1080P")
 		}
@@ -104,11 +117,16 @@ func validate(req relaycommon.TaskSubmitReq, modelName string) error {
 			return fmt.Errorf("audio_setting must be auto or origin")
 		}
 	case modelI2V:
+		if strings.TrimSpace(meta.Video) != "" {
+			return fmt.Errorf("image-to-video does not accept video media")
+		}
 		if strings.TrimSpace(meta.FirstFrame) == "" {
 			return fmt.Errorf("first_frame is required")
 		}
-		if len(meta.ReferenceImages) > 1 {
-			return fmt.Errorf("image-to-video requires exactly one first_frame")
+		for _, image := range meta.ReferenceImages {
+			if strings.TrimSpace(image) != strings.TrimSpace(meta.FirstFrame) {
+				return fmt.Errorf("image-to-video accepts only one first_frame and no reference images")
+			}
 		}
 		if !validImageReference(meta.FirstFrame) {
 			return fmt.Errorf("first_frame must be an HTTP(S) URL or image data URI")
@@ -117,6 +135,9 @@ func validate(req relaycommon.TaskSubmitReq, modelName string) error {
 			return fmt.Errorf("image-to-video does not support ratio")
 		}
 	case modelR2V:
+		if strings.TrimSpace(meta.FirstFrame) != "" || strings.TrimSpace(meta.Video) != "" {
+			return fmt.Errorf("reference-to-video accepts reference images only")
+		}
 		if len(meta.ReferenceImages) < 1 || len(meta.ReferenceImages) > 9 {
 			return fmt.Errorf("reference_image must contain 1 to 9 images")
 		}
@@ -133,6 +154,7 @@ func validate(req relaycommon.TaskSubmitReq, modelName string) error {
 			return fmt.Errorf("unsupported ratio %q", meta.Ratio)
 		}
 	}
+	normalizeMediaForModel(modelName, &meta)
 	if isEditModel(modelName) && !validVideoReference(meta.Video) {
 		return fmt.Errorf("video must be an HTTP(S) URL")
 	}
@@ -167,32 +189,19 @@ func metadataForRequest(req relaycommon.TaskSubmitReq) (requestMetadata, error) 
 	}
 	if meta.FirstFrame == "" {
 		meta.FirstFrame = strings.TrimSpace(req.Image)
-		if meta.FirstFrame == "" && len(req.Images) > 0 {
-			meta.FirstFrame = strings.TrimSpace(req.Images[0])
-		}
+	}
+	if meta.FirstFrame == "" && strings.TrimSpace(req.InputReference) != "" && !likelyVideoReference(req.InputReference) {
+		meta.FirstFrame = strings.TrimSpace(req.InputReference)
 	}
 	if len(meta.ReferenceImages) == 0 {
 		meta.ReferenceImages = append([]string(nil), req.Images...)
-	}
-	if meta.Video == "" {
-		meta.Video = strings.TrimSpace(req.InputReference)
 	}
 	return meta, nil
 }
 
 func validHTTPImageReference(value string) bool {
-	value = strings.TrimSpace(value)
-	if strings.HasPrefix(strings.ToLower(value), "data:image/") {
-		return true
-	}
-	if strings.HasPrefix(value, "data:image/") {
-		return true
-	}
-	if strings.HasPrefix(strings.ToLower(value), "data:image/") {
-		return true
-	}
-	u, err := url.Parse(value)
-	return strings.HasPrefix(strings.ToLower(value), "data:image/") || (err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "")
+	u, err := url.Parse(strings.TrimSpace(value))
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 func validImageReference(value string) bool {
@@ -213,9 +222,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if meta.Duration != nil {
 		duration = *meta.Duration
 	}
-	modelName := resolveModel(req.Model)
+	modelName := resolveModelForRequest(req.Model, meta, req.Prompt)
 	if info != nil && strings.TrimSpace(info.OriginModelName) != "" {
-		modelName = resolveModel(info.OriginModelName)
+		modelName = resolveModelForRequest(info.OriginModelName, meta, req.Prompt)
 	}
 	if isEditModel(modelName) {
 		// The provider charges input + output duration. Without media metadata,
@@ -228,7 +237,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		resolution = "720P"
 	}
 	ratio := resolutionRatio(modelT2V, resolution)
-	if isEditModel(resolveModel(req.Model)) {
+	if isEditModel(modelName) {
 		ratio = resolutionRatio(modelEdit, resolution)
 	}
 	return map[string]float64{"seconds": float64(duration), "resolution-" + resolution: ratio}
@@ -254,7 +263,7 @@ func (a *TaskAdaptor) AdjustBillingOnCompleteChecked(task *model.Task, result *r
 		return 0, nil, false, nil
 	}
 	duration, ok := usageFloat(result.UsageFacts["duration"])
-	if !ok || duration <= 0 || duration > 15*6 {
+	if !ok || duration <= 0 || duration > 90 {
 		return 0, nil, false, nil
 	}
 	ratio := make(map[string]float64, len(billing.OtherRatios))
@@ -291,17 +300,26 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
-	modelName := resolveModel(info.UpstreamModelName)
+	modelName := strings.TrimSpace(info.UpstreamModelName)
 	if modelName == "" {
-		modelName = resolveModel(info.OriginModelName)
+		modelName = strings.TrimSpace(info.OriginModelName)
 	}
 	if modelName == "" {
-		modelName = resolveModel(req.Model)
+		modelName = strings.TrimSpace(req.Model)
 	}
 	meta, err := metadataForRequest(req)
 	if err != nil {
 		return nil, err
 	}
+	assignInputReference(req, modelName, &meta)
+	if meta.FirstFrame == "" && len(req.Images) == 1 && !strings.Contains(req.Prompt, "[Image ") && !likelyVideoReference(req.Images[0]) {
+		meta.FirstFrame = strings.TrimSpace(req.Images[0])
+	}
+	modelName = resolveModelForRequest(modelName, meta, req.Prompt)
+	if !supportedModel(modelName) {
+		return nil, fmt.Errorf("unsupported HappyHorse model %q", modelName)
+	}
+	normalizeMediaForModel(modelName, &meta)
 	meta.Resolution = strings.ToUpper(meta.Resolution)
 	if meta.Resolution == "" {
 		meta.Resolution = "720P"
@@ -311,7 +329,19 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		p.Duration = nil
 		p.Ratio = ""
 	}
-	body := request{Model: modelName, Input: input{Prompt: req.Prompt, FirstFrame: meta.FirstFrame, ReferenceImages: meta.ReferenceImages, Video: meta.Video}, Parameters: p}
+	mediaItems := make([]media, 0, len(meta.ReferenceImages)+2)
+	if strings.TrimSpace(meta.FirstFrame) != "" {
+		mediaItems = append(mediaItems, media{Type: "first_frame", URL: meta.FirstFrame})
+	}
+	for _, image := range meta.ReferenceImages {
+		if strings.TrimSpace(image) != "" && image != meta.FirstFrame {
+			mediaItems = append(mediaItems, media{Type: "reference_image", URL: image})
+		}
+	}
+	if strings.TrimSpace(meta.Video) != "" {
+		mediaItems = append(mediaItems, media{Type: "video", URL: meta.Video})
+	}
+	body := request{Model: modelName, Input: input{Prompt: req.Prompt, Media: mediaItems}, Parameters: p}
 	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -388,12 +418,19 @@ func (a *TaskAdaptor) ParseTaskResult(_ *model.Task, _ *http.Response, body []by
 	default:
 		return nil, fmt.Errorf("unknown task status %q", result.Output.TaskStatus)
 	}
-	if result.Usage != nil {
-		info.UsageFacts = map[string]any{"duration": result.Usage.Duration, "input_video_duration": result.Usage.InputVideoDuration, "output_video_duration": result.Usage.OutputVideoDuration}
+	if result.Usage != nil && result.Usage.Duration > 0 && result.Usage.Duration <= 90 && !math.IsNaN(result.Usage.Duration) && !math.IsInf(result.Usage.Duration, 0) {
+		info.UsageFacts = map[string]any{"seconds": result.Usage.Duration, "duration": result.Usage.Duration, "input_video_duration": result.Usage.InputVideoDuration, "output_video_duration": result.Usage.OutputVideoDuration}
+		if result.Output.Resolution != "" {
+			info.UsageFacts["resolution"] = strings.ToUpper(result.Output.Resolution)
+		} else if result.Usage.Resolution != "" {
+			info.UsageFacts["resolution"] = strings.ToUpper(result.Usage.Resolution)
+		}
 	}
 	return info, nil
 }
-func (a *TaskAdaptor) GetModelList() []string { return ModelList }
+func (a *TaskAdaptor) GetModelList() []string {
+	return []string{modelAlias}
+}
 func (a *TaskAdaptor) GetChannelName() string { return ChannelName }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
@@ -414,14 +451,150 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	return common.Marshal(video)
 }
 
-func resolveModel(name string) string {
-	if name == modelAlias {
-		return modelT2V
-	}
-	return name
+func supportedModel(name string) bool {
+	return name == modelT2V || name == modelI2V || name == modelR2V || name == modelEdit
 }
 
-func isEditModel(name string) bool { return name == modelEdit || name == modelEdit11 }
+func resolveModelForRequest(name string, meta requestMetadata, prompt string) string {
+	name = strings.TrimSpace(name)
+	if name != modelAlias {
+		return name
+	}
+	if strings.TrimSpace(meta.Video) != "" {
+		return modelEdit
+	}
+	if len(meta.ReferenceImages) > 0 {
+		if strings.Contains(prompt, "[Image ") {
+			return modelR2V
+		}
+		return modelI2V
+	}
+	if strings.TrimSpace(meta.FirstFrame) != "" {
+		return modelI2V
+	}
+	return modelT2V
+}
+
+// ExtractUsageFactsValidated provides the fields consumed by the built-in
+// tiered expressions. The provider reports duration as a floating-point value
+// and video-edit duration is already input+output according to its contract.
+func (a *TaskAdaptor) ExtractUsageFactsValidated(c *gin.Context, info *relaycommon.RelayInfo) (map[string]any, error) {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil, err
+	}
+	meta, err := metadataForRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	if meta.FirstFrame == "" && len(req.Images) == 1 && !strings.Contains(req.Prompt, "[Image ") && !likelyVideoReference(req.Images[0]) {
+		meta.FirstFrame = strings.TrimSpace(req.Images[0])
+	}
+	modelName := req.Model
+	if info != nil {
+		if strings.TrimSpace(info.OriginModelName) != "" {
+			modelName = info.OriginModelName
+		}
+	}
+	assignInputReference(req, modelName, &meta)
+	modelName = resolveModelForRequest(modelName, meta, req.Prompt)
+	if !supportedModel(modelName) {
+		return nil, fmt.Errorf("unsupported HappyHorse model %q", modelName)
+	}
+	normalizeMediaForModel(modelName, &meta)
+	resolution := strings.ToUpper(strings.TrimSpace(meta.Resolution))
+	if resolution == "" {
+		resolution = "720P"
+	}
+	if !resolutions[resolution] {
+		return nil, fmt.Errorf("resolution must be 480P, 720P, or 1080P")
+	}
+	if isEditModel(modelName) && resolution == "480P" {
+		return nil, fmt.Errorf("video edit supports only 720P or 1080P")
+	}
+	seconds := 5.0
+	if isEditModel(modelName) {
+		seconds = 30
+	} else if meta.Duration != nil {
+		seconds = float64(*meta.Duration)
+	}
+	if seconds < 3 || seconds > 30 {
+		return nil, fmt.Errorf("billing duration is outside the supported range")
+	}
+	kind := "video"
+	if isEditModel(modelName) {
+		kind = "edit"
+	}
+	return map[string]any{"resolution": resolution, "seconds": seconds, "kind": kind}, nil
+}
+
+func (a *TaskAdaptor) ExtractUsageFacts(c *gin.Context, info *relaycommon.RelayInfo) map[string]any {
+	facts, err := a.ExtractUsageFactsValidated(c, info)
+	if err != nil {
+		return nil
+	}
+	return facts
+}
+
+func normalizeMediaForModel(modelName string, meta *requestMetadata) {
+	if meta == nil {
+		return
+	}
+	switch modelName {
+	case modelI2V:
+		return
+	case modelR2V:
+		meta.FirstFrame = ""
+	case modelEdit:
+		meta.FirstFrame = ""
+	default:
+		meta.FirstFrame = ""
+	}
+}
+
+// assignInputReference keeps the legacy input_reference field compatible with
+// both image-to-video and video-edit requests. Explicit video-edit models take
+// the value as a video; the unified alias uses a conservative file-extension
+// check so an image URL remains a first frame.
+func assignInputReference(req relaycommon.TaskSubmitReq, modelName string, meta *requestMetadata) {
+	if meta == nil || strings.TrimSpace(meta.Video) != "" || strings.TrimSpace(req.InputReference) == "" {
+		return
+	}
+	if modelName == modelEdit || (modelName == modelAlias && likelyVideoReference(req.InputReference)) {
+		meta.Video = strings.TrimSpace(req.InputReference)
+		meta.ReferenceImages = removeReference(meta.ReferenceImages, meta.Video)
+	}
+}
+
+func likelyVideoReference(value string) bool {
+	u, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
+	}
+	path := strings.ToLower(u.Path)
+	for _, ext := range []string{".mp4", ".mov", ".webm", ".m4v"} {
+		if strings.HasSuffix(path, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+func removeReference(references []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return references
+	}
+	filtered := references[:0]
+	for _, reference := range references {
+		if strings.TrimSpace(reference) != value {
+			filtered = append(filtered, reference)
+		}
+	}
+	return filtered
+}
+
+func isEditModel(name string) bool { return name == modelEdit }
 func (a *TaskAdaptor) TaskEndpointSnapshot() *model.TaskEndpointSnapshot {
 	return &model.TaskEndpointSnapshot{BaseURL: a.baseURL, FetchPath: "/api/v1/tasks/{task_id}"}
 }
@@ -433,14 +606,6 @@ func joinURL(base, path string) (string, error) {
 	}
 	u.Path = strings.TrimRight(u.Path, "/") + path
 	return u.String(), nil
-}
-func contains(values []string, value string) bool {
-	for _, v := range values {
-		if v == value {
-			return true
-		}
-	}
-	return false
 }
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
@@ -457,3 +622,5 @@ func validVideoReference(value string) bool {
 }
 
 var _ channel.TaskAdaptor = (*TaskAdaptor)(nil)
+var _ channel.TaskUsageFactsProvider = (*TaskAdaptor)(nil)
+var _ channel.TaskValidatedUsageFactsProvider = (*TaskAdaptor)(nil)

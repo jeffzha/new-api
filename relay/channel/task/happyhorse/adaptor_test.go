@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -32,6 +33,27 @@ func TestHappyHorseUnifiedAliasRouting(t *testing.T) {
 	assert.Equal(t, modelI2V, resolveModelForRequest(modelAlias, requestMetadata{FirstFrame: "https://example.com/a.png"}, ""))
 	assert.Equal(t, modelR2V, resolveModelForRequest(modelAlias, requestMetadata{ReferenceImages: []string{"https://example.com/a.png"}}, "[Image 1] moves"))
 	assert.Equal(t, modelEdit, resolveModelForRequest(modelAlias, requestMetadata{Video: "https://example.com/a.mp4"}, "edit"))
+}
+
+func TestHappyHorseValidateRequestStoresParsedRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := `{"model":"HappyHorse1.1","prompt":"a red ball","resolution":"480P","duration":3}`
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:     &relaycommon.ChannelMeta{},
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+		OriginModelName: modelAlias,
+	}
+
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, modelAlias, req.Model)
+	assert.Equal(t, "a red ball", req.Prompt)
+	assert.Equal(t, 3, req.Duration)
+	assert.Equal(t, constant.TaskActionGenerate, info.Action)
 }
 
 func TestHappyHorseTieredPrices(t *testing.T) {

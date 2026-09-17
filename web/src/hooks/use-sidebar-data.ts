@@ -40,7 +40,6 @@ import {
   Activity,
   Box,
   BriefcaseBusiness,
-  ClipboardList,
   CreditCard,
   FileText,
   Key,
@@ -50,17 +49,15 @@ import {
   Radio,
   ServerCog,
   Settings,
-  ShieldCheck,
   Ticket,
   User,
   Users,
   Wallet,
 } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
 import { createElement } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { SidebarData } from '@/components/layout/types'
-import { useAgentStoreAvailability } from '@/features/agent-store/availability'
 import { ROLE } from '@/lib/roles'
 
 /**
@@ -71,19 +68,12 @@ import { ROLE } from '@/lib/roles'
  */
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
-  const agentStoreEnabled = useAgentStoreAvailability().data?.enabled === true
   return {
     navGroups: [
       {
         id: 'chat',
         title: t('Chat'),
         items: [
-          {
-            title: agentStoreEnabled ? t('Agent Store') : t('Playground'),
-            url: agentStoreEnabled ? '/agent-store' : '/playground',
-            activeUrls: agentStoreEnabled ? ['/playground'] : ['/agent-store'],
-            icon: AgentStoreIcon,
-          },
           {
             title: t('Chat'),
             icon: MessageSquare,
@@ -116,11 +106,6 @@ export function useSidebarData(): SidebarData {
             icon: FileText,
           },
           {
-            title: t('Audit Logs'),
-            url: '/usage-logs/audit',
-            icon: ClipboardList,
-          },
-          {
             title: t('Task Logs'),
             url: '/usage-logs/task',
             activeUrls: ['/usage-logs/drawing'],
@@ -142,11 +127,6 @@ export function useSidebarData(): SidebarData {
             title: t('Profile'),
             url: '/profile',
             icon: User,
-          },
-          {
-            title: t('Security & Access'),
-            url: '/security',
-            icon: ShieldCheck,
           },
         ],
       },

@@ -47,6 +47,55 @@ function assertConfigRoundTrip(config: TaskVisualConfig) {
 }
 
 describe('task billing expressions', () => {
+  test('parses the HappyHorse operation and resolution matrix as structured tiers', () => {
+    const happyHorseSchema: BillingUsageSchema = {
+      seconds: { type: 'number', unit: 'second' },
+      kind: { enum: ['video', 'edit'] },
+      resolution: { enum: ['480P', '720P', '1080P'] },
+    }
+    const expression =
+      'u("kind") == "edit" && u("resolution") == "720P" ? tier("720P-edit", u("seconds") * 0.1232876712328767) : u("kind") == "edit" && u("resolution") == "1080P" ? tier("1080P-edit", u("seconds") * 0.2191780821917808) : u("resolution") == "480P" ? tier("480P", u("seconds") * 0.06164383561643836) : u("resolution") == "1080P" ? tier("1080P", u("seconds") * 0.1643835616438356) : tier("720P", u("seconds") * 0.1232876712328767)'
+
+    const tiers = parseTaskTiersFromExpr(expression, happyHorseSchema)
+
+    assert.deepEqual(
+      tiers.map((tier) => ({
+        label: tier.label,
+        conditions: tier.conditions,
+        seconds: tier.unitPrices.seconds,
+      })),
+      [
+        {
+          label: '720P-edit',
+          conditions: [
+            { field: 'kind', value: 'edit' },
+            { field: 'resolution', value: '720P' },
+          ],
+          seconds: 0.1232876712328767,
+        },
+        {
+          label: '1080P-edit',
+          conditions: [
+            { field: 'kind', value: 'edit' },
+            { field: 'resolution', value: '1080P' },
+          ],
+          seconds: 0.2191780821917808,
+        },
+        {
+          label: '480P',
+          conditions: [{ field: 'resolution', value: '480P' }],
+          seconds: 0.06164383561643836,
+        },
+        {
+          label: '1080P',
+          conditions: [{ field: 'resolution', value: '1080P' }],
+          seconds: 0.1643835616438356,
+        },
+        { label: '720P', conditions: [], seconds: 0.1232876712328767 },
+      ]
+    )
+  })
+
   test('round-trips flat, enum-tiered, and additive canonical shapes', () => {
     assertConfigRoundTrip({
       tiers: [

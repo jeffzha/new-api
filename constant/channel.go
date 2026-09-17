@@ -64,8 +64,10 @@ const (
 	ChannelTypeSGLang     = 63
 	ChannelTypeDummy      // this one is only for count, do not add any channel after this
 
-	// 1002+ is the private namespace for new fork channel types. IDs 1000 and
-	// 1001 are already reserved by earlier fork releases and remain stable.
+	// 1000+ is the private namespace for fork channel types. Keep these IDs
+	// stable: they are persisted in channel records and must not collide with
+	// upstream types.
+	ChannelTypeHappyHorse          = 1001
 	ChannelTypePrivateBase         = 1002
 	ChannelTypeSeedanceDomestic    = 1002
 	ChannelTypeMobileCloudSeedance = 1003
@@ -231,6 +233,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeSeedanceDomestic:    "Seedance Domestic",
 	ChannelTypeMobileCloudSeedance: "MobileCloudSeedance",
 	ChannelTypeOpenAISeedance:      "OpenAISeedance",
+	ChannelTypeHappyHorse:          "HappyHorse",
 }
 
 func GetChannelTypeName(channelType int) string {

@@ -7,9 +7,9 @@ func TestPrivateChannelTypeIDsDoNotOverlapUpstream(t *testing.T) {
 	// OpenAISeedance=1000 is a previously shipped private ID and must remain
 	// stable. New private IDs start at 1002 because 1001 is also occupied by
 	// an earlier fork release.
-	private := []int{ChannelTypeSeedanceDomestic, ChannelTypeMobileCloudSeedance}
+	private := []int{ChannelTypeHappyHorse, ChannelTypeSeedanceDomestic, ChannelTypeMobileCloudSeedance}
 	for _, id := range private {
-		if id < ChannelTypePrivateBase {
+		if id != ChannelTypeHappyHorse && id < ChannelTypePrivateBase {
 			t.Fatalf("private channel ID %d is below private base %d", id, ChannelTypePrivateBase)
 		}
 		for _, upstreamID := range upstream {

@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/lingyiwanwu"
 	"github.com/QuantumNous/new-api/relay/channel/minimax"
 	"github.com/QuantumNous/new-api/relay/channel/moonshot"
+	happyhorse "github.com/QuantumNous/new-api/relay/channel/task/happyhorse"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -122,9 +123,15 @@ func init() {
 		constant.ChannelTypeSeedanceDomestic,
 		constant.ChannelTypeMobileCloudSeedance,
 		constant.ChannelTypeOpenAISeedance,
+		constant.ChannelTypeHappyHorse,
 	} {
 		apiType, success := common.ChannelType2APIType(channelType)
 		if !success {
+			continue
+		}
+		if channelType == constant.ChannelTypeHappyHorse {
+			taskAdaptor := &happyhorse.TaskAdaptor{}
+			channelId2Models[channelType] = taskAdaptor.GetModelList()
 			continue
 		}
 		adaptor := relay.GetAdaptor(apiType)

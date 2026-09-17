@@ -36,6 +36,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/siliconflow"
 	"github.com/QuantumNous/new-api/relay/channel/sub2api"
 	"github.com/QuantumNous/new-api/relay/channel/submodel"
+	happyhorse "github.com/QuantumNous/new-api/relay/channel/task/happyhorse"
 	jspluginadaptor "github.com/QuantumNous/new-api/relay/channel/task/jsplugin"
 	mobilecloudseedance "github.com/QuantumNous/new-api/relay/channel/task/mobilecloudseedance"
 	openaiseedance "github.com/QuantumNous/new-api/relay/channel/task/openaiseedance"
@@ -180,6 +181,8 @@ func getPrivateTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 		return &openaiseedance.TaskAdaptor{}
 	case constant.ChannelTypeMobileCloudSeedance:
 		return &mobilecloudseedance.TaskAdaptor{}
+	case constant.ChannelTypeHappyHorse:
+		return &happyhorse.TaskAdaptor{}
 	default:
 		return nil
 	}

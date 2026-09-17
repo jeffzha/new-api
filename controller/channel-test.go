@@ -83,6 +83,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		constant.ChannelTypeDoubaoVideo,
 		constant.ChannelTypeSeedanceDomestic,
 		constant.ChannelTypeMobileCloudSeedance,
+		constant.ChannelTypeHappyHorse,
 		constant.ChannelTypeVidu,
 		constant.ChannelTypeTaskPlugin,
 	}

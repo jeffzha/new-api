@@ -629,7 +629,21 @@ export function OverviewDashboard() {
 
   return (
     <SectionPageLayout>
-      <SectionPageLayout.Title>{t('Overview')}</SectionPageLayout.Title>
+      <SectionPageLayout.Title>
+        <div className='flex min-w-0 items-center gap-3'>
+          <span className='from-primary/20 to-primary/5 text-primary flex size-10 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br text-sm font-semibold shadow-inner'>
+            {t('Overview').slice(0, 1)}
+          </span>
+          <div className='min-w-0'>
+            <div className='text-muted-foreground text-[10px] font-semibold tracking-[0.18em] uppercase'>
+              {t('Welcome back!')}
+            </div>
+            <div className='truncate text-lg font-semibold tracking-tight sm:text-xl'>
+              {t('Overview')}
+            </div>
+          </div>
+        </div>
+      </SectionPageLayout.Title>
       <SectionPageLayout.Actions>
         {setupStatusReady && setupComplete && (
           <Button

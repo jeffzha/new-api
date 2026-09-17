@@ -16,13 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
-import { useEffect } from 'react'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
 import { Main } from '@/components/layout'
-import { Skeleton } from '@/components/ui/skeleton'
-import { useAgentStoreAvailability } from '@/features/agent-store/availability'
-import { WorkbenchEntry } from '@/features/workbench-entry'
+import { Playground } from '@/features/playground'
 import { isSidebarModuleEnabled } from '@/lib/nav-modules'
 
 export const Route = createFileRoute('/_authenticated/playground/')({
@@ -35,24 +32,9 @@ export const Route = createFileRoute('/_authenticated/playground/')({
 })
 
 function PlaygroundPage() {
-  const navigate = useNavigate()
-  const availability = useAgentStoreAvailability()
-
-  useEffect(() => {
-    if (availability.data?.enabled !== true) return
-    void navigate({ to: '/agent-store', replace: true })
-  }, [availability.data?.enabled, navigate])
-
-  if (availability.isPending || availability.data?.enabled === true) {
-    return (
-      <Main>
-        <div className='mx-auto w-full max-w-7xl space-y-4 py-6'>
-          <Skeleton className='h-9 w-72 max-w-full' />
-          <Skeleton className='h-48 w-full rounded-xl' />
-        </div>
-      </Main>
-    )
-  }
-
-  return <WorkbenchEntry />
+  return (
+    <Main className='p-0'>
+      <Playground />
+    </Main>
+  )
 }

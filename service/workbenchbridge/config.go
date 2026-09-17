@@ -51,16 +51,33 @@ func ConfigFromEnvironment() Config {
 		skewSeconds = maximumInternalSkewSeconds
 	}
 
+	controlHMACSecret := readSecretEnv("WORKBENCH_CONTROL_HMAC_SECRET", "/run/secrets/new_api_control_hmac")
+	serviceHMACSecret := readSecretEnv("WORKBENCH_SERVICE_HMAC_SECRET", "/run/secrets/new_api_identity_hmac")
+
 	return Config{
 		Enabled:                  common.GetEnvOrDefaultBool("WORKBENCH_ENABLED", false),
 		ControlURL:               strings.TrimRight(strings.TrimSpace(os.Getenv("WORKBENCH_CONTROL_URL")), "/"),
 		AllowInsecureControlHTTP: common.GetEnvOrDefaultBool("WORKBENCH_ALLOW_INSECURE_CONTROL_HTTP", false),
-		ControlHMACSecret:        []byte(strings.TrimSpace(os.Getenv("WORKBENCH_CONTROL_HMAC_SECRET"))),
+		ControlHMACSecret:        []byte(controlHMACSecret),
 		ControlServiceName:       strings.TrimSpace(common.GetEnvOrDefaultString("WORKBENCH_CONTROL_SERVICE_NAME", defaultControlServiceName)),
 		ControlTimeout:           time.Duration(controlTimeoutMS) * time.Millisecond,
-		ServiceHMACSecret:        []byte(strings.TrimSpace(os.Getenv("WORKBENCH_SERVICE_HMAC_SECRET"))),
+		ServiceHMACSecret:        []byte(serviceHMACSecret),
 		InternalRequestSkew:      time.Duration(skewSeconds) * time.Second,
 	}
+}
+
+// readSecretEnv supports deployments that mount credentials as Docker secrets
+// instead of placing usable HMAC material in the process environment. The
+// environment variable remains authoritative when explicitly configured.
+func readSecretEnv(envName string, secretPath string) string {
+	if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
+		return value
+	}
+	data, err := os.ReadFile(secretPath)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func (config Config) Validate() error {

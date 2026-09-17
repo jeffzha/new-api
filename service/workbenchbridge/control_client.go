@@ -6,12 +6,15 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -87,12 +90,35 @@ func NewControlClient(config Config) (*ControlClient, error) {
 	if err := config.ValidateTicketIssuer(); err != nil {
 		return nil, err
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// The Workbench control plane uses a private CA. Go's system pool does not
+	// consistently honor SSL_CERT_FILE across platforms, so load the mounted
+	// CA explicitly while keeping normal certificate and hostname validation.
+	caFile := strings.TrimSpace(os.Getenv("WORKBENCH_CONTROL_CA_FILE"))
+	if caFile == "" {
+		caFile = strings.TrimSpace(os.Getenv("SSL_CERT_FILE"))
+	}
+	if caFile != "" {
+		caPEM, readErr := os.ReadFile(caFile)
+		if readErr != nil {
+			return nil, fmt.Errorf("%w: read control CA", ErrInvalidConfiguration)
+		}
+		rootCAs, poolErr := x509.SystemCertPool()
+		if poolErr != nil || rootCAs == nil {
+			rootCAs = x509.NewCertPool()
+		}
+		if !rootCAs.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("%w: parse control CA", ErrInvalidConfiguration)
+		}
+		transport.TLSClientConfig = &tls.Config{RootCAs: rootCAs, MinVersion: tls.VersionTLS12}
+	}
 	return &ControlClient{
 		baseURL:     config.ControlURL,
 		serviceName: config.ControlServiceName,
 		secret:      append([]byte(nil), config.ControlHMACSecret...),
 		httpClient: &http.Client{
-			Timeout: config.ControlTimeout,
+			Timeout:   config.ControlTimeout,
+			Transport: transport,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return http.ErrUseLastResponse
 			},

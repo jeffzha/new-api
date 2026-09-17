@@ -75,6 +75,12 @@ export function useSidebarData(): SidebarData {
         title: t('Chat'),
         items: [
           {
+            title: t('Playground'),
+            url: '/playground/legacy',
+            activeUrls: ['/playground', '/agent-store'],
+            icon: AgentStoreIcon,
+          },
+          {
             title: t('Chat'),
             icon: MessageSquare,
             type: 'chat-presets',

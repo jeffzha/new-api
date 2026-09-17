@@ -533,9 +533,12 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 }
 
 // FetchTask 查询任务状态
-func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
-	taskID, ok := body["task_id"].(string)
-	if !ok {
+func (a *TaskAdaptor) FetchTask(baseUrl, key string, task *model.Task, proxy string) (*http.Response, error) {
+	if task == nil {
+		return nil, fmt.Errorf("task is required")
+	}
+	taskID := strings.TrimSpace(task.GetUpstreamTaskID())
+	if taskID == "" {
 		return nil, fmt.Errorf("invalid task_id")
 	}
 
@@ -555,6 +558,25 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	return client.Do(req)
 }
 
+func (a *TaskAdaptor) ParseResponse(_ *gin.Context, resp *http.Response, _ *relaycommon.RelayInfo) (*channel.TaskSubmitResponse, *taskdto.TaskError) {
+	if resp == nil || resp.Body == nil {
+		return nil, service.TaskErrorWrapper(fmt.Errorf("response body is nil"), "read_response_body_failed", http.StatusBadGateway)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusBadGateway)
+	}
+	_ = resp.Body.Close()
+	var result AliVideoResponse
+	if err := common.Unmarshal(body, &result); err != nil {
+		return nil, service.TaskErrorWrapper(err, "unmarshal_response_body_failed", http.StatusBadGateway)
+	}
+	if strings.TrimSpace(result.Output.TaskID) == "" {
+		return nil, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusBadGateway)
+	}
+	return &channel.TaskSubmitResponse{UpstreamTaskID: result.Output.TaskID, TaskData: body}, nil
+}
+
 func (a *TaskAdaptor) GetModelList() []string {
 	return ModelList
 }
@@ -564,7 +586,7 @@ func (a *TaskAdaptor) GetChannelName() string {
 }
 
 // ParseTaskResult 解析任务结果
-func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+func (a *TaskAdaptor) ParseTaskResult(_ *model.Task, _ *http.Response, respBody []byte) (*relaycommon.TaskInfo, error) {
 	var aliResp AliVideoResponse
 	if err := common.Unmarshal(respBody, &aliResp); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")

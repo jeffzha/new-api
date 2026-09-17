@@ -18,13 +18,17 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useNavigate } from '@tanstack/react-router'
 import i18n from 'i18next'
+import { useCallback } from 'react'
 
 import {
   getSavedLanguage,
   sanitizeAuthRedirect,
 } from '@/features/auth/lib/auth-redirect'
-import { applyAuthBundle } from '@/lib/api'
-import type { AuthBundle } from '@/stores/auth-store'
+import { applyAuthBundle, isAuthBundle } from '@/lib/api'
+import { AuthOperationError } from '@/lib/secure-verification'
+import { useAuthStore, type AuthBundle } from '@/stores/auth-store'
+
+import { isLoginChallenge } from '../secure-verification/api'
 
 /**
  * Hook for handling authentication redirects and user data management
@@ -37,27 +41,43 @@ export function useAuthRedirect() {
    * @param userData - Optional user data from login response
    * @param redirectTo - Redirect path after login
    */
-  const handleLoginSuccess = async (
-    bundle: AuthBundle,
-    redirectTo?: string
-  ) => {
-    applyAuthBundle(bundle)
-    const savedLang = getSavedLanguage(bundle.user)
-    if (savedLang && savedLang !== i18n.language) {
-      await i18n.changeLanguage(savedLang)
-    }
+  const handleLoginSuccess = useCallback(
+    async (bundle: AuthBundle, redirectTo?: string) => {
+      applyAuthBundle(bundle)
+      const savedLang = getSavedLanguage(bundle.user)
+      if (savedLang && savedLang !== i18n.language) {
+        await i18n.changeLanguage(savedLang)
+      }
 
-    const targetPath =
-      sanitizeAuthRedirect(redirectTo, window.location.origin) ?? '/dashboard'
-    navigate({ href: targetPath, replace: true })
-  }
+      const targetPath =
+        sanitizeAuthRedirect(redirectTo, window.location.origin) ?? '/dashboard'
+      await navigate({ href: targetPath, replace: true })
+    },
+    [navigate]
+  )
 
-  /**
-   * Redirect to 2FA page
-   */
-  const redirectTo2FA = () => {
-    navigate({ to: '/otp', replace: true })
-  }
+  const handleLoginResult = useCallback(
+    async (result: unknown, redirectTo?: string): Promise<boolean> => {
+      if (isAuthBundle(result)) {
+        await handleLoginSuccess(result, redirectTo)
+        return true
+      }
+      if (!isLoginChallenge(result)) {
+        throw new AuthOperationError('Login failed')
+      }
+      if (result.expires_at * 1000 <= Date.now()) {
+        throw new AuthOperationError('Login flow expired. Please sign in again.')
+      }
+      useAuthStore.getState().auth.setPendingLoginVerification({
+        challenge: result,
+        redirectTo:
+          sanitizeAuthRedirect(redirectTo, window.location.origin) ?? undefined,
+      })
+      await navigate({ to: '/otp', replace: true })
+      return false
+    },
+    [handleLoginSuccess, navigate]
+  )
 
   /**
    * Redirect to login page
@@ -79,7 +99,7 @@ export function useAuthRedirect() {
 
   return {
     handleLoginSuccess,
-    redirectTo2FA,
+    handleLoginResult,
     redirectToLogin,
     redirectToRegister,
   }

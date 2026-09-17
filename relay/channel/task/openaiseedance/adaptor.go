@@ -239,11 +239,11 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	// Forward them inside metadata (matching the established convention) and keep
 	// the prompt/model/image at the top level.
 	metadata := map[string]any{
-		"duration":        request.Duration,
-		"resolution":      request.Resolution,
-		"ratio":           request.Ratio,
-		"generate_audio":  request.AudioStatus == 1,
-		"audio_status":    request.AudioStatus,
+		"duration":       request.Duration,
+		"resolution":     request.Resolution,
+		"ratio":          request.Ratio,
+		"generate_audio": request.AudioStatus == 1,
+		"audio_status":   request.AudioStatus,
 	}
 	outbound := map[string]any{
 		"prompt":   request.Prompt,
@@ -293,9 +293,12 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, response *http.Response, info *
 	return upstreamID, body, nil
 }
 
-func (a *TaskAdaptor) FetchTask(baseURL string, key string, body map[string]any, _ string) (*http.Response, error) {
-	taskID, ok := body["task_id"].(string)
-	if !ok {
+func (a *TaskAdaptor) FetchTask(baseURL string, key string, task *model.Task, _ string) (*http.Response, error) {
+	if task == nil {
+		return nil, fmt.Errorf("task is required")
+	}
+	taskID := strings.TrimSpace(task.GetUpstreamTaskID())
+	if taskID == "" {
 		return nil, fmt.Errorf("invalid task_id")
 	}
 	uri := buildFetchURL(baseURL, taskID)
@@ -312,7 +315,33 @@ func (a *TaskAdaptor) FetchTask(baseURL string, key string, body map[string]any,
 	return client.Do(req)
 }
 
-func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+// ParseResponse parses the provider's task creation response without writing
+// to the client. The polling pipeline persists the returned upstream task ID
+// and task payload before constructing the public response.
+func (a *TaskAdaptor) ParseResponse(_ *gin.Context, resp *http.Response, _ *relaycommon.RelayInfo) (*channel.TaskSubmitResponse, *taskdto.TaskError) {
+	if resp == nil || resp.Body == nil {
+		return nil, service.TaskErrorWrapper(fmt.Errorf("response body is nil"), "read_response_body_failed", http.StatusBadGateway)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusBadGateway)
+	}
+	_ = resp.Body.Close()
+	var result responseTask
+	if err := common.Unmarshal(body, &result); err != nil {
+		return nil, service.TaskErrorWrapper(err, "unmarshal_response_body_failed", http.StatusBadGateway)
+	}
+	upstreamID := strings.TrimSpace(result.ID)
+	if upstreamID == "" {
+		upstreamID = strings.TrimSpace(result.TaskID)
+	}
+	if upstreamID == "" {
+		return nil, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusBadGateway)
+	}
+	return &channel.TaskSubmitResponse{UpstreamTaskID: upstreamID, TaskData: body}, nil
+}
+
+func (a *TaskAdaptor) ParseTaskResult(_ *model.Task, _ *http.Response, respBody []byte) (*relaycommon.TaskInfo, error) {
 	var resTask responseTask
 	if err := common.Unmarshal(respBody, &resTask); err != nil {
 		return nil, fmt.Errorf("unmarshal task result failed: %w", err)

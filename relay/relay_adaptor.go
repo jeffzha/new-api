@@ -143,18 +143,19 @@ func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
 }
 
 var taskPluginKeys = map[constant.TaskPlatform]string{
-	constant.TaskPlatformSuno:                                            "sunoapi",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAli)):         "alibaba",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKling)):       "kling",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeJimeng)):      "jimeng",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVidu)):        "vidu",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo)): "doubao",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVolcEngine)):  "doubao",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)):      "google",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMiniMax)):     "hailuo",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSora)):        "sora",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeOpenAI)):      "sora",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVertexAi)):    "vertex-ai",
+	constant.TaskPlatformSuno:                                               "sunoapi",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAli)):            "alibaba",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKling)):          "kling",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeJimeng)):         "jimeng",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVidu)):           "vidu",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo)):    "doubao",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVolcEngine)):     "doubao",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)):         "google",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMiniMax)):        "hailuo",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSora)):           "sora",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeOpenAI)):         "sora",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeOpenAISeedance)): "doubao",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVertexAi)):       "vertex-ai",
 }
 
 func ResolveTaskPluginForPlatform(generation *pluginruntime.RoutingGeneration, platform constant.TaskPlatform) (*pluginruntime.LoadedPlugin, bool) {
@@ -223,6 +224,18 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 // declarative or shared-endpoint router. Legacy task routes are pinned here
 // from one registry generation before the adaptor is returned.
 func getTaskAdaptorForRequest(c *gin.Context, platform constant.TaskPlatform) (constant.TaskPlatform, channel.TaskAdaptor) {
+	// The OpenAI video host protocol may be claimed by the shared Doubao
+	// plugin for the same model names that are also served by the native
+	// OpenAISeedance channel (1000).  Keep the plugin responsible for
+	// decoding and channel selection, but hand the actual request to the
+	// native adaptor once distribution selects channel 1000.  This preserves
+	// the existing /v1/video/generations wire contract while making the
+	// channel a real /v1/videos candidate for priority/retry selection.
+	if c != nil {
+		if channelType := c.GetInt(string(constant.ContextKeyChannelType)); channelType == constant.ChannelTypeOpenAISeedance {
+			return constant.TaskPlatform(strconv.Itoa(channelType)), &openaiseedance.TaskAdaptor{}
+		}
+	}
 	if adaptor := getPrivateTaskAdaptor(platform); adaptor != nil {
 		return platform, adaptor
 	}

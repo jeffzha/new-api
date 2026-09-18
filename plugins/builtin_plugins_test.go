@@ -56,6 +56,7 @@ func TestBuiltInVendorPluginsDeclareNativeRoutesAndLegacyChannelTypes(t *testing
 		{50, "kling"},
 		{51, "jimeng"},
 		{54, "doubao"},
+		{1000, "doubao"},
 		{55, "sora"},
 	}
 	for _, channelType := range channelTypes {
@@ -63,6 +64,10 @@ func TestBuiltInVendorPluginsDeclareNativeRoutesAndLegacyChannelTypes(t *testing
 		require.True(t, found)
 		require.Equal(t, channelType.key, plugin.Meta.Key)
 	}
+
+	candidates := generation.LookupEndpointCandidates("POST", "/v1/videos", "doubao-seedance-2-0-260128")
+	require.NotEmpty(t, candidates)
+	assert.Equal(t, "doubao", candidates[0].Plugin.Meta.Key)
 }
 
 func TestBuiltInTaskPluginResponsesAndUsageContracts(t *testing.T) {

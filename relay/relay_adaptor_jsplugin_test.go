@@ -96,3 +96,14 @@ func TestGetTaskAdaptorForRequestPinsLegacyMappedPlugin(t *testing.T) {
 	assert.Equal(t, "sora", pinned.Plugin.Meta.Key)
 	assert.Same(t, pinned.Generation, pluginruntime.DefaultRegistry.Generation())
 }
+
+func TestGetTaskAdaptorForRequestUsesNativeOpenAISeedanceAfterSelection(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	c.Set(string(constant.ContextKeyChannelType), constant.ChannelTypeOpenAISeedance)
+
+	platform, adaptor := getTaskAdaptorForRequest(c, constant.TaskPlatform("doubao"))
+	require.NotNil(t, adaptor)
+	assert.Equal(t, constant.TaskPlatform("1000"), platform)
+	assert.Equal(t, "OpenAISeedance", adaptor.GetChannelName())
+}

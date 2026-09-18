@@ -9,7 +9,11 @@ export const meta = {
   },
   version: "1.0.2",
   author: { name: "QuantumNous" },
-  channelTypes: [54, 45], // VolcEngine-type channels serve Ark video models with the same wire format
+  // Channel 1000 is also allowed to advertise the shared OpenAI video
+  // protocol for the same model names.  After distribution the host swaps
+  // to its native OpenAISeedance adaptor for that channel, so this declaration
+  // only makes the channel visible to /v1/videos candidate selection.
+  channelTypes: [54, 45, 1000],
   models: [
     "doubao-seedance-1-0-pro-250528",
     "doubao-seedance-1-0-lite-t2v",

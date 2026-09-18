@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -99,7 +100,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		resolution = strings.ToLower(strings.TrimSpace(request.Resolution))
 	}
 	if resolution == "" {
-		resolution = "720p"
+		resolution = resolutionFromSize(request.Size)
 	}
 	// ratio: metadata first, then top-level, then default adaptive.
 	ratio := strings.TrimSpace(metadata.Ratio)
@@ -117,6 +118,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		duration = *metadata.Dur
 	} else if request.Duration != 0 {
 		duration = request.Duration
+	} else if strings.TrimSpace(request.Seconds) != "" {
+		parsed, parseErr := strconv.Atoi(strings.TrimSpace(request.Seconds))
+		if parseErr != nil {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("seconds must be an integer"), "invalid_request", http.StatusBadRequest)
+		}
+		duration = parsed
 	}
 	if duration != -1 && (duration < 4 || duration > 15) {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be -1 or between 4 and 15"), "invalid_request", http.StatusBadRequest)
@@ -469,6 +476,9 @@ func firstReferenceImage(request relaycommon.TaskSubmitReq) string {
 	if url := strings.TrimSpace(request.Image); url != "" {
 		return url
 	}
+	if url := strings.TrimSpace(request.InputReference); url != "" {
+		return url
+	}
 	for _, url := range request.Images {
 		if url = strings.TrimSpace(url); url != "" {
 			return url
@@ -487,6 +497,31 @@ func firstReferenceImage(request relaycommon.TaskSubmitReq) string {
 		}
 	}
 	return ""
+}
+
+func resolutionFromSize(size string) string {
+	size = strings.ToLower(strings.TrimSpace(size))
+	if size == "" {
+		return "720p"
+	}
+	parts := strings.FieldsFunc(size, func(r rune) bool { return r == 'x' || r == '*' })
+	if len(parts) != 2 {
+		return "720p"
+	}
+	width, widthErr := strconv.Atoi(parts[0])
+	height, heightErr := strconv.Atoi(parts[1])
+	if widthErr != nil || heightErr != nil {
+		return "720p"
+	}
+	maximum := max(width, height)
+	switch {
+	case maximum >= 3840:
+		return "4k"
+	case maximum >= 1920:
+		return "1080p"
+	default:
+		return "720p"
+	}
 }
 
 func quotaFromUsage(totalTokens int64, snapshot *model.TaskProviderBillingSnapshot) (int, *common.QuotaClamp, error) {

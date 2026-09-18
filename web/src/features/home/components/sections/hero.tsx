@@ -55,9 +55,9 @@ export function Hero({ isAuthenticated }: HeroProps) {
     },
     {
       icon: CheckCircle2,
-      title: t('OpenAI Compatible'),
+      title: t('Protocol Compatible'),
       description: t(
-        'Connect through OpenAI, Claude, Gemini, and other compatible API routes'
+        'Connect mainstream model services and compatible protocols with unified billing and usage management'
       ),
     },
   ]
@@ -76,7 +76,7 @@ export function Hero({ isAuthenticated }: HeroProps) {
             </h1>
             <p className='text-muted-foreground mt-6 max-w-2xl text-base leading-7 md:text-lg'>
               {t(
-                'Connect through OpenAI, Claude, Gemini, and other compatible API routes'
+                'Connect mainstream model services and compatible protocols with unified billing and usage management'
               )}
             </p>
             <div className='mt-8 flex flex-wrap gap-3'>
@@ -113,7 +113,7 @@ export function Hero({ isAuthenticated }: HeroProps) {
             </div>
           </div>
 
-          <div className='border-border/60 bg-card/70 shadow-primary/5 rounded-2xl border p-3 shadow-2xl backdrop-blur-sm'>
+          <div className='min-w-0'>
             <HeroTerminalDemo />
           </div>
         </div>

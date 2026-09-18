@@ -2,6 +2,7 @@ package model
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
@@ -103,7 +104,18 @@ func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilte
 			key := ch.GetSetting().TaskPluginKey
 			return filter.TaskPluginKey != "" && (key == filter.TaskPluginKey || slices.Contains(filter.TaskPluginKeys, key))
 		}
-		return filter.TaskPluginKey == "" || slices.Contains(filter.TaskPluginChannelTypes, ch.Type)
+		if filter.TaskPluginKey != "" && !slices.Contains(filter.TaskPluginChannelTypes, ch.Type) {
+			return false
+		}
+		// OpenAISeedance is exposed through the shared Doubao /v1/videos
+		// protocol, but its native adaptor only advertises the standard
+		// Seedance model. Do not let a channel configured for type 1000
+		// accidentally receive another model declared by that plugin.
+		if ch.Type == constant.ChannelTypeOpenAISeedance && slices.Contains(filter.TaskPluginChannelTypes, ch.Type) &&
+			!strings.EqualFold(strings.TrimSpace(modelName), "doubao-seedance-2-0-260128") {
+			return false
+		}
+		return true
 	case dto.FilterResponsesWebSocket:
 		return (ch.Type == constant.ChannelTypeOpenAI || ch.Type == constant.ChannelTypeCodex) && ch.GetSetting().ResponsesWebSocketEnabled
 	default:

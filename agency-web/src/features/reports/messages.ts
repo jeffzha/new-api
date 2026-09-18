@@ -88,6 +88,8 @@ const rows = [
   ["Remaining quota", "剩余额度", "剩餘額度", "Quota restante", "残りクォータ", "Оставшаяся квота", "Hạn ngạch còn lại"],
   ["Expired quota", "已过期额度", "已過期額度", "Quota expirée", "期限切れクォータ", "Истёкшая квота", "Hạn ngạch đã hết hạn"],
   ["Expires at", "到期时间", "到期時間", "Date d’expiration", "有効期限", "Срок действия", "Hết hạn lúc"],
+  ["Tax", "税费", "稅費", "Taxe", "税", "Налог", "Thuế"],
+  ["Withdrawable amount", "可提现金额", "可提現金額", "Montant retirable", "出金可能額", "Доступная сумма", "Số tiền có thể rút"],
 ] as const;
 
 const locales: Locale[] = ["en", "zh", "zh-TW", "fr", "ja", "ru", "vi"];

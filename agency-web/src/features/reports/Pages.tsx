@@ -20,11 +20,11 @@ function fundingSourceLabel(value: unknown): string {
   const raw = String(value ?? "").trim();
   return {
     admin_grant: "超级管理员调整",
-    redemption: "兑换码",
-    payment_self: "用户自行充值",
+    redemption: "兑换码充值",
+    payment_self: "用户自主充值",
     payment_assisted: "管理员代充",
-    payment_self_bonus: "用户自行充值赠送",
-    payment_unattributed: "未归属付费",
+    payment_self_bonus: "用户充值赠送",
+    payment_unattributed: "未归属支付",
     unattributed_nonpaid: "未归属赠送",
     debt: "欠费",
     legacy_unknown: "历史记录",

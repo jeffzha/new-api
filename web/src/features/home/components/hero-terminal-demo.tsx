@@ -76,7 +76,7 @@ const API_DEMOS: ApiDemoConfig[] = [
     label: 'Chat',
     method: 'POST',
     endpoint: '/v1/chat/completions',
-    headers: ['"Authorization: Bearer sk-••••"'],
+    headers: ['"Authorization: Bearer sk-..."'],
     request: [
       '"model": "your-model",',
       '"messages": [',
@@ -99,7 +99,7 @@ const API_DEMOS: ApiDemoConfig[] = [
     label: 'Responses',
     method: 'POST',
     endpoint: '/v1/responses',
-    headers: ['"Authorization: Bearer sk-••••"'],
+    headers: ['"Authorization: Bearer sk-..."'],
     request: ['"model": "your-model",', '"input": "..."'],
     response: [
       '{',
@@ -117,7 +117,7 @@ const API_DEMOS: ApiDemoConfig[] = [
     label: 'Claude',
     method: 'POST',
     endpoint: '/v1/messages',
-    headers: ['"x-api-key: sk-••••"', '"anthropic-version: 2023-06-01"'],
+    headers: ['"x-api-key: sk-..."', '"anthropic-version: 2023-06-01"'],
     request: [
       '"model": "your-model",',
       '"max_tokens": 1024,',
@@ -141,7 +141,7 @@ const API_DEMOS: ApiDemoConfig[] = [
     label: 'Gemini',
     method: 'POST',
     endpoint: '/v1beta/models/{model}:generateContent',
-    headers: ['"x-goog-api-key: sk-••••"'],
+    headers: ['"x-goog-api-key: sk-..."'],
     request: [
       '"contents": [',
       '  { "role": "user",',

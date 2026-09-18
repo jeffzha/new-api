@@ -1,5 +1,29 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, BookOpen, CheckCircle2, ShieldCheck, WalletCards } from 'lucide-react'
+import {
+  ArrowRight,
+  BookOpen,
+  CheckCircle2,
+  ShieldCheck,
+  WalletCards,
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -17,54 +41,101 @@ export function Hero({ isAuthenticated }: HeroProps) {
   const { status } = useStatus()
   const docsUrl = (status?.docs_link as string | undefined) || '/docs'
   const capabilities = [
-    { icon: ShieldCheck, title: '稳定接入', description: '统一鉴权、故障切换与调用状态追踪' },
-    { icon: WalletCards, title: '透明计费', description: '模型价格、消费记录与余额变化清晰可查' },
-    { icon: CheckCircle2, title: '兼容常用协议', description: '接入 OpenAI 兼容客户端与现有业务系统' },
+    {
+      icon: ShieldCheck,
+      title: t('Secure & Reliable'),
+      description: t(
+        'Enterprise-grade security with comprehensive permission management'
+      ),
+    },
+    {
+      icon: WalletCards,
+      title: t('Transparent Billing'),
+      description: t('Pay-as-you-go with real-time usage monitoring'),
+    },
+    {
+      icon: CheckCircle2,
+      title: t('OpenAI Compatible'),
+      description: t(
+        'Connect through OpenAI, Claude, Gemini, and other compatible API routes'
+      ),
+    },
   ]
 
   return (
-    <section className='border-border bg-background border-b px-6 pt-20 pb-14 md:pt-28 md:pb-20'>
+    <section className='border-border bg-background relative isolate overflow-hidden border-b px-6 pt-16 pb-14 md:pt-24 md:pb-20'>
+      <div className='pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_15%_15%,color-mix(in_oklab,var(--primary)_12%,transparent),transparent_34%),radial-gradient(circle_at_88%_20%,color-mix(in_oklab,var(--primary)_8%,transparent),transparent_30%)]' />
       <div className='mx-auto max-w-6xl'>
-        <div className='mb-12 max-w-3xl'>
-          <p className='text-primary mb-4 text-sm font-semibold'>Nexus Reach AI Gateway</p>
-          <h1 className='text-foreground text-4xl leading-tight font-semibold md:text-6xl'>
-            稳定、透明的企业级 AI 模型服务
-          </h1>
-          <p className='text-muted-foreground mt-5 max-w-2xl text-base leading-7 md:text-lg'>
-            一个 API 连接主流文本、图像与视频模型。按量计费、统一账单，并提供清晰的调用记录与用量管理。
-          </p>
-          <div className='mt-8 flex flex-wrap gap-3'>
-            <Button className='h-11 px-5' render={<Link to={isAuthenticated ? '/dashboard' : '/sign-up'} />}>
-              {isAuthenticated ? t('Go to Dashboard') : t('Get Started')}
-              <ArrowRight className='ml-2 size-4' />
-            </Button>
-            <Button variant='outline' className='h-11 px-5' render={<Link to='/pricing' />}>
-              {t('View Pricing')}
-            </Button>
-            <Button
-              variant='ghost'
-              className='h-11 px-4'
-              render={docsUrl.startsWith('http') ? <a href={docsUrl} target='_blank' rel='noreferrer' /> : <Link to={docsUrl} />}
-            >
-              <BookOpen className='mr-2 size-4' />
-              {t('Docs')}
-            </Button>
+        <div className='grid gap-12 lg:grid-cols-[1fr_0.9fr] lg:items-center lg:gap-16'>
+          <div>
+            <p className='text-primary mb-4 text-sm font-semibold tracking-wide'>
+              Nexus Reach AI Gateway
+            </p>
+            <h1 className='text-foreground max-w-3xl text-4xl leading-[1.08] font-semibold tracking-tight md:text-6xl'>
+              {t('Unified API Gateway for')} {t('AI models')}
+            </h1>
+            <p className='text-muted-foreground mt-6 max-w-2xl text-base leading-7 md:text-lg'>
+              {t(
+                'Connect through OpenAI, Claude, Gemini, and other compatible API routes'
+              )}
+            </p>
+            <div className='mt-8 flex flex-wrap gap-3'>
+              <Button
+                className='h-11 px-5'
+                render={
+                  <Link to={isAuthenticated ? '/dashboard' : '/sign-up'} />
+                }
+              >
+                {isAuthenticated ? t('Go to Dashboard') : t('Get Started')}
+                <ArrowRight className='ml-2 size-4' />
+              </Button>
+              <Button
+                variant='outline'
+                className='h-11 px-5'
+                render={<Link to='/pricing' />}
+              >
+                {t('View Pricing')}
+              </Button>
+              <Button
+                variant='ghost'
+                className='h-11 px-4'
+                render={
+                  docsUrl.startsWith('http') ? (
+                    <a href={docsUrl} target='_blank' rel='noreferrer' />
+                  ) : (
+                    <Link to={docsUrl} />
+                  )
+                }
+              >
+                <BookOpen className='mr-2 size-4' />
+                {t('Docs')}
+              </Button>
+            </div>
+          </div>
+
+          <div className='border-border/60 bg-card/70 shadow-primary/5 rounded-2xl border p-3 shadow-2xl backdrop-blur-sm'>
+            <HeroTerminalDemo />
           </div>
         </div>
 
-        <div className='grid gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:items-center'>
-          <div className='divide-border border-border grid divide-y border-y'>
-            {capabilities.map(({ icon: Icon, title, description }) => (
-              <div key={title} className='flex gap-4 py-5'>
-                <Icon className='text-primary mt-0.5 size-5 shrink-0' />
-                <div>
-                  <h2 className='text-sm font-semibold'>{title}</h2>
-                  <p className='text-muted-foreground mt-1 text-sm leading-6'>{description}</p>
-                </div>
+        <div className='mt-14 grid gap-3 md:grid-cols-3'>
+          {capabilities.map(({ icon: Icon, title, description }) => (
+            <div
+              key={title}
+              className='border-border/60 bg-card/50 hover:bg-card flex gap-4 rounded-xl border p-5 transition-colors'
+            >
+              <Icon
+                className='text-primary mt-0.5 size-5 shrink-0'
+                aria-hidden='true'
+              />
+              <div>
+                <h2 className='text-sm font-semibold'>{title}</h2>
+                <p className='text-muted-foreground mt-1 text-sm leading-6'>
+                  {description}
+                </p>
               </div>
-            ))}
-          </div>
-          <HeroTerminalDemo />
+            </div>
+          ))}
         </div>
       </div>
     </section>

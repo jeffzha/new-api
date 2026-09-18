@@ -84,6 +84,15 @@ export function detectChatLinkType(url: string): ChatLinkType {
   return 'custom-protocol'
 }
 
+/**
+ * Some entries in the legacy chat settings are control markers rather than
+ * launchable links.  `ccswitch` is handled by the dedicated API-key dialog;
+ * treating it as a URL makes the browser resolve it as `/ccswitch`.
+ */
+export function isChatControlLink(url: string): boolean {
+  return url.trim().toLowerCase() === 'ccswitch'
+}
+
 export function chatLinkRequiresApiKey(url: string): boolean {
   return (
     url.includes('{key}') ||
@@ -110,7 +119,7 @@ export function parseChatConfig(raw: RawChatConfig): ChatPreset[] {
   }
 
   return parsed
-    .map((entry, index) => {
+    .map((entry) => {
       if (
         !entry ||
         typeof entry !== 'object' ||
@@ -126,18 +135,18 @@ export function parseChatConfig(raw: RawChatConfig): ChatPreset[] {
       }
 
       const url = value.trim()
-      if (!url) {
+      if (!url || isChatControlLink(url)) {
         return null
       }
 
       return {
-        id: String(index),
         name,
         url,
         type: detectChatLinkType(url),
       } satisfies ChatPreset
     })
-    .filter((item): item is ChatPreset => item !== null)
+    .filter((item): item is Omit<ChatPreset, 'id'> => item !== null)
+    .map((preset, index) => ({ ...preset, id: String(index) }))
 }
 
 function replaceToken(source: string, token: string, value: string) {
@@ -156,7 +165,7 @@ export function resolveChatUrl({
   serverAddress,
 }: ResolveChatUrlParams): string {
   let url = template
-  const safeServerAddress = serverAddress || ''
+  const safeServerAddress = (serverAddress || '').replace(/\/+$/, '')
 
   const safeApiKey = normalizeApiKey(apiKey || '')
 
@@ -198,6 +207,46 @@ export function resolveChatUrl({
       'type=openai',
     ].join('&')
     return replaceToken(url, '{aqbotConfig}', query)
+  }
+
+  if (url.includes('keyVaults') && url.includes('settings=')) {
+    const settings = {
+      keyVaults: {
+        openai: {
+          apiKey: safeApiKey,
+          baseURL: safeServerAddress + '/v1',
+        },
+      },
+    }
+    const settingsIndex = url.indexOf('settings=')
+    return url.slice(0, settingsIndex) + 'settings=' + encodeURIComponent(
+      JSON.stringify(settings)
+    )
+  }
+
+  if (url.includes('set-provider?provider=') && url.includes('compatibility')) {
+    const provider = {
+      type: 'openai',
+      settings: {
+        apiKey: safeApiKey,
+        baseURL: safeServerAddress + '/v1',
+        compatibility: 'strict',
+      },
+    }
+    const providerIndex = url.indexOf('provider=')
+    return url.slice(0, providerIndex) + 'provider=' + encodeURIComponent(
+      JSON.stringify(provider)
+    )
+  }
+
+  if (url.startsWith('ama://') && url.includes('set-api-key?')) {
+    url = replaceToken(url, '{address}', encodeURIComponent(safeServerAddress))
+    return replaceToken(url, '{key}', encodeURIComponent(safeApiKey))
+  }
+
+  if (url.startsWith('opencat://') && url.includes('team/join?')) {
+    url = replaceToken(url, '{address}', encodeURIComponent(safeServerAddress))
+    return replaceToken(url, '{key}', encodeURIComponent(safeApiKey))
   }
 
   if (safeServerAddress) {

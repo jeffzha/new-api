@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "../../components/PageHeader";
+import { ActionIcon } from "../../components/Heading";
 import { DataTable, ErrorNotice, Field, Loading, Pagination, Time } from "../../components/ui";
 import { api, ApiError, hubConfig } from "../../lib/api";
 import { useMutation } from "../../lib/mutations";
@@ -95,12 +97,10 @@ export function ExportsPage({ initialKind = "usage" }: { initialKind?: ExportKin
 
   return (
     <section>
-      <div className="toolbar">
-        <h2>{t("Data exports")}</h2>
-        <button type="button" className="secondary" onClick={reload}>
+      <PageHeader icon="exports" title={t("Data exports")} description={t("Create downloadable usage, top-up and commission reports.")} actions={<button type="button" className="secondary button-icon" onClick={reload}>
+          <ActionIcon name="refresh" />
           {t("Refresh")}
-        </button>
-      </div>
+        </button>} />
       <p className="muted">
         {t(
           "Export dates include both days in Asia/Shanghai. Files expire after 24 hours; original records are retained.",
@@ -165,7 +165,8 @@ export function ExportsPage({ initialKind = "usage" }: { initialKind?: ExportKin
           />
         </Field>
         <div className="actions">
-          <button type="submit" disabled={mutation.pending}>
+          <button className="button-icon" type="submit" disabled={mutation.pending}>
+            <ActionIcon name="download" />
             {t("Create CSV export")}
           </button>
         </div>

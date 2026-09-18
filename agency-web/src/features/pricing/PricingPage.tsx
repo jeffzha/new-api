@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ActionIcon, PageHeading } from "../../components/Heading";
+import { PageHeader } from "../../components/PageHeader";
 import { api, useQuery } from "../../lib/client";
 import { useMutation } from "../../lib/mutations";
 import { ErrorNotice, Field, Loading, Pager, Table, Time } from "../../components/ui";
@@ -20,8 +22,13 @@ export function PricingPage(props: { root: boolean; agencyId: string | null }) {
   const agencyId = props.root ? selected : props.agencyId;
   return (
     <>
+      <PageHeader
+        icon="pricing"
+        title={t("Pricing")}
+        description={t("Set settlement and customer-facing price rules for each agency.")}
+      />
       {props.root && (
-        <div className="toolbar">
+        <div className="page-filter-bar">
           <Field label={t("Select an agency")}>
             <select value={selected} onChange={(e) => setSelected(e.target.value)}>
               <option value="">{t("Select an agency")}</option>
@@ -35,13 +42,15 @@ export function PricingPage(props: { root: boolean; agencyId: string | null }) {
               ))}
             </select>
           </Field>
+          <div className="pager">
           <Pager
             nextCursor={agencies.data?.meta?.next_cursor}
             hasPrevious={Boolean(cursor)}
             onNext={() => setCursor(agencies.data?.meta?.next_cursor ?? "")}
             onReset={() => setCursor("")}
           />
-          <ErrorNotice error={agencies.error} />
+          </div>
+          <div className="filter-actions"><ErrorNotice error={agencies.error} /></div>
         </div>
       )}
       {props.root && !agencyId ? (
@@ -64,9 +73,7 @@ function AgencyPricing(props: { root: boolean; agencyId: string | null }) {
     return (
       <>
         <ErrorNotice error={pricing.error} />
-        <button type="button" onClick={pricing.reload}>
-          {t("Refresh")}
-        </button>
+        <div className="empty-state-actions"><button type="button" onClick={pricing.reload}>{t("Refresh")}</button></div>
       </>
     );
   return (
@@ -86,7 +93,7 @@ function AgencyPricing(props: { root: boolean; agencyId: string | null }) {
         history={history.data?.items ?? []}
       />
       <section>
-        <h3>{t("Price history")}</h3>
+        <PageHeading icon="pricing" level={3}>{t("Price history")}</PageHeading>
         <ErrorNotice error={history.error} />
         <Table
           rows={history.data?.items ?? []}
@@ -176,14 +183,14 @@ function PricingEditor(props: {
         <h3>
           {t("Revision")} {props.policy.revision}
         </h3>
-        <button
+        <button className="secondary button-icon"
           type="button"
-          className="secondary"
           disabled={mutation.pending}
           onClick={() => {
             if (window.confirm(t("Reload prices and discard this draft?"))) props.onSaved();
           }}
         >
+          <ActionIcon name="refresh" />
           {t("Reload current prices")}
         </button>
       </div>
@@ -196,7 +203,8 @@ function PricingEditor(props: {
         <div role="status" className="notice">
           {t("Price published")} · {t("Revision")} {published.revision} ·{" "}
           <Time value={published.committed_at_ms} />{" "}
-          <button type="button" onClick={props.onSaved}>
+          <button className="button-icon" type="button" onClick={props.onSaved}>
+            <ActionIcon name="refresh" />
             {t("Load published version")}
           </button>
         </div>
@@ -263,21 +271,22 @@ function PricingEditor(props: {
       {preview && candidate && <Preview data={preview} policy={candidate} />}
       <ErrorNotice error={error} />
       <div className="toolbar">
-        <button
+        <button className="secondary button-icon"
           type="button"
-          className="secondary"
           disabled={!candidate || previewing || mutation.pending || Boolean(published)}
           onClick={() => void showPreview()}
         >
+          <ActionIcon name="eye" />
           {t("Preview prices")}
         </button>
-        <button
+        <button className="button-icon"
           type="button"
           disabled={
             !candidate || !reason.trim() || props.disabled || mutation.pending || Boolean(published)
           }
           onClick={() => void publish()}
         >
+          <ActionIcon name="check" />
           {t("Publish prices")}
         </button>
       </div>

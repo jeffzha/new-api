@@ -47,6 +47,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { ChatProtocolDialog } from '@/features/chat/components/chat-protocol-dialog'
 import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
 import { resolveChatUrl, type ChatPreset } from '@/features/chat/lib/chat-links'
 import { sendToFluent } from '@/features/chat/lib/send-to-fluent'
@@ -92,6 +93,10 @@ export function DataTableRowActions<TData>({
   const isEnabled = apiKey.status === API_KEY_STATUS.ENABLED
   const { chatPresets, serverAddress } = useChatPresets()
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
+  const [protocolLink, setProtocolLink] = useState<{
+    name: string
+    url: string
+  } | null>(null)
   const isRealKeyLoading = Boolean(loadingKeys[apiKey.id])
 
   const hasChatPresets = chatPresets.length > 0
@@ -130,7 +135,11 @@ export function DataTableRowActions<TData>({
       if (typeof window === 'undefined') return
 
       try {
-        window.open(resolvedUrl, '_blank', 'noopener')
+        if (preset.type === 'custom-protocol') {
+          setProtocolLink({ name: preset.name, url: resolvedUrl })
+        } else {
+          window.open(resolvedUrl, '_blank', 'noopener')
+        }
       } catch {
         window.location.href = resolvedUrl
       }
@@ -173,7 +182,8 @@ export function DataTableRowActions<TData>({
   }
 
   return (
-    <div className='-ml-1.5 flex items-center gap-1'>
+    <>
+      <div className='-ml-1.5 flex items-center gap-1'>
       <Tooltip>
         <TooltipTrigger
           render={
@@ -301,6 +311,15 @@ export function DataTableRowActions<TData>({
           </DropdownMenuShortcut>
         </DropdownMenuItem>
       </DataTableRowActionMenu>
-    </div>
+      </div>
+      <ChatProtocolDialog
+        open={protocolLink !== null}
+        name={protocolLink?.name ?? ''}
+        url={protocolLink?.url ?? ''}
+        onOpenChange={(open) => {
+          if (!open) setProtocolLink(null)
+        }}
+      />
+    </>
   )
 }

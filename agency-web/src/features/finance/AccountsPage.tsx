@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "../../components/PageHeader";
+import { ActionIcon } from "../../components/Heading";
 import { DataTable, Dialog, ErrorNotice, Field, Loading, formatTime } from "../../components/ui";
 import { useMutation } from "../../lib/mutation-context";
 import { useQuery } from "../../lib/query";
@@ -19,17 +21,21 @@ export function AccountsPage(props: { identity: Identity }) {
     return <p className="empty">{t("Enter an agency to manage its payout accounts.")}</p>;
   return (
     <section>
-      <div className="toolbar">
-        <h2>{t("Payout accounts")}</h2>
-        <div className="actions">
-          <button type="button" className="secondary" onClick={query.reload}>
+      <PageHeader
+        icon="accounts"
+        title={t("Payout accounts")}
+        description={t("Manage the verified accounts used for commission withdrawals.")}
+        actions={<div className="actions">
+          <button type="button" className="secondary button-icon" onClick={query.reload}>
+            <ActionIcon name="refresh" />
             {t("Refresh")}
           </button>
-          <button type="button" onClick={() => setEdit("new")}>
+          <button className="button-icon" type="button" onClick={() => setEdit("new")}>
+            <ActionIcon name="plus" />
             {t("Add payout account")}
           </button>
-        </div>
-      </div>
+        </div>}
+      />
       <p className="muted">
         {t(
           "Only the latest account is active. Changes create a new version and leave existing withdrawal snapshots unchanged.",
@@ -180,7 +186,10 @@ function AccountEditor(props: {
             />
           </Field>
           <ErrorNotice error={error} />
-          <button type="submit">{t("Save account version")}</button>
+          <button className="button-icon account-editor-submit" type="submit">
+            <ActionIcon name="save" />
+            {t("Save account version")}
+          </button>
         </fieldset>
       </form>
     </Dialog>

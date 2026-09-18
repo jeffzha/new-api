@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "../../components/PageHeader";
+import { ActionIcon } from "../../components/Heading";
 import { DataTable, ErrorNotice, Loading, Pagination, Time } from "../../components/ui";
 import { useQuery } from "../../lib/query";
 import type { Page } from "../../lib/types";
@@ -20,13 +22,11 @@ export function ReconciliationRuns() {
     `/root/reconciliation/runs?page_size=10&cursor=${encodeURIComponent(cursor)}`,
   );
   return (
-    <section>
-      <div className="toolbar">
-        <h3>{t("Reconciliation history")}</h3>
-        <button type="button" className="secondary" onClick={query.reload}>
+    <section className="reconciliation-history">
+      <PageHeader icon="sync" title={t("Reconciliation history")} actions={<button type="button" className="secondary button-icon" onClick={query.reload}>
+          <ActionIcon name="refresh" />
           {t("Refresh")}
-        </button>
-      </div>
+        </button>} />
       <ErrorNotice error={query.error} />
       {query.loading ? (
         <Loading />

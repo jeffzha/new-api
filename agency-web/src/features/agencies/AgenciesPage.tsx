@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ActionIcon } from "../../components/Heading";
+import { PageHeader } from "../../components/PageHeader";
 import { useQuery } from "../../lib/client";
 import { ErrorNotice, Loading, Pager, Table } from "../../components/ui";
 import { AgencyForm } from "./AgencyForm";
@@ -44,8 +46,11 @@ export function AgenciesPage(props: {
   }
   return (
     <>
-      <div className="toolbar">
-        <button
+      <PageHeader
+        icon="agency"
+        title={t("Agencies")}
+        description={t("Manage agency accounts, invitation links and access status.")}
+        actions={<><button className="button-icon"
           type="button"
           disabled={create || Boolean(delivery)}
           onClick={() => {
@@ -53,12 +58,13 @@ export function AgenciesPage(props: {
             setEditing(null);
           }}
         >
+          <ActionIcon name="plus" />
           {t("Create agency")}
-        </button>
-        <button type="button" className="secondary" onClick={query.reload}>
+        </button><button type="button" className="secondary button-icon" onClick={query.reload}>
+          <ActionIcon name="refresh" />
           {t("Refresh")}
-        </button>
-      </div>
+        </button></>}
+      />
       <ErrorNotice error={query.error ?? error} />
       {create && !delivery && (
         <AgencyForm
@@ -105,40 +111,44 @@ export function AgenciesPage(props: {
               key: "actions",
               label: t("Actions"),
               render: (row) => (
-                <div className="toolbar">
+                <div className="action-row">
                   <button
                     type="button"
-                    className="secondary"
+                    className="secondary button-icon"
                     disabled={Boolean(delivery)}
                     onClick={() => {
                       setEditing(String(row.id));
                       setCreate(false);
                     }}
                   >
+                    <ActionIcon name="save" />
                     {t("Edit")}
                   </button>
                   <button
                     type="button"
-                    className="secondary"
+                    className="secondary button-icon"
                     disabled={Boolean(delivery)}
                     onClick={() => props.onPricing(String(row.id))}
                   >
+                    <ActionIcon name="eye" />
                     {t("Prices")}
                   </button>
                   <button
                     type="button"
-                    className="secondary"
+                    className="secondary button-icon"
                     disabled={Boolean(delivery) || entering || row.status !== "active"}
                     onClick={() => void enter(String(row.id))}
                   >
+                    <ActionIcon name="play" />
                     {t("Enter agency")}
                   </button>
                   <button
                     type="button"
-                    className="secondary"
+                    className="secondary button-icon"
                     disabled={!row.invite_url || row.status !== "active"}
                     onClick={() => void copyInvite(row.invite_url, String(row.id))}
                   >
+                    <ActionIcon name="download" />
                     {t(copied === String(row.id) ? "Copied" : "Copy invitation link")}
                   </button>
                 </div>

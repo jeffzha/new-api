@@ -40,8 +40,8 @@ export function Login({ done }: { done: () => Promise<void> }) {
   return (
     <main className="shell">
       <section className="auth">
-        <p className="eyebrow">AGENCY HUB</p>
-        <h1>{t("Agency Center")}</h1>
+        <p className="eyebrow">NEXIGHT · AGENCY HUB</p>
+        <h1><span className="brand-name">NEXIGHT</span><span className="title-divider">/</span>{t("Agency Center")}<span className="product-attribution sr-only">New API</span></h1>
         {hubConfig().platform_base_url && (
           <button
             type="button"

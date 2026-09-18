@@ -406,6 +406,14 @@ func matchAdvancedCustomRouteModelRule(rule string, model string) bool {
 }
 
 func matchAdvancedCustomIncomingPath(configuredPath string, requestPath string) bool {
+	// The built-in playground intentionally reuses the OpenAI Chat Completions
+	// contract at /pg/chat/completions. Treat it as the public /v1 route for
+	// advanced-custom channel matching so a channel configured once for the
+	// standard endpoint also works in the playground. The adaptor still sends
+	// the configured upstream path, so this only affects candidate selection.
+	if requestPath == "/pg/chat/completions" {
+		requestPath = advancedCustomEndpointPathOpenAIChat
+	}
 	if matchAdvancedCustomIncomingPathTemplate(configuredPath, requestPath) {
 		return true
 	}

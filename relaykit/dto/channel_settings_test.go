@@ -387,6 +387,22 @@ func TestAdvancedCustomMatchPathForModel(t *testing.T) {
 	assert.Equal(t, advancedCustomConverterNone, fallbackRoute.Converter)
 }
 
+func TestAdvancedCustomMatchPathForModelSupportsPlaygroundChat(t *testing.T) {
+	config := &AdvancedCustomConfig{
+		Routes: []AdvancedCustomRoute{{
+			IncomingPath: "/v1/chat/completions",
+			UpstreamPath: "/v1/chat/completions",
+			Converter:    advancedCustomConverterNone,
+			Models:       []string{"Hunyuan/hy3"},
+		}},
+	}
+
+	require.NoError(t, config.Validate())
+	route, ok := config.MatchPathForModel("/pg/chat/completions", "Hunyuan/hy3")
+	require.True(t, ok)
+	assert.Equal(t, "/v1/chat/completions", route.IncomingPath)
+}
+
 func TestAdvancedCustomMatchPathForModelRegexRules(t *testing.T) {
 	config := &AdvancedCustomConfig{
 		Routes: []AdvancedCustomRoute{

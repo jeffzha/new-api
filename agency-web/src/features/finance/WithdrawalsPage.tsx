@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "../../components/PageHeader";
+import { ActionIcon } from "../../components/Heading";
 import {
   DataTable,
   ErrorNotice,
@@ -40,19 +42,23 @@ export function WithdrawalsPage(props: { identity: Identity; onAddAccount?: () =
     return <p className="empty">{t("Enter an agency to view its withdrawals.")}</p>;
   return (
     <section>
-      <div className="toolbar">
-        <h2>{t(isRoot ? "Withdrawal review" : "Withdrawals")}</h2>
-        <div className="actions">
-          <button className="secondary" type="button" onClick={query.reload}>
+      <PageHeader
+        icon="withdrawals"
+        title={t(isRoot ? "Withdrawal review" : "Withdrawals")}
+        description={t("Review commission withdrawals and track their payment status.")}
+        actions={<div className="actions">
+          <button className="secondary button-icon" type="button" onClick={query.reload}>
+            <ActionIcon name="refresh" />
             {t("Refresh")}
           </button>
           {props.identity.agency_id && (
-            <button type="button" onClick={() => setCreate(true)}>
+            <button className="button-icon" type="button" onClick={() => setCreate(true)}>
+              <ActionIcon name="plus" />
               {t("Request withdrawal")}
             </button>
           )}
-        </div>
-      </div>
+        </div>}
+      />
       {isRoot && (
         <form
           className="filters"
@@ -92,7 +98,10 @@ export function WithdrawalsPage(props: { identity: Identity; onAddAccount?: () =
               }
             />
           </Field>
-          <button type="submit">{t("Apply filters")}</button>
+          <button className="button-icon" type="submit">
+            <ActionIcon name="search" />
+            {t("Apply filters")}
+          </button>
         </form>
       )}
       <ErrorNotice error={query.error} />

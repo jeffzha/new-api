@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ActionIcon } from "../../components/Heading";
 import { DataTable, Dialog, ErrorNotice, Field, Loading, formatMoney } from "../../components/ui";
 import { useMutation } from "../../lib/mutation-context";
 import { useQuery } from "../../lib/query";
@@ -99,13 +100,15 @@ export function WithdrawalForm(props: {
             {!accounts.data?.items.length && (
               <div className="actions">
                 <p>{t("Add a payout account before requesting a withdrawal.")}</p>
-                <button type="button" className="secondary" onClick={props.onAddAccount}>
+                <button type="button" className="secondary button-icon" onClick={props.onAddAccount}>
+                  <ActionIcon name="plus" />
                   {t("Add payout account")}
                 </button>
               </div>
             )}
             {accounts.data?.items.length ? (
-              <button type="button" className="secondary" onClick={props.onAddAccount}>
+              <button type="button" className="secondary button-icon" onClick={props.onAddAccount}>
+                <ActionIcon name="plus" />
                 {t("Add payout account")}
               </button>
             ) : null}
@@ -124,7 +127,7 @@ export function WithdrawalForm(props: {
               </select>
             </Field>
             <Field label={t("Currency")}>
-              <output>{t("Chinese yuan (CNY)")}</output>
+              <output className="currency-output"><span aria-hidden="true">¥</span><span>{t("Chinese yuan (CNY)")}</span></output>
             </Field>
             <Field
               label={t("Withdrawal amount")}
@@ -140,7 +143,8 @@ export function WithdrawalForm(props: {
               />
             </Field>
             <ErrorNotice error={error} />
-            <button type="submit" disabled={!account || !balance}>
+            <button className="button-icon" type="submit" disabled={!account || !balance}>
+              <ActionIcon name="check" />
               {t("Confirm withdrawal request")}
             </button>
           </fieldset>

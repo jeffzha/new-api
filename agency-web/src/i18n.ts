@@ -9,6 +9,7 @@ import { customerMessages } from "./features/customers/messages";
 import { reconciliationMessages } from "./features/reconciliation/messages";
 import { reportMessages } from "./features/reports/messages";
 import { invitationMessages } from "./features/invitations/messages";
+import { statusMessages } from "./features/reports/statusMessages";
 import type { Locale } from "./lib/types";
 
 const language = navigator.language.toLowerCase();
@@ -69,6 +70,7 @@ const resources = Object.fromEntries(
         ...reconciliationMessages[lang],
         ...reportMessages[lang],
         ...invitationMessages[lang],
+        ...statusMessages[lang],
         ...(lang === "zh"
           ? {
               "Agency Center": "代理商中心",

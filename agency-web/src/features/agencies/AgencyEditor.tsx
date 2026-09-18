@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "../../components/PageHeader";
+import { ActionIcon } from "../../components/Heading";
 import { useQuery } from "../../lib/client";
 import { useMutation } from "../../lib/mutations";
 import { ErrorNotice, Field, Loading } from "../../components/ui";
@@ -18,7 +20,8 @@ export function AgencyEditor(props: {
     return (
       <>
         <ErrorNotice error={query.error} />
-        <button type="button" onClick={query.reload}>
+        <button className="secondary button-icon" type="button" onClick={query.reload}>
+          <ActionIcon name="refresh" />
           {t("Refresh")}
         </button>
       </>
@@ -96,9 +99,14 @@ function AgencyDetails(props: {
   }
   return (
     <section className="panel">
-      <h3>
-        {t("Edit agency")} · {props.agency.display_name}
-      </h3>
+      <PageHeader
+        icon="agency"
+        title={t("Edit agency") + " · " + props.agency.display_name}
+        actions={<button className="secondary button-icon" type="button" disabled={mutation.pending} onClick={props.onClose}>
+          <ActionIcon name="close" />
+          {t("Close")}
+        </button>}
+      />
       <p>
         {t("Operator username")}: {props.agency.operator_username} · {t("Version")}:{" "}
         {props.agency.version}
@@ -119,16 +127,9 @@ function AgencyDetails(props: {
           />
         </Field>
         <div className="toolbar">
-          <button type="submit" disabled={mutation.pending || !name.trim()}>
+          <button className="button-icon" type="submit" disabled={mutation.pending || !name.trim()}>
+            <ActionIcon name="save" />
             {t("Save agency")}
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            disabled={mutation.pending}
-            onClick={props.onClose}
-          >
-            {t("Close")}
           </button>
         </div>
       </form>
@@ -154,11 +155,12 @@ function AgencyDetails(props: {
         />
       </Field>
       <button
+        className="secondary button-icon"
         type="button"
-        className="secondary"
         disabled={mutation.pending || !reason.trim()}
         onClick={() => void changeStatus()}
       >
+        <ActionIcon name={disabled ? "check" : "close"} />
         {t(disabled ? "Enable agency" : "Disable agency")}
       </button>
       <h4>{t("Reset operator password")}</h4>
@@ -168,21 +170,23 @@ function AgencyDetails(props: {
         )}
       </p>
       <button
+        className="secondary button-icon"
         type="button"
-        className="secondary"
         disabled={mutation.pending}
         onClick={() => void resetPassword()}
       >
+        <ActionIcon name="refresh" />
         {t("Reset operator password")}
       </button>
       <ErrorNotice error={error} />
       {Boolean(error) && (
         <button
           type="button"
-          className="secondary"
+          className="secondary button-icon"
           disabled={mutation.pending}
           onClick={props.onSaved}
         >
+          <ActionIcon name="refresh" />
           {t("Reload current agency")}
         </button>
       )}

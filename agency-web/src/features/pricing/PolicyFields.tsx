@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Field, ErrorNotice } from "../../components/ui";
+import { ActionIcon } from "../../components/Heading";
 import { useQuery } from "../../lib/client";
 import type { PricingDraft } from "./types";
 
@@ -114,6 +115,7 @@ export function PolicyFields(props: {
                       })
                     }
                   >
+                    <ActionIcon name="close" />
                     {t("Remove override")}
                   </button>
                 </td>
@@ -127,7 +129,7 @@ export function PolicyFields(props: {
           {t("All models use the default coefficients. Add an override for a specific model.")}
         </p>
       )}
-      <div className="toolbar">
+      <div className="model-search-row">
         <Field label={t("Search public models")}>
           <input value={model} list={listId} onChange={(e) => setModel(e.target.value)} />
         </Field>
@@ -138,15 +140,16 @@ export function PolicyFields(props: {
         </datalist>
         <button
           type="button"
-          className="secondary"
+          className="secondary button-icon"
           onClick={() => setSearch(model)}
           disabled={models.loading}
         >
+          <ActionIcon name="search" />
           {t("Search")}
         </button>
         <button
           type="button"
-          className="secondary"
+          className="secondary button-icon"
           disabled={
             !model ||
             !models.data?.items.includes(model) ||
@@ -161,6 +164,7 @@ export function PolicyFields(props: {
             setModel("");
           }}
         >
+          <ActionIcon name="plus" />
           {t("Add override")}
         </button>
       </div>

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ActionIcon, PageHeading } from "../../components/Heading";
 import { api } from "../../lib/client";
 import { useMutation } from "../../lib/mutations";
 import { ErrorNotice, Field } from "../../components/ui";
@@ -67,7 +68,18 @@ export function AgencyForm(props: {
   }
   return (
     <section className="panel">
-      <h3>{t("Create agency")}</h3>
+      <div className="agency-form-heading">
+        <PageHeading icon="agency" level={3}>{t("Create agency")}</PageHeading>
+        <button
+          type="button"
+          className="secondary button-icon"
+          disabled={mutation.pending || previewing}
+          onClick={props.onCancel}
+        >
+          <ActionIcon name="close" />
+          {t("Cancel")}
+        </button>
+      </div>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -113,21 +125,24 @@ export function AgencyForm(props: {
         <div className="toolbar">
           <button
             type="button"
-            className="secondary"
+            className="secondary button-icon"
             disabled={mutation.pending || previewing}
             onClick={() => void previewPrices()}
           >
+            <ActionIcon name="eye" />
             {t("Preview prices")}
           </button>
-          <button type="submit" disabled={mutation.pending || !name.trim() || !username.trim()}>
+          <button className="button-icon" type="submit" disabled={mutation.pending || !name.trim() || !username.trim()}>
+            <ActionIcon name="check" />
             {t("Create agency")}
           </button>
           <button
             type="button"
-            className="secondary"
+            className="secondary button-icon"
             disabled={mutation.pending}
             onClick={props.onCancel}
           >
+            <ActionIcon name="close" />
             {t("Cancel")}
           </button>
         </div>

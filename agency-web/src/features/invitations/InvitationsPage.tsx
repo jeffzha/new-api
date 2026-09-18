@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "../../components/PageHeader";
 import { ErrorNotice, Field, Loading } from "../../components/ui";
 import { ApiError } from "../../lib/api";
 import { useQuery } from "../../lib/query";
@@ -21,7 +22,7 @@ export function InvitationsPage() {
       query.error instanceof ApiError && query.error.code === "invitation_url_unavailable";
     return (
       <section aria-label={t("Invite customers")}>
-        <h2>{t("Invite customers")}</h2>
+        <PageHeader icon="invitation" title={t("Invite customers")} description={t("Share your registration link or QR code with new customers.")} actions={<button type="button" className="secondary" onClick={query.reload}>{t("Retry")}</button>} />
         <ErrorNotice
           error={
             new Error(
@@ -31,9 +32,6 @@ export function InvitationsPage() {
             )
           }
         />
-        <button type="button" className="secondary" onClick={query.reload}>
-          {t("Retry")}
-        </button>
       </section>
     );
   }
@@ -96,8 +94,7 @@ function InvitationDetails({ invitation }: { invitation: Invitation }) {
 
   return (
     <section className="invitation-page" aria-label={t("Invite customers")}>
-      <h2>{t("Invite customers")}</h2>
-      <p className="muted">{t("Share your registration link or QR code with new customers.")}</p>
+      <PageHeader icon="invitation" title={t("Invite customers")} description={t("Share your registration link or QR code with new customers.")} />
       <dl>
         <dt>{t("Agency name")}</dt>
         <dd>{invitation.display_name}</dd>

@@ -11,6 +11,7 @@ import { customerMessages } from "../../features/customers/messages";
 import { reconciliationMessages } from "../../features/reconciliation/messages";
 import { reportMessages } from "../../features/reports/messages";
 import { invitationMessages } from "../../features/invitations/messages";
+import { statusMessages } from "../../features/reports/statusMessages";
 import { evidenceLabels } from "../../features/reconciliation/labels";
 import type { Locale } from "../types";
 
@@ -25,6 +26,7 @@ test("every shipped language includes the same complete feature dictionary", () 
     reconciliationMessages,
     reportMessages,
     invitationMessages,
+    statusMessages,
   ]) {
     const keys = Object.keys(messages.en).sort();
     for (const lang of Object.keys(messages) as Locale[]) {
@@ -87,6 +89,7 @@ test("rendered UI source strings have translations in every supported language",
       ...reconciliationMessages[lang],
       ...reportMessages[lang],
       ...invitationMessages[lang],
+      ...statusMessages[lang],
     };
     for (const key of keys) if (!messages[key]) missing.push(`${lang}: ${key}`);
   }

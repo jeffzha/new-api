@@ -2,6 +2,7 @@ import { cloneElement, isValidElement, useEffect, useId, useRef } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { Column } from "../lib/types";
+import { ActionIcon } from "./Heading";
 
 export function Field(props: { label: string; children: ReactNode; hint?: string }) {
   const hintId = useId();
@@ -117,7 +118,8 @@ export function Dialog(props: {
     >
       <div className="toolbar">
         <h2 id={titleId}>{props.title}</h2>
-        <button type="button" className="secondary" disabled={props.busy} onClick={props.onClose}>
+        <button type="button" className="secondary button-icon" disabled={props.busy} onClick={props.onClose}>
+          <ActionIcon name="close" />
           {t("Close")}
         </button>
       </div>
@@ -135,19 +137,21 @@ export function Pagination(props: {
   return (
     <div className="actions">
       <button
-        className="secondary"
+        className="secondary button-icon"
         type="button"
         disabled={!props.hasPrevious}
         onClick={props.onReset}
       >
+        <ActionIcon name="refresh" />
         {t("First page")}
       </button>
       <button
-        className="secondary"
+        className="secondary button-icon"
         type="button"
         disabled={!props.nextCursor}
         onClick={props.onNext}
       >
+        <ActionIcon name="play" />
         {t("Next page")}
       </button>
     </div>

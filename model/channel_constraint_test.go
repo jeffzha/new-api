@@ -176,6 +176,25 @@ func TestFilterCandidateIDs(t *testing.T) {
 	}
 }
 
+func TestChannelSatisfiesFiltersTreatsPlaygroundChatAsOpenAIChat(t *testing.T) {
+	channel := &Channel{Id: 900020, Type: constant.ChannelTypeAdvancedCustom, Status: common.ChannelStatusEnabled}
+	channel.SetOtherSettings(kitdto.ChannelOtherSettings{
+		AdvancedCustom: &kitdto.AdvancedCustomConfig{
+			Routes: []kitdto.AdvancedCustomRoute{{
+				IncomingPath: "/v1/chat/completions",
+				Models:       []string{"Hunyuan/hy3"},
+			}},
+		},
+	})
+
+	ok, kind := ChannelSatisfiesFilters(channel, "Hunyuan/hy3", []dto.ChannelFilter{{
+		Kind:        dto.FilterRequestPath,
+		RequestPath: "/pg/chat/completions",
+	}})
+	require.True(t, ok)
+	assert.Empty(t, kind)
+}
+
 func TestChannelSatisfiesFilters(t *testing.T) {
 	alphaSetting := `{"task_plugin_key":"alpha"}`
 	alpha := &Channel{Id: 1, Type: constant.ChannelTypeTaskPlugin, Setting: &alphaSetting}

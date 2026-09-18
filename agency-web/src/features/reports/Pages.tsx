@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ActionIcon, PageHeading } from "../../components/Heading";
+import { PageHeader } from "../../components/PageHeader";
 import { DataTable, ErrorNotice, Loading, Money, Pagination, Time } from "../../components/ui";
 import { useQuery } from "../../lib/query";
 import { useMutation } from "../../lib/mutations";
@@ -99,12 +101,10 @@ export function OverviewPage({ identity }: { identity: Identity }) {
   if (!identity.agency_id) return <SyncStatusView />;
   return (
     <section>
-      <div className="toolbar">
-        <h2>{t("Overview")}</h2>
-        <button type="button" className="secondary" onClick={balances.reload}>
+      <PageHeader icon="overview" title={t("Overview")} description={t("Review commission balances and account performance at a glance.")} actions={<button type="button" className="secondary button-icon" onClick={balances.reload}>
+          <ActionIcon name="refresh" />
           {t("Refresh")}
-        </button>
-      </div>
+        </button>} />
       <ErrorNotice error={balances.error} />
       {balances.loading && <Loading />}
       {!balances.loading && !balances.error && !balances.data?.items.length && (
@@ -166,17 +166,16 @@ export function CustomersPage({
   );
   return (
     <section>
-      <div className="toolbar">
-        <h2>{t("Customers")}</h2>
+      <PageHeader icon="customers" title={t("Customers")} description={t("View customer accounts, ownership and usage activity.")} actions={<>
         {identity.actor_type === "root" && (
           <button type="button" onClick={() => setManagement({})}>
             {t("Customer assignment")}
           </button>
         )}
-        <button type="button" className="secondary" onClick={query.reload}>
+        <button type="button" className="secondary button-icon" onClick={query.reload}>
+          <ActionIcon name="refresh" />
           {t("Refresh")}
-        </button>
-      </div>
+        </button></>} />
       <ErrorNotice error={query.error || error} />
       {management && (
         <CustomerManagementDialog
@@ -311,9 +310,9 @@ function CustomerHistory({ customer }: { customer: Customer }) {
   ];
   return (
     <section>
-      <h3>
+      <PageHeading icon="customers" level={3}>
         客户：{customer.username}
-      </h3>
+      </PageHeading>
       <div className="tabs">
         <button
           type="button"
@@ -346,7 +345,8 @@ function PagedReport({ path, columns }: { path: string; columns: Column<Row>[] }
   return (
     <>
       <div className="toolbar">
-        <button type="button" className="secondary" onClick={query.reload}>
+        <button type="button" className="secondary button-icon" onClick={query.reload}>
+          <ActionIcon name="refresh" />
           {t("Refresh")}
         </button>
       </div>
@@ -366,14 +366,12 @@ export function LedgerPage({ onExport }: { onExport?: () => void }) {
   const { t } = useTranslation();
   return (
     <section>
-      <div className="toolbar">
-        <h2>{t("Commission ledger")}</h2>
-        {onExport && (
-          <button type="button" className="secondary" onClick={onExport}>
+      <PageHeader icon="ledger" title={t("Commission ledger")} description={t("Track commission events and export detailed records.")} actions={<>{onExport && (
+          <button type="button" className="secondary button-icon" onClick={onExport}>
+            <ActionIcon name="download" />
             {t("Export commission details")}
           </button>
-        )}
-      </div>
+        )}</>} />
       <PagedReport
         path="/commissions/ledger"
         columns={[
@@ -405,7 +403,7 @@ export function AuditPage({ root }: { root: boolean }) {
   const { t } = useTranslation();
   return (
     <section>
-      <h2>{t("Audit log")}</h2>
+      <PageHeader icon="audit" title={t("Audit log")} description={t("Review sensitive actions and operational changes.")} />
       <PagedReport
         path={root ? "/root/audit" : "/audit"}
         columns={[
@@ -427,51 +425,92 @@ export function AuditPage({ root }: { root: boolean }) {
   );
 }
 
+const capabilityNames: Record<string, string> = {
+  agency_durable_v1: "Agency data service",
+  billing_component_v2: "Billing component",
+  billing_schemas: "Billing data schema",
+  commission_worker: "Commission processing",
+  exports: "Data exports",
+  fact_projection: "Usage projection",
+  onboarding: "Agency onboarding",
+  outbox_v1: "Message queue",
+  pricing_snapshot_v1: "Pricing snapshot",
+  withdrawals: "Commission withdrawals",
+};
+const queueNames: Record<string, string> = {
+  claimed: "Processing",
+  pending: "Pending",
+  poison: "Failed jobs",
+  retry: "Retrying",
+  open_reconciliation_issues: "Open reconciliation",
+  exports_in_progress: "Exports in progress",
+};
+
 function SyncStatusView() {
   const { t } = useTranslation();
   const query = useQuery<SyncStatus>("/root/sync/status");
+  const enabledCount = query.data
+    ? Object.values(query.data.capabilities).filter(Boolean).length
+    : 0;
+  const capabilityCount = query.data ? Object.keys(query.data.capabilities).length : 0;
+  const capabilityPercent = capabilityCount ? Math.round((enabledCount / capabilityCount) * 100) : 0;
+  const pendingCount = query.data
+    ? Object.values(query.data.backlog.deliveries || {}).reduce(
+        (sum, value) => sum + Number(value || 0),
+        0,
+      )
+    : 0;
   return (
     <section>
-      <div className="toolbar">
-        <h2>{t("Service status")}</h2>
-        <button type="button" className="secondary" onClick={query.reload}>
+      <PageHeader icon="status" title={t("Service status")} description={t("Live health checks for services, queues and data")} actions={<button type="button" className="secondary button-icon" onClick={query.reload}>
+          <ActionIcon name="refresh" />
           {t("Refresh")}
-        </button>
-      </div>
+        </button>} />
       <ErrorNotice error={query.error} />
       {query.loading && <Loading />}
       {query.data && (
         <>
-          <p className={query.data.schema.ready ? "success" : "notice"}>
-            {t(
-              query.data.schema.ready
-                ? "Database schema is ready."
-                : "Database schema is incomplete.",
-            )}
-          </p>
-          <DataTable
-            rows={Object.entries(query.data.capabilities).map(([name, value]) => ({ name, value }))}
-            columns={[
-              { key: "name", label: "Capability" },
-              {
-                key: "value",
-                label: "Status",
-                render: (row) => t(row.value ? "Enabled" : "Disabled"),
-              },
-            ]}
-          />
-          <h3>{t("Pending work")}</h3>
-          <DataTable
-            rows={Object.entries({
-              ...query.data.backlog.deliveries,
-              open_reconciliation_issues: query.data.backlog.open_reconciliation_issues,
-              exports_in_progress: query.data.backlog.exports_in_progress,
-            }).map(([name, value]) => ({ name, value }))}
-            columns={[
-              { key: "name", label: "Queue" },
-              { key: "value", label: "Count" },
-            ]}
-          />
+          <div className="service-health">
+            <div className={query.data.schema.ready ? "health-banner ready" : "health-banner warning"}>
+              <span className="health-dot" aria-hidden="true" />
+              <div>
+                <strong>{t(query.data.schema.ready ? "All systems operational" : "Schema needs attention")}</strong>
+                <p>{t(query.data.schema.ready ? "Database schema is ready." : "Database schema is incomplete.")}</p>
+              </div>
+            </div>
+            <div className="status-kpis">
+              <div className="status-kpi"><span>{t("Enabled capabilities")}</span><strong>{enabledCount}<small> / {capabilityCount}</small></strong><div className="kpi-progress"><span style={{ width: `${capabilityPercent}%` }} /></div></div>
+              <div className="status-kpi"><span>{t("Pending work")}</span><strong>{pendingCount}</strong><small className="kpi-caption">{pendingCount === 0 ? t("All queues are clear") : t("Needs attention")}</small></div>
+              <div className="status-kpi"><span>{t("Open issues")}</span><strong>{query.data.backlog.open_reconciliation_issues || 0}</strong></div>
+            </div>
+          </div>
+          <div className="status-section">
+            <div className="section-heading"><div><PageHeading icon="agency" level={3}>{t("Capability")}</PageHeading><p className="muted">{t("Live availability of agency services")}</p></div></div>
+            <div className="capability-grid">
+              {Object.entries(query.data.capabilities).map(([name, value]) => (
+                <article className={value ? "capability-card enabled" : "capability-card disabled"} key={name}>
+                  <div className="capability-icon" aria-hidden="true">{value ? "✓" : "!"}</div>
+                  <div><strong>{t(capabilityNames[name] || name.replaceAll("_", " ") )}</strong><span>{t(value ? "Enabled" : "Disabled")}</span></div>
+                </article>
+              ))}
+            </div>
+          </div>
+          <div className="status-section">
+            <div className="section-heading"><div><PageHeading icon="sync" level={3}>{t("Pending work")}</PageHeading><p className="muted">{t("Background jobs and synchronization queues")}</p></div></div>
+            <div className="queue-grid">
+              {Object.entries({
+                ...(query.data.backlog.deliveries || {}),
+                open_reconciliation_issues: query.data.backlog.open_reconciliation_issues,
+                exports_in_progress: query.data.backlog.exports_in_progress,
+              }).map(([name, value]) => (
+                <article className={Number(value) > 0 ? "queue-card has-items" : "queue-card"} key={name}>
+                  <span>{t(queueNames[name] || name.replaceAll("_", " ") )}</span>
+                  <strong>{Number(value || 0).toLocaleString()}</strong>
+                  <small>{t(Number(value || 0) > 0 ? "Needs attention" : "Clear")}</small>
+                </article>
+              ))}
+            </div>
+          </div>
         </>
       )}
     </section>
@@ -504,11 +543,11 @@ export function SyncPage() {
   return (
     <section>
       <SyncStatusView key={`${revision}:${statusRevision}`} />
-      <div className="toolbar">
-        <h2>{t("Reconciliation")}</h2>
-        <button type="button" disabled={mutation.pending} onClick={() => void run()}>
+      <div className="reconciliation-page-header">
+      <PageHeader icon="sync" title={t("Reconciliation")} description={t("Run checks to compare current records and resolve discrepancies.")} actions={<button className="button-icon" type="button" disabled={mutation.pending} onClick={() => void run()}>
+          <ActionIcon name="refresh" />
           {t("Run reconciliation")}
-        </button>
+        </button>} />
       </div>
       <p className="muted">
         {t(

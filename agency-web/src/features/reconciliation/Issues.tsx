@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ActionIcon } from "../../components/Heading";
 import {
   DataTable,
   Dialog,
@@ -31,7 +32,7 @@ export function ReconciliationIssues(props: { onChanged: () => void }) {
   );
   return (
     <section>
-      <div className="toolbar">
+      <div className="page-filter-bar reconciliation-filter-bar">
         <Field label={t("Issue status")}>
           <select
             value={status}
@@ -46,7 +47,8 @@ export function ReconciliationIssues(props: { onChanged: () => void }) {
             <option value="ignored">{t("Ignored")}</option>
           </select>
         </Field>
-        <button type="button" className="secondary" onClick={query.reload}>
+        <button type="button" className="secondary button-icon" onClick={query.reload}>
+          <ActionIcon name="refresh" />
           {t("Refresh")}
         </button>
       </div>
@@ -65,7 +67,8 @@ export function ReconciliationIssues(props: { onChanged: () => void }) {
             { key: "difference", label: "Difference" },
           ]}
           actions={(row) => (
-            <button type="button" className="secondary" onClick={() => setSelected(row.id)}>
+            <button type="button" className="secondary button-icon" onClick={() => setSelected(row.id)}>
+              <ActionIcon name="eye" />
               {t("Inspect evidence")}
             </button>
           )}
@@ -97,7 +100,8 @@ function IssueReview(props: { id: string; onClose: () => void; onChanged: () => 
   const [busy, setBusy] = useState(false);
   return (
     <Dialog title={t("Review reconciliation issue")} onClose={props.onClose} busy={busy}>
-      <button type="button" className="secondary" disabled={busy} onClick={query.reload}>
+      <button type="button" className="secondary button-icon" disabled={busy} onClick={query.reload}>
+        <ActionIcon name="refresh" />
         {t("Reload evidence")}
       </button>
       <ErrorNotice error={reconciliationError(query.error)} />

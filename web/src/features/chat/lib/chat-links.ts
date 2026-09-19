@@ -143,7 +143,7 @@ export function parseChatConfig(raw: RawChatConfig): ChatPreset[] {
         name,
         url,
         type: detectChatLinkType(url),
-      } satisfies ChatPreset
+      } satisfies Omit<ChatPreset, 'id'>
     })
     .filter((item): item is Omit<ChatPreset, 'id'> => item !== null)
     .map((preset, index) => ({ ...preset, id: String(index) }))

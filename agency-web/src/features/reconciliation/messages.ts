@@ -2,6 +2,7 @@ import type { Locale, Messages } from "../../lib/types";
 
 // English source followed by zh, zh-TW, fr, ja, ru and vi.
 const rows: [string, string, string, string, string, string, string][] = [
+  ["Object name", "对象名称", "物件名稱", "Nom de l’objet", "オブジェクト名", "Название объекта", "Tên đối tượng"],
   [
     "Operation result format is supported",
     "操作结果格式可核验",

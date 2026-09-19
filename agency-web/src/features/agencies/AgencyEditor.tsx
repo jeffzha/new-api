@@ -154,15 +154,17 @@ function AgencyDetails(props: {
           disabled={mutation.pending}
         />
       </Field>
-      <button
-        className="secondary button-icon"
-        type="button"
-        disabled={mutation.pending || !reason.trim()}
-        onClick={() => void changeStatus()}
-      >
-        <ActionIcon name={disabled ? "check" : "close"} />
-        {t(disabled ? "Enable agency" : "Disable agency")}
-      </button>
+      <div className="agency-status-actions">
+        <button
+          className={disabled ? "secondary button-icon" : "danger button-icon"}
+          type="button"
+          disabled={mutation.pending || !reason.trim()}
+          onClick={() => void changeStatus()}
+        >
+          <ActionIcon name={disabled ? "check" : "ban"} />
+          {t(disabled ? "Enable agency" : "Disable agency")}
+        </button>
+      </div>
       <h4>{t("Reset operator password")}</h4>
       <p className="muted">
         {t(

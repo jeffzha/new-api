@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -948,6 +949,52 @@ func TestDisabledAgencyCannotCreateWithdrawalInManagedSession(t *testing.T) {
 
 	require.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
 	require.Contains(t, recorder.Body.String(), "agency_disabled")
+}
+
+func TestCNYWithdrawalRejectsSubCentPrecision(t *testing.T) {
+	app := newAgencyTestApp(t)
+	agency, _, err := app.CreateAgency(1, "CNY precision agency", "cny_precision_operator", agencycontract.Policy{
+		DefaultSettlementBPS: 7500, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000,
+	})
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/agency/api/v1/withdrawals", strings.NewReader(`{"currency_code":"CNY","amount_micros":"10001","account_id":"1"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set("agency_identity", &Identity{ActorType: ActorTypeOperator, ActorID: 7, AgencyID: &agency.ID})
+	app.createWithdrawal(ctx)
+
+	require.Equal(t, http.StatusUnprocessableEntity, recorder.Code, recorder.Body.String())
+	require.Contains(t, recorder.Body.String(), "invalid_withdrawal_precision")
+	require.Contains(t, recorder.Body.String(), "最多保留两位小数")
+}
+
+func TestAuditViewsResolveBusinessNamesFromObjectTypeAndID(t *testing.T) {
+	app := newAgencyTestApp(t)
+	require.NoError(t, app.db.AutoMigrate(&model.User{}))
+	agency, _, err := app.CreateAgency(1, "审计代理商", "audit_operator", agencycontract.Policy{
+		DefaultSettlementBPS: 7500, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000,
+	})
+	require.NoError(t, err)
+	user := model.User{Username: "audit_customer", DisplayName: "审计客户"}
+	require.NoError(t, app.db.Create(&user).Error)
+	account := model.AgencyWithdrawalAccount{AgencyID: agency.ID, Version: 1, Ciphertext: "encrypted", KeyID: "test", Last4: "6789", Status: "active", CreatedAtMS: 1}
+	require.NoError(t, app.db.Create(&account).Error)
+	withdrawal := model.AgencyWithdrawal{RequestNo: "WD-AUDIT-1", AgencyID: agency.ID, CurrencyCode: "CNY", AmountMicros: 10_000, Status: "submitted", Version: 1, AccountID: account.ID, AccountVersion: 1, CreatedAtMS: 1, UpdatedAtMS: 1}
+	require.NoError(t, app.db.Create(&withdrawal).Error)
+
+	views, err := app.auditViews([]model.AgencyAuditLog{
+		{EventID: "user", ObjectType: "user", ObjectID: strconv.Itoa(user.Id)},
+		{EventID: "agency", ObjectType: "agency", ObjectID: stringID(agency.ID)},
+		{EventID: "account", ObjectType: "withdrawal_account", ObjectID: stringID(account.ID)},
+		{EventID: "withdrawal", ObjectType: "withdrawal", ObjectID: stringID(withdrawal.ID)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "审计客户", views[0].ObjectName)
+	require.Equal(t, "审计代理商", views[1].ObjectName)
+	require.Equal(t, "收款账户 · 尾号 6789", views[2].ObjectName)
+	require.Equal(t, "WD-AUDIT-1", views[3].ObjectName)
 }
 
 func TestWithdrawalVerificationScopeIsActionBound(t *testing.T) {

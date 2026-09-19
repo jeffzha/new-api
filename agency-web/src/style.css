@@ -570,6 +570,17 @@ th {
   font-weight: 650;
   box-shadow: inset 3px 0 0 #2563eb;
 }
+.dashboard-panel > * { min-width: 0; }
+.dashboard-panel .table-wrap { max-height: min(62vh, 720px); }
+.dashboard-panel .actions { align-items: center; }
+.dashboard-panel .actions button { min-height: 36px; height: auto; }
+.agency-header select { appearance: auto; }
+.currency-output { display: inline-flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 12px; border: 1px solid #cbd5e1; border-radius: 6px; background: #f8fafc; font-weight: 600; }
+.currency-output span:first-child { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #e6f4ea; color: #16803c; }
+.model-search-row button { width: auto; white-space: nowrap; }
+.agency-status-actions { display: flex; margin: 14px 0 24px; }
+.compact-action { width: auto; min-width: 0; min-height: 34px; padding: 6px 10px; white-space: nowrap; }
+.customer-back { margin-bottom: 18px; }
 .tab-icon {
   width: 28px;
   height: 28px;
@@ -835,10 +846,9 @@ h3 {
 .page-filter-bar .actions {
   margin: 0;
 }
-.toolbar,
-.actions {
-  margin-top: 12px;
-}
+.toolbar { margin-top: 12px; }
+.page-header-actions .actions,
+td .actions { margin: 0; }
 button {
   height: auto;
   min-height: 40px;
@@ -938,7 +948,7 @@ td {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 td:nth-child(2),
@@ -949,6 +959,15 @@ td:nth-child(17) {
 }
 td .actions {
   min-width: 160px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.table-action-cell { vertical-align: middle; }
+.inline-cell-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
 }
 td .toolbar {
   margin: 0;

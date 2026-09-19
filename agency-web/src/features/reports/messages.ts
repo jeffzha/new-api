@@ -1,6 +1,9 @@
 import type { Locale } from "../../lib/types";
 
 const rows = [
+  ["Account name", "账户名称", "帳戶名稱", "Nom du compte", "アカウント名", "Имя аккаунта", "Tên tài khoản"],
+  ["Object name", "对象名称", "物件名稱", "Nom de l’objet", "オブジェクト名", "Имя объекта", "Tên đối tượng"],
+  ["Unknown", "未知", "未知", "Inconnu", "不明", "Неизвестно", "Không rõ"],
   ["Customer account", "客户账号", "客戶帳號", "Compte client", "顧客アカウント", "Аккаунт клиента", "Tài khoản khách hàng"],
   ["Agency", "代理商", "代理商", "Agence", "代理店", "Агент", "Đại lý"],
   ["Model", "模型", "模型", "Modèle", "モデル", "Модель", "Mô hình"],

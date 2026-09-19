@@ -104,10 +104,10 @@ export function PolicyFields(props: {
                     onChange={(e) => updateOverride(index, "sales", e.target.value)}
                   />
                 </td>
-                <td>
+                <td className="table-action-cell">
                   <button
                     type="button"
-                    className="secondary"
+                    className="secondary button-icon compact-action"
                     onClick={() =>
                       props.onChange({
                         ...props.draft,

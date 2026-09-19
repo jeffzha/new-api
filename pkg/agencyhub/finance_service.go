@@ -866,9 +866,14 @@ func (a *App) commissionLedger(c *gin.Context) {
 				return
 			}
 		}
+		accountNames, err := a.loadAccountNames(rows)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "database_error", "读取客户名称失败", nil)
+			return
+		}
 		items := make([]gin.H, 0, len(rows))
 		for _, row := range rows {
-			items = append(items, a.commissionLedgerView(row))
+			items = append(items, a.commissionLedgerView(row, accountNames))
 		}
 		respondOK(c, gin.H{"items": items, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
 		return
@@ -892,9 +897,14 @@ func (a *App) commissionLedger(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "database_error", err.Error(), nil)
 		return
 	}
+	accountNames, err := a.loadAccountNames(rows)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取客户名称失败", nil)
+		return
+	}
 	items := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, a.commissionLedgerView(row))
+		items = append(items, a.commissionLedgerView(row, accountNames))
 	}
 	respondOK(c, gin.H{"items": items, "total": total, "page": page, "page_size": size})
 }
@@ -902,7 +912,7 @@ func (a *App) commissionLedger(c *gin.Context) {
 // commissionLedgerView serializes a commission ledger row with int64 money and
 // timestamp fields as strings so the browser never loses precision, and uses
 // snake_case keys that match the agency-web ledger table contract.
-func (a *App) commissionLedgerView(row model.AgencyCommissionLedger) gin.H {
+func (a *App) commissionLedgerView(row model.AgencyCommissionLedger, accountNames map[int64]string) gin.H {
 	originalEntryID := any(nil)
 	if row.OriginalEntryID != nil {
 		originalEntryID = strconv.FormatInt(*row.OriginalEntryID, 10)
@@ -916,6 +926,7 @@ func (a *App) commissionLedgerView(row model.AgencyCommissionLedger) gin.H {
 		"agency_id":                    strconv.FormatInt(row.AgencyID, 10),
 		"binding_id":                   strconv.FormatInt(row.BindingID, 10),
 		"user_id":                      strconv.FormatInt(row.UserID, 10),
+		"account_name":                 accountNames[row.UserID],
 		"origin_model_name":            row.OriginModelName,
 		"standard_quota":               strconv.FormatInt(row.StandardQuota, 10),
 		"settlement_cost_quota":        strconv.FormatInt(row.SettlementCostQuota, 10),
@@ -928,6 +939,34 @@ func (a *App) commissionLedgerView(row model.AgencyCommissionLedger) gin.H {
 		"exchange_rate":                row.ExchangeRate,
 		"occurred_at_ms":               strconv.FormatInt(row.OccurredAtMS, 10),
 	}
+}
+
+func (a *App) loadAccountNames(rows []model.AgencyCommissionLedger) (map[int64]string, error) {
+	ids := make([]int64, 0, len(rows))
+	seen := make(map[int64]struct{}, len(rows))
+	for _, row := range rows {
+		if row.UserID > 0 {
+			if _, ok := seen[row.UserID]; !ok {
+				seen[row.UserID] = struct{}{}
+				ids = append(ids, row.UserID)
+			}
+		}
+	}
+	result := make(map[int64]string, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	var users []model.User
+	if err := a.db.Select("id, username, display_name").Where("id IN ?", ids).Find(&users).Error; err != nil {
+		// Agency-only fixtures may not attach the platform users table.
+		// Names are an enrichment, so preserve the ledger response when the
+		// optional lookup is unavailable.
+		return result, nil
+	}
+	for _, user := range users {
+		result[int64(user.Id)] = userAccountName(user)
+	}
+	return result, nil
 }
 
 func (a *App) createWithdrawal(c *gin.Context) {
@@ -954,6 +993,11 @@ func (a *App) createWithdrawal(c *gin.Context) {
 	}
 	amountMicros := request.AmountMicros.Int64()
 	accountID := request.AccountID.Int64()
+	currencyCode := strings.ToUpper(strings.TrimSpace(request.CurrencyCode))
+	if currencyCode == "CNY" && (amountMicros < 10_000 || amountMicros%10_000 != 0) {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_withdrawal_precision", "人民币提现金额最低为0.01元，且最多保留两位小数", nil)
+		return
+	}
 	identity := currentIdentity(c)
 	now := time.Now().UnixMilli()
 	var withdrawal model.AgencyWithdrawal
@@ -963,12 +1007,12 @@ func (a *App) createWithdrawal(c *gin.Context) {
 			return errors.New("withdrawal account is invalid")
 		}
 		var balance model.AgencyCommissionBalance
-		if err := model.AgencyLockForUpdate(tx).Where("agency_id = ? AND currency_code = ?", agency.ID, request.CurrencyCode).First(&balance).Error; err != nil {
+		if err := model.AgencyLockForUpdate(tx).Where("agency_id = ? AND currency_code = ?", agency.ID, currencyCode).First(&balance).Error; err != nil {
 			return err
 		}
 		_, withdrawable := commissionTaxAndWithdrawable(balance)
 		if withdrawable < amountMicros {
-			return errors.New("withdrawal amount exceeds commission after tax")
+			return errors.New("提现金额超过可提现佣金余额")
 		}
 		locked, err := checkedAdd(balance.LockedMicros, amountMicros)
 		if err != nil {
@@ -982,7 +1026,7 @@ func (a *App) createWithdrawal(c *gin.Context) {
 			return err
 		}
 		hash := sha256.Sum256([]byte(account.Ciphertext))
-		withdrawal = model.AgencyWithdrawal{RequestNo: no, AgencyID: agency.ID, CurrencyCode: request.CurrencyCode, AmountMicros: amountMicros, Status: "submitted", Version: 1, AccountID: account.ID, AccountVersion: account.Version, AccountSnapshotHash: hex.EncodeToString(hash[:]), AccountSnapshot: account.Ciphertext, AccountSnapshotKeyID: account.KeyID, CreatedAtMS: now, UpdatedAtMS: now}
+		withdrawal = model.AgencyWithdrawal{RequestNo: no, AgencyID: agency.ID, CurrencyCode: currencyCode, AmountMicros: amountMicros, Status: "submitted", Version: 1, AccountID: account.ID, AccountVersion: account.Version, AccountSnapshotHash: hex.EncodeToString(hash[:]), AccountSnapshot: account.Ciphertext, AccountSnapshotKeyID: account.KeyID, CreatedAtMS: now, UpdatedAtMS: now}
 		if err = tx.Create(&withdrawal).Error; err != nil {
 			return err
 		}
@@ -1011,6 +1055,61 @@ func withdrawalView(row model.AgencyWithdrawal) gin.H {
 		"created_at_ms":     row.CreatedAtMS,
 		"updated_at_ms":     row.UpdatedAtMS,
 	}
+}
+
+func (a *App) withdrawalViewWithLabels(row model.AgencyWithdrawal, agencyNames map[int64]string, accountLabels map[int64]string) gin.H {
+	view := withdrawalView(row)
+	if label := strings.TrimSpace(accountLabels[row.AccountID]); label != "" {
+		view["account_label"] = label
+	} else {
+		view["account_label"] = "收款账户"
+	}
+	if label := strings.TrimSpace(agencyNames[row.AgencyID]); label != "" {
+		view["agency_name"] = label
+	}
+	return view
+}
+
+func (a *App) loadWithdrawalLabels(rows []model.AgencyWithdrawal) (map[int64]string, map[int64]string, error) {
+	accountIDs := make([]int64, 0, len(rows))
+	agencyIDs := make([]int64, 0, len(rows))
+	seenAccounts := make(map[int64]struct{}, len(rows))
+	seenAgencies := make(map[int64]struct{}, len(rows))
+	for _, row := range rows {
+		if row.AccountID > 0 {
+			if _, ok := seenAccounts[row.AccountID]; !ok {
+				seenAccounts[row.AccountID] = struct{}{}
+				accountIDs = append(accountIDs, row.AccountID)
+			}
+		}
+		if row.AgencyID > 0 {
+			if _, ok := seenAgencies[row.AgencyID]; !ok {
+				seenAgencies[row.AgencyID] = struct{}{}
+				agencyIDs = append(agencyIDs, row.AgencyID)
+			}
+		}
+	}
+	accounts := make(map[int64]string, len(accountIDs))
+	if len(accountIDs) > 0 {
+		var rows []model.AgencyWithdrawalAccount
+		if err := a.db.Select("id, last4").Where("id IN ?", accountIDs).Find(&rows).Error; err != nil {
+			return nil, nil, err
+		}
+		for _, row := range rows {
+			accounts[row.ID] = fmt.Sprintf("收款账户 · 尾号 %s", row.Last4)
+		}
+	}
+	agencies := make(map[int64]string, len(agencyIDs))
+	if len(agencyIDs) > 0 {
+		var rows []model.Agency
+		if err := a.db.Select("id, display_name").Where("id IN ?", agencyIDs).Find(&rows).Error; err != nil {
+			return nil, nil, err
+		}
+		for _, row := range rows {
+			agencies[row.ID] = row.DisplayName
+		}
+	}
+	return agencies, accounts, nil
 }
 
 func (a *App) listWithdrawals(c *gin.Context) {
@@ -1057,9 +1156,14 @@ func (a *App) listWithdrawals(c *gin.Context) {
 		if hasMore {
 			rows = rows[:size]
 		}
+		agencyNames, accountLabels, err := a.loadWithdrawalLabels(rows)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "database_error", "读取提现名称失败", nil)
+			return
+		}
 		items := make([]gin.H, 0, len(rows))
 		for _, row := range rows {
-			items = append(items, withdrawalView(row))
+			items = append(items, a.withdrawalViewWithLabels(row, agencyNames, accountLabels))
 		}
 		nextCursor := ""
 		if hasMore && len(rows) > 0 {
@@ -1089,9 +1193,14 @@ func (a *App) listWithdrawals(c *gin.Context) {
 	// to an agency operator. The snapshot is retained only so Root can prove
 	// which account version was paid; it is not part of the operator-facing
 	// history contract.
+	agencyNames, accountLabels, err := a.loadWithdrawalLabels(rows)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取提现名称失败", nil)
+		return
+	}
 	items := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, withdrawalView(row))
+		items = append(items, a.withdrawalViewWithLabels(row, agencyNames, accountLabels))
 	}
 	respondOK(c, gin.H{"items": items})
 }
@@ -1137,7 +1246,13 @@ func (a *App) listRootWithdrawals(c *gin.Context) {
 		}
 		query = query.Where("currency_code = ?", currency)
 	}
-	if rawAgency := strings.TrimSpace(c.Query("agency_id")); rawAgency != "" {
+	if agencyName := strings.TrimSpace(c.Query("agency_name")); agencyName != "" {
+		if len([]rune(agencyName)) > 191 {
+			respondError(c, http.StatusBadRequest, "invalid_agency_name", "代理商名称过长", nil)
+			return
+		}
+		query = query.Where("agency_id IN (?)", a.db.Model(&model.Agency{}).Select("id").Where("display_name = ?", agencyName))
+	} else if rawAgency := strings.TrimSpace(c.Query("agency_id")); rawAgency != "" {
 		agencyID, parseErr := strconv.ParseInt(rawAgency, 10, 64)
 		if parseErr != nil || agencyID <= 0 {
 			respondError(c, http.StatusBadRequest, "invalid_agency_id", "代理商ID无效", nil)
@@ -1162,9 +1277,14 @@ func (a *App) listRootWithdrawals(c *gin.Context) {
 	if hasMore {
 		rows = rows[:pageSize]
 	}
+	agencyNames, accountLabels, err := a.loadWithdrawalLabels(rows)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取提现名称失败", nil)
+		return
+	}
 	items := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
-		item := withdrawalView(row)
+		item := a.withdrawalViewWithLabels(row, agencyNames, accountLabels)
 		item["agency_id"] = row.AgencyID
 		item["reviewer_id"] = row.ReviewerID
 		item["previous_status"] = row.PreviousStatus

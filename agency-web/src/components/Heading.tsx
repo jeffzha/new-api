@@ -23,6 +23,10 @@ export type ActionIconName =
   | "play"
   | "search"
   | "eye"
+  | "edit"
+  | "ban"
+  | "arrow-left"
+  | "user"
   | "check";
 
 function Icon({ name }: { name: HeadingIconName }) {
@@ -84,6 +88,10 @@ export function ActionIcon({ name }: { name: ActionIconName }) {
     play: <path d="m8 5 11 7-11 7V5Z" />,
     search: <path d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4Z" />,
     eye: <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />,
+    edit: <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />,
+    ban: <path d="M4.9 4.9a10 10 0 0 1 14.2 14.2M19.1 4.9A10 10 0 0 0 4.9 19.1M5 5l14 14" />,
+    "arrow-left": <path d="M19 12H5M12 19l-7-7 7-7" />,
+    user: <path d="M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z" />,
     check: <path d="m5 12 4 4L19 6" />,
   };
   return <svg className="action-icon" {...common}>{paths[name]}</svg>;

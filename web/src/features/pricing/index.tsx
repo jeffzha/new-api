@@ -252,7 +252,7 @@ export function Pricing() {
             />
 
             <main className='min-w-0 space-y-4'>
-              {agencyPricing && !error && <CustomerPricingNotice />}
+              {agencyPricing && !error && <CustomerPricingNotice models={publicModels} />}
               <PricingToolbar
                 filteredCount={filteredModels.length}
                 totalCount={models?.length}

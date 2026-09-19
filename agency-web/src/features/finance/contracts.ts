@@ -28,12 +28,14 @@ export interface CommissionBalance {
 export interface Withdrawal {
   id: DecimalID;
   agency_id?: DecimalID;
+  agency_name?: string;
   request_no: string;
   currency_code: string;
   amount_micros: string;
   status: string;
   version: DecimalID;
   account_id: DecimalID;
+  account_label?: string;
   account_version: DecimalID;
   previous_status?: string;
   on_hold_reason: string;
@@ -104,11 +106,26 @@ export function amountToMicros(value: string, currency: string): string {
       .maximumFractionDigits ?? 2;
   const [whole, fraction = ""] = normalized.split(".");
   if (fraction.length > Math.min(digits, 6))
-    throw new Error("The amount exceeds the currency precision.");
+    throw new Error("Chinese yuan amounts support at most two decimal places.");
   const micros = BigInt(whole) * 1000000n + BigInt(fraction.padEnd(6, "0"));
   if (micros <= 0n || micros > 9223372036854775807n)
     throw new Error("Enter a valid positive amount.");
   return micros.toString();
+}
+
+export function microsToCurrencyAmount(value: string, currency: string): string {
+  const micros = BigInt(value);
+  const digits =
+    new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions()
+      .maximumFractionDigits ?? 2;
+  const unit = 10n ** BigInt(6 - Math.min(digits, 6));
+  const amount = micros / unit;
+  const scale = 10n ** BigInt(Math.min(digits, 6));
+  const whole = amount / scale;
+  const fraction = String(amount % scale)
+    .padStart(Math.min(digits, 6), "0")
+    .replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : String(whole);
 }
 
 export function currentVersion(value: DecimalID): number {
@@ -148,7 +165,7 @@ export function createWithdrawalRequest(
 ): MutationRequest {
   const micros = amountToMicros(amount, balance.currency_code);
   if (BigInt(micros) > BigInt(balance.withdrawable_micros))
-    throw new Error("The amount exceeds the withdrawable commission balance.");
+    throw new Error("The amount exceeds the available commission balance.");
   return {
     path: "/withdrawals",
     action: "withdrawal.create",

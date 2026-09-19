@@ -374,7 +374,14 @@ func (a *Adaptor) resolve(c *gin.Context, info *relaycommon.RelayInfo) error {
 
 func incomingRequestPath(c *gin.Context, info *relaycommon.RelayInfo) string {
 	if c != nil && c.Request != nil && c.Request.URL != nil {
-		return c.Request.URL.Path
+		requestPath := c.Request.URL.Path
+		// The playground uses the internal /pg/chat/completions route while
+		// advanced-custom channels are configured against the public OpenAI
+		// chat contract. Keep selection and adaptor resolution consistent.
+		if requestPath == "/pg/chat/completions" {
+			return "/v1/chat/completions"
+		}
+		return requestPath
 	}
 	if info == nil {
 		return ""

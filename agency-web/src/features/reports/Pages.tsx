@@ -13,6 +13,65 @@ import { ReconciliationRuns } from "../reconciliation/Runs";
 
 type Row = Record<string, string | number | null>;
 
+const dynamicLabels: Record<string, string> = {
+  admin_grant: "管理员调整",
+  redemption: "兑换码充值",
+  payment_self: "用户自主充值",
+  payment_assisted: "管理员代充",
+  payment_assisted_bonus: "代充赠送",
+  payment_self_bonus: "用户充值赠送",
+  payment_unattributed: "未归属支付",
+  unattributed_nonpaid: "未归属赠送",
+  wallet: "钱包余额",
+  debt: "欠费",
+  reversal: "冲正",
+  original: "原始记录",
+  funding_account: "资金账户",
+  commission_balance: "佣金余额",
+  withdrawal_lock: "提现冻结",
+  withdrawal: "提现单",
+  withdrawal_account: "收款账户",
+  user: "客户",
+  user_binding: "客户归属",
+  provisioning: "绑定任务",
+  agency: "代理商",
+  reconciliation_issue: "对账异常",
+  operator_account: "代理商账号",
+  export: "导出任务",
+  billing_event: "计费事件",
+  "agency.create": "新增代理商",
+  "agency.update": "编辑代理商",
+  "agency.enable": "启用代理商",
+  "agency.disable": "停用代理商",
+  "agency.password_reset": "重置代理商密码",
+  "pricing.publish": "发布价格策略",
+  "user.transfer": "调整客户归属",
+  "provisioning.start": "开始绑定客户",
+  "provisioning.completed": "完成客户绑定",
+  "provisioning.cancel": "取消客户绑定",
+  "withdrawal.create": "提交提现申请",
+  "withdrawal.cancel": "取消提现申请",
+  "withdrawal.transition": "更新提现状态",
+  "withdrawal.mark_paid": "确认提现已支付",
+  "withdrawal_account.create": "新增收款账户",
+  "withdrawal_account.update": "更新收款账户",
+  "withdrawal_account.disable": "停用收款账户",
+  "withdrawal_account.reveal": "查看收款账户",
+  "export.create": "创建数据导出",
+  "export.download": "下载数据导出",
+  "reconciliation.run": "执行对账",
+  "reconciliation.resolve": "处理对账异常",
+  "delivery.ack": "确认安全信息送达",
+  "funding.reverse": "资金冲正",
+  "agency updated": "更新代理商资料",
+  "password reset": "重置登录密码",
+};
+
+function dynamicLabel(value: unknown, fallback: string): string {
+  const raw = String(value ?? "").trim();
+  return dynamicLabels[raw] ?? (raw || fallback);
+}
+
 // Main-site quota is stored as USD-units scaled by quotaPerUnit. The default
 // system setting is 500,000 quota units per USD and 7.3 CNY per USD. Agency
 // reports intentionally show a stable RMB approximation for readable audit
@@ -79,7 +138,9 @@ function formatFundingBreakdown(value: unknown): string {
 interface Customer {
   user_id: string | number;
   username: string;
+  account_name?: string;
   agency_id?: string;
+  agency_name?: string;
   effective_at_ms: string;
   revision: string;
 }
@@ -168,7 +229,8 @@ export function CustomersPage({
     <section>
       <PageHeader icon="customers" title={t("Customers")} description={t("View customer accounts, ownership and usage activity.")} actions={<>
         {identity.actor_type === "root" && (
-          <button type="button" onClick={() => setManagement({})}>
+          <button className="button-icon" type="button" onClick={() => setManagement({})}>
+            <ActionIcon name="user" />
             {t("Customer assignment")}
           </button>
         )}
@@ -186,7 +248,8 @@ export function CustomersPage({
       )}
       {selected ? (
         <>
-          <button className="secondary" type="button" onClick={() => setSelected(null)}>
+          <button className="secondary button-icon customer-back" type="button" onClick={() => setSelected(null)}>
+            <ActionIcon name="arrow-left" />
             {t("Back to customers")}
           </button>
           <CustomerHistory key={String(selected.user_id)} customer={selected} />
@@ -200,8 +263,8 @@ export function CustomersPage({
               rows={query.data?.items || []}
               rowKey={(row) => String(row.user_id)}
               columns={[
-                { key: "username", label: "Customer account" },
-                ...(global ? [{ key: "agency_id", label: "Agency" }] : []),
+                { key: "account_name", label: "Customer account" },
+                ...(global ? [{ key: "agency_name", label: "Agency" }] : []),
                 {
                   key: "effective_at_ms",
                   label: "Bound at",
@@ -213,15 +276,16 @@ export function CustomersPage({
                   {identity.actor_type === "root" && (
                     <button
                       type="button"
-                      className="secondary"
+                      className="secondary button-icon compact-action"
                       onClick={() => setManagement({ userID: String(row.user_id) })}
                     >
+                      <ActionIcon name="edit" />
                       {t("Manage assignment")}
                     </button>
                   )}
                   <button
                     type="button"
-                    className="secondary"
+                    className="secondary button-icon compact-action"
                     disabled={busy}
                     onClick={() => {
                       if (!global) {
@@ -235,6 +299,7 @@ export function CustomersPage({
                         .finally(() => setBusy(false));
                     }}
                   >
+                    <ActionIcon name={global ? "play" : "eye"} />
                     {t(global ? "Enter agency" : "View usage and top-ups")}
                   </button>
                 </>
@@ -380,9 +445,9 @@ export function LedgerPage({ onExport }: { onExport?: () => void }) {
             label: "Time",
             render: (row) => <Time value={row.occurred_at_ms || undefined} />,
           },
-          { key: "user_id", label: "User ID" },
+          { key: "account_name", label: "Customer account" },
           { key: "origin_model_name", label: "Public model" },
-          { key: "entry_type", label: "Entry type" },
+          { key: "entry_type", label: "Entry type", render: (row) => dynamicLabel(row.entry_type, t("Unknown")) },
           {
             key: "amount_micros",
             label: "Commission",
@@ -408,17 +473,17 @@ export function AuditPage({ root }: { root: boolean }) {
         path={root ? "/root/audit" : "/audit"}
         columns={[
           {
-            key: root ? "CreatedAtMS" : "created_at_ms",
+            key: "created_at_ms",
             label: "Time",
             render: (row) => (
-              <Time value={(root ? row.CreatedAtMS : row.created_at_ms) || undefined} />
+              <Time value={row.created_at_ms || undefined} />
             ),
           },
-          { key: root ? "Action" : "action", label: "Action" },
-          { key: root ? "ObjectType" : "object_type", label: "Object type" },
-          { key: root ? "ObjectID" : "object_id", label: "Object ID" },
-          { key: root ? "Reason" : "reason", label: "Reason" },
-          { key: root ? "RequestID" : "request_id", label: "Request ID" },
+          { key: "action", label: "Action", render: (row) => dynamicLabel(row.action, t("Unknown")) },
+          { key: "object_type", label: "Object type", render: (row) => dynamicLabel(row.object_type, t("Unknown")) },
+          { key: "object_name", label: "Account name", render: (row) => String(row.object_name || row.object_id || t("Unknown")) },
+          { key: "reason", label: "Reason", render: (row) => dynamicLabel(row.reason, "—") },
+          { key: "request_id", label: "Request ID" },
         ]}
       />
     </section>

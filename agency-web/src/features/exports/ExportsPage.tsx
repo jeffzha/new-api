@@ -221,10 +221,11 @@ export function ExportsPage({ initialKind = "usage" }: { initialKind?: ExportKin
           actions={(job) => (
             <button
               type="button"
-              className="secondary"
+              className="secondary button-icon compact-action"
               disabled={job.status !== "ready" || Boolean(downloading)}
               onClick={() => void download(job)}
             >
+              <ActionIcon name="download" />
               {t(downloading === job.id ? "Downloading…" : "Download CSV")}
             </button>
           )}

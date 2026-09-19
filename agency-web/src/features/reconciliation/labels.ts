@@ -74,3 +74,22 @@ export const evidenceLabels: Record<string, string> = {
   nonpaid_available: "Available nonpaid funding",
   debt_quota: "Outstanding funding debt",
 };
+
+export const objectTypeLabels: Record<string, string> = {
+  funding_account: "资金账户",
+  commission_balance: "佣金余额",
+  withdrawal_lock: "提现冻结",
+  withdrawal: "提现单",
+  withdrawal_account: "收款账户",
+  user: "客户",
+  user_binding: "客户归属",
+  provisioning: "绑定任务",
+  agency: "代理商",
+  reconciliation_issue: "对账异常",
+  active_binding: "当前客户归属",
+  billing_outbox: "计费事件",
+  billing_operation: "计费操作",
+  funding_lot: "资金批次",
+  charge_component: "扣费明细",
+  billing_event: "计费事件",
+};

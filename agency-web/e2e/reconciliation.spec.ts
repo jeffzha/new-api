@@ -347,7 +347,7 @@ test("root reviews reconciliation evidence and safely restores one missing deliv
   await review.getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("button", { name: "Audit log", exact: true }).click();
   await expect(
-    page.getByRole("row").filter({ hasText: "reconciliation.resolve" }),
+    page.getByRole("row").filter({ hasText: "处理对账异常" }),
   ).toContainText(seeded.delivery_issue_id);
   await page
     .getByRole("button", { name: "Sync & reconciliation", exact: true })

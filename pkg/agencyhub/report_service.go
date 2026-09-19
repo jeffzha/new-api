@@ -701,6 +701,7 @@ func (a *App) listCustomers(c *gin.Context) {
 	type customerView struct {
 		UserID        int64  `json:"user_id"`
 		Username      string `json:"username"`
+		AccountName   string `json:"account_name"`
 		BindingID     int64  `json:"binding_id"`
 		Revision      int64  `json:"revision"`
 		EffectiveAtMS int64  `json:"effective_at_ms"`
@@ -708,7 +709,7 @@ func (a *App) listCustomers(c *gin.Context) {
 	views := make([]customerView, 0, len(bindings))
 	if len(ids) > 0 {
 		var users []model.User
-		if err := a.db.Select("id, username").Where("id IN ?", ids).Find(&users).Error; err != nil {
+		if err := a.db.Select("id, username, display_name").Where("id IN ?", ids).Find(&users).Error; err != nil {
 			respondError(c, http.StatusInternalServerError, "database_error", err.Error(), nil)
 			return
 		}
@@ -731,7 +732,7 @@ func (a *App) listCustomers(c *gin.Context) {
 		}
 		for _, binding := range bindings {
 			user := byID[binding.UserID]
-			views = append(views, customerView{UserID: binding.UserID, Username: user.Username, BindingID: binding.BindingID, Revision: binding.Revision, EffectiveAtMS: effectiveAt[binding.BindingID]})
+			views = append(views, customerView{UserID: binding.UserID, Username: userAccountName(user), AccountName: userAccountName(user), BindingID: binding.BindingID, Revision: binding.Revision, EffectiveAtMS: effectiveAt[binding.BindingID]})
 		}
 	}
 	nextCursor := ""
@@ -807,6 +808,8 @@ func (a *App) listRootCustomers(c *gin.Context) {
 	type rootCustomerView struct {
 		UserID        string `json:"user_id"`
 		Username      string `json:"username"`
+		AccountName   string `json:"account_name"`
+		AgencyName    string `json:"agency_name"`
 		Status        int    `json:"status"`
 		AgencyID      string `json:"agency_id"`
 		BindingID     string `json:"binding_id"`
@@ -816,13 +819,26 @@ func (a *App) listRootCustomers(c *gin.Context) {
 	views := make([]rootCustomerView, 0, len(bindings))
 	if len(ids) > 0 {
 		var users []model.User
-		if err := a.db.Select("id, username, status").Where("id IN ?", ids).Find(&users).Error; err != nil {
+		if err := a.db.Select("id, username, display_name, status").Where("id IN ?", ids).Find(&users).Error; err != nil {
 			respondError(c, http.StatusInternalServerError, "database_error", "读取客户失败", nil)
 			return
 		}
 		byID := make(map[int64]model.User, len(users))
 		for _, user := range users {
 			byID[int64(user.Id)] = user
+		}
+		agencyIDs := make([]int64, 0, len(bindings))
+		for _, binding := range bindings {
+			agencyIDs = append(agencyIDs, binding.AgencyID)
+		}
+		var agencies []model.Agency
+		if err := a.db.Select("id, display_name").Where("id IN ?", agencyIDs).Find(&agencies).Error; err != nil {
+			respondError(c, http.StatusInternalServerError, "database_error", "读取代理商失败", nil)
+			return
+		}
+		agencyNames := make(map[int64]string, len(agencies))
+		for _, agency := range agencies {
+			agencyNames[agency.ID] = agency.DisplayName
 		}
 		bindingIDs := make([]int64, 0, len(bindings))
 		for _, binding := range bindings {
@@ -840,7 +856,7 @@ func (a *App) listRootCustomers(c *gin.Context) {
 		for _, binding := range bindings {
 			user := byID[binding.UserID]
 			views = append(views, rootCustomerView{
-				UserID: strconv.FormatInt(binding.UserID, 10), Username: user.Username, Status: user.Status,
+				UserID: strconv.FormatInt(binding.UserID, 10), Username: user.Username, AccountName: userAccountName(user), AgencyName: agencyNames[binding.AgencyID], Status: user.Status,
 				AgencyID: strconv.FormatInt(binding.AgencyID, 10), BindingID: strconv.FormatInt(binding.BindingID, 10),
 				Revision: strconv.FormatInt(binding.Revision, 10), EffectiveAtMS: strconv.FormatInt(effectiveAt[binding.BindingID], 10),
 			})
@@ -1543,6 +1559,13 @@ func (a *App) reportSummary(c *gin.Context) {
 		"reversal_micros":   strconv.FormatInt(total.ReversalMicros, 10),
 		"items":             items,
 	})
+}
+
+func userAccountName(user model.User) string {
+	if name := strings.TrimSpace(user.DisplayName); name != "" {
+		return name
+	}
+	return user.Username
 }
 
 func parseReportInt(value string) int64 {

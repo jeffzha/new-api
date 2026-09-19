@@ -7,6 +7,7 @@ import { useQuery } from "../../lib/query";
 import {
   actionLabels,
   createWithdrawalRequest,
+  microsToCurrencyAmount,
   paidRequest,
   statusLabels,
   transitionRequest,
@@ -131,11 +132,21 @@ export function WithdrawalForm(props: {
             </Field>
             <Field
               label={t("Withdrawal amount")}
-              hint={t("Enter the currency amount, for example 100.00.")}
+              hint={
+                balance
+                  ? t("Enter at least ¥0.01, with no more than two decimal places. The maximum available amount is {{amount}}.", {
+                      amount: microsToCurrencyAmount(balance.withdrawable_micros, currency),
+                    })
+                  : t("Enter at least ¥0.01, with no more than two decimal places.")
+              }
             >
               <input
                 required
+                type="number"
                 inputMode="decimal"
+                min="0.01"
+                step="0.01"
+                max={balance ? microsToCurrencyAmount(balance.withdrawable_micros, currency) : undefined}
                 autoComplete="off"
                 maxLength={24}
                 value={amount}

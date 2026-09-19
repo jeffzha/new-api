@@ -43,7 +43,7 @@ func (v *reconciliationVerification) nonnegative(name string, amount int64) {
 	}
 }
 
-func reconciliationIssueView(issue model.AgencyReconciliationIssue) gin.H {
+func (a *App) reconciliationIssueView(issue model.AgencyReconciliationIssue) gin.H {
 	var actorID, resolvedAt any
 	if issue.ActorID != nil {
 		actorID = stringID(*issue.ActorID)
@@ -51,7 +51,65 @@ func reconciliationIssueView(issue model.AgencyReconciliationIssue) gin.H {
 	if issue.ResolvedAtMS != nil {
 		resolvedAt = stringID(*issue.ResolvedAtMS)
 	}
-	return gin.H{"id": stringID(issue.ID), "object_type": issue.ObjectType, "object_id": issue.ObjectID, "difference": issue.Difference, "evidence_hash": issue.EvidenceHash, "status": issue.Status, "resolution": issue.Resolution, "actor_id": actorID, "created_at_ms": stringID(issue.CreatedAtMS), "resolved_at_ms": resolvedAt, "repair_event_id": issue.RepairEventID, "resolution_evidence": issue.ResolutionEvidence}
+	objectName := a.reconciliationObjectName(issue)
+	return gin.H{"id": stringID(issue.ID), "object_type": issue.ObjectType, "object_id": issue.ObjectID, "object_name": objectName, "difference": issue.Difference, "evidence_hash": issue.EvidenceHash, "status": issue.Status, "resolution": issue.Resolution, "actor_id": actorID, "created_at_ms": stringID(issue.CreatedAtMS), "resolved_at_ms": resolvedAt, "repair_event_id": issue.RepairEventID, "resolution_evidence": issue.ResolutionEvidence}
+}
+
+func (a *App) reconciliationObjectName(issue model.AgencyReconciliationIssue) string {
+	objectName := issue.ObjectID
+	prefix, rawID := issue.ObjectType, issue.ObjectID
+	if issue.ObjectType == "commission_balance" || issue.ObjectType == "withdrawal_lock" {
+		agencyID, currency, ok := strings.Cut(issue.ObjectID, ":")
+		if ok {
+			var agency model.Agency
+			if a != nil && a.db != nil && a.db.Select("display_name").First(&agency, agencyID).Error == nil {
+				return fmt.Sprintf("%s · %s", agency.DisplayName, currency)
+			}
+		}
+	}
+	if explicitType, explicitID, ok := strings.Cut(issue.ObjectID, ":"); ok {
+		if _, err := strconv.ParseInt(explicitID, 10, 64); err == nil {
+			prefix, rawID, objectName = explicitType, explicitID, explicitID
+		}
+	}
+	if a == nil || a.db == nil {
+		return objectName
+	}
+	var name string
+	switch prefix {
+	case "agency":
+		var row model.Agency
+		if err := a.db.Select("display_name").First(&row, rawID).Error; err == nil {
+			name = row.DisplayName
+		}
+	case "withdrawal":
+		var row model.AgencyWithdrawal
+		if err := a.db.Select("request_no").First(&row, rawID).Error; err == nil {
+			name = row.RequestNo
+		}
+	case "withdrawal_account":
+		var row model.AgencyWithdrawalAccount
+		if err := a.db.Select("last4").First(&row, rawID).Error; err == nil {
+			name = fmt.Sprintf("收款账户 · 尾号 %s", row.Last4)
+		}
+	case "user", "customer", "funding_account", "active_binding":
+		var row model.User
+		if err := a.db.Select("username, display_name").First(&row, rawID).Error; err == nil {
+			name = userAccountName(row)
+		}
+	case "funding_lot":
+		var lot model.AgencyFundingLot
+		if err := a.db.Select("user_id").First(&lot, rawID).Error; err == nil {
+			var row model.User
+			if err := a.db.Select("username, display_name").First(&row, lot.UserID).Error; err == nil {
+				name = userAccountName(row)
+			}
+		}
+	}
+	if strings.TrimSpace(name) != "" {
+		return name
+	}
+	return objectName
 }
 
 // tx must already be a consistent snapshot transaction. Resolution callers

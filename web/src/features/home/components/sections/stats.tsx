@@ -16,119 +16,42 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useRef, useEffect, useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getHomePageStats } from '../../api'
-
-interface CounterProps {
-  end: number
-  suffix?: string
-  prefix?: string
-  duration?: number
-  decimals?: number
-}
-
-function Counter(props: CounterProps) {
-  const { end, suffix = '', prefix = '', duration = 1600, decimals = 0 } = props
-  const ref = useRef<HTMLSpanElement>(null)
-  const startedRef = useRef(false)
-
-  const formatValue = useCallback(
-    (v: number) =>
-      decimals > 0 ? v.toFixed(decimals) : Math.round(v).toLocaleString(),
-    [decimals]
-  )
-
-  const animate = useCallback(() => {
-    const el = ref.current
-    if (!el) return
-    const start = performance.now()
-    const step = (now: number) => {
-      const progress = Math.min((now - start) / duration, 1)
-      const eased = 1 - Math.pow(1 - progress, 3)
-      el.textContent = `${prefix}${formatValue(eased * end)}${suffix}`
-      if (progress < 1) requestAnimationFrame(step)
-    }
-    requestAnimationFrame(step)
-  }, [end, duration, prefix, suffix, formatValue])
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
-    if (mq.matches) {
-      el.textContent = `${prefix}${formatValue(end)}${suffix}`
-      return
-    }
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting && !startedRef.current) {
-          startedRef.current = true
-          animate()
-          observer.unobserve(el)
-        }
-      },
-      { threshold: 0.5 }
-    )
-
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [animate, end, prefix, suffix, formatValue])
-
-  return (
-    <span ref={ref} className='tabular-nums'>
-      {prefix}0{suffix}
-    </span>
-  )
-}
 
 interface StatsProps {
   className?: string
 }
 
 interface StatItem {
-  end: number
-  suffix: string
+  value: string
   label: string
-  decimals?: number
 }
 
 export function Stats(_props: StatsProps) {
   const { t } = useTranslation()
-  const [monthlyTokens, setMonthlyTokens] = useState(0)
-  useEffect(() => {
-    let active = true
-    void getHomePageStats().then((value) => { if (active) setMonthlyTokens(value) }).catch(() => undefined)
-    return () => { active = false }
-  }, [])
-
   const stats: StatItem[] = [
-    { end: monthlyTokens, suffix: '', label: t('Monthly tokens') },
-    { end: 100, suffix: '+', label: t('model billing support') },
-    { end: 50, suffix: '+', label: t('compatible API routes') },
-    { end: 10, suffix: '+', label: t('scheduling controls') },
+    { value: t('1.2 trillion'), label: t('Daily token calls') },
+    { value: t('2 billion TPM'), label: t('Platform peak throughput') },
+    { value: '200+', label: t('Global mainstream models') },
+    { value: '99.9%+', label: t('Platform availability SLA') },
   ]
 
   return (
-    <div className='border-border/40 bg-muted/10 relative z-10 border-y'>
-      <div className='mx-auto max-w-6xl px-6 py-10 md:py-12'>
-        <div className='grid grid-cols-2 gap-8 md:grid-cols-4 md:gap-12'>
-          {stats.map((s) => (
-            <div
-              key={s.label}
-              className='flex flex-col items-center text-center'
-            >
-              <span className='text-2xl font-bold tracking-tight md:text-3xl'>
-                <Counter end={s.end} suffix={s.suffix} decimals={s.decimals} />
-              </span>
-              <span className='text-muted-foreground mt-1.5 text-xs'>
-                {s.label}
-              </span>
-            </div>
-          ))}
-        </div>
+    <div className='relative z-10 mt-12 md:mt-14'>
+      <div className='grid grid-cols-2 gap-3 md:grid-cols-4'>
+        {stats.map((s) => (
+          <div
+            key={s.label}
+            className='border-primary/10 bg-primary/[0.055] dark:bg-primary/[0.08] flex min-h-24 flex-col items-center justify-center rounded-lg border px-3 py-5 text-center'
+          >
+            <span className='text-primary text-2xl font-bold tracking-normal md:text-3xl'>
+              {s.value}
+            </span>
+            <span className='text-muted-foreground mt-1.5 text-xs'>
+              {s.label}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   )

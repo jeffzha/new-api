@@ -3,6 +3,7 @@ export interface ReconciliationIssue {
   id: string;
   object_type: string;
   object_id: string;
+  object_name?: string;
   difference: string;
   evidence_hash: string;
   status: "open" | "resolved" | "ignored";

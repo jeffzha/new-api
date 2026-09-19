@@ -3,7 +3,10 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { PricingUnavailable } from '../components/customer-pricing-status'
+import {
+  CustomerPricingNotice,
+  PricingUnavailable,
+} from '../components/customer-pricing-status'
 import { ModelCard } from '../components/model-card'
 import { ModelDetailsContent } from '../components/model-details'
 import { PricingTable } from '../components/pricing-table'
@@ -52,6 +55,29 @@ function renderDetails(model: PricingModel) {
 }
 
 describe('customer pricing display', () => {
+  it('opens the agency pricing list from the exclusive-price notice', async () => {
+    render(
+      <CustomerPricingNotice
+        models={[
+          customer,
+          { ...customer, model_name: 'second-model', sales_bps: 8000 },
+          { ...customer, model_name: 'base-model', sales_bps: undefined },
+        ]}
+      />
+    )
+
+    await userEvent.setup().click(
+      screen.getByRole('button', { name: 'View agency pricing details' })
+    )
+
+    expect(screen.getByRole('dialog')).toHaveTextContent('Agency pricing details')
+    expect(screen.getByRole('dialog')).toHaveTextContent('hy3')
+    expect(screen.getByRole('dialog')).toHaveTextContent('second-model')
+    expect(screen.getByRole('dialog')).not.toHaveTextContent('base-model')
+    expect(screen.getByRole('dialog')).toHaveTextContent('90.00%')
+    expect(screen.getByRole('dialog')).toHaveTextContent('10.00%')
+  })
+
   it('shows agency input/output prices in both card and table, not ordinary group prices', () => {
     const card = render(
       <ModelCard

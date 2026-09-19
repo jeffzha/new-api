@@ -50,34 +50,36 @@ export function AccountsPage(props: { identity: Identity }) {
           rowKey={(row) => String(row.id)}
           empty={t("Add a payout account before requesting a withdrawal.")}
           columns={[
-            { key: "id", label: "Account ID" },
-            { key: "last4", label: "Account ending", render: (row) => `•••• ${row.last4}` },
+            {
+              key: "account",
+              label: "Account",
+              render: (row) => `${t("Payout account")} · •••• ${row.last4}`,
+            },
             { key: "version", label: "Version" },
             {
               key: "created_at_ms",
               label: "Created",
               render: (row) => formatTime(row.created_at_ms),
             },
-            {
-              key: "actions",
-              label: "Actions",
-              render: (row) => (
-                <div className="actions">
-                  <button className="secondary" type="button" onClick={() => setEdit(row)}>
-                    {t("Replace account details")}
-                  </button>
-                  <button className="danger" type="button" onClick={() => setDisable(row)}>
-                    {t("Disable account")}
-                  </button>
-                  {props.identity.actor_type === "root" && (
-                    <button className="secondary" type="button" onClick={() => setReveal(row)}>
-                      {t("Reveal account")}
-                    </button>
-                  )}
-                </div>
-              ),
-            },
           ]}
+          actions={(row) => (
+            <>
+              <button className="secondary button-icon compact-action" type="button" onClick={() => setEdit(row)}>
+                <ActionIcon name="edit" />
+                {t("Replace account details")}
+              </button>
+              <button className="danger button-icon compact-action" type="button" onClick={() => setDisable(row)}>
+                <ActionIcon name="ban" />
+                {t("Disable account")}
+              </button>
+              {props.identity.actor_type === "root" && (
+                <button className="secondary button-icon compact-action" type="button" onClick={() => setReveal(row)}>
+                  <ActionIcon name="eye" />
+                  {t("Reveal account")}
+                </button>
+              )}
+            </>
+          )}
         />
       )}
       {edit && (

@@ -195,6 +195,33 @@ func TestChannelSatisfiesFiltersTreatsPlaygroundChatAsOpenAIChat(t *testing.T) {
 	assert.Empty(t, kind)
 }
 
+func TestFilterCandidateIDsTreatsPlaygroundChatAsOpenAIChat(t *testing.T) {
+	channel := &Channel{Id: 900021, Type: constant.ChannelTypeAdvancedCustom, Status: common.ChannelStatusEnabled}
+	channel.SetOtherSettings(kitdto.ChannelOtherSettings{
+		AdvancedCustom: &kitdto.AdvancedCustomConfig{
+			Routes: []kitdto.AdvancedCustomRoute{{
+				IncomingPath: "/v1/chat/completions",
+				Models:       []string{"Hunyuan/hy3"},
+			}},
+		},
+	})
+
+	channelSyncLock.Lock()
+	previous := channelsIDM
+	channelsIDM = map[int]*Channel{channel.Id: channel}
+	t.Cleanup(func() {
+		channelsIDM = previous
+		channelSyncLock.Unlock()
+	})
+
+	kept, emptiedBy := filterCandidateIDs([]int{channel.Id}, "Hunyuan/hy3", []dto.ChannelFilter{{
+		Kind:        dto.FilterRequestPath,
+		RequestPath: "/pg/chat/completions",
+	}})
+	require.Equal(t, []int{channel.Id}, kept)
+	assert.Empty(t, emptiedBy)
+}
+
 func TestChannelSatisfiesFilters(t *testing.T) {
 	alphaSetting := `{"task_plugin_key":"alpha"}`
 	alpha := &Channel{Id: 1, Type: constant.ChannelTypeTaskPlugin, Setting: &alphaSetting}

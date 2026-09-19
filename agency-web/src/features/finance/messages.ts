@@ -3,6 +3,7 @@ import type { Locale, Messages } from "../../lib/types";
 // English source keys followed by Chinese, Traditional Chinese, French,
 // Japanese, Russian and Vietnamese UI copy, in that order.
 const rows: [string, string, string, string, string, string, string][] = [
+  ["Account", "账户", "帳戶", "Compte", "口座", "Счёт", "Tài khoản"],
   [
     "Chinese yuan (CNY)",
     "人民币（CNY）",
@@ -489,13 +490,13 @@ const rows: [string, string, string, string, string, string, string][] = [
     "Nhập số tiền dương hợp lệ.",
   ],
   [
-    "The amount exceeds the currency precision.",
-    "金额小数位超出该币种精度。",
-    "金額小數位超出此幣別精度。",
-    "Le montant dépasse la précision de la devise.",
-    "金額の小数桁数が通貨の精度を超えています。",
-    "Слишком много знаков после запятой для этой валюты.",
-    "Số tiền vượt quá độ chính xác của loại tiền.",
+    "Chinese yuan amounts support at most two decimal places.",
+    "人民币金额最多保留两位小数。",
+    "人民幣金額最多保留兩位小數。",
+    "Les montants en yuans chinois acceptent au maximum deux décimales.",
+    "人民元の金額は小数点以下2桁まで入力できます。",
+    "Для сумм в китайских юанях допускается не более двух знаков после запятой.",
+    "Số tiền Nhân dân tệ chỉ hỗ trợ tối đa hai chữ số thập phân.",
   ],
   [
     "Refresh this record before continuing.",
@@ -604,6 +605,24 @@ const rows: [string, string, string, string, string, string, string][] = [
     "通貨の金額を入力してください（例：100.00）。",
     "Введите сумму в валюте, например 100.00.",
     "Nhập số tiền thực tế, ví dụ 100.00.",
+  ],
+  [
+    "Enter at least ¥0.01, with no more than two decimal places.",
+    "最低提现 ¥0.01，人民币金额最多保留两位小数。",
+    "最低提現 ¥0.01，人民幣金額最多保留兩位小數。",
+    "Saisissez au moins 0,01 ¥, avec deux décimales au maximum.",
+    "最低 ¥0.01、人民元は小数点以下2桁まで入力できます。",
+    "Введите не менее 0,01 ¥ и не более двух знаков после запятой.",
+    "Nhập tối thiểu ¥0,01 và không quá hai chữ số thập phân.",
+  ],
+  [
+    "Enter at least ¥0.01, with no more than two decimal places. The maximum available amount is {{amount}}.",
+    "最低提现 ¥0.01，人民币金额最多保留两位小数；当前最多可提现 ¥{{amount}}。",
+    "最低提現 ¥0.01，人民幣金額最多保留兩位小數；目前最多可提現 ¥{{amount}}。",
+    "Saisissez au moins 0,01 ¥, avec deux décimales au maximum. Montant maximal disponible : {{amount}} ¥.",
+    "最低 ¥0.01、人民元は小数点以下2桁まで入力できます。現在の上限は ¥{{amount}} です。",
+    "Введите не менее 0,01 ¥ и не более двух знаков после запятой. Доступно до {{amount}} ¥.",
+    "Nhập tối thiểu ¥0,01 và không quá hai chữ số thập phân. Số tiền tối đa hiện có là ¥{{amount}}.",
   ],
   [
     "Only the latest account is active. Changes create a new version and leave existing withdrawal snapshots unchanged.",

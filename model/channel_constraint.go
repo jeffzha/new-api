@@ -98,7 +98,17 @@ func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilte
 			return true
 		}
 		config := ch.GetOtherSettings().AdvancedCustom
-		return config != nil && config.SupportsPathForModel(filter.RequestPath, modelName)
+		if config == nil {
+			return false
+		}
+		// The playground exposes the OpenAI chat contract at /pg/chat/completions.
+		// Advanced-custom channels are configured against the public /v1 route,
+		// so normalize the internal playground path before evaluating routes.
+		requestPath := filter.RequestPath
+		if requestPath == "/pg/chat/completions" {
+			requestPath = "/v1/chat/completions"
+		}
+		return config.SupportsPathForModel(requestPath, modelName)
 	case dto.FilterTaskPluginIdentity:
 		if ch.Type == constant.ChannelTypeTaskPlugin {
 			key := ch.GetSetting().TaskPluginKey

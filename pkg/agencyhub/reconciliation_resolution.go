@@ -60,7 +60,7 @@ func (a *App) getReconciliationIssue(c *gin.Context) {
 		return
 	}
 	c.Header("Cache-Control", "no-store")
-	respondOK(c, gin.H{"issue": reconciliationIssueView(issue), "verification": verification})
+	respondOK(c, gin.H{"issue": a.reconciliationIssueView(issue), "verification": verification})
 }
 
 func (a *App) resolveReconciliationIssue(c *gin.Context) {
@@ -195,7 +195,7 @@ func (a *App) resolveReconciliationIssue(c *gin.Context) {
 		if after.State != "consistent" {
 			return errReconciliationUnresolved
 		}
-		evidence, err := common.Marshal(gin.H{"action": request.Action, "previous_issue": reconciliationIssueView(issue), "before": before, "after": after})
+		evidence, err := common.Marshal(gin.H{"action": request.Action, "previous_issue": a.reconciliationIssueView(issue), "before": before, "after": after})
 		if err != nil {
 			return err
 		}
@@ -217,7 +217,7 @@ func (a *App) resolveReconciliationIssue(c *gin.Context) {
 		if err := recordAuditTx(tx, c, identity, "reconciliation.resolve", "reconciliation_issue", stringID(issue.ID), request.Resolution, before, gin.H{"verification": after, "action": request.Action, "status": request.Status, "repair_event_id": repairEventID}); err != nil {
 			return err
 		}
-		response, err = common.Marshal(apiResponse{Success: true, Data: gin.H{"issue": reconciliationIssueView(issue), "verification": after}, RequestID: requestID(c)})
+		response, err = common.Marshal(apiResponse{Success: true, Data: gin.H{"issue": a.reconciliationIssueView(issue), "verification": after}, RequestID: requestID(c)})
 		if err != nil {
 			return err
 		}

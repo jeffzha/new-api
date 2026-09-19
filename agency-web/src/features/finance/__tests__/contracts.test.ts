@@ -3,6 +3,7 @@ import {
   accountMutation,
   amountToMicros,
   createWithdrawalRequest,
+  microsToCurrencyAmount,
   paidRequest,
   transitionRequest,
   withdrawalActions,
@@ -31,6 +32,8 @@ describe("withdrawal amounts", () => {
     expect(amountToMicros("0.001", "KWD")).toBe("1000");
     expect(amountToMicros("9999999999.99", "CNY")).toBe("9999999999990000");
     expect(amountToMicros("120", "JPY")).toBe("120000000");
+    expect(microsToCurrencyAmount("93289328", "CNY")).toBe("93.28");
+    expect(microsToCurrencyAmount("120000000", "JPY")).toBe("120");
   });
   test("rejects nonpositive, exponent, overflow, and unsupported precision values", () => {
     for (const amount of [

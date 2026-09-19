@@ -21,7 +21,7 @@ import { WithdrawalActionDialog, WithdrawalForm } from "./WithdrawalForms";
 export function WithdrawalsPage(props: { identity: Identity; onAddAccount?: () => void }) {
   const { t } = useTranslation();
   const isRoot = props.identity.actor_type === "root";
-  const [filters, setFilters] = useState({ status: "", agency_id: "", currency_code: "" });
+  const [filters, setFilters] = useState({ status: "", agency_name: "", currency_code: "" });
   const [applied, setApplied] = useState(filters);
   const [cursor, setCursor] = useState("");
   const [create, setCreate] = useState(false);
@@ -81,12 +81,10 @@ export function WithdrawalsPage(props: { identity: Identity; onAddAccount?: () =
               ))}
             </select>
           </Field>
-          <Field label={t("Agency ID")}>
+          <Field label={t("Agency name")}>
             <input
-              inputMode="numeric"
-              pattern="[1-9][0-9]*"
-              value={filters.agency_id}
-              onChange={(event) => setFilters({ ...filters, agency_id: event.target.value })}
+              value={filters.agency_name}
+              onChange={(event) => setFilters({ ...filters, agency_name: event.target.value })}
             />
           </Field>
           <Field label={t("Currency")}>
@@ -118,7 +116,7 @@ export function WithdrawalsPage(props: { identity: Identity; onAddAccount?: () =
           )}
           columns={[
             { key: "request_no", label: "Withdrawal" },
-            ...(isRoot ? [{ key: "agency_id", label: "Agency ID" }] : []),
+            ...(isRoot ? [{ key: "agency_name", label: "Agency name" }] : []),
             {
               key: "amount_micros",
               label: "Amount",
@@ -138,14 +136,15 @@ export function WithdrawalsPage(props: { identity: Identity; onAddAccount?: () =
               key: "account_id",
               label: "Payout account",
               render: (row) => (
-                <>
-                  {row.account_id} · {t("Version")} {row.account_version}
+                <div className="inline-cell-actions">
+                  <span>{row.account_label || t("Payout account")} · {t("Version")} {row.account_version}</span>
                   {isRoot && (
-                    <button className="secondary" type="button" onClick={() => setRevealed(row)}>
+                    <button className="secondary button-icon compact-action" type="button" onClick={() => setRevealed(row)}>
+                      <ActionIcon name="eye" />
                       {t("Reveal account")}
                     </button>
                   )}
-                </>
+                </div>
               ),
             },
             {
@@ -166,11 +165,12 @@ export function WithdrawalsPage(props: { identity: Identity; onAddAccount?: () =
                 <div className="actions">
                   {withdrawalActions(row, isRoot).map((action) => (
                     <button
-                      className="secondary"
+                      className="secondary button-icon compact-action"
                       key={action}
                       type="button"
                       onClick={() => setSelected({ row, action })}
                     >
+                      <ActionIcon name={action === "paid" || action === "approved" ? "check" : action === "rejected" || action === "cancelled" ? "close" : "play"} />
                       {t(actionLabels[action])}
                     </button>
                   ))}

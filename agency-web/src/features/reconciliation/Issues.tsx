@@ -19,8 +19,24 @@ import {
   type ReconciliationIssue,
   type ResolutionAction,
 } from "./contracts";
-import { evidenceLabels } from "./labels";
+import { evidenceLabels, objectTypeLabels } from "./labels";
 import { reconciliationError } from "./errors";
+
+function differenceLabel(value: string): string {
+  const labels: Record<string, string> = {
+    "balance mismatch": "余额不一致",
+    "missing delivery": "缺少投递记录",
+    "detected discrepancy": "检测到数据差异",
+    "historical discrepancy": "历史数据差异",
+    "requires external evidence": "需要外部凭证核查",
+    "billing event delivery moved to poison": "计费事件投递多次失败，已进入异常队列",
+  };
+  if (labels[value]) return labels[value];
+  return value
+    .replaceAll("expected=", "应为：")
+    .replaceAll(", actual=", "，实际为：")
+    .replaceAll("; ", "；");
+}
 
 export function ReconciliationIssues(props: { onChanged: () => void }) {
   const { t } = useTranslation();
@@ -61,10 +77,10 @@ export function ReconciliationIssues(props: { onChanged: () => void }) {
           rowKey={(row) => row.id}
           columns={[
             { key: "id", label: "Issue ID" },
-            { key: "object_type", label: "Object type" },
-            { key: "object_id", label: "Object ID" },
+            { key: "object_type", label: "Object type", render: (row) => t(objectTypeLabels[row.object_type] || row.object_type) },
+            { key: "object_id", label: "Object name", render: (row) => row.object_name || row.object_id },
             { key: "status", label: "Status", render: (row) => t(row.status) },
-            { key: "difference", label: "Difference" },
+            { key: "difference", label: "Difference", render: (row) => differenceLabel(row.difference) },
           ]}
           actions={(row) => (
             <button type="button" className="secondary button-icon" onClick={() => setSelected(row.id)}>
@@ -170,13 +186,13 @@ function IssueEvidence(props: {
         <dt>{t("Issue ID")}</dt>
         <dd>{issue.id}</dd>
         <dt>{t("Object type")}</dt>
-        <dd>{issue.object_type}</dd>
-        <dt>{t("Object ID")}</dt>
-        <dd>{issue.object_id}</dd>
+        <dd>{t(objectTypeLabels[issue.object_type] || issue.object_type)}</dd>
+        <dt>{t("Object name")}</dt>
+        <dd>{issue.object_name || issue.object_id}</dd>
         <dt>{t("Status")}</dt>
         <dd>{t(issue.status)}</dd>
         <dt>{t("Original discrepancy")}</dt>
-        <dd>{issue.difference}</dd>
+        <dd>{differenceLabel(issue.difference)}</dd>
       </dl>
       {issue.status !== "open" && !issue.resolution_evidence && (
         <p className="notice">

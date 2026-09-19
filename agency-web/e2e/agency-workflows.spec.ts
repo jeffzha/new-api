@@ -163,7 +163,7 @@ test("operator sees net lifetime commission without deducting paid or locked amo
       .locator("strong"),
   ).toHaveText("CNY 800.00");
   await page.getByLabel("Language", { exact: true }).selectOption("zh");
-  await expect(page.getByText("净总佣金", { exact: true })).toHaveCount(2);
+  await expect(page.getByText("净佣金总额", { exact: true })).toHaveCount(2);
   await page.screenshot({
     path: test.info().outputPath("commission-overview-zh.png"),
     fullPage: true,
@@ -235,7 +235,7 @@ test("root creates an agency, acknowledges delivery and the operator must change
   ]);
   await page.getByRole("button", { name: "Audit log", exact: true }).click();
   await expect(
-    page.getByRole("cell", { name: "agency.create", exact: true }).first(),
+    page.getByRole("cell", { name: "新增代理商", exact: true }).first(),
   ).toBeVisible();
   await page.getByRole("button", { name: "Agencies", exact: true }).click();
   await page.getByLabel("Language", { exact: true }).selectOption("zh");

@@ -3,6 +3,7 @@ package agencyhub
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -233,7 +234,7 @@ func (a *App) listReconciliationIssues(c *gin.Context) {
 	}
 	items := make([]gin.H, 0, len(issues))
 	for _, issue := range issues {
-		items = append(items, reconciliationIssueView(issue))
+		items = append(items, a.reconciliationIssueView(issue))
 	}
 	respondOK(c, gin.H{"items": items, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
 }
@@ -301,7 +302,12 @@ func (a *App) listAudit(c *gin.Context) {
 			return
 		}
 	}
-	respondOK(c, gin.H{"items": rows, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
+	items, enrichErr := a.auditViews(rows)
+	if enrichErr != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取审计对象名称失败", nil)
+		return
+	}
+	respondOK(c, gin.H{"items": items, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
 }
 
 // listOwnAudit intentionally exposes a reduced operator view.  Root audit
@@ -352,22 +358,10 @@ func (a *App) listOwnAudit(c *gin.Context) {
 	if hasMore {
 		rows = rows[:pageSize]
 	}
-	type auditView struct {
-		EventID     string `json:"event_id"`
-		Action      string `json:"action"`
-		ObjectType  string `json:"object_type"`
-		ObjectID    string `json:"object_id"`
-		RequestID   string `json:"request_id"`
-		Reason      string `json:"reason,omitempty"`
-		CreatedAtMS int64  `json:"created_at_ms"`
-	}
-	items := make([]auditView, 0, len(rows))
-	for _, row := range rows {
-		items = append(items, auditView{
-			EventID: row.EventID, Action: row.Action, ObjectType: row.ObjectType,
-			ObjectID: row.ObjectID, RequestID: row.RequestID, Reason: row.Reason,
-			CreatedAtMS: row.CreatedAtMS,
-		})
+	items, enrichErr := a.auditViews(rows)
+	if enrichErr != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取审计对象名称失败", nil)
+		return
 	}
 	nextCursor := ""
 	if hasMore && len(rows) > 0 {
@@ -382,4 +376,200 @@ func (a *App) listOwnAudit(c *gin.Context) {
 		}
 	}
 	respondOK(c, gin.H{"items": items, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
+}
+
+type auditView struct {
+	EventID     string `json:"event_id"`
+	Action      string `json:"action"`
+	ObjectType  string `json:"object_type"`
+	ObjectID    string `json:"object_id"`
+	ObjectName  string `json:"object_name"`
+	RequestID   string `json:"request_id"`
+	Reason      string `json:"reason,omitempty"`
+	CreatedAtMS int64  `json:"created_at_ms"`
+}
+
+func (a *App) auditViews(rows []model.AgencyAuditLog) ([]auditView, error) {
+	userIDs := make([]int64, 0)
+	agencyIDs := make([]int64, 0)
+	accountIDs := make([]int64, 0)
+	withdrawalIDs := make([]int64, 0)
+	operatorIDs := make([]int64, 0)
+	bindingIDs := make([]int64, 0)
+	provisioningIDs := make([]int64, 0)
+	seenUsers := map[int64]struct{}{}
+	seenAgencies := map[int64]struct{}{}
+	seenAccounts := map[int64]struct{}{}
+	seenWithdrawals := map[int64]struct{}{}
+	seenOperators := map[int64]struct{}{}
+	seenBindings := map[int64]struct{}{}
+	seenProvisioning := map[int64]struct{}{}
+	if a == nil || a.db == nil {
+		items := make([]auditView, 0, len(rows))
+		for _, row := range rows {
+			items = append(items, auditView{
+				EventID: row.EventID, Action: row.Action, ObjectType: row.ObjectType,
+				ObjectID: row.ObjectID, ObjectName: row.ObjectID, RequestID: row.RequestID,
+				Reason: row.Reason, CreatedAtMS: row.CreatedAtMS,
+			})
+		}
+		return items, nil
+	}
+	for _, row := range rows {
+		prefix, rawID := row.ObjectType, row.ObjectID
+		if explicitType, explicitID, ok := strings.Cut(row.ObjectID, ":"); ok {
+			if _, err := strconv.ParseInt(explicitID, 10, 64); err == nil {
+				prefix, rawID = explicitType, explicitID
+			}
+		}
+		id, err := strconv.ParseInt(rawID, 10, 64)
+		if err != nil || id <= 0 {
+			continue
+		}
+		switch prefix {
+		case "user", "customer":
+			if _, ok := seenUsers[id]; !ok {
+				seenUsers[id] = struct{}{}
+				userIDs = append(userIDs, id)
+			}
+		case "agency":
+			if _, ok := seenAgencies[id]; !ok {
+				seenAgencies[id] = struct{}{}
+				agencyIDs = append(agencyIDs, id)
+			}
+		case "withdrawal_account":
+			if _, ok := seenAccounts[id]; !ok {
+				seenAccounts[id] = struct{}{}
+				accountIDs = append(accountIDs, id)
+			}
+		case "withdrawal":
+			if _, ok := seenWithdrawals[id]; !ok {
+				seenWithdrawals[id] = struct{}{}
+				withdrawalIDs = append(withdrawalIDs, id)
+			}
+		case "operator_account":
+			if _, ok := seenOperators[id]; !ok {
+				seenOperators[id] = struct{}{}
+				operatorIDs = append(operatorIDs, id)
+			}
+		case "user_binding":
+			if _, ok := seenBindings[id]; !ok {
+				seenBindings[id] = struct{}{}
+				bindingIDs = append(bindingIDs, id)
+			}
+		case "provisioning":
+			if _, ok := seenProvisioning[id]; !ok {
+				seenProvisioning[id] = struct{}{}
+				provisioningIDs = append(provisioningIDs, id)
+			}
+		}
+	}
+	bindingUsers := map[int64]int64{}
+	if len(bindingIDs) > 0 {
+		var values []model.AgencyUserBinding
+		if err := a.db.Select("id, user_id").Where("id IN ?", bindingIDs).Find(&values).Error; err == nil {
+			for _, value := range values {
+				bindingUsers[value.ID] = value.UserID
+				if _, ok := seenUsers[value.UserID]; !ok {
+					seenUsers[value.UserID] = struct{}{}
+					userIDs = append(userIDs, value.UserID)
+				}
+			}
+		}
+	}
+	provisioningUsers := map[int64]int64{}
+	if len(provisioningIDs) > 0 {
+		var values []model.AgencyProvisioningJob
+		if err := a.db.Select("id, user_id").Where("id IN ?", provisioningIDs).Find(&values).Error; err == nil {
+			for _, value := range values {
+				provisioningUsers[value.ID] = value.UserID
+				if _, ok := seenUsers[value.UserID]; !ok {
+					seenUsers[value.UserID] = struct{}{}
+					userIDs = append(userIDs, value.UserID)
+				}
+			}
+		}
+	}
+	users := map[int64]string{}
+	if len(userIDs) > 0 {
+		var values []model.User
+		if err := a.db.Select("id, username, display_name").Where("id IN ?", userIDs).Find(&values).Error; err == nil {
+			for _, value := range values {
+				users[int64(value.Id)] = userAccountName(value)
+			}
+		}
+	}
+	agencies := map[int64]string{}
+	if len(agencyIDs) > 0 {
+		var values []model.Agency
+		if err := a.db.Select("id, display_name").Where("id IN ?", agencyIDs).Find(&values).Error; err == nil {
+			for _, value := range values {
+				agencies[value.ID] = value.DisplayName
+			}
+		}
+	}
+	accounts := map[int64]string{}
+	if len(accountIDs) > 0 {
+		var values []model.AgencyWithdrawalAccount
+		if err := a.db.Select("id, last4").Where("id IN ?", accountIDs).Find(&values).Error; err == nil {
+			for _, value := range values {
+				accounts[value.ID] = fmt.Sprintf("收款账户 · 尾号 %s", value.Last4)
+			}
+		}
+	}
+	withdrawals := map[int64]string{}
+	if len(withdrawalIDs) > 0 {
+		var values []model.AgencyWithdrawal
+		if err := a.db.Select("id, request_no").Where("id IN ?", withdrawalIDs).Find(&values).Error; err == nil {
+			for _, value := range values {
+				withdrawals[value.ID] = value.RequestNo
+			}
+		}
+	}
+	operators := map[int64]string{}
+	if len(operatorIDs) > 0 {
+		var values []model.AgencyOperatorAccount
+		if err := a.db.Select("id, username").Where("id IN ?", operatorIDs).Find(&values).Error; err == nil {
+			for _, value := range values {
+				operators[value.ID] = value.Username
+			}
+		}
+	}
+	items := make([]auditView, 0, len(rows))
+	for _, row := range rows {
+		name := ""
+		prefix, rawID := row.ObjectType, row.ObjectID
+		if explicitType, explicitID, ok := strings.Cut(row.ObjectID, ":"); ok {
+			if _, err := strconv.ParseInt(explicitID, 10, 64); err == nil {
+				prefix, rawID = explicitType, explicitID
+			}
+		}
+		if id, err := strconv.ParseInt(rawID, 10, 64); err == nil {
+			switch prefix {
+			case "agency":
+				name = agencies[id]
+			case "withdrawal_account":
+				name = accounts[id]
+			case "withdrawal":
+				name = withdrawals[id]
+			case "operator_account":
+				name = operators[id]
+			case "user_binding":
+				if userID := bindingUsers[id]; userID > 0 {
+					name = users[userID]
+				} else {
+					name = users[id]
+				}
+			case "provisioning":
+				name = users[provisioningUsers[id]]
+			default:
+				name = users[id]
+			}
+		}
+		if strings.TrimSpace(name) == "" {
+			name = row.ObjectID
+		}
+		items = append(items, auditView{EventID: row.EventID, Action: row.Action, ObjectType: row.ObjectType, ObjectID: row.ObjectID, ObjectName: name, RequestID: row.RequestID, Reason: row.Reason, CreatedAtMS: row.CreatedAtMS})
+	}
+	return items, nil
 }

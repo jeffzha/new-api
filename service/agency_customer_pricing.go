@@ -52,6 +52,14 @@ func AgencyCustomerSales(userID int, modelNames []string) (map[string]int, error
 	if err := agencycontract.ValidatePolicy(policy); err != nil {
 		return nil, err
 	}
+	platform, err := model.LoadAgencyPlatformPolicy(model.DB)
+	if err != nil {
+		return nil, err
+	}
+	policy, err = agencycontract.ApplyPlatformPolicy(policy, platform)
+	if err != nil {
+		return nil, err
+	}
 	// Exact Go string keys preserve case-sensitive public model identities on
 	// MySQL installations using case-insensitive default collations, too.
 	overrides := make(map[string]int, len(policy.ModelOverrides))

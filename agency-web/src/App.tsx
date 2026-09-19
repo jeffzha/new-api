@@ -334,7 +334,11 @@ function Dashboard({
               }}
             >
               <span className="tab-icon" aria-hidden="true"><NavIcon tab={item} /></span>
-              <span>{t(tabLabels[item])}</span>
+              <span>
+                {item === "pricing"
+                  ? t(root ? "Platform pricing policy" : "Agency sales coefficients")
+                  : t(tabLabels[item])}
+              </span>
             </button>
           ))}
         </nav>

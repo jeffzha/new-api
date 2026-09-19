@@ -53,7 +53,11 @@ func (a *App) createAgencyHTTP(c *gin.Context) {
 		request.Pricing.SalesCapBPS = a.config.SalesCapBPS
 	}
 	if err := agencycontract.ValidatePolicy(request.Pricing); err != nil {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", err.Error(), nil)
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
+		return
+	}
+	if _, err := a.effectivePolicy(request.Pricing); err != nil {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
 		return
 	}
 	identity := currentIdentity(c)
@@ -94,6 +98,9 @@ func (a *App) CreateAgencyWithDelivery(rootID int64, displayName, operatorUserna
 
 func (a *App) createAgency(rootID int64, displayName, operatorUsername string, policy agencycontract.Policy, deliveryOperationID string, binding deliveryBinding) (model.Agency, string, model.AgencyDeliverySecret, error) {
 	if err := agencycontract.ValidatePolicy(policy); err != nil {
+		return model.Agency{}, "", model.AgencyDeliverySecret{}, err
+	}
+	if _, err := a.effectivePolicy(policy); err != nil {
 		return model.Agency{}, "", model.AgencyDeliverySecret{}, err
 	}
 	if rootID <= 0 {

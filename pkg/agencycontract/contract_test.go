@@ -95,3 +95,25 @@ func TestModelKeyIsCaseAndUTF8ExactAcrossDatabases(t *testing.T) {
 	_, err = ModelKey(strings.Repeat("\U0001D49C", 192))
 	require.ErrorIs(t, err, ErrInvalidModelName)
 }
+
+func TestPlatformPolicyControlsCostWhileAgencySalesOverrideWins(t *testing.T) {
+	agencySales := 7000
+	base := Policy{
+		DefaultSettlementBPS: 5000, DefaultSalesBPS: 6500, MinSpreadBPS: 500, SalesCapBPS: 30000,
+		ModelOverrides: []ModelOverride{{OriginModelName: "glm-5.3", SalesBPS: &agencySales}},
+	}
+	platform := PlatformPolicy{ModelPrices: []PlatformModelPrice{{
+		OriginModelName: "glm-5.3", PlatformCostBPS: 5000, AgencyCostBPS: 5500, DefaultSalesBPS: 6000,
+	}}}
+	effective, err := ApplyPlatformPolicy(base, platform)
+	require.NoError(t, err)
+	resolved, err := Resolve(effective, "glm-5.3")
+	require.NoError(t, err)
+	require.Equal(t, 5500, resolved.SettlementBPS)
+	require.Equal(t, 7000, resolved.SalesBPS)
+
+	agencySales = 5400
+	base.ModelOverrides[0].SalesBPS = &agencySales
+	_, err = ApplyPlatformPolicy(base, platform)
+	require.Error(t, err, "an agency sale below platform-owned agency cost must fail closed")
+}

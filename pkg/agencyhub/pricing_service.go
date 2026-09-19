@@ -33,6 +33,40 @@ type salesPricingRequest struct {
 	Reason string `json:"reason"`
 }
 
+func pricingErrorMessage(err error) string {
+	message := err.Error()
+	if rest, ok := strings.CutPrefix(message, "model "); ok {
+		if modelName, matched := strings.CutSuffix(rest, " agency cost must cover platform cost"); matched {
+			return "模型 " + modelName + "：代理商成本系数不能低于平台成本系数。"
+		}
+		if modelName, matched := strings.CutSuffix(rest, " sales coefficient must cover agency cost"); matched {
+			return "模型 " + modelName + "：销售系数不能低于代理商成本系数。"
+		}
+		if modelName, matched := strings.CutSuffix(rest, " violates minimum spread"); matched {
+			return "模型 " + modelName + "：销售系数必须不低于代理商成本系数与最低价差之和。"
+		}
+	}
+	if strings.HasPrefix(message, "coefficient ") && strings.Contains(message, " is outside ") {
+		return "价格系数超出允许范围，请填写 0 到 10 之间的数值，最多保留四位小数。"
+	}
+	switch {
+	case strings.HasPrefix(message, "duplicate platform model price:"):
+		return "同一个模型只能配置一条平台价格策略。"
+	case strings.HasPrefix(message, "duplicate model override:"):
+		return "同一个模型只能配置一条销售系数。"
+	case message == "default sales coefficient must be at least settlement plus spread":
+		return "默认销售系数必须不低于代理商成本系数与最低价差之和。"
+	case strings.HasPrefix(message, "invalid minimum spread:"):
+		return "最低价差设置无效，请检查后重试。"
+	case strings.HasPrefix(message, "invalid sales cap:"):
+		return "销售系数上限设置无效，请检查后重试。"
+	case message == "sales coefficient model is not managed by platform pricing":
+		return "该模型尚未纳入平台价格策略，请先由超级管理员配置平台价格。"
+	default:
+		return "价格策略配置不符合要求，请检查成本顺序、销售系数、最低价差和数值范围。"
+	}
+}
+
 func (a *App) loadAgencyPolicy(agencyID int64) (model.Agency, agencycontract.Policy, error) {
 	var agency model.Agency
 	if err := a.db.First(&agency, agencyID).Error; err != nil {
@@ -83,6 +117,58 @@ func (a *App) getRootPricing(c *gin.Context) {
 		return
 	}
 	respondOK(c, a.policyView(agency, policy))
+}
+
+func (a *App) getOwnModelSales(c *gin.Context) {
+	agency, policy, ok := a.ownAgency(c)
+	if ok {
+		a.respondModelSales(c, agency, policy)
+	}
+}
+
+func (a *App) getRootModelSales(c *gin.Context) {
+	id, err := parseID(c.Param("id"))
+	if err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_id", "无效的代理商", nil)
+		return
+	}
+	agency, policy, err := a.loadAgencyPolicy(id)
+	if err != nil {
+		respondError(c, http.StatusNotFound, "not_found", "代理商或价格策略不存在", nil)
+		return
+	}
+	a.respondModelSales(c, agency, policy)
+}
+
+func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agencycontract.Policy) {
+	platform, err := model.LoadAgencyPlatformPolicy(a.db)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取平台价格策略失败", nil)
+		return
+	}
+	overrides := make(map[string]*int, len(policy.ModelOverrides))
+	for _, override := range policy.ModelOverrides {
+		if override.SalesBPS != nil {
+			value := *override.SalesBPS
+			overrides[override.OriginModelName] = &value
+		}
+	}
+	items := make([]gin.H, 0, len(platform.ModelPrices))
+	for _, price := range platform.ModelPrices {
+		sales := price.DefaultSalesBPS
+		override := overrides[price.OriginModelName]
+		if override != nil {
+			sales = *override
+		}
+		items = append(items, gin.H{
+			"origin_model_name":          price.OriginModelName,
+			"agency_cost_bps":            price.AgencyCostBPS,
+			"platform_default_sales_bps": price.DefaultSalesBPS,
+			"sales_bps":                  sales,
+			"override_sales_bps":         override,
+		})
+	}
+	respondOK(c, gin.H{"agency_id": agency.ID, "agency_name": agency.DisplayName, "revision": policy.Revision, "platform_revision": platform.Revision, "default_sales_bps": policy.DefaultSalesBPS, "items": items})
 }
 
 func (a *App) getOwnPricingHistory(c *gin.Context) {
@@ -178,12 +264,12 @@ func (a *App) previewRootPricing(c *gin.Context) {
 		policy.SalesCapBPS = a.config.SalesCapBPS
 	}
 	if err := agencycontract.ValidatePolicy(policy); err != nil {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", err.Error(), nil)
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
 		return
 	}
 	preview, err := pricePreview(policy)
 	if err != nil {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", err.Error(), nil)
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
 		return
 	}
 	respondOK(c, preview)
@@ -229,18 +315,69 @@ func (a *App) previewSalesPricing(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, "invalid_request", "请求格式错误", nil)
 		return
 	}
-	candidate, err := mergeSalesPolicy(policy, request)
+	candidate, err := a.mergePublishedSalesPolicy(policy, request)
 	if err != nil {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", err.Error(), nil)
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
 		return
 	}
 	if err := agencycontract.ValidatePolicy(candidate); err != nil {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", err.Error(), nil)
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
 		return
 	}
-	preview, err := pricePreview(candidate)
+	effective, err := a.effectivePolicy(candidate)
 	if err != nil {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", err.Error(), nil)
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
+		return
+	}
+	preview, err := pricePreview(effective)
+	if err != nil {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
+		return
+	}
+	respondOK(c, preview)
+}
+
+func (a *App) previewRootSalesPricing(c *gin.Context) {
+	a.handleRootSalesPricing(c, false)
+}
+
+func (a *App) publishRootSalesPricing(c *gin.Context) {
+	a.handleRootSalesPricing(c, true)
+}
+
+func (a *App) handleRootSalesPricing(c *gin.Context, publish bool) {
+	id, err := parseID(c.Param("id"))
+	if err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_id", "无效的代理商", nil)
+		return
+	}
+	_, old, err := a.loadAgencyPolicy(id)
+	if err != nil {
+		respondError(c, http.StatusNotFound, "not_found", "代理商或价格策略不存在", nil)
+		return
+	}
+	var request salesPricingRequest
+	if err = common.DecodeJsonStrict(c.Request.Body, &request); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_request", "请求格式错误", nil)
+		return
+	}
+	candidate, err := a.mergePublishedSalesPolicy(old, request)
+	if err != nil {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
+		return
+	}
+	if publish {
+		_ = a.publishPolicy(c, id, request.ExpectedRevision, candidate, request.Reason, ActorTypeRoot)
+		return
+	}
+	effective, err := a.effectivePolicy(candidate)
+	if err != nil {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
+		return
+	}
+	preview, err := pricePreview(effective)
+	if err != nil {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
 		return
 	}
 	respondOK(c, preview)
@@ -274,9 +411,9 @@ func (a *App) publishSalesPricing(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, "invalid_request", "请求格式错误", nil)
 		return
 	}
-	candidate, err := mergeSalesPolicy(old, request)
+	candidate, err := a.mergePublishedSalesPolicy(old, request)
 	if err != nil {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", err.Error(), nil)
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
 		return
 	}
 	identity := currentIdentity(c)
@@ -287,6 +424,70 @@ func (a *App) publishSalesPricing(c *gin.Context) {
 		actorType = ActorTypeRoot
 	}
 	_ = a.publishPolicy(c, agency.ID, request.ExpectedRevision, candidate, request.Reason, actorType)
+}
+
+func (a *App) effectivePolicy(policy agencycontract.Policy) (agencycontract.Policy, error) {
+	platform, err := model.LoadAgencyPlatformPolicy(a.db)
+	if err != nil {
+		return agencycontract.Policy{}, err
+	}
+	return agencycontract.ApplyPlatformPolicy(policy, platform)
+}
+
+func (a *App) mergePublishedSalesPolicy(base agencycontract.Policy, request salesPricingRequest) (agencycontract.Policy, error) {
+	platform, err := model.LoadAgencyPlatformPolicy(a.db)
+	if err != nil {
+		return agencycontract.Policy{}, err
+	}
+	if len(platform.ModelPrices) == 0 {
+		return mergeSalesPolicy(base, request)
+	}
+
+	platformModels := make(map[string]struct{}, len(platform.ModelPrices))
+	for _, price := range platform.ModelPrices {
+		key, keyErr := agencycontract.ModelKey(price.OriginModelName)
+		if keyErr != nil {
+			return agencycontract.Policy{}, keyErr
+		}
+		platformModels[key] = struct{}{}
+	}
+
+	candidate := base
+	candidate.ModelOverrides = make([]agencycontract.ModelOverride, 0, len(base.ModelOverrides)+len(request.ModelSalesOverrides))
+	positions := make(map[string]int, len(base.ModelOverrides)+len(request.ModelSalesOverrides))
+	for _, override := range base.ModelOverrides {
+		key, keyErr := agencycontract.ModelKey(override.OriginModelName)
+		if keyErr != nil {
+			return agencycontract.Policy{}, keyErr
+		}
+		copy := override
+		if _, managed := platformModels[key]; managed {
+			copy.SalesBPS = nil
+		}
+		if copy.SettlementBPS == nil && copy.SalesBPS == nil {
+			continue
+		}
+		positions[key] = len(candidate.ModelOverrides)
+		candidate.ModelOverrides = append(candidate.ModelOverrides, copy)
+	}
+	for _, override := range request.ModelSalesOverrides {
+		key, keyErr := agencycontract.ModelKey(override.OriginModelName)
+		if keyErr != nil {
+			return agencycontract.Policy{}, keyErr
+		}
+		if _, managed := platformModels[key]; !managed {
+			return agencycontract.Policy{}, errors.New("sales coefficient model is not managed by platform pricing")
+		}
+		if position, exists := positions[key]; exists {
+			candidate.ModelOverrides[position].SalesBPS = override.SalesBPS
+			continue
+		}
+		if override.SalesBPS != nil {
+			positions[key] = len(candidate.ModelOverrides)
+			candidate.ModelOverrides = append(candidate.ModelOverrides, agencycontract.ModelOverride{OriginModelName: override.OriginModelName, SalesBPS: override.SalesBPS})
+		}
+	}
+	return candidate, nil
 }
 
 func mergeSalesPolicy(base agencycontract.Policy, request salesPricingRequest) (agencycontract.Policy, error) {
@@ -337,7 +538,11 @@ func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, po
 		return errors.New("expected revision required")
 	}
 	if err := agencycontract.ValidatePolicy(policy); err != nil {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", err.Error(), nil)
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
+		return err
+	}
+	if _, err := a.effectivePolicy(policy); err != nil {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
 		return err
 	}
 	identity := currentIdentity(c)

@@ -112,6 +112,7 @@ func (a *App) Router() *gin.Engine {
 	api.POST("/auth/verify", a.operatorVerify)
 	api.GET("/pricing", a.getOwnPricing)
 	api.GET("/pricing/history", a.getOwnPricingHistory)
+	api.GET("/pricing/model-sales", a.getOwnModelSales)
 	api.GET("/models", a.listPublicModels)
 	api.POST("/pricing/sales/preview", a.previewSalesPricing)
 	api.POST("/pricing/sales/publish", a.publishSalesPricing)
@@ -147,8 +148,13 @@ func (a *App) Router() *gin.Engine {
 	root.POST("/deliveries/:delivery_id/ack", a.acknowledgeDeliverySecret)
 	root.GET("/agencies/:id/pricing", a.getRootPricing)
 	root.GET("/agencies/:id/pricing/history", a.getRootPricingHistory)
+	root.GET("/agencies/:id/pricing/model-sales", a.getRootModelSales)
 	root.POST("/agencies/:id/pricing/preview", a.previewRootPricing)
 	root.POST("/agencies/:id/pricing/publish", a.publishRootPricing)
+	root.POST("/agencies/:id/pricing/sales/preview", a.previewRootSalesPricing)
+	root.POST("/agencies/:id/pricing/sales/publish", a.publishRootSalesPricing)
+	root.GET("/platform-pricing", a.getPlatformPricing)
+	root.POST("/platform-pricing/publish", a.publishPlatformPricing)
 	root.POST("/agencies/:id/enter", a.enterAgency)
 	root.POST("/leave-agency", a.leaveAgency)
 	root.GET("/customers", a.listRootCustomers)
@@ -256,22 +262,24 @@ func (a *App) agencySchemaStatus() (gin.H, error) {
 		}
 	}
 	required := map[string][]string{
-		(model.Agency{}).TableName():                    {"price_revision", "state_revision", "current_policy_version_id"},
-		(model.AgencyPricePolicyVersion{}).TableName():  {"revision", "policy_hash", "created_at_ms"},
-		(model.AgencyBillingJournal{}).TableName():      {"charge_id", "status", "reserve_quota", "revision"},
-		(model.AgencyBillingOperation{}).TableName():    {"charge_id", "event_count", "committed_result"},
-		(model.AgencyFundingAccount{}).TableName():      {"paid_available", "nonpaid_available", "money_seq", "reconcile_blocked"},
-		(model.AgencyExportJob{}).TableName():           {"error_code", "lease_owner", "lease_until", "attempts"},
-		(model.AgencyTopupFact{}).TableName():           {"source_id", "quota_conversion_snapshot", "actual_money", "currency_code", "payment_reference", "expires_at", "expired_quota"},
-		(model.AgencyReconciliationIssue{}).TableName(): {"active_key", "resolution_evidence", "repair_event_id"},
-		(model.AgencyChargeComponent{}).TableName():     {"component_key", "original_result", "refunded_quota", "reversed_commission_micros"},
-		(model.AgencyComponentFunding{}).TableName():    {"charge_component_id", "allocation_id", "restored_paid_quota", "restored_nonpaid_quota", "restored_debt_quota"},
-		(model.AgencyUsageFact{}).TableName():           {"component_key"},
-		(model.AgencyFundingLot{}).TableName():          {"actor_user_id", "source_snapshot_json", "bonus_debt_repaid", "expires_at", "bonus_expired"},
-		(model.AgencyFundingAllocation{}).TableName():   {"source_snapshot_json"},
-		(model.AgencyDebtRepayment{}).TableName():       {"source_kind"},
-		(model.AgencyFundingDebt{}).TableName():         {"allocation_id"},
-		(model.AgencyCommissionLedger{}).TableName():    {"component_key"},
+		(model.Agency{}).TableName():                     {"price_revision", "state_revision", "current_policy_version_id"},
+		(model.AgencyPricePolicyVersion{}).TableName():   {"revision", "policy_hash", "created_at_ms"},
+		(model.AgencyPlatformPriceState{}).TableName():   {"revision", "current_version_id", "updated_at_ms"},
+		(model.AgencyPlatformPriceVersion{}).TableName(): {"revision", "policy_hash", "created_at_ms"},
+		(model.AgencyBillingJournal{}).TableName():       {"charge_id", "status", "reserve_quota", "revision"},
+		(model.AgencyBillingOperation{}).TableName():     {"charge_id", "event_count", "committed_result"},
+		(model.AgencyFundingAccount{}).TableName():       {"paid_available", "nonpaid_available", "money_seq", "reconcile_blocked"},
+		(model.AgencyExportJob{}).TableName():            {"error_code", "lease_owner", "lease_until", "attempts"},
+		(model.AgencyTopupFact{}).TableName():            {"source_id", "quota_conversion_snapshot", "actual_money", "currency_code", "payment_reference", "expires_at", "expired_quota"},
+		(model.AgencyReconciliationIssue{}).TableName():  {"active_key", "resolution_evidence", "repair_event_id"},
+		(model.AgencyChargeComponent{}).TableName():      {"component_key", "original_result", "refunded_quota", "reversed_commission_micros"},
+		(model.AgencyComponentFunding{}).TableName():     {"charge_component_id", "allocation_id", "restored_paid_quota", "restored_nonpaid_quota", "restored_debt_quota"},
+		(model.AgencyUsageFact{}).TableName():            {"component_key"},
+		(model.AgencyFundingLot{}).TableName():           {"actor_user_id", "source_snapshot_json", "bonus_debt_repaid", "expires_at", "bonus_expired"},
+		(model.AgencyFundingAllocation{}).TableName():    {"source_snapshot_json"},
+		(model.AgencyDebtRepayment{}).TableName():        {"source_kind"},
+		(model.AgencyFundingDebt{}).TableName():          {"allocation_id"},
+		(model.AgencyCommissionLedger{}).TableName():     {"component_key"},
 	}
 	for table, columns := range required {
 		if !a.db.Migrator().HasTable(table) {

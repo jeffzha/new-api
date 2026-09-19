@@ -50,7 +50,7 @@ func TestAgencyBrowserFixture(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	require.NoError(t, model.MigrateAgency(db))
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Task{}, &model.Log{}, &model.Ability{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Task{}, &model.Log{}, &model.Channel{}, &model.Ability{}))
 	previousDB := model.DB
 	model.DB = db
 	t.Cleanup(func() { model.DB = previousDB })
@@ -73,6 +73,9 @@ func TestAgencyBrowserFixture(t *testing.T) {
 	source := model.UserSession{SID: "browser-root-session", UserID: root.Id, Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive, RefreshHash: "browser-refresh", LoginMethod: "password", LastActiveAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Hour).Unix()}
 	require.NoError(t, db.Create(&source).Error)
 	policy := agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
+	channel := model.Channel{Name: "Browser model channel", Type: 1, Key: "browser-only", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: "browser-chat-model", ChannelId: channel.Id, Enabled: true}).Error)
 	agency, _, err := app.CreateAgency(int64(root.Id), "Browser Agency", "browser-operator", policy)
 	require.NoError(t, err)
 	passwordHash, err := common.Password2Hash("Browser-operator-2026!")

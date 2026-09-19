@@ -67,15 +67,23 @@ describe('customer pricing display', () => {
     )
 
     await userEvent.setup().click(
-      screen.getByRole('button', { name: 'View agency pricing details' })
+      screen.getByRole('button', { name: 'View exclusive pricing' })
     )
 
-    expect(screen.getByRole('dialog')).toHaveTextContent('Agency pricing details')
+    expect(screen.getByRole('dialog')).toHaveTextContent(
+      'Agency-exclusive pricing details'
+    )
     expect(screen.getByRole('dialog')).toHaveTextContent('hy3')
     expect(screen.getByRole('dialog')).toHaveTextContent('second-model')
     expect(screen.getByRole('dialog')).not.toHaveTextContent('base-model')
     expect(screen.getByRole('dialog')).toHaveTextContent('90.00%')
     expect(screen.getByRole('dialog')).toHaveTextContent('10.00%')
+    expect(
+      screen.getByRole('region', { name: 'Agency pricing model list' })
+    ).toHaveClass('overflow-x-auto')
+    expect(screen.getByRole('dialog').querySelector('[style]')).toHaveStyle({
+      '--dialog-content-height': 'min(520px, calc(100dvh - 14rem))',
+    })
   })
 
   it('shows agency input/output prices in both card and table, not ordinary group prices', () => {

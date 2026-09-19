@@ -60,6 +60,105 @@ type ResolvedPolicy struct {
 	OriginModelName string
 }
 
+// PlatformModelPrice defines the platform-owned cost chain for one exact
+// public model. Channel names are deliberately not persisted here: they are
+// read from the live routing catalog so channel changes appear immediately.
+type PlatformModelPrice struct {
+	OriginModelName string `json:"origin_model_name"`
+	PlatformCostBPS int    `json:"platform_cost_bps"`
+	AgencyCostBPS   int    `json:"agency_cost_bps"`
+	DefaultSalesBPS int    `json:"default_sales_bps"`
+}
+
+type PlatformPolicy struct {
+	Revision    int64                `json:"revision"`
+	ModelPrices []PlatformModelPrice `json:"model_prices"`
+}
+
+func ValidatePlatformPolicy(policy PlatformPolicy) error {
+	if len(policy.ModelPrices) > 1000 {
+		return errors.New("too many platform model prices")
+	}
+	seen := make(map[string]struct{}, len(policy.ModelPrices))
+	for _, price := range policy.ModelPrices {
+		key, err := ModelKey(price.OriginModelName)
+		if err != nil {
+			return err
+		}
+		if _, exists := seen[key]; exists {
+			return fmt.Errorf("duplicate platform model price: %s", price.OriginModelName)
+		}
+		seen[key] = struct{}{}
+		for _, coefficient := range []int{price.PlatformCostBPS, price.AgencyCostBPS, price.DefaultSalesBPS} {
+			if coefficient < MinCoefficientBPS || coefficient > MaxCoefficientBPS {
+				return fmt.Errorf("coefficient %d is outside 0..%d", coefficient, MaxCoefficientBPS)
+			}
+		}
+		if price.AgencyCostBPS < price.PlatformCostBPS {
+			return fmt.Errorf("model %s agency cost must cover platform cost", price.OriginModelName)
+		}
+		if price.DefaultSalesBPS < price.AgencyCostBPS {
+			return fmt.Errorf("model %s sales coefficient must cover agency cost", price.OriginModelName)
+		}
+	}
+	return nil
+}
+
+func ResolvePlatform(policy PlatformPolicy, originModelName string) (*PlatformModelPrice, error) {
+	key, err := ModelKey(originModelName)
+	if err != nil {
+		return nil, err
+	}
+	for i := range policy.ModelPrices {
+		priceKey, keyErr := ModelKey(policy.ModelPrices[i].OriginModelName)
+		if keyErr == nil && priceKey == key {
+			price := policy.ModelPrices[i]
+			return &price, nil
+		}
+	}
+	return nil, nil
+}
+
+// ApplyPlatformPolicy overlays the platform-owned agency cost and default
+// sale onto an agency policy without mutating either input. An explicit agency
+// sales override wins; platform cost always remains administrator-owned.
+func ApplyPlatformPolicy(policy Policy, platform PlatformPolicy) (Policy, error) {
+	result := policy
+	result.ModelOverrides = append([]ModelOverride(nil), policy.ModelOverrides...)
+	positions := make(map[string]int, len(result.ModelOverrides))
+	for i, override := range result.ModelOverrides {
+		key, err := ModelKey(override.OriginModelName)
+		if err != nil {
+			return Policy{}, err
+		}
+		positions[key] = i
+	}
+	for _, price := range platform.ModelPrices {
+		key, err := ModelKey(price.OriginModelName)
+		if err != nil {
+			return Policy{}, err
+		}
+		agencyCost := price.AgencyCostBPS
+		if position, exists := positions[key]; exists {
+			override := result.ModelOverrides[position]
+			override.SettlementBPS = &agencyCost
+			if override.SalesBPS == nil {
+				defaultSales := price.DefaultSalesBPS
+				override.SalesBPS = &defaultSales
+			}
+			result.ModelOverrides[position] = override
+			continue
+		}
+		defaultSales := price.DefaultSalesBPS
+		result.ModelOverrides = append(result.ModelOverrides, ModelOverride{OriginModelName: price.OriginModelName, SettlementBPS: &agencyCost, SalesBPS: &defaultSales})
+		positions[key] = len(result.ModelOverrides) - 1
+	}
+	if err := ValidatePolicy(result); err != nil {
+		return Policy{}, err
+	}
+	return result, nil
+}
+
 // ModelKey hashes the exact UTF-8 model name. The original name remains in the
 // policy for display and collision verification.
 func ModelKey(originModelName string) (string, error) {

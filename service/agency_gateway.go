@@ -305,6 +305,14 @@ func AgencyQuoteForUser(userID, tokenID int, originModelName string, acceptedAtM
 	if err := common.Unmarshal([]byte(policyRow.PolicyJSON), &policy); err != nil {
 		return nil, err
 	}
+	platform, err := model.LoadAgencyPlatformPolicy(model.DB)
+	if err != nil {
+		return nil, err
+	}
+	policy, err = agencycontract.ApplyPlatformPolicy(policy, platform)
+	if err != nil {
+		return nil, err
+	}
 	resolved, err := agencycontract.Resolve(policy, originModelName)
 	if err != nil {
 		return nil, err

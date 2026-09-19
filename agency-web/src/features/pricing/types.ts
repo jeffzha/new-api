@@ -44,3 +44,34 @@ export type PricePreview = {
     commission_quota: number;
   }[];
 };
+
+export type PlatformPriceRow = {
+  origin_model_name: string;
+  channel_names: string[];
+  platform_cost_bps: number | null;
+  agency_cost_bps: number | null;
+  default_sales_bps: number | null;
+};
+
+export type PlatformPricing = {
+  revision: number;
+  items: PlatformPriceRow[];
+  refreshed_at_ms: number;
+};
+
+export type ModelSaleRow = {
+  origin_model_name: string;
+  agency_cost_bps: number;
+  platform_default_sales_bps: number;
+  sales_bps: number;
+  override_sales_bps: number | null;
+};
+
+export type ModelSales = {
+  agency_id: string | number;
+  agency_name: string;
+  revision: number;
+  platform_revision: number;
+  default_sales_bps: number;
+  items: ModelSaleRow[];
+};

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/csv"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -261,6 +262,58 @@ func TestSalesPolicyPublishPreservesRootSettlementOverrides(t *testing.T) {
 	require.Equal(t, settlement, *candidate.ModelOverrides[0].SettlementBPS)
 	require.NotNil(t, candidate.ModelOverrides[0].SalesBPS)
 	require.Equal(t, newSales, *candidate.ModelOverrides[0].SalesBPS)
+}
+
+func TestPricingErrorsAreSafeChineseMessages(t *testing.T) {
+	require.Equal(t, "模型 deepseek-v4-flash：代理商成本系数不能低于平台成本系数。", pricingErrorMessage(errors.New("model deepseek-v4-flash agency cost must cover platform cost")))
+	require.Equal(t, "模型 deepseek-v4-flash：销售系数必须不低于代理商成本系数与最低价差之和。", pricingErrorMessage(errors.New("model deepseek-v4-flash violates minimum spread")))
+	require.Equal(t, "价格策略配置不符合要求，请检查成本顺序、销售系数、最低价差和数值范围。", pricingErrorMessage(errors.New("internal implementation detail")))
+}
+
+func TestPlatformPricingPublishesLiveModelChannelMatrixAndRejectsAgencyConflict(t *testing.T) {
+	client := newFinanceRootClient(t)
+	require.NoError(t, client.app.db.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	channel := model.Channel{Name: "uzoom-QWEN", Type: 1, Key: "unused", Status: common.ChannelStatusEnabled}
+	require.NoError(t, client.app.db.Create(&channel).Error)
+	require.NoError(t, client.app.db.Create(&model.Ability{Group: "default", Model: "glm-5.3", ChannelId: channel.Id, Enabled: true}).Error)
+
+	body := `{"expected_revision":0,"model_prices":[{"origin_model_name":"glm-5.3","platform_cost_bps":5000,"agency_cost_bps":5500,"default_sales_bps":6000}],"reason":"initial matrix"}`
+	proof := client.proof(t, body, "pricing.platform.publish", "platform_pricing:current", "platform-pricing-first")
+	response := client.post("/agency/api/v1/root/platform-pricing/publish", body, "platform-pricing-first", proof)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+	policy, err := model.LoadAgencyPlatformPolicy(client.app.db)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), policy.Revision)
+	require.Len(t, policy.ModelPrices, 1)
+	require.Equal(t, 5500, policy.ModelPrices[0].AgencyCostBPS)
+
+	request := httptest.NewRequest(http.MethodGet, "/agency/api/v1/root/platform-pricing", nil)
+	request.AddCookie(&http.Cookie{Name: client.app.config.CookieName, Value: client.sessionToken})
+	recorder := httptest.NewRecorder()
+	client.app.Router().ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Contains(t, recorder.Body.String(), "glm-5.3")
+	require.Contains(t, recorder.Body.String(), "uzoom-QWEN")
+	require.NoError(t, client.app.db.Model(&channel).Update("status", common.ChannelStatusManuallyDisabled).Error)
+
+	retained := `{"expected_revision":1,"model_prices":[{"origin_model_name":"glm-5.3","platform_cost_bps":5000,"agency_cost_bps":5500,"default_sales_bps":6000}],"reason":"retain temporarily unavailable model"}`
+	retainedProof := client.proof(t, retained, "pricing.platform.publish", "platform_pricing:current", "platform-pricing-retained")
+	retainedResponse := client.post("/agency/api/v1/root/platform-pricing/publish", retained, "platform-pricing-retained", retainedProof)
+	require.Equal(t, http.StatusOK, retainedResponse.Code, retainedResponse.Body.String())
+
+	lowSales := 6100
+	_, _, err = client.app.CreateAgency(client.rootID, "Low sale agency", "low-sale-agency", agencycontract.Policy{
+		DefaultSettlementBPS: 5000, DefaultSalesBPS: 6500, MinSpreadBPS: 500, SalesCapBPS: 30000,
+		ModelOverrides: []agencycontract.ModelOverride{{OriginModelName: "glm-5.3", SalesBPS: &lowSales}},
+	})
+	require.NoError(t, err)
+
+	conflicting := `{"expected_revision":2,"model_prices":[{"origin_model_name":"glm-5.3","platform_cost_bps":5500,"agency_cost_bps":6000,"default_sales_bps":6500}],"reason":"raise cost"}`
+	conflictProof := client.proof(t, conflicting, "pricing.platform.publish", "platform_pricing:current", "platform-pricing-conflict")
+	conflict := client.post("/agency/api/v1/root/platform-pricing/publish", conflicting, "platform-pricing-conflict", conflictProof)
+	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
+	require.Contains(t, conflict.Body.String(), "Low sale agency")
 }
 
 func TestPayoutAccountEncryptionRoundTrip(t *testing.T) {

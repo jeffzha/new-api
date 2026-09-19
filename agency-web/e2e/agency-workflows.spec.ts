@@ -274,70 +274,78 @@ test("root creates an agency, acknowledges delivery and the operator must change
   }
 });
 
-test("operator publishes sales only and keeps its draft when another session published first", async ({
+test("root publishes live platform costs and the operator can change only its sales coefficient", async ({
   page,
   browser,
 }) => {
-  await operatorLogin(page);
-  await page.getByRole("button", { name: "Pricing", exact: true }).click();
-  await expect(page.getByLabel("Default settlement coefficient", { exact: true })).toHaveAttribute(
-    "readonly",
-    "",
+  await rootLogin(page);
+  await page.getByRole("button", { name: "Platform pricing policy", exact: true }).click();
+  await expect(page.getByRole("cell", { name: "browser-chat-model", exact: true })).toBeVisible();
+  await expect(page.getByText("Browser model channel", { exact: true })).toBeVisible();
+  await page.getByLabel("Platform cost coefficient: browser-chat-model", { exact: true }).fill("0.75");
+  await page.getByLabel("Agency cost coefficient: browser-chat-model", { exact: true }).fill("0.80");
+  await page.getByLabel("Sales coefficient: browser-chat-model", { exact: true }).fill("0.90");
+  await page.getByLabel("Change reason", { exact: true }).first().fill("Browser platform pricing");
+  const platformPublished = page.waitForResponse((response) =>
+    response.url().endsWith("/root/platform-pricing/publish"),
   );
-  await expect(page.getByLabel("Default settlement coefficient", { exact: true })).toHaveValue(
-    "0.7500",
-  );
-  const otherContext = await browser.newContext({
+  await page.getByRole("button", { name: "Publish platform pricing", exact: true }).click();
+  await confirm(page, rootPassword);
+  const platformResponse = await platformPublished;
+  expect(platformResponse.status()).toBe(200);
+  expect(platformResponse.request().postDataJSON()).toMatchObject({
+    expected_revision: 0,
+    model_prices: [{
+      origin_model_name: "browser-chat-model",
+      platform_cost_bps: 7500,
+      agency_cost_bps: 8000,
+      default_sales_bps: 9000,
+    }],
+  });
+
+  const operatorContext = await browser.newContext({
     locale: "en-US",
     baseURL: test.info().project.use.baseURL,
   });
-  const other = await otherContext.newPage();
+  const operator = await operatorContext.newPage();
   try {
-    await operatorLogin(other);
-    await other.getByRole("button", { name: "Pricing", exact: true }).click();
-    await expect(other.getByLabel("Default sales coefficient", { exact: true })).toHaveValue(
-      "0.9000",
-    );
-    await other.getByLabel("Default sales coefficient", { exact: true }).fill("0.97");
-    await other.getByLabel("Reason", { exact: true }).fill("Keep this conflict draft");
-    await page.getByLabel("Default sales coefficient", { exact: true }).fill("0.95");
-    await page.getByLabel("Reason", { exact: true }).fill("Browser sales-only publication");
-    const published = page.waitForResponse((response) =>
+    await operatorLogin(operator);
+    await operator.getByRole("button", { name: "Agency sales coefficients", exact: true }).click();
+    const row = operator.getByRole("row").filter({ hasText: "browser-chat-model" });
+    await expect(row.getByText("0.8000", { exact: true })).toBeVisible();
+    const sales = operator.getByLabel("Sales coefficient: browser-chat-model", { exact: true });
+    await expect(sales).toHaveValue("");
+    await expect(sales).toHaveAttribute("placeholder", "0.9000");
+    await sales.fill("0.95");
+    await operator.getByLabel("Change reason", { exact: true }).fill("Browser agency sales override");
+    const published = operator.waitForResponse((response) =>
       response.url().endsWith("/pricing/sales/publish"),
     );
-    await page.getByRole("button", { name: "Publish prices", exact: true }).click();
-    await confirm(page, operatorPassword);
+    await operator.getByRole("button", { name: "Publish sales coefficients", exact: true }).click();
+    await confirm(operator, operatorPassword);
     const publishResponse = await published;
     expect(publishResponse.status()).toBe(200);
     expect(publishResponse.request().postDataJSON()).toMatchObject({
-      default_sales_bps: 9500,
       expected_revision: 1,
+      model_sales_overrides: [{
+        origin_model_name: "browser-chat-model",
+        sales_bps: 9500,
+      }],
     });
     expect(publishResponse.request().postDataJSON()).not.toHaveProperty("default_settlement_bps");
-    await expect(page.getByRole("status")).toContainText("Price published");
-    const conflict = other.waitForResponse((response) =>
-      response.url().endsWith("/pricing/sales/publish"),
-    );
-    await other.getByRole("button", { name: "Publish prices", exact: true }).click();
-    await confirm(other, operatorPassword);
-    expect((await conflict).status()).toBe(409);
-    await expect(
-      other.getByRole("dialog", { name: "Confirm this action", exact: true }),
-    ).toHaveCount(0);
-    await expect(other.getByLabel("Default sales coefficient", { exact: true })).toHaveValue(
-      "0.97",
-    );
-    await expect(other.getByLabel("Reason", { exact: true })).toHaveValue(
-      "Keep this conflict draft",
-    );
-    const current = await (await page.request.get("/agency/api/v1/pricing")).json();
+    const current = await (await operator.request.get("/agency/api/v1/pricing/model-sales")).json();
     expect(current.data).toMatchObject({
       revision: 2,
-      default_settlement_bps: 7500,
-      default_sales_bps: 9500,
+      items: [{
+        origin_model_name: "browser-chat-model",
+        agency_cost_bps: 8000,
+        platform_default_sales_bps: 9000,
+        sales_bps: 9500,
+        override_sales_bps: 9500,
+      }],
     });
   } finally {
-    await otherContext.close();
+    await operatorContext.close();
   }
 });
 

@@ -202,7 +202,7 @@ func requiresAgencyVerification(path string) bool {
 	if strings.HasSuffix(path, "/enter") || strings.HasSuffix(path, "/leave-agency") {
 		return false
 	}
-	for _, fragment := range []string{"/pricing/publish", "/pricing/sales/publish", "/root/agencies", "/root/deliveries/", "/root/users/", "/root/provisioning/", "/root/withdrawals/", "/root/reconciliation/", "/withdrawals", "/withdrawal-accounts"} {
+	for _, fragment := range []string{"/pricing/publish", "/pricing/sales/publish", "/platform-pricing/publish", "/root/agencies", "/root/deliveries/", "/root/users/", "/root/provisioning/", "/root/withdrawals/", "/root/reconciliation/", "/withdrawals", "/withdrawal-accounts"} {
 		if strings.Contains(path, fragment) {
 			return true
 		}
@@ -289,6 +289,12 @@ func expectedProofScope(c *gin.Context, identity *Identity) (string, string, boo
 	}
 	if c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/cancel") && strings.Contains(path, "/withdrawals/") {
 		return "withdrawal.cancel", "withdrawal:" + strings.TrimSpace(c.Param("id")), true
+	}
+	if c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/root/platform-pricing/publish") {
+		return "pricing.platform.publish", "platform_pricing:current", true
+	}
+	if c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/pricing/sales/publish") && strings.Contains(path, "/root/agencies/") {
+		return "pricing.sales.publish", "agency:" + strings.TrimSpace(c.Param("id")), true
 	}
 	if c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/pricing/sales/publish") {
 		if identity.AgencyID == nil {

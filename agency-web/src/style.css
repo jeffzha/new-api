@@ -101,6 +101,14 @@ header {
   font-size: 26px;
 }
 @media (max-width: 640px) {
+  .pricing-search,
+  .pricing-publish-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .pricing-live-badge { width: fit-content; }
+  .pricing-publish-row button { width: 100%; }
   .dashboard-shell {
     padding: 16px;
   }
@@ -846,6 +854,72 @@ h3 {
 .page-filter-bar .actions {
   margin: 0;
 }
+.pricing-matrix-card {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid #e3e8ef;
+  border-radius: 16px;
+  background: linear-gradient(145deg, #fff, #fbfcff);
+  box-shadow: 0 12px 32px rgb(15 23 42 / 5%);
+}
+.pricing-toolbar { align-items: flex-start; margin-bottom: .85rem; }
+.pricing-toolbar h3 { margin: 0 0 .25rem; }
+.pricing-toolbar p { margin: 0; }
+.pricing-search { display: flex; align-items: end; gap: .75rem; margin-bottom: .85rem; }
+.pricing-search .field { flex: 1; margin: 0; }
+.pricing-live-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 .8rem;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  color: #166534;
+  background: #f0fdf4;
+  font-size: .82rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.pricing-matrix-wrap { max-height: 520px; }
+.pricing-matrix { min-width: 900px; }
+.agency-sales-card .pricing-matrix { min-width: 680px; }
+.pricing-matrix th { white-space: nowrap; }
+.pricing-matrix td { vertical-align: middle; }
+.pricing-matrix input { min-width: 118px; width: 100%; }
+.channel-tags { display: flex; flex-wrap: wrap; gap: .35rem; min-width: 170px; }
+.channel-tags span {
+  display: inline-flex;
+  padding: .2rem .55rem;
+  border: 1px solid #e3e8ef;
+  border-radius: 999px;
+  background: #fff;
+  font-size: .78rem;
+  white-space: nowrap;
+}
+.pricing-publish-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  align-items: end;
+  gap: .75rem;
+  margin-top: 1rem;
+}
+.pricing-publish-row .field { margin: 0; }
+.pricing-publish-row button { min-height: 42px; }
+.pricing-agency-section { margin-top: 1.4rem; padding-top: .35rem; }
+.coefficient-readonly {
+  display: inline-flex;
+  min-width: 108px;
+  justify-content: center;
+  padding: .55rem .75rem;
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  color: #1d4ed8;
+  background: #eff6ff;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.sales-coefficient-field { display: grid; gap: .25rem; min-width: 220px; }
+.sales-coefficient-field small { color: #667085; }
 .toolbar { margin-top: 12px; }
 .page-header-actions .actions,
 td .actions { margin: 0; }

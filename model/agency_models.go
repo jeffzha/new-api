@@ -171,6 +171,34 @@ type AgencyPricePolicyItem struct {
 
 func (AgencyPricePolicyItem) TableName() string { return AgencyTablePrefix + "price_policy_items" }
 
+// AgencyPlatformPriceState points at the current immutable platform pricing
+// revision. A singleton row keeps publication atomic while model/channel
+// availability remains live in the channels and abilities tables.
+type AgencyPlatformPriceState struct {
+	ID               int64 `gorm:"primaryKey"`
+	Revision         int64 `gorm:"not null"`
+	CurrentVersionID int64 `gorm:"not null"`
+	UpdatedAtMS      int64 `gorm:"not null"`
+}
+
+func (AgencyPlatformPriceState) TableName() string {
+	return AgencyTablePrefix + "platform_price_states"
+}
+
+type AgencyPlatformPriceVersion struct {
+	ID          int64  `gorm:"primaryKey"`
+	Revision    int64  `gorm:"not null;uniqueIndex:uidx_agency_platform_price_revision"`
+	PolicyJSON  string `gorm:"type:text;not null"`
+	PolicyHash  string `gorm:"size:128;not null"`
+	CreatedByID int64  `gorm:"not null"`
+	Reason      string `gorm:"type:text"`
+	CreatedAtMS int64  `gorm:"not null"`
+}
+
+func (AgencyPlatformPriceVersion) TableName() string {
+	return AgencyTablePrefix + "platform_price_versions"
+}
+
 type AgencyIdempotencyRecord struct {
 	ID           int64  `gorm:"primaryKey"`
 	ScopeHash    string `gorm:"size:128;not null;uniqueIndex:uidx_agency_idempotency_scope"`
@@ -867,7 +895,7 @@ func (AgencyDebtRepayment) TableName() string { return AgencyTablePrefix + "debt
 func AgencyModels() []any {
 	return []any{
 		&Agency{}, &AgencyOperatorAccount{}, &AgencySession{}, &AgencySSOTicketUse{}, &AgencyVerificationUse{}, &AgencyDeliverySecret{},
-		&AgencyUserBinding{}, &AgencyActiveUserBinding{}, &AgencyPricePolicyVersion{}, &AgencyPricePolicyItem{}, &AgencyIdempotencyRecord{},
+		&AgencyUserBinding{}, &AgencyActiveUserBinding{}, &AgencyPricePolicyVersion{}, &AgencyPricePolicyItem{}, &AgencyPlatformPriceState{}, &AgencyPlatformPriceVersion{}, &AgencyIdempotencyRecord{},
 		&AgencyFundingAccount{}, &AgencyFundingLot{}, &AgencyFundingAllocation{}, &AgencyFundingLedger{}, &AgencyFundingDebt{}, &AgencyDebtRepayment{}, &AgencyFundingReversal{}, &AgencyFundingReversalChargeRecord{},
 		&AgencyBillingJournal{}, &AgencyBillingOperation{}, &AgencyBillingOutbox{}, &AgencyEventDelivery{}, &AgencyTaskSubmissionAttempt{},
 		&AgencyChargeComponent{}, &AgencyComponentFunding{},

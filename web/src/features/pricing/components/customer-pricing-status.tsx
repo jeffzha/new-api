@@ -116,7 +116,6 @@ export function CustomerPricingNotice(props: { models?: PricingModel[] }) {
                         </TableCell>
                         <TableCell className='text-right'>
                           <Badge variant='secondary' className='gap-1.5 rounded-full px-3 py-1 font-semibold text-primary'>
-                            <span aria-hidden='true' className='font-bold'>%</span>
                             <span>{coefficient.toFixed(2)}%</span>
                           </Badge>
                         </TableCell>

@@ -77,7 +77,7 @@ describe('customer pricing display', () => {
     expect(screen.getByRole('dialog')).toHaveTextContent('second-model')
     expect(screen.getByRole('dialog')).not.toHaveTextContent('base-model')
     expect(screen.getByRole('dialog')).toHaveTextContent('90.00%')
-    expect(screen.getByRole('dialog')).toHaveTextContent('%90.00%')
+    expect(screen.getByRole('dialog')).not.toHaveTextContent('%90.00%')
     expect(screen.getByRole('dialog')).toHaveTextContent('10.00%')
     expect(
       screen.getByRole('region', { name: 'Agency pricing model list' })

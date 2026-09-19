@@ -237,6 +237,9 @@ test("root creates an agency, acknowledges delivery and the operator must change
   await expect(
     page.getByRole("cell", { name: "新增代理商", exact: true }).first(),
   ).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "创建代理商账号", exact: true }).first(),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Agencies", exact: true }).click();
   await page.getByLabel("Language", { exact: true }).selectOption("zh");
   await page.screenshot({

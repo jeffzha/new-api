@@ -52,6 +52,9 @@ const dynamicLabels: Record<string, string> = {
   "withdrawal.create": "提交提现申请",
   "withdrawal.cancel": "取消提现申请",
   "withdrawal.transition": "更新提现状态",
+  "withdrawal.review": "审核提现申请",
+  "withdrawal.reject": "驳回提现申请",
+  "withdrawal.recover_unpaid": "恢复未支付提现",
   "withdrawal.mark_paid": "确认提现已支付",
   "withdrawal_account.create": "新增收款账户",
   "withdrawal_account.update": "更新收款账户",
@@ -64,6 +67,7 @@ const dynamicLabels: Record<string, string> = {
   "delivery.ack": "确认安全信息送达",
   "funding.reverse": "资金冲正",
   "agency updated": "更新代理商资料",
+  "agency created": "创建代理商账号",
   "password reset": "重置登录密码",
 };
 

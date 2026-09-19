@@ -48,6 +48,12 @@ export type PricePreview = {
 export type PlatformPriceRow = {
   origin_model_name: string;
   channel_names: string[];
+  channel_costs: {
+    channel_id: number;
+    channel_name: string;
+    available: boolean;
+    platform_cost_bps: number | null;
+  }[];
   platform_cost_bps: number | null;
   agency_cost_bps: number | null;
   default_sales_bps: number | null;

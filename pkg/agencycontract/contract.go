@@ -60,14 +60,28 @@ type ResolvedPolicy struct {
 	OriginModelName string
 }
 
+// PlatformChannelCost is the platform's internal procurement cost for a
+// particular enabled route. It never changes the agency settlement or the
+// customer sales coefficient, which remain model-level values.
+type PlatformChannelCost struct {
+	ChannelID       int `json:"channel_id"`
+	PlatformCostBPS int `json:"platform_cost_bps"`
+}
+
 // PlatformModelPrice defines the platform-owned cost chain for one exact
-// public model. Channel names are deliberately not persisted here: they are
-// read from the live routing catalog so channel changes appear immediately.
+// public model. Agency and sales coefficients are deliberately model-level so
+// a customer's price remains stable when routing switches channels.
+//
+// PlatformCostBPS is retained only to read immutable snapshots published
+// before channel-level costs existed. New snapshots use ChannelCosts. Channel
+// names are deliberately not persisted here: they come from the live routing
+// catalog so channel changes appear immediately.
 type PlatformModelPrice struct {
-	OriginModelName string `json:"origin_model_name"`
-	PlatformCostBPS int    `json:"platform_cost_bps"`
-	AgencyCostBPS   int    `json:"agency_cost_bps"`
-	DefaultSalesBPS int    `json:"default_sales_bps"`
+	OriginModelName string                `json:"origin_model_name"`
+	PlatformCostBPS int                   `json:"platform_cost_bps,omitempty"`
+	ChannelCosts    []PlatformChannelCost `json:"channel_costs,omitempty"`
+	AgencyCostBPS   int                   `json:"agency_cost_bps"`
+	DefaultSalesBPS int                   `json:"default_sales_bps"`
 }
 
 type PlatformPolicy struct {
@@ -89,13 +103,29 @@ func ValidatePlatformPolicy(policy PlatformPolicy) error {
 			return fmt.Errorf("duplicate platform model price: %s", price.OriginModelName)
 		}
 		seen[key] = struct{}{}
-		for _, coefficient := range []int{price.PlatformCostBPS, price.AgencyCostBPS, price.DefaultSalesBPS} {
+		for _, coefficient := range []int{price.AgencyCostBPS, price.DefaultSalesBPS} {
 			if coefficient < MinCoefficientBPS || coefficient > MaxCoefficientBPS {
 				return fmt.Errorf("coefficient %d is outside 0..%d", coefficient, MaxCoefficientBPS)
 			}
 		}
-		if price.AgencyCostBPS < price.PlatformCostBPS {
-			return fmt.Errorf("model %s agency cost must cover platform cost", price.OriginModelName)
+		if len(price.ChannelCosts) == 0 {
+			if price.PlatformCostBPS < MinCoefficientBPS || price.PlatformCostBPS > MaxCoefficientBPS {
+				return fmt.Errorf("coefficient %d is outside 0..%d", price.PlatformCostBPS, MaxCoefficientBPS)
+			}
+		} else {
+			channelIDs := make(map[int]struct{}, len(price.ChannelCosts))
+			for _, cost := range price.ChannelCosts {
+				if cost.ChannelID <= 0 {
+					return fmt.Errorf("model %s has invalid platform channel cost", price.OriginModelName)
+				}
+				if _, exists := channelIDs[cost.ChannelID]; exists {
+					return fmt.Errorf("model %s has duplicate platform channel cost: %d", price.OriginModelName, cost.ChannelID)
+				}
+				channelIDs[cost.ChannelID] = struct{}{}
+				if cost.PlatformCostBPS < MinCoefficientBPS || cost.PlatformCostBPS > MaxCoefficientBPS {
+					return fmt.Errorf("coefficient %d is outside 0..%d", cost.PlatformCostBPS, MaxCoefficientBPS)
+				}
+			}
 		}
 		if price.DefaultSalesBPS < price.AgencyCostBPS {
 			return fmt.Errorf("model %s sales coefficient must cover agency cost", price.OriginModelName)

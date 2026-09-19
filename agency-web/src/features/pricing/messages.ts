@@ -53,6 +53,7 @@ const rows = [
   ["Configure platform model coefficients first.", "请先配置平台模型系数。", "請先設定平台模型係數。", "Configurez d’abord les coefficients plateforme.", "先にプラットフォームのモデル係数を設定してください。", "Сначала настройте коэффициенты моделей платформы.", "Hãy cấu hình hệ số mô hình nền tảng trước."],
   ["No enabled models or channels are currently available.", "当前没有可用的模型或渠道。", "目前沒有可用的模型或渠道。", "Aucun modèle ou canal actif.", "現在利用可能なモデルまたはチャネルはありません。", "Нет доступных моделей или каналов.", "Hiện không có mô hình hoặc kênh khả dụng."],
   ["Complete all three coefficients for a configured model.", "已配置的模型必须完整填写三个系数。", "已設定的模型必須完整填寫三個係數。", "Renseignez les trois coefficients du modèle configuré.", "設定するモデルには3つの係数をすべて入力してください。", "Заполните все три коэффициента настроенной модели.", "Hãy điền đủ ba hệ số cho mô hình đã cấu hình."],
+  ["Complete every enabled channel cost, agency cost, and sales coefficient for a configured model.", "已配置的模型必须完整填写每个启用渠道的平台成本系数，以及代理商成本系数和销售系数。", "已設定的模型必須完整填寫每個啟用渠道的平台成本係數，以及代理商成本係數和銷售係數。", "Pour chaque modèle configuré, renseignez tous les coûts des canaux actifs, le coût agence et le coefficient de vente.", "設定するモデルでは、有効な各チャネルのプラットフォーム原価、代理店原価、販売係数をすべて入力してください。", "Для настроенной модели заполните стоимость каждого активного канала, стоимость агентства и коэффициент продаж.", "Với mô hình đã cấu hình, hãy điền đủ chi phí nền tảng của từng kênh đang bật, chi phí đại lý và hệ số bán hàng."],
   [
     "Agency cost coefficient cannot be lower than platform cost coefficient. Model: {{model}}",
     "模型 {{model}}：代理商成本系数不能低于平台成本系数。",
@@ -61,6 +62,15 @@ const rows = [
     "モデル {{model}}：代理店原価係数はプラットフォーム原価係数以上である必要があります。",
     "Модель {{model}}: коэффициент себестоимости агентства не может быть ниже коэффициента платформы.",
     "Mô hình {{model}}: hệ số chi phí đại lý không được thấp hơn hệ số chi phí nền tảng.",
+  ],
+  [
+    "Agency cost coefficient cannot be lower than any channel platform cost coefficient. Model: {{model}}",
+    "模型 {{model}}：代理商成本系数不能低于该模型任一渠道的平台成本系数。",
+    "模型 {{model}}：代理商成本係數不能低於該模型任一渠道的平台成本係數。",
+    "Modèle {{model}} : le coefficient de coût agence ne peut pas être inférieur au coût de l’un de ses canaux.",
+    "モデル {{model}}：代理店原価係数は、いずれかのチャネルのプラットフォーム原価係数を下回ることはできません。",
+    "Модель {{model}}: коэффициент стоимости агентства не может быть ниже стоимости любого канала платформы.",
+    "Mô hình {{model}}: hệ số chi phí đại lý không được thấp hơn hệ số chi phí nền tảng của bất kỳ kênh nào.",
   ],
   [
     "Sales coefficient cannot be lower than agency cost coefficient. Model: {{model}}",

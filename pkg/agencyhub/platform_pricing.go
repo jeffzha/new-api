@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,24 @@ type liveModelChannel struct {
 	Model       string
 	ChannelID   int
 	ChannelName string
+}
+
+type catalogChannelCost struct {
+	ChannelID       int    `json:"channel_id"`
+	ChannelName     string `json:"channel_name"`
+	Available       bool   `json:"available"`
+	PlatformCostBPS *int   `json:"platform_cost_bps"`
+}
+
+type platformPricingCatalogRow struct {
+	OriginModelName string               `json:"origin_model_name"`
+	ChannelNames    []string             `json:"channel_names"`
+	ChannelCosts    []catalogChannelCost `json:"channel_costs"`
+	// PlatformCostBPS is a read-only legacy fallback for a policy published
+	// before per-channel platform costs were introduced.
+	PlatformCostBPS *int `json:"platform_cost_bps"`
+	AgencyCostBPS   *int `json:"agency_cost_bps"`
+	DefaultSalesBPS *int `json:"default_sales_bps"`
 }
 
 func (a *App) liveModelChannels() ([]liveModelChannel, error) {
@@ -54,45 +73,83 @@ func (a *App) getPlatformPricing(c *gin.Context) {
 	for _, price := range policy.ModelPrices {
 		configured[price.OriginModelName] = price
 	}
-	type catalogRow struct {
-		OriginModelName string   `json:"origin_model_name"`
-		ChannelNames    []string `json:"channel_names"`
-		PlatformCostBPS *int     `json:"platform_cost_bps"`
-		AgencyCostBPS   *int     `json:"agency_cost_bps"`
-		DefaultSalesBPS *int     `json:"default_sales_bps"`
-	}
-	byModel := make(map[string]*catalogRow)
+	byModel := make(map[string]*platformPricingCatalogRow)
 	order := make([]string, 0)
 	for _, item := range live {
 		row := byModel[item.Model]
 		if row == nil {
-			row = &catalogRow{OriginModelName: item.Model}
+			row = &platformPricingCatalogRow{OriginModelName: item.Model}
 			if price, ok := configured[item.Model]; ok {
-				platformCost, agencyCost, defaultSales := price.PlatformCostBPS, price.AgencyCostBPS, price.DefaultSalesBPS
-				row.PlatformCostBPS, row.AgencyCostBPS, row.DefaultSalesBPS = &platformCost, &agencyCost, &defaultSales
+				agencyCost, defaultSales := price.AgencyCostBPS, price.DefaultSalesBPS
+				row.AgencyCostBPS, row.DefaultSalesBPS = &agencyCost, &defaultSales
+				if len(price.ChannelCosts) == 0 {
+					legacyCost := price.PlatformCostBPS
+					row.PlatformCostBPS = &legacyCost
+				}
 			}
 			byModel[item.Model] = row
 			order = append(order, item.Model)
 		}
-		if len(row.ChannelNames) == 0 || row.ChannelNames[len(row.ChannelNames)-1] != item.ChannelName {
-			row.ChannelNames = append(row.ChannelNames, item.ChannelName)
+		if containsCatalogChannel(row.ChannelCosts, item.ChannelID) {
+			continue
 		}
+		var channelCost *int
+		if price, configuredNow := configured[item.Model]; configuredNow {
+			channelCost = configuredChannelCost(price, item.ChannelID)
+		}
+		row.ChannelNames = append(row.ChannelNames, item.ChannelName)
+		row.ChannelCosts = append(row.ChannelCosts, catalogChannelCost{ChannelID: item.ChannelID, ChannelName: item.ChannelName, Available: true, PlatformCostBPS: channelCost})
 	}
 	// Keep a configured row visible even if its channel was disabled after publication.
 	for name, price := range configured {
-		if byModel[name] != nil {
-			continue
+		row := byModel[name]
+		if row == nil {
+			agencyCost, defaultSales := price.AgencyCostBPS, price.DefaultSalesBPS
+			row = &platformPricingCatalogRow{OriginModelName: name, ChannelNames: []string{}, AgencyCostBPS: &agencyCost, DefaultSalesBPS: &defaultSales}
+			if len(price.ChannelCosts) == 0 {
+				legacyCost := price.PlatformCostBPS
+				row.PlatformCostBPS = &legacyCost
+			}
+			byModel[name] = row
+			order = append(order, name)
 		}
-		platformCost, agencyCost, defaultSales := price.PlatformCostBPS, price.AgencyCostBPS, price.DefaultSalesBPS
-		byModel[name] = &catalogRow{OriginModelName: name, ChannelNames: []string{}, PlatformCostBPS: &platformCost, AgencyCostBPS: &agencyCost, DefaultSalesBPS: &defaultSales}
-		order = append(order, name)
+		for _, cost := range price.ChannelCosts {
+			if containsCatalogChannel(row.ChannelCosts, cost.ChannelID) {
+				continue
+			}
+			costBPS := cost.PlatformCostBPS
+			row.ChannelCosts = append(row.ChannelCosts, catalogChannelCost{ChannelID: cost.ChannelID, ChannelName: "渠道当前不可用 #" + strconv.Itoa(cost.ChannelID), Available: false, PlatformCostBPS: &costBPS})
+		}
 	}
 	sort.Strings(order)
-	items := make([]*catalogRow, 0, len(order))
+	items := make([]*platformPricingCatalogRow, 0, len(order))
 	for _, name := range order {
 		items = append(items, byModel[name])
 	}
 	respondOK(c, gin.H{"revision": policy.Revision, "items": items, "refreshed_at_ms": time.Now().UnixMilli()})
+}
+
+func containsCatalogChannel(costs []catalogChannelCost, channelID int) bool {
+	for _, cost := range costs {
+		if cost.ChannelID == channelID {
+			return true
+		}
+	}
+	return false
+}
+
+func configuredChannelCost(price agencycontract.PlatformModelPrice, channelID int) *int {
+	if len(price.ChannelCosts) == 0 {
+		cost := price.PlatformCostBPS
+		return &cost
+	}
+	for _, cost := range price.ChannelCosts {
+		if cost.ChannelID == channelID {
+			configured := cost.PlatformCostBPS
+			return &configured
+		}
+	}
+	return nil
 }
 
 func (a *App) publishPlatformPricing(c *gin.Context) {
@@ -122,22 +179,56 @@ func (a *App) publishPlatformPricing(c *gin.Context) {
 		return
 	}
 	liveModels := make(map[string]struct{}, len(live))
+	liveChannels := make(map[string]map[int]struct{}, len(live))
 	for _, item := range live {
 		liveModels[item.Model] = struct{}{}
+		if liveChannels[item.Model] == nil {
+			liveChannels[item.Model] = make(map[int]struct{})
+		}
+		liveChannels[item.Model][item.ChannelID] = struct{}{}
 	}
 	previousModels := make(map[string]struct{}, len(previousPolicy.ModelPrices))
+	previousChannelCosts := make(map[string]map[int]struct{}, len(previousPolicy.ModelPrices))
 	for _, price := range previousPolicy.ModelPrices {
 		previousModels[price.OriginModelName] = struct{}{}
+		for _, cost := range price.ChannelCosts {
+			if previousChannelCosts[price.OriginModelName] == nil {
+				previousChannelCosts[price.OriginModelName] = make(map[int]struct{})
+			}
+			previousChannelCosts[price.OriginModelName][cost.ChannelID] = struct{}{}
+		}
 	}
 	for _, price := range policy.ModelPrices {
-		if _, liveNow := liveModels[price.OriginModelName]; liveNow {
+		_, liveNow := liveModels[price.OriginModelName]
+		_, configuredBefore := previousModels[price.OriginModelName]
+		if !liveNow && !configuredBefore {
+			respondError(c, http.StatusConflict, "model_unavailable", "模型已不在启用渠道中，请刷新后重试："+price.OriginModelName, nil)
+			return
+		}
+		if len(price.ChannelCosts) == 0 {
 			continue
 		}
-		if _, configuredBefore := previousModels[price.OriginModelName]; configuredBefore {
-			continue
+		for _, cost := range price.ChannelCosts {
+			_, liveNow := liveChannels[price.OriginModelName][cost.ChannelID]
+			_, configuredBefore := previousChannelCosts[price.OriginModelName][cost.ChannelID]
+			if liveNow || configuredBefore {
+				continue
+			}
+			respondError(c, http.StatusConflict, "channel_unavailable", "渠道已不属于该模型或当前不可用，请刷新后重试。", nil)
+			return
 		}
-		respondError(c, http.StatusConflict, "model_unavailable", "模型已不在启用渠道中，请刷新后重试："+price.OriginModelName, nil)
-		return
+		if active := liveChannels[price.OriginModelName]; len(active) > 0 {
+			configured := make(map[int]struct{}, len(price.ChannelCosts))
+			for _, cost := range price.ChannelCosts {
+				configured[cost.ChannelID] = struct{}{}
+			}
+			for channelID := range active {
+				if _, ok := configured[channelID]; !ok {
+					respondError(c, http.StatusUnprocessableEntity, "channel_cost_required", "已配置的模型必须为每个启用渠道填写平台成本系数。", nil)
+					return
+				}
+			}
+		}
 	}
 	var activePolicies []struct {
 		AgencyID    int64

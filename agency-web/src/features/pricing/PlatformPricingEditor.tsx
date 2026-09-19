@@ -9,8 +9,16 @@ import type { PlatformPriceRow, PlatformPricing } from "./types";
 
 type PlatformDraft = Record<
   string,
-  { platformCost: string; agencyCost: string; defaultSales: string }
+  { channelCosts: Record<string, string>; agencyCost: string; defaultSales: string }
 >;
+
+type PublishedPlatformModelPrice = {
+  origin_model_name: string;
+  platform_cost_bps?: number;
+  channel_costs?: { channel_id: number; platform_cost_bps: number }[];
+  agency_cost_bps: number;
+  default_sales_bps: number;
+};
 
 export function PlatformPricingEditor() {
   const pricing = useQuery<PlatformPricing>("/root/platform-pricing");
@@ -30,7 +38,12 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
       props.data.items.map((row) => [
         row.origin_model_name,
         {
-          platformCost: coefficientValue(row.platform_cost_bps),
+          channelCosts: Object.fromEntries(
+            row.channel_costs.map((channel) => [
+              String(channel.channel_id),
+              coefficientValue(channel.platform_cost_bps ?? row.platform_cost_bps),
+            ]),
+          ),
           agencyCost: coefficientValue(row.agency_cost_bps),
           defaultSales: coefficientValue(row.default_sales_bps),
         },
@@ -47,32 +60,62 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
     );
   }, [props.data.items, search]);
 
-  function update(model: string, key: keyof PlatformDraft[string], value: string) {
+  function update(model: string, key: "agencyCost" | "defaultSales", value: string) {
     setDraft((current) => ({ ...current, [model]: { ...current[model], [key]: value } }));
+  }
+
+  function updateChannelCost(model: string, channelID: number, value: string) {
+    setDraft((current) => ({
+      ...current,
+      [model]: {
+        ...current[model],
+        channelCosts: { ...current[model].channelCosts, [String(channelID)]: value },
+      },
+    }));
   }
 
   async function publish() {
     setError(null);
     try {
-      const modelPrices = props.data.items.flatMap((row) => {
+      const modelPrices: PublishedPlatformModelPrice[] = props.data.items.flatMap<PublishedPlatformModelPrice>((row) => {
         const value = draft[row.origin_model_name];
-        const values = [value.platformCost, value.agencyCost, value.defaultSales];
+        if (row.channel_costs.length === 0) {
+          const values = [coefficientValue(row.platform_cost_bps), value.agencyCost, value.defaultSales];
+          if (values.every((item) => item === "")) return [];
+          if (values.some((item) => item === "")) {
+            throw new Error(t("Complete all three coefficients for a configured model."));
+          }
+          const platformCost = parseCoefficient(coefficientValue(row.platform_cost_bps));
+          const agencyCost = parseCoefficient(value.agencyCost);
+          const defaultSales = parseCoefficient(value.defaultSales);
+          if (defaultSales < agencyCost) {
+            throw new Error(t("Sales coefficient cannot be lower than agency cost coefficient. Model: {{model}}", { model: row.origin_model_name }));
+          }
+          return [{
+            origin_model_name: row.origin_model_name,
+            platform_cost_bps: platformCost,
+            agency_cost_bps: agencyCost,
+            default_sales_bps: defaultSales,
+          }];
+        }
+        const channelValues = row.channel_costs.map((channel) => value.channelCosts[String(channel.channel_id)] ?? "");
+        const values = [...channelValues, value.agencyCost, value.defaultSales];
         if (values.every((item) => item === "")) return [];
         if (values.some((item) => item === "")) {
-          throw new Error("Complete all three coefficients for a configured model.");
+          throw new Error(t("Complete every enabled channel cost, agency cost, and sales coefficient for a configured model."));
         }
-        const platformCost = parseCoefficient(value.platformCost);
+        const channelCosts = row.channel_costs.map((channel) => ({
+          channel_id: channel.channel_id,
+          platform_cost_bps: parseCoefficient(value.channelCosts[String(channel.channel_id)]),
+        }));
         const agencyCost = parseCoefficient(value.agencyCost);
         const defaultSales = parseCoefficient(value.defaultSales);
-        if (agencyCost < platformCost) {
-          throw new Error(t("Agency cost coefficient cannot be lower than platform cost coefficient. Model: {{model}}", { model: row.origin_model_name }));
-        }
         if (defaultSales < agencyCost) {
           throw new Error(t("Sales coefficient cannot be lower than agency cost coefficient. Model: {{model}}", { model: row.origin_model_name }));
         }
         return [{
           origin_model_name: row.origin_model_name,
-          platform_cost_bps: platformCost,
+          channel_costs: channelCosts,
           agency_cost_bps: agencyCost,
           default_sales_bps: defaultSales,
         }];
@@ -121,7 +164,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
           </thead>
           <tbody>
             {visible.map((row) => (
-              <PlatformPricingRow key={row.origin_model_name} row={row} value={draft[row.origin_model_name]} update={update} />
+              <PlatformPricingRow key={row.origin_model_name} row={row} value={draft[row.origin_model_name]} update={update} updateChannelCost={updateChannelCost} />
             ))}
           </tbody>
         </table>
@@ -146,21 +189,35 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
 function PlatformPricingRow(props: {
   row: PlatformPriceRow;
   value: PlatformDraft[string];
-  update: (model: string, key: keyof PlatformDraft[string], value: string) => void;
+  update: (model: string, key: "agencyCost" | "defaultSales", value: string) => void;
+  updateChannelCost: (model: string, channelID: number, value: string) => void;
 }) {
   const { t } = useTranslation();
-  const value = props.value ?? { platformCost: "", agencyCost: "", defaultSales: "" };
+  const value = props.value ?? { channelCosts: {}, agencyCost: "", defaultSales: "" };
   return (
     <tr>
       <td><strong>{props.row.origin_model_name}</strong></td>
       <td>
-        <div className="channel-tags">
-          {props.row.channel_names.length
-            ? props.row.channel_names.map((name) => <span key={name}>{name}</span>)
+        <div className="channel-tags channel-cost-list">
+          {props.row.channel_costs.length
+            ? props.row.channel_costs.map((channel) => <span key={channel.channel_id}>{channel.channel_name}</span>)
             : <span>{t("Channel unavailable")}</span>}
         </div>
       </td>
-      <CoefficientInput label={t("Platform cost coefficient")} model={props.row.origin_model_name} value={value.platformCost} placeholder="0.5000" onChange={(value) => props.update(props.row.origin_model_name, "platformCost", value)} />
+      <td>
+        <div className="channel-cost-list">
+          {props.row.channel_costs.map((channel) => (
+            <input
+              key={channel.channel_id}
+              aria-label={`${t("Platform cost coefficient")}: ${props.row.origin_model_name} / ${channel.channel_name}`}
+              inputMode="decimal"
+              placeholder="0.5000"
+              value={value.channelCosts[String(channel.channel_id)] ?? ""}
+              onChange={(event) => props.updateChannelCost(props.row.origin_model_name, channel.channel_id, event.target.value)}
+            />
+          ))}
+        </div>
+      </td>
       <CoefficientInput label={t("Agency cost coefficient")} model={props.row.origin_model_name} value={value.agencyCost} placeholder="0.5500" onChange={(value) => props.update(props.row.origin_model_name, "agencyCost", value)} />
       <CoefficientInput label={t("Sales coefficient")} model={props.row.origin_model_name} value={value.defaultSales} placeholder="0.6000" onChange={(value) => props.update(props.row.origin_model_name, "defaultSales", value)} />
     </tr>

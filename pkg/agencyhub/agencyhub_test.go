@@ -265,7 +265,6 @@ func TestSalesPolicyPublishPreservesRootSettlementOverrides(t *testing.T) {
 }
 
 func TestPricingErrorsAreSafeChineseMessages(t *testing.T) {
-	require.Equal(t, "模型 deepseek-v4-flash：代理商成本系数不能低于平台成本系数。", pricingErrorMessage(errors.New("model deepseek-v4-flash agency cost must cover platform cost")))
 	require.Equal(t, "模型 deepseek-v4-flash：销售系数必须不低于代理商成本系数与最低价差之和。", pricingErrorMessage(errors.New("model deepseek-v4-flash violates minimum spread")))
 	require.Equal(t, "价格策略配置不符合要求，请检查成本顺序、销售系数、最低价差和数值范围。", pricingErrorMessage(errors.New("internal implementation detail")))
 }
@@ -275,9 +274,12 @@ func TestPlatformPricingPublishesLiveModelChannelMatrixAndRejectsAgencyConflict(
 	require.NoError(t, client.app.db.AutoMigrate(&model.Channel{}, &model.Ability{}))
 	channel := model.Channel{Name: "uzoom-QWEN", Type: 1, Key: "unused", Status: common.ChannelStatusEnabled}
 	require.NoError(t, client.app.db.Create(&channel).Error)
+	backupChannel := model.Channel{Name: "backup-QWEN", Type: 1, Key: "unused", Status: common.ChannelStatusEnabled}
+	require.NoError(t, client.app.db.Create(&backupChannel).Error)
 	require.NoError(t, client.app.db.Create(&model.Ability{Group: "default", Model: "glm-5.3", ChannelId: channel.Id, Enabled: true}).Error)
+	require.NoError(t, client.app.db.Create(&model.Ability{Group: "default", Model: "glm-5.3", ChannelId: backupChannel.Id, Enabled: true}).Error)
 
-	body := `{"expected_revision":0,"model_prices":[{"origin_model_name":"glm-5.3","platform_cost_bps":5000,"agency_cost_bps":5500,"default_sales_bps":6000}],"reason":"initial matrix"}`
+	body := fmt.Sprintf(`{"expected_revision":0,"model_prices":[{"origin_model_name":"glm-5.3","channel_costs":[{"channel_id":%d,"platform_cost_bps":5000},{"channel_id":%d,"platform_cost_bps":5400}],"agency_cost_bps":5500,"default_sales_bps":6000}],"reason":"initial matrix"}`, channel.Id, backupChannel.Id)
 	proof := client.proof(t, body, "pricing.platform.publish", "platform_pricing:current", "platform-pricing-first")
 	response := client.post("/agency/api/v1/root/platform-pricing/publish", body, "platform-pricing-first", proof)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
@@ -287,6 +289,7 @@ func TestPlatformPricingPublishesLiveModelChannelMatrixAndRejectsAgencyConflict(
 	require.Equal(t, int64(1), policy.Revision)
 	require.Len(t, policy.ModelPrices, 1)
 	require.Equal(t, 5500, policy.ModelPrices[0].AgencyCostBPS)
+	require.Equal(t, []agencycontract.PlatformChannelCost{{ChannelID: channel.Id, PlatformCostBPS: 5000}, {ChannelID: backupChannel.Id, PlatformCostBPS: 5400}}, policy.ModelPrices[0].ChannelCosts)
 
 	request := httptest.NewRequest(http.MethodGet, "/agency/api/v1/root/platform-pricing", nil)
 	request.AddCookie(&http.Cookie{Name: client.app.config.CookieName, Value: client.sessionToken})
@@ -295,9 +298,12 @@ func TestPlatformPricingPublishesLiveModelChannelMatrixAndRejectsAgencyConflict(
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	require.Contains(t, recorder.Body.String(), "glm-5.3")
 	require.Contains(t, recorder.Body.String(), "uzoom-QWEN")
+	require.Contains(t, recorder.Body.String(), "backup-QWEN")
+	require.Contains(t, recorder.Body.String(), "\"platform_cost_bps\":5400")
 	require.NoError(t, client.app.db.Model(&channel).Update("status", common.ChannelStatusManuallyDisabled).Error)
+	require.NoError(t, client.app.db.Model(&backupChannel).Update("status", common.ChannelStatusManuallyDisabled).Error)
 
-	retained := `{"expected_revision":1,"model_prices":[{"origin_model_name":"glm-5.3","platform_cost_bps":5000,"agency_cost_bps":5500,"default_sales_bps":6000}],"reason":"retain temporarily unavailable model"}`
+	retained := fmt.Sprintf(`{"expected_revision":1,"model_prices":[{"origin_model_name":"glm-5.3","channel_costs":[{"channel_id":%d,"platform_cost_bps":5000},{"channel_id":%d,"platform_cost_bps":5400}],"agency_cost_bps":5500,"default_sales_bps":6000}],"reason":"retain temporarily unavailable model"}`, channel.Id, backupChannel.Id)
 	retainedProof := client.proof(t, retained, "pricing.platform.publish", "platform_pricing:current", "platform-pricing-retained")
 	retainedResponse := client.post("/agency/api/v1/root/platform-pricing/publish", retained, "platform-pricing-retained", retainedProof)
 	require.Equal(t, http.StatusOK, retainedResponse.Code, retainedResponse.Body.String())
@@ -309,7 +315,7 @@ func TestPlatformPricingPublishesLiveModelChannelMatrixAndRejectsAgencyConflict(
 	})
 	require.NoError(t, err)
 
-	conflicting := `{"expected_revision":2,"model_prices":[{"origin_model_name":"glm-5.3","platform_cost_bps":5500,"agency_cost_bps":6000,"default_sales_bps":6500}],"reason":"raise cost"}`
+	conflicting := fmt.Sprintf(`{"expected_revision":2,"model_prices":[{"origin_model_name":"glm-5.3","channel_costs":[{"channel_id":%d,"platform_cost_bps":5500},{"channel_id":%d,"platform_cost_bps":5600}],"agency_cost_bps":6000,"default_sales_bps":6500}],"reason":"raise cost"}`, channel.Id, backupChannel.Id)
 	conflictProof := client.proof(t, conflicting, "pricing.platform.publish", "platform_pricing:current", "platform-pricing-conflict")
 	conflict := client.post("/agency/api/v1/root/platform-pricing/publish", conflicting, "platform-pricing-conflict", conflictProof)
 	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())

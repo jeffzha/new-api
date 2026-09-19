@@ -36,9 +36,6 @@ type salesPricingRequest struct {
 func pricingErrorMessage(err error) string {
 	message := err.Error()
 	if rest, ok := strings.CutPrefix(message, "model "); ok {
-		if modelName, matched := strings.CutSuffix(rest, " agency cost must cover platform cost"); matched {
-			return "模型 " + modelName + "：代理商成本系数不能低于平台成本系数。"
-		}
 		if modelName, matched := strings.CutSuffix(rest, " sales coefficient must cover agency cost"); matched {
 			return "模型 " + modelName + "：销售系数不能低于代理商成本系数。"
 		}
@@ -52,6 +49,10 @@ func pricingErrorMessage(err error) string {
 	switch {
 	case strings.HasPrefix(message, "duplicate platform model price:"):
 		return "同一个模型只能配置一条平台价格策略。"
+	case strings.Contains(message, "duplicate platform channel cost:"):
+		return "同一个模型中的同一渠道只能配置一条平台成本系数。"
+	case strings.Contains(message, "invalid platform channel cost"):
+		return "渠道成本配置无效，请刷新渠道列表后重新填写。"
 	case strings.HasPrefix(message, "duplicate model override:"):
 		return "同一个模型只能配置一条销售系数。"
 	case message == "default sales coefficient must be at least settlement plus spread":

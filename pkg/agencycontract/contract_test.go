@@ -117,3 +117,32 @@ func TestPlatformPolicyControlsCostWhileAgencySalesOverrideWins(t *testing.T) {
 	_, err = ApplyPlatformPolicy(base, platform)
 	require.Error(t, err, "an agency sale below platform-owned agency cost must fail closed")
 }
+
+func TestPlatformPolicyAllowsPerChannelCostsWithoutChangingAgencySales(t *testing.T) {
+	agencySales := 7000
+	base := Policy{
+		DefaultSettlementBPS: 5000, DefaultSalesBPS: 6500, MinSpreadBPS: 500, SalesCapBPS: 30000,
+		ModelOverrides: []ModelOverride{{OriginModelName: "doubao-seedance-2-0-260128", SalesBPS: &agencySales}},
+	}
+	platform := PlatformPolicy{ModelPrices: []PlatformModelPrice{{
+		OriginModelName: "doubao-seedance-2-0-260128",
+		ChannelCosts: []PlatformChannelCost{
+			{ChannelID: 12, PlatformCostBPS: 5000},
+			{ChannelID: 14, PlatformCostBPS: 5500},
+		},
+		AgencyCostBPS: 5500, DefaultSalesBPS: 6000,
+	}}}
+	require.NoError(t, ValidatePlatformPolicy(platform))
+
+	effective, err := ApplyPlatformPolicy(base, platform)
+	require.NoError(t, err)
+	resolved, err := Resolve(effective, "doubao-seedance-2-0-260128")
+	require.NoError(t, err)
+	require.Equal(t, 5500, resolved.SettlementBPS)
+	require.Equal(t, agencySales, resolved.SalesBPS, "channel routing must not change customer sales pricing")
+
+	platform.ModelPrices[0].AgencyCostBPS = 4000
+	require.NoError(t, ValidatePlatformPolicy(platform), "platform channel cost is internal and must not force an agency price change")
+	platform.ModelPrices[0].ChannelCosts = append(platform.ModelPrices[0].ChannelCosts, PlatformChannelCost{ChannelID: 14, PlatformCostBPS: 5200})
+	require.ErrorContains(t, ValidatePlatformPolicy(platform), "duplicate platform channel cost")
+}

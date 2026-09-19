@@ -1,4 +1,4 @@
-import { BadgePercent, Percent, ShieldCheck, Sparkles, Tag } from 'lucide-react'
+import { BadgePercent, ShieldCheck, Sparkles, Tag } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -116,8 +116,8 @@ export function CustomerPricingNotice(props: { models?: PricingModel[] }) {
                         </TableCell>
                         <TableCell className='text-right'>
                           <Badge variant='secondary' className='gap-1.5 rounded-full px-3 py-1 font-semibold text-primary'>
-                            <Percent aria-hidden='true' />
-                            {coefficient.toFixed(2)}%
+                            <span aria-hidden='true' className='font-bold'>%</span>
+                            <span>{coefficient.toFixed(2)}%</span>
                           </Badge>
                         </TableCell>
                         <TableCell className='text-right font-medium text-emerald-600 dark:text-emerald-400'>

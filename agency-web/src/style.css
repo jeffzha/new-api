@@ -896,6 +896,14 @@ h3 {
   font-size: .78rem;
   white-space: nowrap;
 }
+.channel-cost-list {
+  display: grid;
+  gap: .42rem;
+  min-width: 170px;
+}
+.channel-cost-list input {
+  min-width: 138px;
+}
 .pricing-publish-row {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) auto;

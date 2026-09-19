@@ -295,6 +295,7 @@ export function Pricing() {
                 if (!open) setSelectedModelName(null)
               }}
               model={selectedModel}
+              pricingModels={publicModels}
               groupRatio={groupRatio || {}}
               usableGroup={usableGroup || {}}
               endpointMap={

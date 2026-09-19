@@ -1548,6 +1548,7 @@ const TAB_META: Record<
 
 export interface ModelDetailsContentProps {
   model: PricingModel
+  pricingModels?: PricingModel[]
   groupRatio: Record<string, number>
   usableGroup: Record<string, { desc: string; ratio: number }>
   endpointMap: Record<string, { path?: string; method?: string }>
@@ -1599,7 +1600,9 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
 
         <TabsContent value='overview' className='space-y-6 outline-none'>
           <OverviewSummaryGrid model={props.model} />
-          {props.model.sales_bps != null && <CustomerPricingNotice />}
+          {props.model.sales_bps != null && (
+            <CustomerPricingNotice models={props.pricingModels} />
+          )}
 
           <section className='bg-card/60 space-y-5 rounded-xl border p-4 shadow-sm'>
             <SectionTitle>{t('Pricing')}</SectionTitle>
@@ -1778,6 +1781,7 @@ export function ModelDetails() {
 
         <ModelDetailsContent
           model={model}
+          pricingModels={models}
           groupRatio={groupRatio || {}}
           usableGroup={usableGroup || {}}
           autoGroups={autoGroups || []}

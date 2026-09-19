@@ -29,7 +29,7 @@ afterEach(() => {
   clients.length = 0
 })
 
-function renderDetails(model: PricingModel) {
+function renderDetails(model: PricingModel, pricingModels?: PricingModel[]) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -42,6 +42,7 @@ function renderDetails(model: PricingModel) {
     <QueryClientProvider client={client}>
       <ModelDetailsContent
         model={model}
+        pricingModels={pricingModels}
         groupRatio={{ default: 2 }}
         usableGroup={{ default: { desc: 'Default', ratio: 2 } }}
         endpointMap={{}}
@@ -118,6 +119,22 @@ describe('customer pricing display', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(
       'Prices include your agency sales policy.'
     )
+  })
+
+  it('shows the complete agency pricing list from a model detail drawer', async () => {
+    renderDetails(customer, [
+      customer,
+      { ...customer, model_name: 'second-model', sales_bps: 8000 },
+    ])
+
+    await userEvent.setup().click(
+      screen.getByRole('button', { name: 'View exclusive pricing' })
+    )
+
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveTextContent('hy3')
+    expect(dialog).toHaveTextContent('second-model')
+    expect(dialog).toHaveTextContent('2 models')
   })
 
   it('shows the customer per-call price in card, table, and detail group rows', () => {

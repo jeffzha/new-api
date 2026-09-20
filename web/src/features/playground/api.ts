@@ -25,6 +25,7 @@ import type {
   ChatCompletionResponse,
   ModelOption,
   GroupOption,
+  PricingAssistantResponse,
 } from './types'
 
 /**
@@ -38,6 +39,18 @@ export async function sendChatCompletion(
     signal,
     skipErrorHandler: true,
   } as Record<string, unknown>)
+  return res.data
+}
+
+export async function queryPricingAssistant(
+  message: string,
+  signal?: AbortSignal
+): Promise<PricingAssistantResponse> {
+  const res = await api.post(
+    API_ENDPOINTS.PRICING_ASSISTANT,
+    { message },
+    { signal, skipErrorHandler: true }
+  )
   return res.data
 }
 

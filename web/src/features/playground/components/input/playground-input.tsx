@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { ChartNoAxesCombinedIcon } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -25,6 +26,7 @@ import {
   PromptInputTextarea,
   type PromptInputMessage,
 } from '@/components/ai-elements/prompt-input'
+import { Switch } from '@/components/ui/switch'
 
 import { getSubmittableInputText } from '../../lib'
 import type {
@@ -60,6 +62,8 @@ interface PlaygroundInputProps {
     value: boolean
   ) => void
   parameterEnabled: ParameterEnabled
+  pricingAssistantEnabled?: boolean
+  onPricingAssistantEnabledChange?: (enabled: boolean) => void
 }
 
 export function PlaygroundInput({
@@ -80,6 +84,8 @@ export function PlaygroundInput({
   onClearMessages,
   onParameterEnabledChange,
   parameterEnabled,
+  pricingAssistantEnabled = false,
+  onPricingAssistantEnabledChange,
 }: PlaygroundInputProps) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
@@ -93,7 +99,32 @@ export function PlaygroundInput({
   }
 
   return (
-    <div className='grid shrink-0 gap-4 px-1 md:pb-4'>
+    <div className='grid shrink-0 gap-3 px-1 md:pb-4'>
+      {onPricingAssistantEnabledChange && (
+        <div className='border-primary/20 bg-primary/5 flex items-center justify-between gap-3 rounded-xl border px-3.5 py-2.5'>
+          <div className='flex min-w-0 items-center gap-2.5'>
+            <div className='bg-primary/10 text-primary flex size-8 shrink-0 items-center justify-center rounded-lg'>
+              <ChartNoAxesCombinedIcon aria-hidden='true' className='size-4' />
+            </div>
+            <div className='min-w-0'>
+              <p className='text-sm font-medium'>
+                {t('Pricing strategy assistant')}
+              </p>
+              <p className='text-muted-foreground text-xs leading-5'>
+                {t(
+                  'Query live model, channel, and agency pricing coefficients without calling a model.'
+                )}
+              </p>
+            </div>
+          </div>
+          <Switch
+            aria-label={t('Pricing strategy assistant')}
+            checked={pricingAssistantEnabled}
+            disabled={disabled}
+            onCheckedChange={onPricingAssistantEnabledChange}
+          />
+        </div>
+      )}
       <PromptInput
         className='relative'
         groupClassName='bg-background/95 dark:bg-background/80 border-border/70 shadow-[0_18px_60px_-32px_rgba(0,0,0,0.65)] ring-1 ring-foreground/5 rounded-xl overflow-hidden transition-all duration-200 focus-within:border-primary/45 focus-within:ring-primary/15 focus-within:shadow-[0_22px_70px_-34px_rgba(0,0,0,0.75)]'
@@ -107,7 +138,11 @@ export function PlaygroundInput({
           className='min-h-20 px-5 pt-4 pb-3 leading-7 md:min-h-24 md:text-base'
           disabled={disabled}
           onChange={(event) => setText(event.target.value)}
-          placeholder={t('Ask anything')}
+          placeholder={t(
+            pricingAssistantEnabled
+              ? 'Ask about platform pricing'
+              : 'Ask anything'
+          )}
           value={text}
         />
 
@@ -123,6 +158,7 @@ export function PlaygroundInput({
             onGroupChange={onGroupChange}
             onModelChange={onModelChange}
             onStop={onStop}
+            pricingAssistantEnabled={pricingAssistantEnabled}
             text={text}
             tools={
               <PlaygroundInputTools

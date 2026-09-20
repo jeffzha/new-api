@@ -29,17 +29,17 @@ type liveModelChannel struct {
 	ChannelName string
 }
 
-type catalogChannelCost struct {
+type PlatformPricingCatalogChannel struct {
 	ChannelID       int    `json:"channel_id"`
 	ChannelName     string `json:"channel_name"`
 	Available       bool   `json:"available"`
 	PlatformCostBPS *int   `json:"platform_cost_bps"`
 }
 
-type platformPricingCatalogRow struct {
-	OriginModelName string               `json:"origin_model_name"`
-	ChannelNames    []string             `json:"channel_names"`
-	ChannelCosts    []catalogChannelCost `json:"channel_costs"`
+type PlatformPricingCatalogRow struct {
+	OriginModelName string                          `json:"origin_model_name"`
+	ChannelNames    []string                        `json:"channel_names"`
+	ChannelCosts    []PlatformPricingCatalogChannel `json:"channel_costs"`
 	// PlatformCostBPS is a read-only legacy fallback for a policy published
 	// before per-channel platform costs were introduced.
 	PlatformCostBPS *int `json:"platform_cost_bps"`
@@ -47,9 +47,22 @@ type platformPricingCatalogRow struct {
 	DefaultSalesBPS *int `json:"default_sales_bps"`
 }
 
+// PlatformPricingCatalog is the current, read-only view of the pricing
+// policy combined with live model/channel abilities. Both the agency hub and
+// internal integrations use it so they cannot drift apart.
+type PlatformPricingCatalog struct {
+	Revision      int64                       `json:"revision"`
+	Items         []PlatformPricingCatalogRow `json:"items"`
+	RefreshedAtMS int64                       `json:"refreshed_at_ms"`
+}
+
 func (a *App) liveModelChannels() ([]liveModelChannel, error) {
+	return loadLiveModelChannels(a.db)
+}
+
+func loadLiveModelChannels(db *gorm.DB) ([]liveModelChannel, error) {
 	var rows []liveModelChannel
-	err := a.db.Table("abilities").
+	err := db.Table("abilities").
 		Select("abilities.model, channels.id AS channel_id, channels.name AS channel_name").
 		Joins("JOIN channels ON channels.id = abilities.channel_id").
 		Where("abilities.enabled = ? AND channels.status = ?", true, common.ChannelStatusEnabled).
@@ -58,27 +71,25 @@ func (a *App) liveModelChannels() ([]liveModelChannel, error) {
 	return rows, err
 }
 
-func (a *App) getPlatformPricing(c *gin.Context) {
-	policy, err := model.LoadAgencyPlatformPolicy(a.db)
+func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
+	policy, err := model.LoadAgencyPlatformPolicy(db)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "database_error", "读取平台价格策略失败", nil)
-		return
+		return nil, err
 	}
-	live, err := a.liveModelChannels()
+	live, err := loadLiveModelChannels(db)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "database_error", "读取实时模型与渠道失败", nil)
-		return
+		return nil, err
 	}
 	configured := make(map[string]agencycontract.PlatformModelPrice, len(policy.ModelPrices))
 	for _, price := range policy.ModelPrices {
 		configured[price.OriginModelName] = price
 	}
-	byModel := make(map[string]*platformPricingCatalogRow)
+	byModel := make(map[string]*PlatformPricingCatalogRow)
 	order := make([]string, 0)
 	for _, item := range live {
 		row := byModel[item.Model]
 		if row == nil {
-			row = &platformPricingCatalogRow{OriginModelName: item.Model}
+			row = &PlatformPricingCatalogRow{OriginModelName: item.Model}
 			if price, ok := configured[item.Model]; ok {
 				agencyCost, defaultSales := price.AgencyCostBPS, price.DefaultSalesBPS
 				row.AgencyCostBPS, row.DefaultSalesBPS = &agencyCost, &defaultSales
@@ -98,14 +109,14 @@ func (a *App) getPlatformPricing(c *gin.Context) {
 			channelCost = configuredChannelCost(price, item.ChannelID)
 		}
 		row.ChannelNames = append(row.ChannelNames, item.ChannelName)
-		row.ChannelCosts = append(row.ChannelCosts, catalogChannelCost{ChannelID: item.ChannelID, ChannelName: item.ChannelName, Available: true, PlatformCostBPS: channelCost})
+		row.ChannelCosts = append(row.ChannelCosts, PlatformPricingCatalogChannel{ChannelID: item.ChannelID, ChannelName: item.ChannelName, Available: true, PlatformCostBPS: channelCost})
 	}
 	// Keep a configured row visible even if its channel was disabled after publication.
 	for name, price := range configured {
 		row := byModel[name]
 		if row == nil {
 			agencyCost, defaultSales := price.AgencyCostBPS, price.DefaultSalesBPS
-			row = &platformPricingCatalogRow{OriginModelName: name, ChannelNames: []string{}, AgencyCostBPS: &agencyCost, DefaultSalesBPS: &defaultSales}
+			row = &PlatformPricingCatalogRow{OriginModelName: name, ChannelNames: []string{}, AgencyCostBPS: &agencyCost, DefaultSalesBPS: &defaultSales}
 			if len(price.ChannelCosts) == 0 {
 				legacyCost := price.PlatformCostBPS
 				row.PlatformCostBPS = &legacyCost
@@ -118,18 +129,27 @@ func (a *App) getPlatformPricing(c *gin.Context) {
 				continue
 			}
 			costBPS := cost.PlatformCostBPS
-			row.ChannelCosts = append(row.ChannelCosts, catalogChannelCost{ChannelID: cost.ChannelID, ChannelName: "渠道当前不可用 #" + strconv.Itoa(cost.ChannelID), Available: false, PlatformCostBPS: &costBPS})
+			row.ChannelCosts = append(row.ChannelCosts, PlatformPricingCatalogChannel{ChannelID: cost.ChannelID, ChannelName: "渠道当前不可用 #" + strconv.Itoa(cost.ChannelID), Available: false, PlatformCostBPS: &costBPS})
 		}
 	}
 	sort.Strings(order)
-	items := make([]*platformPricingCatalogRow, 0, len(order))
+	items := make([]PlatformPricingCatalogRow, 0, len(order))
 	for _, name := range order {
-		items = append(items, byModel[name])
+		items = append(items, *byModel[name])
 	}
-	respondOK(c, gin.H{"revision": policy.Revision, "items": items, "refreshed_at_ms": time.Now().UnixMilli()})
+	return &PlatformPricingCatalog{Revision: policy.Revision, Items: items, RefreshedAtMS: time.Now().UnixMilli()}, nil
 }
 
-func containsCatalogChannel(costs []catalogChannelCost, channelID int) bool {
+func (a *App) getPlatformPricing(c *gin.Context) {
+	catalog, err := LoadPlatformPricingCatalog(a.db)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取平台价格策略失败", nil)
+		return
+	}
+	respondOK(c, catalog)
+}
+
+func containsCatalogChannel(costs []PlatformPricingCatalogChannel, channelID int) bool {
 	for _, cost := range costs {
 		if cost.ChannelID == channelID {
 			return true

@@ -13,6 +13,7 @@ import (
 )
 
 func SetApiRouter(router *gin.Engine) {
+	router.POST("/mcp", middleware.RootAuth(), middleware.DisableCache(), controller.PlatformPricingMCP)
 	apiRouter := router.Group("/api")
 	apiRouter.Use(middleware.RouteTag("api"))
 	apiRouter.Use(gzip.Gzip(gzip.DefaultCompression))
@@ -28,6 +29,7 @@ func SetApiRouter(router *gin.Engine) {
 	agencyRoute.POST("/verify", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-verification"), middleware.DisableCache(), controller.IssueAgencyVerification)
 	agencyRoute.POST("/command-proof", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-verification"), middleware.DisableCache(), controller.IssueAgencyCommandProof)
 	agencyRoute.GET("/effective-pricing", middleware.UserAuth(), controller.GetAgencyEffectivePricing)
+	apiRouter.POST("/playground/pricing-assistant", middleware.RootAuth(), middleware.DisableCache(), controller.PlaygroundPricingAssistant)
 	{
 		apiRouter.GET("/setup", controller.GetSetup)
 		apiRouter.POST("/setup", anonymousRequestBodyLimit, controller.PostSetup)

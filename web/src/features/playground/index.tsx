@@ -16,6 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useCallback, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
+
+import { queryPricingAssistant } from './api'
 import { PlaygroundChat } from './components/chat/playground-chat'
 import { PlaygroundInput } from './components/input/playground-input'
 import {
@@ -24,8 +31,22 @@ import {
   usePlaygroundOptions,
   usePlaygroundState,
 } from './hooks'
+import {
+  completeAssistantMessage,
+  updateAssistantMessageWithError,
+  updateCurrentVersionContent,
+  updateLastAssistantMessage,
+} from './lib'
+import type { Message } from './types'
 
 export function Playground() {
+  const { t } = useTranslation()
+  const userRole = useAuthStore((state) => state.auth.user?.role)
+  const isRoot = userRole === ROLE.SUPER_ADMIN
+  const [pricingAssistantEnabled, setPricingAssistantEnabled] = useState(false)
+  const [isPricingAssistantQuerying, setIsPricingAssistantQuerying] =
+    useState(false)
+  const pricingAssistantAbortRef = useRef<AbortController | null>(null)
   const {
     config,
     parameterEnabled,
@@ -47,6 +68,71 @@ export function Playground() {
     onMessageUpdate: updateMessages,
   })
 
+  const sendPricingAssistant = useCallback(
+    async (nextMessages: Message[]) => {
+      const lastUserMessage = [...nextMessages]
+        .reverse()
+        .find((message) => message.from === 'user')
+      const message = lastUserMessage?.versions[0]?.content.trim()
+      if (!message) return
+
+      pricingAssistantAbortRef.current?.abort()
+      const abortController = new AbortController()
+      pricingAssistantAbortRef.current = abortController
+      setIsPricingAssistantQuerying(true)
+      try {
+        const response = await queryPricingAssistant(
+          message,
+          abortController.signal
+        )
+        const pricingData = response.data
+        if (!response.success || !pricingData?.message) {
+          throw new Error(
+            response.message || t('Unable to query platform pricing')
+          )
+        }
+        updateMessages((previousMessages) =>
+          updateLastAssistantMessage(previousMessages, (assistantMessage) =>
+            completeAssistantMessage(
+              updateCurrentVersionContent(assistantMessage, pricingData.message)
+            )
+          )
+        )
+      } catch (error: unknown) {
+        if (abortController.signal.aborted) return
+        const message =
+          error instanceof Error
+            ? error.message
+            : t('Unable to query platform pricing')
+        updateMessages((previousMessages) =>
+          updateAssistantMessageWithError(
+            previousMessages,
+            message,
+            undefined,
+            t('Pricing strategy assistant error')
+          )
+        )
+      } finally {
+        if (pricingAssistantAbortRef.current === abortController) {
+          pricingAssistantAbortRef.current = null
+          setIsPricingAssistantQuerying(false)
+        }
+      }
+    },
+    [t, updateMessages]
+  )
+
+  const stopPricingAssistant = useCallback(() => {
+    pricingAssistantAbortRef.current?.abort()
+    pricingAssistantAbortRef.current = null
+    setIsPricingAssistantQuerying(false)
+    updateMessages((previousMessages) =>
+      updateLastAssistantMessage(previousMessages, (assistantMessage) =>
+        completeAssistantMessage(assistantMessage)
+      )
+    )
+  }, [updateMessages])
+
   const {
     editingMessageKey,
     handleSendMessage,
@@ -58,12 +144,19 @@ export function Playground() {
   } = usePlaygroundConversation({
     messages,
     updateMessages,
-    sendChat,
+    sendChat: pricingAssistantEnabled ? sendPricingAssistant : sendChat,
   })
 
   const handleClearMessages = () => {
     handleEditOpenChange(false)
     clearMessages()
+  }
+
+  const handlePricingAssistantEnabledChange = (enabled: boolean) => {
+    if (enabled === pricingAssistantEnabled) return
+    handleEditOpenChange(false)
+    clearMessages()
+    setPricingAssistantEnabled(enabled)
   }
 
   const { isLoadingModels } = usePlaygroundOptions({
@@ -85,7 +178,7 @@ export function Playground() {
           onEditMessage={handleEditMessage}
           onDeleteMessage={handleDeleteMessage}
           onSelectPrompt={handleSendMessage}
-          isGenerating={isGenerating}
+          isGenerating={isGenerating || isPricingAssistantQuerying}
           editingKey={editingMessageKey}
           onCancelEdit={handleEditOpenChange}
           onSaveEdit={(newContent) => applyEdit(newContent, false)}
@@ -97,10 +190,10 @@ export function Playground() {
       <div className='mx-auto w-full max-w-4xl'>
         <PlaygroundInput
           config={config}
-          disabled={isGenerating}
+          disabled={isGenerating || isPricingAssistantQuerying}
           groups={groups}
           groupValue={config.group}
-          isGenerating={isGenerating}
+          isGenerating={isGenerating || isPricingAssistantQuerying}
           isModelLoading={isLoadingModels}
           modelValue={config.model}
           models={models}
@@ -109,10 +202,16 @@ export function Playground() {
           onClearMessages={handleClearMessages}
           onModelChange={(value) => updateConfig('model', value)}
           onParameterEnabledChange={updateParameterEnabled}
-          onStop={stopGeneration}
+          onStop={
+            pricingAssistantEnabled ? stopPricingAssistant : stopGeneration
+          }
           onSubmit={handleSendMessage}
           parameterEnabled={parameterEnabled}
           hasMessages={messages.length > 0}
+          pricingAssistantEnabled={isRoot ? pricingAssistantEnabled : undefined}
+          onPricingAssistantEnabledChange={
+            isRoot ? handlePricingAssistantEnabledChange : undefined
+          }
         />
       </div>
     </div>

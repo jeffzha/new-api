@@ -37,6 +37,7 @@ type PlaygroundInputControlsProps = {
   onGroupChange: (value: string) => void
   onModelChange: (value: string) => void
   onStop?: () => void
+  pricingAssistantEnabled?: boolean
   text: string
   tools: ReactNode
 }
@@ -52,12 +53,14 @@ export function PlaygroundInputControls({
   onGroupChange,
   onModelChange,
   onStop,
+  pricingAssistantEnabled = false,
   text,
   tools,
 }: PlaygroundInputControlsProps) {
   const { t } = useTranslation()
   const { canSubmit, isSelectorDisabled, shouldShowStop } =
     getInputControlState({
+      allowSubmitWithoutModel: pricingAssistantEnabled,
       disabled,
       groups,
       hasStopHandler: Boolean(onStop),
@@ -106,7 +109,7 @@ export function PlaygroundInputControls({
   return (
     <div className='flex w-full flex-col gap-2.5 md:flex-row md:items-center md:justify-between'>
       <div className='flex min-w-0 items-center justify-end md:hidden'>
-        {renderSelector()}
+        {!pricingAssistantEnabled && renderSelector()}
       </div>
 
       <div className='flex items-center justify-between gap-2 md:justify-start'>
@@ -117,7 +120,7 @@ export function PlaygroundInputControls({
       </div>
 
       <div className='hidden min-w-0 items-center gap-2 md:flex'>
-        {renderSelector()}
+        {!pricingAssistantEnabled && renderSelector()}
         {renderSubmitButton()}
       </div>
     </div>

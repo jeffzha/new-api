@@ -115,6 +115,16 @@ export interface ChatCompletionResponse {
   }
 }
 
+export interface PricingAssistantResponse {
+  success: boolean
+  message?: string
+  data?: {
+    message: string
+    policy_revision: number
+    updated_at_ms: number
+  }
+}
+
 // Configuration types
 export interface PlaygroundConfig {
   model: string

@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type { GroupOption, ModelOption } from '../../types'
 
 type InputControlStateOptions = {
+  allowSubmitWithoutModel?: boolean
   disabled?: boolean
   groups: GroupOption[]
   hasStopHandler: boolean
@@ -50,6 +51,7 @@ export function getSubmittableInputText(
 }
 
 export function getInputControlState({
+  allowSubmitWithoutModel = false,
   disabled,
   groups,
   hasStopHandler,
@@ -58,7 +60,7 @@ export function getInputControlState({
   models,
   text,
 }: InputControlStateOptions): InputControlState {
-  const hasModels = models.length > 0
+  const hasModels = allowSubmitWithoutModel || models.length > 0
 
   return {
     canSubmit: !disabled && hasModels && text.trim().length > 0,

@@ -88,10 +88,10 @@ func TestPlatformPricingMCPReturnsLiveChannelCostRows(t *testing.T) {
 	languageModelContext := pricingAssistantLanguageModelContext("查询 mcp-test-model", modelIntent, modelRows, revision)
 	assert.Contains(t, languageModelContext, "mcp-test-model")
 	assert.Contains(t, languageModelContext, "default_sales_coefficient")
-	assert.NotContains(t, languageModelContext, "platform_cost_coefficient")
-	assert.NotContains(t, languageModelContext, "agency_cost_coefficient")
-	assert.NotContains(t, languageModelContext, channel.Name)
-	assert.NotContains(t, languageModelContext, "channel_id")
+	assert.Contains(t, languageModelContext, "platform_cost_coefficient")
+	assert.Contains(t, languageModelContext, "agency_cost_coefficient")
+	assert.Contains(t, languageModelContext, channel.Name)
+	assert.Contains(t, languageModelContext, "channel_id")
 
 	channelIntent, err := playgroundPricingIntentFromMessage("查询 MCP pricing channel 的价格")
 	require.NoError(t, err)
@@ -103,9 +103,21 @@ func TestPlatformPricingMCPReturnsLiveChannelCostRows(t *testing.T) {
 	helpReply := formatPricingAssistantReply(helpIntent, nil, 1)
 	assert.Contains(t, helpReply, "我可以帮您查询具体模型或渠道")
 	assert.NotContains(t, helpReply, "当前策略版本")
+
+	generalPricingIntent, err := playgroundPricingIntentFromMessage("现在模型价格和渠道价格系数是怎么样的")
+	require.NoError(t, err)
+	assert.True(t, generalPricingIntent.ListRequested)
+	generalRows, generalRevision, _, err := queryPlatformPricing(generalPricingIntent.Query)
+	require.NoError(t, err)
+	require.Len(t, generalRows, 1)
+	assert.Contains(t, formatPricingAssistantReply(generalPricingIntent, generalRows, generalRevision), "mcp-test-model")
 }
 
 func TestPlatformPricingMCPExternalCredentialHidesChannelAndCostFields(t *testing.T) {
+	previousRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = previousRedisEnabled })
+
 	previousDB := model.DB
 	db, err := gorm.Open(sqlite.Open("file:pricing-mcp-public-test?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)

@@ -246,16 +246,19 @@ type playgroundPricingAssistantIntent struct {
 }
 
 func pricingAssistantLanguageModelContext(message string, intent playgroundPricingAssistantIntent, rows []platformPricingMCPRow, _ int64) string {
-	publicRows := publicMCPPricingRows(rows)
-	encodedRows, err := common.Marshal(publicRows)
+	// This handler is Root-only. The selected model receives the same
+	// authorized pricing fields shown in the Root pricing view, while public
+	// external MCP credentials continue to use publicMCPPricingRows instead.
+	encodedRows, err := common.Marshal(rows)
 	if err != nil {
 		return ""
 	}
 	return strings.Join([]string{
-		"你是价格策略助手的表达层。只能基于“已授权工具结果”回答，不能推测、计算、补充或改写任何价格、成本、渠道状态。",
-		"使用简体中文，直接回答用户问题；不能执行修改、发布、调用模型或其他操作。",
+		"你是平台价格策略助手。下面的“已授权查询结果”由系统刚刚实时查询并已完成权限校验。",
+		"必须根据这些结果直接、自然地回答用户的问题，可以比较、解释和总结其中的模型、渠道与系数；不得声称没有工具、没有数据或需要用户另行授权。",
+		"不得猜测、杜撰或使用查询结果以外的价格和渠道信息；不得执行修改、发布、调用模型或其他操作。使用简体中文。",
 		"用户问题：" + message,
-		"已授权工具结果（仅公开销售策略视图）：" + string(encodedRows),
+		"已授权查询结果：" + string(encodedRows),
 	}, "\n\n")
 }
 
@@ -322,8 +325,14 @@ func playgroundPricingIntentFromMessage(message string) (playgroundPricingAssist
 	if channelID := channelIDFromMessage(message); channelID > 0 {
 		intent.Query.ChannelID = &channelID
 	}
+	// A general pricing question is still a data request. Previously only a
+	// handful of phrases (such as "查看价格") populated the catalog, so
+	// natural questions like "现在平台价格怎么样" reached the expression
+	// layer with an empty result set.
 	intent.ListRequested = containsAny(normalizedMessage, []string{
-		`全部`, `所有`, `列表`, `清单`, `查看模型`, `查看价格`, `all`, `list`,
+		`全部`, `所有`, `列表`, `清单`, `查看模型`, `查看价格`,
+		`价格`, `定价`, `收费`, `成本`, `折扣`, `系数`,
+		`all`, `list`, `price`, `pricing`, `cost`, `discount`,
 	})
 	intent.RulesRequested = containsAny(normalizedMessage, []string{
 		`规则`, `说明`, `怎么计算`, `如何计算`, `策略`, `rule`, `policy`,

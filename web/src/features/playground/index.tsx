@@ -37,7 +37,7 @@ import {
   updateCurrentVersionContent,
   updateLastAssistantMessage,
 } from './lib'
-import type { Message } from './types'
+import type { ChatSendOptions, Message } from './types'
 
 export function Playground() {
   const { t } = useTranslation()
@@ -91,13 +91,26 @@ export function Playground() {
             response.message || t('Unable to query platform pricing')
           )
         }
-        updateMessages((previousMessages) =>
-          updateLastAssistantMessage(previousMessages, (assistantMessage) =>
-            completeAssistantMessage(
-              updateCurrentVersionContent(assistantMessage, pricingData.message)
+        const fallbackContent = `${pricingData.message}\n\n> ${t(
+          'The selected language model is unavailable, so the verified server response is shown instead.'
+        )}`
+        if (!config.model) {
+          updateMessages((previousMessages) =>
+            updateLastAssistantMessage(previousMessages, (assistantMessage) =>
+              completeAssistantMessage(
+                updateCurrentVersionContent(assistantMessage, fallbackContent)
+              )
             )
           )
-        )
+          return
+        }
+        const options: ChatSendOptions = {
+          fallbackContent,
+          requestMessages: lastUserMessage ? [lastUserMessage] : [],
+          systemPrompt: pricingData.language_model_context,
+        }
+        setIsPricingAssistantQuerying(false)
+        sendChat(nextMessages, options)
       } catch (error: unknown) {
         if (abortController.signal.aborted) return
         const message =
@@ -119,19 +132,15 @@ export function Playground() {
         }
       }
     },
-    [t, updateMessages]
+    [config.model, sendChat, t, updateMessages]
   )
 
   const stopPricingAssistant = useCallback(() => {
     pricingAssistantAbortRef.current?.abort()
     pricingAssistantAbortRef.current = null
     setIsPricingAssistantQuerying(false)
-    updateMessages((previousMessages) =>
-      updateLastAssistantMessage(previousMessages, (assistantMessage) =>
-        completeAssistantMessage(assistantMessage)
-      )
-    )
-  }, [updateMessages])
+    stopGeneration()
+  }, [stopGeneration])
 
   const {
     editingMessageKey,
@@ -160,6 +169,7 @@ export function Playground() {
   }
 
   const { isLoadingModels } = usePlaygroundOptions({
+    chatOnly: isRoot && pricingAssistantEnabled,
     currentGroup: config.group,
     currentModel: config.model,
     setGroups,
@@ -190,7 +200,11 @@ export function Playground() {
       <div className='mx-auto w-full max-w-4xl'>
         <PlaygroundInput
           config={config}
-          disabled={isGenerating || isPricingAssistantQuerying}
+          disabled={
+            isGenerating ||
+            isPricingAssistantQuerying ||
+            (pricingAssistantEnabled && isLoadingModels)
+          }
           groups={groups}
           groupValue={config.group}
           isGenerating={isGenerating || isPricingAssistantQuerying}
@@ -209,6 +223,7 @@ export function Playground() {
           parameterEnabled={parameterEnabled}
           hasMessages={messages.length > 0}
           pricingAssistantEnabled={isRoot ? pricingAssistantEnabled : undefined}
+          pricingAssistantUsesLanguageModel={isRoot && pricingAssistantEnabled}
           onPricingAssistantEnabledChange={
             isRoot ? handlePricingAssistantEnabledChange : undefined
           }

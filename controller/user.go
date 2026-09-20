@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -698,10 +699,32 @@ func GetUserModels(c *gin.Context) {
 			groupsToQuery = []string{group}
 		}
 	}
+	models := service.GetGroupsEnabledModels(groupsToQuery)
+	if c.Query("chat_only") == "true" {
+		chatAbilities, queryErr := model.GetEnabledAbilitiesWithChannelsByGroups(groupsToQuery)
+		if queryErr != nil {
+			common.ApiError(c, queryErr)
+			return
+		}
+		chatModels := make(map[string]struct{}, len(chatAbilities))
+		for _, ability := range chatAbilities {
+			if constant.IsTaskOnlyChannelType(ability.ChannelType) || common.IsImageGenerationModel(ability.Model) || !slices.Contains(common.GetEndpointTypesByChannelType(ability.ChannelType, ability.Model), constant.EndpointTypeOpenAI) {
+				continue
+			}
+			chatModels[ability.Model] = struct{}{}
+		}
+		filteredModels := make([]string, 0, len(models))
+		for _, modelName := range models {
+			if _, ok := chatModels[modelName]; ok {
+				filteredModels = append(filteredModels, modelName)
+			}
+		}
+		models = filteredModels
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    service.GetGroupsEnabledModels(groupsToQuery),
+		"data":    models,
 	})
 }
 

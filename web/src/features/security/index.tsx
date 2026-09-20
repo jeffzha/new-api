@@ -31,17 +31,22 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { TitledCard } from '@/components/ui/titled-card'
 import { useProfile } from '@/features/profile/hooks/use-profile'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { AccessTokenCard } from './components/access-token-card'
 import { AccountActionCard } from './components/account-action-card'
 import { AccountBindings } from './components/account-bindings'
 import { LoginSessionsCard } from './components/login-sessions-card'
+import { MCPAccessCredentialCard } from './components/mcp-access-credential-card'
 import { PasskeyCard } from './components/passkey-card'
 import { PrivacyCard } from './components/privacy-card'
 import { TwoFACard } from './components/two-fa-card'
 
 export function Security() {
   const { t } = useTranslation()
+  const userRole = useAuthStore((state) => state.auth.user?.role)
+  const isRoot = userRole === ROLE.SUPER_ADMIN
   const { profile, loading, refreshProfile, fetchProfile } = useProfile()
 
   let content: ReactNode
@@ -106,6 +111,7 @@ export function Security() {
             </h3>
             <LoginSessionsCard />
             <AccessTokenCard />
+            {isRoot && <MCPAccessCredentialCard />}
           </section>
           <section aria-labelledby='security-account' className='space-y-4'>
             <h3 id='security-account' className='text-sm font-semibold'>

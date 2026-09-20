@@ -39,6 +39,7 @@ export type SecurityProofScope =
   | 'account.password.change'
   | 'account.delete'
   | 'workbench.admin.step_up'
+  | 'mcp.access.manage'
 
 export type VerificationOperation =
   | { scope: 'channel.key.read'; context: { channel_id: number } }

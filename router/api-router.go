@@ -13,7 +13,7 @@ import (
 )
 
 func SetApiRouter(router *gin.Engine) {
-	router.POST("/mcp", middleware.RootAuth(), middleware.DisableCache(), controller.PlatformPricingMCP)
+	router.POST("/mcp", middleware.MCPPricingAuth(), middleware.MCPPricingRateLimit(), middleware.DisableCache(), controller.PlatformPricingMCP)
 	apiRouter := router.Group("/api")
 	apiRouter.Use(middleware.RouteTag("api"))
 	apiRouter.Use(gzip.Gzip(gzip.DefaultCompression))
@@ -30,6 +30,14 @@ func SetApiRouter(router *gin.Engine) {
 	agencyRoute.POST("/command-proof", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-verification"), middleware.DisableCache(), controller.IssueAgencyCommandProof)
 	agencyRoute.GET("/effective-pricing", middleware.UserAuth(), controller.GetAgencyEffectivePricing)
 	apiRouter.POST("/playground/pricing-assistant", middleware.RootAuth(), middleware.DisableCache(), controller.PlaygroundPricingAssistant)
+	mcpRoute := apiRouter.Group("/mcp/credentials")
+	mcpRoute.Use(middleware.RootAuth(), middleware.UserCriticalRateLimit("mcp-credentials"), middleware.DisableCache())
+	{
+		mcpRoute.GET("", controller.ListMCPAccessCredentials)
+		mcpRoute.POST("", controller.CreateMCPAccessCredential)
+		mcpRoute.POST("/:id/rotate", controller.RotateMCPAccessCredential)
+		mcpRoute.DELETE("/:id", controller.RevokeMCPAccessCredential)
+	}
 	{
 		apiRouter.GET("/setup", controller.GetSetup)
 		apiRouter.POST("/setup", anonymousRequestBodyLimit, controller.PostSetup)

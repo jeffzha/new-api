@@ -63,6 +63,7 @@ interface PlaygroundInputProps {
   ) => void
   parameterEnabled: ParameterEnabled
   pricingAssistantEnabled?: boolean
+  pricingAssistantUsesLanguageModel?: boolean
   onPricingAssistantEnabledChange?: (enabled: boolean) => void
 }
 
@@ -85,6 +86,7 @@ export function PlaygroundInput({
   onParameterEnabledChange,
   parameterEnabled,
   pricingAssistantEnabled = false,
+  pricingAssistantUsesLanguageModel = false,
   onPricingAssistantEnabledChange,
 }: PlaygroundInputProps) {
   const { t } = useTranslation()
@@ -112,7 +114,7 @@ export function PlaygroundInput({
               </p>
               <p className='text-muted-foreground text-xs leading-5'>
                 {t(
-                  'Query live model, channel, and agency pricing coefficients without calling a model.'
+                  'Query live pricing through controlled tools. The selected text model only explains authorized results and automatically falls back to the verified response if unavailable.'
                 )}
               </p>
             </div>
@@ -159,6 +161,9 @@ export function PlaygroundInput({
             onModelChange={onModelChange}
             onStop={onStop}
             pricingAssistantEnabled={pricingAssistantEnabled}
+            pricingAssistantUsesLanguageModel={
+              pricingAssistantUsesLanguageModel
+            }
             text={text}
             tools={
               <PlaygroundInputTools

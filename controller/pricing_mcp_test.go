@@ -29,7 +29,8 @@ func TestPlatformPricingMCPReturnsLiveChannelCostRows(t *testing.T) {
 	})
 	model.DB = db
 	require.NoError(t, model.MigrateAgency(db))
-	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}))
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "root-mcp-reader", Role: common.RoleRootUser, Status: common.UserStatusEnabled}).Error)
 	channel := model.Channel{Name: "MCP pricing channel", Type: 1, Key: "test-only", Status: common.ChannelStatusEnabled}
 	require.NoError(t, db.Create(&channel).Error)
 	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: "mcp-test-model", ChannelId: channel.Id, Enabled: true}).Error)
@@ -69,6 +70,92 @@ func TestPlatformPricingMCPReturnsLiveChannelCostRows(t *testing.T) {
 	assert.Equal(t, 0.5, *row.PlatformCostCoefficient)
 	assert.Equal(t, 0.55, *row.AgencyCostCoefficient)
 	assert.Equal(t, 0.6, *row.DefaultSalesCoefficient)
+	publicRows := publicMCPPricingRows([]platformPricingMCPRow{row})
+	require.Len(t, publicRows, 1)
+	assert.Zero(t, publicRows[0].ChannelID)
+	assert.Empty(t, publicRows[0].ChannelName)
+	assert.Nil(t, publicRows[0].PlatformCostCoefficient)
+	assert.Nil(t, publicRows[0].AgencyCostCoefficient)
+	require.NotNil(t, publicRows[0].DefaultSalesCoefficient)
+
+	modelIntent, err := playgroundPricingIntentFromMessage("查询 mcp-test-model 的价格")
+	require.NoError(t, err)
+	assert.Equal(t, "mcp-test-model", modelIntent.Query.ModelName)
+	modelRows, revision, _, err := queryPlatformPricing(modelIntent.Query)
+	require.NoError(t, err)
+	require.Len(t, modelRows, 1)
+	assert.Contains(t, formatPricingAssistantReply(modelIntent, modelRows, revision), "mcp-test-model 的价格策略")
+	languageModelContext := pricingAssistantLanguageModelContext("查询 mcp-test-model", modelIntent, modelRows, revision)
+	assert.Contains(t, languageModelContext, "mcp-test-model")
+	assert.Contains(t, languageModelContext, "default_sales_coefficient")
+	assert.NotContains(t, languageModelContext, "platform_cost_coefficient")
+	assert.NotContains(t, languageModelContext, "agency_cost_coefficient")
+	assert.NotContains(t, languageModelContext, channel.Name)
+	assert.NotContains(t, languageModelContext, "channel_id")
+
+	channelIntent, err := playgroundPricingIntentFromMessage("查询 MCP pricing channel 的价格")
+	require.NoError(t, err)
+	require.NotNil(t, channelIntent.Query.ChannelID)
+	assert.Equal(t, channel.Id, *channelIntent.Query.ChannelID)
+
+	helpIntent, err := playgroundPricingIntentFromMessage("你是谁")
+	require.NoError(t, err)
+	helpReply := formatPricingAssistantReply(helpIntent, nil, 1)
+	assert.Contains(t, helpReply, "我可以帮您查询具体模型或渠道")
+	assert.NotContains(t, helpReply, "当前策略版本")
+}
+
+func TestPlatformPricingMCPExternalCredentialHidesChannelAndCostFields(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:pricing-mcp-public-test?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() {
+		model.DB = previousDB
+		require.NoError(t, sqlDB.Close())
+	})
+	model.DB = db
+	require.NoError(t, model.MigrateAgency(db))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}))
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "root-public-mcp-reader", Role: common.RoleRootUser, Status: common.UserStatusEnabled}).Error)
+	channel := model.Channel{Name: "Private supplier", Type: 1, Key: "test-only", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: "public-test-model", ChannelId: channel.Id, Enabled: true}).Error)
+	policyJSON, err := common.Marshal(agencycontract.PlatformPolicy{Revision: 1, ModelPrices: []agencycontract.PlatformModelPrice{{
+		OriginModelName: "public-test-model",
+		AgencyCostBPS:   5500,
+		DefaultSalesBPS: 6000,
+		ChannelCosts:    []agencycontract.PlatformChannelCost{{ChannelID: channel.Id, PlatformCostBPS: 5000}},
+	}}})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.AgencyPlatformPriceVersion{ID: 1, Revision: 1, PolicyJSON: string(policyJSON), PolicyHash: "test"}).Error)
+	require.NoError(t, db.Create(&model.AgencyPlatformPriceState{ID: 1, Revision: 1, CurrentVersionID: 1}).Error)
+
+	body := "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"list_platform_model_pricing\",\"arguments\":{\"model_name\":\"public-test-model\"}}}"
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	context.Set("mcp_access_credential", model.MCPAccessCredential{OwnerUserID: 1, TokenHash: "audit-only"})
+	PlatformPricingMCP(context)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.NotContains(t, recorder.Body.String(), "Private supplier")
+	assert.NotContains(t, recorder.Body.String(), "platform_cost_coefficient")
+	assert.NotContains(t, recorder.Body.String(), "agency_cost_coefficient")
+	assert.NotContains(t, recorder.Body.String(), "channel_id")
+	assert.NotContains(t, recorder.Body.String(), "channel_name")
+	assert.Contains(t, recorder.Body.String(), "default_sales_coefficient")
+
+	listBody := "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/list\"}"
+	recorder = httptest.NewRecorder()
+	context, _ = gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(listBody))
+	context.Set("mcp_access_credential", model.MCPAccessCredential{OwnerUserID: 1})
+	PlatformPricingMCP(context)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.NotContains(t, recorder.Body.String(), "channel_id")
+	assert.NotContains(t, recorder.Body.String(), "platform cost")
 }
 
 func TestPlatformPricingQueryRejectsUnknownArgumentsAndDoesNotTreatModelVersionsAsChannels(t *testing.T) {

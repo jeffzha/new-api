@@ -108,6 +108,43 @@ func TestUserAuthAllowsOpaqueDottedPAT(t *testing.T) {
 	assert.Equal(t, user.Id, body.ID)
 }
 
+func TestMCPPricingAuthAcceptsOnlyActiveDedicatedCredential(t *testing.T) {
+	setupDashboardAuthMiddlewareTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.MCPAccessCredential{}))
+	root := &model.User{
+		Username: "mcp-pricing-root", Password: "password-placeholder", Role: common.RoleRootUser,
+		Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1,
+	}
+	require.NoError(t, model.DB.Create(root).Error)
+	credential, secret, err := model.CreateMCPAccessCredential(root.Id, "external pricing", nil, "")
+	require.NoError(t, err)
+	require.Positive(t, credential.ID)
+
+	router := gin.New()
+	router.GET("/mcp", MCPPricingAuth(), func(c *gin.Context) {
+		_, external := GetMCPAccessCredential(c)
+		c.JSON(http.StatusOK, gin.H{"external": external, "id": c.GetInt("id")})
+	})
+	request := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	request.Header.Set("Authorization", "Bearer "+secret)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var body struct {
+		External bool `json:"external"`
+		ID       int  `json:"id"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
+	assert.True(t, body.External)
+	assert.Equal(t, root.Id, body.ID)
+
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", root.Id).Update("status", common.UserStatusDisabled).Error)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	assert.Equal(t, http.StatusUnauthorized, response.Code)
+	assert.Contains(t, response.Body.String(), "MCP_CREDENTIAL_INVALID")
+}
+
 func TestUserAuthNeverFallsBackForRecognizedInvalidInternalJWT(t *testing.T) {
 	setupDashboardAuthMiddlewareTest(t)
 	identity := service.AuthIdentity{UserID: 42, SessionID: "session-42", UserAuthVersion: 1, SessionVersion: 1}

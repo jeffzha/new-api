@@ -51,6 +51,7 @@ import {
 import type { GroupOption, ModelOption, PlaygroundConfig } from '../types'
 
 type UsePlaygroundOptionsParams = {
+  chatOnly?: boolean
   currentGroup: string
   currentModel: string
   setGroups: (groups: GroupOption[]) => void
@@ -62,6 +63,7 @@ type UsePlaygroundOptionsParams = {
 }
 
 export function usePlaygroundOptions({
+  chatOnly = false,
   currentGroup,
   currentModel,
   setGroups,
@@ -76,9 +78,9 @@ export function usePlaygroundOptions({
     isError: isModelsError,
     isLoading: isLoadingModels,
   } = useQuery({
-    queryKey: ['playground-models', currentGroup],
+    queryKey: ['playground-models', currentGroup, chatOnly],
     queryFn: async () =>
-      requireServerSuccess(await getUserModels(currentGroup)),
+      requireServerSuccess(await getUserModels(currentGroup, { chatOnly })),
     enabled: currentGroup !== '',
   })
 

@@ -255,6 +255,30 @@ func IsAdvancedCustomChannel(channelType int) bool {
 	}
 }
 
+// IsTaskOnlyChannelType reports channel types that exclusively serve
+// asynchronous or media task protocols. They must not be offered as a text
+// model in clients that need a chat-completions compatible model. Mixed
+// channels (for example OpenAI, Gemini, Ali, and task-plugin-backed general
+// channels) are deliberately not listed here because they can also serve text
+// models.
+func IsTaskOnlyChannelType(channelType int) bool {
+	switch channelType {
+	case ChannelTypeKling,
+		ChannelTypeJimeng,
+		ChannelTypeVidu,
+		ChannelTypeDoubaoVideo,
+		ChannelTypeSora,
+		ChannelTypeTaskPlugin,
+		ChannelTypeHappyHorse,
+		ChannelTypeOpenAISeedance,
+		ChannelTypeSeedanceDomestic,
+		ChannelTypeMobileCloudSeedance:
+		return true
+	default:
+		return false
+	}
+}
+
 type ChannelSpecialBase struct {
 	ClaudeBaseURL string
 	OpenAIBaseURL string

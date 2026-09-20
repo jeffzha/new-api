@@ -29,6 +29,7 @@ const (
 	VerificationScopeLogin                = "auth.login"
 	VerificationScopeAccessTokenGenerate  = "access_token.generate"
 	VerificationScopeAccessTokenRevoke    = "access_token.revoke"
+	VerificationScopeMCPAccessManage      = "mcp.access.manage"
 	VerificationScopeAccountBind          = "account.binding.bind"
 	VerificationScopeAccountUnbind        = "account.binding.unbind"
 	VerificationScopePasswordSet          = "account.password.set"
@@ -121,6 +122,7 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	case VerificationScopePasskeyRegister, VerificationScopePasskeyDelete, VerificationScopeTwoFASetup,
 		VerificationScopeTwoFADisable, VerificationScopeTwoFABackupCodes,
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenRevoke,
+		VerificationScopeMCPAccessManage,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
 		VerificationScopeWorkbenchAdminStepUp:
 		if len(fields) != 0 {
@@ -187,6 +189,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 		}
 	case VerificationScopePasskeyRegister, VerificationScopeTwoFASetup,
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenRevoke,
+		VerificationScopeMCPAccessManage,
 		VerificationScopeAccountBind, VerificationScopeAccountUnbind,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete:
 		if scope == VerificationScopeAccountDelete && state.Role == common.RoleRootUser {

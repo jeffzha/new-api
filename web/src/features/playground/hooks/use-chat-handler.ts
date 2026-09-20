@@ -34,8 +34,14 @@ import {
   hasChatCompletionChoice,
   isAssistantMessageFinal,
   isAssistantMessagePending,
+  updateCurrentVersionContent,
 } from '../lib'
-import type { Message, PlaygroundConfig, ParameterEnabled } from '../types'
+import type {
+  ChatSendOptions,
+  Message,
+  PlaygroundConfig,
+  ParameterEnabled,
+} from '../types'
 import { useStreamRequest } from './use-stream-request'
 
 interface UseChatHandlerOptions {
@@ -221,10 +227,26 @@ export function useChatHandler({
 
   // Handle stream error
   const handleStreamError = useCallback(
-    (generation: number, error: string, errorCode?: string) => {
+    (
+      generation: number,
+      error: string,
+      errorCode?: string,
+      fallbackContent?: string
+    ) => {
       if (generation !== requestGenerationRef.current) return
       flushStreamUpdates(generation)
       setIsRequesting(false)
+      if (fallbackContent) {
+        onMessageUpdate((prev) => {
+          if (generation !== requestGenerationRef.current) return prev
+          return updateLastAssistantMessage(prev, (message) =>
+            completeAssistantMessage(
+              updateCurrentVersionContent(message, fallbackContent)
+            )
+          )
+        })
+        return
+      }
       const displayError = getDisplayError(error)
       handleServerError(new Error(displayError))
       const errorTitle = t(ERROR_MESSAGES.API_REQUEST_ERROR)
@@ -243,7 +265,7 @@ export function useChatHandler({
 
   // Send streaming chat request
   const sendStreamingChat = useCallback(
-    (messages: Message[]) => {
+    (messages: Message[], options?: ChatSendOptions) => {
       const generation = requestGenerationRef.current + 1
       requestGenerationRef.current = generation
       abortControllerRef.current?.abort()
@@ -251,15 +273,22 @@ export function useChatHandler({
       discardPendingStreamUpdates(generation)
       setIsRequesting(true)
       const payload = buildChatCompletionPayload(
-        messages,
+        options?.requestMessages ?? messages,
         config,
-        parameterEnabled
+        parameterEnabled,
+        options?.systemPrompt
       )
       void sendStreamRequest(
         payload,
         (type, chunk) => handleStreamUpdate(generation, type, chunk),
         () => handleStreamComplete(generation),
-        (error, errorCode) => handleStreamError(generation, error, errorCode)
+        (error, errorCode) =>
+          handleStreamError(
+            generation,
+            error,
+            errorCode,
+            options?.fallbackContent
+          )
       )
     },
     [
@@ -275,11 +304,12 @@ export function useChatHandler({
 
   // Send non-streaming chat request
   const sendNonStreamingChat = useCallback(
-    async (messages: Message[]) => {
+    async (messages: Message[], options?: ChatSendOptions) => {
       const payload = buildChatCompletionPayload(
-        messages,
+        options?.requestMessages ?? messages,
         config,
-        parameterEnabled
+        parameterEnabled,
+        options?.systemPrompt
       )
       const generation = requestGenerationRef.current + 1
       const abortController = new AbortController()
@@ -304,7 +334,12 @@ export function useChatHandler({
         }
 
         if (!hasChatCompletionChoice(response)) {
-          handleStreamError(generation, ERROR_MESSAGES.API_REQUEST_ERROR)
+          handleStreamError(
+            generation,
+            ERROR_MESSAGES.API_REQUEST_ERROR,
+            undefined,
+            options?.fallbackContent
+          )
           return
         }
 
@@ -328,7 +363,12 @@ export function useChatHandler({
         }
 
         const { errorCode, errorMessage } = parseRequestErrorDetails(error)
-        handleStreamError(generation, errorMessage, errorCode)
+        handleStreamError(
+          generation,
+          errorMessage,
+          errorCode,
+          options?.fallbackContent
+        )
       } finally {
         if (requestGenerationRef.current === generation) {
           abortControllerRef.current = null
@@ -348,11 +388,11 @@ export function useChatHandler({
 
   // Send chat request (stream or non-stream based on config)
   const sendChat = useCallback(
-    (messages: Message[]) => {
+    (messages: Message[], options?: ChatSendOptions) => {
       if (config.stream) {
-        sendStreamingChat(messages)
+        sendStreamingChat(messages, options)
       } else {
-        sendNonStreamingChat(messages)
+        sendNonStreamingChat(messages, options)
       }
     },
     [config.stream, sendStreamingChat, sendNonStreamingChat]

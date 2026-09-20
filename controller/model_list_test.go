@@ -215,6 +215,45 @@ func TestGetUserModelsFiltersByRequestedGroup(t *testing.T) {
 	require.Empty(t, decodeUserModelsResponse(t, vipRecorder))
 }
 
+func TestGetUserModelsChatOnlyExcludesTaskAndImageModels(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1004,
+		Username: "playground-chat-model-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 1004, Type: constant.ChannelTypeOpenAI, Key: "text-key", Name: "text", Status: common.ChannelStatusEnabled},
+		{Id: 1005, Type: constant.ChannelTypeHappyHorse, Key: "task-key", Name: "task", Status: common.ChannelStatusEnabled},
+		{Id: 1006, Type: constant.ChannelTypeOpenAI, Key: "image-key", Name: "image", Status: common.ChannelStatusEnabled},
+		{Id: 1007, Type: constant.ChannelTypeJina, Key: "rerank-key", Name: "rerank", Status: common.ChannelStatusEnabled},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "zz-chat-model", ChannelId: 1004, Enabled: true},
+		{Group: "default", Model: "zz-task-model", ChannelId: 1005, Enabled: true},
+		{Group: "default", Model: "gpt-image-zz", ChannelId: 1006, Enabled: true},
+		{Group: "default", Model: "zz-rerank-model", ChannelId: 1007, Enabled: true},
+	}).Error)
+
+	allRecorder := httptest.NewRecorder()
+	allContext, _ := gin.CreateTestContext(allRecorder)
+	allContext.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?group=default", nil)
+	allContext.Set("id", 1004)
+	GetUserModels(allContext)
+	require.ElementsMatch(t, []string{"zz-chat-model", "zz-task-model", "gpt-image-zz", "zz-rerank-model"}, decodeUserModelsResponse(t, allRecorder))
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?group=default&chat_only=true", nil)
+	context.Set("id", 1004)
+
+	GetUserModels(context)
+
+	require.Equal(t, []string{"zz-chat-model"}, decodeUserModelsResponse(t, recorder))
+}
+
 func TestGetUserModelsExpandsAutoGroupsInConfiguredOrder(t *testing.T) {
 	originalAutoGroups := setting.AutoGroups2JsonString()
 	originalUsableGroups := setting.UserUsableGroups2JSONString()

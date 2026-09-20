@@ -32,6 +32,80 @@ export interface AccessTokenStatus {
   last_used_ip: string
 }
 
+export interface MCPAccessCredential {
+  id: number
+  name: string
+  token_prefix: string
+  scope: string
+  allow_ips: string
+  created_at: number
+  expires_at: number | null
+  last_used_at: number | null
+  revoked_at: number | null
+}
+
+interface CreateMCPAccessCredentialResponse {
+  credential: MCPAccessCredential
+  token: string
+  endpoint: string
+  warning: string
+}
+
+export function getMCPAccessCredentials(): Promise<MCPAccessCredential[]> {
+  return authResult(
+    api.get('/api/mcp/credentials', authRequestOptions),
+    'Failed to load MCP credentials'
+  )
+}
+
+export function createMCPAccessCredential(
+  payload: { name: string; allow_ips?: string; expires_at?: number },
+  proofToken: string,
+  signal: AbortSignal
+): Promise<CreateMCPAccessCredentialResponse> {
+  return authResult(
+    api.post('/api/mcp/credentials', payload, {
+      ...authRequestOptions,
+      headers: { 'X-Security-Proof': proofToken },
+      singleUseAuthorization: true,
+      signal,
+    }),
+    'Failed to create MCP credential'
+  )
+}
+
+export function revokeMCPAccessCredential(
+  id: number,
+  proofToken: string,
+  signal: AbortSignal
+): Promise<void> {
+  return authResult(
+    api.delete(`/api/mcp/credentials/${id}`, {
+      ...authRequestOptions,
+      headers: { 'X-Security-Proof': proofToken },
+      singleUseAuthorization: true,
+      signal,
+    }),
+    'Failed to revoke MCP credential'
+  )
+}
+
+export function rotateMCPAccessCredential(
+  id: number,
+  proofToken: string,
+  signal: AbortSignal
+): Promise<CreateMCPAccessCredentialResponse> {
+  return authResult(
+    api.post(`/api/mcp/credentials/${id}/rotate`, undefined, {
+      ...authRequestOptions,
+      headers: { 'X-Security-Proof': proofToken },
+      singleUseAuthorization: true,
+      signal,
+    }),
+    'Failed to rotate MCP credential'
+  )
+}
+
 export function getAccessTokenStatus(): Promise<AccessTokenStatus> {
   return authResult(
     api.get('/api/user/token/status', authRequestOptions),

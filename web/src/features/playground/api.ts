@@ -57,9 +57,12 @@ export async function queryPricingAssistant(
 /**
  * Get user available models
  */
-export async function getUserModels(group: string): Promise<ModelOption[]> {
+export async function getUserModels(
+  group: string,
+  options?: { chatOnly?: boolean }
+): Promise<ModelOption[]> {
   const res = await api.get(API_ENDPOINTS.USER_MODELS, {
-    params: { group },
+    params: { group, chat_only: options?.chatOnly || undefined },
   })
   const { data } = res
   requireServerSuccess(data)

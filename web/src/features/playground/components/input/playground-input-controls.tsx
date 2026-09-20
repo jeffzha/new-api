@@ -38,6 +38,7 @@ type PlaygroundInputControlsProps = {
   onModelChange: (value: string) => void
   onStop?: () => void
   pricingAssistantEnabled?: boolean
+  pricingAssistantUsesLanguageModel?: boolean
   text: string
   tools: ReactNode
 }
@@ -54,6 +55,7 @@ export function PlaygroundInputControls({
   onModelChange,
   onStop,
   pricingAssistantEnabled = false,
+  pricingAssistantUsesLanguageModel = false,
   text,
   tools,
 }: PlaygroundInputControlsProps) {
@@ -109,7 +111,8 @@ export function PlaygroundInputControls({
   return (
     <div className='flex w-full flex-col gap-2.5 md:flex-row md:items-center md:justify-between'>
       <div className='flex min-w-0 items-center justify-end md:hidden'>
-        {!pricingAssistantEnabled && renderSelector()}
+        {(!pricingAssistantEnabled || pricingAssistantUsesLanguageModel) &&
+          renderSelector()}
       </div>
 
       <div className='flex items-center justify-between gap-2 md:justify-start'>
@@ -120,7 +123,8 @@ export function PlaygroundInputControls({
       </div>
 
       <div className='hidden min-w-0 items-center gap-2 md:flex'>
-        {!pricingAssistantEnabled && renderSelector()}
+        {(!pricingAssistantEnabled || pricingAssistantUsesLanguageModel) &&
+          renderSelector()}
         {renderSubmitButton()}
       </div>
     </div>

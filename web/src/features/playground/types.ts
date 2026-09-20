@@ -78,6 +78,12 @@ export interface ChatCompletionRequest {
   seed?: number
 }
 
+export interface ChatSendOptions {
+  fallbackContent?: string
+  requestMessages?: Message[]
+  systemPrompt?: string
+}
+
 export interface ChatCompletionChunk {
   id: string
   object: string
@@ -120,6 +126,7 @@ export interface PricingAssistantResponse {
   message?: string
   data?: {
     message: string
+    language_model_context: string
     policy_revision: number
     updated_at_ms: number
   }

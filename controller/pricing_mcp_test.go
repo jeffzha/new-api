@@ -70,6 +70,21 @@ func TestPlatformPricingMCPReturnsLiveChannelCostRows(t *testing.T) {
 	assert.Equal(t, 0.5, *row.PlatformCostCoefficient)
 	assert.Equal(t, 0.55, *row.AgencyCostCoefficient)
 	assert.Equal(t, 0.6, *row.DefaultSalesCoefficient)
+
+	// WorkBuddy namespaces discovered remote MCP tools before calling them.
+	// The server must accept that transport-level name without accepting any
+	// additional tool beyond the one it advertises.
+	namespacedBody := `{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"mcp__NEXIGHT pricing__list_platform_model_pricing","arguments":{"model_name":"mcp-test-model"}}}`
+	recorder = httptest.NewRecorder()
+	context, _ = gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(namespacedBody))
+	PlatformPricingMCP(context)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Contains(t, recorder.Body.String(), "mcp-test-model")
+	assert.Equal(t, platformPricingMCPTool, normalizePlatformPricingMCPToolName("mcp__NEXIGHT pricing__list_platform_model_pricing"))
+	assert.NotEqual(t, platformPricingMCPTool, normalizePlatformPricingMCPToolName("mcp____list_platform_model_pricing"))
+	assert.NotEqual(t, platformPricingMCPTool, normalizePlatformPricingMCPToolName("mcp__NEXIGHT pricing__another_tool"))
+
 	publicRows := publicMCPPricingRows([]platformPricingMCPRow{row})
 	require.Len(t, publicRows, 1)
 	assert.Zero(t, publicRows[0].ChannelID)

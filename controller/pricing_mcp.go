@@ -96,7 +96,7 @@ func platformPricingToolDefinition(c *gin.Context) gin.H {
 
 func handlePlatformPricingMCPToolCall(c *gin.Context, request mcpRequest) {
 	var params mcpToolCallParams
-	if err := common.DecodeJsonStrict(bytes.NewReader(request.Params), &params); err != nil || params.Name != platformPricingMCPTool {
+	if err := common.DecodeJsonStrict(bytes.NewReader(request.Params), &params); err != nil || normalizePlatformPricingMCPToolName(params.Name) != platformPricingMCPTool {
 		writeMCPError(c, http.StatusBadRequest, request.ID, -32602, `Invalid tool arguments`)
 		return
 	}
@@ -138,6 +138,26 @@ func handlePlatformPricingMCPToolCall(c *gin.Context, request mcpRequest) {
 		`content`:           []gin.H{{`type`: `text`, `text`: string(encoded)}},
 		`structuredContent`: structured,
 	})
+}
+
+// normalizePlatformPricingMCPToolName accepts the namespaced form emitted by
+// MCP clients such as WorkBuddy while retaining a strict one-tool allowlist.
+// Those clients prefix a remote tool with `mcp__<server name>__`; the protocol
+// server itself advertises only the unqualified tool name.
+func normalizePlatformPricingMCPToolName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == platformPricingMCPTool {
+		return name
+	}
+	prefix := `mcp__`
+	suffix := `__` + platformPricingMCPTool
+	if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, suffix) {
+		serverName := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+		if strings.TrimSpace(serverName) != `` {
+			return platformPricingMCPTool
+		}
+	}
+	return name
 }
 
 func publicMCPPricingRows(rows []platformPricingMCPRow) []platformPricingMCPRow {

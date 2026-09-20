@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -84,6 +85,32 @@ func TestPlatformPricingMCPReturnsLiveChannelCostRows(t *testing.T) {
 	assert.Equal(t, platformPricingMCPTool, normalizePlatformPricingMCPToolName("mcp__NEXIGHT pricing__list_platform_model_pricing"))
 	assert.NotEqual(t, platformPricingMCPTool, normalizePlatformPricingMCPToolName("mcp____list_platform_model_pricing"))
 	assert.NotEqual(t, platformPricingMCPTool, normalizePlatformPricingMCPToolName("mcp__NEXIGHT pricing__another_tool"))
+
+	// Some client bridges encode one or both nested JSON envelopes as strings.
+	// Accept that transport representation without relaxing the argument schema.
+	encodedArguments, err := common.Marshal(gin.H{"model_name": "mcp-test-model"})
+	require.NoError(t, err)
+	encodedParams, err := common.Marshal(gin.H{
+		"name":      "mcp__NEXIGHT pricing__list_platform_model_pricing",
+		"arguments": string(encodedArguments),
+		"workbuddy_context": gin.H{
+			"request_source": "tool-orchestrator",
+		},
+	})
+	require.NoError(t, err)
+	encodedParamsBody, err := common.Marshal(gin.H{
+		"jsonrpc": "2.0",
+		"id":      9,
+		"method":  "tools/call",
+		"params":  string(encodedParams),
+	})
+	require.NoError(t, err)
+	recorder = httptest.NewRecorder()
+	context, _ = gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(encodedParamsBody))
+	PlatformPricingMCP(context)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Contains(t, recorder.Body.String(), "mcp-test-model")
 
 	publicRows := publicMCPPricingRows([]platformPricingMCPRow{row})
 	require.Len(t, publicRows, 1)

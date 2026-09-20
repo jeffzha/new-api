@@ -24,8 +24,12 @@ type mcpRequest struct {
 }
 
 type mcpToolCallParams struct {
-	Name      string            `json:"name"`
-	Arguments common.RawMessage `json:"arguments,omitempty"`
+	Name       string            `json:"name"`
+	ToolName   string            `json:"tool_name,omitempty"`
+	ToolNameV2 string            `json:"toolName,omitempty"`
+	Arguments  common.RawMessage `json:"arguments,omitempty"`
+	Input      common.RawMessage `json:"input,omitempty"`
+	Meta       common.RawMessage `json:"_meta,omitempty"`
 }
 
 type platformPricingQuery struct {
@@ -95,12 +99,12 @@ func platformPricingToolDefinition(c *gin.Context) gin.H {
 }
 
 func handlePlatformPricingMCPToolCall(c *gin.Context, request mcpRequest) {
-	var params mcpToolCallParams
-	if err := common.DecodeJsonStrict(bytes.NewReader(request.Params), &params); err != nil || normalizePlatformPricingMCPToolName(params.Name) != platformPricingMCPTool {
+	params, err := decodeMCPToolCallParams(request.Params)
+	if err != nil || normalizePlatformPricingMCPToolName(params.toolName()) != platformPricingMCPTool {
 		writeMCPError(c, http.StatusBadRequest, request.ID, -32602, `Invalid tool arguments`)
 		return
 	}
-	query, err := decodePlatformPricingQuery(params.Arguments)
+	query, err := decodePlatformPricingQuery(params.arguments())
 	if err != nil {
 		writeMCPError(c, http.StatusBadRequest, request.ID, -32602, err.Error())
 		return
@@ -140,6 +144,43 @@ func handlePlatformPricingMCPToolCall(c *gin.Context, request mcpRequest) {
 	})
 }
 
+func (params mcpToolCallParams) toolName() string {
+	if params.Name != `` {
+		return params.Name
+	}
+	if params.ToolName != `` {
+		return params.ToolName
+	}
+	return params.ToolNameV2
+}
+
+func (params mcpToolCallParams) arguments() common.RawMessage {
+	if len(params.Arguments) != 0 {
+		return params.Arguments
+	}
+	return params.Input
+}
+
+// decodeMCPToolCallParams accepts the standard object form and the JSON-string
+// envelope emitted by some MCP client bridges. The outer envelope is decoded
+// permissively because MCP clients may attach transport metadata such as a
+// progress token. The tool name remains allowlisted and arguments are decoded
+// strictly below, so metadata cannot alter the tool's business input.
+func decodeMCPToolCallParams(raw common.RawMessage) (mcpToolCallParams, error) {
+	var params mcpToolCallParams
+	if err := common.Unmarshal(raw, &params); err == nil {
+		return params, nil
+	}
+	var encoded string
+	if err := common.Unmarshal(raw, &encoded); err != nil {
+		return mcpToolCallParams{}, err
+	}
+	if err := common.UnmarshalJsonStr(encoded, &params); err != nil {
+		return mcpToolCallParams{}, err
+	}
+	return params, nil
+}
+
 // normalizePlatformPricingMCPToolName accepts the namespaced form emitted by
 // MCP clients such as WorkBuddy while retaining a strict one-tool allowlist.
 // Those clients prefix a remote tool with `mcp__<server name>__`; the protocol
@@ -149,13 +190,16 @@ func normalizePlatformPricingMCPToolName(name string) string {
 	if name == platformPricingMCPTool {
 		return name
 	}
-	prefix := `mcp__`
-	suffix := `__` + platformPricingMCPTool
-	if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, suffix) {
-		serverName := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
-		if strings.TrimSpace(serverName) != `` {
-			return platformPricingMCPTool
-		}
+	canonical := strings.NewReplacer(
+		` `, ``,
+		`_`, ``,
+		`-`, ``,
+		`/`, ``,
+		`:`, ``,
+		`.`, ``,
+	).Replace(strings.ToLower(name))
+	if strings.HasPrefix(canonical, `mcp`) && strings.HasSuffix(canonical, `listplatformmodelpricing`) && canonical != `mcplistplatformmodelpricing` {
+		return platformPricingMCPTool
 	}
 	return name
 }
@@ -191,7 +235,10 @@ func decodePlatformPricingQuery(raw common.RawMessage) (platformPricingQuery, er
 		return query, nil
 	}
 	if err := common.DecodeJsonStrict(bytes.NewReader(raw), &query); err != nil {
-		return platformPricingQuery{}, fmt.Errorf(`arguments must be a JSON object`)
+		var encoded string
+		if decodeStringErr := common.DecodeJsonStrict(bytes.NewReader(raw), &encoded); decodeStringErr != nil || common.DecodeJsonStrict(strings.NewReader(encoded), &query) != nil {
+			return platformPricingQuery{}, fmt.Errorf(`arguments must be a JSON object`)
+		}
 	}
 	query.ModelName = strings.TrimSpace(query.ModelName)
 	if len([]rune(query.ModelName)) > 191 {

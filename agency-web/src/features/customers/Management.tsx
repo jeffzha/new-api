@@ -18,31 +18,35 @@ interface CustomerManagement {
   username: string;
   billing_mode: string;
   agency_id?: string;
+  agency_name?: string;
+  agency_operator_username?: string;
   binding_revision?: string;
   provisioning?: ProvisioningJob;
 }
 
 export function CustomerManagementDialog(props: {
-  userID?: string;
+  username?: string;
   onClose: () => void;
   onChanged: () => void;
 }) {
   const { t } = useTranslation();
-  const [input, setInput] = useState(props.userID || "");
-  const [userID, setUserID] = useState(props.userID || "");
-  const query = useQuery<CustomerManagement>(userID ? `/root/users/${userID}/management` : null);
+  const [input, setInput] = useState(props.username || "");
+  const [username, setUsername] = useState(props.username || "");
+  const query = useQuery<CustomerManagement>(
+    username ? `/root/users/management?username=${encodeURIComponent(username)}` : null,
+  );
   return (
     <Dialog title={t("Customer assignment")} onClose={props.onClose}>
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          setUserID(input);
+          setUsername(input.trim());
         }}
       >
-        <Field label={t("User ID")}>
+        <Field label={t("Customer account")}>
           <input
-            inputMode="numeric"
-            pattern="[1-9][0-9]{0,18}"
+            autoComplete="off"
+            maxLength={20}
             required
             value={input}
             onChange={(event) => setInput(event.target.value)}
@@ -54,7 +58,7 @@ export function CustomerManagementDialog(props: {
       {query.loading && <Loading />}
       {query.data && (
         <AssignmentForm
-          key={`${userID}:${query.data.binding_revision || "legacy"}`}
+          key={`${username}:${query.data.binding_revision || "legacy"}`}
           customer={query.data}
           changed={() => {
             query.reload();
@@ -70,26 +74,29 @@ function AssignmentForm(props: { customer: CustomerManagement; changed: () => vo
   const { t } = useTranslation();
   const mutation = useMutation();
   const [targetInput, setTargetInput] = useState("");
-  const [targetID, setTargetID] = useState("");
+  const [targetQuery, setTargetQuery] = useState("");
   const [reason, setReason] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [jobID, setJobID] = useState(props.customer.provisioning?.id || "");
   const [error, setError] = useState<unknown>(null);
-  const target = useQuery<Agency>(targetID ? `/root/agencies/${targetID}` : null);
+  const target = useQuery<{ items: Agency[] }>(
+    targetQuery ? `/root/agencies/lookup?query=${encodeURIComponent(targetQuery)}` : null,
+  );
+  const targetAgency = target.data?.items.length === 1 ? target.data.items[0] : undefined;
   const customer = props.customer;
   const existingJob = customer.provisioning;
   const initialBusy =
     existingJob && ["queued", "processing", "blocked"].includes(existingJob.status);
   const transfer = Boolean(customer.agency_id);
   async function submit() {
-    if (!target.data || target.data.status !== "active" || !confirmed) return;
+    if (!targetAgency || targetAgency.status !== "active" || !confirmed) return;
     setError(null);
     try {
       if (transfer) {
         await mutation.mutate(
           `/root/users/${customer.user_id}/transfer`,
           {
-            target_agency_id: String(target.data.id),
+            target_agency_id: String(targetAgency.id),
             expected_binding_revision: customer.binding_revision,
             reason,
           },
@@ -103,7 +110,7 @@ function AssignmentForm(props: { customer: CustomerManagement; changed: () => vo
         const result = await mutation.mutate<{ job_id: string }>(
           `/root/users/${customer.user_id}/bind`,
           {
-            invite_code: target.data.invite_code,
+            invite_code: targetAgency.invite_code,
             reason,
           },
           {
@@ -122,10 +129,12 @@ function AssignmentForm(props: { customer: CustomerManagement; changed: () => vo
   return (
     <section>
       <h3>
-        {customer.username} · {customer.user_id}
+        {customer.username}
       </h3>
       <p>
-        {t("Current agency")}: {customer.agency_id || t("Unassigned")}
+        {t("Current agency")}: {customer.agency_name
+          ? `${customer.agency_name}（${customer.agency_operator_username || t("Unknown")}）`
+          : t("Unassigned")}
       </p>
       {jobID && <ProvisioningProgress id={jobID} onChanged={props.changed} />}
       {!initialBusy && !transfer && (
@@ -147,20 +156,20 @@ function AssignmentForm(props: { customer: CustomerManagement; changed: () => vo
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              setTargetID(targetInput);
+              setTargetQuery(targetInput.trim());
               setConfirmed(false);
             }}
           >
-            <Field label={t("Target agency ID")}>
+            <Field label={t("Target agency account")}>
               <input
-                inputMode="numeric"
-                pattern="[1-9][0-9]{0,18}"
+                autoComplete="off"
+                maxLength={191}
                 required
                 value={targetInput}
                 disabled={mutation.pending}
                 onChange={(event) => {
                   setTargetInput(event.target.value);
-                  setTargetID("");
+                  setTargetQuery("");
                   setConfirmed(false);
                 }}
               />
@@ -171,10 +180,16 @@ function AssignmentForm(props: { customer: CustomerManagement; changed: () => vo
           </form>
           <ErrorNotice error={target.error} />
           {target.loading && <Loading />}
-          {target.data && (
+          {target.data && target.data.items.length === 0 && (
+            <p className="notice">{t("No matching agency account was found.")}</p>
+          )}
+          {target.data && target.data.items.length > 1 && (
+            <p className="notice">{t("Multiple agencies match this name. Please enter the operator account.")}</p>
+          )}
+          {targetAgency && (
             <p>
-              {target.data.display_name} · {target.data.id} ·{" "}
-              {t(target.data.status === "active" ? "Enabled" : "Disabled")}
+              {targetAgency.display_name}（{targetAgency.operator_username}）·{" "}
+              {t(targetAgency.status === "active" ? "Enabled" : "Disabled")}
             </p>
           )}
           <form
@@ -207,9 +222,9 @@ function AssignmentForm(props: { customer: CustomerManagement; changed: () => vo
                 mutation.pending ||
                 !confirmed ||
                 !reason.trim() ||
-                !target.data ||
-                target.data.status !== "active" ||
-                String(target.data.id) === customer.agency_id
+                !targetAgency ||
+                targetAgency.status !== "active" ||
+                String(targetAgency.id) === customer.agency_id
               }
             >
               {t(transfer ? "Transfer customer" : "Bind existing customer")}

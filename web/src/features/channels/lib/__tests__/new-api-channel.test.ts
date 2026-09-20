@@ -23,6 +23,7 @@ import {
   CHANNEL_TYPE_SUB2API,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_HAPPY_HORSE,
   CHANNEL_TYPE_OPTIONS,
   MODEL_FETCHABLE_TYPES,
 } from '../../constants'
@@ -94,6 +95,41 @@ describe('New API channel', () => {
     })
 
     expect(result.success).toBe(true)
+  })
+})
+
+describe('HappyHorse channel', () => {
+  test('registers its persisted supplier type instead of falling back to Unknown', () => {
+    expect(CHANNEL_TYPE_OPTIONS).toContainEqual({
+      value: CHANNEL_TYPE_HAPPY_HORSE,
+      label: 'HappyHorse',
+    })
+    expect(getChannelTypeIcon(CHANNEL_TYPE_HAPPY_HORSE)).toBe('Qwen')
+    expect(getChannelTypeConfig(CHANNEL_TYPE_HAPPY_HORSE)).toMatchObject({
+      id: CHANNEL_TYPE_HAPPY_HORSE,
+      name: 'HappyHorse',
+      icon: 'Qwen',
+    })
+    expect(getKeyPromptForType(CHANNEL_TYPE_HAPPY_HORSE)).toBe(
+      'Enter API key for this channel'
+    )
+  })
+
+  test('requires the configured upstream address', () => {
+    const blank = channelFormSchema.safeParse({
+      ...newAPIForm(''),
+      type: CHANNEL_TYPE_HAPPY_HORSE,
+      models: 'happyhorse-1.1-t2v',
+    })
+    expect(blank.success).toBe(false)
+
+    expect(
+      channelFormSchema.safeParse({
+        ...newAPIForm('https://api.yunwoke.com/ali'),
+        type: CHANNEL_TYPE_HAPPY_HORSE,
+        models: 'happyhorse-1.1-t2v',
+      }).success
+    ).toBe(true)
   })
 })
 

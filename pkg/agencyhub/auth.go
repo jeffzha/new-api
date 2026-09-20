@@ -287,7 +287,16 @@ func (a *App) me(c *gin.Context) {
 		respondError(c, http.StatusUnauthorized, "unauthorized", "请先登录", nil)
 		return
 	}
-	respondOK(c, identity)
+	view := *identity
+	if identity.AgencyID != nil {
+		var agency model.Agency
+		if err := a.db.Select("id, display_name").First(&agency, *identity.AgencyID).Error; err == nil {
+			var account model.AgencyOperatorAccount
+			_ = a.db.Select("username").Where("agency_id = ?", agency.ID).First(&account).Error
+			view.ActingAgency = &AgencyIdentity{DisplayName: agency.DisplayName, OperatorUsername: account.Username}
+		}
+	}
+	respondOK(c, &view)
 }
 func (a *App) logout(c *gin.Context) {
 	identity := currentIdentity(c)

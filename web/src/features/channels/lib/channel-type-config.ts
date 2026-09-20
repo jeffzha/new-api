@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   CHANNEL_TYPES,
+  CHANNEL_TYPE_HAPPY_HORSE,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
 } from '../constants'
@@ -188,6 +189,16 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     icon: 'openai',
     defaultBaseUrl: 'https://api.openai.com',
     supportedModels: ['doubao-seedance-2-0-260128'],
+  },
+  [CHANNEL_TYPE_HAPPY_HORSE]: {
+    id: CHANNEL_TYPE_HAPPY_HORSE,
+    name: CHANNEL_TYPES[CHANNEL_TYPE_HAPPY_HORSE],
+    icon: 'Qwen',
+    hints: {
+      baseUrl: 'HappyHorse API base URL',
+      key: 'HappyHorse API key',
+      models: 'happyhorse-1.1-t2v,happyhorse-1.1-i2v,happyhorse-1.1-r2v,happyhorse-1.0-video-edit',
+    },
   },
   59: {
     id: 59,

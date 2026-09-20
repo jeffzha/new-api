@@ -6,6 +6,10 @@ export interface Identity {
   actor_type: "root" | "agency_operator";
   actor_id: number;
   agency_id?: number;
+  acting_agency?: {
+    display_name: string;
+    operator_username: string;
+  };
   username?: string;
   must_change_password: boolean;
 }

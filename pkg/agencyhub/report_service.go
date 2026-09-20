@@ -810,6 +810,7 @@ func (a *App) listRootCustomers(c *gin.Context) {
 		Username      string `json:"username"`
 		AccountName   string `json:"account_name"`
 		AgencyName    string `json:"agency_name"`
+		AgencyAccount string `json:"agency_account"`
 		Status        int    `json:"status"`
 		AgencyID      string `json:"agency_id"`
 		BindingID     string `json:"binding_id"`
@@ -840,6 +841,15 @@ func (a *App) listRootCustomers(c *gin.Context) {
 		for _, agency := range agencies {
 			agencyNames[agency.ID] = agency.DisplayName
 		}
+		var operatorAccounts []model.AgencyOperatorAccount
+		if err := a.db.Select("agency_id, username").Where("agency_id IN ?", agencyIDs).Find(&operatorAccounts).Error; err != nil {
+			respondError(c, http.StatusInternalServerError, "database_error", "读取代理商账号失败", nil)
+			return
+		}
+		agencyAccounts := make(map[int64]string, len(operatorAccounts))
+		for _, account := range operatorAccounts {
+			agencyAccounts[account.AgencyID] = account.Username
+		}
 		bindingIDs := make([]int64, 0, len(bindings))
 		for _, binding := range bindings {
 			bindingIDs = append(bindingIDs, binding.BindingID)
@@ -856,7 +866,7 @@ func (a *App) listRootCustomers(c *gin.Context) {
 		for _, binding := range bindings {
 			user := byID[binding.UserID]
 			views = append(views, rootCustomerView{
-				UserID: strconv.FormatInt(binding.UserID, 10), Username: user.Username, AccountName: userAccountName(user), AgencyName: agencyNames[binding.AgencyID], Status: user.Status,
+				UserID: strconv.FormatInt(binding.UserID, 10), Username: user.Username, AccountName: userAccountName(user), AgencyName: agencyNames[binding.AgencyID], AgencyAccount: agencyAccounts[binding.AgencyID], Status: user.Status,
 				AgencyID: strconv.FormatInt(binding.AgencyID, 10), BindingID: strconv.FormatInt(binding.BindingID, 10),
 				Revision: strconv.FormatInt(binding.Revision, 10), EffectiveAtMS: strconv.FormatInt(effectiveAt[binding.BindingID], 10),
 			})

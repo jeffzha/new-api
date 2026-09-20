@@ -229,8 +229,23 @@ func (a *App) listAgencies(c *gin.Context) {
 		agencies = agencies[:size]
 	}
 	views := make([]agencyView, 0, len(agencies))
+	operatorNames := make(map[int64]string, len(agencies))
+	if len(agencies) > 0 {
+		ids := make([]int64, 0, len(agencies))
+		for _, agency := range agencies {
+			ids = append(ids, agency.ID)
+		}
+		var accounts []model.AgencyOperatorAccount
+		if err := a.db.Select("agency_id, username").Where("agency_id IN ?", ids).Find(&accounts).Error; err != nil {
+			respondError(c, http.StatusInternalServerError, "database_error", "读取代理商账号失败", nil)
+			return
+		}
+		for _, account := range accounts {
+			operatorNames[account.AgencyID] = account.Username
+		}
+	}
 	for _, agency := range agencies {
-		views = append(views, agencyView{Agency: agency, InviteURL: a.inviteURL(agency.InviteCode), InviteQRURL: a.inviteQRURL(agency.InviteCode)})
+		views = append(views, agencyView{Agency: agency, InviteURL: a.inviteURL(agency.InviteCode), InviteQRURL: a.inviteQRURL(agency.InviteCode), OperatorUsername: operatorNames[agency.ID]})
 	}
 	nextCursor := ""
 	if hasMore && len(agencies) > 0 {
@@ -245,6 +260,62 @@ func (a *App) listAgencies(c *gin.Context) {
 		}
 	}
 	respondOK(c, gin.H{"items": views, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
+}
+
+// lookupAgency resolves an exact operator account or agency name for root-only
+// management flows. It deliberately does not perform fuzzy search, avoiding a
+// directory/enumeration endpoint while keeping internal IDs out of the UI.
+func (a *App) lookupAgency(c *gin.Context) {
+	reference := strings.TrimSpace(c.Query("query"))
+	if reference == "" || len([]rune(reference)) > 191 {
+		respondError(c, http.StatusBadRequest, "invalid_query", "请输入有效的代理商名称或账号", nil)
+		return
+	}
+	var accounts []model.AgencyOperatorAccount
+	if err := a.db.Select("agency_id, username").Where("username = ?", reference).Find(&accounts).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "查询代理商失败", nil)
+		return
+	}
+	ids := make([]int64, 0, len(accounts))
+	operatorNames := make(map[int64]string, len(accounts))
+	for _, account := range accounts {
+		ids = append(ids, account.AgencyID)
+		operatorNames[account.AgencyID] = account.Username
+	}
+	if len(ids) == 0 {
+		var agenciesByName []model.Agency
+		if err := a.db.Where("display_name = ?", reference).Find(&agenciesByName).Error; err != nil {
+			respondError(c, http.StatusInternalServerError, "database_error", "查询代理商失败", nil)
+			return
+		}
+		for _, agency := range agenciesByName {
+			ids = append(ids, agency.ID)
+		}
+	}
+	if len(ids) == 0 {
+		respondOK(c, gin.H{"items": []agencyView{}})
+		return
+	}
+	var agencies []model.Agency
+	if err := a.db.Where("id IN ?", ids).Order("id ASC").Find(&agencies).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "查询代理商失败", nil)
+		return
+	}
+	if len(operatorNames) < len(agencies) {
+		var allAccounts []model.AgencyOperatorAccount
+		if err := a.db.Select("agency_id, username").Where("agency_id IN ?", ids).Find(&allAccounts).Error; err != nil {
+			respondError(c, http.StatusInternalServerError, "database_error", "读取代理商账号失败", nil)
+			return
+		}
+		for _, account := range allAccounts {
+			operatorNames[account.AgencyID] = account.Username
+		}
+	}
+	views := make([]agencyView, 0, len(agencies))
+	for _, agency := range agencies {
+		views = append(views, agencyView{Agency: agency, OperatorUsername: operatorNames[agency.ID]})
+	}
+	respondOK(c, gin.H{"items": views})
 }
 func (a *App) getAgency(c *gin.Context) {
 	id, err := parseID(c.Param("id"))

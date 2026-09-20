@@ -43,14 +43,23 @@ type App struct {
 }
 
 type Identity struct {
-	ActorType            string `json:"actor_type"`
-	ActorID              int64  `json:"actor_id"`
-	AgencyID             *int64 `json:"agency_id,omitempty"`
-	Username             string `json:"username,omitempty"`
-	MustChangePassword   bool   `json:"must_change_password"`
-	SessionID            int64  `json:"-"`
-	SourceSID            string `json:"-"`
-	SourceSessionVersion int64  `json:"-"`
+	ActorType            string          `json:"actor_type"`
+	ActorID              int64           `json:"actor_id"`
+	AgencyID             *int64          `json:"agency_id,omitempty"`
+	Username             string          `json:"username,omitempty"`
+	MustChangePassword   bool            `json:"must_change_password"`
+	ActingAgency         *AgencyIdentity `json:"acting_agency,omitempty"`
+	SessionID            int64           `json:"-"`
+	SourceSID            string          `json:"-"`
+	SourceSessionVersion int64           `json:"-"`
+}
+
+// AgencyIdentity is the business-facing identity used when a root session is
+// temporarily acting on behalf of an agency. Internal database IDs remain in
+// the session only and are not needed in the browser.
+type AgencyIdentity struct {
+	DisplayName      string `json:"display_name"`
+	OperatorUsername string `json:"operator_username"`
 }
 
 type apiResponse struct {
@@ -139,6 +148,7 @@ func (a *App) Router() *gin.Engine {
 	root := api.Group("/root")
 	root.Use(a.requireRoot())
 	root.GET("/agencies", a.listAgencies)
+	root.GET("/agencies/lookup", a.lookupAgency)
 	root.POST("/agencies", a.createAgencyHTTP)
 	root.GET("/agencies/:id", a.getAgency)
 	root.PATCH("/agencies/:id", a.updateAgency)
@@ -158,6 +168,7 @@ func (a *App) Router() *gin.Engine {
 	root.POST("/agencies/:id/enter", a.enterAgency)
 	root.POST("/leave-agency", a.leaveAgency)
 	root.GET("/customers", a.listRootCustomers)
+	root.GET("/users/management", a.customerManagement)
 	root.GET("/users/:user_id/management", a.customerManagement)
 	root.POST("/users/:user_id/bind", a.bindExistingUser)
 	root.GET("/provisioning/:id", a.getProvisioning)

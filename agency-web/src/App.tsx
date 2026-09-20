@@ -311,7 +311,11 @@ function Dashboard({
       </header>
       {root && identity.agency_id && (
         <div className="notice toolbar">
-          <strong>{t("Managing agency {{id}}", { id: identity.agency_id })}</strong>
+          <strong>{t("Managing agency {{agency}}", {
+            agency: identity.acting_agency
+              ? `${identity.acting_agency.display_name}（${identity.acting_agency.operator_username}）`
+              : t("Agency"),
+          })}</strong>
           <button className="secondary button-icon" type="button" disabled={busy} onClick={() => void leave()}>
             <ActionIcon name="close" />
             {t("Leave agency")}

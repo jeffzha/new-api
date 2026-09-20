@@ -3,6 +3,7 @@ package agencyhub
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/model"
@@ -10,6 +11,43 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRootManagementLookupUsesBusinessAccounts(t *testing.T) {
+	client := newFinanceRootClient(t)
+	policy := agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
+	agency, _, err := client.app.CreateAgency(client.rootID, "演示代理商", "agency-operator", policy)
+	require.NoError(t, err)
+	user := model.User{Username: "customer-account", AffCode: "customer-account-aff", BillingMode: model.AgencyDurableBillingMode}
+	require.NoError(t, client.app.db.Create(&user).Error)
+	binding := model.AgencyUserBinding{UserID: int64(user.Id), AgencyID: agency.ID, Revision: 1}
+	require.NoError(t, client.app.db.Create(&binding).Error)
+	require.NoError(t, client.app.db.Create(&model.AgencyActiveUserBinding{UserID: int64(user.Id), AgencyID: agency.ID, BindingID: binding.ID, Revision: binding.Revision}).Error)
+
+	request := httptest.NewRequest(http.MethodGet, "/agency/api/v1/root/users/management?username=customer-account", nil)
+	request.AddCookie(&http.Cookie{Name: client.app.config.CookieName, Value: client.sessionToken})
+	management := httptest.NewRecorder()
+	client.app.Router().ServeHTTP(management, request)
+	require.Equal(t, http.StatusOK, management.Code, management.Body.String())
+	assert.Contains(t, management.Body.String(), `"username":"customer-account"`)
+	assert.Contains(t, management.Body.String(), `"agency_name":"演示代理商"`)
+	assert.Contains(t, management.Body.String(), `"agency_operator_username":"agency-operator"`)
+
+	request = httptest.NewRequest(http.MethodGet, "/agency/api/v1/root/customers?page_size=30", nil)
+	request.AddCookie(&http.Cookie{Name: client.app.config.CookieName, Value: client.sessionToken})
+	customers := httptest.NewRecorder()
+	client.app.Router().ServeHTTP(customers, request)
+	require.Equal(t, http.StatusOK, customers.Code, customers.Body.String())
+	assert.Contains(t, customers.Body.String(), `"agency_name":"演示代理商"`)
+	assert.Contains(t, customers.Body.String(), `"agency_account":"agency-operator"`)
+
+	request = httptest.NewRequest(http.MethodGet, "/agency/api/v1/root/agencies/lookup?query=agency-operator", nil)
+	request.AddCookie(&http.Cookie{Name: client.app.config.CookieName, Value: client.sessionToken})
+	lookup := httptest.NewRecorder()
+	client.app.Router().ServeHTTP(lookup, request)
+	require.Equal(t, http.StatusOK, lookup.Code, lookup.Body.String())
+	assert.Contains(t, lookup.Body.String(), `"display_name":"演示代理商"`)
+	assert.Contains(t, lookup.Body.String(), `"operator_username":"agency-operator"`)
+}
 
 func TestCustomerTransferPreservesFundingHistoryAndRejectsStaleRevision(t *testing.T) {
 	client := newFinanceRootClient(t)

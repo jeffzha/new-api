@@ -100,6 +100,7 @@ export function AgenciesPage(props: {
           rowKey={(row) => String(row.id)}
           columns={[
             { key: "display_name", label: t("Agency name") },
+            { key: "operator_username", label: t("Operator username") },
             {
               key: "status",
               label: t("Status"),

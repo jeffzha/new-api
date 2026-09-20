@@ -148,6 +148,7 @@ interface Customer {
   account_name?: string;
   agency_id?: string;
   agency_name?: string;
+  agency_account?: string;
   effective_at_ms: string;
   revision: string;
 }
@@ -225,7 +226,7 @@ export function CustomersPage({
   const { t } = useTranslation();
   const [cursor, setCursor] = useState("");
   const [selected, setSelected] = useState<Customer | null>(null);
-  const [management, setManagement] = useState<{ userID?: string } | null>(null);
+  const [management, setManagement] = useState<{ username?: string } | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const global = identity.actor_type === "root" && !identity.agency_id;
@@ -248,7 +249,7 @@ export function CustomersPage({
       <ErrorNotice error={query.error || error} />
       {management && (
         <CustomerManagementDialog
-          userID={management.userID}
+          username={management.username}
           onClose={() => setManagement(null)}
           onChanged={query.reload}
         />
@@ -271,7 +272,13 @@ export function CustomersPage({
               rowKey={(row) => String(row.user_id)}
               columns={[
                 { key: "account_name", label: "Customer account" },
-                ...(global ? [{ key: "agency_name", label: "Agency" }] : []),
+                ...(global ? [{
+                  key: "agency_name",
+                  label: "Agency",
+                  render: (row: Customer) => row.agency_account
+                    ? `${row.agency_name}（${row.agency_account}）`
+                    : row.agency_name || "—",
+                }] : []),
                 {
                   key: "effective_at_ms",
                   label: "Bound at",
@@ -284,7 +291,7 @@ export function CustomersPage({
                     <button
                       type="button"
                       className="secondary button-icon compact-action"
-                      onClick={() => setManagement({ userID: String(row.user_id) })}
+                      onClick={() => setManagement({ username: row.username })}
                     >
                       <ActionIcon name="edit" />
                       {t("Manage assignment")}

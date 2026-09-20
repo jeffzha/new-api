@@ -185,9 +185,9 @@ const rows: [string, string, string, string, string, string, string][] = [
     "Quản trị viên cấp cao",
   ],
   [
-    "Managing agency {{id}}",
-    "正在代管代理商 {{id}}",
-    "正在代管代理商 {{id}}",
+    "Managing agency {{agency}}",
+    "正在代管：{{agency}}",
+    "正在代管：{{agency}}",
     "Gestion de l’agence {{id}}",
     "代理店 {{id}} を管理中",
     "Управление агентством {{id}}",

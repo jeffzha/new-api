@@ -34,13 +34,29 @@ const entries: Record<string, [string, string, string, string, string, string]> 
     "Đại lý hiện tại",
   ],
   Unassigned: ["尚未绑定", "尚未綁定", "Non affecté", "未所属", "Не назначен", "Chưa phân công"],
-  "Target agency ID": [
-    "目标代理商 ID",
-    "目標代理商 ID",
+  "Target agency account": [
+    "目标代理商账号",
+    "目標代理商帳號",
     "ID de l’agence cible",
     "移転先の代理店 ID",
     "ID целевого агентства",
     "ID đại lý đích",
+  ],
+  "No matching agency account was found.": [
+    "未找到对应的代理商账号。",
+    "找不到對應的代理商帳號。",
+    "Aucun compte agence correspondant.",
+    "該当する代理店アカウントが見つかりません。",
+    "Подходящий аккаунт агентства не найден.",
+    "Không tìm thấy tài khoản đại lý tương ứng.",
+  ],
+  "Multiple agencies match this name. Please enter the operator account.": [
+    "有多个代理商名称相同，请填写管理账号。",
+    "有多個代理商名稱相同，請填寫管理帳號。",
+    "Plusieurs agences portent ce nom. Saisissez le compte opérateur.",
+    "同名の代理店が複数あります。管理アカウントを入力してください。",
+    "Несколько агентств имеют это название. Укажите аккаунт оператора.",
+    "Có nhiều đại lý cùng tên. Hãy nhập tài khoản quản lý.",
   ],
   "Check target agency": [
     "核对目标代理商",
@@ -67,8 +83,8 @@ const entries: Record<string, [string, string, string, string, string, string]> 
     "Liên kết khách hàng hiện có",
   ],
   "I have checked the customer, target agency and impact.": [
-    "我已核对客户、目标代理商及影响范围。",
     "我已核對客戶、目標代理商及影響範圍。",
+    "我已核对客户、目标代理商及影响范围。",
     "J’ai vérifié le client, l’agence cible et les conséquences.",
     "顧客、移転先、影響を確認しました。",
     "Клиент, целевое агентство и последствия проверены.",

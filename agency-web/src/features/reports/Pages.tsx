@@ -235,6 +235,13 @@ export function CustomersPage({
   const query = useQuery<Page<Customer>>(
     `${global ? "/root" : ""}/customers?page_size=30&cursor=${encodeURIComponent(cursor)}`,
   );
+  if (salesCustomer) {
+    return <CustomerSalesEditor
+      userId={salesCustomer.user_id}
+      username={salesCustomer.username}
+      onBack={() => setSalesCustomer(null)}
+    />;
+  }
   return (
     <section>
       <PageHeader icon="customers" title={t("Customers")} description={t("View customer accounts, ownership and usage activity.")} actions={<>
@@ -254,13 +261,6 @@ export function CustomersPage({
           username={management.username}
           onClose={() => setManagement(null)}
           onChanged={query.reload}
-        />
-      )}
-      {salesCustomer && (
-        <CustomerSalesEditor
-          userId={salesCustomer.user_id}
-          username={salesCustomer.username}
-          onClose={() => setSalesCustomer(null)}
         />
       )}
       {selected ? (

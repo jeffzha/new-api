@@ -293,6 +293,7 @@ const rows = [
   ["Upstream agencies", "上级代理商", "上級代理商", "Agences supérieures", "上位代理店", "Вышестоящие агентства", "Đại lý cấp trên"],
   ["Direct child agencies", "直属下级代理商", "直屬下級代理商", "Agences enfants directes", "直属の子代理店", "Прямые дочерние агентства", "Đại lý con trực tiếp"],
   ["Showing {{from}}–{{to}} of {{total}} agencies", "显示第 {{from}}–{{to}} 条，共 {{total}} 个代理商", "顯示第 {{from}}–{{to}} 筆，共 {{total}} 個代理商", "Affichage de {{from}} à {{to}} sur {{total}} agences", "{{total}}件中 {{from}}～{{to}}件を表示", "Показано с {{from}} по {{to}} из {{total}} агентств", "Hiển thị {{from}}–{{to}} trong tổng số {{total}} đại lý"],
+  ["Temporary password copied.", "临时密码已复制。", "臨時密碼已複製。", "Mot de passe temporaire copié.", "仮パスワードをコピーしました。", "Временный пароль скопирован.", "Đã sao chép mật khẩu tạm thời."],
 ] as const;
 
 const locales: Locale[] = ["en", "zh", "zh-TW", "fr", "ja", "ru", "vi"];

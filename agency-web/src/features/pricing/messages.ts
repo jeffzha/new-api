@@ -539,6 +539,7 @@ const rows = [
     "Коэффициент продажи должен быть положительным, не выше предела и не ниже суммы расчётного коэффициента и минимальной разницы.",
     "Mọi hệ số bán phải dương, không vượt giới hạn và không thấp hơn hệ số quyết toán cộng chênh lệch tối thiểu.",
   ],
+  ["Back to customer management", "返回客户管理", "返回客戶管理", "Retour à la gestion des clients", "顧客管理に戻る", "Вернуться к управлению клиентами", "Quay lại quản lý khách hàng"],
 ] as const;
 
 const locales: Locale[] = ["en", "zh", "zh-TW", "fr", "ja", "ru", "vi"];

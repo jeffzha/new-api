@@ -358,13 +358,20 @@ test("root publishes platform pricing and an operator manages direct-child and c
     const delivery = operator.getByRole("dialog", { name: "Child agency login details", exact: true });
     await expect(delivery.getByLabel("Operator username", { exact: true })).toHaveValue("browser-child-operator");
     await expect(delivery.getByLabel("Temporary password", { exact: true })).not.toHaveValue("");
+    await delivery.getByRole("button", { name: "Copy password", exact: true }).click();
+    await expect(delivery.getByRole("status")).toHaveText("Temporary password copied.");
+    await delivery.getByRole("button", { name: "Copy invitation link", exact: true }).click();
+    await expect(delivery.getByRole("status")).toHaveText("Invitation link copied.");
     await delivery.getByRole("button", { name: "Close", exact: true }).nth(1).click();
     await expect(operator.getByRole("row").filter({ hasText: "Browser Child Agency" })).toBeVisible();
 
     await operator.getByRole("button", { name: "Customers", exact: true }).click();
     await operator.getByRole("row").filter({ hasText: "browser-managed" }).getByRole("button", { name: "Customer pricing", exact: true }).click();
-    const customerPricing = operator.getByRole("dialog", { name: "Customer sales pricing · browser-managed", exact: true });
+    const customerPricing = operator.locator(".customer-pricing-page");
+    await expect(customerPricing.getByRole("heading", { name: "Customer sales pricing · browser-managed", exact: true })).toBeVisible();
     await expect(customerPricing.getByRole("columnheader", { name: "Model name", exact: true })).toBeVisible();
+    await expect(customerPricing.getByRole("columnheader", { name: "Agency sales coefficient", exact: true })).toBeVisible();
+    await expect(customerPricing.getByRole("columnheader", { name: "Customer sales coefficient", exact: true })).toBeVisible();
     const customerModelPrice = customerPricing.getByLabel("Customer sales coefficient: browser-chat-model", { exact: true });
     await expect(customerModelPrice).toHaveAttribute("placeholder", "0.9500");
     await customerModelPrice.fill("0.97");
@@ -380,6 +387,7 @@ test("root publishes platform pricing and an operator manages direct-child and c
     expect(customerResponse.request().postDataJSON()).toMatchObject({
       models: [{ model_name: "browser-chat-model", sales_bps: 9700 }],
     });
+    await expect(operator.getByRole("heading", { name: "Customers", exact: true })).toBeVisible();
   } finally {
     await operatorContext.close();
   }

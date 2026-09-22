@@ -80,3 +80,21 @@ func TestCommissionSummarySeparatesLifetimeTotalsFromWithdrawalBalances(t *testi
 		})
 	}
 }
+
+func TestCommissionLedgerViewDistinguishesChildAgencySpread(t *testing.T) {
+	app := newAgencyTestApp(t)
+	direct := model.AgencyCommissionLedger{ID: 1, AgencyID: 10, BindingID: 100, CurrencyCode: "CNY"}
+	spread := model.AgencyCommissionLedger{ID: 2, AgencyID: 10, BindingID: 200, CurrencyCode: "CNY"}
+	contexts := map[int64]commissionContext{
+		1: {AgencyName: "当前代理商", BindingAgencyID: 10},
+		2: {AgencyName: "下级代理商", BindingAgencyID: 11},
+	}
+
+	directView := app.commissionLedgerView(direct, contexts)
+	spreadView := app.commissionLedgerView(spread, contexts)
+
+	assert.Equal(t, "direct_customer", directView["commission_source"])
+	assert.Equal(t, "当前代理商", directView["agency_name"])
+	assert.Equal(t, "child_agency_spread", spreadView["commission_source"])
+	assert.Equal(t, "下级代理商", spreadView["agency_name"])
+}

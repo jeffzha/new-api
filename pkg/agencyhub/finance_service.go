@@ -1087,7 +1087,7 @@ func (a *App) loadCommissionContexts(rows []model.AgencyCommissionLedger) (map[i
 					if binding, ok := findBinding(bindings, row.BindingID); ok {
 						context := result[row.ID]
 						context.BindingAgencyID = binding.AgencyID
-						context.AgencyName = names[row.AgencyID]
+						context.AgencyName = names[binding.AgencyID]
 						result[row.ID] = context
 					}
 				}

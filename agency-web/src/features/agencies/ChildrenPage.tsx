@@ -57,12 +57,13 @@ function HierarchySummary(props: { data: HierarchyResponse }) {
   const path = [...props.data.parents].reverse().concat(props.data.current).map((item) => item.display_name).join(" → ");
   async function copyPath() { try { await navigator.clipboard.writeText(path); setCopied(true); } catch { setCopied(false); } }
   const upstream = [...props.data.parents].reverse();
+  const childCount = props.data.children.length;
   return <section className="hierarchy-card" aria-label={t("Agency hierarchy")}>
     <div className="hierarchy-card-header"><div><h3>{t("Agency hierarchy")}</h3><p className="muted">{t("View the upstream path and direct child agencies for the current account.")}</p></div><button type="button" className="secondary button-icon compact-action" onClick={() => void copyPath()}><ActionIcon name="save" />{t(copied ? "Copied" : "Copy hierarchy")}</button></div>
-    <div className="hierarchy-tree" role="tree" aria-label={t("Agency hierarchy")}>
-      {upstream.length > 0 && <div className="hierarchy-upstream-branch"><span className="hierarchy-lane-label">{t("Upstream agencies")}</span><div className="hierarchy-parent-chain">{upstream.map((item) => <HierarchyNode key={item.id} item={item} label={t("Parent agency")} />)}</div></div>}
-      <div className="hierarchy-current-branch"><span className="hierarchy-lane-label">{t("Current agency")}</span><HierarchyNode item={props.data.current} label={t("Current agency")} current /></div>
-      <div className="hierarchy-children-branch"><span className="hierarchy-lane-label">{t("Direct child agencies")}</span>{props.data.children.length > 0 ? <div className="hierarchy-child-grid">{props.data.children.map((item) => <HierarchyNode key={item.id} item={item} label={t("Direct child agency")} child />)}</div> : <p className="hierarchy-empty">{t("No direct child agencies yet.")}</p>}</div>
+    <div className="hierarchy-org-chart" role="tree" aria-label={t("Agency hierarchy")}>
+      {upstream.length > 0 && <div className="hierarchy-ancestry"><span className="hierarchy-lane-label">{t("Upstream agencies")}</span><div className="hierarchy-parent-chain">{upstream.map((item) => <HierarchyNode key={item.id} item={item} label={t("Parent agency")} />)}</div></div>}
+      <div className="hierarchy-focus-stage"><span className="hierarchy-lane-label">{t("Current agency")}</span><HierarchyNode item={props.data.current} label={t("Current agency")} current /></div>
+      <div className="hierarchy-descendants"><div className="hierarchy-descendants-title"><span className="hierarchy-lane-label">{t("Direct child agencies")}</span>{childCount > 0 && <span className="hierarchy-count">{childCount}</span>}</div>{childCount > 0 ? <div className={`hierarchy-child-grid hierarchy-child-grid--${Math.min(childCount, 5)}`}>{props.data.children.map((item) => <HierarchyNode key={item.id} item={item} label={t("Direct child agency")} child />)}</div> : <p className="hierarchy-empty">{t("No direct child agencies yet.")}</p>}</div>
     </div>
     <p className="hierarchy-path"><strong>{t("Upstream path")}</strong>: {path || props.data.current.display_name}</p>
   </section>;
@@ -70,7 +71,9 @@ function HierarchySummary(props: { data: HierarchyResponse }) {
 
 function HierarchyNode(props: { item: Child; label: string; current?: boolean; child?: boolean }) {
   const { t } = useTranslation();
-  return <div className={["agency-tree-node", props.current ? "current" : "", props.child ? "child" : ""].filter(Boolean).join(" ")} role="treeitem" aria-current={props.current ? "true" : undefined}><div className="agency-tree-node-copy"><strong>{props.item.display_name}</strong><span>{props.label} · {t(props.item.status === "active" ? "Active" : "Disabled")}</span></div></div>;
+  const initial = props.item.display_name.trim().slice(0, 1).toUpperCase() || "A";
+  const status = t(props.item.status === "active" ? "Active" : "Disabled");
+  return <div className={["agency-tree-node", props.current ? "current" : "", props.child ? "child" : ""].filter(Boolean).join(" ")} role="treeitem" aria-current={props.current ? "true" : undefined} aria-label={`${props.label}: ${props.item.display_name}, ${status}`}><div className="agency-tree-node-copy"><span className="agency-tree-avatar" aria-hidden="true">{initial}</span><div className="agency-tree-node-main"><strong>{props.item.display_name}</strong>{props.item.operator_username && <span className="agency-tree-account">@{props.item.operator_username}</span>}</div><span className={["agency-tree-status", props.item.status === "active" ? "active" : "disabled"].join(" ")}><i aria-hidden="true" />{status}</span><span className="agency-tree-role">{props.label}</span></div></div>;
 }
 
 function ChildForm(props: { parent: Pricing; onClose: () => void; onCreated: (result: PasswordDelivery) => void }) {

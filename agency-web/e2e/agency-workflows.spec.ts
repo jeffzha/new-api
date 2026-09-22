@@ -364,6 +364,9 @@ test("root publishes platform pricing and an operator manages direct-child and c
     await expect(delivery.getByRole("status")).toHaveText("Invitation link copied.");
     await delivery.getByRole("button", { name: "Close", exact: true }).nth(1).click();
     await expect(operator.getByRole("row").filter({ hasText: "Browser Child Agency" })).toBeVisible();
+    await operator.getByRole("tree", { name: "Agency hierarchy", exact: true }).screenshot({
+      path: test.info().outputPath("agency-hierarchy-org-chart.png"),
+    });
 
     await operator.getByRole("button", { name: "Customers", exact: true }).click();
     await operator.getByRole("row").filter({ hasText: "browser-managed" }).getByRole("button", { name: "Customer pricing", exact: true }).click();

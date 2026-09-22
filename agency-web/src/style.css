@@ -605,25 +605,29 @@ th {
 }
 .hierarchy-card-header h3 { margin: 0 0 4px; font-size: 16px; }
 .hierarchy-card-header p { margin: 0; font-size: 13px; }
-.hierarchy-tree { display: grid; gap: 0; padding: 2px 0 4px; }
-.hierarchy-lane-label { display: block; margin-bottom: 10px; color: #475467; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.hierarchy-upstream-branch,
-.hierarchy-current-branch,
-.hierarchy-children-branch { position: relative; display: grid; justify-items: center; width: min(100%, 960px); margin-inline: auto; }
-.hierarchy-upstream-branch { padding-bottom: 32px; }
-.hierarchy-upstream-branch::after,
-.hierarchy-current-branch::after { position: absolute; bottom: 0; left: 50%; width: 2px; height: 22px; background: #9ab3df; content: ""; }
-.hierarchy-parent-chain { display: grid; width: min(100%, 420px); gap: 22px; }
+.hierarchy-org-chart { display: grid; justify-items: center; padding: 10px 0 4px; }
+.hierarchy-lane-label { display: block; margin: 0 0 10px; color: #667085; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.hierarchy-ancestry,
+.hierarchy-focus-stage,
+.hierarchy-descendants { position: relative; display: grid; justify-items: center; width: 100%; }
+.hierarchy-ancestry { padding-bottom: 34px; }
+.hierarchy-ancestry::after,
+.hierarchy-focus-stage::after { position: absolute; bottom: 0; left: 50%; width: 2px; height: 24px; background: #cbd5e1; content: ""; }
+.hierarchy-parent-chain { display: grid; width: min(100%, 420px); gap: 24px; }
 .hierarchy-parent-chain .agency-tree-node { position: relative; }
-.hierarchy-parent-chain .agency-tree-node:not(:last-child)::after { position: absolute; bottom: -22px; left: 50%; width: 2px; height: 22px; background: #9ab3df; content: ""; }
-.hierarchy-current-branch { padding: 0 0 42px; }
-.hierarchy-current-branch .agency-tree-node { width: min(100%, 440px); }
-.hierarchy-children-branch { width: 100%; padding: 22px 20px 4px; border: 1px solid #cce5d5; border-radius: 14px; background: linear-gradient(180deg, #f5fcf7 0%, #ffffff 100%); }
-.hierarchy-children-branch::before { position: absolute; top: -21px; left: 50%; width: 2px; height: 21px; background: #9ab3df; content: ""; }
-.hierarchy-child-grid { position: relative; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); width: 100%; gap: 30px 18px; padding-top: 25px; }
-.hierarchy-child-grid::before { position: absolute; top: 0; right: 8%; left: 8%; height: 2px; background: #91c9a7; content: ""; }
-.hierarchy-child-grid .agency-tree-node::before { position: absolute; top: -25px; left: 50%; width: 2px; height: 25px; background: #91c9a7; content: ""; }
-.hierarchy-child-grid:has(.agency-tree-node:only-child)::before { right: 50%; left: 50%; }
+.hierarchy-parent-chain .agency-tree-node:not(:last-child)::after { position: absolute; bottom: -24px; left: 50%; width: 2px; height: 24px; background: #cbd5e1; content: ""; }
+.hierarchy-focus-stage { padding-bottom: 44px; }
+.hierarchy-focus-stage .agency-tree-node { width: min(100%, 460px); }
+.hierarchy-descendants { padding-top: 12px; }
+.hierarchy-descendants::before { position: absolute; top: -24px; left: 50%; width: 2px; height: 24px; background: #cbd5e1; content: ""; }
+.hierarchy-descendants-title { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; margin-bottom: 16px; padding: 0 12px; border: 1px solid #dbe5f1; border-radius: 999px; background: #f8fafc; }
+.hierarchy-descendants-title .hierarchy-lane-label { margin: 0; }
+.hierarchy-count { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; color: #175cd3; background: #dbeafe; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hierarchy-child-grid { position: relative; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); width: min(100%, 1120px); gap: 34px 24px; padding-top: 32px; }
+.hierarchy-child-grid::before { position: absolute; top: 0; right: 12%; left: 12%; height: 2px; background: #cbd5e1; content: ""; }
+.hierarchy-child-grid .agency-tree-node::before { position: absolute; top: -32px; left: 50%; width: 2px; height: 32px; background: #cbd5e1; content: ""; }
+.hierarchy-child-grid--1 { width: min(100%, 460px); }
+.hierarchy-child-grid--1::before { right: 50%; left: 50%; }
 .agency-tree-node {
   position: relative;
   display: flex;
@@ -631,19 +635,32 @@ th {
 }
 .agency-tree-node-copy {
   display: grid;
-  align-content: center;
-  gap: 2px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "avatar main status" "avatar role role";
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 4px;
   min-width: 0;
-  padding: 8px 12px;
+  padding: 12px 14px;
   border: 1px solid #dfe4ea;
   width: 100%;
-  border-radius: 8px;
+  border-radius: 10px;
   background: #fff;
+  box-shadow: 0 1px 2px #1018280a;
 }
-.agency-tree-node-copy strong { overflow-wrap: anywhere; }
-.agency-tree-node-copy span { color: #667085; font-size: 12px; }
-.agency-tree-node.current .agency-tree-node-copy { border-color: #7f9fe8; background: #fff; box-shadow: inset 3px 0 0 #2563eb; }
-.agency-tree-node.child .agency-tree-node-copy { border-color: #a9d7ba; background: #fff; box-shadow: inset 3px 0 0 #22a06b; }
+.agency-tree-avatar { grid-area: avatar; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; color: #344054; background: #f2f4f7; font-weight: 750; }
+.agency-tree-node-main { grid-area: main; display: grid; min-width: 0; gap: 2px; }
+.agency-tree-node-copy strong { overflow: hidden; color: #1d2939; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.agency-tree-account { overflow: hidden; color: #667085; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.agency-tree-status { grid-area: status; display: inline-flex; align-items: center; gap: 5px; color: #475467; font-size: 12px; white-space: nowrap; }
+.agency-tree-status i { display: block; width: 7px; height: 7px; border-radius: 50%; background: #98a2b3; }
+.agency-tree-status.active i { background: #12b76a; box-shadow: 0 0 0 3px #d1fadf; }
+.agency-tree-status.disabled i { background: #f04438; box-shadow: 0 0 0 3px #fee4e2; }
+.agency-tree-role { grid-area: role; color: #667085; font-size: 12px; }
+.agency-tree-node.current .agency-tree-node-copy { border-color: #84adff; background: linear-gradient(135deg, #f8fbff 0%, #ffffff 100%); box-shadow: 0 0 0 3px #eaf1ff, 0 3px 8px #175cd31a; }
+.agency-tree-node.current .agency-tree-avatar { color: #175cd3; background: #dbeafe; }
+.agency-tree-node.current .agency-tree-role { color: #175cd3; font-weight: 650; }
+.agency-tree-node.child .agency-tree-node-copy { border-color: #d0d5dd; }
 .hierarchy-empty { margin: 0; color: #667085; font-size: 13px; }
 .hierarchy-path { margin: 14px 0 0; color: #475467; font-size: 13px; overflow-wrap: anywhere; }
 .credential-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }

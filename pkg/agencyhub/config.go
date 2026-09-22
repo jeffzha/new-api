@@ -60,7 +60,7 @@ func LoadConfig() Config {
 		SessionAbsolute:              envDuration("AGENCY_HUB_SESSION_ABSOLUTE_SECONDS", 28800),
 		LoginLockout:                 envDuration("AGENCY_HUB_LOGIN_LOCKOUT_SECONDS", 900),
 		MaxLoginAttempts:             envInt("AGENCY_HUB_MAX_LOGIN_ATTEMPTS", 5),
-		MinSpreadBPS:                 envInt("AGENCY_HUB_MIN_SPREAD_BPS", 500),
+		MinSpreadBPS:                 envInt("AGENCY_HUB_MIN_SPREAD_BPS", 0),
 		SalesCapBPS:                  envInt("AGENCY_HUB_SALES_CAP_BPS", 30000),
 		FactProjectionEnabled:        envBoolAny(true, "AGENCY_HUB_FACT_PROJECTION_ENABLED", "AGENCY_FACT_PROJECTION_ENABLED"),
 		CommissionEnabled:            envBoolAny(false, "AGENCY_HUB_COMMISSION_PROCESSING_ENABLED", "AGENCY_COMMISSION_PROCESSING_ENABLED"),

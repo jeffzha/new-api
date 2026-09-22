@@ -17,6 +17,9 @@ services:
       SQL_MAX_IDLE_CONNS: ${AGENCY_HUB_SQL_MAX_IDLE_CONNS:-5}
       SQL_MAX_LIFETIME: "60"
       AGENCY_HUB_AUTO_MIGRATE: "false"
+      # The platform may opt into a profitability guardrail explicitly. Keep
+      # the default disabled so a valid cost/sales pair may be equal.
+      AGENCY_HUB_MIN_SPREAD_BPS: ${AGENCY_HUB_MIN_SPREAD_BPS:-0}
       # Keep fact projection running so usage/top-up reports stay current;
       # commission settlement is independently disabled until finance signs off.
       AGENCY_HUB_FACT_PROJECTION_ENABLED: "true"

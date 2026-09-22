@@ -22,6 +22,7 @@ type createAgencyRequest struct {
 	OperatorUsername string                `json:"operator_username"`
 	Pricing          agencycontract.Policy `json:"pricing"`
 	Status           string                `json:"status"`
+	ParentAgencyID   *int64                `json:"parent_agency_id,omitempty"`
 }
 type updateAgencyRequest struct {
 	DisplayName     *string `json:"display_name"`
@@ -33,6 +34,345 @@ type agencyView struct {
 	InviteURL        string `json:"invite_url"`
 	InviteQRURL      string `json:"invite_qr_url"`
 	OperatorUsername string `json:"operator_username,omitempty"`
+}
+
+type agencyHierarchyNode struct {
+	ID               int64  `json:"id"`
+	DisplayName      string `json:"display_name"`
+	Status           string `json:"status"`
+	Depth            int    `json:"depth"`
+	ParentAgencyID   *int64 `json:"parent_agency_id,omitempty"`
+	OperatorUsername string `json:"operator_username,omitempty"`
+}
+
+const maxAgencyDepth = 10
+
+func minCoefficient(value, cap int) int {
+	if cap <= 0 || value < 0 {
+		return value
+	}
+	if value > cap {
+		return cap
+	}
+	return value
+}
+
+func inheritedSalesBPS(inheritedSales, settlement, minSpread, cap int) (int, error) {
+	minimum := settlement + minSpread
+	if minimum > cap {
+		return 0, errors.New("inherited sales coefficient exceeds sales cap")
+	}
+	return max(inheritedSales, minimum), nil
+}
+
+func validateAgencyParentTx(tx *gorm.DB, parentID *int64) (int, error) {
+	if parentID == nil || *parentID == 0 {
+		return 1, nil
+	}
+	var parent model.Agency
+	if err := model.AgencyLockForUpdate(tx).First(&parent, *parentID).Error; err != nil {
+		return 0, fmt.Errorf("parent agency not found")
+	}
+	if parent.Status != AgencyStatusActive {
+		return 0, fmt.Errorf("parent agency is disabled")
+	}
+	depth := parent.Depth
+	if depth <= 0 {
+		depth = 1
+	}
+	if depth >= maxAgencyDepth {
+		return 0, fmt.Errorf("agency hierarchy depth limit is %d", maxAgencyDepth)
+	}
+	return depth + 1, nil
+}
+
+func validateChildPolicyTx(tx *gorm.DB, parentID int64, policy agencycontract.Policy) error {
+	var parent model.Agency
+	if err := tx.First(&parent, parentID).Error; err != nil {
+		return errors.New("parent agency not found")
+	}
+	var row model.AgencyPricePolicyVersion
+	if err := tx.Where("id = ?", parent.CurrentPolicyVersionID).First(&row).Error; err != nil {
+		return errors.New("parent agency pricing is unavailable")
+	}
+	var parentPolicy agencycontract.Policy
+	if err := common.Unmarshal([]byte(row.PolicyJSON), &parentPolicy); err != nil {
+		return errors.New("parent agency pricing is invalid")
+	}
+	parentEffective := parentPolicy
+	if parent.ParentAgencyID == nil {
+		var err error
+		parentEffective, err = (&App{db: tx}).effectivePolicy(parentPolicy)
+		if err != nil {
+			return err
+		}
+	}
+	if policy.MinSpreadBPS == 0 {
+		policy.MinSpreadBPS = parentEffective.MinSpreadBPS
+	} else if policy.MinSpreadBPS < parentEffective.MinSpreadBPS {
+		return errors.New("child minimum spread cannot be below parent minimum spread")
+	}
+	parentDefaultChildCost := parentEffective.DefaultChildCostBPS
+	if parentDefaultChildCost == 0 {
+		return errors.New("parent child agency cost is not configured; configure it before creating a child agency")
+	}
+	if policy.DefaultSettlementBPS < parentDefaultChildCost {
+		return errors.New("child default cost must not be below parent child cost")
+	}
+	for _, childOverride := range policy.ModelOverrides {
+		childResolved, resolveErr := agencycontract.Resolve(policy, childOverride.OriginModelName)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		parentChildCost := parentDefaultChildCost
+		if parentOverride := findModelOverride(parentEffective, childOverride.OriginModelName); parentOverride != nil && parentOverride.ChildCostBPS != nil {
+			parentChildCost = *parentOverride.ChildCostBPS
+		}
+		if childResolved.SettlementBPS < parentChildCost {
+			return fmt.Errorf("child cost for model %s must not be below parent child cost", childOverride.OriginModelName)
+		}
+	}
+	return nil
+}
+
+func findModelOverride(policy agencycontract.Policy, modelName string) *agencycontract.ModelOverride {
+	key, err := agencycontract.ModelKey(modelName)
+	if err != nil {
+		return nil
+	}
+	for i := range policy.ModelOverrides {
+		overrideKey, keyErr := agencycontract.ModelKey(policy.ModelOverrides[i].OriginModelName)
+		if keyErr == nil && overrideKey == key {
+			return &policy.ModelOverrides[i]
+		}
+	}
+	return nil
+}
+
+// inheritChildCostPolicy makes omitted model costs explicit. Without this
+// normalization a child that only supplied a default cost could silently fall
+// below a parent model-specific cost when that model was later requested.
+func inheritChildCostPolicy(tx *gorm.DB, parentID int64, policy agencycontract.Policy) (agencycontract.Policy, error) {
+	var parent model.Agency
+	if err := tx.First(&parent, parentID).Error; err != nil {
+		return agencycontract.Policy{}, errors.New("parent agency not found")
+	}
+	var row model.AgencyPricePolicyVersion
+	if err := tx.Where("id = ?", parent.CurrentPolicyVersionID).First(&row).Error; err != nil {
+		return agencycontract.Policy{}, errors.New("parent agency pricing is unavailable")
+	}
+	var parentPolicy agencycontract.Policy
+	if err := common.Unmarshal([]byte(row.PolicyJSON), &parentPolicy); err != nil {
+		return agencycontract.Policy{}, errors.New("parent agency pricing is invalid")
+	}
+	parentEffective := parentPolicy
+	if parent.ParentAgencyID == nil {
+		var err error
+		parentEffective, err = (&App{db: tx}).effectivePolicy(parentPolicy)
+		if err != nil {
+			return agencycontract.Policy{}, err
+		}
+	}
+	if policy.MinSpreadBPS == 0 {
+		policy.MinSpreadBPS = parentEffective.MinSpreadBPS
+	} else if policy.MinSpreadBPS < parentEffective.MinSpreadBPS {
+		return agencycontract.Policy{}, errors.New("child minimum spread cannot be below parent minimum spread")
+	}
+	if policy.SalesCapBPS == 0 {
+		policy.SalesCapBPS = parentEffective.SalesCapBPS
+	}
+	if policy.DefaultSettlementBPS == 0 {
+		policy.DefaultSettlementBPS = parentEffective.DefaultChildCostBPS
+	}
+	if policy.DefaultSalesBPS == 0 || policy.DefaultSalesBPS == 10000 {
+		var salesErr error
+		policy.DefaultSalesBPS, salesErr = inheritedSalesBPS(parentEffective.DefaultSalesBPS, policy.DefaultSettlementBPS, policy.MinSpreadBPS, policy.SalesCapBPS)
+		if salesErr != nil {
+			return agencycontract.Policy{}, salesErr
+		}
+	}
+	parentDefaultChildCost := parentEffective.DefaultChildCostBPS
+	if parentDefaultChildCost == 0 {
+		return agencycontract.Policy{}, errors.New("parent child agency cost is not configured; configure it before creating a child agency")
+	}
+	// A blank default child cost is intentional. It prevents silently adding
+	// another spread at every hierarchy level; the parent must explicitly set
+	// one before creating a child.
+	positions := make(map[string]int, len(policy.ModelOverrides))
+	for i, override := range policy.ModelOverrides {
+		key, err := agencycontract.ModelKey(override.OriginModelName)
+		if err != nil {
+			return agencycontract.Policy{}, err
+		}
+		positions[key] = i
+	}
+	for _, parentOverride := range parentEffective.ModelOverrides {
+		key, err := agencycontract.ModelKey(parentOverride.OriginModelName)
+		if err != nil {
+			return agencycontract.Policy{}, err
+		}
+		parentResolved, err := agencycontract.Resolve(parentEffective, parentOverride.OriginModelName)
+		if err != nil {
+			return agencycontract.Policy{}, err
+		}
+		position, exists := positions[key]
+		if !exists {
+			cost := parentDefaultChildCost
+			if parentOverride.ChildCostBPS != nil {
+				cost = *parentOverride.ChildCostBPS
+			}
+			cost = minCoefficient(cost, policy.SalesCapBPS)
+			sales, salesErr := inheritedSalesBPS(parentResolved.SalesBPS, cost, policy.MinSpreadBPS, policy.SalesCapBPS)
+			if salesErr != nil {
+				return agencycontract.Policy{}, salesErr
+			}
+			policy.ModelOverrides = append(policy.ModelOverrides, agencycontract.ModelOverride{OriginModelName: parentOverride.OriginModelName, SettlementBPS: &cost, SalesBPS: &sales})
+			positions[key] = len(policy.ModelOverrides) - 1
+			continue
+		}
+		if policy.ModelOverrides[position].SettlementBPS == nil {
+			cost := parentDefaultChildCost
+			if parentOverride.ChildCostBPS != nil {
+				cost = *parentOverride.ChildCostBPS
+			}
+			cost = minCoefficient(cost, policy.SalesCapBPS)
+			policy.ModelOverrides[position].SettlementBPS = &cost
+			if policy.ModelOverrides[position].SalesBPS == nil {
+				sales, salesErr := inheritedSalesBPS(parentResolved.SalesBPS, cost, policy.MinSpreadBPS, policy.SalesCapBPS)
+				if salesErr != nil {
+					return agencycontract.Policy{}, salesErr
+				}
+				policy.ModelOverrides[position].SalesBPS = &sales
+			}
+		}
+	}
+	return policy, nil
+}
+
+func (a *App) createChildAgencyHTTP(c *gin.Context) {
+	identity := currentIdentity(c)
+	if identity == nil || identity.AgencyID == nil || identity.ActorType != ActorTypeOperator {
+		respondError(c, http.StatusForbidden, "agency_required", "只有代理商账号可以创建下级代理商", nil)
+		return
+	}
+	var request createAgencyRequest
+	request.Pricing = agencycontract.Policy{DefaultSalesBPS: 10000, MinSpreadBPS: a.config.MinSpreadBPS}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_request", "请求格式错误", nil)
+		return
+	}
+	parentID := *identity.AgencyID
+	request.ParentAgencyID = &parentID
+	parentAgency, _, parentErr := a.loadAgencyPolicy(parentID)
+	if parentErr != nil || parentAgency.Status != AgencyStatusActive {
+		respondError(c, http.StatusConflict, "parent_unavailable", "上级代理商当前不可用", nil)
+		return
+	}
+	request.Pricing, parentErr = inheritChildCostPolicy(a.db, parentID, request.Pricing)
+	if parentErr != nil {
+		message := "上级代理商价格策略不可用"
+		if parentErr.Error() == "parent child agency cost is not configured; configure it before creating a child agency" {
+			message = pricingErrorMessage(parentErr)
+		}
+		respondError(c, http.StatusConflict, "parent_unavailable", message, nil)
+		return
+	}
+	if err := agencycontract.ValidatePolicy(request.Pricing); err != nil {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
+		return
+	}
+	if err := a.validateChildPolicy(parentID, request.Pricing); err != nil {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
+		return
+	}
+	operationID := deliveryOperationID(c, identity)
+	binding := deliveryBindingFromContext(c, identity, c.Request.URL.Path, "")
+	agency, password, delivery, err := a.createAgency(identity.ActorID, strings.TrimSpace(request.DisplayName), strings.TrimSpace(request.OperatorUsername), request.Pricing, operationID, binding, request.ParentAgencyID, ActorTypeOperator)
+	if err != nil {
+		respondError(c, http.StatusUnprocessableEntity, "create_failed", err.Error(), nil)
+		return
+	}
+	view := agencyView{Agency: agency, InviteURL: a.inviteURL(agency.InviteCode), InviteQRURL: a.inviteQRURL(agency.InviteCode), OperatorUsername: request.OperatorUsername}
+	c.Header("Cache-Control", "no-store")
+	respondCreated(c, gin.H{
+		"agency":                        view,
+		"agency_id":                     agency.ID,
+		"invite_code":                   agency.InviteCode,
+		"invite_url":                    view.InviteURL,
+		"invite_qr_url":                 view.InviteQRURL,
+		"delivery_id":                   delivery.ID,
+		"delivery_operation_id":         delivery.OperationID,
+		"temporary_password":            password,
+		"temporary_password_expires_at": delivery.ExpiresAt,
+	})
+}
+
+func (a *App) validateChildPolicy(parentID int64, policy agencycontract.Policy) error {
+	return validateChildPolicyTx(a.db, parentID, policy)
+}
+
+func (a *App) listChildAgencies(c *gin.Context) {
+	identity := currentIdentity(c)
+	if identity == nil || identity.AgencyID == nil {
+		respondError(c, http.StatusForbidden, "agency_required", "当前会话没有代理商范围", nil)
+		return
+	}
+	var rows []model.Agency
+	if err := a.db.Where("parent_agency_id = ?", *identity.AgencyID).Order("id ASC").Find(&rows).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取下级代理商失败", nil)
+		return
+	}
+	views := make([]agencyView, 0, len(rows))
+	for _, agency := range rows {
+		var account model.AgencyOperatorAccount
+		_ = a.db.Select("username").Where("agency_id = ?", agency.ID).First(&account).Error
+		views = append(views, agencyView{Agency: agency, InviteURL: a.inviteURL(agency.InviteCode), InviteQRURL: a.inviteQRURL(agency.InviteCode), OperatorUsername: account.Username})
+	}
+	respondOK(c, gin.H{"items": views})
+}
+
+// getAgencyHierarchy returns the current agency, its ancestor chain, and its
+// direct children. Only the operator's own subtree is exposed; pricing and
+// financial fields are intentionally omitted.
+func (a *App) getAgencyHierarchy(c *gin.Context) {
+	identity := currentIdentity(c)
+	if identity == nil || identity.AgencyID == nil || identity.ActorType != ActorTypeOperator {
+		respondError(c, http.StatusForbidden, "agency_required", "当前会话没有代理商范围", nil)
+		return
+	}
+	var current model.Agency
+	if err := a.db.First(&current, *identity.AgencyID).Error; err != nil {
+		respondError(c, http.StatusNotFound, "agency_not_found", "代理商不存在", nil)
+		return
+	}
+	toNode := func(agency model.Agency) agencyHierarchyNode {
+		node := agencyHierarchyNode{ID: agency.ID, DisplayName: agency.DisplayName, Status: agency.Status, Depth: agency.Depth, ParentAgencyID: agency.ParentAgencyID}
+		var account model.AgencyOperatorAccount
+		if a.db.Select("username").Where("agency_id = ?", agency.ID).First(&account).Error == nil {
+			node.OperatorUsername = account.Username
+		}
+		return node
+	}
+	parents := make([]agencyHierarchyNode, 0, maxAgencyDepth-1)
+	parentID := current.ParentAgencyID
+	for parentID != nil && len(parents) < maxAgencyDepth {
+		var parent model.Agency
+		if err := a.db.First(&parent, *parentID).Error; err != nil {
+			break
+		}
+		parents = append(parents, toNode(parent))
+		parentID = parent.ParentAgencyID
+	}
+	children := make([]model.Agency, 0)
+	if err := a.db.Where("parent_agency_id = ?", current.ID).Order("id ASC").Find(&children).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取下级代理商失败", nil)
+		return
+	}
+	childNodes := make([]agencyHierarchyNode, 0, len(children))
+	for _, child := range children {
+		childNodes = append(childNodes, toNode(child))
+	}
+	respondOK(c, gin.H{"current": toNode(current), "parents": parents, "children": childNodes})
 }
 
 func (a *App) createAgencyHTTP(c *gin.Context) {
@@ -52,13 +392,32 @@ func (a *App) createAgencyHTTP(c *gin.Context) {
 	if request.Pricing.SalesCapBPS == 0 {
 		request.Pricing.SalesCapBPS = a.config.SalesCapBPS
 	}
+	if request.ParentAgencyID != nil {
+		inherited, inheritErr := inheritChildCostPolicy(a.db, *request.ParentAgencyID, request.Pricing)
+		if inheritErr != nil {
+			respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(inheritErr), nil)
+			return
+		}
+		request.Pricing = inherited
+	}
 	if err := agencycontract.ValidatePolicy(request.Pricing); err != nil {
 		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
 		return
 	}
-	if _, err := a.effectivePolicy(request.Pricing); err != nil {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
-		return
+	// Root-created agencies receive the platform-owned procurement costs. A
+	// child agency already carries an inherited cost snapshot and must not be
+	// overwritten by the platform policy.
+	if request.ParentAgencyID == nil {
+		if _, err := a.effectivePolicy(request.Pricing); err != nil {
+			respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
+			return
+		}
+	}
+	if request.ParentAgencyID != nil {
+		if err := a.validateChildPolicy(*request.ParentAgencyID, request.Pricing); err != nil {
+			respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
+			return
+		}
 	}
 	identity := currentIdentity(c)
 	if identity == nil {
@@ -67,7 +426,7 @@ func (a *App) createAgencyHTTP(c *gin.Context) {
 	}
 	operationID := deliveryOperationID(c, identity)
 	binding := deliveryBindingFromContext(c, identity, c.Request.URL.Path, "")
-	agency, password, delivery, err := a.createAgency(identity.ActorID, request.DisplayName, request.OperatorUsername, request.Pricing, operationID, binding)
+	agency, password, delivery, err := a.createAgency(identity.ActorID, request.DisplayName, request.OperatorUsername, request.Pricing, operationID, binding, request.ParentAgencyID, ActorTypeRoot)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
@@ -85,7 +444,7 @@ func (a *App) createAgencyHTTP(c *gin.Context) {
 // policy in one transaction. The temporary password is returned only to the
 // caller; only its hash is persisted.
 func (a *App) CreateAgency(rootID int64, displayName, operatorUsername string, policy agencycontract.Policy) (model.Agency, string, error) {
-	agency, password, _, err := a.createAgency(rootID, displayName, operatorUsername, policy, "", deliveryBinding{})
+	agency, password, _, err := a.createAgency(rootID, displayName, operatorUsername, policy, "", deliveryBinding{}, nil, ActorTypeRoot)
 	return agency, password, err
 }
 
@@ -93,15 +452,19 @@ func (a *App) CreateAgencyWithDelivery(rootID int64, displayName, operatorUserna
 	if strings.TrimSpace(deliveryOperationID) == "" {
 		return model.Agency{}, "", model.AgencyDeliverySecret{}, errors.New("delivery operation required")
 	}
-	return a.createAgency(rootID, displayName, operatorUsername, policy, deliveryOperationID, deliveryBinding{})
+	return a.createAgency(rootID, displayName, operatorUsername, policy, deliveryOperationID, deliveryBinding{}, nil, ActorTypeRoot)
 }
 
-func (a *App) createAgency(rootID int64, displayName, operatorUsername string, policy agencycontract.Policy, deliveryOperationID string, binding deliveryBinding) (model.Agency, string, model.AgencyDeliverySecret, error) {
+func (a *App) createAgency(rootID int64, displayName, operatorUsername string, policy agencycontract.Policy, deliveryOperationID string, binding deliveryBinding, parentAgencyID *int64, creatorType string) (model.Agency, string, model.AgencyDeliverySecret, error) {
 	if err := agencycontract.ValidatePolicy(policy); err != nil {
 		return model.Agency{}, "", model.AgencyDeliverySecret{}, err
 	}
-	if _, err := a.effectivePolicy(policy); err != nil {
-		return model.Agency{}, "", model.AgencyDeliverySecret{}, err
+	if parentAgencyID == nil {
+		effective, err := a.effectivePolicy(policy)
+		if err != nil {
+			return model.Agency{}, "", model.AgencyDeliverySecret{}, err
+		}
+		policy = effective
 	}
 	if rootID <= 0 {
 		return model.Agency{}, "", model.AgencyDeliverySecret{}, errors.New("root actor required")
@@ -135,11 +498,15 @@ func (a *App) createAgency(rootID int64, displayName, operatorUsername string, p
 	var agency model.Agency
 	var delivery model.AgencyDeliverySecret
 	err = a.db.Transaction(func(tx *gorm.DB) error {
-		agency = model.Agency{Code: code, DisplayName: displayName, Status: AgencyStatusActive, InviteCode: invite, PriceRevision: 1, StateRevision: 1, Version: 1, CreatedByType: ActorTypeRoot, CreatedByID: rootID, CreatedAt: now / 1000, UpdatedAt: now / 1000}
+		depth, err := validateAgencyParentTx(tx, parentAgencyID)
+		if err != nil {
+			return err
+		}
+		agency = model.Agency{ParentAgencyID: parentAgencyID, Depth: depth, Code: code, DisplayName: displayName, Status: AgencyStatusActive, InviteCode: invite, PriceRevision: 1, StateRevision: 1, Version: 1, CreatedByType: creatorType, CreatedByID: rootID, CreatedAt: now / 1000, UpdatedAt: now / 1000}
 		if err := tx.Create(&agency).Error; err != nil {
 			return err
 		}
-		policyRow := model.AgencyPricePolicyVersion{AgencyID: agency.ID, Revision: 1, PolicyJSON: string(policyJSON), PolicyHash: policyHash, CreatedByType: ActorTypeRoot, CreatedByID: rootID, CreatedAtMS: now}
+		policyRow := model.AgencyPricePolicyVersion{AgencyID: agency.ID, Revision: 1, PolicyJSON: string(policyJSON), PolicyHash: policyHash, CreatedByType: creatorType, CreatedByID: rootID, CreatedAtMS: now}
 		if err := tx.Create(&policyRow).Error; err != nil {
 			return err
 		}
@@ -153,7 +520,7 @@ func (a *App) createAgency(rootID int64, displayName, operatorUsername string, p
 		if err := a.writePolicyItems(tx, policyRow.ID, policy); err != nil {
 			return err
 		}
-		if err := recordAuditTx(tx, nil, &Identity{ActorType: ActorTypeRoot, ActorID: rootID},
+		if err := recordAuditTx(tx, nil, &Identity{ActorType: creatorType, ActorID: rootID},
 			"agency.create", "agency", strconv.FormatInt(agency.ID, 10), "agency created",
 			nil, map[string]any{"display_name": agency.DisplayName, "status": agency.Status, "policy_revision": policyRow.Revision}); err != nil {
 			return err
@@ -182,7 +549,7 @@ func (a *App) writePolicyItems(tx *gorm.DB, policyID int64, policy agencycontrac
 		if override.SalesBPS != nil {
 			sales = *override.SalesBPS
 		}
-		items = append(items, model.AgencyPricePolicyItem{PolicyVersionID: policyID, Scope: "model", ModelKey: key, OriginModelName: override.OriginModelName, SettlementBPS: override.SettlementBPS, SalesBPS: override.SalesBPS, ResolvedSettlementBPS: settlement, ResolvedSalesBPS: sales})
+		items = append(items, model.AgencyPricePolicyItem{PolicyVersionID: policyID, Scope: "model", ModelKey: key, OriginModelName: override.OriginModelName, SettlementBPS: override.SettlementBPS, ChildCostBPS: override.ChildCostBPS, SalesBPS: override.SalesBPS, ResolvedSettlementBPS: settlement, ResolvedSalesBPS: sales})
 	}
 	if len(items) == 0 {
 		return nil
@@ -425,6 +792,7 @@ func (a *App) setAgencyStatus(c *gin.Context, status string) {
 	}
 	var agency model.Agency
 	now := time.Now().Unix()
+	var affectedAgencyIDs []int64
 	err = a.db.Transaction(func(tx *gorm.DB) error {
 		if err := model.AgencyLockForUpdate(tx).First(&agency, id).Error; err != nil {
 			return err
@@ -447,12 +815,36 @@ func (a *App) setAgencyStatus(c *gin.Context, status string) {
 			return err
 		}
 		if status == AgencyStatusDisabled {
+			// Disabling an ancestor suspends the complete subtree. This is
+			// deliberately done in the same transaction as the root state
+			// change so no descendant can accept a request in between.
+			ids, descendantErr := agencySubtreeIDsTx(tx, agency.ID)
+			if descendantErr != nil {
+				return descendantErr
+			}
+			affectedAgencyIDs = ids
+			for _, descendantID := range ids {
+				if descendantID == agency.ID {
+					continue
+				}
+				if err := tx.Model(&model.Agency{}).Where("id = ? AND status = ?", descendantID, AgencyStatusActive).Updates(map[string]any{
+					"status": AgencyStatusDisabled, "state_revision": gorm.Expr("state_revision + 1"), "version": gorm.Expr("version + 1"), "disabled_reason": "ancestor_disabled", "disabled_at": now, "updated_at": now,
+				}).Error; err != nil {
+					return err
+				}
+			}
+		}
+		if status == AgencyStatusDisabled {
 			var balances []model.AgencyCommissionBalance
-			if err := tx.Where("agency_id = ?", id).Find(&balances).Error; err != nil {
+			balanceIDs := affectedAgencyIDs
+			if len(balanceIDs) == 0 {
+				balanceIDs = []int64{id}
+			}
+			if err := tx.Where("agency_id IN ?", balanceIDs).Find(&balances).Error; err != nil {
 				return err
 			}
 			for _, balance := range balances {
-				if err := holdUnpaidWithdrawals(tx, id, balance.CurrencyCode, "agency-disabled-"+strconv.FormatInt(id, 10), time.Now().UnixMilli()); err != nil {
+				if err := holdUnpaidWithdrawals(tx, balance.AgencyID, balance.CurrencyCode, "agency-disabled-"+strconv.FormatInt(balance.AgencyID, 10), time.Now().UnixMilli()); err != nil {
 					return err
 				}
 			}
@@ -478,9 +870,38 @@ func (a *App) setAgencyStatus(c *gin.Context, status string) {
 		return
 	}
 	if status == AgencyStatusDisabled {
-		_ = a.db.Model(&model.AgencySession{}).Where("agency_id = ?", id).Update("revoked_at", now).Error
+		if len(affectedAgencyIDs) == 0 {
+			affectedAgencyIDs = []int64{id}
+		}
+		_ = a.db.Model(&model.AgencySession{}).Where("agency_id IN ?", affectedAgencyIDs).Update("revoked_at", now).Error
 	}
 	respondOK(c, gin.H{"status": status, "version": agency.Version + 1})
+}
+
+func agencySubtreeIDsTx(tx *gorm.DB, rootID int64) ([]int64, error) {
+	if rootID <= 0 {
+		return nil, errors.New("invalid agency root")
+	}
+	ids := []int64{rootID}
+	seen := map[int64]struct{}{rootID: {}}
+	frontier := []int64{rootID}
+	for len(frontier) > 0 {
+		var children []model.Agency
+		if err := tx.Select("id").Where("parent_agency_id IN ?", frontier).Find(&children).Error; err != nil {
+			return nil, err
+		}
+		next := make([]int64, 0, len(children))
+		for _, child := range children {
+			if _, exists := seen[child.ID]; exists {
+				continue
+			}
+			seen[child.ID] = struct{}{}
+			ids = append(ids, child.ID)
+			next = append(next, child.ID)
+		}
+		frontier = next
+	}
+	return ids, nil
 }
 
 func (a *App) resetPassword(c *gin.Context) {

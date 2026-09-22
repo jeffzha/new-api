@@ -54,6 +54,9 @@ func ComponentEvent(event BillingEvent, component BillingComponent) BillingEvent
 // ValidateBillingComponents binds every component to the envelope totals.
 // v1 payloads cannot carry components: an old consumer would ignore them.
 func ValidateBillingComponents(event BillingEvent) error {
+	if err := ValidateCommissionSplits(event); err != nil {
+		return err
+	}
 	if event.SchemaVersion == SchemaVersion && len(event.Components) == 0 {
 		return nil
 	}
@@ -156,4 +159,63 @@ func ValidateBillingComponents(event BillingEvent) error {
 		return errors.New("billing component eligibility mismatch")
 	}
 	return nil
+}
+
+// ValidateCommissionSplits binds tiered commission rows to the envelope
+// totals. Empty splits are the legacy single-agency representation.
+func ValidateCommissionSplits(event BillingEvent) error {
+	if len(event.CommissionSplits) == 0 {
+		return nil
+	}
+	if len(event.CommissionSplits) > 128 {
+		return errors.New("too many commission splits")
+	}
+	seen := make(map[int64]struct{}, len(event.CommissionSplits))
+	var theoretical, commission, micros, reversedMicros int64
+	for index, split := range event.CommissionSplits {
+		if split.AgencyID <= 0 || split.CostBPS < 0 || split.CostBPS > MaxCoefficientBPS || split.Depth <= 0 || split.TheoreticalQuota < 0 || split.PaidAllocatedQuota < 0 || split.CommissionQuota < 0 || split.CommissionAmountMicros < 0 || split.ReversedCommissionAmountMicros < 0 {
+			return errors.New("invalid commission split")
+		}
+		if _, exists := seen[split.AgencyID]; exists {
+			return errors.New("duplicate commission split agency")
+		}
+		seen[split.AgencyID] = struct{}{}
+		if index > 0 && split.Depth <= event.CommissionSplits[index-1].Depth {
+			return errors.New("commission split depths must increase")
+		}
+		var err error
+		theoretical, err = addChecked(theoretical, split.TheoreticalQuota)
+		if err != nil {
+			return err
+		}
+		commission, err = addChecked(commission, split.CommissionQuota)
+		if err != nil {
+			return err
+		}
+		micros, err = addChecked(micros, split.CommissionAmountMicros)
+		if err != nil {
+			return err
+		}
+		reversedMicros, err = addChecked(reversedMicros, split.ReversedCommissionAmountMicros)
+		if err != nil {
+			return err
+		}
+	}
+	if event.EventType == "agency.billing_reversed" {
+		if micros != 0 || reversedMicros != event.ReversedCommissionAmountMicros {
+			return errors.New("commission split reversal totals mismatch")
+		}
+		return nil
+	}
+	if theoretical != event.TheoreticalCommissionQuota || commission != event.CommissionQuota || micros != event.CommissionAmountMicros || reversedMicros != 0 {
+		return errors.New("commission split totals mismatch")
+	}
+	return nil
+}
+
+func addChecked(current, value int64) (int64, error) {
+	if value < 0 || current > math.MaxInt64-value {
+		return 0, errors.New("commission split amount overflow")
+	}
+	return current + value, nil
 }

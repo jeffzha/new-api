@@ -20,7 +20,7 @@ export interface Page<T> {
 }
 export interface MutationRequest {
   path: string;
-  method?: "POST" | "PATCH";
+  method?: "POST" | "PUT" | "PATCH" | "DELETE";
   body: unknown;
   action?: string;
   objectId?: string;

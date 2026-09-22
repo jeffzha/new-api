@@ -335,13 +335,25 @@ func AgencyCommitWalletChargeTx(tx *gorm.DB, input agencycontract.BillingEvent, 
 				result.DebtAllocatedQuota += debt
 			}
 			if result.CommissionEligible {
-				result.CommissionQuota, err = agencycontract.CommissionForPaid(result.TheoreticalCommissionQuota, result.PaidAllocatedQuota, result.CommissionableQuota, true)
-				if err != nil {
-					return err
-				}
-				result.CommissionAmountMicros, err = agencyFrozenCommissionMicros(result.CommissionQuota, snapshot)
-				if err != nil {
-					return err
+				if len(snapshot.Hierarchy) > 1 {
+					splits, totalTheoretical, totalCommission, totalMicros, splitErr := agencyTieredCommissionSplits(result, snapshot)
+					if splitErr != nil {
+						return splitErr
+					}
+					result.CommissionSplits = splits
+					result.SettlementCostQuota = result.ChargedTotalQuota - totalTheoretical
+					result.TheoreticalCommissionQuota = totalTheoretical
+					result.CommissionQuota = totalCommission
+					result.CommissionAmountMicros = totalMicros
+				} else {
+					result.CommissionQuota, err = agencycontract.CommissionForPaid(result.TheoreticalCommissionQuota, result.PaidAllocatedQuota, result.CommissionableQuota, true)
+					if err != nil {
+						return err
+					}
+					result.CommissionAmountMicros, err = agencyFrozenCommissionMicros(result.CommissionQuota, snapshot)
+					if err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -357,6 +369,40 @@ func AgencyCommitWalletChargeTx(tx *gorm.DB, input agencycontract.BillingEvent, 
 		return writeAgencyJournalEventTx(tx, &journal, &result, "finalize", inputHash, before)
 	})
 	return result, err
+}
+
+func agencyTieredCommissionSplits(event agencycontract.BillingEvent, snapshot agencycontract.PricingSnapshot) ([]agencycontract.CommissionSplit, int64, int64, int64, error) {
+	if len(snapshot.Hierarchy) <= 1 || event.StandardQuota < 0 || event.ChargedTotalQuota < 0 || event.PaidAllocatedQuota < 0 || event.PaidAllocatedQuota > event.CommissionableQuota {
+		return nil, 0, 0, 0, errors.New("invalid tiered commission settlement input")
+	}
+	nodes := make([]agencycontract.TierNode, len(snapshot.Hierarchy))
+	for i, node := range snapshot.Hierarchy {
+		nodes[i] = agencycontract.TierNode{AgencyID: node.AgencyID, CostBPS: node.CostBPS, MinSpreadBPS: node.MinSpreadBPS, SalesBPS: node.SalesBPS}
+	}
+	result, err := agencycontract.CalculateTieredCommission(event.StandardQuota, nodes, snapshot.PlatformCostBPS, snapshot.MinSpreadBPS, event.PaidAllocatedQuota, true)
+	if err != nil {
+		return nil, 0, 0, 0, err
+	}
+	if result.CustomerChargedQuota != event.ChargedTotalQuota {
+		return nil, 0, 0, 0, errors.New("tiered commission charge mismatch")
+	}
+	splits := make([]agencycontract.CommissionSplit, 0, len(result.Segments))
+	var theoretical, commission, micros int64
+	for i, segment := range result.Segments {
+		amount, amountErr := agencyFrozenCommissionMicros(segment.CommissionQuota, snapshot)
+		if amountErr != nil {
+			return nil, 0, 0, 0, amountErr
+		}
+		node := snapshot.Hierarchy[i]
+		splits = append(splits, agencycontract.CommissionSplit{AgencyID: segment.AgencyID, ParentAgencyID: node.ParentAgencyID, Depth: node.Depth, CostBPS: node.CostBPS, SalesBPS: node.SalesBPS, TheoreticalQuota: segment.TheoreticalQuota, PaidAllocatedQuota: segment.PaidAllocatedQuota, CommissionQuota: segment.CommissionQuota, CommissionAmountMicros: amount})
+		if theoretical > math.MaxInt64-segment.TheoreticalQuota || commission > math.MaxInt64-segment.CommissionQuota || micros > math.MaxInt64-amount {
+			return nil, 0, 0, 0, errors.New("tiered commission overflow")
+		}
+		theoretical += segment.TheoreticalQuota
+		commission += segment.CommissionQuota
+		micros += amount
+	}
+	return splits, theoretical, commission, micros, nil
 }
 
 func agencyAdjustAcceptedTokenTx(tx *gorm.DB, tokenID int64, tokenKey string, delta int64) error {

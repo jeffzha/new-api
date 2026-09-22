@@ -33,6 +33,14 @@ function AgencySalesForm(props: {
   const mutation = useMutation();
   const [reason, setReason] = useState("");
   const [error, setError] = useState<unknown>(null);
+  const [defaultSales, setDefaultSales] = useState(() => formatCoefficient(props.data.default_sales_bps));
+  const [defaultChildCost, setDefaultChildCost] = useState(() => props.data.default_child_cost_bps ? formatCoefficient(props.data.default_child_cost_bps) : "");
+  const [childCosts, setChildCosts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(props.data.items.map((row) => [
+      row.origin_model_name,
+      row.override_child_cost_bps == null ? "" : formatCoefficient(row.override_child_cost_bps),
+    ])),
+  );
   const [sales, setSales] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       props.data.items.map((row) => [
@@ -49,13 +57,18 @@ function AgencySalesForm(props: {
         props.root ? props.path + "/sales/publish" : "/pricing/sales/publish",
         {
           expected_revision: props.data.revision,
-          default_sales_bps: props.data.default_sales_bps,
+          default_sales_bps: parseCoefficient(defaultSales),
+          default_child_cost_bps: defaultChildCost.trim() === "" ? 0 : parseCoefficient(defaultChildCost),
           model_sales_overrides: props.data.items.map((row) => ({
             origin_model_name: row.origin_model_name,
             sales_bps:
               sales[row.origin_model_name] === ""
                 ? null
                 : parseCoefficient(sales[row.origin_model_name]),
+          })),
+          model_child_cost_overrides: props.data.items.map((row) => ({
+            origin_model_name: row.origin_model_name,
+            child_cost_bps: childCosts[row.origin_model_name] === "" ? null : parseCoefficient(childCosts[row.origin_model_name]),
           })),
           reason,
         },
@@ -73,7 +86,7 @@ function AgencySalesForm(props: {
         <div>
           <h3>{props.data.agency_name}</h3>
           <p className="muted">
-            {t("Agency cost is controlled by the platform. Leave sales blank to inherit the platform default.")}
+            {t("Agency cost is inherited and read-only. Set your customer sales coefficient and the cost inherited by your direct child agencies.")}
           </p>
         </div>
         <button className="secondary button-icon" type="button" onClick={props.reload}>
@@ -81,12 +94,23 @@ function AgencySalesForm(props: {
           {t("Refresh")}
         </button>
       </div>
+      <div className="pricing-defaults-grid">
+        <Field label={t("Default sales coefficient")}>
+          <input inputMode="decimal" value={defaultSales} onChange={(event) => setDefaultSales(event.target.value)} />
+          <small>{t("Used when a model or customer has no more specific sales override.")}</small>
+        </Field>
+        <Field label={t("Default child agency cost coefficient")}>
+          <input inputMode="decimal" value={defaultChildCost} onChange={(event) => setDefaultChildCost(event.target.value)} />
+          <small>{t("Used by direct child agencies when a model has no specific cost override.")}</small>
+        </Field>
+      </div>
       <div className="table-wrap pricing-matrix-wrap">
         <table className="pricing-matrix">
           <thead>
             <tr>
               <th>{t("Model name")}</th>
               <th>{t("Agency cost coefficient")}</th>
+              <th>{t("Child agency cost coefficient")}</th>
               <th>{t("Sales coefficient")}</th>
             </tr>
           </thead>
@@ -95,6 +119,16 @@ function AgencySalesForm(props: {
               <tr key={row.origin_model_name}>
                 <td><strong>{row.origin_model_name}</strong></td>
                 <td><span className="coefficient-readonly">{formatCoefficient(row.agency_cost_bps)}</span></td>
+                <td>
+                  <input
+                    aria-label={`${t("Child agency cost coefficient")}: ${row.origin_model_name}`}
+                    inputMode="decimal"
+                    value={childCosts[row.origin_model_name]}
+                    placeholder={row.child_cost_bps ? formatCoefficient(row.child_cost_bps) : t("Not configured")}
+                    onChange={(event) => setChildCosts((current) => ({ ...current, [row.origin_model_name]: event.target.value }))}
+                  />
+                  <small>{childCosts[row.origin_model_name] === "" ? row.child_cost_bps ? t("Using inherited child cost {{value}}", { value: formatCoefficient(row.child_cost_bps) }) : t("Not configured") : t("Agency override")}</small>
+                </td>
                 <td>
                   <div className="sales-coefficient-field">
                     <input

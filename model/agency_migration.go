@@ -36,6 +36,13 @@ func MigrateAgency(db *gorm.DB) error {
 	if err := db.AutoMigrate(models...); err != nil {
 		return fmt.Errorf("agency migration: %w", err)
 	}
+	// Legacy agencies were all directly managed by Root. Backfill the new
+	// hierarchy marker without touching their pricing or bindings.
+	if db.Migrator().HasColumn(&Agency{}, "depth") {
+		if err := db.Model(&Agency{}).Where("depth = ?", 0).Update("depth", 1).Error; err != nil {
+			return fmt.Errorf("agency migration: backfill depth: %w", err)
+		}
+	}
 	if err := migrateAgencyComponentIdentities(db); err != nil {
 		return err
 	}

@@ -10,10 +10,15 @@ declare global {
 
 export function hubConfig(): HubConfig {
   const config = window.__AGENCY_CONFIG__;
+  const devPlatformBaseURL = import.meta.env.DEV
+    ? `${window.location.protocol}//${window.location.hostname}:3001`
+    : "";
   return {
     base_path: config?.base_path?.replace(/\/$/, "") || "/agency",
     platform_base_url:
-      config?.platform_base_url || import.meta.env.VITE_AGENCY_PLATFORM_BASE_URL || "",
+      config?.platform_base_url ||
+      import.meta.env.VITE_AGENCY_PLATFORM_BASE_URL ||
+      devPlatformBaseURL,
   };
 }
 

@@ -548,6 +548,12 @@ func (a *App) projectBillingComponentMode(tx *gorm.DB, event agencycontract.Bill
 			return 0, err
 		}
 	}
+	if len(event.CommissionSplits) > 0 {
+		if !commissionEnabled {
+			return 0, nil
+		}
+		return a.projectCommissionSplits(tx, event, componentID, now)
+	}
 	zeroCommission := (!isReversal && event.CommissionAmountMicros == 0) || (isReversal && event.ReversedCommissionAmountMicros == 0)
 	// Quota and currency micros have independent cumulative rounding. A
 	// sub-micro refund can reverse nonzero K and still needs a ledger row.
@@ -641,6 +647,82 @@ func (a *App) projectBillingComponentMode(tx *gorm.DB, event agencycontract.Bill
 		}
 	}
 	return amount, nil
+}
+
+// projectCommissionSplits writes one immutable ledger entry and balance
+// update per agency in a tiered chain. Legacy events never enter this path,
+// so their single-agency projection remains unchanged.
+func (a *App) projectCommissionSplits(tx *gorm.DB, event agencycontract.BillingEvent, componentID string, now int64) (int64, error) {
+	if event.EventType == "agency.billing_reversed" && event.OriginalEventID == "" {
+		return 0, errors.New("tiered commission reversal is missing original event")
+	}
+	total := int64(0)
+	for _, split := range event.CommissionSplits {
+		amount := split.CommissionAmountMicros
+		entryType := "earned"
+		var originalID *int64
+		if event.EventType == "agency.billing_reversed" {
+			entryType = "reversal"
+			amount = -split.ReversedCommissionAmountMicros
+			var original model.AgencyCommissionLedger
+			if err := model.AgencyLockForUpdate(tx).Where("event_id = ? AND component_key = ? AND agency_id = ? AND entry_type = ?", event.OriginalEventID, model.AgencyComponentKey(componentID), split.AgencyID, "earned").First(&original).Error; err != nil {
+				return 0, err
+			}
+			if split.ReversedCommissionAmountMicros < 0 || split.ReversedCommissionAmountMicros > original.AmountMicros {
+				return 0, errors.New("tiered commission reversal exceeds original entry")
+			}
+			var alreadyReversed int64
+			if err := tx.Model(&model.AgencyCommissionLedger{}).
+				Where("original_entry_id = ? AND entry_type = ?", original.ID, "reversal").
+				Select("COALESCE(SUM(-amount_micros),0)").Scan(&alreadyReversed).Error; err != nil {
+				return 0, err
+			}
+			if alreadyReversed < 0 || alreadyReversed > original.AmountMicros-split.ReversedCommissionAmountMicros {
+				return 0, errors.New("tiered commission cumulative reversal exceeds original entry")
+			}
+			originalID = &original.ID
+		}
+		if amount == 0 {
+			continue
+		}
+		entry := &model.AgencyCommissionLedger{EventID: event.EventID, ComponentID: componentID, EntryType: entryType, OriginalEntryID: originalID, AgencyID: split.AgencyID, ParentAgencyID: split.ParentAgencyID, HierarchyDepth: split.Depth, BindingID: valueOrZero(event.BindingID), UserID: event.UserID, OriginModelName: event.OriginModelName, StandardQuota: event.StandardQuota, SettlementCostQuota: 0, TheoreticalCommissionQuota: split.TheoreticalQuota, PaidAllocatedQuota: split.PaidAllocatedQuota, CommissionQuota: split.CommissionQuota, AmountMicros: amount, CurrencyCode: event.CurrencyCode, QuotaPerUnit: event.QuotaPerUnit, ExchangeRate: event.ExchangeRate, OccurredAtMS: now}
+		if err := tx.Create(entry).Error; err != nil {
+			return 0, err
+		}
+		var balance model.AgencyCommissionBalance
+		if err := model.AgencyLockForUpdate(tx).Where("agency_id = ? AND currency_code = ?", split.AgencyID, event.CurrencyCode).First(&balance).Error; err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return 0, err
+			}
+			balance = model.AgencyCommissionBalance{AgencyID: split.AgencyID, CurrencyCode: event.CurrencyCode, Version: 1}
+			if err := tx.Create(&balance).Error; err != nil {
+				return 0, err
+			}
+		}
+		available, err := checkedAdd(balance.AvailableMicros, amount)
+		if err != nil {
+			return 0, err
+		}
+		earned, reversed := balance.EarnedMicros, balance.ReversedMicros
+		if amount > 0 {
+			earned, err = checkedAdd(earned, amount)
+		} else {
+			reversed, err = checkedAdd(reversed, -amount)
+		}
+		if err != nil {
+			return 0, err
+		}
+		if err := tx.Model(&balance).Updates(map[string]any{"available_micros": available, "earned_micros": earned, "reversed_micros": reversed, "version": balance.Version + 1, "updated_at_ms": now}).Error; err != nil {
+			return 0, err
+		}
+		if amount > 0 {
+			if total > math.MaxInt64-amount {
+				return 0, errors.New("tiered commission overflow")
+			}
+			total += amount
+		}
+	}
+	return total, nil
 }
 
 func (a *App) recordUsageFact(tx *gorm.DB, event agencycontract.BillingEvent, componentID string) error {

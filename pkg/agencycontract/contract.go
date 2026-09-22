@@ -39,6 +39,7 @@ var (
 type ModelOverride struct {
 	OriginModelName string `json:"origin_model_name"`
 	SettlementBPS   *int   `json:"settlement_bps,omitempty"`
+	ChildCostBPS    *int   `json:"child_cost_bps,omitempty"`
 	SalesBPS        *int   `json:"sales_bps,omitempty"`
 }
 
@@ -47,6 +48,7 @@ type ModelOverride struct {
 type Policy struct {
 	Revision             int64           `json:"revision"`
 	DefaultSettlementBPS int             `json:"default_settlement_bps"`
+	DefaultChildCostBPS  int             `json:"default_child_cost_bps"`
 	DefaultSalesBPS      int             `json:"default_sales_bps"`
 	MinSpreadBPS         int             `json:"min_spread_bps"`
 	SalesCapBPS          int             `json:"sales_cap_bps"`
@@ -81,6 +83,7 @@ type PlatformModelPrice struct {
 	PlatformCostBPS int                   `json:"platform_cost_bps,omitempty"`
 	ChannelCosts    []PlatformChannelCost `json:"channel_costs,omitempty"`
 	AgencyCostBPS   int                   `json:"agency_cost_bps"`
+	ChildCostBPS    int                   `json:"child_cost_bps"`
 	DefaultSalesBPS int                   `json:"default_sales_bps"`
 }
 
@@ -103,7 +106,16 @@ func ValidatePlatformPolicy(policy PlatformPolicy) error {
 			return fmt.Errorf("duplicate platform model price: %s", price.OriginModelName)
 		}
 		seen[key] = struct{}{}
-		for _, coefficient := range []int{price.AgencyCostBPS, price.DefaultSalesBPS} {
+		// ChildCostBPS is retained only to read historical policy snapshots.
+		// New platform policies expose one agency cost: the cost inherited by
+		// a root-created agency. Each agency explicitly configures the cost of
+		// its own direct children in its own pricing policy.
+		childCost := price.ChildCostBPS
+		coefficients := []int{price.AgencyCostBPS, price.DefaultSalesBPS}
+		if childCost != 0 {
+			coefficients = append(coefficients, childCost)
+		}
+		for _, coefficient := range coefficients {
 			if coefficient < MinCoefficientBPS || coefficient > MaxCoefficientBPS {
 				return fmt.Errorf("coefficient %d is outside 0..%d", coefficient, MaxCoefficientBPS)
 			}
@@ -129,6 +141,9 @@ func ValidatePlatformPolicy(policy PlatformPolicy) error {
 		}
 		if price.DefaultSalesBPS < price.AgencyCostBPS {
 			return fmt.Errorf("model %s sales coefficient must cover agency cost", price.OriginModelName)
+		}
+		if childCost != 0 && childCost < price.AgencyCostBPS {
+			return fmt.Errorf("model %s child cost coefficient must cover agency cost", price.OriginModelName)
 		}
 	}
 	return nil
@@ -180,7 +195,8 @@ func ApplyPlatformPolicy(policy Policy, platform PlatformPolicy) (Policy, error)
 			continue
 		}
 		defaultSales := price.DefaultSalesBPS
-		result.ModelOverrides = append(result.ModelOverrides, ModelOverride{OriginModelName: price.OriginModelName, SettlementBPS: &agencyCost, SalesBPS: &defaultSales})
+		modelOverride := ModelOverride{OriginModelName: price.OriginModelName, SettlementBPS: &agencyCost, SalesBPS: &defaultSales}
+		result.ModelOverrides = append(result.ModelOverrides, modelOverride)
 		positions[key] = len(result.ModelOverrides) - 1
 	}
 	if err := ValidatePolicy(result); err != nil {
@@ -220,6 +236,14 @@ func ValidatePolicy(policy Policy) error {
 	if err := ValidateCoefficient(policy.DefaultSettlementBPS, cap); err != nil {
 		return err
 	}
+	if policy.DefaultChildCostBPS != 0 {
+		if err := ValidateCoefficient(policy.DefaultChildCostBPS, cap); err != nil {
+			return err
+		}
+		if policy.DefaultChildCostBPS < policy.DefaultSettlementBPS+policy.MinSpreadBPS {
+			return fmt.Errorf("default child cost coefficient must be at least settlement plus spread")
+		}
+	}
 	if err := ValidateCoefficient(policy.DefaultSalesBPS, cap); err != nil {
 		return err
 	}
@@ -240,6 +264,7 @@ func ValidatePolicy(policy Policy) error {
 		}
 		seen[key] = struct{}{}
 		settlement := policy.DefaultSettlementBPS
+		childCost := policy.DefaultChildCostBPS
 		sales := policy.DefaultSalesBPS
 		if override.SettlementBPS != nil {
 			settlement = *override.SettlementBPS
@@ -247,11 +272,22 @@ func ValidatePolicy(policy Policy) error {
 		if override.SalesBPS != nil {
 			sales = *override.SalesBPS
 		}
+		if override.ChildCostBPS != nil {
+			childCost = *override.ChildCostBPS
+		}
 		if err := ValidateCoefficient(settlement, cap); err != nil {
 			return err
 		}
 		if err := ValidateCoefficient(sales, cap); err != nil {
 			return err
+		}
+		if override.ChildCostBPS != nil {
+			if err := ValidateCoefficient(childCost, cap); err != nil {
+				return err
+			}
+			if childCost < settlement+policy.MinSpreadBPS {
+				return fmt.Errorf("model %s child cost violates minimum spread", override.OriginModelName)
+			}
 		}
 		if sales < settlement+policy.MinSpreadBPS {
 			return fmt.Errorf("model %s violates minimum spread", override.OriginModelName)
@@ -303,6 +339,7 @@ type ChargeResult struct {
 // its own pricing/funding transaction; the sidecar does not infer them.
 type BillingEvent struct {
 	Components        []BillingComponent `json:"components,omitempty"`
+	CommissionSplits  []CommissionSplit  `json:"commission_splits,omitempty"`
 	SchemaVersion     string             `json:"schema_version"`
 	EventID           string             `json:"event_id"`
 	EventType         string             `json:"event_type"`
@@ -361,6 +398,22 @@ type BillingEvent struct {
 	FinancialFinal                 bool   `json:"financial_final"`
 }
 
+// CommissionSplit is an immutable per-agency settlement component. It is
+// populated only for tiered snapshots; legacy events leave it empty and keep
+// the original single-agency fields.
+type CommissionSplit struct {
+	AgencyID                       int64  `json:"agency_id"`
+	ParentAgencyID                 *int64 `json:"parent_agency_id,omitempty"`
+	Depth                          int    `json:"depth"`
+	CostBPS                        int    `json:"cost_bps"`
+	SalesBPS                       *int   `json:"sales_bps,omitempty"`
+	TheoreticalQuota               int64  `json:"theoretical_quota"`
+	PaidAllocatedQuota             int64  `json:"paid_allocated_quota"`
+	CommissionQuota                int64  `json:"commission_quota"`
+	CommissionAmountMicros         int64  `json:"commission_amount_micros"`
+	ReversedCommissionAmountMicros int64  `json:"reversed_commission_amount_micros,omitempty"`
+}
+
 type PricingSnapshot struct {
 	SchemaVersion         string `json:"schema_version"`
 	FinancialChargeID     string `json:"financial_charge_id"`
@@ -385,6 +438,27 @@ type PricingSnapshot struct {
 	AcceptedAtMS          int64  `json:"accepted_at_ms"`
 	FundingRuleVersion    string `json:"funding_rule_version"`
 	PricingEngineVersion  string `json:"pricing_engine_version"`
+	// Hierarchy freezes the complete root-to-leaf pricing chain. It is empty
+	// for legacy single-level snapshots, preserving their wire compatibility.
+	Hierarchy                []PricingTierNode `json:"hierarchy,omitempty"`
+	CustomerSalesOverrideBPS *int              `json:"customer_sales_override_bps,omitempty"`
+	PlatformCostBPS          int               `json:"platform_cost_bps,omitempty"`
+	MinSpreadBPS             int               `json:"min_spread_bps,omitempty"`
+}
+
+// PricingTierNode is an immutable pricing boundary captured when a request is
+// accepted. CostBPS is the amount owed to the parent/platform boundary; only
+// the leaf carries the customer-facing sales coefficient.
+type PricingTierNode struct {
+	AgencyID        int64  `json:"agency_id"`
+	ParentAgencyID  *int64 `json:"parent_agency_id,omitempty"`
+	Depth           int    `json:"depth"`
+	CostBPS         int    `json:"cost_bps"`
+	MinSpreadBPS    int    `json:"min_spread_bps"`
+	SalesBPS        *int   `json:"sales_bps,omitempty"`
+	PolicyVersionID int64  `json:"policy_version_id"`
+	PolicyRevision  int64  `json:"policy_revision"`
+	StateRevision   int64  `json:"state_revision"`
 }
 
 func applyBPS(quota int64, bps int, round bool) (int64, error) {

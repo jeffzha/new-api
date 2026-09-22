@@ -3,6 +3,7 @@ import type { Policy, PricingDraft } from "./types";
 export const initialPolicy: Policy = {
   revision: 1,
   default_settlement_bps: 7500,
+  default_child_cost_bps: 0,
   default_sales_bps: 10000,
   min_spread_bps: 500,
   sales_cap_bps: 30000,
@@ -43,6 +44,7 @@ export function draftToPolicy(draft: PricingDraft, base: Policy, root: boolean):
   const policy: Policy = {
     revision: base.revision,
     default_settlement_bps: root ? parseCoefficient(draft.settlement) : base.default_settlement_bps,
+    default_child_cost_bps: base.default_child_cost_bps ?? 0,
     default_sales_bps: parseCoefficient(draft.sales),
     min_spread_bps: root ? parseCoefficient(draft.spread) : base.min_spread_bps,
     sales_cap_bps: root ? parseCoefficient(draft.cap) : base.sales_cap_bps,
@@ -121,6 +123,7 @@ export function pricingRequest(policy: Policy, root: boolean, reason: string) {
   return {
     expected_revision: policy.revision,
     default_settlement_bps: policy.default_settlement_bps,
+    default_child_cost_bps: policy.default_child_cost_bps ?? 0,
     default_sales_bps: policy.default_sales_bps,
     min_spread_bps: policy.min_spread_bps,
     sales_cap_bps: policy.sales_cap_bps,

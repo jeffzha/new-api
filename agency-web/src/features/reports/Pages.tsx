@@ -8,6 +8,7 @@ import { useMutation } from "../../lib/mutations";
 import type { Column, Identity, Page } from "../../lib/types";
 import type { CommissionBalance } from "../finance/contracts";
 import { CustomerManagementDialog } from "../customers/Management";
+import { CustomerSalesEditor } from "../pricing/CustomerSalesEditor";
 import { ReconciliationIssues } from "../reconciliation/Issues";
 import { ReconciliationRuns } from "../reconciliation/Runs";
 
@@ -227,6 +228,7 @@ export function CustomersPage({
   const [cursor, setCursor] = useState("");
   const [selected, setSelected] = useState<Customer | null>(null);
   const [management, setManagement] = useState<{ username?: string } | null>(null);
+  const [salesCustomer, setSalesCustomer] = useState<Customer | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const global = identity.actor_type === "root" && !identity.agency_id;
@@ -252,6 +254,13 @@ export function CustomersPage({
           username={management.username}
           onClose={() => setManagement(null)}
           onChanged={query.reload}
+        />
+      )}
+      {salesCustomer && (
+        <CustomerSalesEditor
+          userId={salesCustomer.user_id}
+          username={salesCustomer.username}
+          onClose={() => setSalesCustomer(null)}
         />
       )}
       {selected ? (
@@ -295,6 +304,16 @@ export function CustomersPage({
                     >
                       <ActionIcon name="edit" />
                       {t("Manage assignment")}
+                    </button>
+                  )}
+                  {!global && (
+                    <button
+                      type="button"
+                      className="secondary button-icon compact-action"
+                      onClick={() => setSalesCustomer(row)}
+                    >
+                      <ActionIcon name="edit" />
+                      {t("Customer pricing")}
                     </button>
                   )}
                   <button

@@ -45,6 +45,10 @@ func AgencyCustomerSales(userID int, modelNames []string) (map[string]int, error
 	if err != nil {
 		return nil, err
 	}
+	var agency model.Agency
+	if err := model.DB.First(&agency, active.AgencyID).Error; err != nil {
+		return nil, err
+	}
 	var policy agencycontract.Policy
 	if err := common.Unmarshal([]byte(row.PolicyJSON), &policy); err != nil {
 		return nil, err
@@ -56,9 +60,11 @@ func AgencyCustomerSales(userID int, modelNames []string) (map[string]int, error
 	if err != nil {
 		return nil, err
 	}
-	policy, err = agencycontract.ApplyPlatformPolicy(policy, platform)
-	if err != nil {
-		return nil, err
+	if agency.ParentAgencyID == nil {
+		policy, err = agencycontract.ApplyPlatformPolicy(policy, platform)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// Exact Go string keys preserve case-sensitive public model identities on
 	// MySQL installations using case-insensitive default collations, too.

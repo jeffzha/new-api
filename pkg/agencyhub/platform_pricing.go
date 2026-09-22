@@ -44,6 +44,7 @@ type PlatformPricingCatalogRow struct {
 	// before per-channel platform costs were introduced.
 	PlatformCostBPS *int `json:"platform_cost_bps"`
 	AgencyCostBPS   *int `json:"agency_cost_bps"`
+	ChildCostBPS    *int `json:"child_cost_bps"`
 	DefaultSalesBPS *int `json:"default_sales_bps"`
 }
 

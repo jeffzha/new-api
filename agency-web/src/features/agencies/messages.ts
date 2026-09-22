@@ -2,6 +2,8 @@ import type { Locale } from "../../lib/i18n-types";
 
 // Each row contains the English source and all six translated values.
 const rows = [
+  ["Pricing is inherited from the parent agency and the platform policy. You can adjust the child policy after creation.", "价格系数继承自上级代理商和平台策略，创建后可调整下级策略。", "價格係數繼承自上級代理商與平台策略，建立後可調整下級策略。", "Les coefficients sont hérités de l’agence parente et de la plateforme. Vous pouvez les ajuster après création.", "価格係数は親代理店とプラットフォームポリシーを継承し、作成後に調整できます。", "Коэффициенты наследуются от родительского агентства и платформы. После создания их можно изменить.", "Hệ số được kế thừa từ đại lý cấp trên và nền tảng. Có thể điều chỉnh sau khi tạo."],
+  ["Create and manage your direct child agencies. You cannot edit grandchildren or upstream agencies.", "创建并管理直属下级代理商；不能编辑孙级或上级代理商。", "建立並管理直屬下級代理商；不能編輯孫級或上級代理商。", "Créez et gérez vos agences enfants directes. Les agences petites-enfants et supérieures ne sont pas modifiables.", "直属の子代理店を管理します。孫代理店や上位代理店は編集できません。", "Создавайте прямые дочерние агентства. Внуков и вышестоящие агентства редактировать нельзя.", "Tạo và quản lý đại lý con trực tiếp. Không thể sửa đại lý cháu hoặc cấp trên."],
   [
     "Agency name",
     "代理商名称",
@@ -265,6 +267,32 @@ const rows = [
   ["Status", "状态", "狀態", "État", "状態", "Статус", "Trạng thái"],
   ["Version", "版本", "版本", "Version", "バージョン", "Версия", "Phiên bản"],
   ["Reason", "原因", "原因", "Motif", "理由", "Причина", "Lý do"],
+  ["Child agencies", "下级代理商", "下級代理商", "Agences enfants", "子代理店", "Дочерние агентства", "Đại lý cấp dưới"],
+  ["Agency hierarchy", "代理商层级关系", "代理商層級關係", "Hiérarchie des agences", "代理店階層", "Иерархия агентств", "Cây đại lý"],
+  ["Upstream path", "上级链路", "上級鏈路", "Chaîne supérieure", "上位経路", "Цепочка вышестоящих", "Chuỗi cấp trên"],
+  ["Current agency", "当前代理商", "目前代理商", "Agence actuelle", "現在の代理店", "Текущее агентство", "Đại lý hiện tại"],
+  ["Parent agencies", "父级代理商", "父級代理商", "Agences parentes", "親代理店", "Родительские агентства", "Đại lý cấp trên"],
+  ["Direct child count", "直属下级数量", "直屬下級數量", "Nombre d’enfants directs", "直属子代理店数", "Число прямых подчинённых", "Số đại lý con trực tiếp"],
+  ["Copy hierarchy", "复制层级关系", "複製層級關係", "Copier la hiérarchie", "階層をコピー", "Копировать иерархию", "Sao chép cây đại lý"],
+  ["Child agency login details", "下级代理商登录信息", "下級代理商登入資訊", "Identifiants de l’agence enfant", "子代理店のログイン情報", "Данные входа дочернего агентства", "Thông tin đăng nhập đại lý con"],
+  ["Save these details now. The temporary password is shown only once and must be changed at first sign-in.", "请立即保存这些信息。临时密码仅显示一次，首次登录必须修改。", "請立即保存這些資訊。臨時密碼只顯示一次，首次登入必須修改。", "Enregistrez ces informations maintenant. Le mot de passe temporaire n’est affiché qu’une fois et doit être changé à la première connexion.", "今すぐ保存してください。仮パスワードは一度だけ表示され、初回ログイン時に変更が必要です。", "Сохраните данные сейчас. Временный пароль показывается один раз и должен быть изменён при первом входе.", "Hãy lưu thông tin này ngay. Mật khẩu tạm thời chỉ hiển thị một lần và phải đổi khi đăng nhập lần đầu."],
+  ["Create child agency", "创建下级代理商", "建立下級代理商", "Créer une agence enfant", "子代理店を作成", "Создать дочернее агентство", "Tạo đại lý cấp dưới"],
+  ["Manage child pricing", "管理下级成本", "管理下級成本", "Gérer le coût enfant", "子代理店の原価を管理", "Управлять стоимостью дочернего агентства", "Quản lý chi phí đại lý cấp dưới"],
+  ["Publish child pricing", "发布下级价格", "發布下級價格", "Publier le prix enfant", "子代理店価格を公開", "Опубликовать цены дочернего агентства", "Công bố giá cấp dưới"],
+  ["Model cost overrides", "模型成本覆盖", "模型成本覆蓋", "Coûts par modèle", "モデル原価の上書き", "Переопределения стоимости моделей", "Ghi đè chi phí mô hình"],
+  ["Hierarchy depth", "层级深度", "層級深度", "Profondeur hiérarchique", "階層の深さ", "Глубина иерархии", "Độ sâu cấp bậc"],
+  ["Child cost coefficient", "下级成本系数", "下級成本係數", "Coefficient de coût enfant", "子代理店原価係数", "Коэффициент стоимости дочернего агентства", "Hệ số chi phí cấp dưới"],
+  ["Default sales coefficient", "默认销售系数", "預設銷售係數", "Coefficient de vente par défaut", "デフォルト販売係数", "Коэффициент продаж по умолчанию", "Hệ số bán mặc định"],
+  ["Must be at least the parent cost plus the minimum spread.", "必须不低于上级成本加最低价差。", "必須不低於上級成本加最低價差。", "Doit être au moins le coût parent plus l'écart minimal.", "親コストと最低スプレッド以上が必要です。", "Должно быть не меньше стоимости родителя плюс минимальный спред.", "Phải ít nhất bằng chi phí cấp trên cộng chênh lệch tối thiểu."],
+  ["Only direct child cost can be changed. Sales pricing remains managed by the child agency for its customers.", "只能修改直接下级成本；下级代理商负责管理其客户销售价格。", "只能修改直接下級成本；下級代理商負責管理其客戶銷售價格。", "Seul le coût de l'enfant direct peut être modifié. L'agence enfant gère ses prix clients.", "直接の子代理店の原価のみ変更できます。顧客価格は子代理店が管理します。", "Можно менять только стоимость прямого дочернего агентства. Цены клиентов управляются им.", "Chỉ có thể sửa chi phí đại lý con trực tiếp. Đại lý con quản lý giá khách hàng."],
+  ["View the upstream path and direct child agencies for the current account.", "查看当前账号的上级链路和直属下级代理商。", "查看目前帳號的上級鏈路與直屬下級代理商。", "Consultez la chaîne supérieure et les agences enfants directes du compte actuel.", "現在のアカウントの上位経路と直属の子代理店を確認します。", "Просматривайте цепочку вышестоящих и прямых дочерних агентств текущей учётной записи.", "Xem chuỗi cấp trên và các đại lý con trực tiếp của tài khoản hiện tại."],
+  ["Parent agency", "上级代理商", "上級代理商", "Agence parente", "上位代理店", "Родительское агентство", "Đại lý cấp trên"],
+  ["Direct child agency", "直属下级代理商", "直屬下級代理商", "Agence enfant directe", "直属の子代理店", "Прямое дочернее агентство", "Đại lý con trực tiếp"],
+  ["No direct child agencies yet.", "暂时没有直属下级代理商。", "暫時沒有直屬下級代理商。", "Aucune agence enfant directe pour le moment.", "直属の子代理店はまだありません。", "Прямых дочерних агентств пока нет.", "Chưa có đại lý con trực tiếp."],
+  ["Invitation QR code", "邀请二维码", "邀請二維碼", "Code QR d’invitation", "招待 QR コード", "QR-код приглашения", "Mã QR lời mời"],
+  ["Upstream agencies", "上级代理商", "上級代理商", "Agences supérieures", "上位代理店", "Вышестоящие агентства", "Đại lý cấp trên"],
+  ["Direct child agencies", "直属下级代理商", "直屬下級代理商", "Agences enfants directes", "直属の子代理店", "Прямые дочерние агентства", "Đại lý con trực tiếp"],
+  ["Showing {{from}}–{{to}} of {{total}} agencies", "显示第 {{from}}–{{to}} 条，共 {{total}} 个代理商", "顯示第 {{from}}–{{to}} 筆，共 {{total}} 個代理商", "Affichage de {{from}} à {{to}} sur {{total}} agences", "{{total}}件中 {{from}}～{{to}}件を表示", "Показано с {{from}} по {{to}} из {{total}} агентств", "Hiển thị {{from}}–{{to}} trong tổng số {{total}} đại lý"],
 ] as const;
 
 const locales: Locale[] = ["en", "zh", "zh-TW", "fr", "ja", "ru", "vi"];

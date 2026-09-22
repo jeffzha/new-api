@@ -187,22 +187,8 @@ test("root creates an agency, acknowledges delivery and the operator must change
   await page.getByRole("button", { name: "Create agency", exact: true }).click();
   await page.getByLabel("Agency name", { exact: true }).fill("Browser Created Agency");
   await page.getByLabel("Operator username", { exact: true }).fill("browser-created-operator");
-  await expect(page.getByLabel("Default sales coefficient", { exact: true })).toHaveValue("1.0000");
-  await page.getByRole("button", { name: "Preview prices", exact: true }).click();
-  await expect(
-    page.getByRole("heading", {
-      name: "Preview based on 10000 standard quota units",
-    }),
-  ).toBeVisible();
-  await expect(
-    page.locator(".metrics article").filter({ hasText: "Customer charge" }).locator("strong"),
-  ).toHaveText("10,000");
-  await expect(
-    page
-      .locator(".metrics article")
-      .filter({ hasText: "Theoretical commission" })
-      .locator("strong"),
-  ).toHaveText("2,500");
+  await expect(page.getByLabel("Default sales coefficient", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Pricing is inherited from the platform pricing policy after the agency is created.", { exact: true })).toBeVisible();
   const createResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" && response.url().endsWith("/api/v1/root/agencies"),
@@ -274,12 +260,12 @@ test("root creates an agency, acknowledges delivery and the operator must change
   }
 });
 
-test("root publishes live platform costs and the operator can change only its sales coefficient", async ({
+test("root publishes platform pricing and an operator manages direct-child and customer sales pricing", async ({
   page,
   browser,
 }) => {
   await rootLogin(page);
-  await page.getByRole("button", { name: "Platform pricing policy", exact: true }).click();
+  await page.getByRole("button", { name: "Pricing", exact: true }).click();
   await expect(page.getByRole("cell", { name: "browser-chat-model", exact: true })).toBeVisible();
   await expect(page.getByText("Browser model channel", { exact: true })).toBeVisible();
   await page.getByLabel("Platform cost coefficient: browser-chat-model", { exact: true }).fill("0.75");
@@ -310,13 +296,16 @@ test("root publishes live platform costs and the operator can change only its sa
   const operator = await operatorContext.newPage();
   try {
     await operatorLogin(operator);
-    await operator.getByRole("button", { name: "Agency sales coefficients", exact: true }).click();
+    await operator.getByRole("button", { name: "Pricing", exact: true }).click();
     const row = operator.getByRole("row").filter({ hasText: "browser-chat-model" });
     await expect(row.getByText("0.8000", { exact: true })).toBeVisible();
     const sales = operator.getByLabel("Sales coefficient: browser-chat-model", { exact: true });
     await expect(sales).toHaveValue("");
     await expect(sales).toHaveAttribute("placeholder", "0.9000");
     await sales.fill("0.95");
+    const childCost = operator.getByLabel("Child agency cost coefficient: browser-chat-model", { exact: true });
+    await expect(childCost).toHaveAttribute("placeholder", "Not configured");
+    await childCost.fill("0.85");
     await operator.getByLabel("Change reason", { exact: true }).fill("Browser agency sales override");
     const published = operator.waitForResponse((response) =>
       response.url().endsWith("/pricing/sales/publish"),
@@ -331,6 +320,10 @@ test("root publishes live platform costs and the operator can change only its sa
         origin_model_name: "browser-chat-model",
         sales_bps: 9500,
       }],
+      model_child_cost_overrides: [{
+        origin_model_name: "browser-chat-model",
+        child_cost_bps: 8500,
+      }],
     });
     expect(publishResponse.request().postDataJSON()).not.toHaveProperty("default_settlement_bps");
     const current = await (await operator.request.get("/agency/api/v1/pricing/model-sales")).json();
@@ -342,7 +335,48 @@ test("root publishes live platform costs and the operator can change only its sa
         platform_default_sales_bps: 9000,
         sales_bps: 9500,
         override_sales_bps: 9500,
+        child_cost_bps: 8500,
+        override_child_cost_bps: 8500,
       }],
+    });
+    await operator.getByRole("button", { name: "Agencies", exact: true }).click();
+    await expect(operator.getByRole("heading", { name: "Agency hierarchy", exact: true })).toBeVisible();
+    await operator.getByText("Direct child agencies", { exact: true }).scrollIntoViewIfNeeded();
+    await operator.getByRole("button", { name: "Create child agency", exact: true }).click();
+    const createChild = operator.getByRole("dialog", { name: "Create child agency", exact: true });
+    await createChild.getByLabel("Agency name", { exact: true }).fill("Browser Child Agency");
+    await createChild.getByLabel("Operator username", { exact: true }).fill("browser-child-operator");
+    const createdChild = operator.waitForResponse((response) =>
+      response.request().method() === "POST" && response.url().endsWith("/api/v1/children"),
+    );
+    await createChild.getByRole("button", { name: "Create child agency", exact: true }).click();
+    await confirm(operator, operatorPassword);
+    expect((await createdChild).status()).toBe(201);
+    await expect(createChild).toHaveCount(0);
+    const delivery = operator.getByRole("dialog", { name: "Child agency login details", exact: true });
+    await expect(delivery.getByLabel("Operator username", { exact: true })).toHaveValue("browser-child-operator");
+    await expect(delivery.getByLabel("Temporary password", { exact: true })).not.toHaveValue("");
+    await delivery.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(operator.getByRole("row").filter({ hasText: "Browser Child Agency" })).toBeVisible();
+
+    await operator.getByRole("button", { name: "Customers", exact: true }).click();
+    await operator.getByRole("row").filter({ hasText: "browser-managed" }).getByRole("button", { name: "Customer pricing", exact: true }).click();
+    const customerPricing = operator.getByRole("dialog", { name: "Customer sales pricing · browser-managed", exact: true });
+    await expect(customerPricing.getByRole("columnheader", { name: "Model name", exact: true })).toBeVisible();
+    const customerModelPrice = customerPricing.getByLabel("Customer sales coefficient: browser-chat-model", { exact: true });
+    await expect(customerModelPrice).toHaveAttribute("placeholder", "0.9500");
+    await customerModelPrice.fill("0.97");
+    await customerPricing.getByLabel("Change reason", { exact: true }).fill("Browser customer model price");
+    const fixtureState = await (await operator.request.get("/__fixture/state")).json();
+    const customerPublished = operator.waitForResponse((response) =>
+      response.request().method() === "PUT" && response.url().endsWith(`/customers/${fixtureState.managed_user_id}/pricing/batch`),
+    );
+    await customerPricing.getByRole("button", { name: "Save customer pricing", exact: true }).click();
+    await confirm(operator, operatorPassword);
+    const customerResponse = await customerPublished;
+    expect(customerResponse.status()).toBe(200);
+    expect(customerResponse.request().postDataJSON()).toMatchObject({
+      models: [{ model_name: "browser-chat-model", sales_bps: 9700 }],
     });
   } finally {
     await operatorContext.close();
@@ -555,7 +589,7 @@ test("root can inspect and cancel a blocked binding, then transfer a managed cus
     name: "Customer assignment",
     exact: true,
   });
-  await dialog.getByLabel("User ID", { exact: true }).fill(String(before.legacy_user_id));
+  await dialog.getByLabel("Customer account", { exact: true }).fill(String(before.legacy_user_id));
   await dialog.getByRole("button", { name: "Look up customer", exact: true }).click();
   await dialog.getByLabel("Target agency ID", { exact: true }).fill(String(before.agency_id));
   await dialog.getByRole("button", { name: "Check target agency", exact: true }).click();

@@ -588,6 +588,65 @@ th {
 .model-search-row button { width: auto; white-space: nowrap; }
 .agency-status-actions { display: flex; margin: 14px 0 24px; }
 .compact-action { width: auto; min-width: 0; min-height: 34px; padding: 6px 10px; white-space: nowrap; }
+.page-header-actions > .compact-action { flex: 0 0 auto; }
+.hierarchy-card {
+  margin: 0 0 18px;
+  padding: 18px 20px;
+  border: 1px solid #dfe4ea;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+.hierarchy-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.hierarchy-card-header h3 { margin: 0 0 4px; font-size: 16px; }
+.hierarchy-card-header p { margin: 0; font-size: 13px; }
+.hierarchy-lanes { display: grid; gap: 18px; }
+.hierarchy-lane { position: relative; padding: 14px 16px 16px 22px; border: 1px solid #dfe4ea; border-radius: 10px; background: #fff; }
+.hierarchy-lane::before { position: absolute; top: 20px; bottom: 20px; left: 10px; width: 3px; border-radius: 999px; background: #b8c7e4; content: ""; }
+.hierarchy-upstream { background: #fbfcfe; }
+.hierarchy-current { border-color: #9eb7e8; background: #f2f7ff; }
+.hierarchy-current::before { background: #2563eb; }
+.hierarchy-children { border-color: #cce5d5; background: #f8fdf9; }
+.hierarchy-children::before { background: #22a06b; }
+.hierarchy-lane-label { display: block; margin-bottom: 10px; color: #475467; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.hierarchy-child-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.agency-tree-node {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+.agency-tree-node-copy {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid #dfe4ea;
+  width: 100%;
+  border-radius: 8px;
+  background: #fff;
+}
+.agency-tree-node-copy strong { overflow-wrap: anywhere; }
+.agency-tree-node-copy span { color: #667085; font-size: 12px; }
+.agency-tree-node.current .agency-tree-node-copy { border-color: #7f9fe8; background: #fff; box-shadow: inset 3px 0 0 #2563eb; }
+.agency-tree-node.child .agency-tree-node-copy { border-color: #cce5d5; background: #fff; }
+.hierarchy-empty { margin: 0; color: #667085; font-size: 13px; }
+.hierarchy-path { margin: 14px 0 0; color: #475467; font-size: 13px; overflow-wrap: anywhere; }
+.credential-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.credential-delivery-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.credential-delivery-footer p { margin: 0; color: #667085; font-size: 13px; }
+.credential-qr { display: grid; justify-items: start; gap: 8px; margin-top: 18px; padding-top: 16px; border-top: 1px solid #eaecf0; }
+.credential-qr p { margin: 0; color: #475467; font-weight: 600; }
+.credential-qr img { width: 156px; height: 156px; border: 1px solid #dfe4ea; border-radius: 6px; background: #fff; image-rendering: auto; }
+.inherited-sales { display: grid; grid-template-columns: auto auto; align-items: baseline; column-gap: 10px; row-gap: 2px; margin: 16px 0 12px; padding: 12px; border: 1px solid #c7d7fe; border-radius: 6px; background: #f5f8ff; }
+.inherited-sales span { color: #475467; font-size: 13px; }
+.inherited-sales strong { color: #175cd3; font-variant-numeric: tabular-nums; }
+.inherited-sales small { grid-column: 1 / -1; color: #667085; }
 .customer-back { margin-bottom: 18px; }
 .tab-icon {
   width: 28px;
@@ -928,6 +987,17 @@ h3 {
 }
 .sales-coefficient-field { display: grid; gap: .25rem; min-width: 220px; }
 .sales-coefficient-field small { color: #667085; }
+.pricing-matrix td small { display: block; max-width: 230px; margin-top: .35rem; color: #667085; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; }
+.customer-pricing-summary { max-width: 440px; margin: 12px 0 16px; padding: 14px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; }
+.customer-pricing-summary .field { margin: 0; }
+.customer-pricing-matrix-wrap { max-height: min(46vh, 480px); }
+.customer-pricing-matrix { min-width: 690px; }
+.customer-pricing-matrix td:last-child { min-width: 260px; }
+.customer-pricing-matrix td:last-child input { width: 100%; }
+.dialog-actions { margin-top: 20px; padding-top: 16px; border-top: 1px solid #eaecf0; }
+.list-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; color: #667085; font-size: 13px; }
+.list-pagination > .actions { margin: 0; }
+.agency-form-panel { min-height: 0; }
 .toolbar { margin-top: 12px; }
 .page-header-actions .actions,
 td .actions { margin: 0; }
@@ -1162,6 +1232,12 @@ dd {
   .dashboard-shell {
     padding: 16px;
   }
+  .hierarchy-card-header,
+  .credential-delivery-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .credential-grid { grid-template-columns: 1fr; }
   header {
     flex-wrap: wrap;
   }

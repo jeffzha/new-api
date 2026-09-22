@@ -1,6 +1,7 @@
 export type ModelOverride = {
   origin_model_name: string;
   settlement_bps?: number | null;
+  child_cost_bps?: number | null;
   sales_bps?: number | null;
 };
 
@@ -8,6 +9,7 @@ export type Policy = {
   agency_id?: string | number;
   revision: number;
   default_settlement_bps: number;
+  default_child_cost_bps?: number;
   default_sales_bps: number;
   min_spread_bps: number;
   sales_cap_bps: number;
@@ -56,6 +58,7 @@ export type PlatformPriceRow = {
   }[];
   platform_cost_bps: number | null;
   agency_cost_bps: number | null;
+  child_cost_bps: number | null;
   default_sales_bps: number | null;
 };
 
@@ -68,9 +71,12 @@ export type PlatformPricing = {
 export type ModelSaleRow = {
   origin_model_name: string;
   agency_cost_bps: number;
+  child_cost_bps: number;
   platform_default_sales_bps: number;
   sales_bps: number;
   override_sales_bps: number | null;
+  default_child_cost_bps?: number;
+  override_child_cost_bps: number | null;
 };
 
 export type ModelSales = {
@@ -79,5 +85,6 @@ export type ModelSales = {
   revision: number;
   platform_revision: number;
   default_sales_bps: number;
+  default_child_cost_bps?: number;
   items: ModelSaleRow[];
 };

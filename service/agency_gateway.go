@@ -309,13 +309,29 @@ func AgencyQuoteForUser(userID, tokenID int, originModelName string, acceptedAtM
 	if err != nil {
 		return nil, err
 	}
-	policy, err = agencycontract.ApplyPlatformPolicy(policy, platform)
-	if err != nil {
-		return nil, err
+	// Platform pricing owns the root agency's procurement boundary. Child
+	// policies already contain their immutable inherited cost and must not be
+	// overwritten with the platform cost here.
+	if agency.ParentAgencyID == nil {
+		policy, err = agencycontract.ApplyPlatformPolicy(policy, platform)
+		if err != nil {
+			return nil, err
+		}
 	}
 	resolved, err := agencycontract.Resolve(policy, originModelName)
 	if err != nil {
 		return nil, err
+	}
+	// A customer-specific sales override is only valid for the agency that
+	// currently owns this binding. It wins over model and agency defaults.
+	var customerOverride model.AgencyCustomerSalesOverride
+	modelKey := resolved.ModelKey
+	overrideErr := model.DB.Where("agency_id = ? AND user_id = ? AND model_key IN ?", agency.ID, userID, []string{modelKey, ""}).
+		Order("CASE WHEN model_key = '' THEN 1 ELSE 0 END ASC").First(&customerOverride).Error
+	if overrideErr == nil {
+		resolved.SalesBPS = customerOverride.SalesBPS
+	} else if !errors.Is(overrideErr, gorm.ErrRecordNotFound) {
+		return nil, overrideErr
 	}
 	if acceptedAtMS == 0 {
 		acceptedAtMS = time.Now().UnixMilli()
@@ -336,7 +352,138 @@ func AgencyQuoteForUser(userID, tokenID int, originModelName string, acceptedAtM
 	if !eligible {
 		reason = "agency_disabled"
 	}
-	return &agencycontract.PricingSnapshot{SchemaVersion: agencycontract.SchemaVersion, UserID: int64(userID), TokenID: int64(tokenID), AgencyID: agency.ID, BindingID: binding.ID, BindingRevision: binding.Revision, AgencyStateRevision: agency.StateRevision, PolicyVersionID: policyRow.ID, PolicyRevision: policyRow.Revision, OriginModelName: originModelName, ModelKey: resolved.ModelKey, SettlementBPS: resolved.SettlementBPS, SalesBPS: resolved.SalesBPS, CommissionEligible: eligible, EligibilityReason: reason, CurrencyCode: currencyCode, CurrencyConfigVersion: "operation-setting-v1", QuotaPerUnit: strconv.FormatFloat(common.QuotaPerUnit, 'f', -1, 64), ExchangeRate: strconv.FormatFloat(exchangeRate, 'f', -1, 64), AcceptedAtMS: acceptedAtMS, FundingRuleVersion: agencycontract.FundingRuleVersion, PricingEngineVersion: "gateway-v1"}, nil
+	if resolved.SalesBPS < resolved.SettlementBPS {
+		return nil, errors.New("customer sales coefficient is below agency cost")
+	}
+	hierarchy, hierarchyEligible, hierarchyReason, err := agencyPricingHierarchy(agency, originModelName, resolved.SalesBPS, modelKey, platform)
+	if err != nil {
+		return nil, err
+	}
+	if !hierarchyEligible {
+		eligible = false
+		if reason == "" {
+			reason = hierarchyReason
+		}
+	}
+	platformCostBPS := 0
+	if platformPrice, priceErr := agencycontract.ResolvePlatform(platform, originModelName); priceErr == nil && platformPrice != nil {
+		platformCostBPS = platformPrice.PlatformCostBPS
+	}
+	return &agencycontract.PricingSnapshot{SchemaVersion: agencycontract.SchemaVersion, UserID: int64(userID), TokenID: int64(tokenID), AgencyID: agency.ID, BindingID: binding.ID, BindingRevision: binding.Revision, AgencyStateRevision: agency.StateRevision, PolicyVersionID: policyRow.ID, PolicyRevision: policyRow.Revision, OriginModelName: originModelName, ModelKey: resolved.ModelKey, SettlementBPS: resolved.SettlementBPS, SalesBPS: resolved.SalesBPS, CommissionEligible: eligible, EligibilityReason: reason, CurrencyCode: currencyCode, CurrencyConfigVersion: "operation-setting-v1", QuotaPerUnit: strconv.FormatFloat(common.QuotaPerUnit, 'f', -1, 64), ExchangeRate: strconv.FormatFloat(exchangeRate, 'f', -1, 64), AcceptedAtMS: acceptedAtMS, FundingRuleVersion: agencycontract.FundingRuleVersion, PricingEngineVersion: "gateway-v1", Hierarchy: hierarchy, MinSpreadBPS: hierarchyMinSpreadBPS(hierarchy, policy.MinSpreadBPS), CustomerSalesOverrideBPS: func() *int {
+		if overrideErr == nil {
+			value := customerOverride.SalesBPS
+			return &value
+		}
+		return nil
+	}(), PlatformCostBPS: platformCostBPS}, nil
+}
+
+// agencyPricingHierarchy loads the immutable root-to-leaf chain at quote time.
+// Legacy agencies have a nil parent and naturally produce a one-node chain.
+// Any broken/disabled ancestor fails closed for new requests while preserving
+// the legacy snapshot fields used by existing settlement code.
+func agencyPricingHierarchy(leaf model.Agency, originModelName string, leafSales int, modelKey string, platform agencycontract.PlatformPolicy) ([]agencycontract.PricingTierNode, bool, string, error) {
+	const maxDepth = 10
+	chain := make([]model.Agency, 0, maxDepth)
+	seen := make(map[int64]struct{}, maxDepth)
+	current := leaf
+	for len(chain) < maxDepth {
+		if current.ID <= 0 {
+			return nil, false, "agency_hierarchy_invalid", errors.New("agency hierarchy contains invalid agency")
+		}
+		if _, exists := seen[current.ID]; exists {
+			return nil, false, "agency_hierarchy_cycle", errors.New("agency hierarchy cycle detected")
+		}
+		seen[current.ID] = struct{}{}
+		chain = append(chain, current)
+		if current.ParentAgencyID == nil || *current.ParentAgencyID == 0 {
+			break
+		}
+		var parent model.Agency
+		if err := model.DB.First(&parent, *current.ParentAgencyID).Error; err != nil {
+			return nil, false, "agency_hierarchy_invalid", err
+		}
+		current = parent
+	}
+	if len(chain) == maxDepth && chain[len(chain)-1].ParentAgencyID != nil {
+		return nil, false, "agency_depth_exceeded", errors.New("agency hierarchy depth exceeds limit")
+	}
+	nodes := make([]agencycontract.PricingTierNode, len(chain))
+	eligible := true
+	reason := ""
+	minSpreadBPS := 0
+	for i := range chain {
+		agency := chain[len(chain)-1-i]
+		if agency.Status != "active" {
+			eligible = false
+			if reason == "" {
+				reason = "agency_ancestor_disabled"
+			}
+		}
+		var policyRow model.AgencyPricePolicyVersion
+		if err := model.DB.First(&policyRow, agency.CurrentPolicyVersionID).Error; err != nil {
+			return nil, false, "agency_policy_unavailable", err
+		}
+		var policy agencycontract.Policy
+		if err := common.Unmarshal([]byte(policyRow.PolicyJSON), &policy); err != nil {
+			return nil, false, "agency_policy_invalid", err
+		}
+		effective := policy
+		if agency.ParentAgencyID == nil {
+			var applyErr error
+			effective, applyErr = agencycontract.ApplyPlatformPolicy(policy, platform)
+			if applyErr != nil {
+				return nil, false, "agency_policy_invalid", applyErr
+			}
+		}
+		if effective.MinSpreadBPS > minSpreadBPS {
+			minSpreadBPS = effective.MinSpreadBPS
+		}
+		resolved, err := agencycontract.Resolve(effective, originModelName)
+		if err != nil {
+			return nil, false, "agency_model_unavailable", err
+		}
+		node := agencycontract.PricingTierNode{AgencyID: agency.ID, ParentAgencyID: agency.ParentAgencyID, Depth: agency.Depth, CostBPS: resolved.SettlementBPS, MinSpreadBPS: effective.MinSpreadBPS, PolicyVersionID: policyRow.ID, PolicyRevision: policyRow.Revision, StateRevision: agency.StateRevision}
+		if i == len(chain)-1 {
+			node.SalesBPS = &leafSales
+		}
+		nodes[i] = node
+	}
+	// Verify the persisted depth agrees with the traversed chain where it is
+	// available; this catches accidental cycles or partial migrations early.
+	for i := range nodes {
+		if nodes[i].Depth > 0 && nodes[i].Depth != i+1 {
+			return nil, false, "agency_hierarchy_invalid", errors.New("agency hierarchy depth is inconsistent")
+		}
+		if i > 0 && nodes[i].CostBPS < nodes[i-1].CostBPS+minSpreadBPS {
+			return nil, false, "agency_cost_invalid", errors.New("agency hierarchy cost spread is below minimum")
+		}
+	}
+	if len(nodes) > 0 && nodes[len(nodes)-1].SalesBPS != nil && *nodes[len(nodes)-1].SalesBPS < nodes[len(nodes)-1].CostBPS+minSpreadBPS {
+		return nil, false, "agency_sales_invalid", errors.New("leaf sales coefficient is below cost plus minimum spread")
+	}
+	if len(nodes) > 0 {
+		if platformPrice, err := agencycontract.ResolvePlatform(platform, originModelName); err == nil && platformPrice != nil && platformPrice.PlatformCostBPS > nodes[0].CostBPS {
+			return nil, false, "platform_cost_invalid", errors.New("platform cost exceeds root agency cost")
+		}
+	}
+	_ = modelKey
+	return nodes, eligible, reason, nil
+}
+
+// hierarchyMinSpreadBPS preserves the leaf policy value in the immutable
+// snapshot. The hierarchy validator already uses the maximum spread found
+// along the chain; legacy policies have one shared spread value.
+func hierarchyMinSpreadBPS(nodes []agencycontract.PricingTierNode, fallback int) int {
+	if fallback < 0 {
+		fallback = 0
+	}
+	for _, node := range nodes {
+		if node.MinSpreadBPS > fallback {
+			fallback = node.MinSpreadBPS
+		}
+	}
+	return fallback
 }
 
 func agencySchemaUnavailable(err error) bool {
@@ -476,6 +623,28 @@ func RecordAgencyBillingEvent(relayInfo *relaycommon.RelayInfo, actualQuota int6
 		}
 	}
 	event.CommissionAmountMicros = commission
+	// A one-node hierarchy is the legacy single-agency shape. Keep its
+	// historical commission formula; tier splits are only emitted when an
+	// actual parent/child chain exists.
+	if commissionEligible && len(snapshot.Hierarchy) > 1 {
+		splits, splitErr := agencyTierCommissionSplits(snapshot, standard, charged, event.PaidAllocatedQuota)
+		if splitErr != nil {
+			return splitErr
+		}
+		event.CommissionSplits = splits
+		var tierTheoretical, tierCommission, tierMicros int64
+		for _, split := range splits {
+			tierTheoretical += split.TheoreticalQuota
+			tierCommission += split.CommissionQuota
+			tierMicros += split.CommissionAmountMicros
+		}
+		// For a hierarchy the aggregate settlement boundary is the platform
+		// cost, while the commission is the sum of all tier differences.
+		event.SettlementCostQuota = charged - tierTheoretical
+		event.TheoreticalCommissionQuota = tierTheoretical
+		event.CommissionQuota = tierCommission
+		event.CommissionAmountMicros = tierMicros
+	}
 	if snapshot.FinancialChargeID != "" {
 		committed, commitErr := model.AgencyCommitWalletCharge(event, relayInfo.TokenKey)
 		if commitErr != nil {
@@ -546,6 +715,33 @@ func RecordAgencyBillingEvent(relayInfo *relaycommon.RelayInfo, actualQuota int6
 		}
 		return tx.Create(&model.AgencyEventDelivery{EventID: event.EventID, Status: "pending", NextRetryAt: time.Now().Unix(), CreatedAt: time.Now().Unix()}).Error
 	})
+}
+
+func agencyTierCommissionSplits(snapshot agencycontract.PricingSnapshot, standard, charged, paidAllocated int64) ([]agencycontract.CommissionSplit, error) {
+	if len(snapshot.Hierarchy) == 0 || standard < 0 || charged < 0 || paidAllocated < 0 || paidAllocated > charged {
+		return nil, errors.New("invalid tier commission snapshot")
+	}
+	nodes := make([]agencycontract.TierNode, len(snapshot.Hierarchy))
+	for i, node := range snapshot.Hierarchy {
+		nodes[i] = agencycontract.TierNode{AgencyID: node.AgencyID, CostBPS: node.CostBPS, MinSpreadBPS: node.MinSpreadBPS, SalesBPS: node.SalesBPS}
+	}
+	result, err := agencycontract.CalculateTieredCommission(standard, nodes, snapshot.PlatformCostBPS, snapshot.MinSpreadBPS, paidAllocated, true)
+	if err != nil {
+		return nil, err
+	}
+	if result.CustomerChargedQuota != charged {
+		return nil, errors.New("tier commission customer charge mismatch")
+	}
+	splits := make([]agencycontract.CommissionSplit, 0, len(snapshot.Hierarchy))
+	for i, segment := range result.Segments {
+		node := snapshot.Hierarchy[i]
+		amount, err := agencyCommissionMicros(segment.CommissionQuota, snapshot)
+		if err != nil {
+			return nil, err
+		}
+		splits = append(splits, agencycontract.CommissionSplit{AgencyID: segment.AgencyID, ParentAgencyID: node.ParentAgencyID, Depth: node.Depth, CostBPS: node.CostBPS, SalesBPS: node.SalesBPS, TheoreticalQuota: segment.TheoreticalQuota, PaidAllocatedQuota: segment.PaidAllocatedQuota, CommissionQuota: segment.CommissionQuota, CommissionAmountMicros: amount})
+	}
+	return splits, nil
 }
 
 func agencyCommissionMicros(quota int64, snapshot agencycontract.PricingSnapshot) (int64, error) {
@@ -671,7 +867,7 @@ func recordAgencyProportionalRefundEventTx(tx *gorm.DB, originalEventID, chargeI
 	if err != nil {
 		return err
 	}
-	if original.SchemaVersion == agencycontract.ComponentSchemaVersion {
+	if original.SchemaVersion == agencycontract.ComponentSchemaVersion && len(original.CommissionSplits) == 0 {
 		// A v2 charge can mix model fees and noncommissionable components.
 		// The old aggregate callback cannot identify which original allocation
 		// was reversed and must never restore funds or guess its commission.
@@ -747,6 +943,14 @@ func recordAgencyProportionalRefundEventTx(tx *gorm.DB, originalEventID, chargeI
 		event.BillingStatus = "reversed"
 		event.CommissionAmountMicros = 0
 		event.ReversedCommissionAmountMicros = reversedCommission
+		if len(original.CommissionSplits) > 0 {
+			splits, splitTotal, splitErr := buildTieredReversalSplits(tx, original, cumulativeQuota)
+			if splitErr != nil {
+				return splitErr
+			}
+			event.CommissionSplits = splits
+			event.ReversedCommissionAmountMicros = splitTotal
+		}
 		if reversedCommission == 0 {
 			event.CommissionSkipReason = "zero_commission_refund"
 		}
@@ -793,6 +997,51 @@ func recordAgencyProportionalRefundEventTx(tx *gorm.DB, originalEventID, chargeI
 			CreatedAt: time.Now().Unix(),
 		}).Error
 	}
+}
+
+func buildTieredReversalSplits(tx *gorm.DB, original agencycontract.BillingEvent, cumulativeQuota int64) ([]agencycontract.CommissionSplit, int64, error) {
+	if tx == nil || original.ChargedTotalQuota <= 0 || cumulativeQuota < 0 || cumulativeQuota > original.ChargedTotalQuota {
+		return nil, 0, errors.New("invalid tiered reversal inputs")
+	}
+	result := make([]agencycontract.CommissionSplit, 0, len(original.CommissionSplits))
+	var total int64
+	for _, split := range original.CommissionSplits {
+		var originalEntry model.AgencyCommissionLedger
+		if err := tx.Where("event_id = ? AND agency_id = ? AND entry_type = ?", original.EventID, split.AgencyID, "earned").First(&originalEntry).Error; err != nil {
+			return nil, 0, err
+		}
+		var already int64
+		if err := tx.Model(&model.AgencyCommissionLedger{}).
+			Where("original_entry_id = ? AND entry_type = ?", originalEntry.ID, "reversal").
+			Select("COALESCE(SUM(-amount_micros),0)").Scan(&already).Error; err != nil {
+			return nil, 0, err
+		}
+		target := decimal.NewFromInt(split.CommissionAmountMicros).
+			Mul(decimal.NewFromInt(cumulativeQuota)).
+			Div(decimal.NewFromInt(original.ChargedTotalQuota)).Round(0).IntPart()
+		remaining := split.CommissionAmountMicros - already
+		if target < already {
+			return nil, 0, errors.New("tiered reversal rounding regressed")
+		}
+		amount := target - already
+		if amount > remaining {
+			amount = remaining
+		}
+		if amount < 0 {
+			return nil, 0, errors.New("tiered reversal exceeds original split")
+		}
+		result = append(result, agencycontract.CommissionSplit{
+			AgencyID: split.AgencyID, ParentAgencyID: split.ParentAgencyID, Depth: split.Depth,
+			CostBPS: split.CostBPS, SalesBPS: split.SalesBPS,
+			TheoreticalQuota: split.TheoreticalQuota, PaidAllocatedQuota: split.PaidAllocatedQuota,
+			CommissionQuota: split.CommissionQuota, ReversedCommissionAmountMicros: amount,
+		})
+		if total > math.MaxInt64-amount {
+			return nil, 0, errors.New("tiered reversal commission overflow")
+		}
+		total += amount
+	}
+	return result, total, nil
 }
 
 // RecordAgencyRefundByReference is used by the signed Root command worker.

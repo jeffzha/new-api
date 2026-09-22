@@ -7,7 +7,12 @@ package model
 const AgencyTablePrefix = "agency_hub_"
 
 type Agency struct {
-	ID                     int64  `gorm:"primaryKey" json:"id"`
+	ID int64 `gorm:"primaryKey" json:"id"`
+	// ParentAgencyID is nil for legacy/root-managed agencies. Existing rows are
+	// therefore depth 1 and remain fully compatible with the single-level
+	// pricing path.
+	ParentAgencyID         *int64 `gorm:"index:idx_agency_parent_status" json:"parent_agency_id,omitempty"`
+	Depth                  int    `gorm:"not null;default:1;index:idx_agency_depth" json:"depth"`
 	Code                   string `gorm:"size:64;not null;uniqueIndex:uidx_agency_code" json:"code"`
 	DisplayName            string `gorm:"size:191;not null" json:"display_name"`
 	Status                 string `gorm:"size:32;not null;index:idx_agency_status" json:"status"`
@@ -141,6 +146,28 @@ type AgencyActiveUserBinding struct {
 
 func (AgencyActiveUserBinding) TableName() string { return AgencyTablePrefix + "active_user_bindings" }
 
+// AgencyCustomerSalesOverride is an agency-local sales coefficient for one of
+// its directly bound customers. ModelKey is empty for the customer-wide
+// override; otherwise it is the stable ModelKey hash from agencycontract.
+// Keeping this in the sidecar avoids changing the core users table.
+type AgencyCustomerSalesOverride struct {
+	ID              int64  `gorm:"primaryKey" json:"id"`
+	AgencyID        int64  `gorm:"not null;uniqueIndex:uidx_agency_customer_sales,priority:1;index:idx_agency_customer_sales_agency" json:"agency_id"`
+	UserID          int64  `gorm:"not null;uniqueIndex:uidx_agency_customer_sales,priority:2;index:idx_agency_customer_sales_user" json:"user_id"`
+	ModelKey        string `gorm:"size:64;not null;uniqueIndex:uidx_agency_customer_sales,priority:3" json:"model_key"`
+	OriginModelName string `gorm:"size:764;not null" json:"origin_model_name"`
+	SalesBPS        int    `gorm:"not null" json:"sales_bps"`
+	Revision        int64  `gorm:"not null" json:"revision"`
+	CreatedByType   string `gorm:"size:32;not null" json:"created_by_type"`
+	CreatedByID     int64  `gorm:"not null" json:"created_by_id"`
+	CreatedAtMS     int64  `gorm:"not null" json:"created_at_ms"`
+	UpdatedAtMS     int64  `gorm:"not null" json:"updated_at_ms"`
+}
+
+func (AgencyCustomerSalesOverride) TableName() string {
+	return AgencyTablePrefix + "customer_sales_overrides"
+}
+
 type AgencyPricePolicyVersion struct {
 	ID            int64  `gorm:"primaryKey"`
 	AgencyID      int64  `gorm:"not null;index:idx_agency_policy_agency;uniqueIndex:uidx_agency_policy_revision,priority:1"`
@@ -164,6 +191,7 @@ type AgencyPricePolicyItem struct {
 	ModelKey              string `gorm:"size:64;not null;uniqueIndex:uidx_agency_policy_item,priority:3"`
 	OriginModelName       string `gorm:"size:764;not null"`
 	SettlementBPS         *int
+	ChildCostBPS          *int
 	SalesBPS              *int
 	ResolvedSettlementBPS int
 	ResolvedSalesBPS      int
@@ -562,6 +590,8 @@ type AgencyCommissionLedger struct {
 	QuotaPerUnit               string `gorm:"size:64"`
 	ExchangeRate               string `gorm:"size:64"`
 	OccurredAtMS               int64  `gorm:"not null;index:idx_agency_commission_agency_time"`
+	HierarchyDepth             int    `gorm:"default:0;index:idx_agency_commission_depth"`
+	ParentAgencyID             *int64 `gorm:"index:idx_agency_commission_parent"`
 }
 
 func (AgencyCommissionLedger) TableName() string { return AgencyTablePrefix + "commission_ledger" }
@@ -895,7 +925,7 @@ func (AgencyDebtRepayment) TableName() string { return AgencyTablePrefix + "debt
 func AgencyModels() []any {
 	return []any{
 		&Agency{}, &AgencyOperatorAccount{}, &AgencySession{}, &AgencySSOTicketUse{}, &AgencyVerificationUse{}, &AgencyDeliverySecret{},
-		&AgencyUserBinding{}, &AgencyActiveUserBinding{}, &AgencyPricePolicyVersion{}, &AgencyPricePolicyItem{}, &AgencyPlatformPriceState{}, &AgencyPlatformPriceVersion{}, &AgencyIdempotencyRecord{},
+		&AgencyUserBinding{}, &AgencyActiveUserBinding{}, &AgencyCustomerSalesOverride{}, &AgencyPricePolicyVersion{}, &AgencyPricePolicyItem{}, &AgencyPlatformPriceState{}, &AgencyPlatformPriceVersion{}, &AgencyIdempotencyRecord{},
 		&AgencyFundingAccount{}, &AgencyFundingLot{}, &AgencyFundingAllocation{}, &AgencyFundingLedger{}, &AgencyFundingDebt{}, &AgencyDebtRepayment{}, &AgencyFundingReversal{}, &AgencyFundingReversalChargeRecord{},
 		&AgencyBillingJournal{}, &AgencyBillingOperation{}, &AgencyBillingOutbox{}, &AgencyEventDelivery{}, &AgencyTaskSubmissionAttempt{},
 		&AgencyChargeComponent{}, &AgencyComponentFunding{},

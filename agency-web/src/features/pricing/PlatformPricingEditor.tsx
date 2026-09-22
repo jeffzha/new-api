@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ActionIcon } from "../../components/Heading";
-import { ErrorNotice, Field, Loading } from "../../components/ui";
+import { ErrorNotice, Field, Loading, Pager } from "../../components/ui";
 import { useQuery } from "../../lib/client";
 import { useMutation } from "../../lib/mutations";
 import { formatCoefficient, parseCoefficient } from "./policy";
@@ -31,6 +31,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
   const { t } = useTranslation();
   const mutation = useMutation();
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [draft, setDraft] = useState<PlatformDraft>(() =>
@@ -59,6 +60,10 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
         row.channel_names.some((name) => name.toLowerCase().includes(query)),
     );
   }, [props.data.items, search]);
+  const pageSize = 20;
+  const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pageRows = visible.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
 
   function update(model: string, key: "agencyCost" | "defaultSales", value: string) {
     setDraft((current) => ({ ...current, [model]: { ...current[model], [key]: value } }));
@@ -83,7 +88,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
           const values = [coefficientValue(row.platform_cost_bps), value.agencyCost, value.defaultSales];
           if (values.every((item) => item === "")) return [];
           if (values.some((item) => item === "")) {
-            throw new Error(t("Complete all three coefficients for a configured model."));
+            throw new Error(t("Complete the platform cost, agency cost, and sales coefficient for a configured model."));
           }
           const platformCost = parseCoefficient(coefficientValue(row.platform_cost_bps));
           const agencyCost = parseCoefficient(value.agencyCost);
@@ -147,7 +152,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
       </div>
       <div className="pricing-search">
         <Field label={t("Search models or channels")}>
-          <input value={search} onChange={(event) => setSearch(event.target.value)} />
+          <input value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} />
         </Field>
         <span className="pricing-live-badge">{t("Live platform data")} · {visible.length}</span>
       </div>
@@ -163,12 +168,20 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
             </tr>
           </thead>
           <tbody>
-            {visible.map((row) => (
+            {pageRows.map((row) => (
               <PlatformPricingRow key={row.origin_model_name} row={row} value={draft[row.origin_model_name]} update={update} updateChannelCost={updateChannelCost} />
             ))}
           </tbody>
         </table>
       </div>
+      {visible.length > pageSize && (
+        <Pager
+          nextCursor={currentPage < pageCount - 1 ? String(currentPage + 1) : undefined}
+          hasPrevious={currentPage > 0}
+          onNext={() => setPage((value) => Math.min(value + 1, pageCount - 1))}
+          onReset={() => setPage(0)}
+        />
+      )}
       {props.data.items.length === 0 && (
         <p className="empty">{t("No enabled models or channels are currently available.")}</p>
       )}

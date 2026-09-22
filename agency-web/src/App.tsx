@@ -8,6 +8,7 @@ import { MutationProvider } from "./components/MutationProvider";
 import { Login, PasswordChange } from "./components/Auth";
 import { ErrorNotice, Loading } from "./components/ui";
 import { AgenciesPage } from "./features/agencies/AgenciesPage";
+import { ChildrenPage } from "./features/agencies/ChildrenPage";
 import { PricingPage } from "./features/pricing/PricingPage";
 import { WithdrawalsPage } from "./features/finance/WithdrawalsPage";
 import { AccountsPage } from "./features/finance/AccountsPage";
@@ -92,6 +93,7 @@ export function App() {
 type Tab =
   | "overview"
   | "agencies"
+  | "children"
   | "pricing"
   | "customers"
   | "invitation"
@@ -105,6 +107,7 @@ type Tab =
 const tabLabels: Record<Tab, string> = {
   overview: "Overview",
   agencies: "Agencies",
+  children: "Agencies",
   pricing: "Pricing",
   customers: "Customers",
   invitation: "Invite customers",
@@ -134,6 +137,8 @@ function NavIcon({ tab }: { tab: Tab }) {
       return <svg {...common}><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>;
     case "agencies":
       return <svg {...common}><path d="M4 21v-8h16v8M7 13V4h10v9M2 21h20M9 8h6M9 11h6" /></svg>;
+    case "children":
+      return <svg {...common}><path d="M12 4v16M5 8h14M5 16h14" /><circle cx="12" cy="4" r="2" /><circle cx="5" cy="8" r="2" /><circle cx="19" cy="8" r="2" /><circle cx="5" cy="16" r="2" /><circle cx="19" cy="16" r="2" /></svg>;
     case "pricing":
       return <svg {...common}><path d="M12 3v18M17 7.5c0-1.7-1.9-3-5-3S7 5.8 7 7.5 8.9 10 12 10s5 1.3 5 3-1.9 3-5 3-5-1.3-5-3" /></svg>;
     case "customers":
@@ -189,6 +194,7 @@ function Dashboard({
       ]
     : [
         "overview",
+        "children",
         "customers",
         "invitation",
         "pricing",
@@ -227,6 +233,9 @@ function Dashboard({
           }}
         />
       );
+      break;
+    case "children":
+      content = <ChildrenPage />;
       break;
     case "pricing":
       content = <PricingPage root={root} agencyId={pricingAgency} />;
@@ -339,9 +348,7 @@ function Dashboard({
             >
               <span className="tab-icon" aria-hidden="true"><NavIcon tab={item} /></span>
               <span>
-                {item === "pricing"
-                  ? t(root ? "Platform pricing policy" : "Agency sales coefficients")
-                  : t(tabLabels[item])}
+                {item === "pricing" ? t("Pricing") : t(tabLabels[item])}
               </span>
             </button>
           ))}

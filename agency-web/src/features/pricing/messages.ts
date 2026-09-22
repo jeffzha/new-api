@@ -540,6 +540,15 @@ const rows = [
     "Mọi hệ số bán phải dương, không vượt giới hạn và không thấp hơn hệ số quyết toán cộng chênh lệch tối thiểu.",
   ],
   ["Back to customer management", "返回客户管理", "返回客戶管理", "Retour à la gestion des clients", "顧客管理に戻る", "Вернуться к управлению клиентами", "Quay lại quản lý khách hàng"],
+  ["Batch adjust selected models", "批量调整选中模型", "批量調整選取模型", "Ajuster les modèles sélectionnés", "選択したモデルを一括調整", "Массовая настройка выбранных моделей", "Điều chỉnh hàng loạt mô hình đã chọn"],
+  ["Selected", "已选择", "已選取", "Sélectionnés", "選択済み", "Выбрано", "Đã chọn"],
+  ["Adjustment amount", "调整幅度", "調整幅度", "Montant de l’ajustement", "調整幅", "Величина изменения", "Mức điều chỉnh"],
+  ["Apply adjustment", "应用调整", "套用調整", "Appliquer l’ajustement", "調整を適用", "Применить изменение", "Áp dụng điều chỉnh"],
+  ["Enter a valid adjustment, such as 0.1000 or -0.1000.", "请输入有效调整值，例如 0.1000 或 -0.1000。", "請輸入有效調整值，例如 0.1000 或 -0.1000。", "Saisissez un ajustement valide, par exemple 0.1000 ou -0.1000.", "0.1000 または -0.1000 のような有効な調整値を入力してください。", "Введите корректное изменение, например 0.1000 или -0.1000.", "Nhập mức điều chỉnh hợp lệ, ví dụ 0.1000 hoặc -0.1000."],
+  ["The adjusted customer coefficient cannot be below agency cost plus minimum spread or above the sales cap.", "调整后的客户销售系数不能低于代理商成本加最低价差，也不能超过销售系数上限。", "調整後的客戶銷售係數不能低於代理商成本加最低價差，也不能超過銷售係數上限。", "Le coefficient client ajusté ne peut être inférieur au coût agence plus l’écart minimum ni dépasser le plafond.", "調整後の顧客販売係数は代理店原価と最低価格差の合計以上、販売上限以下である必要があります。", "Изменённый коэффициент клиента не может быть ниже стоимости агентства плюс минимальная разница или выше предела продаж.", "Hệ số khách hàng sau điều chỉnh không được thấp hơn chi phí đại lý cộng chênh lệch tối thiểu và không được vượt trần bán hàng."],
+  ["The server also checks agency cost, minimum spread and sales cap.", "服务端还会校验代理商成本、最低价差和销售系数上限。", "伺服器也會檢查代理商成本、最低價差與銷售係數上限。", "Le serveur vérifie également le coût agence, l’écart minimum et le plafond.", "サーバーでも代理店原価、最低価格差、販売上限を検証します。", "Сервер также проверяет стоимость агентства, минимальную разницу и предел продаж.", "Máy chủ cũng kiểm tra chi phí đại lý, chênh lệch tối thiểu và trần bán hàng."],
+  ["Select visible models", "选择当前模型", "選擇目前模型", "Sélectionner les modèles visibles", "表示中のモデルを選択", "Выбрать видимые модели", "Chọn các mô hình đang hiển thị"],
+  ["Select model", "选择模型", "選擇模型", "Sélectionner le modèle", "モデルを選択", "Выберите модель", "Chọn mô hình"],
 ] as const;
 
 const locales: Locale[] = ["en", "zh", "zh-TW", "fr", "ja", "ru", "vi"];

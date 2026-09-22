@@ -229,18 +229,17 @@ func TestWithdrawalInProgressIdempotencyReplyDoesNotExecuteMutation(t *testing.T
 	assert.Equal(t, int64(1), withdrawal.Version)
 }
 
-func TestSalesPricePublicationRequiresVerificationBeforeChangingPolicy(t *testing.T) {
+func TestSalesPricePublicationUsesAuthenticatedSessionWithoutSecondPassword(t *testing.T) {
 	client := newFinanceRootClient(t)
 	agency, _, err := client.app.CreateAgency(client.rootID, "Sales proof agency", "sales-proof-operator", agencycontract.Policy{
 		DefaultSettlementBPS: 7500, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000,
 	})
 	require.NoError(t, err)
 	require.NoError(t, client.app.db.Model(&model.AgencySession{}).Where("token_hash = ?", tokenHash(client.sessionToken)).Update("agency_id", agency.ID).Error)
-	body := `{"expected_price_revision":1,"default_sales_bps":9500,"model_overrides":[],"reason":"new sales prices"}`
+	body := `{"expected_revision":1,"default_sales_bps":9500,"model_sales_overrides":[],"reason":"new sales prices"}`
 	response := client.post("/agency/api/v1/pricing/sales/publish", body, "sales-publish-proof-key", "")
-	assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), "verification_required")
+	assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	var policies int64
 	require.NoError(t, client.app.db.Model(&model.AgencyPricePolicyVersion{}).Where("agency_id = ?", agency.ID).Count(&policies).Error)
-	assert.Equal(t, int64(1), policies)
+	assert.Equal(t, int64(2), policies)
 }

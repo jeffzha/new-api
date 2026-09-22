@@ -4,6 +4,8 @@ Agency Hub is deployed beside new-api and shares the primary database. It is
 not placed in the model relay path. Run the migration command with a dedicated
 migration credential before starting the service:
 
+面向超级管理员和代理商的日常操作请参阅 [代理商中心用户操作手册](../../docs/agency-user-manual.md)，其中包含代理商管理、层级关系、客户管理和客户单独销售系数的截图与步骤。
+
 ```sh
 AGENCY_HUB_AUTO_MIGRATE=false ./agency-hub migrate
 # Run the deterministic financial/integrity scan. This only records Root-visible

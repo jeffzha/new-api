@@ -144,10 +144,13 @@ func (a *App) getCustomerSalesPricing(c *gin.Context) {
 		items = append(items, item)
 	}
 	respondOK(c, gin.H{
-		"agency_id":         agency.ID,
-		"user_id":           userID,
-		"default_sales_bps": effective.DefaultSalesBPS,
-		"items":             items,
+		"agency_id":               agency.ID,
+		"user_id":                 userID,
+		"default_sales_bps":       effective.DefaultSalesBPS,
+		"default_agency_cost_bps": effective.DefaultSettlementBPS,
+		"min_spread_bps":          effective.MinSpreadBPS,
+		"sales_cap_bps":           effective.SalesCapBPS,
+		"items":                   items,
 	})
 }
 

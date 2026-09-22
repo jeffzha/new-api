@@ -216,6 +216,17 @@ func (a *App) consumeOperatorProof(c *gin.Context, bodyHash string) bool {
 		respondError(c, http.StatusUnauthorized, "unauthorized", "请先登录", nil)
 		return false
 	}
+	// The authenticated agency session is the temporary verification boundary.
+	// Session middleware has already checked idle/absolute expiry, CSRF, source
+	// session binding and account auth version. Requiring the password again for
+	// every mutation caused unrelated refresh/identity calls to consume the
+	// login limit; re-login is required once this session is no longer valid.
+	// Keep proof-of-possession for revealing encrypted payout details. This is
+	// a sensitive disclosure rather than a routine session-authenticated write.
+	if strings.TrimSpace(c.GetHeader("X-Agency-Verification-Proof")) == "" &&
+		!(c.Request.Method == http.MethodPost && strings.Contains(c.Request.URL.Path, "/withdrawal-accounts/") && strings.HasSuffix(c.Request.URL.Path, "/reveal")) {
+		return true
+	}
 	raw := strings.TrimSpace(c.GetHeader("X-Agency-Verification-Proof"))
 	if raw == "" {
 		respondError(c, http.StatusForbidden, "verification_required", "该操作需要二次验证", nil)

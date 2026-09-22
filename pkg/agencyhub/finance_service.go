@@ -948,14 +948,14 @@ func (a *App) commissionLedger(c *gin.Context) {
 				return
 			}
 		}
-		accountNames, err := a.loadAccountNames(rows)
+		contexts, err := a.loadCommissionContexts(rows)
 		if err != nil {
 			respondError(c, http.StatusInternalServerError, "database_error", "读取客户名称失败", nil)
 			return
 		}
 		items := make([]gin.H, 0, len(rows))
 		for _, row := range rows {
-			items = append(items, a.commissionLedgerView(row, accountNames))
+			items = append(items, a.commissionLedgerView(row, contexts))
 		}
 		respondOK(c, gin.H{"items": items, "total": total, "meta": gin.H{"next_cursor": nextCursor}})
 		return
@@ -979,14 +979,14 @@ func (a *App) commissionLedger(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "database_error", err.Error(), nil)
 		return
 	}
-	accountNames, err := a.loadAccountNames(rows)
+	contexts, err := a.loadCommissionContexts(rows)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "database_error", "读取客户名称失败", nil)
 		return
 	}
 	items := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, a.commissionLedgerView(row, accountNames))
+		items = append(items, a.commissionLedgerView(row, contexts))
 	}
 	respondOK(c, gin.H{"items": items, "total": total, "page": page, "page_size": size})
 }
@@ -994,10 +994,21 @@ func (a *App) commissionLedger(c *gin.Context) {
 // commissionLedgerView serializes a commission ledger row with int64 money and
 // timestamp fields as strings so the browser never loses precision, and uses
 // snake_case keys that match the agency-web ledger table contract.
-func (a *App) commissionLedgerView(row model.AgencyCommissionLedger, accountNames map[int64]string) gin.H {
+type commissionContext struct {
+	AccountName     string
+	AgencyName      string
+	BindingAgencyID int64
+}
+
+func (a *App) commissionLedgerView(row model.AgencyCommissionLedger, contexts map[int64]commissionContext) gin.H {
 	originalEntryID := any(nil)
 	if row.OriginalEntryID != nil {
 		originalEntryID = strconv.FormatInt(*row.OriginalEntryID, 10)
+	}
+	context := contexts[row.ID]
+	source := "direct_customer"
+	if context.BindingAgencyID > 0 && context.BindingAgencyID != row.AgencyID {
+		source = "child_agency_spread"
 	}
 	return gin.H{
 		"id":                           row.ID,
@@ -1008,7 +1019,9 @@ func (a *App) commissionLedgerView(row model.AgencyCommissionLedger, accountName
 		"agency_id":                    strconv.FormatInt(row.AgencyID, 10),
 		"binding_id":                   strconv.FormatInt(row.BindingID, 10),
 		"user_id":                      strconv.FormatInt(row.UserID, 10),
-		"account_name":                 accountNames[row.UserID],
+		"account_name":                 context.AccountName,
+		"agency_name":                  context.AgencyName,
+		"commission_source":            source,
 		"origin_model_name":            row.OriginModelName,
 		"standard_quota":               strconv.FormatInt(row.StandardQuota, 10),
 		"settlement_cost_quota":        strconv.FormatInt(row.SettlementCostQuota, 10),
@@ -1023,9 +1036,11 @@ func (a *App) commissionLedgerView(row model.AgencyCommissionLedger, accountName
 	}
 }
 
-func (a *App) loadAccountNames(rows []model.AgencyCommissionLedger) (map[int64]string, error) {
+func (a *App) loadCommissionContexts(rows []model.AgencyCommissionLedger) (map[int64]commissionContext, error) {
 	ids := make([]int64, 0, len(rows))
 	seen := make(map[int64]struct{}, len(rows))
+	bindingIDs := make([]int64, 0, len(rows))
+	bindingSeen := make(map[int64]struct{}, len(rows))
 	for _, row := range rows {
 		if row.UserID > 0 {
 			if _, ok := seen[row.UserID]; !ok {
@@ -1033,22 +1048,72 @@ func (a *App) loadAccountNames(rows []model.AgencyCommissionLedger) (map[int64]s
 				ids = append(ids, row.UserID)
 			}
 		}
+		if row.BindingID > 0 {
+			if _, ok := bindingSeen[row.BindingID]; !ok {
+				bindingSeen[row.BindingID] = struct{}{}
+				bindingIDs = append(bindingIDs, row.BindingID)
+			}
+		}
 	}
-	result := make(map[int64]string, len(ids))
-	if len(ids) == 0 {
-		return result, nil
+	result := make(map[int64]commissionContext, len(rows))
+	if len(ids) > 0 {
+		var users []model.User
+		if err := a.db.Select("id, username, display_name").Where("id IN ?", ids).Find(&users).Error; err == nil {
+			for _, user := range users {
+				for _, row := range rows {
+					if row.UserID == int64(user.Id) {
+						context := result[row.ID]
+						context.AccountName = userAccountName(user)
+						result[row.ID] = context
+					}
+				}
+			}
+		}
 	}
-	var users []model.User
-	if err := a.db.Select("id, username, display_name").Where("id IN ?", ids).Find(&users).Error; err != nil {
-		// Agency-only fixtures may not attach the platform users table.
-		// Names are an enrichment, so preserve the ledger response when the
-		// optional lookup is unavailable.
-		return result, nil
+	if len(bindingIDs) > 0 {
+		var bindings []model.AgencyUserBinding
+		if err := a.db.Where("id IN ?", bindingIDs).Find(&bindings).Error; err == nil {
+			agencyIDs := make([]int64, 0, len(bindings))
+			for _, binding := range bindings {
+				agencyIDs = append(agencyIDs, binding.AgencyID)
+			}
+			var agencies []model.Agency
+			if err := a.db.Where("id IN ?", agencyIDs).Find(&agencies).Error; err == nil {
+				names := make(map[int64]string, len(agencies))
+				for _, agency := range agencies {
+					names[agency.ID] = agency.DisplayName
+				}
+				for _, row := range rows {
+					if binding, ok := findBinding(bindings, row.BindingID); ok {
+						context := result[row.ID]
+						context.BindingAgencyID = binding.AgencyID
+						context.AgencyName = names[row.AgencyID]
+						result[row.ID] = context
+					}
+				}
+			}
+		}
 	}
-	for _, user := range users {
-		result[int64(user.Id)] = userAccountName(user)
+	for _, row := range rows {
+		context := result[row.ID]
+		if context.AgencyName == "" {
+			var agency model.Agency
+			if err := a.db.Select("display_name").First(&agency, row.AgencyID).Error; err == nil {
+				context.AgencyName = agency.DisplayName
+			}
+		}
+		result[row.ID] = context
 	}
 	return result, nil
+}
+
+func findBinding(bindings []model.AgencyUserBinding, id int64) (model.AgencyUserBinding, bool) {
+	for _, binding := range bindings {
+		if binding.ID == id {
+			return binding, true
+		}
+	}
+	return model.AgencyUserBinding{}, false
 }
 
 func (a *App) createWithdrawal(c *gin.Context) {

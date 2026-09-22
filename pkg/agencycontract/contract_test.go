@@ -146,3 +146,17 @@ func TestPlatformPolicyAllowsPerChannelCostsWithoutChangingAgencySales(t *testin
 	platform.ModelPrices[0].ChannelCosts = append(platform.ModelPrices[0].ChannelCosts, PlatformChannelCost{ChannelID: 14, PlatformCostBPS: 5200})
 	require.ErrorContains(t, ValidatePlatformPolicy(platform), "duplicate platform channel cost")
 }
+
+func TestPlatformPolicyRaisesInheritedSalesToMinimumSpread(t *testing.T) {
+	policy := Policy{DefaultSalesBPS: 10000, MinSpreadBPS: 500, SalesCapBPS: 30000}
+	platform := PlatformPolicy{ModelPrices: []PlatformModelPrice{{
+		OriginModelName: "doubao-seedance-2.0", AgencyCostBPS: 8800, DefaultSalesBPS: 9000,
+	}}}
+
+	effective, err := ApplyPlatformPolicy(policy, platform)
+
+	require.NoError(t, err)
+	require.Len(t, effective.ModelOverrides, 1)
+	require.Equal(t, 8800, *effective.ModelOverrides[0].SettlementBPS)
+	require.Equal(t, 9300, *effective.ModelOverrides[0].SalesBPS)
+}

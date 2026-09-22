@@ -22,6 +22,8 @@ const dynamicLabels: Record<string, string> = {
   payment_assisted_bonus: "代充赠送",
   payment_self_bonus: "用户充值赠送",
   payment_unattributed: "未归属支付",
+  direct_customer: "直属客户佣金",
+  child_agency_spread: "下级代理商差价佣金",
   unattributed_nonpaid: "未归属赠送",
   wallet: "钱包余额",
   debt: "欠费",
@@ -479,6 +481,8 @@ export function LedgerPage({ onExport }: { onExport?: () => void }) {
             render: (row) => <Time value={row.occurred_at_ms || undefined} />,
           },
           { key: "account_name", label: "Customer account" },
+          { key: "agency_name", label: "Serving agency" },
+          { key: "commission_source", label: "Commission source", render: (row) => dynamicLabel(row.commission_source, t("Unknown")) },
           { key: "origin_model_name", label: "Public model" },
           { key: "entry_type", label: "Entry type", render: (row) => dynamicLabel(row.entry_type, t("Unknown")) },
           {

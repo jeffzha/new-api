@@ -188,13 +188,13 @@ func ApplyPlatformPolicy(policy Policy, platform PlatformPolicy) (Policy, error)
 			override := result.ModelOverrides[position]
 			override.SettlementBPS = &agencyCost
 			if override.SalesBPS == nil {
-				defaultSales := price.DefaultSalesBPS
+				defaultSales := max(price.DefaultSalesBPS, agencyCost+result.MinSpreadBPS)
 				override.SalesBPS = &defaultSales
 			}
 			result.ModelOverrides[position] = override
 			continue
 		}
-		defaultSales := price.DefaultSalesBPS
+		defaultSales := max(price.DefaultSalesBPS, agencyCost+result.MinSpreadBPS)
 		modelOverride := ModelOverride{OriginModelName: price.OriginModelName, SettlementBPS: &agencyCost, SalesBPS: &defaultSales}
 		result.ModelOverrides = append(result.ModelOverrides, modelOverride)
 		positions[key] = len(result.ModelOverrides) - 1

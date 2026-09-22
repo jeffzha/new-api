@@ -113,10 +113,7 @@ func validateChildPolicyTx(tx *gorm.DB, parentID int64, policy agencycontract.Po
 		return errors.New("child minimum spread cannot be below parent minimum spread")
 	}
 	parentDefaultChildCost := parentEffective.DefaultChildCostBPS
-	if parentDefaultChildCost == 0 {
-		return errors.New("parent child agency cost is not configured; configure it before creating a child agency")
-	}
-	if policy.DefaultSettlementBPS < parentDefaultChildCost {
+	if parentDefaultChildCost != 0 && policy.DefaultSettlementBPS < parentDefaultChildCost {
 		return errors.New("child default cost must not be below parent child cost")
 	}
 	for _, childOverride := range policy.ModelOverrides {
@@ -192,12 +189,26 @@ func inheritChildCostPolicy(tx *gorm.DB, parentID int64, policy agencycontract.P
 		}
 	}
 	parentDefaultChildCost := parentEffective.DefaultChildCostBPS
-	if parentDefaultChildCost == 0 {
-		return agencycontract.Policy{}, errors.New("parent child agency cost is not configured; configure it before creating a child agency")
-	}
 	// A blank default child cost is intentional. It prevents silently adding
 	// another spread at every hierarchy level; the parent must explicitly set
-	// one before creating a child.
+	// one before creating a child. A model-specific direct-child cost is also
+	// sufficient, but then every enabled platform model needs its own value.
+	platform, err := model.LoadAgencyPlatformPolicy(tx)
+	if err != nil {
+		return agencycontract.Policy{}, err
+	}
+	modelNames := make([]string, 0, len(platform.ModelPrices))
+	for _, price := range platform.ModelPrices {
+		modelNames = append(modelNames, price.OriginModelName)
+	}
+	if len(modelNames) == 0 {
+		for _, override := range parentEffective.ModelOverrides {
+			modelNames = append(modelNames, override.OriginModelName)
+		}
+	}
+	if parentDefaultChildCost == 0 && len(modelNames) == 0 {
+		return agencycontract.Policy{}, errors.New("parent child agency cost is not configured; configure it before creating a child agency")
+	}
 	positions := make(map[string]int, len(policy.ModelOverrides))
 	for i, override := range policy.ModelOverrides {
 		key, err := agencycontract.ModelKey(override.OriginModelName)
@@ -206,35 +217,34 @@ func inheritChildCostPolicy(tx *gorm.DB, parentID int64, policy agencycontract.P
 		}
 		positions[key] = i
 	}
-	for _, parentOverride := range parentEffective.ModelOverrides {
-		key, err := agencycontract.ModelKey(parentOverride.OriginModelName)
+	for _, modelName := range modelNames {
+		key, err := agencycontract.ModelKey(modelName)
 		if err != nil {
 			return agencycontract.Policy{}, err
 		}
-		parentResolved, err := agencycontract.Resolve(parentEffective, parentOverride.OriginModelName)
+		parentResolved, err := agencycontract.Resolve(parentEffective, modelName)
 		if err != nil {
 			return agencycontract.Policy{}, err
+		}
+		cost := resolvedChildCost(parentEffective, modelName, 0)
+		if cost == 0 {
+			return agencycontract.Policy{}, errors.New("parent child agency cost is not configured; configure it before creating a child agency")
+		}
+		if policy.DefaultSettlementBPS == 0 {
+			policy.DefaultSettlementBPS = cost
 		}
 		position, exists := positions[key]
 		if !exists {
-			cost := parentDefaultChildCost
-			if parentOverride.ChildCostBPS != nil {
-				cost = *parentOverride.ChildCostBPS
-			}
 			cost = minCoefficient(cost, policy.SalesCapBPS)
 			sales, salesErr := inheritedSalesBPS(parentResolved.SalesBPS, cost, policy.MinSpreadBPS, policy.SalesCapBPS)
 			if salesErr != nil {
 				return agencycontract.Policy{}, salesErr
 			}
-			policy.ModelOverrides = append(policy.ModelOverrides, agencycontract.ModelOverride{OriginModelName: parentOverride.OriginModelName, SettlementBPS: &cost, SalesBPS: &sales})
+			policy.ModelOverrides = append(policy.ModelOverrides, agencycontract.ModelOverride{OriginModelName: modelName, SettlementBPS: &cost, SalesBPS: &sales})
 			positions[key] = len(policy.ModelOverrides) - 1
 			continue
 		}
 		if policy.ModelOverrides[position].SettlementBPS == nil {
-			cost := parentDefaultChildCost
-			if parentOverride.ChildCostBPS != nil {
-				cost = *parentOverride.ChildCostBPS
-			}
 			cost = minCoefficient(cost, policy.SalesCapBPS)
 			policy.ModelOverrides[position].SettlementBPS = &cost
 			if policy.ModelOverrides[position].SalesBPS == nil {

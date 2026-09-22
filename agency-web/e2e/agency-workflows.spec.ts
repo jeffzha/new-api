@@ -268,7 +268,9 @@ test("root publishes platform pricing and an operator manages direct-child and c
   await page.getByRole("button", { name: "Pricing", exact: true }).click();
   await expect(page.getByRole("cell", { name: "browser-chat-model", exact: true })).toBeVisible();
   await expect(page.getByText("Browser model channel", { exact: true })).toBeVisible();
-  await page.getByLabel("Platform cost coefficient: browser-chat-model", { exact: true }).fill("0.75");
+  await page
+    .getByLabel("Platform cost coefficient: browser-chat-model / Browser model channel", { exact: true })
+    .fill("0.75");
   await page.getByLabel("Agency cost coefficient: browser-chat-model", { exact: true }).fill("0.80");
   await page.getByLabel("Sales coefficient: browser-chat-model", { exact: true }).fill("0.90");
   await page.getByLabel("Change reason", { exact: true }).first().fill("Browser platform pricing");
@@ -283,7 +285,7 @@ test("root publishes platform pricing and an operator manages direct-child and c
     expected_revision: 0,
     model_prices: [{
       origin_model_name: "browser-chat-model",
-      platform_cost_bps: 7500,
+      channel_costs: [{ platform_cost_bps: 7500 }],
       agency_cost_bps: 8000,
       default_sales_bps: 9000,
     }],
@@ -356,7 +358,7 @@ test("root publishes platform pricing and an operator manages direct-child and c
     const delivery = operator.getByRole("dialog", { name: "Child agency login details", exact: true });
     await expect(delivery.getByLabel("Operator username", { exact: true })).toHaveValue("browser-child-operator");
     await expect(delivery.getByLabel("Temporary password", { exact: true })).not.toHaveValue("");
-    await delivery.getByRole("button", { name: "Close", exact: true }).click();
+    await delivery.getByRole("button", { name: "Close", exact: true }).nth(1).click();
     await expect(operator.getByRole("row").filter({ hasText: "Browser Child Agency" })).toBeVisible();
 
     await operator.getByRole("button", { name: "Customers", exact: true }).click();
@@ -589,9 +591,9 @@ test("root can inspect and cancel a blocked binding, then transfer a managed cus
     name: "Customer assignment",
     exact: true,
   });
-  await dialog.getByLabel("Customer account", { exact: true }).fill(String(before.legacy_user_id));
+  await dialog.getByLabel("Customer account", { exact: true }).fill("browser-legacy");
   await dialog.getByRole("button", { name: "Look up customer", exact: true }).click();
-  await dialog.getByLabel("Target agency ID", { exact: true }).fill(String(before.agency_id));
+  await dialog.getByLabel("Target agency account", { exact: true }).fill("browser-operator");
   await dialog.getByRole("button", { name: "Check target agency", exact: true }).click();
   await expect(dialog.getByText(/Browser Agency/)).toBeVisible();
   await dialog.getByLabel("Reason", { exact: true }).fill("Test isolated legacy binding");
@@ -631,8 +633,8 @@ test("root can inspect and cancel a blocked binding, then transfer a managed cus
     exact: true,
   });
   await dialog
-    .getByLabel("Target agency ID", { exact: true })
-    .fill(String(before.target_agency_id));
+    .getByLabel("Target agency account", { exact: true })
+    .fill("browser-target");
   await dialog.getByRole("button", { name: "Check target agency", exact: true }).click();
   await expect(dialog.getByText(/Transfer Target/)).toBeVisible();
   await dialog.getByLabel("Reason", { exact: true }).fill("Verified customer move");

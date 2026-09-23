@@ -71,6 +71,9 @@ const (
 	ChannelTypePrivateBase         = 1002
 	ChannelTypeSeedanceDomestic    = 1002
 	ChannelTypeMobileCloudSeedance = 1003
+	// ChannelTypeSeedreamArkOpenAI is a private OpenAI-image channel for
+	// Ark-compatible gateways that expose /v1/images/generations directly.
+	ChannelTypeSeedreamArkOpenAI = 1004
 	// ChannelTypeOpenAISeedance is an OpenAI-compatible seedance video channel:
 	// it accepts OpenAI /v1/video/generations (prompt) and proxies to an
 	// OpenAI-compatible seedance upstream (e.g. vedioapi.laomandi.com), billing
@@ -148,7 +151,7 @@ var ChannelBaseURLs = []string{
 
 func init() {
 	// Keep direct indexing safe for private IDs used by existing relay code.
-	maxPrivateType := ChannelTypeMobileCloudSeedance
+	maxPrivateType := ChannelTypeSeedreamArkOpenAI
 	if ChannelTypeOpenAISeedance > maxPrivateType {
 		maxPrivateType = ChannelTypeOpenAISeedance
 	}
@@ -232,6 +235,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeSGLang:              "SGLang",
 	ChannelTypeSeedanceDomestic:    "Seedance Domestic",
 	ChannelTypeMobileCloudSeedance: "MobileCloudSeedance",
+	ChannelTypeSeedreamArkOpenAI:   "SeedreamArkOpenAI",
 	ChannelTypeOpenAISeedance:      "OpenAISeedance",
 	ChannelTypeHappyHorse:          "HappyHorse",
 }

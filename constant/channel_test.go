@@ -7,7 +7,7 @@ func TestPrivateChannelTypeIDsDoNotOverlapUpstream(t *testing.T) {
 	// OpenAISeedance=1000 is a previously shipped private ID and must remain
 	// stable. New private IDs start at 1002 because 1001 is also occupied by
 	// an earlier fork release.
-	private := []int{ChannelTypeHappyHorse, ChannelTypeSeedanceDomestic, ChannelTypeMobileCloudSeedance}
+	private := []int{ChannelTypeHappyHorse, ChannelTypeSeedanceDomestic, ChannelTypeMobileCloudSeedance, ChannelTypeSeedreamArkOpenAI}
 	for _, id := range private {
 		if id != ChannelTypeHappyHorse && id < ChannelTypePrivateBase {
 			t.Fatalf("private channel ID %d is below private base %d", id, ChannelTypePrivateBase)
@@ -17,6 +17,12 @@ func TestPrivateChannelTypeIDsDoNotOverlapUpstream(t *testing.T) {
 				t.Fatalf("private channel ID %d overlaps upstream ID", id)
 			}
 		}
+	}
+}
+
+func TestSeedreamArkOpenAIChannelType(t *testing.T) {
+	if got := GetChannelTypeName(ChannelTypeSeedreamArkOpenAI); got != "SeedreamArkOpenAI" {
+		t.Fatalf("unexpected channel name: %q", got)
 	}
 }
 

@@ -124,6 +124,7 @@ func init() {
 		constant.ChannelTypeMobileCloudSeedance,
 		constant.ChannelTypeOpenAISeedance,
 		constant.ChannelTypeHappyHorse,
+		constant.ChannelTypeSeedreamArkOpenAI,
 	} {
 		apiType, success := common.ChannelType2APIType(channelType)
 		if !success {

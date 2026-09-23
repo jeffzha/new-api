@@ -190,6 +190,17 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     defaultBaseUrl: 'https://api.openai.com',
     supportedModels: ['doubao-seedance-2-0-260128'],
   },
+  1004: {
+    id: 1004,
+    name: CHANNEL_TYPES[1004],
+    icon: 'Volcengine',
+    defaultBaseUrl: 'https://api.uzoomtech.com',
+    supportedModels: [
+      'doubao-seedream-5-0-260128',
+      'doubao-seedream-5-0-pro-260628',
+      'doubao-seed-2-0-mini-260428',
+    ],
+  },
   [CHANNEL_TYPE_HAPPY_HORSE]: {
     id: CHANNEL_TYPE_HAPPY_HORSE,
     name: CHANNEL_TYPES[CHANNEL_TYPE_HAPPY_HORSE],

@@ -314,6 +314,7 @@ export const channelFormSchema = z
         8,
         36,
         45,
+        1004,
         CHANNEL_TYPE_NEW_API,
         CHANNEL_TYPE_HAPPY_HORSE,
         CHANNEL_TYPE_TASK_PLUGIN,

@@ -137,7 +137,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 
 		// VolcEngine 图像生成模型
-		if channel.Type == constant.ChannelTypeVolcEngine && strings.Contains(testModel, "seedream") {
+		if (channel.Type == constant.ChannelTypeVolcEngine || channel.Type == constant.ChannelTypeSeedreamArkOpenAI) && strings.Contains(testModel, "seedream") {
 			requestPath = "/v1/images/generations"
 		}
 

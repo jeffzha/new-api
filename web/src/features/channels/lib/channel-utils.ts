@@ -109,6 +109,7 @@ export function getChannelTypeIcon(type: number): string {
     1002: 'Doubao', // Seedance Domestic
     1003: 'Doubao', // Mobile Cloud Seedance
     1000: 'OpenAISeedance', // OpenAISeedance
+    1004: 'Volcengine', // Seedream Ark OpenAI image channel
     1001: 'Qwen', // HappyHorse
     56: 'Replicate', // Replicate
 

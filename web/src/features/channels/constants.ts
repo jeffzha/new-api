@@ -93,6 +93,7 @@ export const CHANNEL_TYPES = {
   1002: 'Seedance Domestic',
   1003: 'Mobile Cloud Seedance',
   1000: 'OpenAISeedance',
+  1004: 'VolcEngine',
   [CHANNEL_TYPE_HAPPY_HORSE]: 'HappyHorse',
 } as const
 
@@ -181,7 +182,7 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
   1, 14, 24, 33, 43, 3, 41, 17, 45, 25, 26, 23, 48, 60, 58, 59, 61, 42, 34, 20,
   4, 62, 40, 27, 15, 46, 18, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 22, 21,
-  44, 2, 5, 36, 50, 51, 52, 53, 54, 55, 56, 1002, 1003, 1000, CHANNEL_TYPE_HAPPY_HORSE, 63,
+  44, 2, 5, 36, 50, 51, 52, 53, 54, 55, 56, 1002, 1003, 1000, 1004, CHANNEL_TYPE_HAPPY_HORSE, 63,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -556,6 +557,7 @@ export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
   1002: 'Enter API key for this channel',
   1003: 'Enter API key for this channel',
   1000: 'Enter API key for this channel',
+  1004: 'Enter API key for this channel',
   [CHANNEL_TYPE_HAPPY_HORSE]: 'Enter API key for this channel',
   61: 'Enter API key for this channel',
   62: 'vLLM API key, or EMPTY if authentication is disabled',

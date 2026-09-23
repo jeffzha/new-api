@@ -44,8 +44,6 @@ type platformPricingMCPRow struct {
 	ChannelName             string   `json:"channel_name,omitempty"`
 	ChannelAvailable        bool     `json:"channel_available"`
 	PlatformCostCoefficient *float64 `json:"platform_cost_coefficient,omitempty"`
-	AgencyCostCoefficient   *float64 `json:"agency_cost_coefficient,omitempty"`
-	DefaultSalesCoefficient *float64 `json:"default_sales_coefficient,omitempty"`
 	PolicyRevision          int64    `json:"policy_revision"`
 	UpdatedAtMS             int64    `json:"updated_at_ms"`
 }
@@ -76,14 +74,14 @@ func PlatformPricingMCP(c *gin.Context) {
 }
 
 func platformPricingToolDefinition(c *gin.Context) gin.H {
-	description := "Returns live platform model and channel cost coefficients plus model-level agency cost and default sales coefficients. It never returns channel credentials, upstream URLs, or procurement prices."
+	description := "Returns live public model availability and platform cost coefficients by channel. It never returns agency or reseller prices, channel credentials, upstream URLs, or procurement prices."
 	properties := gin.H{
 		`model_name`:   gin.H{`type`: `string`, `description`: `Optional exact public model name.`},
 		`channel_id`:   gin.H{`type`: `integer`, `minimum`: 1, `description`: `Optional channel ID.`},
 		`enabled_only`: gin.H{`type`: `boolean`, `default`: true, `description`: `Whether to return only currently available channels.`},
 	}
 	if _, external := middleware.GetMCPAccessCredential(c); external {
-		description = "Returns live public model pricing availability and default sales coefficients. It never returns platform or agency cost coefficients, channel credentials, upstream URLs, or procurement prices."
+		description = "Returns live public model availability and platform cost coefficients. It never returns channel identities, agency or reseller prices, channel credentials, upstream URLs, or procurement prices."
 		properties = gin.H{`model_name`: properties[`model_name`], `enabled_only`: properties[`enabled_only`]}
 	}
 	return gin.H{
@@ -210,13 +208,12 @@ func publicMCPPricingRows(rows []platformPricingMCPRow) []platformPricingMCPRow 
 		existing, found := byModel[row.ModelName]
 		if found {
 			existing.ChannelAvailable = existing.ChannelAvailable || row.ChannelAvailable
+			existing.PlatformCostCoefficient = lowerCoefficient(existing.PlatformCostCoefficient, row.PlatformCostCoefficient)
 			byModel[row.ModelName] = existing
 			continue
 		}
 		row.ChannelID = 0
 		row.ChannelName = ""
-		row.PlatformCostCoefficient = nil
-		row.AgencyCostCoefficient = nil
 		byModel[row.ModelName] = row
 	}
 	items := make([]platformPricingMCPRow, 0, len(byModel))
@@ -227,6 +224,16 @@ func publicMCPPricingRows(rows []platformPricingMCPRow) []platformPricingMCPRow 
 		}
 	}
 	return items
+}
+
+func lowerCoefficient(left, right *float64) *float64 {
+	if left == nil {
+		return right
+	}
+	if right == nil || *left <= *right {
+		return left
+	}
+	return right
 }
 
 func decodePlatformPricingQuery(raw common.RawMessage) (platformPricingQuery, error) {
@@ -255,9 +262,20 @@ func queryPlatformPricing(query platformPricingQuery) ([]platformPricingMCPRow, 
 	if err != nil {
 		return nil, 0, 0, err
 	}
+	names := make([]string, 0, len(catalog.Items))
+	for _, modelRow := range catalog.Items {
+		names = append(names, modelRow.OriginModelName)
+	}
+	publicModels, err := model.PublicModelNames(model.DB, names)
+	if err != nil {
+		return nil, 0, 0, err
+	}
 	enabledOnly := query.EnabledOnly == nil || *query.EnabledOnly
 	items := make([]platformPricingMCPRow, 0)
 	for _, modelRow := range catalog.Items {
+		if !publicModels[modelRow.OriginModelName] {
+			continue
+		}
 		if query.ModelName != `` && modelRow.OriginModelName != query.ModelName {
 			continue
 		}
@@ -274,8 +292,6 @@ func queryPlatformPricing(query platformPricingQuery) ([]platformPricingMCPRow, 
 				ChannelName:             channel.ChannelName,
 				ChannelAvailable:        channel.Available,
 				PlatformCostCoefficient: bpsCoefficient(channel.PlatformCostBPS),
-				AgencyCostCoefficient:   bpsCoefficient(modelRow.AgencyCostBPS),
-				DefaultSalesCoefficient: bpsCoefficient(modelRow.DefaultSalesBPS),
 				PolicyRevision:          catalog.Revision,
 				UpdatedAtMS:             catalog.RefreshedAtMS,
 			})
@@ -314,15 +330,14 @@ type playgroundPricingAssistantIntent struct {
 
 func pricingAssistantLanguageModelContext(message string, intent playgroundPricingAssistantIntent, rows []platformPricingMCPRow, _ int64) string {
 	// This handler is Root-only. The selected model receives the same
-	// authorized pricing fields shown in the Root pricing view, while public
-	// external MCP credentials continue to use publicMCPPricingRows instead.
+	// authorized public model and platform cost fields shown by MCP.
 	encodedRows, err := common.Marshal(rows)
 	if err != nil {
 		return ""
 	}
 	return strings.Join([]string{
 		"你是平台价格策略助手。下面的“已授权查询结果”由系统刚刚实时查询并已完成权限校验。",
-		"必须根据这些结果直接、自然地回答用户的问题，可以比较、解释和总结其中的模型、渠道与系数；不得声称没有工具、没有数据或需要用户另行授权。",
+		"必须根据这些结果直接、自然地回答用户的问题，可以比较、解释和总结其中的公开模型、渠道与平台成本系数；不得声称没有工具、没有数据或需要用户另行授权。",
 		"不得猜测、杜撰或使用查询结果以外的价格和渠道信息；不得执行修改、发布、调用模型或其他操作。使用简体中文。",
 		"用户问题：" + message,
 		"已授权查询结果：" + string(encodedRows),
@@ -453,7 +468,7 @@ func channelIDFromMessage(message string) int {
 func formatPricingAssistantReply(intent playgroundPricingAssistantIntent, rows []platformPricingMCPRow, revision int64) string {
 	if intent.Query.ModelName == `` && intent.Query.ChannelID == nil && !intent.ListRequested {
 		if intent.RulesRequested {
-			return "### 平台价格策略说明\n\n- 平台成本系数按“模型 + 渠道”分别维护。\n- 代理商成本系数和默认销售系数按模型统一维护。\n- 输入模型名称、渠道名称或“渠道 ID + 编号”可查询实时配置。\n\n例如：`查询 deepseek-v4-flash`、`查询 Yunwoke-HappyHorse`、`查询渠道 ID 18 的价格`。"
+			return "### 平台价格策略说明\n\n- 平台成本系数按“模型 + 渠道”分别维护。\n- 仅返回公开模型和平台成本，不返回代理商或销售价格。\n- 输入模型名称、渠道名称或“渠道 ID + 编号”可查询实时配置。\n\n例如：`查询 deepseek-v4-flash`、`查询 Yunwoke-HappyHorse`、`查询渠道 ID 18 的价格`。"
 		}
 		return "我可以帮您查询具体模型或渠道的实时价格，不会调用模型或产生费用。\n\n例如：`查询 deepseek-v4-flash`、`查询 Yunwoke-HappyHorse`、`查询渠道 ID 18 的价格`。如需完整清单，请说“查看全部已配置价格”。"
 	}
@@ -475,11 +490,11 @@ func formatPricingAssistantReply(intent playgroundPricingAssistantIntent, rows [
 		builder.WriteString("### 已配置模型与渠道价格\n\n")
 	}
 	builder.WriteString("已找到 " + strconv.Itoa(len(rows)) + " 条当前可用配置。\n\n")
-	builder.WriteString("| \u6a21\u578b | \u6e20\u9053 | \u5e73\u53f0\u6210\u672c\u7cfb\u6570 | \u4ee3\u7406\u5546\u6210\u672c\u7cfb\u6570 | \u9ed8\u8ba4\u9500\u552e\u7cfb\u6570 |\n| --- | --- | ---: | ---: | ---: |\n")
+	builder.WriteString("| \u6a21\u578b | \u6e20\u9053 | \u5e73\u53f0\u6210\u672c\u7cfb\u6570 |\n| --- | --- | ---: |\n")
 	for _, row := range rows {
 		builder.WriteString(`| `)
 		builder.WriteString(row.ModelName)
-		builder.WriteString(" | " + row.ChannelName + " (#" + strconv.Itoa(row.ChannelID) + ") | " + formatCoefficient(row.PlatformCostCoefficient) + " | " + formatCoefficient(row.AgencyCostCoefficient) + " | " + formatCoefficient(row.DefaultSalesCoefficient) + " |\n")
+		builder.WriteString(" | " + row.ChannelName + " (#" + strconv.Itoa(row.ChannelID) + ") | " + formatCoefficient(row.PlatformCostCoefficient) + " |\n")
 	}
 	builder.WriteString("\n数据版本：" + strconv.FormatInt(revision, 10) + "。")
 	return builder.String()

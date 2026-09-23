@@ -30,7 +30,7 @@ func TestPlatformPricingMCPReturnsLiveChannelCostRows(t *testing.T) {
 	})
 	model.DB = db
 	require.NoError(t, model.MigrateAgency(db))
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Model{}, &model.Channel{}, &model.Ability{}))
 	require.NoError(t, db.Create(&model.User{Id: 1, Username: "root-mcp-reader", Role: common.RoleRootUser, Status: common.UserStatusEnabled}).Error)
 	channel := model.Channel{Name: "MCP pricing channel", Type: 1, Key: "test-only", Status: common.ChannelStatusEnabled}
 	require.NoError(t, db.Create(&channel).Error)
@@ -66,11 +66,7 @@ func TestPlatformPricingMCPReturnsLiveChannelCostRows(t *testing.T) {
 	row := response.Result.StructuredContent.Items[0]
 	assert.Equal(t, channel.Id, row.ChannelID)
 	require.NotNil(t, row.PlatformCostCoefficient)
-	require.NotNil(t, row.AgencyCostCoefficient)
-	require.NotNil(t, row.DefaultSalesCoefficient)
 	assert.Equal(t, 0.5, *row.PlatformCostCoefficient)
-	assert.Equal(t, 0.55, *row.AgencyCostCoefficient)
-	assert.Equal(t, 0.6, *row.DefaultSalesCoefficient)
 
 	// WorkBuddy namespaces discovered remote MCP tools before calling them.
 	// The server must accept that transport-level name without accepting any
@@ -116,9 +112,8 @@ func TestPlatformPricingMCPReturnsLiveChannelCostRows(t *testing.T) {
 	require.Len(t, publicRows, 1)
 	assert.Zero(t, publicRows[0].ChannelID)
 	assert.Empty(t, publicRows[0].ChannelName)
-	assert.Nil(t, publicRows[0].PlatformCostCoefficient)
-	assert.Nil(t, publicRows[0].AgencyCostCoefficient)
-	require.NotNil(t, publicRows[0].DefaultSalesCoefficient)
+	require.NotNil(t, publicRows[0].PlatformCostCoefficient)
+	assert.Equal(t, 0.5, *publicRows[0].PlatformCostCoefficient)
 
 	modelIntent, err := playgroundPricingIntentFromMessage("查询 mcp-test-model 的价格")
 	require.NoError(t, err)
@@ -129,9 +124,9 @@ func TestPlatformPricingMCPReturnsLiveChannelCostRows(t *testing.T) {
 	assert.Contains(t, formatPricingAssistantReply(modelIntent, modelRows, revision), "mcp-test-model 的价格策略")
 	languageModelContext := pricingAssistantLanguageModelContext("查询 mcp-test-model", modelIntent, modelRows, revision)
 	assert.Contains(t, languageModelContext, "mcp-test-model")
-	assert.Contains(t, languageModelContext, "default_sales_coefficient")
 	assert.Contains(t, languageModelContext, "platform_cost_coefficient")
-	assert.Contains(t, languageModelContext, "agency_cost_coefficient")
+	assert.NotContains(t, languageModelContext, "agency_cost_coefficient")
+	assert.NotContains(t, languageModelContext, "default_sales_coefficient")
 	assert.Contains(t, languageModelContext, channel.Name)
 	assert.Contains(t, languageModelContext, "channel_id")
 
@@ -172,16 +167,23 @@ func TestPlatformPricingMCPExternalCredentialHidesChannelAndCostFields(t *testin
 	})
 	model.DB = db
 	require.NoError(t, model.MigrateAgency(db))
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Model{}, &model.Channel{}, &model.Ability{}))
 	require.NoError(t, db.Create(&model.User{Id: 1, Username: "root-public-mcp-reader", Role: common.RoleRootUser, Status: common.UserStatusEnabled}).Error)
 	channel := model.Channel{Name: "Private supplier", Type: 1, Key: "test-only", Status: common.ChannelStatusEnabled}
 	require.NoError(t, db.Create(&channel).Error)
 	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: "public-test-model", ChannelId: channel.Id, Enabled: true}).Error)
+	require.NoError(t, db.Create(&model.Model{ModelName: "private-test-model", Status: 0, NameRule: model.NameRuleExact}).Error)
+	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: "private-test-model", ChannelId: channel.Id, Enabled: true}).Error)
 	policyJSON, err := common.Marshal(agencycontract.PlatformPolicy{Revision: 1, ModelPrices: []agencycontract.PlatformModelPrice{{
 		OriginModelName: "public-test-model",
 		AgencyCostBPS:   5500,
 		DefaultSalesBPS: 6000,
 		ChannelCosts:    []agencycontract.PlatformChannelCost{{ChannelID: channel.Id, PlatformCostBPS: 5000}},
+	}, {
+		OriginModelName: "private-test-model",
+		AgencyCostBPS:   5500,
+		DefaultSalesBPS: 6000,
+		ChannelCosts:    []agencycontract.PlatformChannelCost{{ChannelID: channel.Id, PlatformCostBPS: 7000}},
 	}}})
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&model.AgencyPlatformPriceVersion{ID: 1, Revision: 1, PolicyJSON: string(policyJSON), PolicyHash: "test"}).Error)
@@ -195,11 +197,12 @@ func TestPlatformPricingMCPExternalCredentialHidesChannelAndCostFields(t *testin
 	PlatformPricingMCP(context)
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	assert.NotContains(t, recorder.Body.String(), "Private supplier")
-	assert.NotContains(t, recorder.Body.String(), "platform_cost_coefficient")
+	assert.Contains(t, recorder.Body.String(), "platform_cost_coefficient")
 	assert.NotContains(t, recorder.Body.String(), "agency_cost_coefficient")
 	assert.NotContains(t, recorder.Body.String(), "channel_id")
 	assert.NotContains(t, recorder.Body.String(), "channel_name")
-	assert.Contains(t, recorder.Body.String(), "default_sales_coefficient")
+	assert.NotContains(t, recorder.Body.String(), "default_sales_coefficient")
+	assert.NotContains(t, recorder.Body.String(), "private-test-model")
 
 	listBody := "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/list\"}"
 	recorder = httptest.NewRecorder()
@@ -209,7 +212,7 @@ func TestPlatformPricingMCPExternalCredentialHidesChannelAndCostFields(t *testin
 	PlatformPricingMCP(context)
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	assert.NotContains(t, recorder.Body.String(), "channel_id")
-	assert.NotContains(t, recorder.Body.String(), "platform cost")
+	assert.Contains(t, recorder.Body.String(), "platform cost")
 }
 
 func TestPlatformPricingQueryRejectsUnknownArgumentsAndDoesNotTreatModelVersionsAsChannels(t *testing.T) {

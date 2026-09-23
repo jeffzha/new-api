@@ -99,6 +99,23 @@ func resolveModelMetadata(records []Model, names []string) map[string]*Model {
 	return resolved
 }
 
+// PublicModelNames resolves the same exact/prefix/suffix/contains metadata
+// rules used by the model square. Models without metadata remain public for
+// backwards compatibility with channel-only model configurations.
+func PublicModelNames(db *gorm.DB, names []string) (map[string]bool, error) {
+	var records []Model
+	if err := db.Find(&records).Error; err != nil {
+		return nil, err
+	}
+	resolved := resolveModelMetadata(records, names)
+	public := make(map[string]bool, len(names))
+	for _, name := range names {
+		metadata, found := resolved[name]
+		public[name] = !found || metadata.Status == 1
+	}
+	return public, nil
+}
+
 // FillModelSquareStates applies the same metadata policy as the public catalog
 // to live routes, then aggregates concrete models for metadata rule rows.
 func FillModelSquareStates(rows []*Model, configured map[string][]int, connections []ModelConnection) error {

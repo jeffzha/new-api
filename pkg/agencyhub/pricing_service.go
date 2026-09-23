@@ -2,6 +2,7 @@ package agencyhub
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ type rootPricingRequest struct {
 	Reason               string                         `json:"reason"`
 }
 type salesPricingRequest struct {
+	MinSpreadBPS        *int  `json:"min_spread_bps"`
 	ExpectedRevision    int64 `json:"expected_revision"`
 	DefaultSalesBPS     int   `json:"default_sales_bps"`
 	DefaultChildCostBPS *int  `json:"default_child_cost_bps"`
@@ -40,8 +42,34 @@ type salesPricingRequest struct {
 }
 
 func pricingErrorMessage(err error) string {
+	var coefficientErr *agencycontract.PolicyCoefficientError
+	if errors.As(err, &coefficientErr) {
+		field := map[string]string{
+			"default_settlement_bps": "默认代理商成本系数",
+			"default_child_cost_bps": "默认下一级代理商成本系数",
+			"default_sales_bps":      "默认销售系数",
+			"settlement_bps":         "代理商成本系数",
+			"child_cost_bps":         "下一级代理商成本系数",
+			"sales_bps":              "销售系数",
+		}[coefficientErr.Field]
+		if field != "" {
+			if coefficientErr.OriginModelName != "" {
+				field = "模型 " + coefficientErr.OriginModelName + "：" + field
+			}
+			if coefficientErr.BelowCost {
+				return fmt.Sprintf("%s为 %.4f，最低应为 %.4f（代理商成本 %.4f + 最低价差 %.4f）。", field, float64(coefficientErr.ValueBPS)/10000, float64(coefficientErr.MinimumBPS)/10000, float64(coefficientErr.SettlementBPS)/10000, float64(coefficientErr.MinSpreadBPS)/10000)
+			}
+			return fmt.Sprintf("%s为 %.4f，允许范围为 %.4f 到 %.4f。", field, float64(coefficientErr.ValueBPS)/10000, float64(coefficientErr.MinimumBPS)/10000, float64(coefficientErr.MaximumBPS)/10000)
+		}
+	}
 	message := err.Error()
 	if rest, ok := strings.CutPrefix(message, "model "); ok {
+		if modelName, matched := strings.CutSuffix(rest, " child cost violates minimum spread"); matched {
+			return "模型 " + modelName + "：下一级代理商成本系数必须不低于代理商成本系数与最低价差之和。"
+		}
+		if modelName, matched := strings.CutSuffix(rest, " child cost coefficient must cover agency cost"); matched {
+			return "模型 " + modelName + "：下一级代理商成本系数不能低于代理商成本系数。"
+		}
 		if modelName, matched := strings.CutSuffix(rest, " sales coefficient must cover agency cost"); matched {
 			return "模型 " + modelName + "：销售系数不能低于代理商成本系数。"
 		}
@@ -63,6 +91,8 @@ func pricingErrorMessage(err error) string {
 		return "同一个模型只能配置一条销售系数。"
 	case message == "default sales coefficient must be at least settlement plus spread":
 		return "默认销售系数必须不低于代理商成本系数与最低价差之和。"
+	case message == "default child cost coefficient must be at least settlement plus spread":
+		return "默认下一级代理商成本系数必须不低于代理商成本系数与最低价差之和；不配置时请留空。"
 	case message == "parent child agency cost is not configured; configure it before creating a child agency":
 		return "暂时无法创建下级代理商，请先在价格策略中设置下一级代理商成本系数。"
 	case strings.HasPrefix(message, "invalid minimum spread:"):
@@ -200,7 +230,7 @@ func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agen
 			"default_child_cost_bps":     effective.DefaultChildCostBPS,
 		})
 	}
-	respondOK(c, gin.H{"agency_id": agency.ID, "agency_name": agency.DisplayName, "revision": policy.Revision, "platform_revision": platform.Revision, "default_sales_bps": effective.DefaultSalesBPS, "default_child_cost_bps": effective.DefaultChildCostBPS, "items": items})
+	respondOK(c, gin.H{"agency_id": agency.ID, "agency_name": agency.DisplayName, "revision": policy.Revision, "platform_revision": platform.Revision, "min_spread_bps": effective.MinSpreadBPS, "default_sales_bps": effective.DefaultSalesBPS, "default_child_cost_bps": effective.DefaultChildCostBPS, "items": items})
 }
 
 func (a *App) getOwnPricingHistory(c *gin.Context) {
@@ -399,7 +429,10 @@ func (a *App) handleRootSalesPricing(c *gin.Context, publish bool) {
 		return
 	}
 	if publish {
-		_ = a.publishPolicy(c, id, request.ExpectedRevision, candidate, request.Reason, ActorTypeRoot)
+		if request.MinSpreadBPS != nil {
+			candidate.MinSpreadBPS = *request.MinSpreadBPS
+		}
+		_ = a.publishPolicy(c, id, request.ExpectedRevision, candidate, request.Reason, ActorTypeRoot, request.DefaultChildCostBPS != nil || len(request.ModelChildCostOverrides) > 0)
 		return
 	}
 	agency, _, loadErr := a.loadAgencyPolicy(id)
@@ -434,7 +467,7 @@ func (a *App) publishRootPricing(c *gin.Context) {
 	if policy.SalesCapBPS == 0 {
 		policy.SalesCapBPS = a.config.SalesCapBPS
 	}
-	if err = a.publishPolicy(c, id, request.ExpectedRevision, policy, request.Reason, ActorTypeRoot); err != nil {
+	if err = a.publishPolicy(c, id, request.ExpectedRevision, policy, request.Reason, ActorTypeRoot, true); err != nil {
 		return
 	}
 }
@@ -446,6 +479,10 @@ func (a *App) publishSalesPricing(c *gin.Context) {
 	var request salesPricingRequest
 	if err := common.DecodeJsonStrict(c.Request.Body, &request); err != nil {
 		respondError(c, http.StatusBadRequest, "invalid_request", "请求格式错误", nil)
+		return
+	}
+	if request.MinSpreadBPS != nil {
+		respondError(c, http.StatusForbidden, "spread_read_only", "最低价差只能由平台管理员设置", nil)
 		return
 	}
 	candidate, err := a.mergePublishedSalesPolicy(old, request)
@@ -460,7 +497,7 @@ func (a *App) publishSalesPricing(c *gin.Context) {
 		// agency. Preserve the real actor in the immutable policy history.
 		actorType = ActorTypeRoot
 	}
-	_ = a.publishPolicy(c, agency.ID, request.ExpectedRevision, candidate, request.Reason, actorType)
+	_ = a.publishPolicy(c, agency.ID, request.ExpectedRevision, candidate, request.Reason, actorType, request.DefaultChildCostBPS != nil || len(request.ModelChildCostOverrides) > 0)
 }
 
 func (a *App) effectivePolicy(policy agencycontract.Policy) (agencycontract.Policy, error) {
@@ -614,7 +651,7 @@ func mergeSalesPolicy(base agencycontract.Policy, request salesPricingRequest) (
 	return candidate, nil
 }
 
-func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, policy agencycontract.Policy, reason, actorType string) error {
+func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, policy agencycontract.Policy, reason, actorType string, syncChildren bool) error {
 	if expectedRevision <= 0 {
 		respondError(c, http.StatusUnprocessableEntity, "expected_revision_required", "必须提供当前价格版本", nil)
 		return errors.New("expected revision required")
@@ -642,15 +679,37 @@ func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, po
 	now := time.Now().UnixMilli()
 	var row model.AgencyPricePolicyVersion
 	err = a.db.Transaction(func(tx *gorm.DB) error {
+		// Serialize with parent publication and child creation in parent-first order.
+		if targetAgency.ParentAgencyID != nil {
+			var parent model.Agency
+			if err := model.AgencyLockForUpdate(tx).First(&parent, *targetAgency.ParentAgencyID).Error; err != nil {
+				return err
+			}
+			if err := validateChildPolicyTx(tx, parent.ID, policy); err != nil {
+				return err
+			}
+		}
 		var agency model.Agency
-		if err := tx.First(&agency, agencyID).Error; err != nil {
+		if err := model.AgencyLockForUpdate(tx).First(&agency, agencyID).Error; err != nil {
 			return err
 		}
 		if agency.Status != AgencyStatusActive {
 			return errors.New("agency is disabled")
 		}
-		if expectedRevision > 0 && agency.PriceRevision != expectedRevision {
+		if agency.PriceRevision != expectedRevision {
 			return agencycontract.ErrPolicyRevision
+		}
+		var currentVersion model.AgencyPricePolicyVersion
+		if err := tx.Where("id = ? AND agency_id = ?", agency.CurrentPolicyVersionID, agency.ID).First(&currentVersion).Error; err != nil {
+			return err
+		}
+		if err := validateCustomerSalesPolicyTx(tx, agency.ID, policy); err != nil {
+			return &childPricingPropagationError{ChildName: agency.DisplayName, Cause: err}
+		}
+		if syncChildren {
+			if err := a.syncDirectChildPoliciesTx(tx, c, identity, agency, policy, reason, actorType); err != nil {
+				return err
+			}
 		}
 		policy.Revision = agency.PriceRevision + 1
 		encoded, err := common.Marshal(policy)
@@ -685,6 +744,9 @@ func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, po
 		if errors.Is(err, agencycontract.ErrPolicyRevision) {
 			status = http.StatusConflict
 			code = "price_revision_conflict"
+		} else if _, ok := err.(*childPricingPropagationError); ok {
+			status = http.StatusConflict
+			code = "child_pricing_conflict"
 		}
 		respondError(c, status, code, err.Error(), nil)
 		return err

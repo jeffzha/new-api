@@ -252,12 +252,13 @@ func (a *App) publishPlatformPricing(c *gin.Context) {
 		}
 	}
 	var activePolicies []struct {
-		AgencyID    int64
-		DisplayName string
-		PolicyJSON  string
+		AgencyID       int64
+		ParentAgencyID *int64
+		DisplayName    string
+		PolicyJSON     string
 	}
 	if err = a.db.Table((model.Agency{}).TableName() + " AS agency").
-		Select("agency.id AS agency_id, agency.display_name, version.policy_json").
+		Select("agency.id AS agency_id, agency.parent_agency_id, agency.display_name, version.policy_json").
 		Joins("JOIN " + (model.AgencyPricePolicyVersion{}).TableName() + " AS version ON version.id = agency.current_policy_version_id AND version.agency_id = agency.id").
 		Scan(&activePolicies).Error; err != nil {
 		respondError(c, http.StatusInternalServerError, "database_error", "校验代理商价格策略失败", nil)
@@ -270,12 +271,19 @@ func (a *App) publishPlatformPricing(c *gin.Context) {
 			respondError(c, http.StatusConflict, "invalid_agency_pricing", "代理商价格策略数据异常："+row.DisplayName, nil)
 			return
 		}
-		if _, applyErr := agencycontract.ApplyPlatformPolicy(agencyPolicy, policy); applyErr != nil {
-			conflicts = append(conflicts, row.DisplayName)
+		var validationErr error
+		if row.ParentAgencyID == nil {
+			_, validationErr = agencycontract.ApplyPlatformPolicy(agencyPolicy, policy)
+		} else {
+			// Child agencies retain the cost inherited in their own policy revision.
+			validationErr = agencycontract.ValidatePolicy(agencyPolicy)
+		}
+		if validationErr != nil {
+			conflicts = append(conflicts, row.DisplayName+"："+pricingErrorMessage(validationErr))
 		}
 	}
 	if len(conflicts) > 0 {
-		respondError(c, http.StatusConflict, "agency_sales_below_cost", "以下代理商的销售系数低于新的代理商成本，请先调整："+strings.Join(conflicts, "、"), nil)
+		respondError(c, http.StatusConflict, "agency_sales_below_cost", "以下代理商的价格策略不符合要求，请先调整："+strings.Join(conflicts, "；"), nil)
 		return
 	}
 	identity := currentIdentity(c)

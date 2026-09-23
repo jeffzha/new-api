@@ -222,6 +222,23 @@ func ValidateCoefficient(value, cap int) error {
 	return nil
 }
 
+// PolicyCoefficientError exposes actionable pricing bounds while preserving
+// the original error text for callers that already report or inspect it.
+type PolicyCoefficientError struct {
+	OriginModelName string
+	Field           string
+	ValueBPS        int
+	MinimumBPS      int
+	MaximumBPS      int
+	SettlementBPS   int
+	MinSpreadBPS    int
+	BelowCost       bool
+	Cause           error
+}
+
+func (e *PolicyCoefficientError) Error() string { return e.Cause.Error() }
+func (e *PolicyCoefficientError) Unwrap() error { return e.Cause }
+
 func ValidatePolicy(policy Policy) error {
 	cap := policy.SalesCapBPS
 	if cap == 0 {
@@ -234,21 +251,21 @@ func ValidatePolicy(policy Policy) error {
 		return fmt.Errorf("invalid minimum spread: %d", policy.MinSpreadBPS)
 	}
 	if err := ValidateCoefficient(policy.DefaultSettlementBPS, cap); err != nil {
-		return err
+		return &PolicyCoefficientError{Field: "default_settlement_bps", ValueBPS: policy.DefaultSettlementBPS, MaximumBPS: cap, Cause: err}
 	}
 	if policy.DefaultChildCostBPS != 0 {
 		if err := ValidateCoefficient(policy.DefaultChildCostBPS, cap); err != nil {
-			return err
+			return &PolicyCoefficientError{Field: "default_child_cost_bps", ValueBPS: policy.DefaultChildCostBPS, MaximumBPS: cap, Cause: err}
 		}
 		if policy.DefaultChildCostBPS < policy.DefaultSettlementBPS+policy.MinSpreadBPS {
-			return fmt.Errorf("default child cost coefficient must be at least settlement plus spread")
+			return &PolicyCoefficientError{Field: "default_child_cost_bps", ValueBPS: policy.DefaultChildCostBPS, MinimumBPS: policy.DefaultSettlementBPS + policy.MinSpreadBPS, MaximumBPS: cap, SettlementBPS: policy.DefaultSettlementBPS, MinSpreadBPS: policy.MinSpreadBPS, BelowCost: true, Cause: errors.New("default child cost coefficient must be at least settlement plus spread")}
 		}
 	}
 	if err := ValidateCoefficient(policy.DefaultSalesBPS, cap); err != nil {
-		return err
+		return &PolicyCoefficientError{Field: "default_sales_bps", ValueBPS: policy.DefaultSalesBPS, MaximumBPS: cap, Cause: err}
 	}
 	if policy.DefaultSalesBPS < policy.DefaultSettlementBPS+policy.MinSpreadBPS {
-		return fmt.Errorf("default sales coefficient must be at least settlement plus spread")
+		return &PolicyCoefficientError{Field: "default_sales_bps", ValueBPS: policy.DefaultSalesBPS, MinimumBPS: policy.DefaultSettlementBPS + policy.MinSpreadBPS, MaximumBPS: cap, SettlementBPS: policy.DefaultSettlementBPS, MinSpreadBPS: policy.MinSpreadBPS, BelowCost: true, Cause: errors.New("default sales coefficient must be at least settlement plus spread")}
 	}
 	seen := make(map[string]struct{}, len(policy.ModelOverrides))
 	if len(policy.ModelOverrides) > 1000 {
@@ -276,21 +293,21 @@ func ValidatePolicy(policy Policy) error {
 			childCost = *override.ChildCostBPS
 		}
 		if err := ValidateCoefficient(settlement, cap); err != nil {
-			return err
+			return &PolicyCoefficientError{OriginModelName: override.OriginModelName, Field: "settlement_bps", ValueBPS: settlement, MaximumBPS: cap, Cause: err}
 		}
 		if err := ValidateCoefficient(sales, cap); err != nil {
-			return err
+			return &PolicyCoefficientError{OriginModelName: override.OriginModelName, Field: "sales_bps", ValueBPS: sales, MaximumBPS: cap, Cause: err}
 		}
 		if override.ChildCostBPS != nil {
 			if err := ValidateCoefficient(childCost, cap); err != nil {
-				return err
+				return &PolicyCoefficientError{OriginModelName: override.OriginModelName, Field: "child_cost_bps", ValueBPS: childCost, MaximumBPS: cap, Cause: err}
 			}
 			if childCost < settlement+policy.MinSpreadBPS {
-				return fmt.Errorf("model %s child cost violates minimum spread", override.OriginModelName)
+				return &PolicyCoefficientError{OriginModelName: override.OriginModelName, Field: "child_cost_bps", ValueBPS: childCost, MinimumBPS: settlement + policy.MinSpreadBPS, MaximumBPS: cap, SettlementBPS: settlement, MinSpreadBPS: policy.MinSpreadBPS, BelowCost: true, Cause: fmt.Errorf("model %s child cost violates minimum spread", override.OriginModelName)}
 			}
 		}
 		if sales < settlement+policy.MinSpreadBPS {
-			return fmt.Errorf("model %s violates minimum spread", override.OriginModelName)
+			return &PolicyCoefficientError{OriginModelName: override.OriginModelName, Field: "sales_bps", ValueBPS: sales, MinimumBPS: settlement + policy.MinSpreadBPS, MaximumBPS: cap, SettlementBPS: settlement, MinSpreadBPS: policy.MinSpreadBPS, BelowCost: true, Cause: fmt.Errorf("model %s violates minimum spread", override.OriginModelName)}
 		}
 	}
 	return nil

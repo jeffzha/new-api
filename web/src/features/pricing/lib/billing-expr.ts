@@ -307,7 +307,7 @@ export function parseTiersFromExpr(exprStr: string): ParsedTier[] {
   if (!exprStr) return []
   const compiled = compileBillingExpression(exprStr)
   if (compiled.status !== 'ready') return []
-  const canonical = readTokenTierChain(compiled.ast)
+  const canonical = readTokenTierChain(compiled.ast, compiled.source)
   if (canonical) return canonical.map(mapTokenTier)
   return readTimeTokenPricing(exprStr)?.tiers.map(mapTokenTier) ?? []
 }

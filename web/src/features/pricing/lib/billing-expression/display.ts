@@ -46,6 +46,29 @@ export type TimeTokenTier = TokenTier & {
   timeConditions: { condition: ExpressionNode; matches: boolean }[]
 }
 
+function isRequestCondition(node: ExpressionNode): boolean {
+  const dependencies = expressionDependencies(node)
+  if (dependencies.variables.size > 0) return false
+  const functions = [...dependencies.functions]
+  return (
+    functions.some((name) => ['param', 'header'].includes(name)) &&
+    functions.every((name) => ['param', 'header', 'has'].includes(name))
+  )
+}
+
+function tokenTierCondition(
+  node: ExpressionNode,
+  source: string
+): Pick<TokenTier, 'conditions' | 'conditionText'> | null {
+  const conditions = tokenConditions(node)
+  if (conditions) return { conditions }
+  if (!source || !isRequestCondition(node)) return null
+  return {
+    conditions: [],
+    conditionText: source.slice(node.start, node.end),
+  }
+}
+
 export function flattenBinary(
   node: ExpressionNode,
   operator: string
@@ -182,7 +205,10 @@ function tokenTier(
 }
 
 /** Legacy token summary contract: ordered linear chain, never a minimum or partial price extraction. */
-export function readTokenTierChain(node: ExpressionNode): TokenTier[] | null {
+export function readTokenTierChain(
+  node: ExpressionNode,
+  source = ''
+): TokenTier[] | null {
   if (
     node.kind === 'conditional' &&
     node.condition.kind === 'binary' &&
@@ -220,7 +246,7 @@ export function readTokenTierChain(node: ExpressionNode): TokenTier[] | null {
     ]) {
       if (factor.kind === 'variable' && factor.name === 'image_count') {
         return (
-          readTokenTierChain(pricing)?.map((tier) => ({
+          readTokenTierChain(pricing, source)?.map((tier) => ({
             ...tier,
             imageCount: true,
           })) ?? null
@@ -231,9 +257,11 @@ export function readTokenTierChain(node: ExpressionNode): TokenTier[] | null {
   const tiers: TokenTier[] = []
   let remaining = node
   while (remaining.kind === 'conditional') {
-    const conditions = tokenConditions(remaining.condition)
-    if (!conditions) return null
+    const condition = tokenTierCondition(remaining.condition, source)
+    if (!condition) return null
+    const { conditions } = condition
     const tier = tokenTier(remaining.yes, conditions)
+    if (tier && condition.conditionText) tier.conditionText = condition.conditionText
     if (!tier) return null
     tiers.push(tier)
     remaining = remaining.no

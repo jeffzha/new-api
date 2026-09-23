@@ -125,7 +125,7 @@ func (a *App) publishChildPricing(c *gin.Context) {
 		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
 		return
 	}
-	if err := a.publishPolicy(c, child.ID, request.ExpectedRevision, candidate, request.Reason, ActorTypeOperator); err != nil {
+	if err := a.publishPolicy(c, child.ID, request.ExpectedRevision, candidate, request.Reason, ActorTypeOperator, false); err != nil {
 		return
 	}
 }

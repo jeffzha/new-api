@@ -32,6 +32,7 @@ function AgencySalesForm(props: {
   const { t } = useTranslation();
   const mutation = useMutation();
   const [reason, setReason] = useState("");
+  const [minSpread, setMinSpread] = useState(() => formatCoefficient(props.data.min_spread_bps));
   const [error, setError] = useState<unknown>(null);
   const [defaultSales, setDefaultSales] = useState(() => formatCoefficient(props.data.default_sales_bps));
   const [defaultChildCost, setDefaultChildCost] = useState(() => props.data.default_child_cost_bps ? formatCoefficient(props.data.default_child_cost_bps) : "");
@@ -57,6 +58,7 @@ function AgencySalesForm(props: {
         props.root ? props.path + "/sales/publish" : "/pricing/sales/publish",
         {
           expected_revision: props.data.revision,
+          ...(props.root ? { min_spread_bps: parseCoefficient(minSpread) } : {}),
           default_sales_bps: parseCoefficient(defaultSales),
           default_child_cost_bps: defaultChildCost.trim() === "" ? 0 : parseCoefficient(defaultChildCost),
           model_sales_overrides: props.data.items.map((row) => ({
@@ -95,6 +97,9 @@ function AgencySalesForm(props: {
         </button>
       </div>
       <div className="pricing-defaults-grid">
+        <Field label={t("Minimum spread")}>
+          <input inputMode="decimal" value={minSpread} readOnly={!props.root} onChange={(event) => setMinSpread(event.target.value)} />
+        </Field>
         <Field label={t("Default sales coefficient")}>
           <input inputMode="decimal" value={defaultSales} onChange={(event) => setDefaultSales(event.target.value)} />
           <small>{t("Used when a model or customer has no more specific sales override.")}</small>

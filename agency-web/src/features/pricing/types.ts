@@ -84,6 +84,7 @@ export type ModelSales = {
   agency_name: string;
   revision: number;
   platform_revision: number;
+  min_spread_bps: number;
   default_sales_bps: number;
   default_child_cost_bps?: number;
   items: ModelSaleRow[];

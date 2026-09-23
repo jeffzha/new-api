@@ -2,6 +2,7 @@ package agencyhub
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -55,6 +56,10 @@ func (a *App) validateCustomerSales(agencyID int64, modelName string, sales int)
 	if err := agencycontract.ValidateCoefficient(sales, effective.SalesCapBPS); err != nil {
 		return err
 	}
+	return validateCustomerSalesPolicy(effective, modelName, sales)
+}
+
+func validateCustomerSalesPolicy(effective agencycontract.Policy, modelName string, sales int) error {
 	if modelName != "" {
 		resolved, err := agencycontract.Resolve(effective, modelName)
 		if err != nil {
@@ -77,6 +82,20 @@ func (a *App) validateCustomerSales(agencyID int64, modelName string, sales int)
 	}
 	if sales < minimum {
 		return errors.New("customer-wide sales coefficient is below one or more model costs")
+	}
+	return nil
+}
+
+// validateCustomerSalesPolicyTx protects negotiated prices when agency costs change.
+func validateCustomerSalesPolicyTx(tx *gorm.DB, agencyID int64, policy agencycontract.Policy) error {
+	var overrides []model.AgencyCustomerSalesOverride
+	if err := tx.Where("agency_id = ?", agencyID).Find(&overrides).Error; err != nil {
+		return err
+	}
+	for _, override := range overrides {
+		if err := validateCustomerSalesPolicy(policy, override.OriginModelName, override.SalesBPS); err != nil {
+			return fmt.Errorf("客户 %d（模型 %s，销售系数 %.4f）：%s", override.UserID, override.OriginModelName, float64(override.SalesBPS)/10000, pricingErrorMessage(err))
+		}
 	}
 	return nil
 }
@@ -187,6 +206,13 @@ func (a *App) putCustomerSalesPricing(c *gin.Context) {
 	now := time.Now().UnixMilli()
 	var row model.AgencyCustomerSalesOverride
 	err = a.db.Transaction(func(tx *gorm.DB) error {
+		var locked model.Agency
+		if err := model.AgencyLockForUpdate(tx).First(&locked, agency.ID).Error; err != nil {
+			return err
+		}
+		if err := (&App{db: tx}).validateCustomerSales(agency.ID, name, request.SalesBPS); err != nil {
+			return err
+		}
 		var existing model.AgencyCustomerSalesOverride
 		lookup := tx.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, key).First(&existing).Error
 		if lookup != nil && !errors.Is(lookup, gorm.ErrRecordNotFound) {
@@ -276,6 +302,23 @@ func (a *App) putCustomerSalesPricingBatch(c *gin.Context) {
 	}
 	now := time.Now().UnixMilli()
 	err = a.db.Transaction(func(tx *gorm.DB) error {
+		var locked model.Agency
+		if err := model.AgencyLockForUpdate(tx).First(&locked, agency.ID).Error; err != nil {
+			return err
+		}
+		validator := &App{db: tx}
+		if request.GlobalSalesBPS != nil {
+			if err := validator.validateCustomerSales(agency.ID, "", *request.GlobalSalesBPS); err != nil {
+				return err
+			}
+		}
+		for _, item := range normalized {
+			if item.sales != nil {
+				if err := validator.validateCustomerSales(agency.ID, item.name, *item.sales); err != nil {
+					return err
+				}
+			}
+		}
 		apply := func(key, name string, sales *int) error {
 			var existing model.AgencyCustomerSalesOverride
 			lookup := tx.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, key).First(&existing).Error

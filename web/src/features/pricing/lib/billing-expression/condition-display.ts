@@ -128,11 +128,41 @@ function describeTimeRange(
   return { text, kind, timezone: first.timezone }
 }
 
+function describeRequestCondition(
+  node: ExpressionNode,
+  t: Translate
+): Description | null {
+  if (
+    node.kind !== 'binary' ||
+    !['==', '!='].includes(node.operator) ||
+    node.left.kind !== 'call' ||
+    !['param', 'header'].includes(node.left.name) ||
+    node.left.args[0]?.kind !== 'literal' ||
+    typeof node.left.args[0].value !== 'string' ||
+    node.right.kind !== 'literal' ||
+    node.right.value === null
+  ) {
+    return null
+  }
+  const source = node.left.name === 'header' ? 'Header' : 'Body param'
+  const value =
+    typeof node.right.value === 'string'
+      ? node.right.value
+      : String(node.right.value)
+  return {
+    text: `${t(source)} ${node.left.args[0].value} ${node.operator === '==' ? '=' : '≠'} ${value}`,
+    kind: 'combined',
+    timezone: ''
+  }
+}
+
 function describeBillingCondition(
   node: ExpressionNode,
   t: Translate,
   locale: string
 ): Description | null {
+  const requestDescription = describeRequestCondition(node, t)
+  if (requestDescription) return requestDescription
   if (node.kind === 'unary' && node.operator === '!') {
     const description = describeBillingCondition(node.operand, t, locale)
     if (!description) return null

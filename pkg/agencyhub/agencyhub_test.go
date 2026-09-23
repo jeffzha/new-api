@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,7 +25,10 @@ import (
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -265,8 +269,45 @@ func TestSalesPolicyPublishPreservesRootSettlementOverrides(t *testing.T) {
 }
 
 func TestPricingErrorsAreSafeChineseMessages(t *testing.T) {
-	require.Equal(t, "模型 deepseek-v4-flash：销售系数必须不低于代理商成本系数与最低价差之和。", pricingErrorMessage(errors.New("model deepseek-v4-flash violates minimum spread")))
-	require.Equal(t, "价格策略配置不符合要求，请检查成本顺序、销售系数、最低价差和数值范围。", pricingErrorMessage(errors.New("internal implementation detail")))
+	assert.Equal(t, "模型 deepseek-v4-flash：销售系数必须不低于代理商成本系数与最低价差之和。", pricingErrorMessage(errors.New("model deepseek-v4-flash violates minimum spread")))
+	assert.Equal(t, "价格策略配置不符合要求，请检查成本顺序、销售系数、最低价差和数值范围。", pricingErrorMessage(errors.New("internal implementation detail")))
+	for _, tc := range []struct {
+		name, field, want string
+		value             int
+		model             bool
+	}{
+		{"default child below cost", "child", "默认下一级代理商成本系数为 0.7000，最低应为 0.7500（代理商成本 0.7000 + 最低价差 0.0500）。", 7000, false},
+		{"model child below cost", "child", "模型 model-a：下一级代理商成本系数为 0.0000，最低应为 0.7500（代理商成本 0.7000 + 最低价差 0.0500）。", 0, true},
+		{"default sale below cost", "sales", "默认销售系数为 0.7000，最低应为 0.7500（代理商成本 0.7000 + 最低价差 0.0500）。", 7000, false},
+		{"model sale below cost", "sales", "模型 model-a：销售系数为 0.7499，最低应为 0.7500（代理商成本 0.7000 + 最低价差 0.0500）。", 7499, true},
+		{"model sale exceeds cap", "sales", "模型 model-a：销售系数为 3.0001，允许范围为 0.0000 到 3.0000。", 30001, true},
+		{"default child exceeds cap", "child", "默认下一级代理商成本系数为 3.0001，允许范围为 0.0000 到 3.0000。", 30001, false},
+		{"model child negative", "child", "模型 model-a：下一级代理商成本系数为 -0.0001，允许范围为 0.0000 到 3.0000。", -1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := agencycontract.Policy{DefaultSettlementBPS: 7000, DefaultSalesBPS: 7500, MinSpreadBPS: 500, SalesCapBPS: 30000}
+			if tc.model {
+				override := agencycontract.ModelOverride{OriginModelName: "model-a"}
+				if tc.field == "child" {
+					override.ChildCostBPS = &tc.value
+				} else {
+					override.SalesBPS = &tc.value
+				}
+				policy.ModelOverrides = []agencycontract.ModelOverride{override}
+			} else if tc.field == "child" {
+				policy.DefaultChildCostBPS = tc.value
+			} else {
+				policy.DefaultSalesBPS = tc.value
+			}
+			err := agencycontract.ValidatePolicy(policy)
+			require.Error(t, err)
+			assert.Equal(t, tc.want, pricingErrorMessage(fmt.Errorf("pricing validation: %w", err)))
+		})
+	}
+	policy := agencycontract.Policy{DefaultSettlementBPS: 7000, DefaultSalesBPS: 7500, MinSpreadBPS: 500, SalesCapBPS: 30000}
+	assert.NoError(t, agencycontract.ValidatePolicy(policy), "blank default child cost is optional")
+	policy.DefaultChildCostBPS = 7500
+	assert.NoError(t, agencycontract.ValidatePolicy(policy), "exact minimum remains valid")
 }
 
 func TestPlatformPricingPublishesLiveModelChannelMatrixAndRejectsAgencyConflict(t *testing.T) {
@@ -320,6 +361,151 @@ func TestPlatformPricingPublishesLiveModelChannelMatrixAndRejectsAgencyConflict(
 	conflict := client.post("/agency/api/v1/root/platform-pricing/publish", conflicting, "platform-pricing-conflict", conflictProof)
 	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
 	require.Contains(t, conflict.Body.String(), "Low sale agency")
+}
+
+func TestPlatformPricingPreservesChildCostsAcrossDialects(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			var dialector gorm.Dialector
+			if dialect == "sqlite" {
+				dialector = sqlite.Open(filepath.Join(t.TempDir(), "pricing.sqlite"))
+			} else {
+				dsn := strings.TrimSpace(os.Getenv("AGENCY_HUB_TEST_" + strings.ToUpper(dialect) + "_DSN"))
+				if os.Getenv("AGENCY_HUB_RUN_EXTERNAL_DB_TESTS") != "1" || dsn == "" {
+					t.Skip("isolated external test database is not configured")
+				}
+				if dialect == "mysql" {
+					dialector = mysql.Open(dsn)
+				} else {
+					dialector = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+				}
+			}
+			db, err := gorm.Open(dialector, &gorm.Config{})
+			require.NoError(t, err)
+			versionQuery := "SELECT VERSION()"
+			if dialect == "sqlite" {
+				versionQuery = "SELECT sqlite_version()"
+			}
+			var databaseVersion string
+			require.NoError(t, db.Raw(versionQuery).Scan(&databaseVersion).Error)
+			t.Logf("%s version: %s", dialect, databaseVersion)
+			pool, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, pool.Close()) })
+			// Use an isolated database: publication owns the singleton platform state.
+			require.NoError(t, db.AutoMigrate(&model.Agency{}, &model.AgencyPricePolicyVersion{}, &model.AgencyPricePolicyItem{}, &model.AgencyPlatformPriceState{}, &model.AgencyPlatformPriceVersion{}, &model.AgencyAuditLog{}, &model.AgencyCustomerSalesOverride{}, &model.Channel{}, &model.Ability{}))
+			db = db.Begin()
+			require.NoError(t, db.Error)
+			t.Cleanup(func() { require.NoError(t, db.Rollback().Error) })
+			app := New(db, db, Config{})
+			channel := model.Channel{Name: "pricing-test", Type: 1, Key: "unused", Status: common.ChannelStatusEnabled}
+			require.NoError(t, db.Create(&channel).Error)
+			for _, name := range []string{"qwen-image-2.0", "new-model"} {
+				require.NoError(t, db.Create(&model.Ability{Group: "default", Model: name, ChannelId: channel.Id, Enabled: true}).Error)
+			}
+			root := model.Agency{Code: "root", InviteCode: "ROOT", DisplayName: "Root agency", Status: AgencyStatusActive, PriceRevision: 1, Version: 1}
+			require.NoError(t, db.Create(&root).Error)
+			child := model.Agency{Code: "child", InviteCode: "CHILD", DisplayName: "Child agency", ParentAgencyID: &root.ID, Depth: 2, Status: AgencyStatusActive, PriceRevision: 1, Version: 1}
+			require.NoError(t, db.Create(&child).Error)
+			rootSales, childCost, childSales := 10000, 7000, 7500
+			rootPolicy := agencycontract.Policy{Revision: 1, DefaultSettlementBPS: 7000, DefaultSalesBPS: 10000, SalesCapBPS: 30000, ModelOverrides: []agencycontract.ModelOverride{{OriginModelName: "qwen-image-2.0", SalesBPS: &rootSales}}}
+			childPolicy := agencycontract.Policy{Revision: 1, DefaultSettlementBPS: childCost, DefaultSalesBPS: childSales, MinSpreadBPS: 500, SalesCapBPS: 30000, ModelOverrides: []agencycontract.ModelOverride{{OriginModelName: "qwen-image-2.0", SettlementBPS: &childCost, SalesBPS: &childSales}}}
+			for i, agency := range []*model.Agency{&root, &child} {
+				encoded, marshalErr := common.Marshal([]agencycontract.Policy{rootPolicy, childPolicy}[i])
+				require.NoError(t, marshalErr)
+				version := model.AgencyPricePolicyVersion{AgencyID: agency.ID, Revision: 1, PolicyJSON: string(encoded)}
+				require.NoError(t, db.Create(&version).Error)
+				agency.CurrentPolicyVersionID = version.ID
+				require.NoError(t, db.Model(agency).Update("current_policy_version_id", version.ID).Error)
+			}
+			var revision int64
+			for _, tc := range []struct {
+				name         string
+				cost, status int
+			}{
+				{"initial publication", 10000, http.StatusOK},
+				{"republish unchanged costs", 10000, http.StatusOK},
+				{"root below new cost", 11000, http.StatusConflict},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					body, marshalErr := common.Marshal(platformPricingPublishRequest{ExpectedRevision: revision, Reason: tc.name, ModelPrices: []agencycontract.PlatformModelPrice{
+						{OriginModelName: "qwen-image-2.0", ChannelCosts: []agencycontract.PlatformChannelCost{{ChannelID: channel.Id, PlatformCostBPS: tc.cost}}, AgencyCostBPS: tc.cost, DefaultSalesBPS: tc.cost},
+						{OriginModelName: "new-model", ChannelCosts: []agencycontract.PlatformChannelCost{{ChannelID: channel.Id, PlatformCostBPS: 5000}}, AgencyCostBPS: 5500, DefaultSalesBPS: 7000},
+					}})
+					require.NoError(t, marshalErr)
+					recorder := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(recorder)
+					c.Request = httptest.NewRequest(http.MethodPost, "/root/platform-pricing/publish", bytes.NewReader(body))
+					c.Set("agency_identity", &Identity{ActorType: ActorTypeRoot, ActorID: 1})
+					app.publishPlatformPricing(c)
+					require.Equal(t, tc.status, recorder.Code, recorder.Body.String())
+					if tc.status == http.StatusOK {
+						revision++
+					} else {
+						assert.Contains(t, recorder.Body.String(), "Root agency：模型 qwen-image-2.0：销售系数为 1.0000，最低应为 1.1000")
+						assert.NotContains(t, recorder.Body.String(), "Child agency")
+					}
+					saved, loadErr := model.LoadAgencyPlatformPolicy(db)
+					require.NoError(t, loadErr)
+					assert.Equal(t, revision, saved.Revision)
+				})
+			}
+			_, savedChild, err := app.loadAgencyPolicy(child.ID)
+			require.NoError(t, err)
+			assert.Equal(t, childPolicy, savedChild, "platform publication must not rewrite a child policy")
+			for _, tc := range []struct {
+				name                string
+				cost, sales, status int
+			}{
+				{"below minimum child cost", 7000, 7500, http.StatusUnprocessableEntity},
+				{"below minimum sale", 0, 7499, http.StatusUnprocessableEntity},
+				{"exact minimum child cost", 7500, 7500, http.StatusOK},
+				{"blank child cost", 0, 7500, http.StatusOK},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					body := fmt.Sprintf(`{"expected_revision":%d,"default_sales_bps":%d,"default_child_cost_bps":%d,"model_sales_overrides":[{"origin_model_name":"qwen-image-2.0","sales_bps":7500}],"reason":"pricing regression"}`, savedChild.Revision, tc.sales, tc.cost)
+					recorder := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(recorder)
+					c.Request = httptest.NewRequest(http.MethodPost, "/sales/publish", strings.NewReader(body))
+					c.Params = gin.Params{{Key: "id", Value: strconv.FormatInt(child.ID, 10)}}
+					c.Set("agency_identity", &Identity{ActorType: ActorTypeRoot, ActorID: 1})
+					app.publishRootSalesPricing(c)
+					require.Equal(t, tc.status, recorder.Code, recorder.Body.String())
+					if tc.status == http.StatusOK {
+						savedChild.Revision++
+					} else {
+						assert.Contains(t, recorder.Body.String(), "最低应为 0.7500（代理商成本 0.7000 + 最低价差 0.0500）")
+					}
+					_, current, loadErr := app.loadAgencyPolicy(child.ID)
+					require.NoError(t, loadErr)
+					assert.Equal(t, savedChild.Revision, current.Revision)
+					assert.Equal(t, childCost, current.DefaultSettlementBPS)
+				})
+			}
+			// Invalid inherited pricing must still block publication; children are
+			// validated against their own cost, not exempted from validation.
+			_, invalidChild, err := app.loadAgencyPolicy(child.ID)
+			require.NoError(t, err)
+			invalidChild.DefaultChildCostBPS = 7000
+			encoded, err := common.Marshal(invalidChild)
+			require.NoError(t, err)
+			require.NoError(t, db.Model(&model.AgencyPricePolicyVersion{}).Where("agency_id = ? AND revision = ?", child.ID, invalidChild.Revision).Update("policy_json", string(encoded)).Error)
+			platform, err := model.LoadAgencyPlatformPolicy(db)
+			require.NoError(t, err)
+			body, err := common.Marshal(platformPricingPublishRequest{ExpectedRevision: revision, Reason: "invalid inherited policy", ModelPrices: platform.ModelPrices})
+			require.NoError(t, err)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/root/platform-pricing/publish", bytes.NewReader(body))
+			c.Set("agency_identity", &Identity{ActorType: ActorTypeRoot, ActorID: 1})
+			app.publishPlatformPricing(c)
+			assert.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
+			assert.Contains(t, recorder.Body.String(), "Child agency：默认下一级代理商成本系数为 0.7000，最低应为 0.7500")
+			unchanged, err := model.LoadAgencyPlatformPolicy(db)
+			require.NoError(t, err)
+			assert.Equal(t, platform, unchanged)
+		})
+	}
 }
 
 func TestPayoutAccountEncryptionRoundTrip(t *testing.T) {

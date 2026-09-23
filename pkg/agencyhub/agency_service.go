@@ -512,6 +512,11 @@ func (a *App) createAgency(rootID int64, displayName, operatorUsername string, p
 		if err != nil {
 			return err
 		}
+		if parentAgencyID != nil {
+			if err := validateChildPolicyTx(tx, *parentAgencyID, policy); err != nil {
+				return err
+			}
+		}
 		agency = model.Agency{ParentAgencyID: parentAgencyID, Depth: depth, Code: code, DisplayName: displayName, Status: AgencyStatusActive, InviteCode: invite, PriceRevision: 1, StateRevision: 1, Version: 1, CreatedByType: creatorType, CreatedByID: rootID, CreatedAt: now / 1000, UpdatedAt: now / 1000}
 		if err := tx.Create(&agency).Error; err != nil {
 			return err

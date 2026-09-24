@@ -28,7 +28,7 @@ func agencyPricingCatalogFixture(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	model.DB, common.RedisEnabled = db, false
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.Agency{}, &model.AgencyActiveUserBinding{}, &model.AgencyUserBinding{}, &model.AgencyPricePolicyVersion{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.Agency{}, &model.AgencyActiveUserBinding{}, &model.AgencyUserBinding{}, &model.AgencyCustomerSalesOverride{}, &model.AgencyPricePolicyVersion{}, &model.AgencyPlatformPriceState{}, &model.AgencyPlatformPriceVersion{}))
 	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default"}`))
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":2}`))
 	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"hy3":1,"Hy3":1,"free-model":1}`))
@@ -84,6 +84,12 @@ func requestAgencyPricingCatalog(t *testing.T, userID int) (*httptest.ResponseRe
 func TestGetPricingUsesCustomerSalesWithoutMutatingStandardCatalog(t *testing.T) {
 	db := agencyPricingCatalogFixture(t)
 	bindAgencyPricingCustomer(t, db)
+	modelKey, err := agencycontract.ModelKey("hy3")
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.AgencyCustomerSalesOverride{
+		AgencyID: 1, UserID: 1, ModelKey: modelKey, OriginModelName: "hy3", SalesBPS: 15000,
+		Revision: 1, CreatedByType: "test", CreatedByID: 1, CreatedAtMS: 1, UpdatedAtMS: 1,
+	}).Error)
 	standard, err := common.Marshal(model.GetPricing())
 	require.NoError(t, err)
 	for _, state := range []string{"active", "disabled"} {
@@ -96,7 +102,7 @@ func TestGetPricingUsesCustomerSalesWithoutMutatingStandardCatalog(t *testing.T)
 			rows, ok := response["data"].([]any)
 			require.True(t, ok)
 			require.Len(t, rows, 4)
-			want := map[string]int{"hy3": 12500, "Hy3": 9000, "free-model": 0, "per-call": 9000}
+			want := map[string]int{"hy3": 15000, "Hy3": 9000, "free-model": 0, "per-call": 9000}
 			for _, raw := range rows {
 				row := raw.(map[string]any)
 				name := row["model_name"].(string)
@@ -128,8 +134,10 @@ func TestGetPricingUsesCustomerSalesWithoutMutatingStandardCatalog(t *testing.T)
 	require.NoError(t, db.Model(&model.Agency{}).Where("id = ?", 1).Update("current_policy_version_id", 2).Error)
 	recorder, response := requestAgencyPricingCatalog(t, 1)
 	require.Equal(t, http.StatusOK, recorder.Code)
+	wantAfterPublication := map[string]int{"hy3": 15000, "Hy3": 11000, "free-model": 11000, "per-call": 11000}
 	for _, raw := range response["data"].([]any) {
-		assert.Equal(t, float64(11000), raw.(map[string]any)["sales_bps"])
+		row := raw.(map[string]any)
+		assert.Equal(t, float64(wantAfterPublication[row["model_name"].(string)]), row["sales_bps"], "customer model override must survive an agency policy publication")
 	}
 }
 

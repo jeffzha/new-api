@@ -66,6 +66,14 @@ func AgencyCustomerSales(userID int, modelNames []string) (map[string]int, error
 			return nil, err
 		}
 	}
+	var customerOverrides []model.AgencyCustomerSalesOverride
+	if err := model.DB.Where("agency_id = ? AND user_id = ?", agency.ID, userID).Find(&customerOverrides).Error; err != nil {
+		return nil, err
+	}
+	customerSales := make(map[string]int, len(customerOverrides))
+	for _, override := range customerOverrides {
+		customerSales[override.ModelKey] = override.SalesBPS
+	}
 	// Exact Go string keys preserve case-sensitive public model identities on
 	// MySQL installations using case-insensitive default collations, too.
 	overrides := make(map[string]int, len(policy.ModelOverrides))
@@ -82,6 +90,15 @@ func AgencyCustomerSales(userID int, modelNames []string) (map[string]int, error
 		coefficient, ok := overrides[name]
 		if !ok {
 			coefficient = policy.DefaultSalesBPS
+		}
+		modelKey, err := agencycontract.ModelKey(name)
+		if err != nil {
+			return nil, err
+		}
+		if customerCoefficient, exists := customerSales[modelKey]; exists {
+			coefficient = customerCoefficient
+		} else if globalCoefficient, exists := customerSales[""]; exists {
+			coefficient = globalCoefficient
 		}
 		sales[name] = coefficient
 	}

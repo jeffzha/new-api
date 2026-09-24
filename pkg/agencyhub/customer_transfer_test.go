@@ -67,7 +67,7 @@ func TestCustomerTransferPreservesFundingHistoryAndRejectsStaleRevision(t *testi
 	require.NoError(t, app.db.Create(&funding).Error)
 	usage := model.AgencyUsageFact{EventID: "old-agency-event", ComponentID: "text", UserID: int64(user.Id), AgencyID: &source.ID, BindingID: &binding.ID, ChargedQuota: 9}
 	require.NoError(t, app.db.Create(&usage).Error)
-	body := fmt.Sprintf(`{"target_agency_id":"%d","expected_binding_revision":"9007199254740993","reason":"Verified customer transfer"}`, target.ID)
+	body := fmt.Sprintf(`{"target_agency_id":"%d","expected_binding_revision":"9007199254740993","reason":""}`, target.ID)
 	path := fmt.Sprintf("/agency/api/v1/root/users/%d/transfer", user.Id)
 	object := fmt.Sprintf("user:%d", user.Id)
 	proof := client.proof(t, body, "user.transfer", object, "transfer-one")

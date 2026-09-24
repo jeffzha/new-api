@@ -1020,8 +1020,7 @@ h3 {
 .customer-pricing-page .page-header { margin-bottom: 18px; }
 .customer-pricing-page .customer-pricing-summary { max-width: 560px; }
 .customer-pricing-page-matrix { max-height: min(60vh, 680px); }
-.customer-pricing-matrix { min-width: 900px; }
-.customer-pricing-matrix { min-width: 1120px; }
+.customer-pricing-matrix { min-width: 820px; }
 .customer-pricing-matrix td:last-child { min-width: 260px; }
 .customer-pricing-matrix td:last-child input { width: 100%; }
 .customer-pricing-bulk { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 14px 0; padding: 12px 14px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; }

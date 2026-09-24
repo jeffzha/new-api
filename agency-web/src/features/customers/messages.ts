@@ -74,6 +74,14 @@ const entries: Record<string, [string, string, string, string, string, string]> 
     "Перевести клиента",
     "Chuyển khách hàng",
   ],
+  "Transfer reason (optional)": [
+    "转移客户原因（选填）",
+    "轉移客戶原因（選填）",
+    "Motif du transfert (facultatif)",
+    "顧客移転理由（任意）",
+    "Причина перевода клиента (необязательно)",
+    "Lý do chuyển khách hàng (không bắt buộc)",
+  ],
   "Bind existing customer": [
     "绑定已有客户",
     "綁定既有客戶",

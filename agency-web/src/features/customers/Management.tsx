@@ -198,9 +198,9 @@ function AssignmentForm(props: { customer: CustomerManagement; changed: () => vo
               void submit();
             }}
           >
-            <Field label={t("Reason")}>
+            <Field label={transfer ? t("Transfer reason (optional)") : t("Reason")}>
               <textarea
-                required
+                required={!transfer}
                 maxLength={500}
                 value={reason}
                 disabled={mutation.pending}
@@ -221,7 +221,7 @@ function AssignmentForm(props: { customer: CustomerManagement; changed: () => vo
               disabled={
                 mutation.pending ||
                 !confirmed ||
-                !reason.trim() ||
+                (!transfer && !reason.trim()) ||
                 !targetAgency ||
                 targetAgency.status !== "active" ||
                 String(targetAgency.id) === customer.agency_id

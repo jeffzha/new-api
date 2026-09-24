@@ -652,6 +652,11 @@ func mergeSalesPolicy(base agencycontract.Policy, request salesPricingRequest) (
 }
 
 func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, policy agencycontract.Policy, reason, actorType string, syncChildren bool) error {
+	reason = strings.TrimSpace(reason)
+	if len(reason) > 2000 {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_reason", "价格调整原因不能超过2000字节", nil)
+		return errors.New("pricing reason too long")
+	}
 	if expectedRevision <= 0 {
 		respondError(c, http.StatusUnprocessableEntity, "expected_revision_required", "必须提供当前价格版本", nil)
 		return errors.New("expected revision required")

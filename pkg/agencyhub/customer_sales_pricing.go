@@ -189,8 +189,8 @@ func (a *App) putCustomerSalesPricing(c *gin.Context) {
 		return
 	}
 	request.Reason = strings.TrimSpace(request.Reason)
-	if request.Reason == "" || len(request.Reason) > 2000 {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_reason", "必须提供调整原因（不超过2000字节）", nil)
+	if len(request.Reason) > 2000 {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_reason", "调整原因不能超过2000字节", nil)
 		return
 	}
 	key, name, err := customerSalesKey(request.ModelName)
@@ -260,8 +260,8 @@ func (a *App) putCustomerSalesPricingBatch(c *gin.Context) {
 		return
 	}
 	request.Reason = strings.TrimSpace(request.Reason)
-	if request.Reason == "" || len(request.Reason) > 2000 || len(request.Models) > 1000 {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_request", "请填写调整原因，且模型数量不能超过1000个", nil)
+	if len(request.Reason) > 2000 || len(request.Models) > 1000 {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_request", "调整原因不能超过2000字节，且模型数量不能超过1000个", nil)
 		return
 	}
 	if request.GlobalSalesBPS != nil {

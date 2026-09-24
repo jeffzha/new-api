@@ -1231,8 +1231,8 @@ func (a *App) transferUser(c *gin.Context) {
 		return
 	}
 	request.Reason = strings.TrimSpace(request.Reason)
-	if request.Reason == "" || len(request.Reason) > 2000 {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_reason", "必须提供转移原因（不超过2000字节）", nil)
+	if len(request.Reason) > 2000 {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_reason", "转移原因不能超过2000字节", nil)
 		return
 	}
 	identity := currentIdentity(c)

@@ -100,11 +100,11 @@ function AgencySalesForm(props: {
         <Field label={t("Minimum spread")}>
           <input inputMode="decimal" value={minSpread} readOnly={!props.root} onChange={(event) => setMinSpread(event.target.value)} />
         </Field>
-        <Field label={t("Default sales coefficient")}>
+        <Field label={t("Default sales price (coefficient)")}>
           <input inputMode="decimal" value={defaultSales} onChange={(event) => setDefaultSales(event.target.value)} />
           <small>{t("Used when a model or customer has no more specific sales override.")}</small>
         </Field>
-        <Field label={t("Default child agency cost coefficient")}>
+        <Field label={t("Default downstream channel price (coefficient)")}>
           <input inputMode="decimal" value={defaultChildCost} onChange={(event) => setDefaultChildCost(event.target.value)} />
           <small>{t("Used by direct child agencies when a model has no specific cost override.")}</small>
         </Field>
@@ -114,9 +114,9 @@ function AgencySalesForm(props: {
           <thead>
             <tr>
               <th>{t("Model name")}</th>
-              <th>{t("Agency cost coefficient")}</th>
-              <th>{t("Child agency cost coefficient")}</th>
-              <th>{t("Sales coefficient")}</th>
+              <th>{t("My cost (coefficient)")}</th>
+              <th>{t("My downstream channel price (coefficient)")}</th>
+              <th>{t("Sales price (coefficient)")}</th>
             </tr>
           </thead>
           <tbody>
@@ -126,7 +126,7 @@ function AgencySalesForm(props: {
                 <td><span className="coefficient-readonly">{formatCoefficient(row.agency_cost_bps)}</span></td>
                 <td>
                   <input
-                    aria-label={`${t("Child agency cost coefficient")}: ${row.origin_model_name}`}
+                    aria-label={`${t("My downstream channel price (coefficient)")}: ${row.origin_model_name}`}
                     inputMode="decimal"
                     value={childCosts[row.origin_model_name]}
                     placeholder={row.child_cost_bps ? formatCoefficient(row.child_cost_bps) : t("Not configured")}
@@ -137,7 +137,7 @@ function AgencySalesForm(props: {
                 <td>
                   <div className="sales-coefficient-field">
                     <input
-                      aria-label={`${t("Sales coefficient")}: ${row.origin_model_name}`}
+                      aria-label={`${t("Sales price (coefficient)")}: ${row.origin_model_name}`}
                       inputMode="decimal"
                       value={sales[row.origin_model_name]}
                       placeholder={formatCoefficient(row.platform_default_sales_bps)}
@@ -166,13 +166,13 @@ function AgencySalesForm(props: {
         <p className="empty">{t("Configure platform model coefficients first.")}</p>
       )}
       <div className="pricing-publish-row">
-        <Field label={t("Change reason")}>
-          <input value={reason} maxLength={1000} onChange={(event) => setReason(event.target.value)} />
+        <Field label={t("Change reason (optional)")}>
+          <input value={reason} maxLength={2000} onChange={(event) => setReason(event.target.value)} />
         </Field>
         <button
           className="button-icon"
           type="button"
-          disabled={mutation.pending || !reason.trim() || props.data.items.length === 0}
+          disabled={mutation.pending || props.data.items.length === 0}
           onClick={() => void publish()}
         >
           <ActionIcon name="save" />

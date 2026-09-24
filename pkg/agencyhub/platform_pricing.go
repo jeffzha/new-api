@@ -180,8 +180,8 @@ func (a *App) publishPlatformPricing(c *gin.Context) {
 		return
 	}
 	request.Reason = strings.TrimSpace(request.Reason)
-	if request.Reason == "" {
-		respondError(c, http.StatusUnprocessableEntity, "reason_required", "请填写本次价格调整原因", nil)
+	if len(request.Reason) > 2000 {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_reason", "价格调整原因不能超过2000字节", nil)
 		return
 	}
 	policy := agencycontract.PlatformPolicy{ModelPrices: request.ModelPrices}

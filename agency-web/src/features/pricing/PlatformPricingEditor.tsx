@@ -162,9 +162,9 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
             <tr>
               <th>{t("Model name")}</th>
               <th>{t("Channel name")}</th>
-              <th>{t("Platform cost coefficient")}</th>
-              <th>{t("Agency cost coefficient")}</th>
-              <th>{t("Sales coefficient")}</th>
+              <th>{t("My cost (coefficient)")}</th>
+              <th>{t("My downstream channel price (coefficient)")}</th>
+              <th>{t("Sales price (coefficient)")}</th>
             </tr>
           </thead>
           <tbody>
@@ -186,10 +186,10 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
         <p className="empty">{t("No enabled models or channels are currently available.")}</p>
       )}
       <div className="pricing-publish-row">
-        <Field label={t("Change reason")}>
-          <input value={reason} maxLength={1000} onChange={(event) => setReason(event.target.value)} />
+        <Field label={t("Change reason (optional)")}>
+          <input value={reason} maxLength={2000} onChange={(event) => setReason(event.target.value)} />
         </Field>
-        <button className="button-icon" type="button" disabled={mutation.pending || !reason.trim()} onClick={() => void publish()}>
+        <button className="button-icon" type="button" disabled={mutation.pending} onClick={() => void publish()}>
           <ActionIcon name="save" />
           {t("Publish platform pricing")}
         </button>
@@ -222,7 +222,7 @@ function PlatformPricingRow(props: {
           {props.row.channel_costs.map((channel) => (
             <input
               key={channel.channel_id}
-              aria-label={`${t("Platform cost coefficient")}: ${props.row.origin_model_name} / ${channel.channel_name}`}
+              aria-label={`${t("My cost (coefficient)")}: ${props.row.origin_model_name} / ${channel.channel_name}`}
               inputMode="decimal"
               placeholder="0.5000"
               value={value.channelCosts[String(channel.channel_id)] ?? ""}
@@ -231,8 +231,8 @@ function PlatformPricingRow(props: {
           ))}
         </div>
       </td>
-      <CoefficientInput label={t("Agency cost coefficient")} model={props.row.origin_model_name} value={value.agencyCost} placeholder="0.5500" onChange={(value) => props.update(props.row.origin_model_name, "agencyCost", value)} />
-      <CoefficientInput label={t("Sales coefficient")} model={props.row.origin_model_name} value={value.defaultSales} placeholder="0.6000" onChange={(value) => props.update(props.row.origin_model_name, "defaultSales", value)} />
+      <CoefficientInput label={t("My downstream channel price (coefficient)")} model={props.row.origin_model_name} value={value.agencyCost} placeholder="0.5500" onChange={(value) => props.update(props.row.origin_model_name, "agencyCost", value)} />
+      <CoefficientInput label={t("Sales price (coefficient)")} model={props.row.origin_model_name} value={value.defaultSales} placeholder="0.6000" onChange={(value) => props.update(props.row.origin_model_name, "defaultSales", value)} />
     </tr>
   );
 }

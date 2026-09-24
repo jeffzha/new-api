@@ -121,7 +121,7 @@ func TestCustomerSalesPricingBatchPublishesAtomically(t *testing.T) {
 			{"model_name": modelA, "sales_bps": modelASales},
 			{"model_name": modelB, "sales_bps": nil},
 		},
-		"reason": "batch customer pricing regression",
+		"reason": "",
 	})
 	require.NoError(t, err)
 	recorder := httptest.NewRecorder()
@@ -146,6 +146,25 @@ func TestCustomerSalesPricingBatchPublishesAtomically(t *testing.T) {
 	require.False(t, deleted)
 	var audit model.AgencyAuditLog
 	require.NoError(t, app.db.Where("action = ?", "pricing.customer_sales.batch_publish").First(&audit).Error)
+	require.Empty(t, audit.Reason)
+
+	singleBody, err := common.Marshal(gin.H{
+		"model_name": modelB,
+		"sales_bps":  9500,
+		"reason":     "",
+	})
+	require.NoError(t, err)
+	singleRecorder := httptest.NewRecorder()
+	singleContext, _ := gin.CreateTestContext(singleRecorder)
+	singleContext.Request = httptest.NewRequest(http.MethodPut, "/agency/api/v1/customers/7/pricing", bytes.NewReader(singleBody))
+	singleContext.Request.Header.Set("Content-Type", "application/json")
+	singleContext.Params = gin.Params{{Key: "user_id", Value: "7"}}
+	singleContext.Set("agency_identity", &Identity{ActorType: ActorTypeOperator, ActorID: 1, AgencyID: &agency.ID})
+	app.putCustomerSalesPricing(singleContext)
+	require.Equal(t, http.StatusOK, singleRecorder.Code, singleRecorder.Body.String())
+	var retained model.AgencyCustomerSalesOverride
+	require.NoError(t, app.db.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, keyB).First(&retained).Error)
+	require.Equal(t, 9500, retained.SalesBPS)
 
 	invalidSales := 7400
 	invalidBody, err := common.Marshal(gin.H{
@@ -161,7 +180,7 @@ func TestCustomerSalesPricingBatchPublishesAtomically(t *testing.T) {
 	invalidContext.Set("agency_identity", &Identity{ActorType: ActorTypeOperator, ActorID: 1, AgencyID: &agency.ID})
 	app.putCustomerSalesPricingBatch(invalidContext)
 	require.Equal(t, http.StatusUnprocessableEntity, invalidRecorder.Code, invalidRecorder.Body.String())
-	var retained model.AgencyCustomerSalesOverride
+	retained = model.AgencyCustomerSalesOverride{}
 	require.NoError(t, app.db.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, keyA).First(&retained).Error)
 	require.Equal(t, modelASales, retained.SalesBPS)
 }

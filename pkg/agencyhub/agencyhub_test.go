@@ -320,7 +320,7 @@ func TestPlatformPricingPublishesLiveModelChannelMatrixAndRejectsAgencyConflict(
 	require.NoError(t, client.app.db.Create(&model.Ability{Group: "default", Model: "glm-5.3", ChannelId: channel.Id, Enabled: true}).Error)
 	require.NoError(t, client.app.db.Create(&model.Ability{Group: "default", Model: "glm-5.3", ChannelId: backupChannel.Id, Enabled: true}).Error)
 
-	body := fmt.Sprintf(`{"expected_revision":0,"model_prices":[{"origin_model_name":"glm-5.3","channel_costs":[{"channel_id":%d,"platform_cost_bps":5000},{"channel_id":%d,"platform_cost_bps":5400}],"agency_cost_bps":5500,"default_sales_bps":6000}],"reason":"initial matrix"}`, channel.Id, backupChannel.Id)
+	body := fmt.Sprintf(`{"expected_revision":0,"model_prices":[{"origin_model_name":"glm-5.3","channel_costs":[{"channel_id":%d,"platform_cost_bps":5000},{"channel_id":%d,"platform_cost_bps":5400}],"agency_cost_bps":5500,"default_sales_bps":6000}],"reason":""}`, channel.Id, backupChannel.Id)
 	proof := client.proof(t, body, "pricing.platform.publish", "platform_pricing:current", "platform-pricing-first")
 	response := client.post("/agency/api/v1/root/platform-pricing/publish", body, "platform-pricing-first", proof)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
@@ -331,6 +331,9 @@ func TestPlatformPricingPublishesLiveModelChannelMatrixAndRejectsAgencyConflict(
 	require.Len(t, policy.ModelPrices, 1)
 	require.Equal(t, 5500, policy.ModelPrices[0].AgencyCostBPS)
 	require.Equal(t, []agencycontract.PlatformChannelCost{{ChannelID: channel.Id, PlatformCostBPS: 5000}, {ChannelID: backupChannel.Id, PlatformCostBPS: 5400}}, policy.ModelPrices[0].ChannelCosts)
+	var platformAudit model.AgencyAuditLog
+	require.NoError(t, client.app.db.Where("action = ?", "pricing.platform.publish").First(&platformAudit).Error)
+	require.Empty(t, platformAudit.Reason)
 
 	request := httptest.NewRequest(http.MethodGet, "/agency/api/v1/root/platform-pricing", nil)
 	request.AddCookie(&http.Cookie{Name: client.app.config.CookieName, Value: client.sessionToken})

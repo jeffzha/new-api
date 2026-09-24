@@ -466,7 +466,7 @@ func TestPlatformPricingPreservesChildCostsAcrossDialects(t *testing.T) {
 				{"blank child cost", 0, 7500, http.StatusOK},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
-					body := fmt.Sprintf(`{"expected_revision":%d,"default_sales_bps":%d,"default_child_cost_bps":%d,"model_sales_overrides":[{"origin_model_name":"qwen-image-2.0","sales_bps":7500}],"reason":"pricing regression"}`, savedChild.Revision, tc.sales, tc.cost)
+					body := fmt.Sprintf(`{"expected_revision":%d,"default_sales_bps":%d,"default_child_cost_bps":%d,"model_sales_overrides":[{"origin_model_name":"qwen-image-2.0","sales_bps":7500}],"reason":""}`, savedChild.Revision, tc.sales, tc.cost)
 					recorder := httptest.NewRecorder()
 					c, _ := gin.CreateTestContext(recorder)
 					c.Request = httptest.NewRequest(http.MethodPost, "/sales/publish", strings.NewReader(body))

@@ -32,7 +32,11 @@ const (
 	requestContextKey = "openaiseedance_request"
 )
 
-var ModelList = []string{defaultModel}
+var ModelList = []string{
+	defaultModel,
+	seedancepricing.Seedance25Model,
+	seedancepricing.AimodelSeedance25Model,
+}
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
@@ -125,8 +129,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		}
 		duration = parsed
 	}
-	if duration != -1 && (duration < 4 || duration > 15) {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be -1 or between 4 and 15"), "invalid_request", http.StatusBadRequest)
+	maxDuration := 15
+	if isSeedance25Model(request.Model) || isSeedance25Model(info.OriginModelName) || isSeedance25Model(info.UpstreamModelName) {
+		maxDuration = 30
+	}
+	if duration != -1 && (duration < 4 || duration > maxDuration) {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be -1 or between 4 and %d seconds", maxDuration), "invalid_request", http.StatusBadRequest)
 	}
 	// audio: honor the generate_audio/audio_status params instead of hardcoding.
 	audioStatus := 1 // OpenAI default is with-audio
@@ -159,6 +167,15 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	normalized.AudioStatus = audioStatus
 	storeTaskRequest(c, normalized)
 	return nil
+}
+
+func isSeedance25Model(modelName string) bool {
+	switch strings.TrimSpace(modelName) {
+	case seedancepricing.Seedance25Model, seedancepricing.AimodelSeedance25Model:
+		return true
+	default:
+		return false
+	}
 }
 
 // EstimateBilling is unused (provider-billing path via EstimateTaskBilling).

@@ -1,6 +1,7 @@
 package openaiseedance
 
 import (
+	"fmt"
 	"github.com/QuantumNous/new-api/common"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	seedancepricing "github.com/QuantumNous/new-api/setting/seedance_video_pricing"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -41,4 +43,34 @@ func TestOpenAISeedanceBuildsNativeRequestFromOpenAIVideoShape(t *testing.T) {
 	url, err := adaptor.BuildRequestURL(info)
 	require.NoError(t, err)
 	require.Equal(t, "https://vedioapi.laomandi.com/v1/video/generations", url)
+}
+
+func TestOpenAISeedanceDurationLimitDependsOnModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name     string
+		model    string
+		duration int
+		valid    bool
+	}{
+		{name: "seedance 2.5 accepts 16 seconds", model: seedancepricing.AimodelSeedance25Model, duration: 16, valid: true},
+		{name: "seedance 2.5 accepts 30 seconds", model: seedancepricing.AimodelSeedance25Model, duration: 30, valid: true},
+		{name: "seedance 2.5 rejects 31 seconds", model: seedancepricing.AimodelSeedance25Model, duration: 31},
+		{name: "seedance 2.0 keeps 15 second cap", model: defaultModel, duration: 16},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			body := fmt.Sprintf("{\"model\":%q,\"prompt\":\"A blue bird\",\"seconds\":\"%d\"}", test.model, test.duration)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			info := &relaycommon.RelayInfo{OriginModelName: test.model, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: test.model}}
+			result := (&TaskAdaptor{}).ValidateRequestAndSetAction(ctx, info)
+			if test.valid {
+				require.Nil(t, result)
+				return
+			}
+			require.NotNil(t, result)
+		})
+	}
 }

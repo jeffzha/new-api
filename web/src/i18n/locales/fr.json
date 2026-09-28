@@ -6774,6 +6774,8 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Download usage bill": "Télécharger la facture de consommation",
+    "Failed to download usage bill": "Échec du téléchargement de la facture"
   }
 }

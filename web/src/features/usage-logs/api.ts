@@ -31,6 +31,21 @@ import type {
   UserInfo,
 } from './types'
 
+export async function downloadUsageBill(
+  params: GetLogsParams,
+  isAdmin: boolean
+): Promise<Blob> {
+  const queryParams = buildQueryParams(
+    params as unknown as Record<string, unknown>
+  )
+  const endpoint = isAdmin ? '/api/log/export' : '/api/log/self/export'
+  const response = await api.get(`${endpoint}?${queryParams.toString()}`, {
+    responseType: 'blob',
+    skipErrorHandler: true,
+  })
+  return response.data as Blob
+}
+
 // ============================================================================
 // Generic API Helpers
 // ============================================================================

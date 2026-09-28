@@ -16,7 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Eye, EyeOff } from 'lucide-react'
+import { getRouteApi } from '@tanstack/react-router'
+import { Download } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -25,41 +27,69 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { handleServerError } from '@/lib/handle-server-error'
 
-import { CommonLogsStats } from './common-logs-stats'
-import { useUsageLogsContext } from './usage-logs-provider'
+import { downloadUsageBill } from '../api'
+import { buildApiParams } from '../lib/utils'
+import { useLogsViewScope } from './usage-logs-provider'
+
+const route = getRouteApi('/_authenticated/usage-logs/$section')
 
 /**
- * Page-header actions for the Common Logs view: live usage stats plus a
- * toggle for masking sensitive values (token names, usernames, group names,
- * and the quota figure shown in stats). Both controls live in the page
- * header so the toolbar below stays focused on filter inputs and form
- * actions only.
+ * Page-header action for downloading a complete consume bill using the
+ * currently applied usage-log filters.
  */
 export function CommonLogsHeaderActions() {
   const { t } = useTranslation()
-  const { sensitiveVisible, setSensitiveVisible } = useUsageLogsContext()
+  const { isAdminView: isAdmin } = useLogsViewScope()
+  const searchParams = route.useSearch()
+  const [downloading, setDownloading] = useState(false)
+
+  const handleDownload = async () => {
+    setDownloading(true)
+    try {
+      const params = buildApiParams({
+        page: 1,
+        pageSize: 1,
+        searchParams,
+        columnFilters: [],
+        isAdmin,
+      })
+      const blob = await downloadUsageBill(params, isAdmin)
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = 'usage-bill.csv'
+      try {
+        anchor.click()
+      } finally {
+        URL.revokeObjectURL(url)
+      }
+    } catch (error) {
+      handleServerError(error, t('Failed to download usage bill'))
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   return (
     <div className='flex flex-wrap items-center gap-2'>
-      <CommonLogsStats />
       <Tooltip>
         <TooltipTrigger
           render={
             <Button
               variant='ghost'
               size='icon'
-              onClick={() => setSensitiveVisible(!sensitiveVisible)}
-              aria-label={sensitiveVisible ? t('Hide') : t('Show')}
+              onClick={handleDownload}
+              disabled={downloading}
+              aria-label={t('Download usage bill')}
               className='text-muted-foreground hover:text-foreground size-7'
             />
           }
         >
-          {sensitiveVisible ? <Eye /> : <EyeOff />}
+          <Download />
         </TooltipTrigger>
-        <TooltipContent>
-          {sensitiveVisible ? t('Hide') : t('Show')}
-        </TooltipContent>
+        <TooltipContent>{t('Download usage bill')}</TooltipContent>
       </Tooltip>
     </div>
   )

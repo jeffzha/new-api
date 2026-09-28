@@ -16,24 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { SidebarTrigger } from '@/components/ui/sidebar'
-import { cn } from '@/lib/utils'
+import { useThemeCustomization } from '@/context/theme-customization-provider'
+import { usesConsoleWorkspace } from '@/lib/theme-customization'
 
-type HeaderProps = React.HTMLAttributes<HTMLElement>
+import { OverviewDashboard } from './overview-dashboard'
+import { SignalDashboard } from './signal-dashboard'
 
-export function Header({ className, children, ...props }: HeaderProps) {
-  return (
-    <header
-      className={cn(
-        'signal-console-header sticky top-0 z-40 h-[var(--app-header-height,3rem)] w-full shrink-0 bg-transparent',
-        className
-      )}
-      {...props}
-    >
-      <div className='flex h-full items-center gap-1.5 px-2 sm:gap-2 sm:px-3'>
-        <SidebarTrigger variant='ghost' className='size-8' />
-        {children}
-      </div>
-    </header>
+export function OverviewThemeView() {
+  const { customization } = useThemeCustomization()
+  return usesConsoleWorkspace(customization.preset) ? (
+    <SignalDashboard />
+  ) : (
+    <OverviewDashboard />
   )
 }

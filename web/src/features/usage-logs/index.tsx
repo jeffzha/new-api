@@ -23,10 +23,13 @@ import { useTranslation } from 'react-i18next'
 import { SectionPageLayout } from '@/components/layout'
 import type { NavGroup } from '@/components/layout/types'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { CacheStatsDialog } from '@/features/system-settings/general/channel-affinity/cache-stats-dialog'
 import { useSidebarConfig } from '@/hooks/use-sidebar-config'
+import { usesConsoleWorkspace } from '@/lib/theme-customization'
 
 import { UserInfoDialog } from './components/dialogs/user-info-dialog'
+import { UsageAnalyticsPanel } from './components/usage-analytics-panel'
 import {
   type LogsViewScope,
   UsageLogsProvider,
@@ -57,6 +60,8 @@ const SECTION_META: Record<UsageLogsSectionId, { titleKey: string }> = {
 
 function UsageLogsContent() {
   const { t } = useTranslation()
+  const { customization } = useThemeCustomization()
+  const signal = usesConsoleWorkspace(customization.preset)
   const navigate = useNavigate()
   const params = route.useParams()
   const activeCategory: UsageLogsSectionId =
@@ -124,7 +129,7 @@ function UsageLogsContent() {
 
   return (
     <>
-      <SectionPageLayout fixedContent>
+      <SectionPageLayout fixedContent={!signal}>
         <SectionPageLayout.Title>
           {t(pageMeta.titleKey)}
         </SectionPageLayout.Title>
@@ -139,7 +144,14 @@ function UsageLogsContent() {
           )}
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
-          <div className='flex h-full min-h-0 flex-col gap-4'>
+          <div
+            className={
+              signal
+                ? 'flex min-w-0 flex-col gap-4'
+                : 'flex h-full min-h-0 flex-col gap-4'
+            }
+          >
+            {signal && activeCategory === 'common' && <UsageAnalyticsPanel />}
             {showTaskSwitcher && (
               <Tabs value={activeCategory} onValueChange={handleSectionChange}>
                 <TabsList className='max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto'>
@@ -151,7 +163,7 @@ function UsageLogsContent() {
                 </TabsList>
               </Tabs>
             )}
-            <div className='min-h-0 flex-1'>
+            <div className={signal ? 'h-[680px] min-h-0' : 'min-h-0 flex-1'}>
               <UsageLogsTable logCategory={activeCategory} />
             </div>
           </div>

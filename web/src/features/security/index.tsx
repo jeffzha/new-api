@@ -29,9 +29,12 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TitledCard } from '@/components/ui/titled-card'
+import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { useProfile } from '@/features/profile/hooks/use-profile'
 import { ROLE } from '@/lib/roles'
+import { usesConsoleWorkspace } from '@/lib/theme-customization'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { AccessTokenCard } from './components/access-token-card'
@@ -45,6 +48,7 @@ import { TwoFACard } from './components/two-fa-card'
 
 export function Security() {
   const { t } = useTranslation()
+  const { customization } = useThemeCustomization()
   const userRole = useAuthStore((state) => state.auth.user?.role)
   const isRoot = userRole === ROLE.SUPER_ADMIN
   const { profile, loading, refreshProfile, fetchProfile } = useProfile()
@@ -77,16 +81,24 @@ export function Security() {
       </Empty>
     )
   } else {
-    content = (
-      <div className='grid gap-4 sm:gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.46fr)] xl:items-start'>
-        <div className='min-w-0 space-y-4 sm:space-y-6'>
-          <section
-            aria-labelledby='security-authentication'
-            className='space-y-3'
-          >
-            <h3 id='security-authentication' className='text-sm font-semibold'>
+    if (usesConsoleWorkspace(customization.preset)) {
+      content = (
+        <Tabs
+          defaultValue='authentication'
+          className='signal-settings-tabs min-w-0'
+        >
+          <TabsList variant='line' aria-label={t('Security & Access')}>
+            <TabsTrigger value='authentication'>
               {t('Login & Authentication')}
-            </h3>
+            </TabsTrigger>
+            <TabsTrigger value='access'>{t('Sessions & Access')}</TabsTrigger>
+            <TabsTrigger value='privacy'>{t('Privacy')}</TabsTrigger>
+          </TabsList>
+          <TabsContent value='authentication' keepMounted className='space-y-5'>
+            <div className='grid gap-5 lg:grid-cols-2'>
+              <PasskeyCard loading={loading} />
+              <TwoFACard loading={loading} />
+            </div>
             <AccountActionCard
               action='password'
               username={profile.username}
@@ -96,50 +108,95 @@ export function Security() {
             <TitledCard
               title={t('Account Bindings')}
               icon={<Link2 className='size-4' />}
-              headerClassName='px-3 py-2.5 !pb-2.5 sm:px-4 sm:py-2.5 sm:!pb-2.5'
-              contentClassName='p-3 sm:p-3'
-              titleClassName='text-sm sm:text-sm'
-              iconClassName='size-7 sm:size-7'
               disableHoverEffect
             >
               <AccountBindings profile={profile} onUpdate={refreshProfile} />
             </TitledCard>
-          </section>
-          <section aria-labelledby='security-access' className='space-y-4'>
-            <h3 id='security-access' className='text-sm font-semibold'>
-              {t('Sessions & Access')}
-            </h3>
+          </TabsContent>
+          <TabsContent value='access' keepMounted className='space-y-5'>
             <LoginSessionsCard />
             <AccessTokenCard />
             {isRoot && <MCPAccessCredentialCard />}
-          </section>
-          <section aria-labelledby='security-account' className='space-y-4'>
-            <h3 id='security-account' className='text-sm font-semibold'>
-              {t('Account Actions')}
-            </h3>
-            <AccountActionCard action='delete' username={profile.username} />
-          </section>
-        </div>
-        <aside
-          aria-labelledby='security-verification'
-          className='min-w-0 space-y-4 sm:space-y-6 xl:sticky xl:top-0'
-        >
-          <div className='space-y-3'>
-            <h3 id='security-verification' className='text-sm font-semibold'>
-              {t('Security verification')}
-            </h3>
-            <PasskeyCard loading={loading} />
-            <TwoFACard loading={loading} />
-          </div>
-          <section aria-labelledby='security-privacy' className='space-y-4'>
-            <h3 id='security-privacy' className='text-sm font-semibold'>
-              {t('Privacy')}
-            </h3>
+          </TabsContent>
+          <TabsContent value='privacy' keepMounted className='space-y-5'>
             <PrivacyCard profile={profile} onUpdate={refreshProfile} />
-          </section>
-        </aside>
-      </div>
-    )
+            <section className='border-destructive/30 border-t pt-6'>
+              <h3 className='text-destructive mb-3 text-sm font-semibold'>
+                {t('Account Actions')}
+              </h3>
+              <AccountActionCard action='delete' username={profile.username} />
+            </section>
+          </TabsContent>
+        </Tabs>
+      )
+    } else {
+      content = (
+        <div className='signal-security-grid grid gap-4 sm:gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.46fr)] xl:items-start'>
+          <div className='signal-security-main min-w-0 space-y-4 sm:space-y-6'>
+            <section
+              aria-labelledby='security-authentication'
+              className='space-y-3'
+            >
+              <h3
+                id='security-authentication'
+                className='text-sm font-semibold'
+              >
+                {t('Login & Authentication')}
+              </h3>
+              <AccountActionCard
+                action='password'
+                username={profile.username}
+                hasPassword={profile.has_password}
+                onUpdate={refreshProfile}
+              />
+              <TitledCard
+                title={t('Account Bindings')}
+                icon={<Link2 className='size-4' />}
+                headerClassName='px-3 py-2.5 !pb-2.5 sm:px-4 sm:py-2.5 sm:!pb-2.5'
+                contentClassName='p-3 sm:p-3'
+                titleClassName='text-sm sm:text-sm'
+                iconClassName='size-7 sm:size-7'
+                disableHoverEffect
+              >
+                <AccountBindings profile={profile} onUpdate={refreshProfile} />
+              </TitledCard>
+            </section>
+            <section aria-labelledby='security-access' className='space-y-4'>
+              <h3 id='security-access' className='text-sm font-semibold'>
+                {t('Sessions & Access')}
+              </h3>
+              <LoginSessionsCard />
+              <AccessTokenCard />
+              {isRoot && <MCPAccessCredentialCard />}
+            </section>
+            <section aria-labelledby='security-account' className='space-y-4'>
+              <h3 id='security-account' className='text-sm font-semibold'>
+                {t('Account Actions')}
+              </h3>
+              <AccountActionCard action='delete' username={profile.username} />
+            </section>
+          </div>
+          <aside
+            aria-labelledby='security-verification'
+            className='signal-security-rail min-w-0 space-y-4 sm:space-y-6 xl:sticky xl:top-0'
+          >
+            <div className='space-y-3'>
+              <h3 id='security-verification' className='text-sm font-semibold'>
+                {t('Security verification')}
+              </h3>
+              <PasskeyCard loading={loading} />
+              <TwoFACard loading={loading} />
+            </div>
+            <section aria-labelledby='security-privacy' className='space-y-4'>
+              <h3 id='security-privacy' className='text-sm font-semibold'>
+                {t('Privacy')}
+              </h3>
+              <PrivacyCard profile={profile} onUpdate={refreshProfile} />
+            </section>
+          </aside>
+        </div>
+      )
+    }
   }
 
   return (
@@ -148,7 +205,9 @@ export function Security() {
         {t('Security & Access')}
       </SectionPageLayout.Title>
       <SectionPageLayout.Content>
-        <div className='mx-auto w-full max-w-7xl'>{content}</div>
+        <div className='signal-security-layout mx-auto w-full max-w-7xl'>
+          {content}
+        </div>
       </SectionPageLayout.Content>
     </SectionPageLayout>
   )

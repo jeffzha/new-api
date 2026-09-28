@@ -291,7 +291,7 @@ export function Wallet(props: WalletProps) {
       <SectionPageLayout>
         <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
         <SectionPageLayout.Content>
-          <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
+          <div className='signal-wallet-layout mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
             <WalletStatsCard user={user} loading={userLoading} />
 
             <div

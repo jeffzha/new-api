@@ -50,6 +50,7 @@ import type { PricingModel, PricingVendor, TokenUnit } from '../types'
 import { PricingSidebar } from './pricing-sidebar'
 
 export interface PricingToolbarProps {
+  alwaysShowFilters?: boolean
   filteredCount: number
   totalCount?: number
   sortBy: string
@@ -94,7 +95,9 @@ export function PricingToolbar(props: PricingToolbarProps) {
             variant='outline'
             size='sm'
             onClick={() => setMobileFiltersOpen(true)}
-            className='gap-1.5 xl:hidden'
+            className={
+              props.alwaysShowFilters ? 'gap-1.5' : 'gap-1.5 xl:hidden'
+            }
           >
             <Filter className='size-4' />
             {t('Filter')}

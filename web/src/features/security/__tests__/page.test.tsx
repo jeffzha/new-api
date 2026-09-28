@@ -34,6 +34,7 @@ import {
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ThemeCustomizationProvider } from '@/context/theme-customization-provider'
 import { Profile } from '@/features/profile'
 import type { UserProfile } from '@/features/profile/types'
 import { api } from '@/lib/api'
@@ -112,6 +113,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
   useAuthStore.getState().auth.reset()
   vi.restoreAllMocks()
+  document.cookie = 'theme_preset=; Max-Age=0; path=/'
 })
 
 async function renderPage(path = '/security') {
@@ -152,13 +154,78 @@ async function renderPage(path = '/security') {
   await router.load()
   const rendered = render(
     <QueryClientProvider client={client}>
-      <RouterProvider router={router} />
+      <ThemeCustomizationProvider>
+        <RouterProvider router={router} />
+      </ThemeCustomizationProvider>
     </QueryClientProvider>
   )
   return { ...rendered, router }
 }
 
 describe('security page migration', () => {
+  it.each(['signal-console', 'prism-console'])(
+    '%s tabs separate authentication, sessions and destructive actions with keyboard navigation',
+    async (preset) => {
+      document.cookie = `theme_preset=${preset}; path=/`
+      await renderPage()
+      const auth = await screen.findByRole('tab', {
+        name: 'Login & Authentication',
+      })
+      expect(auth).toHaveAttribute('aria-selected', 'true')
+      expect(
+        screen.getByRole('button', { name: 'Change Password' })
+      ).toBeVisible()
+      expect(
+        screen.queryByRole('button', { name: 'Delete Account' })
+      ).not.toBeInTheDocument()
+      auth.focus()
+      await userEvent.keyboard('{ArrowRight}{Enter}')
+      await waitFor(() =>
+        expect(
+          screen.getByRole('tab', { name: 'Sessions & Access' })
+        ).toHaveAttribute('aria-selected', 'true')
+      )
+      expect(await screen.findByText('No active login sessions')).toBeVisible()
+      await userEvent.click(screen.getByRole('tab', { name: 'Privacy' }))
+      expect(
+        screen.getByRole('button', { name: 'Delete Account' })
+      ).toBeVisible()
+      expect(
+        screen.getByRole('switch', { name: 'Record IP Address' })
+      ).toBeVisible()
+      expect(
+        screen.queryByRole('button', { name: 'Change Password' })
+      ).not.toBeInTheDocument()
+    }
+  )
+
+  it.each(['signal-console', 'prism-console'])(
+    '%s profile separates preferences and does not offer disabled check-in',
+    async (preset) => {
+      document.cookie = `theme_preset=${preset}; path=/`
+      await renderPage('/profile')
+      expect(
+        await screen.findByRole('button', { name: 'Save Settings' })
+      ).toBeVisible()
+      expect(
+        screen.queryByRole('tab', { name: 'Check-in' })
+      ).not.toBeInTheDocument()
+      await userEvent.click(screen.getByRole('tab', { name: 'Preferences' }))
+      expect(screen.getByRole('tab', { name: 'Preferences' })).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+      expect(
+        screen.queryByRole('button', { name: 'Save Settings' })
+      ).not.toBeInTheDocument()
+      await userEvent.click(
+        screen.getByRole('tab', { name: 'Account settings' })
+      )
+      expect(
+        screen.getByRole('button', { name: 'Save Settings' })
+      ).toBeVisible()
+    }
+  )
   it('places account management on the left and verification and privacy on the right', async () => {
     await renderPage()
     const login = await screen.findByRole('region', {

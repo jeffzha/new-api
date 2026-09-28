@@ -43,6 +43,7 @@ export function AuthenticatedLayout(props: AuthenticatedLayoutProps) {
           <div className='flex min-h-0 w-full flex-1'>
             <AppSidebar />
             <SidebarInset
+              data-console-surface='content'
               className={cn(
                 '@container/content',
                 'h-[calc(100svh-var(--app-header-height,0px))]',

@@ -344,13 +344,16 @@ export function DataTablePage<TData>(props: DataTablePageProps<TData>) {
     <>
       <div
         className={cn(
+          'signal-data-workspace',
           props.fixedHeight !== false
             ? 'flex h-full min-h-0 flex-col gap-2.5 sm:gap-3'
             : 'space-y-2.5 sm:space-y-3',
           props.className
         )}
       >
-        {toolbarNode}
+        {toolbarNode != null && (
+          <div className='signal-filter-zone'>{toolbarNode}</div>
+        )}
         {mobileNode}
         {desktopNode}
         {props.afterTable}

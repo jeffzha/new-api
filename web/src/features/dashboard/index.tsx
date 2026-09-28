@@ -37,7 +37,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { ModelsChartPreferences } from './components/models/models-chart-preferences'
 import { ModelsFilter } from './components/models/models-filter-dialog'
-import { OverviewDashboard } from './components/overview/overview-dashboard'
+import { OverviewThemeView } from './components/overview/overview-theme-view'
 import { DEFAULT_TIME_GRANULARITY } from './constants'
 import {
   buildDefaultDashboardFilters,
@@ -318,14 +318,14 @@ export function Dashboard() {
   const sectionActions = modelActions ?? flowActions
 
   if (activeSection === 'overview') {
-    return <OverviewDashboard />
+    return <OverviewThemeView />
   }
 
   return (
     <SectionPageLayout>
       <SectionPageLayout.Title>{t(meta.titleKey)}</SectionPageLayout.Title>
       <SectionPageLayout.Content>
-        <div className='space-y-3 sm:space-y-4'>
+        <div className='signal-analytics-grid space-y-3 sm:space-y-4'>
           <div className='flex flex-wrap items-center justify-between gap-1.5 sm:gap-2'>
             {showSectionTabs ? (
               <Tabs value={activeSection} onValueChange={handleSectionChange}>
@@ -363,7 +363,7 @@ export function Dashboard() {
                   </Suspense>
                 </FadeIn>
               )}
-              <FadeIn delay={0.1}>
+              <FadeIn delay={0.1} className='signal-analytics-distribution'>
                 <Suspense fallback={<ModelChartsFallback />}>
                   <LazyConsumptionDistributionChart
                     data={modelData}
@@ -377,7 +377,7 @@ export function Dashboard() {
                   />
                 </Suspense>
               </FadeIn>
-              <FadeIn delay={0.15}>
+              <FadeIn delay={0.15} className='signal-analytics-trends'>
                 <Suspense fallback={<ModelChartsFallback />}>
                   <LazyModelCharts
                     data={modelData}

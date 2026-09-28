@@ -178,7 +178,10 @@ export function Playground() {
   })
 
   return (
-    <div className='relative flex size-full min-h-0 flex-col overflow-hidden'>
+    <div
+      data-signal-page='playground'
+      className='signal-studio relative flex size-full min-h-0 flex-col overflow-hidden'
+    >
       {/* Full-width scroll container: scrolling works even over side whitespace */}
       <div className='flex min-h-0 flex-1 flex-col overflow-hidden'>
         <PlaygroundChat
@@ -197,7 +200,7 @@ export function Playground() {
       </div>
 
       {/* Input area: center content and constrain to the same container width */}
-      <div className='mx-auto w-full max-w-4xl'>
+      <div className='signal-studio-composer mx-auto w-full max-w-4xl'>
         <PlaygroundInput
           config={config}
           disabled={

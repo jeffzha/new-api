@@ -25,6 +25,16 @@ For commercial licensing, please contact support@quantumnous.com
 
 export const THEME_PRESETS = [
   {
+    value: 'prism-console',
+    name: 'Prism Workspace',
+    swatches: ['#e8eeed', '#11766e'],
+  },
+  {
+    value: 'signal-console',
+    name: 'Signal Console',
+    swatches: ['#17233d', '#4269dc'],
+  },
+  {
     value: 'default',
     name: 'Default',
     swatches: ['oklch(0.72 0.18 250)', 'oklch(0.7 0.12 280)'],
@@ -80,6 +90,11 @@ export const THEME_PRESETS = [
 ] as const
 
 export type ThemePreset = (typeof THEME_PRESETS)[number]['value']
+
+export function usesConsoleWorkspace(preset: ThemePreset): boolean {
+  return preset === 'signal-console' || preset === 'prism-console'
+}
+
 export type ThemeRadius = 'default' | 'none' | 'sm' | 'md' | 'lg' | 'xl'
 export type ThemeScale = 'default' | 'sm' | 'lg' | 'xl'
 export type ContentLayout = 'full' | 'centered'

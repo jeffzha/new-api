@@ -1,9 +1,6 @@
 package controller
 
 import (
-	"bytes"
-	"encoding/csv"
-	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -42,12 +39,6 @@ type logExportRow struct {
 	Other    logExportOther
 	Funding  model.LogExportFunding
 	HasFunds bool
-}
-
-type logExportFundingColumns struct {
-	Nonpaid bool
-	Paid    bool
-	Debt    bool
 }
 
 func logExportCSVSafe(value string) string {
@@ -120,7 +111,7 @@ func logExportActualMoney(log *model.Log, other logExportOther) (float64, bool) 
 	return float64(log.Quota) / other.QuotaPerUnit * operation_setting.USDExchangeRate, true
 }
 
-func writeLogExportRow(writer *csv.Writer, row logExportRow, columns logExportFundingColumns) error {
+func logExportRowValues(row logExportRow) []string {
 	other := row.Other
 	inPrice, outPrice := logExportMoneyPerMillion(other)
 	actual, hasActual := logExportActualMoney(row.Log, other)
@@ -146,26 +137,11 @@ func writeLogExportRow(writer *csv.Writer, row logExportRow, columns logExportFu
 	} else {
 		values = append(values, "")
 	}
-	if columns.Nonpaid {
+	fundingValues := []int64{row.Funding.NonpaidQuota, row.Funding.PaidQuota, row.Funding.DebtQuota}
+	for _, quota := range fundingValues {
 		if other.QuotaPerUnit > 0 && row.HasFunds {
 			fundingRate := operation_setting.USDExchangeRate / other.QuotaPerUnit
-			values = append(values, fmt.Sprintf("%.8f", float64(row.Funding.NonpaidQuota)*fundingRate))
-		} else {
-			values = append(values, "")
-		}
-	}
-	if columns.Paid {
-		if other.QuotaPerUnit > 0 && row.HasFunds {
-			fundingRate := operation_setting.USDExchangeRate / other.QuotaPerUnit
-			values = append(values, fmt.Sprintf("%.8f", float64(row.Funding.PaidQuota)*fundingRate))
-		} else {
-			values = append(values, "")
-		}
-	}
-	if columns.Debt {
-		if other.QuotaPerUnit > 0 && row.HasFunds {
-			fundingRate := operation_setting.USDExchangeRate / other.QuotaPerUnit
-			values = append(values, fmt.Sprintf("%.8f", float64(row.Funding.DebtQuota)*fundingRate))
+			values = append(values, fmt.Sprintf("%.8f", float64(quota)*fundingRate))
 		} else {
 			values = append(values, "")
 		}
@@ -173,26 +149,7 @@ func writeLogExportRow(writer *csv.Writer, row logExportRow, columns logExportFu
 	for i := range values {
 		values[i] = logExportCSVSafe(values[i])
 	}
-	return writer.Write(values)
-}
-
-func writeLogExportSummary(writer *csv.Writer, label string, amount float64, columns logExportFundingColumns) error {
-	values := []string{label}
-	columnCount := 13
-	if columns.Nonpaid {
-		columnCount++
-	}
-	if columns.Paid {
-		columnCount++
-	}
-	if columns.Debt {
-		columnCount++
-	}
-	for len(values) < columnCount {
-		values = append(values, "")
-	}
-	values[12] = fmt.Sprintf("%.8f", amount)
-	return writer.Write(values)
+	return values
 }
 
 func logExportQuery(c *gin.Context, isAdmin bool) model.LogExportParams {
@@ -218,104 +175,12 @@ func logExportQuery(c *gin.Context, isAdmin bool) model.LogExportParams {
 	return params
 }
 
-func writeLogExportCSV(c *gin.Context, params model.LogExportParams) {
-	logs, funding, err := model.GetConsumeLogsForExport(params)
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, model.ErrLogExportTooManyRows) {
-			status = http.StatusBadRequest
-		}
-		c.JSON(status, gin.H{"success": false, "message": err.Error()})
-		return
-	}
-
-	rows := make([]logExportRow, 0, len(logs))
-	var fundingColumns logExportFundingColumns
-	for _, log := range logs {
-		other, parsed := parseLogExportOther(log)
-		fundingKey := model.LogExportFundingKey{UserID: int64(log.UserId), RequestID: log.RequestId}
-		currentFunding, hasFunding := funding[fundingKey]
-		if hasFunding && other.QuotaPerUnit > 0 {
-			fundingColumns.Nonpaid = fundingColumns.Nonpaid || currentFunding.NonpaidQuota > 0
-			fundingColumns.Paid = fundingColumns.Paid || currentFunding.PaidQuota > 0
-			fundingColumns.Debt = fundingColumns.Debt || currentFunding.DebtQuota > 0
-		}
-		rows = append(rows, logExportRow{Log: log, Other: other, Funding: currentFunding, HasFunds: hasFunding})
-		if !parsed {
-			rows[len(rows)-1].Other = logExportOther{}
-		}
-	}
-
-	var body bytes.Buffer
-	body.WriteString("\xEF\xBB\xBF")
-	writer := csv.NewWriter(&body)
-	if err := writer.Write([]string{"按量消费明细"}); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	header := []string{"用户名称", "账期", "模型名称", "输入token", "输出token", "缓存读取token", "缓存创建token", "输入单价（元/M）", "输出单价（元/M）", "缓存读取倍率", "缓存创建倍率", "阶梯折扣", "实际消费（元）"}
-	if fundingColumns.Nonpaid {
-		header = append(header, "代金券抵扣（元）")
-	}
-	if fundingColumns.Paid {
-		header = append(header, "充值余额支付（元）")
-	}
-	if fundingColumns.Debt {
-		header = append(header, "授信额度支付（元）")
-	}
-	if err := writer.Write(header); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-
-	var currentMonth string
-	var monthAmount, totalAmount float64
-	for _, row := range rows {
-		month := time.Unix(row.Log.CreatedAt, 0).Format("2006-01")
-		if currentMonth != "" && month != currentMonth {
-			if err := writeLogExportSummary(writer, currentMonth+" 月度小计", monthAmount, fundingColumns); err != nil {
-				common.ApiError(c, err)
-				return
-			}
-			monthAmount = 0
-		}
-		currentMonth = month
-		if actual, ok := logExportActualMoney(row.Log, row.Other); ok {
-			monthAmount += actual
-			totalAmount += actual
-		}
-		if err := writeLogExportRow(writer, row, fundingColumns); err != nil {
-			common.ApiError(c, err)
-			return
-		}
-	}
-	if currentMonth != "" {
-		if err := writeLogExportSummary(writer, currentMonth+" 月度小计", monthAmount, fundingColumns); err != nil {
-			common.ApiError(c, err)
-			return
-		}
-	}
-	if err := writeLogExportSummary(writer, "本期消费金额", totalAmount, fundingColumns); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	writer.Flush()
-	if err := writer.Error(); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	c.Header("Content-Type", "text/csv; charset=utf-8")
-	c.Header("Content-Disposition", "attachment; filename="+strconv.Quote("usage-bill.csv"))
-	c.Header("Cache-Control", "no-store")
-	c.Data(http.StatusOK, "text/csv; charset=utf-8", body.Bytes())
-}
-
 func GetAllLogsExport(c *gin.Context) {
-	writeLogExportCSV(c, logExportQuery(c, true))
+	writeLogExport(c, logExportQuery(c, true))
 }
 
 func GetUserLogsExport(c *gin.Context) {
-	writeLogExportCSV(c, logExportQuery(c, false))
+	writeLogExport(c, logExportQuery(c, false))
 }
 
 func GetAllLogs(c *gin.Context) {

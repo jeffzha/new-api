@@ -23,7 +23,13 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 
@@ -127,6 +133,12 @@ it.each([
     await userEvent.click(
       await screen.findByRole('button', { name: 'Download usage bill' })
     )
+    expect(
+      await screen.findByText(
+        'No date selected. The bill will include all matching records.'
+      )
+    ).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Download bill' }))
 
     await waitFor(() => expect(get).toHaveBeenCalledOnce())
     const [requestURL, requestConfig] = get.mock.calls[0]
@@ -134,8 +146,9 @@ it.each([
     expect(requestURL).toContain('model_name=deepseek-chat')
     expect(requestURL).toContain('group=premium')
     expect(requestURL).toContain('request_id=req-1')
-    expect(requestURL).toContain('start_timestamp=1756684800')
-    expect(requestURL).toContain('end_timestamp=1759276799')
+    expect(requestURL).toContain('format=xlsx')
+    expect(requestURL).not.toContain('start_timestamp=')
+    expect(requestURL).not.toContain('end_timestamp=')
     for (const filter of testCase.adminFilters) {
       expect(requestURL).toContain(filter)
     }
@@ -152,3 +165,42 @@ it.each([
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:usage-bill')
   }
 )
+
+it('uses the bill-specific date range when selected', async () => {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'viewer', role: ROLE.USER })
+  const blob = new Blob(['bill'])
+  const get = vi.spyOn(api, 'get').mockResolvedValue({ data: blob })
+  vi.stubGlobal(
+    'URL',
+    Object.assign(class extends URL {}, {
+      createObjectURL: vi.fn(() => 'blob:usage-bill'),
+      revokeObjectURL: vi.fn(),
+    })
+  )
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(
+    () => undefined
+  )
+
+  renderDownload('/usage-logs/common')
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Download usage bill' })
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'All time' }))
+  const start = screen.getByLabelText('Start Time')
+  const end = screen.getByLabelText('End Time')
+  fireEvent.change(start, { target: { value: '2025-09-01T00:00' } })
+  fireEvent.change(end, { target: { value: '2025-09-30T23:59' } })
+  await userEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Download bill' }))
+
+  await waitFor(() => expect(get).toHaveBeenCalledOnce())
+  const requestURL = String(get.mock.calls[0][0])
+  const expectedStart = Math.floor(
+    new Date('2025-09-01T00:00').getTime() / 1000
+  )
+  const expectedEnd = Math.floor(new Date('2025-09-30T23:59').getTime() / 1000)
+  expect(requestURL).toContain(`start_timestamp=${expectedStart}`)
+  expect(requestURL).toContain(`end_timestamp=${expectedEnd}`)
+})

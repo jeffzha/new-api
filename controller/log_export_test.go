@@ -20,18 +20,22 @@ For commercial licensing, please contact support@quantumnous.com
 package controller
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
+	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 )
 
-func TestWriteLogExportRowIncludesOnlyAvailableFundingColumns(t *testing.T) {
+func TestWriteLogExportRowFollowsFixedTemplateColumns(t *testing.T) {
 	log := &model.Log{Username: "alice", CreatedAt: 1_758_000_000, ModelName: "deepseek", PromptTokens: 10, CompletionTokens: 5, Quota: 100}
 	modelRatio, completionRatio, cacheRatio, cacheCreationRatio, groupRatio := 1.0, 2.0, 0.5, 0.25, 1.5
 	row := logExportRow{
@@ -40,17 +44,91 @@ func TestWriteLogExportRowIncludesOnlyAvailableFundingColumns(t *testing.T) {
 		Funding:  model.LogExportFunding{PaidQuota: 100},
 		HasFunds: true,
 	}
-	var output strings.Builder
-	writer := csv.NewWriter(&output)
-	require.NoError(t, writeLogExportRow(writer, row, logExportFundingColumns{Paid: true}))
-	writer.Flush()
-	require.NoError(t, writer.Error())
-	values, err := csv.NewReader(strings.NewReader(output.String())).Read()
-	require.NoError(t, err)
-	require.Len(t, values, 14)
+	values := logExportRowValues(row)
+	require.Len(t, values, 16)
 	require.Equal(t, "21.90000000", values[7])
 	require.Equal(t, "43.80000000", values[8])
-	require.Equal(t, "7.30000000", values[13])
+	require.Equal(t, "0.00000000", values[13])
+	require.Equal(t, "7.30000000", values[14])
+	require.Equal(t, "0.00000000", values[15])
+}
+
+func TestBuildLogExportFormatsFollowTemplate(t *testing.T) {
+	modelRatio, completionRatio := 1.0, 2.0
+	document := logExportDocument{
+		Rows: []logExportRow{{
+			Log:   &model.Log{Username: "alice", CreatedAt: 1_758_000_000, ModelName: "deepseek-chat", PromptTokens: 10, CompletionTokens: 5, Quota: 100},
+			Other: logExportOther{QuotaPerUnit: 100, ModelRatio: &modelRatio, CompletionRatio: &completionRatio},
+		}},
+		MonthTotal: map[string]float64{"2025-09": 7.3},
+		Total:      7.3,
+	}
+
+	csvData, err := buildLogExportCSV(document)
+	require.NoError(t, err)
+	csvReader := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(csvData, []byte("\xEF\xBB\xBF"))))
+	csvReader.FieldsPerRecord = -1
+	csvRows, err := csvReader.ReadAll()
+	require.NoError(t, err)
+	require.Equal(t, "按量消费明细", csvRows[0][0])
+	require.Equal(t, logExportHeaders, csvRows[1])
+	require.Len(t, csvRows[2], 16)
+	require.Equal(t, "2025-09 月度小计", csvRows[3][0])
+	require.Equal(t, "本期消费金额", csvRows[4][0])
+
+	xlsxData, err := buildLogExportXLSX(document)
+	require.NoError(t, err)
+	workbook, err := excelize.OpenReader(bytes.NewReader(xlsxData))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, workbook.Close()) })
+	require.Equal(t, "按量消费明细", mustCellValue(t, workbook, "账单明细", "A1"))
+	require.Equal(t, "授信额度支付（元）", mustCellValue(t, workbook, "账单明细", "P2"))
+	require.Equal(t, "alice", mustCellValue(t, workbook, "账单明细", "A3"))
+	require.Equal(t, "2025-09 月度小计", mustCellValue(t, workbook, "账单明细", "A4"))
+	merged, err := workbook.GetMergeCells("账单明细")
+	require.NoError(t, err)
+	require.Equal(t, "A1:P1", merged[0].GetStartAxis()+":"+merged[0].GetEndAxis())
+	require.Equal(t, "A4:L4", merged[1].GetStartAxis()+":"+merged[1].GetEndAxis())
+
+	docxData, err := buildLogExportDOCX(document)
+	require.NoError(t, err)
+	archive, err := zip.NewReader(bytes.NewReader(docxData), int64(len(docxData)))
+	require.NoError(t, err)
+	documentXML := readZipEntry(t, archive, "word/document.xml")
+	require.Contains(t, documentXML, "按量消费明细")
+	require.Contains(t, documentXML, "授信额度支付（元）")
+	require.Contains(t, documentXML, `w:gridSpan w:val="12"`)
+	require.Contains(t, documentXML, `w:gridSpan w:val="16"`)
+
+	pdfData, err := buildLogExportPDF(document)
+	require.NoError(t, err)
+	require.True(t, bytes.HasPrefix(pdfData, []byte("%PDF-1.4")))
+	require.Contains(t, string(pdfData), "/BaseFont /STSong-Light")
+	require.Contains(t, string(pdfData), pdfText("按量消费明细"))
+}
+
+func mustCellValue(t *testing.T, workbook *excelize.File, sheet, cell string) string {
+	t.Helper()
+	value, err := workbook.GetCellValue(sheet, cell)
+	require.NoError(t, err)
+	return value
+}
+
+func readZipEntry(t *testing.T, archive *zip.Reader, name string) string {
+	t.Helper()
+	for _, file := range archive.File {
+		if file.Name != name {
+			continue
+		}
+		reader, err := file.Open()
+		require.NoError(t, err)
+		defer reader.Close()
+		data, err := io.ReadAll(reader)
+		require.NoError(t, err)
+		return string(data)
+	}
+	t.Fatalf("zip entry %q not found", name)
+	return ""
 }
 
 func TestGetConsumeLogsForExportLoadsFundingAcrossQueryBatches(t *testing.T) {

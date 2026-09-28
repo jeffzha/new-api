@@ -34,6 +34,7 @@ interface CompactDateTimeRangePickerProps {
   start?: Date
   end?: Date
   onChange: (range: { start?: Date; end?: Date }) => void
+  emptyLabel?: string
   className?: string
 }
 
@@ -51,6 +52,7 @@ export function CompactDateTimeRangePicker({
   start,
   end,
   onChange,
+  emptyLabel,
   className,
 }: CompactDateTimeRangePickerProps) {
   const { t } = useTranslation()
@@ -59,7 +61,7 @@ export function CompactDateTimeRangePicker({
   const [draftEnd, setDraftEnd] = useState(toInputValue(end))
 
   const label = useMemo(() => {
-    if (!start && !end) return t('Date Range')
+    if (!start && !end) return emptyLabel ?? t('Date Range')
     // The popover's <input type="datetime-local"> only supports minute
     // precision, so seconds are always 00 (manual pick) or 59 (preset
     // end-of-day). Hide them in the trigger label to keep the button
@@ -67,7 +69,7 @@ export function CompactDateTimeRangePicker({
     const startText = start ? dayjs(start).format('YYYY-MM-DD HH:mm') : '-'
     const endText = end ? dayjs(end).format('YYYY-MM-DD HH:mm') : '-'
     return `${startText} ~ ${endText}`
-  }, [end, start, t])
+  }, [emptyLabel, end, start, t])
 
   const mobileLabel = useMemo(() => {
     if (!start || !end) return label

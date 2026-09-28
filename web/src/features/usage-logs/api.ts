@@ -33,11 +33,13 @@ import type {
 
 export async function downloadUsageBill(
   params: GetLogsParams,
-  isAdmin: boolean
+  isAdmin: boolean,
+  format: 'csv' | 'xlsx' | 'pdf' | 'docx'
 ): Promise<Blob> {
-  const queryParams = buildQueryParams(
-    params as unknown as Record<string, unknown>
-  )
+  const queryParams = buildQueryParams({
+    ...params,
+    format,
+  } as unknown as Record<string, unknown>)
   const endpoint = isAdmin ? '/api/log/export' : '/api/log/self/export'
   const response = await api.get(`${endpoint}?${queryParams.toString()}`, {
     responseType: 'blob',

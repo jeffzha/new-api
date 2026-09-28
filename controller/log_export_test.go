@@ -25,15 +25,48 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 )
+
+func TestLogExportQueryRestrictsUsernameToRoot(t *testing.T) {
+	tests := []struct {
+		name         string
+		isAdmin      bool
+		role         int
+		userID       int
+		wantUsername string
+		wantUserID   int
+	}{
+		{name: "root can filter by username", isAdmin: true, role: common.RoleRootUser, wantUsername: "target-user"},
+		{name: "admin username filter is ignored", isAdmin: true, role: common.RoleAdminUser},
+		{name: "self export uses authenticated user", role: common.RoleCommonUser, userID: 42, wantUserID: 42},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest("GET", "/api/log/export?username=%20target-user%20", nil)
+			ctx.Set("role", tt.role)
+			ctx.Set("id", tt.userID)
+
+			params := logExportQuery(ctx, tt.isAdmin)
+
+			require.Equal(t, tt.wantUsername, params.Username)
+			require.Equal(t, tt.wantUserID, params.UserID)
+		})
+	}
+}
 
 func TestWriteLogExportRowFollowsFixedTemplateColumns(t *testing.T) {
 	log := &model.Log{Username: "alice", CreatedAt: 1_758_000_000, ModelName: "deepseek", PromptTokens: 10, CompletionTokens: 5, Quota: 100}

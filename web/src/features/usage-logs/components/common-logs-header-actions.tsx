@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -51,13 +52,14 @@ const route = getRouteApi('/_authenticated/usage-logs/$section')
  */
 export function CommonLogsHeaderActions() {
   const { t } = useTranslation()
-  const { isAdminView: isAdmin } = useLogsViewScope()
+  const { isAdminView: isAdmin, isRootView } = useLogsViewScope()
   const searchParams = route.useSearch()
   const [open, setOpen] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [format, setFormat] = useState<'csv' | 'xlsx' | 'pdf' | 'docx'>('xlsx')
   const [start, setStart] = useState<Date>()
   const [end, setEnd] = useState<Date>()
+  const [username, setUsername] = useState('')
 
   const handleDownload = async () => {
     setDownloading(true)
@@ -73,6 +75,7 @@ export function CommonLogsHeaderActions() {
         ? Math.floor(start.getTime() / 1000)
         : undefined
       params.end_timestamp = end ? Math.floor(end.getTime() / 1000) : undefined
+      params.username = isRootView ? username.trim() || undefined : undefined
       const blob = await downloadUsageBill(params, isAdmin, format)
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
@@ -132,6 +135,17 @@ export function CommonLogsHeaderActions() {
         }
       >
         <div className='space-y-5'>
+          {isRootView && (
+            <div className='space-y-2'>
+              <Label htmlFor='usage-bill-username'>{t('Username')}</Label>
+              <Input
+                id='usage-bill-username'
+                value={username}
+                placeholder={t('All users')}
+                onChange={(event) => setUsername(event.target.value)}
+              />
+            </div>
+          )}
           <div className='space-y-2'>
             <Label>{t('Bill period')}</Label>
             <CompactDateTimeRangePicker

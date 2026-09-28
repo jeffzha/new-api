@@ -89,7 +89,7 @@ it.each([
   {
     role: ROLE.ADMIN,
     endpoint: '/api/log/export',
-    adminFilters: ['username=alice', 'channel=7'],
+    adminFilters: ['channel=7'],
     selfScope: false,
   },
   {
@@ -138,6 +138,7 @@ it.each([
         'No date selected. The bill will include all matching records.'
       )
     ).toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Username' })).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'Download bill' }))
 
     await waitFor(() => expect(get).toHaveBeenCalledOnce())
@@ -152,8 +153,8 @@ it.each([
     for (const filter of testCase.adminFilters) {
       expect(requestURL).toContain(filter)
     }
+    expect(requestURL).not.toContain('username=')
     if (testCase.role === ROLE.USER || testCase.selfScope) {
-      expect(requestURL).not.toContain('username=')
       expect(requestURL).not.toContain('channel=')
     }
     expect(requestConfig).toMatchObject({
@@ -165,6 +166,39 @@ it.each([
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:usage-bill')
   }
 )
+
+it('lets a super admin download a bill for one username', async () => {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
+  const blob = new Blob(['bill'])
+  const get = vi.spyOn(api, 'get').mockResolvedValue({ data: blob })
+  vi.stubGlobal(
+    'URL',
+    Object.assign(class extends URL {}, {
+      createObjectURL: vi.fn(() => 'blob:usage-bill'),
+      revokeObjectURL: vi.fn(),
+    })
+  )
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(
+    () => undefined
+  )
+
+  renderDownload('/usage-logs/common?username=page-user&channel=7')
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Download usage bill' })
+  )
+  const username = screen.getByRole('textbox', { name: 'Username' })
+  expect(username).toHaveAttribute('placeholder', 'All users')
+  await userEvent.type(username, 'target-user')
+  await userEvent.click(screen.getByRole('button', { name: 'Download bill' }))
+
+  await waitFor(() => expect(get).toHaveBeenCalledOnce())
+  const requestURL = String(get.mock.calls[0][0])
+  expect(requestURL).toContain('/api/log/export?')
+  expect(requestURL).toContain('username=target-user')
+  expect(requestURL).not.toContain('username=page-user')
+})
 
 it('uses the bill-specific date range when selected', async () => {
   useAuthStore

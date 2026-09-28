@@ -167,9 +167,9 @@ func logExportQuery(c *gin.Context, isAdmin bool) model.LogExportParams {
 		UpstreamRequestID: c.Query("upstream_request_id"),
 		Channel:           channel,
 	}
-	if isAdmin {
-		params.Username = c.Query("username")
-	} else {
+	if isAdmin && c.GetInt("role") >= common.RoleRootUser {
+		params.Username = strings.TrimSpace(c.Query("username"))
+	} else if !isAdmin {
 		params.UserID = c.GetInt("id")
 	}
 	return params

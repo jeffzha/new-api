@@ -172,7 +172,28 @@ it('lets a super admin download a bill for one username', async () => {
     .getState()
     .auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
   const blob = new Blob(['bill'])
-  const get = vi.spyOn(api, 'get').mockResolvedValue({ data: blob })
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (String(url).startsWith('/api/user/search?')) {
+      return {
+        data: {
+          success: true,
+          data: {
+            items: [
+              {
+                id: 27,
+                username: 'target-user',
+                display_name: 'Target Customer',
+              },
+            ],
+            total: 1,
+            page: 1,
+            page_size: 20,
+          },
+        },
+      }
+    }
+    return { data: blob }
+  })
   vi.stubGlobal(
     'URL',
     Object.assign(class extends URL {}, {
@@ -188,13 +209,31 @@ it('lets a super admin download a bill for one username', async () => {
   await userEvent.click(
     await screen.findByRole('button', { name: 'Download usage bill' })
   )
-  const username = screen.getByRole('textbox', { name: 'Username' })
-  expect(username).toHaveAttribute('placeholder', 'All users')
+  const username = screen.getByRole('combobox', { name: 'Username' })
+  expect(username).toHaveValue('All users')
+  await userEvent.click(username)
   await userEvent.type(username, 'target-user')
+  const option = await screen.findByRole('option', {
+    name: /target-user.*Target Customer.*ID 27/,
+  })
+  await userEvent.click(option)
+  await waitFor(() => expect(username).toHaveValue('target-user'))
   await userEvent.click(screen.getByRole('button', { name: 'Download bill' }))
 
-  await waitFor(() => expect(get).toHaveBeenCalledOnce())
-  const requestURL = String(get.mock.calls[0][0])
+  await waitFor(() =>
+    expect(
+      get.mock.calls.some(([url]) => String(url).includes('/api/log/export?'))
+    ).toBe(true)
+  )
+  const exportCall = get.mock.calls.find(([url]) =>
+    String(url).includes('/api/log/export?')
+  )
+  const requestURL = String(exportCall?.[0])
+  expect(
+    get.mock.calls.some(([url]) =>
+      String(url).includes('/api/user/search?keyword=target-user')
+    )
+  ).toBe(true)
   expect(requestURL).toContain('/api/log/export?')
   expect(requestURL).toContain('username=target-user')
   expect(requestURL).not.toContain('username=page-user')
@@ -224,17 +263,19 @@ it('uses the bill-specific date range when selected', async () => {
   await userEvent.click(screen.getByRole('button', { name: 'All time' }))
   const start = screen.getByLabelText('Start Time')
   const end = screen.getByLabelText('End Time')
-  fireEvent.change(start, { target: { value: '2025-09-01T00:00' } })
-  fireEvent.change(end, { target: { value: '2025-09-30T23:59' } })
+  fireEvent.change(start, { target: { value: '2025-09-01T00:00:17' } })
+  fireEvent.change(end, { target: { value: '2025-09-30T23:59:43' } })
   await userEvent.click(screen.getByRole('button', { name: 'Confirm' }))
   await userEvent.click(screen.getByRole('button', { name: 'Download bill' }))
 
   await waitFor(() => expect(get).toHaveBeenCalledOnce())
   const requestURL = String(get.mock.calls[0][0])
   const expectedStart = Math.floor(
-    new Date('2025-09-01T00:00').getTime() / 1000
+    new Date('2025-09-01T00:00:17').getTime() / 1000
   )
-  const expectedEnd = Math.floor(new Date('2025-09-30T23:59').getTime() / 1000)
+  const expectedEnd = Math.floor(
+    new Date('2025-09-30T23:59:43').getTime() / 1000
+  )
   expect(requestURL).toContain(`start_timestamp=${expectedStart}`)
   expect(requestURL).toContain(`end_timestamp=${expectedEnd}`)
 })

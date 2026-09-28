@@ -18,12 +18,19 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { getRouteApi } from '@tanstack/react-router'
 import { Download } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  useComboboxAnchor,
+} from '@/components/ui/combobox'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -37,14 +44,152 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { useDebounce } from '@/hooks/use-debounce'
 import { handleServerError } from '@/lib/handle-server-error'
 
+import { searchUsers } from '../../users/api'
+import type { User } from '../../users/types'
 import { downloadUsageBill } from '../api'
 import { buildApiParams } from '../lib/utils'
 import { CompactDateTimeRangePicker } from './compact-date-time-range-picker'
 import { useLogsViewScope } from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
+
+type BillUserOption = Pick<User, 'id' | 'username' | 'display_name'>
+
+function BillUserSearch(props: {
+  value: BillUserOption | null
+  onValueChange: (value: BillUserOption | null) => void
+}) {
+  const { t } = useTranslation()
+  const anchor = useComboboxAnchor()
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const [users, setUsers] = useState<BillUserOption[]>([])
+  const [status, setStatus] = useState<
+    'idle' | 'loading' | 'success' | 'error'
+  >('idle')
+  const keyword = useDebounce(search.trim(), 250)
+  const allUsers = useMemo<BillUserOption>(
+    () => ({ id: 0, username: t('All users'), display_name: '' }),
+    [t]
+  )
+  const selected = props.value ?? allUsers
+  const options = useMemo(() => [allUsers, ...users], [allUsers, users])
+
+  useEffect(() => {
+    if (!open || !keyword) {
+      setUsers([])
+      setStatus('idle')
+      return
+    }
+
+    let active = true
+    setStatus('loading')
+    searchUsers({ keyword, p: 1, page_size: 20 })
+      .then((response) => {
+        if (!active) return
+        if (!response.success || !response.data) {
+          setUsers([])
+          setStatus('error')
+          return
+        }
+        setUsers(
+          response.data.items.map((user) => ({
+            id: user.id,
+            username: user.username,
+            display_name: user.display_name,
+          }))
+        )
+        setStatus('success')
+      })
+      .catch(() => {
+        if (!active) return
+        setUsers([])
+        setStatus('error')
+      })
+
+    return () => {
+      active = false
+    }
+  }, [keyword, open])
+
+  return (
+    <Combobox<BillUserOption>
+      items={options}
+      value={selected}
+      open={open}
+      inputValue={open ? search : selected.username}
+      onInputValueChange={(value, details) => {
+        if (details.reason === 'input-change') setSearch(value)
+      }}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen)
+        setSearch('')
+      }}
+      onValueChange={(option) => {
+        props.onValueChange(option?.id ? option : null)
+        setOpen(false)
+        setSearch('')
+      }}
+      filter={() => true}
+      isItemEqualToValue={(item, value) => item.id === value.id}
+    >
+      <div ref={anchor}>
+        <ComboboxInput
+          id='usage-bill-username'
+          aria-label={t('Username')}
+          placeholder={t('Enter a username to search.')}
+          triggerAriaLabel={t('Search users')}
+          className='h-9 w-full'
+        />
+      </div>
+      <ComboboxContent anchor={anchor}>
+        <ComboboxList>
+          <ComboboxItem value={allUsers}>{t('All users')}</ComboboxItem>
+          {users.map((user) => (
+            <ComboboxItem key={user.id} value={user}>
+              <span className='min-w-0 flex-1'>
+                <span className='block truncate font-medium'>
+                  {user.username}
+                </span>
+                {user.display_name && (
+                  <span className='text-muted-foreground block truncate text-xs'>
+                    {user.display_name}
+                  </span>
+                )}
+              </span>
+              <span className='text-muted-foreground shrink-0 text-xs'>
+                ID {user.id}
+              </span>
+            </ComboboxItem>
+          ))}
+        </ComboboxList>
+        {status === 'idle' && (
+          <p className='text-muted-foreground px-3 py-2 text-xs'>
+            {t('Enter a username to search.')}
+          </p>
+        )}
+        {status === 'loading' && (
+          <p className='text-muted-foreground px-3 py-2 text-xs'>
+            {t('Loading...')}
+          </p>
+        )}
+        {status === 'success' && users.length === 0 && (
+          <p className='text-muted-foreground px-3 py-2 text-xs'>
+            {t('No matching users found.')}
+          </p>
+        )}
+        {status === 'error' && (
+          <p className='text-destructive px-3 py-2 text-xs'>
+            {t('Failed to search users')}
+          </p>
+        )}
+      </ComboboxContent>
+    </Combobox>
+  )
+}
 
 /**
  * Page-header action for downloading a complete consume bill using the
@@ -59,7 +204,7 @@ export function CommonLogsHeaderActions() {
   const [format, setFormat] = useState<'csv' | 'xlsx' | 'pdf' | 'docx'>('xlsx')
   const [start, setStart] = useState<Date>()
   const [end, setEnd] = useState<Date>()
-  const [username, setUsername] = useState('')
+  const [selectedUser, setSelectedUser] = useState<BillUserOption | null>(null)
 
   const handleDownload = async () => {
     setDownloading(true)
@@ -75,7 +220,7 @@ export function CommonLogsHeaderActions() {
         ? Math.floor(start.getTime() / 1000)
         : undefined
       params.end_timestamp = end ? Math.floor(end.getTime() / 1000) : undefined
-      params.username = isRootView ? username.trim() || undefined : undefined
+      params.username = isRootView ? selectedUser?.username : undefined
       const blob = await downloadUsageBill(params, isAdmin, format)
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
@@ -138,11 +283,9 @@ export function CommonLogsHeaderActions() {
           {isRootView && (
             <div className='space-y-2'>
               <Label htmlFor='usage-bill-username'>{t('Username')}</Label>
-              <Input
-                id='usage-bill-username'
-                value={username}
-                placeholder={t('All users')}
-                onChange={(event) => setUsername(event.target.value)}
+              <BillUserSearch
+                value={selectedUser}
+                onValueChange={setSelectedUser}
               />
             </div>
           )}

@@ -287,3 +287,31 @@ it.each([
     })
   }
 )
+
+it('places this month before last month and selects the complete previous month', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date(2026, 8, 8, 12))
+  const user = userEvent.setup()
+  const onChange = vi.fn()
+  render(
+    <CompactDateTimeRangePicker
+      start={new Date(2026, 7, 10)}
+      end={new Date(2026, 8, 8)}
+      onChange={onChange}
+    />
+  )
+  await user.click(screen.getByRole('button', { name: /^2026/ }))
+
+  const thisMonth = screen.getByRole('button', { name: 'Current month' })
+  const lastMonth = screen.getByRole('button', { name: 'Last month' })
+  expect(
+    thisMonth.compareDocumentPosition(lastMonth) &
+      Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '30 Days' })).toBeNull()
+  await user.click(lastMonth)
+  expect(onChange).toHaveBeenCalledWith({
+    start: new Date(2026, 7, 1),
+    end: new Date(2026, 7, 31, 23, 59, 59, 999),
+  })
+})

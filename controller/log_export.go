@@ -23,6 +23,7 @@ var logExportHeaders = []string{
 	"缓存创建token", " 输入单价（元/M） ", " 输出单价（元/M） ", "缓存读取倍率",
 	"缓存创建倍率", "阶梯折扣", "实际消费（元）", "代金券抵扣（元）",
 	"充值余额支付（元）", "授信额度支付（元）",
+	"是否使用代理商优惠", "代理商销售价格（系数）", "代理商优惠金额（元）",
 }
 
 var logExportColumnWidths = []float64{
@@ -30,7 +31,10 @@ var logExportColumnWidths = []float64{
 	13, 19.8148148148148, 17.4537037037037, 23.1759259259259,
 	24.1759259259259, 16.0925925925926, 21.0925925925926, 12.5462962962963,
 	23, 14.2685185185185, 13, 13.3611111111111,
+	18, 22, 20,
 }
+
+const logExportBillingNotice = "计费说明：实际消费为客户最终结算金额，已包含代理商销售价格、客户专属价格及其他适用优惠；代理商成本和平台成本不作为客户账单金额。每笔记录均标明是否使用代理商优惠、销售价格系数及优惠金额。"
 
 type logExportDocument struct {
 	Rows       []logExportRow
@@ -46,7 +50,7 @@ func logExportSummaryValues(label string, amount float64) []string {
 }
 
 func loadLogExportDocument(params model.LogExportParams) (logExportDocument, error) {
-	logs, funding, err := model.GetConsumeLogsForExport(params)
+	logs, funding, agencyPricing, err := model.GetConsumeLogsForExport(params)
 	if err != nil {
 		return logExportDocument{}, err
 	}
@@ -58,9 +62,10 @@ func loadLogExportDocument(params model.LogExportParams) (logExportDocument, err
 		}
 		fundingKey := model.LogExportFundingKey{UserID: int64(log.UserId), RequestID: log.RequestId}
 		currentFunding, hasFunding := funding[fundingKey]
-		row := logExportRow{Log: log, Other: other, Funding: currentFunding, HasFunds: hasFunding}
+		currentPricing, hasPricing := agencyPricing[fundingKey]
+		row := logExportRow{Log: log, Other: other, Funding: currentFunding, HasFunds: hasFunding, AgencyPricing: currentPricing, HasAgencyPricing: hasPricing}
 		document.Rows = append(document.Rows, row)
-		if amount, ok := logExportActualMoney(log, other); ok {
+		if amount, ok := logExportRowActualMoney(row); ok {
 			month := time.Unix(log.CreatedAt, 0).Format("2006-01")
 			document.MonthTotal[month] += amount
 			document.Total += amount
@@ -140,6 +145,9 @@ func buildLogExportCSV(document logExportDocument) ([]byte, error) {
 	if err := writer.Write([]string{"按量消费明细"}); err != nil {
 		return nil, err
 	}
+	if err := writer.Write([]string{logExportBillingNotice}); err != nil {
+		return nil, err
+	}
 	if err := writer.Write(logExportHeaders); err != nil {
 		return nil, err
 	}
@@ -181,22 +189,29 @@ func buildLogExportXLSX(document logExportDocument) ([]byte, error) {
 	ratioStyle, _ := file.NewStyle(&excelize.Style{Font: &excelize.Font{Family: "宋体", Size: 11}, Alignment: &excelize.Alignment{Vertical: "center"}, Border: border, CustomNumFmt: &priceFormat})
 	discountStyle, _ := file.NewStyle(&excelize.Style{Font: &excelize.Font{Family: "宋体", Size: 11}, Alignment: &excelize.Alignment{Vertical: "center"}, Border: border, CustomNumFmt: &discountFormat})
 	moneyStyle, _ := file.NewStyle(&excelize.Style{Font: &excelize.Font{Family: "宋体", Size: 11}, Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center"}, Border: border, CustomNumFmt: &moneyFormat})
-	if err := file.MergeCell(sheet, "A1", "P1"); err != nil {
+	lastColumn, _ := excelize.ColumnNumberToName(len(logExportHeaders))
+	if err := file.MergeCell(sheet, "A1", lastColumn+"1"); err != nil {
 		return nil, err
 	}
 	file.SetCellValue(sheet, "A1", "按量消费明细")
-	file.SetCellStyle(sheet, "A1", "P1", titleStyle)
+	file.SetCellStyle(sheet, "A1", lastColumn+"1", titleStyle)
 	file.SetRowHeight(sheet, 1, 17.4)
+	if err := file.MergeCell(sheet, "A2", lastColumn+"2"); err != nil {
+		return nil, err
+	}
+	file.SetCellValue(sheet, "A2", logExportBillingNotice)
+	file.SetCellStyle(sheet, "A2", lastColumn+"2", bodyLeftStyle)
+	file.SetRowHeight(sheet, 2, 32)
 	for col, value := range logExportHeaders {
-		cell, _ := excelize.CoordinatesToCellName(col+1, 2)
+		cell, _ := excelize.CoordinatesToCellName(col+1, 3)
 		file.SetCellValue(sheet, cell, value)
 	}
-	file.SetCellStyle(sheet, "A2", "P2", headerStyle)
-	file.SetCellStyle(sheet, "B2", "B2", headerLeftStyle)
-	file.SetCellStyle(sheet, "H2", "I2", headerRightStyle)
-	file.SetCellStyle(sheet, "M2", "P2", headerCenterStyle)
-	file.SetRowHeight(sheet, 2, 20)
-	rowIndex := 3
+	file.SetCellStyle(sheet, "A3", lastColumn+"3", headerStyle)
+	file.SetCellStyle(sheet, "B3", "B3", headerLeftStyle)
+	file.SetCellStyle(sheet, "H3", "I3", headerRightStyle)
+	file.SetCellStyle(sheet, "M3", lastColumn+"3", headerCenterStyle)
+	file.SetRowHeight(sheet, 3, 20)
+	rowIndex := 4
 	for _, values := range logExportTableRows(document) {
 		isSummary := strings.Contains(values[0], "月度小计")
 		if isSummary {
@@ -212,7 +227,7 @@ func buildLogExportXLSX(document logExportDocument) ([]byte, error) {
 				if number, err := strconv.Atoi(value); err == nil {
 					cellValue = number
 				}
-			} else if col >= 7 && col <= 15 {
+			} else if (col >= 7 && col <= 15) || col == 17 || col == 18 {
 				if number, err := strconv.ParseFloat(value, 64); err == nil {
 					cellValue = number
 				}
@@ -223,7 +238,7 @@ func buildLogExportXLSX(document logExportDocument) ([]byte, error) {
 		if isSummary {
 			style = summaryStyle
 		}
-		file.SetCellStyle(sheet, fmt.Sprintf("A%d", rowIndex), fmt.Sprintf("P%d", rowIndex), style)
+		file.SetCellStyle(sheet, fmt.Sprintf("A%d", rowIndex), fmt.Sprintf("%s%d", lastColumn, rowIndex), style)
 		if !isSummary {
 			file.SetCellStyle(sheet, fmt.Sprintf("B%d", rowIndex), fmt.Sprintf("B%d", rowIndex), bodyLeftStyle)
 			file.SetCellStyle(sheet, fmt.Sprintf("D%d", rowIndex), fmt.Sprintf("G%d", rowIndex), countStyle)
@@ -231,14 +246,17 @@ func buildLogExportXLSX(document logExportDocument) ([]byte, error) {
 			file.SetCellStyle(sheet, fmt.Sprintf("J%d", rowIndex), fmt.Sprintf("K%d", rowIndex), ratioStyle)
 			file.SetCellStyle(sheet, fmt.Sprintf("L%d", rowIndex), fmt.Sprintf("L%d", rowIndex), discountStyle)
 			file.SetCellStyle(sheet, fmt.Sprintf("M%d", rowIndex), fmt.Sprintf("P%d", rowIndex), moneyStyle)
+			file.SetCellStyle(sheet, fmt.Sprintf("Q%d", rowIndex), fmt.Sprintf("Q%d", rowIndex), bodyStyle)
+			file.SetCellStyle(sheet, fmt.Sprintf("R%d", rowIndex), fmt.Sprintf("R%d", rowIndex), ratioStyle)
+			file.SetCellStyle(sheet, fmt.Sprintf("S%d", rowIndex), fmt.Sprintf("S%d", rowIndex), moneyStyle)
 		}
 		file.SetRowHeight(sheet, rowIndex, 20)
 		rowIndex++
 	}
 	rowIndex += 2
-	file.MergeCell(sheet, fmt.Sprintf("A%d", rowIndex), fmt.Sprintf("P%d", rowIndex))
+	file.MergeCell(sheet, fmt.Sprintf("A%d", rowIndex), fmt.Sprintf("%s%d", lastColumn, rowIndex))
 	file.SetCellValue(sheet, fmt.Sprintf("A%d", rowIndex), fmt.Sprintf("本期消费金额：%.8f元", document.Total))
-	file.SetCellStyle(sheet, fmt.Sprintf("A%d", rowIndex), fmt.Sprintf("P%d", rowIndex), totalStyle)
+	file.SetCellStyle(sheet, fmt.Sprintf("A%d", rowIndex), fmt.Sprintf("%s%d", lastColumn, rowIndex), totalStyle)
 	file.SetRowHeight(sheet, rowIndex, 22)
 	for i, width := range logExportColumnWidths {
 		col, _ := excelize.ColumnNumberToName(i + 1)
@@ -265,6 +283,9 @@ func buildLogExportDOCX(document logExportDocument) ([]byte, error) {
 	var body strings.Builder
 	body.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>`)
 	body.WriteString(`<w:p><w:r><w:rPr><w:b/><w:sz w:val="28"/><w:rFonts w:eastAsia="宋体"/></w:rPr><w:t>按量消费明细</w:t></w:r></w:p>`)
+	body.WriteString(`<w:p><w:r><w:rPr><w:sz w:val="18"/><w:rFonts w:eastAsia="宋体"/></w:rPr><w:t>`)
+	body.WriteString(xmlEscape(logExportBillingNotice))
+	body.WriteString(`</w:t></w:r></w:p>`)
 	body.WriteString(`<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblLayout w:type="fixed"/><w:tblBorders><w:top w:val="single" w:sz="4" w:color="000000"/><w:left w:val="single" w:sz="4" w:color="000000"/><w:bottom w:val="single" w:sz="4" w:color="000000"/><w:right w:val="single" w:sz="4" w:color="000000"/><w:insideH w:val="single" w:sz="4" w:color="000000"/><w:insideV w:val="single" w:sz="4" w:color="000000"/></w:tblBorders></w:tblPr>`)
 	writeRow := func(values []string, bold bool, header bool) {
 		body.WriteString(`<w:tr>`)
@@ -272,7 +293,7 @@ func buildLogExportDOCX(document logExportDocument) ([]byte, error) {
 			body.WriteString(`<w:trPr><w:tblHeader/></w:trPr>`)
 		}
 		for _, value := range values {
-			body.WriteString(`<w:tc><w:tcPr><w:tcW w:w="950" w:type="dxa"/>`)
+			body.WriteString(`<w:tc><w:tcPr><w:tcW w:w="800" w:type="dxa"/>`)
 			body.WriteString(`</w:tcPr><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:eastAsia="宋体"/><w:sz w:val="14"/>`)
 			if bold {
 				body.WriteString(`<w:b/>`)
@@ -289,17 +310,17 @@ func buildLogExportDOCX(document logExportDocument) ([]byte, error) {
 			writeRow(row, false, false)
 			continue
 		}
-		body.WriteString(`<w:tr><w:tc><w:tcPr><w:gridSpan w:val="12"/><w:tcW w:w="11400" w:type="dxa"/><w:shd w:fill="FFFFFF"/></w:tcPr><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:rFonts w:eastAsia="宋体"/><w:sz w:val="14"/></w:rPr><w:t>`)
+		body.WriteString(`<w:tr><w:tc><w:tcPr><w:gridSpan w:val="12"/><w:tcW w:w="9600" w:type="dxa"/><w:shd w:fill="FFFFFF"/></w:tcPr><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:rFonts w:eastAsia="宋体"/><w:sz w:val="14"/></w:rPr><w:t>`)
 		body.WriteString(xmlEscape(row[0]))
 		body.WriteString(`</w:t></w:r></w:p></w:tc>`)
 		for _, value := range row[12:] {
-			body.WriteString(`<w:tc><w:tcPr><w:tcW w:w="950" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:rFonts w:eastAsia="宋体"/><w:sz w:val="14"/></w:rPr><w:t>`)
+			body.WriteString(`<w:tc><w:tcPr><w:tcW w:w="800" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:rFonts w:eastAsia="宋体"/><w:sz w:val="14"/></w:rPr><w:t>`)
 			body.WriteString(xmlEscape(value))
 			body.WriteString(`</w:t></w:r></w:p></w:tc>`)
 		}
 		body.WriteString(`</w:tr>`)
 	}
-	body.WriteString(`</w:tbl><w:p/><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="4" w:color="000000"/><w:left w:val="single" w:sz="4" w:color="000000"/><w:bottom w:val="single" w:sz="4" w:color="000000"/><w:right w:val="single" w:sz="4" w:color="000000"/></w:tblBorders></w:tblPr><w:tr><w:tc><w:tcPr><w:gridSpan w:val="16"/><w:tcW w:w="15200" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:b/><w:rFonts w:eastAsia="宋体"/><w:sz w:val="22"/></w:rPr><w:t>`)
+	body.WriteString(fmt.Sprintf(`</w:tbl><w:p/><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="4" w:color="000000"/><w:left w:val="single" w:sz="4" w:color="000000"/><w:bottom w:val="single" w:sz="4" w:color="000000"/><w:right w:val="single" w:sz="4" w:color="000000"/></w:tblBorders></w:tblPr><w:tr><w:tc><w:tcPr><w:gridSpan w:val="%d"/><w:tcW w:w="15200" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:b/><w:rFonts w:eastAsia="宋体"/><w:sz w:val="22"/></w:rPr><w:t>`, len(logExportHeaders)))
 	body.WriteString(xmlEscape(fmt.Sprintf("本期消费金额：%.8f元", document.Total)))
 	body.WriteString(`</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/><w:pgMar w:top="567" w:right="340" w:bottom="567" w:left="340"/></w:sectPr></w:body></w:document>`)
 	files := map[string]string{
@@ -401,7 +422,7 @@ func writePDFCellText(content *strings.Builder, value string, left, baseline, wi
 
 func buildLogExportPDF(document logExportDocument) ([]byte, error) {
 	rows := logExportTableRows(document)
-	const rowsPerPage = 28
+	const rowsPerPage = 27
 	pageCount := max((len(rows)+rowsPerPage-1)/rowsPerPage, 1)
 	objects := make([][]byte, 6)
 	objects[0] = []byte(`<< /Type /Catalog /Pages 2 0 R >>`)
@@ -420,10 +441,11 @@ func buildLogExportPDF(document logExportDocument) ([]byte, error) {
 		var content strings.Builder
 		content.WriteString("0.7 w 0 0 0 RG\n")
 		writePDFCellText(&content, "按量消费明细", 0, 810, 1191, 16, "center")
+		writePDFCellText(&content, logExportBillingNotice, 24, 792, 1143, 8, "left")
 		if page > 0 {
 			writePDFCellText(&content, fmt.Sprintf("第%d页", page+1), 1080, 810, 80, 8, "right")
 		}
-		rowHeight, left, top, tableWidth := 24.0, 24.0, 785.0, 1143.0
+		rowHeight, left, top, tableWidth := 24.0, 24.0, 770.0, 1143.0
 		columnWidths := make([]float64, len(logExportColumnWidths))
 		totalWeight := 0.0
 		for _, width := range logExportColumnWidths {

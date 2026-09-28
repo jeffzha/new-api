@@ -216,6 +216,7 @@
     "Actively check all channels": "主动检查全部渠道",
     "Actively check auto-disable-enabled channels": "主动检查已开启自动禁用的渠道",
     "Actual Amount": "实付金额",
+    "Actual consumption is the customer's final charge after agency sales pricing, customer-specific pricing, and applicable discounts. Exported files show whether each charge used an agency discount and the discount amount.": "实际消费为客户在代理商销售价格、客户专属价格及其他适用优惠后的最终扣费。导出文件会逐笔标明是否使用代理商优惠及优惠金额。",
     "Actual Model": "实际模型",
     "Actual Model:": "实际模型：",
     "Adapt `-thinking` suffix requests to Anthropic native thinking behavior while keeping billing predictable.": "将带 `-thinking` 后缀的请求适配为 Anthropic 原生思考请求，并保持计费可预测。",

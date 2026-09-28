@@ -64,7 +64,10 @@ function DownloadFixtureProvider() {
 
 function renderDownload(initialEntry: string) {
   const root = createRootRoute()
-  const auth = createRoute({ getParentRoute: () => root, id: '_authenticated' })
+  const auth = createRoute({
+    getParentRoute: () => root,
+    id: '_authenticated',
+  })
   const logs = createRoute({
     getParentRoute: () => auth,
     path: '/usage-logs/$section',
@@ -136,6 +139,11 @@ it.each([
     expect(
       await screen.findByText(
         'No date selected. The bill will include all matching records.'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        "Actual consumption is the customer's final charge after agency sales pricing, customer-specific pricing, and applicable discounts. Exported files show whether each charge used an agency discount and the discount amount."
       )
     ).toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: 'Username' })).toBeNull()

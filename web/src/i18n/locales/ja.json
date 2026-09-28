@@ -216,6 +216,7 @@
     "Actively check all channels": "すべてのチャネルを定期チェック",
     "Actively check auto-disable-enabled channels": "自動無効化が有効なチャネルを定期チェック",
     "Actual Amount": "実際の金額",
+    "Actual consumption is the customer's final charge after agency sales pricing, customer-specific pricing, and applicable discounts. Exported files show whether each charge used an agency discount and the discount amount.": "実際の利用額は、代理店販売価格、顧客別価格、および適用可能な割引を反映した顧客への最終請求額です。エクスポートには、各明細の代理店割引の適用有無と割引額が表示されます。",
     "Actual Model": "実際のモデル",
     "Actual Model:": "実際のモデル：",
     "Adapt `-thinking` suffix requests to Anthropic native thinking behavior while keeping billing predictable.": "`-thinking` サフィックス付きリクエストを Anthropic ネイティブの思考動作に適配し、課金を予測可能に保ちます。",

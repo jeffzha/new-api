@@ -21,9 +21,11 @@ package model
 
 import (
 	"errors"
+	"math"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"gorm.io/gorm"
 )
 
@@ -44,6 +46,17 @@ type LogExportFunding struct {
 type LogExportFundingKey struct {
 	UserID    int64
 	RequestID string
+}
+
+// LogExportAgencyPricing is the frozen customer-facing price for one charge.
+// SettlementBPS is deliberately excluded because it is an agency cost, not a
+// customer discount.
+type LogExportAgencyPricing struct {
+	StandardQuota     int64
+	ChargedTotalQuota int64
+	SalesBPS          int
+	QuotaPerUnit      string
+	ExchangeRate      string
 }
 
 type logExportSourceSnapshot struct {
@@ -106,20 +119,20 @@ func buildConsumeLogQuery(params LogExportParams) (*gorm.DB, error) {
 	return tx, nil
 }
 
-func GetConsumeLogsForExport(params LogExportParams) ([]*Log, map[LogExportFundingKey]LogExportFunding, error) {
+func GetConsumeLogsForExport(params LogExportParams) ([]*Log, map[LogExportFundingKey]LogExportFunding, map[LogExportFundingKey]LogExportAgencyPricing, error) {
 	if LOG_DB == nil {
-		return nil, nil, errors.New("log database is not initialized")
+		return nil, nil, nil, errors.New("log database is not initialized")
 	}
 	tx, err := buildConsumeLogQuery(params)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var total int64
 	if err := tx.Model(&Log{}).Count(&total).Error; err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if total > LogExportMaxRows {
-		return nil, nil, ErrLogExportTooManyRows
+		return nil, nil, nil, ErrLogExportTooManyRows
 	}
 	order := "logs.created_at asc, logs.id asc"
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
@@ -127,15 +140,13 @@ func GetConsumeLogsForExport(params LogExportParams) ([]*Log, map[LogExportFundi
 	}
 	var logs []*Log
 	if err := tx.Order(order).Limit(LogExportMaxRows).Find(&logs).Error; err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	funding := make(map[LogExportFundingKey]LogExportFunding)
+	agencyPricing := make(map[LogExportFundingKey]LogExportAgencyPricing)
 	if DB == nil || len(logs) == 0 {
-		return logs, funding, nil
-	}
-	if !DB.Migrator().HasTable(&AgencyFundingAllocation{}) {
-		return logs, funding, nil
+		return logs, funding, agencyPricing, nil
 	}
 	chargeIDs := make([]string, 0, len(logs))
 	seen := make(map[string]struct{}, len(logs))
@@ -150,34 +161,77 @@ func GetConsumeLogsForExport(params LogExportParams) ([]*Log, map[LogExportFundi
 		chargeIDs = append(chargeIDs, log.RequestId)
 	}
 	if len(chargeIDs) == 0 {
-		return logs, funding, nil
+		return logs, funding, agencyPricing, nil
 	}
-	allocations := make([]AgencyFundingAllocation, 0)
-	for start := 0; start < len(chargeIDs); start += logExportFundingBatchSize {
-		end := min(start+logExportFundingBatchSize, len(chargeIDs))
-		var batch []AgencyFundingAllocation
-		if err := DB.Where("charge_id IN ?", chargeIDs[start:end]).Find(&batch).Error; err != nil {
-			return nil, nil, err
+	if DB.Migrator().HasTable(&AgencyFundingAllocation{}) {
+		allocations := make([]AgencyFundingAllocation, 0)
+		for start := 0; start < len(chargeIDs); start += logExportFundingBatchSize {
+			end := min(start+logExportFundingBatchSize, len(chargeIDs))
+			var batch []AgencyFundingAllocation
+			if err := DB.Where("charge_id IN ?", chargeIDs[start:end]).Find(&batch).Error; err != nil {
+				return nil, nil, nil, err
+			}
+			allocations = append(allocations, batch...)
 		}
-		allocations = append(allocations, batch...)
+		for _, allocation := range allocations {
+			paid, nonpaid, debt, err := agencyFundingAllocationActiveParts(allocation)
+			if err != nil {
+				continue
+			}
+			if paid <= 0 && nonpaid <= 0 && debt <= 0 {
+				continue
+			}
+			key := LogExportFundingKey{UserID: allocation.UserID, RequestID: allocation.ChargeID}
+			current := funding[key]
+			current.PaidQuota += paid
+			var source logExportSourceSnapshot
+			if common.UnmarshalJsonStr(allocation.SourceSnapshotJSON, &source) == nil && isRedemptionSource(source.SourceKind) {
+				current.NonpaidQuota += nonpaid
+			}
+			current.DebtQuota += debt
+			funding[key] = current
+		}
 	}
-	for _, allocation := range allocations {
-		paid, nonpaid, debt, err := agencyFundingAllocationActiveParts(allocation)
-		if err != nil {
-			continue
+
+	if DB.Migrator().HasTable(&AgencyBillingOperation{}) {
+		invalidPricing := make(map[LogExportFundingKey]struct{})
+		for start := 0; start < len(chargeIDs); start += logExportFundingBatchSize {
+			end := min(start+logExportFundingBatchSize, len(chargeIDs))
+			var operations []AgencyBillingOperation
+			if err := DB.Where("charge_id IN ? AND operation = ?", chargeIDs[start:end], "finalize").Find(&operations).Error; err != nil {
+				return nil, nil, nil, err
+			}
+			for _, operation := range operations {
+				var event agencycontract.BillingEvent
+				if common.UnmarshalJsonStr(operation.CommittedResult, &event) != nil || event.UserID <= 0 ||
+					event.FinancialChargeID != operation.ChargeID || event.StandardQuota < 0 ||
+					event.ChargedTotalQuota < 0 || event.SalesBPS < 0 || event.SalesBPS > agencycontract.MaxCoefficientBPS {
+					continue
+				}
+				key := LogExportFundingKey{UserID: event.UserID, RequestID: operation.ChargeID}
+				if _, invalid := invalidPricing[key]; invalid {
+					continue
+				}
+				current, exists := agencyPricing[key]
+				if exists && (current.SalesBPS != event.SalesBPS || current.QuotaPerUnit != event.QuotaPerUnit || current.ExchangeRate != event.ExchangeRate) {
+					delete(agencyPricing, key)
+					invalidPricing[key] = struct{}{}
+					continue
+				}
+				if event.StandardQuota > math.MaxInt64-current.StandardQuota ||
+					event.ChargedTotalQuota > math.MaxInt64-current.ChargedTotalQuota {
+					delete(agencyPricing, key)
+					invalidPricing[key] = struct{}{}
+					continue
+				}
+				current.StandardQuota += event.StandardQuota
+				current.ChargedTotalQuota += event.ChargedTotalQuota
+				current.SalesBPS = event.SalesBPS
+				current.QuotaPerUnit = event.QuotaPerUnit
+				current.ExchangeRate = event.ExchangeRate
+				agencyPricing[key] = current
+			}
 		}
-		if paid <= 0 && nonpaid <= 0 && debt <= 0 {
-			continue
-		}
-		key := LogExportFundingKey{UserID: allocation.UserID, RequestID: allocation.ChargeID}
-		current := funding[key]
-		current.PaidQuota += paid
-		var source logExportSourceSnapshot
-		if common.UnmarshalJsonStr(allocation.SourceSnapshotJSON, &source) == nil && isRedemptionSource(source.SourceKind) {
-			current.NonpaidQuota += nonpaid
-		}
-		current.DebtQuota += debt
-		funding[key] = current
 	}
-	return logs, funding, nil
+	return logs, funding, agencyPricing, nil
 }

@@ -35,10 +35,12 @@ type logExportOther struct {
 }
 
 type logExportRow struct {
-	Log      *model.Log
-	Other    logExportOther
-	Funding  model.LogExportFunding
-	HasFunds bool
+	Log              *model.Log
+	Other            logExportOther
+	Funding          model.LogExportFunding
+	HasFunds         bool
+	AgencyPricing    model.LogExportAgencyPricing
+	HasAgencyPricing bool
 }
 
 func logExportCSVSafe(value string) string {
@@ -111,10 +113,29 @@ func logExportActualMoney(log *model.Log, other logExportOther) (float64, bool) 
 	return float64(log.Quota) / other.QuotaPerUnit * operation_setting.USDExchangeRate, true
 }
 
+func logExportQuotaMoney(quota int64, quotaPerUnit, exchangeRate string) (float64, bool) {
+	unit, unitErr := strconv.ParseFloat(quotaPerUnit, 64)
+	rate, rateErr := strconv.ParseFloat(exchangeRate, 64)
+	if quota < 0 || unitErr != nil || rateErr != nil || unit <= 0 || rate < 0 ||
+		math.IsNaN(unit) || math.IsInf(unit, 0) || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return 0, false
+	}
+	return float64(quota) / unit * rate, true
+}
+
+func logExportRowActualMoney(row logExportRow) (float64, bool) {
+	if row.HasAgencyPricing {
+		if amount, ok := logExportQuotaMoney(row.AgencyPricing.ChargedTotalQuota, row.AgencyPricing.QuotaPerUnit, row.AgencyPricing.ExchangeRate); ok {
+			return amount, true
+		}
+	}
+	return logExportActualMoney(row.Log, row.Other)
+}
+
 func logExportRowValues(row logExportRow) []string {
 	other := row.Other
 	inPrice, outPrice := logExportMoneyPerMillion(other)
-	actual, hasActual := logExportActualMoney(row.Log, other)
+	actual, hasActual := logExportRowActualMoney(row)
 	cacheRead := other.CacheTokens
 	cacheWrite := other.CacheWriteTokens
 	if cacheWrite == 0 {
@@ -146,6 +167,20 @@ func logExportRowValues(row logExportRow) []string {
 			values = append(values, "")
 		}
 	}
+	usedAgencyDiscount := "否"
+	agencySalesRatio := ""
+	agencyDiscountMoney := ""
+	if row.HasAgencyPricing {
+		agencySalesRatio = fmt.Sprintf("%.4f", float64(row.AgencyPricing.SalesBPS)/10000)
+		discountQuota := max(row.AgencyPricing.StandardQuota-row.AgencyPricing.ChargedTotalQuota, 0)
+		if discountQuota > 0 {
+			usedAgencyDiscount = "是"
+		}
+		if amount, ok := logExportQuotaMoney(discountQuota, row.AgencyPricing.QuotaPerUnit, row.AgencyPricing.ExchangeRate); ok {
+			agencyDiscountMoney = fmt.Sprintf("%.8f", amount)
+		}
+	}
+	values = append(values, usedAgencyDiscount, agencySalesRatio, agencyDiscountMoney)
 	for i := range values {
 		values[i] = logExportCSVSafe(values[i])
 	}

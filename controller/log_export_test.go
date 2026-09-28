@@ -26,15 +26,19 @@ import (
 	"fmt"
 	"io"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"github.com/xuri/excelize/v2"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -78,12 +82,42 @@ func TestWriteLogExportRowFollowsFixedTemplateColumns(t *testing.T) {
 		HasFunds: true,
 	}
 	values := logExportRowValues(row)
-	require.Len(t, values, 16)
+	require.Len(t, values, 19)
 	require.Equal(t, "21.90000000", values[7])
 	require.Equal(t, "43.80000000", values[8])
 	require.Equal(t, "0.00000000", values[13])
 	require.Equal(t, "7.30000000", values[14])
 	require.Equal(t, "0.00000000", values[15])
+	require.Equal(t, "否", values[16])
+	require.Empty(t, values[17])
+	require.Empty(t, values[18])
+}
+
+func TestLogExportRowShowsCustomerAgencyDiscount(t *testing.T) {
+	other := logExportOther{QuotaPerUnit: 100}
+	tests := []struct {
+		name           string
+		pricing        model.LogExportAgencyPricing
+		wantActual     string
+		wantDiscounted string
+		wantRatio      string
+		wantDiscount   string
+	}{
+		{name: "discount", pricing: model.LogExportAgencyPricing{StandardQuota: 125, ChargedTotalQuota: 100, SalesBPS: 8000, QuotaPerUnit: "100", ExchangeRate: "7.3"}, wantActual: "7.30000000", wantDiscounted: "是", wantRatio: "0.8000", wantDiscount: "1.82500000"},
+		{name: "markup is not a discount", pricing: model.LogExportAgencyPricing{StandardQuota: 100, ChargedTotalQuota: 120, SalesBPS: 12000, QuotaPerUnit: "100", ExchangeRate: "7.3"}, wantActual: "8.76000000", wantDiscounted: "否", wantRatio: "1.2000", wantDiscount: "0.00000000"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values := logExportRowValues(logExportRow{
+				Log:   &model.Log{Username: "agency-customer", CreatedAt: 1_758_000_000, ModelName: "deepseek", Quota: 999},
+				Other: other, AgencyPricing: tt.pricing, HasAgencyPricing: true,
+			})
+			require.Equal(t, tt.wantActual, values[12])
+			require.Equal(t, tt.wantDiscounted, values[16])
+			require.Equal(t, tt.wantRatio, values[17])
+			require.Equal(t, tt.wantDiscount, values[18])
+		})
+	}
 }
 
 func TestBuildLogExportFormatsFollowTemplate(t *testing.T) {
@@ -104,10 +138,11 @@ func TestBuildLogExportFormatsFollowTemplate(t *testing.T) {
 	csvRows, err := csvReader.ReadAll()
 	require.NoError(t, err)
 	require.Equal(t, "按量消费明细", csvRows[0][0])
-	require.Equal(t, logExportHeaders, csvRows[1])
-	require.Len(t, csvRows[2], 16)
-	require.Equal(t, "2025-09 月度小计", csvRows[3][0])
-	require.Equal(t, "本期消费金额", csvRows[4][0])
+	require.Equal(t, logExportBillingNotice, csvRows[1][0])
+	require.Equal(t, logExportHeaders, csvRows[2])
+	require.Len(t, csvRows[3], 19)
+	require.Equal(t, "2025-09 月度小计", csvRows[4][0])
+	require.Equal(t, "本期消费金额", csvRows[5][0])
 
 	xlsxData, err := buildLogExportXLSX(document)
 	require.NoError(t, err)
@@ -115,13 +150,15 @@ func TestBuildLogExportFormatsFollowTemplate(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, workbook.Close()) })
 	require.Equal(t, "按量消费明细", mustCellValue(t, workbook, "账单明细", "A1"))
-	require.Equal(t, "授信额度支付（元）", mustCellValue(t, workbook, "账单明细", "P2"))
-	require.Equal(t, "alice", mustCellValue(t, workbook, "账单明细", "A3"))
-	require.Equal(t, "2025-09 月度小计", mustCellValue(t, workbook, "账单明细", "A4"))
+	require.Equal(t, logExportBillingNotice, mustCellValue(t, workbook, "账单明细", "A2"))
+	require.Equal(t, "代理商优惠金额（元）", mustCellValue(t, workbook, "账单明细", "S3"))
+	require.Equal(t, "alice", mustCellValue(t, workbook, "账单明细", "A4"))
+	require.Equal(t, "2025-09 月度小计", mustCellValue(t, workbook, "账单明细", "A5"))
 	merged, err := workbook.GetMergeCells("账单明细")
 	require.NoError(t, err)
-	require.Equal(t, "A1:P1", merged[0].GetStartAxis()+":"+merged[0].GetEndAxis())
-	require.Equal(t, "A4:L4", merged[1].GetStartAxis()+":"+merged[1].GetEndAxis())
+	require.Equal(t, "A1:S1", merged[0].GetStartAxis()+":"+merged[0].GetEndAxis())
+	require.Equal(t, "A2:S2", merged[1].GetStartAxis()+":"+merged[1].GetEndAxis())
+	require.Equal(t, "A5:L5", merged[2].GetStartAxis()+":"+merged[2].GetEndAxis())
 
 	docxData, err := buildLogExportDOCX(document)
 	require.NoError(t, err)
@@ -129,15 +166,17 @@ func TestBuildLogExportFormatsFollowTemplate(t *testing.T) {
 	require.NoError(t, err)
 	documentXML := readZipEntry(t, archive, "word/document.xml")
 	require.Contains(t, documentXML, "按量消费明细")
-	require.Contains(t, documentXML, "授信额度支付（元）")
+	require.Contains(t, documentXML, xmlEscape(logExportBillingNotice))
+	require.Contains(t, documentXML, "代理商优惠金额（元）")
 	require.Contains(t, documentXML, `w:gridSpan w:val="12"`)
-	require.Contains(t, documentXML, `w:gridSpan w:val="16"`)
+	require.Contains(t, documentXML, `w:gridSpan w:val="19"`)
 
 	pdfData, err := buildLogExportPDF(document)
 	require.NoError(t, err)
 	require.True(t, bytes.HasPrefix(pdfData, []byte("%PDF-1.4")))
 	require.Contains(t, string(pdfData), "/BaseFont /STSong-Light")
 	require.Contains(t, string(pdfData), pdfText("按量消费明细"))
+	require.Contains(t, string(pdfData), pdfText(logExportBillingNotice))
 }
 
 func mustCellValue(t *testing.T, workbook *excelize.File, sheet, cell string) string {
@@ -168,12 +207,52 @@ func TestGetConsumeLogsForExportLoadsFundingAcrossQueryBatches(t *testing.T) {
 	dsn := "file:log-export-batches-" + strings.ReplaceAll(t.Name(), "/", "-") + "?mode=memory&cache=shared"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.AgencyFundingAllocation{}))
+	testGetConsumeLogsForExportLoadsAgencyPricing(t, db, common.DatabaseTypeSQLite)
+}
+
+func TestGetConsumeLogsForExportExternalDatabaseCompatibility(t *testing.T) {
+	tests := []struct {
+		name     string
+		dsn      string
+		database common.DatabaseType
+		open     func(string) gorm.Dialector
+	}{
+		{name: "mysql", dsn: strings.TrimSpace(os.Getenv("TEST_MYSQL_DSN")), database: common.DatabaseTypeMySQL, open: func(dsn string) gorm.Dialector { return mysql.Open(dsn) }},
+		{name: "postgres", dsn: strings.TrimSpace(os.Getenv("TEST_POSTGRES_DSN")), database: common.DatabaseTypePostgreSQL, open: func(dsn string) gorm.Dialector {
+			return postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.dsn == "" {
+				t.Skipf("TEST_%s_DSN is not configured", strings.ToUpper(tt.name))
+			}
+			db, err := gorm.Open(tt.open(tt.dsn), &gorm.Config{})
+			require.NoError(t, err)
+			testGetConsumeLogsForExportLoadsAgencyPricing(t, db, tt.database)
+		})
+	}
+}
+
+func testGetConsumeLogsForExportLoadsAgencyPricing(t *testing.T, db *gorm.DB, databaseType common.DatabaseType) {
+	t.Helper()
+	require.NoError(t, db.Migrator().DropTable(&model.Log{}, &model.AgencyFundingAllocation{}, &model.AgencyBillingOperation{}))
+	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.AgencyFundingAllocation{}, &model.AgencyBillingOperation{}))
+	t.Cleanup(func() {
+		require.NoError(t, db.Migrator().DropTable(&model.Log{}, &model.AgencyFundingAllocation{}, &model.AgencyBillingOperation{}))
+		sqlDB, err := db.DB()
+		if err == nil {
+			require.NoError(t, sqlDB.Close())
+		}
+	})
 
 	previousDB, previousLogDB := model.DB, model.LOG_DB
+	previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
 	model.DB, model.LOG_DB = db, db
+	common.SetDatabaseTypes(databaseType, databaseType)
 	t.Cleanup(func() {
 		model.DB, model.LOG_DB = previousDB, previousLogDB
+		common.SetDatabaseTypes(previousMainType, previousLogType)
 	})
 
 	logs := make([]model.Log, 502)
@@ -192,11 +271,16 @@ func TestGetConsumeLogsForExportLoadsFundingAcrossQueryBatches(t *testing.T) {
 	}
 	require.NoError(t, db.CreateInBatches(logs, 100).Error)
 	require.NoError(t, db.CreateInBatches(allocations, 100).Error)
+	event := agencycontract.BillingEvent{FinancialChargeID: "bill-request-500", UserID: 1, StandardQuota: 100, ChargedTotalQuota: 80, SalesBPS: 8000, QuotaPerUnit: "100", ExchangeRate: "7.3"}
+	payload, err := common.Marshal(event)
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.AgencyBillingOperation{ChargeID: event.FinancialChargeID, SegmentNo: 0, Revision: 1, Operation: "finalize", InputHash: "billing-export-test", CommittedResult: string(payload), EventCount: 1, CreatedAtMS: 1}).Error)
 
-	exported, funding, err := model.GetConsumeLogsForExport(model.LogExportParams{IsAdmin: true})
+	exported, funding, agencyPricing, err := model.GetConsumeLogsForExport(model.LogExportParams{IsAdmin: true})
 	require.NoError(t, err)
 	require.Len(t, exported, 502)
 	require.Len(t, funding, 502)
 	require.Equal(t, int64(1), funding[model.LogExportFundingKey{UserID: 1, RequestID: "bill-request-500"}].PaidQuota)
 	require.Equal(t, int64(1), funding[model.LogExportFundingKey{UserID: 2, RequestID: "bill-request-000"}].PaidQuota)
+	require.Equal(t, model.LogExportAgencyPricing{StandardQuota: 100, ChargedTotalQuota: 80, SalesBPS: 8000, QuotaPerUnit: "100", ExchangeRate: "7.3"}, agencyPricing[model.LogExportFundingKey{UserID: 1, RequestID: "bill-request-500"}])
 }

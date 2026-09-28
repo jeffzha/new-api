@@ -17,11 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { getRouteApi } from '@tanstack/react-router'
-import { Download } from 'lucide-react'
+import { Download, Info } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Combobox,
@@ -280,6 +281,14 @@ export function CommonLogsHeaderActions() {
         }
       >
         <div className='space-y-5'>
+          <Alert>
+            <Info className='size-4' />
+            <AlertDescription className='text-xs'>
+              {t(
+                "Actual consumption is the customer's final charge after agency sales pricing, customer-specific pricing, and applicable discounts. Exported files show whether each charge used an agency discount and the discount amount."
+              )}
+            </AlertDescription>
+          </Alert>
           {isRootView && (
             <div className='space-y-2'>
               <Label htmlFor='usage-bill-username'>{t('Username')}</Label>

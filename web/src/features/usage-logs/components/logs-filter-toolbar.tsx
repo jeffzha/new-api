@@ -243,11 +243,13 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
   return (
     <div
       className={cn(
-        'signal-log-filters bg-card/50 rounded-lg border p-2.5 sm:p-3',
+        'signal-log-filters bg-card/50 shrink-0 rounded-lg border p-2.5 sm:p-3',
         props.className
       )}
+      role='group'
+      aria-label={t('Filter')}
     >
-      <div className='flex flex-wrap items-start gap-2'>
+      <div className='console-filter-primary flex flex-wrap items-start gap-2'>
         <div className='grid min-w-0 flex-1 grid-cols-1 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]'>
           {props.primaryFilters}
         </div>
@@ -259,12 +261,12 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
       </div>
 
       {advancedOpen && props.advancedFilters && (
-        <div className='mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]'>
+        <div className='console-filter-advanced mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]'>
           {props.advancedFilters}
         </div>
       )}
 
-      <div className='mt-2 flex flex-wrap items-center gap-2'>
+      <div className='console-filter-actions mt-2 flex flex-wrap items-center gap-2'>
         {props.stats}
         <div className='ms-auto flex flex-wrap items-center justify-end gap-1.5 sm:gap-2'>
           {props.actionStart}

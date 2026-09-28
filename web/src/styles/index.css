@@ -32,6 +32,8 @@ For commercial licensing, please contact support@quantumnous.com
 @import './signal-console.css';
 @import './signal-workspace.css';
 @import './prism-console.css';
+@import './console-shell.css';
+@import './console-surfaces.css';
 
 /* Shiki dual themes: token colors follow dark theme (pre background stays `bg-background` on the block) */
 @layer components {

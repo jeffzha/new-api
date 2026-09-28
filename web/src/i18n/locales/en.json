@@ -11,6 +11,18 @@
   "signal.page.marketplace": "Explore capabilities. Compare prices. Find your next model.",
   "signal.page.rankings": "Read the platform’s model demand and provider trends.",
   "translation": {
+    "Observe": "Observe",
+    "Develop": "Develop",
+    "Manage": "Manage",
+    "Workspace": "Workspace",
+    "Workspaces": "Workspaces",
+    "Workspace areas": "Workspace areas",
+    "Platform navigation": "Platform navigation",
+    "Open platform menu": "Open platform menu",
+    "Collapse navigation": "Collapse navigation",
+    "Expand navigation": "Expand navigation",
+    "Close navigation": "Close navigation",
+    "Explore": "Explore",
     "Account Information": "Account Information",
     "Failed to load period totals": "Failed to load period totals",
     "Analyzed records only": "Analyzed records only",
@@ -36,6 +48,7 @@
     "Cache read tokens": "Cache read tokens",
     "Cache reads are included in input tokens.": "Cache reads are included in input tokens.",
     "Account settings": "Account settings",
+    "Account security": "Account security",
     "Check-in": "Check-in",
     "Providers": "Providers",
     "preset.signal-console": "Signal Console",
@@ -6835,6 +6848,15 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Actual": "Actual",
+    "Not provided": "Not provided",
+    "Model catalog": "Model catalog",
+    "Current page": "Current page",
+    "Key status": "Key status",
+    "Model cost breakdown": "Model cost breakdown",
+    "Cost share": "Cost share",
+    "No subscription plans available": "No subscription plans available",
+    "Log records": "Log records"
   }
 }

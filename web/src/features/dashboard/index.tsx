@@ -31,10 +31,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { ROLE } from '@/lib/roles'
+import { usesConsoleWorkspace } from '@/lib/theme-customization'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { ConsoleModelBreakdown } from './components/models/console-model-breakdown'
 import { ModelsChartPreferences } from './components/models/models-chart-preferences'
 import { ModelsFilter } from './components/models/models-filter-dialog'
 import { OverviewThemeView } from './components/overview/overview-theme-view'
@@ -193,6 +196,8 @@ const SECTION_META: Record<DashboardSectionId, { titleKey: string }> = {
 
 export function Dashboard() {
   const { t } = useTranslation()
+  const { customization } = useThemeCustomization()
+  const workspace = usesConsoleWorkspace(customization.preset)
   const navigate = useNavigate()
   const params = route.useParams()
   const userRole = useAuthStore((state) => state.auth.user?.role)
@@ -325,7 +330,12 @@ export function Dashboard() {
     <SectionPageLayout>
       <SectionPageLayout.Title>{t(meta.titleKey)}</SectionPageLayout.Title>
       <SectionPageLayout.Content>
-        <div className='signal-analytics-grid space-y-3 sm:space-y-4'>
+        <div
+          className={cn(
+            'signal-analytics-grid space-y-3 sm:space-y-4',
+            workspace && 'console-analytics-workspace'
+          )}
+        >
           <div className='flex flex-wrap items-center justify-between gap-1.5 sm:gap-2'>
             {showSectionTabs ? (
               <Tabs value={activeSection} onValueChange={handleSectionChange}>
@@ -389,6 +399,9 @@ export function Dashboard() {
                   />
                 </Suspense>
               </FadeIn>
+              {workspace && (
+                <ConsoleModelBreakdown data={modelData} loading={dataLoading} />
+              )}
             </>
           )}
           {activeSection === 'users' && (

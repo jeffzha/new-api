@@ -16,11 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Combobox } from '@/components/ui/combobox'
 import type { Table } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
 
-
+import { Combobox } from '@/components/ui/combobox'
 
 import { CompactDateTimeRangePicker } from '../../components/compact-date-time-range-picker'
 import {
@@ -39,14 +38,14 @@ function AuditFilterSelect(props: {
   return (
     <LogsFilterField>
       <Combobox
-options={props.options}
-value={props.value}
-onValueChange={(value) => {
+        options={props.options}
+        value={props.value}
+        onValueChange={(value) => {
           if (value !== null) props.onChange(value)
         }}
-aria-label={props.label}
-className='w-full'
-/>
+        aria-label={props.label}
+        className='w-full'
+      />
     </LogsFilterField>
   )
 }
@@ -57,6 +56,7 @@ export function AuditLogFilterBar(props: {
   onChange: (patch: Partial<AuditFilters>) => void
   scope: 'all' | 'self'
   accessOnly?: boolean
+  hideCategory?: boolean
   tokenScope: string
   currentTokenRef?: string
   onTokenScopeChange: (value: string) => void
@@ -123,20 +123,22 @@ export function AuditLogFilterBar(props: {
           onChange={props.onTokenScopeChange}
         />
       ) : (
-        <AuditFilterSelect
-          label={t('Category')}
-          value={props.filters.category ?? 'all'}
-          options={[
-            { value: 'all', label: t('All categories') },
-            { value: 'login', label: t('Login') },
-            { value: 'security', label: t('Account security') },
-            { value: 'operation', label: t('Operation audit') },
-            { value: 'access_token', label: t('Access Token') },
-          ]}
-          onChange={(value) =>
-            props.onChange({ category: value === 'all' ? undefined : value })
-          }
-        />
+        !props.hideCategory && (
+          <AuditFilterSelect
+            label={t('Category')}
+            value={props.filters.category ?? 'all'}
+            options={[
+              { value: 'all', label: t('All categories') },
+              { value: 'login', label: t('Login') },
+              { value: 'security', label: t('Account security') },
+              { value: 'operation', label: t('Operation audit') },
+              { value: 'access_token', label: t('Access Token') },
+            ]}
+            onChange={(value) =>
+              props.onChange({ category: value === 'all' ? undefined : value })
+            }
+          />
+        )
       )}
     </>
   )

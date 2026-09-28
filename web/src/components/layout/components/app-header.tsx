@@ -21,11 +21,15 @@ import { LanguageSwitcher } from '@/components/language-switcher'
 import { NotificationPopover } from '@/components/notification-popover'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { Search } from '@/components/search'
+import { SidebarTrigger } from '@/components/ui/sidebar'
+import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useTopNavLinks } from '@/hooks/use-top-nav-links'
+import { usesConsoleWorkspace } from '@/lib/theme-customization'
 
 import { defaultTopNavLinks } from '../config/top-nav.config'
 import type { TopNavLink } from '../types'
+import { ConsoleProductNav } from './console-product-nav'
 import { Header } from './header'
 import { SystemBrand } from './system-brand'
 import { TopNav } from './top-nav'
@@ -109,20 +113,24 @@ export function AppHeader({
 
   // Notifications hook
   const notifications = useNotifications()
+  const { customization } = useThemeCustomization()
+  const workspace = usesConsoleWorkspace(customization.preset)
 
   return (
-    <Header>
-      <div className='@container/system-brand flex min-w-0 flex-1 items-center gap-1'>
+    <Header showSidebarTrigger={!workspace}>
+      <div className='console-brand @container/system-brand flex min-w-0 flex-1 items-center gap-1'>
+        {workspace && <SidebarTrigger variant='ghost' className='size-8' />}
         <SystemBrand variant='inline' />
       </div>
 
+      {workspace && showTopNav && <ConsoleProductNav links={links} console />}
       {leftContent ? (
         <div className='ms-2 flex items-center'>{leftContent}</div>
       ) : null}
 
       {rightContent ?? (
-        <div className='ms-auto flex shrink-0 items-center gap-1 sm:gap-2'>
-          {showTopNav && (
+        <div className='console-header-actions ms-auto flex shrink-0 items-center gap-1 sm:gap-2'>
+          {showTopNav && !workspace && (
             <div className='me-1 hidden lg:block'>
               <TopNav links={links} />
             </div>

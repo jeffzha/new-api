@@ -31,6 +31,7 @@ import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import { ThemeCustomizationProvider } from '@/context/theme-customization-provider'
 import en from '@/i18n/locales/en.json'
 import fr from '@/i18n/locales/fr.json'
 import ja from '@/i18n/locales/ja.json'
@@ -395,6 +396,7 @@ it.each([
 )
 
 beforeEach(() => {
+  document.cookie = 'theme_preset=; Max-Age=0; path=/'
   vi.stubGlobal('localStorage', {
     getItem: () => null,
     setItem: () => undefined,
@@ -403,10 +405,70 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  document.cookie = 'theme_preset=; Max-Age=0; path=/'
   useAuthStore.getState().auth.reset()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
+it.each(['signal-console', 'prism-console'])(
+  '%s category tabs filter audit records and reset pagination without duplicate category controls',
+  async (preset) => {
+    document.cookie = `theme_preset=${preset}; path=/`
+    const get = vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: { items: [], total: 45 } },
+    })
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const view = render(
+      <QueryClientProvider client={client}>
+        <ThemeCustomizationProvider>
+          <AuditLogs />
+        </ThemeCustomizationProvider>
+      </QueryClientProvider>
+    )
+    try {
+      await waitFor(() =>
+        expect(
+          screen.getByRole('button', { name: 'Go to next page' })
+        ).toBeEnabled()
+      )
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Go to next page' })
+      )
+      await waitFor(() =>
+        expect(get).toHaveBeenLastCalledWith('/api/audit/self', {
+          params: expect.objectContaining({ p: 2 }),
+        })
+      )
+      await userEvent.click(
+        screen.getByRole('tab', { name: 'Account security' })
+      )
+      await waitFor(() =>
+        expect(get).toHaveBeenLastCalledWith('/api/audit/self', {
+          params: expect.objectContaining({ p: 1, category: 'security' }),
+        })
+      )
+      expect(
+        screen.getByRole('tab', { name: 'Account security' })
+      ).toHaveAttribute('aria-selected', 'true')
+      expect(
+        screen.queryByRole('combobox', { name: 'Category' })
+      ).not.toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: 'Result' })).toBeVisible()
+      await userEvent.click(screen.getByRole('tab', { name: 'All categories' }))
+      await waitFor(() =>
+        expect(get).toHaveBeenLastCalledWith('/api/audit/self', {
+          params: expect.objectContaining({ category: undefined }),
+        })
+      )
+    } finally {
+      view.unmount()
+      client.clear()
+    }
+  }
+)
+
 function renderViewer(scope: 'all' | 'self' = 'self') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },

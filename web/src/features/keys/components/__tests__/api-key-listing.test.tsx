@@ -43,6 +43,7 @@ import { I18nextProvider } from 'react-i18next'
 import { Toaster, toast } from 'sonner'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import { ThemeCustomizationProvider } from '@/context/theme-customization-provider'
 import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import {
@@ -143,6 +144,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  document.cookie = 'theme_preset=; Max-Age=0; path=/'
   toast.dismiss()
   localStorage.clear()
   clients.splice(0).forEach((client) => client.clear())
@@ -341,13 +343,37 @@ async function renderKeysPage(status = 1, overrides: Partial<ApiKey> = {}) {
   render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={client}>
-        <RouterProvider router={router} />
+        <ThemeCustomizationProvider>
+          <RouterProvider router={router} />
+        </ThemeCustomizationProvider>
       </QueryClientProvider>
     </I18nextProvider>
   )
   await screen.findByText(currentKey.name)
-  return { post, put }
+  return { post, put, router }
 }
+
+it.each(['signal-console', 'prism-console'])(
+  '%s status tabs update the URL and restore all keys when cleared',
+  async (preset) => {
+    document.cookie = `theme_preset=${preset}; path=/`
+    const { router } = await renderKeysPage()
+    await userEvent.click(screen.getByRole('tab', { name: 'Disabled' }))
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({ status: ['2'] })
+    )
+    expect(
+      screen.queryByRole('cell', { name: 'production' })
+    ).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('tab', { name: 'All' }))
+    expect(
+      await screen.findByRole('cell', { name: 'production' })
+    ).toBeVisible()
+    expect(
+      screen.getByRole('textbox', { name: 'Filter by API key...' })
+    ).toBeVisible()
+  }
+)
 
 it('combines creation and last use while keeping expiry, models and IP restrictions separate', async () => {
   await renderKeysPage()

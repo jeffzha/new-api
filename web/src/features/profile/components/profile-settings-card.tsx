@@ -34,12 +34,14 @@ interface ProfileSettingsCardProps {
   profile: UserProfile | null
   loading: boolean
   onProfileUpdate: () => void
+  title?: string
 }
 
 export function ProfileSettingsCard({
   profile,
   loading,
   onProfileUpdate,
+  title,
 }: ProfileSettingsCardProps) {
   const { t } = useTranslation()
 
@@ -61,8 +63,8 @@ export function ProfileSettingsCard({
 
   return (
     <TitledCard
-      title={t('Settings')}
-      description={t('Settings & Preferences')}
+      title={title ?? t('Settings')}
+      description={title ? undefined : t('Settings & Preferences')}
       icon={<Settings className='h-4 w-4' />}
       iconTone='info'
       disableHoverEffect

@@ -35,6 +35,7 @@ import {
   ModelCardGrid,
   ModelDetailsDrawer,
 } from './components'
+import { ConsoleCatalogHeader } from './components/console-catalog-header'
 import {
   CustomerPricingNotice,
   PricingUnavailable,
@@ -213,60 +214,47 @@ export function Pricing() {
           />
         )}
         <PageTransition className='relative mx-auto w-full max-w-[1800px] px-3 pt-16 pb-8 sm:px-6 sm:pt-20 sm:pb-10 xl:px-8'>
-          <header className='signal-marketplace-hero mx-auto mb-5 max-w-3xl pt-5 text-center sm:mb-10 sm:pt-10'>
-            <h1 className='text-3xl leading-tight font-bold'>
-              {t('Model Square')}
-            </h1>
-            <p className='text-muted-foreground/80 mt-3 text-sm sm:mt-4 sm:text-base'>
-              {t('This site currently has {{count}} models enabled', {
-                count: models?.length || 0,
-              })}
-            </p>
-            {!signal && (
-              <p className='text-muted-foreground/60 mx-auto mt-2 max-w-2xl text-xs leading-relaxed sm:text-sm'>
-                {t(
-                  'Discover curated AI models, compare pricing and capabilities, and choose the right model for every scenario.'
-                )}
-              </p>
-            )}
-            {signal && (
-              <dl className='mt-4 flex flex-wrap gap-8 border-y py-4 text-sm'>
-                <div>
-                  <dt className='text-muted-foreground'>{t('Models')}</dt>
-                  <dd className='mt-1 text-xl font-semibold'>
-                    {publicModels.length}
-                  </dd>
-                </div>
-                <div>
-                  <dt className='text-muted-foreground'>{t('Providers')}</dt>
-                  <dd className='mt-1 text-xl font-semibold'>
-                    {
-                      new Set(
-                        publicModels
-                          .map((model) => model.vendor_id)
-                          .filter(Boolean)
-                      ).size
-                    }
-                  </dd>
-                </div>
-                <div>
-                  <dt className='text-muted-foreground'>{t('Groups')}</dt>
-                  <dd className='mt-1 text-xl font-semibold'>
-                    {availableGroups.length}
-                  </dd>
-                </div>
-              </dl>
-            )}
-            <SearchBar
-              value={searchInput}
-              onChange={setSearchInput}
+          {signal ? (
+            <ConsoleCatalogHeader
+              models={publicModels.length}
+              providers={
+                new Set(
+                  publicModels.map((model) => model.vendor_id).filter(Boolean)
+                ).size
+              }
+              groups={availableGroups.length}
+              search={searchInput}
+              onSearch={setSearchInput}
               onClear={clearSearch}
-              placeholder={t(
-                'Search model name, provider, endpoint, or tag...'
-              )}
-              className='mx-auto mt-4 max-w-2xl sm:mt-6'
             />
-          </header>
+          ) : (
+            <header className='signal-marketplace-hero mx-auto mb-5 max-w-3xl pt-5 text-center sm:mb-10 sm:pt-10'>
+              <h1 className='text-3xl leading-tight font-bold'>
+                {t('Model Square')}
+              </h1>
+              <p className='text-muted-foreground/80 mt-3 text-sm sm:mt-4 sm:text-base'>
+                {t('This site currently has {{count}} models enabled', {
+                  count: models?.length || 0,
+                })}
+              </p>
+              {!signal && (
+                <p className='text-muted-foreground/60 mx-auto mt-2 max-w-2xl text-xs leading-relaxed sm:text-sm'>
+                  {t(
+                    'Discover curated AI models, compare pricing and capabilities, and choose the right model for every scenario.'
+                  )}
+                </p>
+              )}
+              <SearchBar
+                value={searchInput}
+                onChange={setSearchInput}
+                onClear={clearSearch}
+                placeholder={t(
+                  'Search model name, provider, endpoint, or tag...'
+                )}
+                className='mx-auto mt-4 max-w-2xl sm:mt-6'
+              />
+            </header>
+          )}
 
           {signal && (
             <Tabs

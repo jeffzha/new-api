@@ -20,6 +20,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
+import { ConsoleCatalogHeader } from '../components/console-catalog-header'
 import {
   PricingToolbar,
   type PricingToolbarProps,
@@ -59,6 +60,32 @@ function toolbarProps(): PricingToolbarProps {
 }
 
 describe('pricing controls', () => {
+  it('keeps catalog counts alongside a searchable and clearable model field', async () => {
+    const onSearch = vi.fn()
+    const onClear = vi.fn()
+    render(
+      <ConsoleCatalogHeader
+        models={10}
+        providers={4}
+        groups={2}
+        search='gpt'
+        onSearch={onSearch}
+        onClear={onClear}
+      />
+    )
+    expect(screen.getByRole('heading', { name: 'Model Square' })).toBeVisible()
+    expect(screen.getByLabelText('Model catalog')).toHaveTextContent(
+      'Models10Providers4Groups2'
+    )
+    await userEvent.type(
+      screen.getByRole('textbox', { name: 'Search models' }),
+      '4'
+    )
+    expect(onSearch).toHaveBeenCalledWith('gpt4')
+    await userEvent.click(screen.getByRole('button', { name: 'Clear search' }))
+    expect(onClear).toHaveBeenCalledOnce()
+  })
+
   it('changes the token unit and keeps the selected unit pressed when clicked again', async () => {
     const props = toolbarProps()
     const user = userEvent.setup()

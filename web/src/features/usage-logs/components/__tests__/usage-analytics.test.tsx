@@ -22,10 +22,43 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { usageLogSchema } from '../../data/schema'
 import { UsageAnalyticsPanel } from '../usage-analytics-panel'
+import { UsageAnalyticsView } from '../usage-analytics-view'
 import { UsageLogsProvider } from '../usage-logs-provider'
 
 let client: QueryClient
+
+it('keeps model request counts visible when token usage and cost are zero', async () => {
+  render(
+    <UsageAnalyticsView
+      showModelTable
+      rows={[
+        usageLogSchema.parse({
+          id: 1,
+          user_id: 1,
+          created_at: 7200,
+          type: 2,
+          content: '',
+          model_name: 'free-model',
+          group: 'default',
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          quota: 0,
+          use_time: 1,
+          other: JSON.stringify({ agency_standard_quota: 0 }),
+        }),
+      ]}
+    />
+  )
+  const table = screen.getByRole('table', { name: 'Model distribution' })
+  expect(
+    within(table).getByRole('row', { name: /free-model 1 0/ })
+  ).toBeVisible()
+  await userEvent.click(screen.getByRole('tab', { name: 'Usage' }))
+  expect(within(table).getByText('free-model')).toBeVisible()
+})
+
 function Fixture() {
   return (
     <UsageLogsProvider>
@@ -88,6 +121,12 @@ it('selecting a model or group updates the shared table URL filters without losi
   const models = await screen.findByRole('region', {
     name: 'Model distribution',
   })
+  expect(
+    within(models)
+      .getAllByRole('columnheader')
+      .map((cell) => cell.textContent)
+  ).toEqual(['Model', 'Requests', 'Tokens', 'Actual', 'Standard'])
+  expect(within(models).getByText('Not provided')).toBeVisible()
   await userEvent.click(within(models).getByRole('button', { name: 'model-a' }))
   await waitFor(() =>
     expect(router.state.location.search).toMatchObject({

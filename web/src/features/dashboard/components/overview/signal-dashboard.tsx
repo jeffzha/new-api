@@ -268,10 +268,10 @@ export function SignalDashboard() {
                   )}
                 </p>
               )}
-              <UsageAnalyticsView rows={query.data.rows} />
+              <UsageAnalyticsView rows={query.data.rows} showModelTable />
             </>
           )}
-          <div className='grid min-w-0 gap-8 xl:grid-cols-[minmax(0,2fr)_minmax(240px,1fr)]'>
+          <div className='console-activity-grid grid min-w-0 gap-8 xl:grid-cols-[minmax(0,2fr)_minmax(240px,1fr)]'>
             {query.isSuccess && (
               <section className='min-w-0' aria-label={t('Recent usage')}>
                 <div className='mb-3 flex items-center justify-between'>
@@ -321,7 +321,10 @@ export function SignalDashboard() {
                 )}
               </section>
             )}
-            <nav aria-label={t('Quick actions')}>
+            <nav
+              className='console-quick-actions'
+              aria-label={t('Quick actions')}
+            >
               <h3 className='mb-3 font-semibold'>{t('Quick actions')}</h3>
               <div className='divide-y'>
                 {actions.map((action) => (
@@ -329,7 +332,7 @@ export function SignalDashboard() {
                     key={action.to}
                     variant='ghost'
                     render={<Link to={action.to} />}
-                    className='h-16 w-full justify-start gap-3 rounded-none'
+                    className='h-12 w-full justify-start gap-3 rounded-md'
                   >
                     <action.icon aria-hidden className='text-primary' />
                     <span className='flex-1 text-left'>{action.title}</span>

@@ -187,6 +187,7 @@ export interface LogOtherData {
   input_tokens_total?: number
   billable_input_tokens?: number
   quota_per_unit?: number
+  agency_standard_quota?: number
   usage_semantic?: string
   claude?: boolean
   model_ratio?: number

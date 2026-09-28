@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { CalendarCheck, SlidersHorizontal, UserRound } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Main } from '@/components/layout'
@@ -25,6 +26,7 @@ import {
 } from '@/components/page-transition'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useThemeCustomization } from '@/context/theme-customization-provider'
+import { useMediaQuery } from '@/hooks'
 import { useStatus } from '@/hooks/use-status'
 import { usesConsoleWorkspace } from '@/lib/theme-customization'
 import { useAuthStore } from '@/stores/auth-store'
@@ -40,6 +42,7 @@ export function Profile() {
   const { t } = useTranslation()
   const { customization } = useThemeCustomization()
   const signal = usesConsoleWorkspace(customization.preset)
+  const compact = useMediaQuery('(max-width: 767px)')
   const { profile, loading, refreshProfile } = useProfile()
   const { status } = useStatus()
   const permissions = useAuthStore((s) => s.auth.user?.permissions)
@@ -56,7 +59,11 @@ export function Profile() {
       <div className='signal-profile-content min-h-0 flex-1 overflow-auto px-3 py-3 sm:px-4 sm:py-6'>
         <CardStaggerContainer className='signal-profile-layout mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-6'>
           <CardStaggerItem>
-            <ProfileHeader profile={profile} loading={loading} />
+            <ProfileHeader
+              profile={profile}
+              loading={loading}
+              compact={signal}
+            />
           </CardStaggerItem>
 
           <CardStaggerItem>
@@ -64,17 +71,23 @@ export function Profile() {
               {signal ? (
                 <Tabs
                   defaultValue='account'
-                  className='signal-settings-tabs col-span-full min-w-0'
+                  orientation={compact ? 'horizontal' : 'vertical'}
+                  className='console-settings signal-settings-tabs col-span-full min-w-0'
                 >
                   <TabsList variant='line' aria-label={t('Profile')}>
                     <TabsTrigger value='account'>
+                      <UserRound aria-hidden />
                       {t('Account settings')}
                     </TabsTrigger>
                     <TabsTrigger value='preferences'>
+                      <SlidersHorizontal aria-hidden />
                       {t('Preferences')}
                     </TabsTrigger>
                     {checkinEnabled && (
-                      <TabsTrigger value='checkin'>{t('Check-in')}</TabsTrigger>
+                      <TabsTrigger value='checkin'>
+                        <CalendarCheck aria-hidden />
+                        {t('Check-in')}
+                      </TabsTrigger>
                     )}
                   </TabsList>
                   <TabsContent
@@ -85,12 +98,12 @@ export function Profile() {
                     {profile && (
                       <section
                         aria-label={t('Account Information')}
-                        className='border-b pb-6'
+                        className='console-account-details border-b pb-6'
                       >
                         <h3 className='mb-4 text-base font-semibold'>
                           {t('Account Information')}
                         </h3>
-                        <dl className='grid min-w-0 gap-x-8 gap-y-5 sm:grid-cols-2 xl:grid-cols-4'>
+                        <dl className='grid min-w-0 gap-x-8 gap-y-5 sm:grid-cols-2'>
                           {[
                             { label: t('Username'), value: profile.username },
                             {
@@ -118,6 +131,7 @@ export function Profile() {
                     <ProfileSettingsCard
                       profile={profile}
                       loading={loading}
+                      title={t('Notifications')}
                       onProfileUpdate={refreshProfile}
                     />
                   </TabsContent>

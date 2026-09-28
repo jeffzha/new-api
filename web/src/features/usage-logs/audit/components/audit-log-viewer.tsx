@@ -18,13 +18,17 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
+import { Activity, KeyRound, LogIn, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTablePage, useDataTable } from '@/components/data-table'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { usesConsoleWorkspace } from '@/lib/theme-customization'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { getAuditLogs, type AuditFilters, type AuditLog } from '../api'
@@ -40,6 +44,9 @@ export function AuditLogViewer(props: {
   onAccessDenied?: () => Promise<void>
 }) {
   const { t } = useTranslation()
+  const { customization } = useThemeCustomization()
+  const workspace =
+    usesConsoleWorkspace(customization.preset) && !props.accessOnly
   const userId = useAuthStore((state) => state.auth.user?.id)
   const [filters, setFilters] = useState<AuditFilters>({ p: 1, page_size: 20 })
   const [tokenScope, setTokenScope] = useState('all')
@@ -123,7 +130,49 @@ export function AuditLogViewer(props: {
         tableClassName='[&_[data-slot=table]]:text-[13px] [&_[data-slot=table]_td]:text-[13px] [&_[data-slot=table]_td_*]:text-[13px] [&_[data-slot=table]_th]:text-[13px] [&_[data-slot=table]_th_*]:text-[13px]'
         toolbar={
           <div className='shrink-0 space-y-2'>
+            {workspace && (
+              <div className='console-audit-categories'>
+                <div className='console-resource-heading'>
+                  <h3>
+                    {t('Audit Logs')}{' '}
+                    <span>{query.isSuccess ? query.data.total : '-'}</span>
+                  </h3>
+                  <span>
+                    {t('Current page')}: {table.getRowModel().rows.length}
+                  </span>
+                </div>
+                <Tabs
+                  value={filters.category ?? 'all'}
+                  onValueChange={(value) =>
+                    update({
+                      category: value === 'all' ? undefined : String(value),
+                    })
+                  }
+                >
+                  <TabsList variant='line' aria-label={t('Category')}>
+                    <TabsTrigger value='all'>{t('All categories')}</TabsTrigger>
+                    <TabsTrigger value='login'>
+                      <LogIn aria-hidden />
+                      {t('Login')}
+                    </TabsTrigger>
+                    <TabsTrigger value='security'>
+                      <ShieldCheck aria-hidden />
+                      {t('Account security')}
+                    </TabsTrigger>
+                    <TabsTrigger value='operation'>
+                      <Activity aria-hidden />
+                      {t('Operation audit')}
+                    </TabsTrigger>
+                    <TabsTrigger value='access_token'>
+                      <KeyRound aria-hidden />
+                      {t('Access Token')}
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
+            )}
             <AuditLogFilterBar
+              hideCategory={workspace}
               table={table}
               filters={filters}
               onChange={update}

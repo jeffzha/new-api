@@ -16,7 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Link2 } from 'lucide-react'
+import {
+  Fingerprint,
+  KeyRound,
+  Link2,
+  LockKeyhole,
+  Monitor,
+  ShieldCheck,
+} from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -33,6 +40,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TitledCard } from '@/components/ui/titled-card'
 import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { useProfile } from '@/features/profile/hooks/use-profile'
+import { useMediaQuery } from '@/hooks'
 import { ROLE } from '@/lib/roles'
 import { usesConsoleWorkspace } from '@/lib/theme-customization'
 import { useAuthStore } from '@/stores/auth-store'
@@ -49,6 +57,7 @@ import { TwoFACard } from './components/two-fa-card'
 export function Security() {
   const { t } = useTranslation()
   const { customization } = useThemeCustomization()
+  const compact = useMediaQuery('(max-width: 767px)')
   const userRole = useAuthStore((state) => state.auth.user?.role)
   const isRoot = userRole === ROLE.SUPER_ADMIN
   const { profile, loading, refreshProfile, fetchProfile } = useProfile()
@@ -85,26 +94,38 @@ export function Security() {
       content = (
         <Tabs
           defaultValue='authentication'
-          className='signal-settings-tabs min-w-0'
+          orientation={compact ? 'horizontal' : 'vertical'}
+          className='console-settings signal-settings-tabs min-w-0'
         >
           <TabsList variant='line' aria-label={t('Security & Access')}>
             <TabsTrigger value='authentication'>
+              <Fingerprint aria-hidden />
               {t('Login & Authentication')}
             </TabsTrigger>
-            <TabsTrigger value='access'>{t('Sessions & Access')}</TabsTrigger>
-            <TabsTrigger value='privacy'>{t('Privacy')}</TabsTrigger>
+            <TabsTrigger value='access'>
+              <Monitor aria-hidden />
+              {t('Sessions & Access')}
+            </TabsTrigger>
+            <TabsTrigger value='privacy'>
+              <LockKeyhole aria-hidden />
+              {t('Privacy')}
+            </TabsTrigger>
           </TabsList>
           <TabsContent value='authentication' keepMounted className='space-y-5'>
-            <div className='grid gap-5 lg:grid-cols-2'>
-              <PasskeyCard loading={loading} />
-              <TwoFACard loading={loading} />
-            </div>
+            <header className='console-settings-heading'>
+              <ShieldCheck aria-hidden />
+              <h3>{t('Login & Authentication')}</h3>
+            </header>
             <AccountActionCard
               action='password'
               username={profile.username}
               hasPassword={profile.has_password}
               onUpdate={refreshProfile}
             />
+            <div className='console-verification-methods'>
+              <PasskeyCard loading={loading} />
+              <TwoFACard loading={loading} />
+            </div>
             <TitledCard
               title={t('Account Bindings')}
               icon={<Link2 className='size-4' />}
@@ -114,11 +135,19 @@ export function Security() {
             </TitledCard>
           </TabsContent>
           <TabsContent value='access' keepMounted className='space-y-5'>
+            <header className='console-settings-heading'>
+              <KeyRound aria-hidden />
+              <h3>{t('Sessions & Access')}</h3>
+            </header>
             <LoginSessionsCard />
             <AccessTokenCard />
             {isRoot && <MCPAccessCredentialCard />}
           </TabsContent>
           <TabsContent value='privacy' keepMounted className='space-y-5'>
+            <header className='console-settings-heading'>
+              <LockKeyhole aria-hidden />
+              <h3>{t('Privacy')}</h3>
+            </header>
             <PrivacyCard profile={profile} onUpdate={refreshProfile} />
             <section className='border-destructive/30 border-t pt-6'>
               <h3 className='text-destructive mb-3 text-sm font-semibold'>

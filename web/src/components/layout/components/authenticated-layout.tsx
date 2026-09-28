@@ -21,7 +21,9 @@ import { SkipToMain } from '@/components/skip-to-main'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { LayoutProvider } from '@/context/layout-provider'
 import { SearchProvider } from '@/context/search-provider'
+import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { getCookie } from '@/lib/cookies'
+import { usesConsoleWorkspace } from '@/lib/theme-customization'
 import { cn } from '@/lib/utils'
 
 import { AppHeader } from './app-header'
@@ -33,11 +35,24 @@ type AuthenticatedLayoutProps = {
 
 export function AuthenticatedLayout(props: AuthenticatedLayoutProps) {
   const defaultOpen = getCookie('sidebar_state') !== 'false'
+  const { customization } = useThemeCustomization()
+  const workspace = usesConsoleWorkspace(customization.preset)
 
   return (
     <LayoutProvider>
       <SearchProvider>
-        <SidebarProvider defaultOpen={defaultOpen} className='flex-col'>
+        <SidebarProvider
+          defaultOpen={defaultOpen}
+          className={cn('flex-col', workspace && 'console-shell')}
+          style={
+            workspace
+              ? ({
+                  '--sidebar-width': '13rem',
+                  '--sidebar-width-icon': '3rem',
+                } as React.CSSProperties)
+              : undefined
+          }
+        >
           <SkipToMain />
           <AppHeader />
           <div className='flex min-h-0 w-full flex-1'>

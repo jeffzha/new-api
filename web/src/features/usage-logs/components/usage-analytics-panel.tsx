@@ -88,6 +88,7 @@ export function UsageAnalyticsPanel() {
         rows={query.data.rows}
         showMetrics
         showDimensions
+        showModelTable
         onFilter={(key, value) =>
           void navigate({ search: { ...search, [key]: value, page: 1 } })
         }

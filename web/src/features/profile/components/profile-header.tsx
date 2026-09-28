@@ -38,14 +38,22 @@ import type { UserProfile } from '../types'
 interface ProfileHeaderProps {
   profile: UserProfile | null
   loading: boolean
+  compact?: boolean
 }
 
-export function ProfileHeader({ profile, loading }: ProfileHeaderProps) {
+export function ProfileHeader({
+  profile,
+  loading,
+  compact,
+}: ProfileHeaderProps) {
   const { t } = useTranslation()
 
   if (loading) {
     return (
-      <Card data-card-hover='false' className='signal-profile-hero gap-0 overflow-hidden py-0'>
+      <Card
+        data-card-hover='false'
+        className='signal-profile-hero gap-0 overflow-hidden py-0'
+      >
         <CardContent className='p-4 sm:p-5'>
           <div className='flex flex-col items-center gap-4 text-center sm:flex-row sm:text-left'>
             <Skeleton className='h-16 w-16 rounded-2xl' />
@@ -115,7 +123,14 @@ export function ProfileHeader({ profile, loading }: ProfileHeaderProps) {
   ]
 
   return (
-    <Card data-card-hover='false' className='signal-profile-hero gap-0 overflow-hidden py-0'>
+    <Card
+      data-card-hover='false'
+      className={
+        compact
+          ? 'console-profile-identity gap-0 py-0'
+          : 'signal-profile-hero gap-0 overflow-hidden py-0'
+      }
+    >
       <CardContent className='p-3 sm:p-5'>
         <div className='flex items-center gap-3 text-left sm:gap-4'>
           <Avatar className='ring-background h-12 w-12 rounded-xl text-sm ring-2 sm:h-16 sm:w-16 sm:rounded-2xl sm:text-lg sm:ring-4'>
@@ -162,29 +177,34 @@ export function ProfileHeader({ profile, loading }: ProfileHeaderProps) {
           </div>
         </div>
       </CardContent>
-      <div className='border-t'>
-        <div className='divide-border/60 grid grid-cols-3 divide-x'>
-          {stats.map((item) => (
-            <div key={item.label} className='min-w-0 px-3 py-3 sm:px-5 sm:py-4'>
-              <div className='flex items-center gap-2'>
-                <IconBadge tone={item.tone} size='stat'>
-                  <item.icon />
-                </IconBadge>
-                <div className='text-muted-foreground truncate text-xs font-medium tracking-wider uppercase'>
-                  {item.label}
+      {!compact && (
+        <div className='border-t'>
+          <div className='divide-border/60 grid grid-cols-3 divide-x'>
+            {stats.map((item) => (
+              <div
+                key={item.label}
+                className='min-w-0 px-3 py-3 sm:px-5 sm:py-4'
+              >
+                <div className='flex items-center gap-2'>
+                  <IconBadge tone={item.tone} size='stat'>
+                    <item.icon />
+                  </IconBadge>
+                  <div className='text-muted-foreground truncate text-xs font-medium tracking-wider uppercase'>
+                    {item.label}
+                  </div>
+                </div>
+
+                <div className='text-foreground mt-1.5 truncate font-mono text-lg font-bold tracking-tight tabular-nums sm:mt-2 sm:text-2xl'>
+                  {item.value}
+                </div>
+                <div className='text-muted-foreground/60 mt-1 hidden text-xs md:block'>
+                  {item.description}
                 </div>
               </div>
-
-              <div className='text-foreground mt-1.5 truncate font-mono text-lg font-bold tracking-tight tabular-nums sm:mt-2 sm:text-2xl'>
-                {item.value}
-              </div>
-              <div className='text-muted-foreground/60 mt-1 hidden text-xs md:block'>
-                {item.description}
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </Card>
   )
 }

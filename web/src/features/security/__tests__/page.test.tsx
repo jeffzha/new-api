@@ -163,6 +163,31 @@ async function renderPage(path = '/security') {
 }
 
 describe('security page migration', () => {
+  it('mobile settings use horizontal tabs and support left/right keyboard navigation', async () => {
+    document.cookie = 'theme_preset=prism-console; path=/'
+    const matchMedia = window.matchMedia.bind(window)
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      ...matchMedia(query),
+      matches: query === '(max-width: 767px)',
+    }))
+    await renderPage()
+    const auth = await screen.findByRole('tab', {
+      name: 'Login & Authentication',
+    })
+    expect(
+      screen.getByRole('tablist', { name: 'Security & Access' })
+    ).not.toHaveAttribute('aria-orientation', 'vertical')
+    auth.focus()
+    await userEvent.keyboard('{ArrowRight}{Enter}')
+    expect(
+      screen.getByRole('tab', { name: 'Sessions & Access' })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(await screen.findByText('No active login sessions')).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: 'Change Password' })
+    ).not.toBeInTheDocument()
+  })
+
   it.each(['signal-console', 'prism-console'])(
     '%s tabs separate authentication, sessions and destructive actions with keyboard navigation',
     async (preset) => {
@@ -173,13 +198,16 @@ describe('security page migration', () => {
       })
       expect(auth).toHaveAttribute('aria-selected', 'true')
       expect(
+        screen.getByRole('tablist', { name: 'Security & Access' })
+      ).toHaveAttribute('aria-orientation', 'vertical')
+      expect(
         screen.getByRole('button', { name: 'Change Password' })
       ).toBeVisible()
       expect(
         screen.queryByRole('button', { name: 'Delete Account' })
       ).not.toBeInTheDocument()
       auth.focus()
-      await userEvent.keyboard('{ArrowRight}{Enter}')
+      await userEvent.keyboard('{ArrowDown}{Enter}')
       await waitFor(() =>
         expect(
           screen.getByRole('tab', { name: 'Sessions & Access' })

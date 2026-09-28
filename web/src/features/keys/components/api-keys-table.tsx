@@ -27,6 +27,7 @@ import {
   DISABLED_ROW_DESKTOP,
   DISABLED_ROW_MOBILE,
   DataTablePage,
+  DataTableToolbar,
   useDebouncedColumnFilter,
   useDataTable,
 } from '@/components/data-table'
@@ -40,8 +41,11 @@ import {
 } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { createServerError } from '@/lib/server-error-message'
+import { usesConsoleWorkspace } from '@/lib/theme-customization'
 import { cn } from '@/lib/utils'
 
 import { getApiKeys, searchApiKeys } from '../api'
@@ -217,6 +221,8 @@ function ApiKeysMobileList({
 
 export function ApiKeysTable() {
   const { t } = useTranslation()
+  const { customization } = useThemeCustomization()
+  const workspace = usesConsoleWorkspace(customization.preset)
   const { refreshTrigger } = useApiKeys()
   const [now, setNow] = useState(() => Date.now())
   const columns = useApiKeysColumns(now)
@@ -350,6 +356,58 @@ export function ApiKeysTable() {
       )}
       skeletonKeyPrefix='api-keys-skeleton'
       applyHeaderSize
+      toolbar={
+        workspace ? (
+          <div className='console-keys-toolbar'>
+            <div className='console-resource-heading'>
+              <h3>
+                {t('API Keys')}{' '}
+                <span>{isLoading ? '-' : (data?.total ?? 0)}</span>
+              </h3>
+              <span>
+                {t('Current page')}: {table.getRowModel().rows.length}
+              </span>
+            </div>
+            <Tabs
+              value={String(
+                (
+                  table.getColumn('status')?.getFilterValue() as
+                    | string[]
+                    | undefined
+                )?.[0] ?? 'all'
+              )}
+              onValueChange={(value) =>
+                table
+                  .getColumn('status')
+                  ?.setFilterValue(value === 'all' ? [] : [String(value)])
+              }
+            >
+              <TabsList variant='line' aria-label={t('Key status')}>
+                <TabsTrigger value='all'>{t('All')}</TabsTrigger>
+                {API_KEY_STATUS_OPTIONS.map((option) => (
+                  <TabsTrigger key={option.value} value={option.value}>
+                    {t(option.label)}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+            <DataTableToolbar
+              table={table}
+              searchPlaceholder={t('Filter by name...')}
+              searchDebounceMs={500}
+              additionalSearch={
+                <Input
+                  aria-label={t('Filter by API key...')}
+                  placeholder={t('Filter by API key...')}
+                  value={tokenFilterInput}
+                  onChange={(event) => setTokenFilterInput(event.target.value)}
+                  className='w-full sm:w-60'
+                />
+              }
+            />
+          </div>
+        ) : undefined
+      }
       toolbarProps={{
         searchPlaceholder: t('Filter by name...'),
         searchDebounceMs: 500,

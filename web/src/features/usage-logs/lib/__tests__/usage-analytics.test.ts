@@ -26,6 +26,33 @@ const record = (id: number, extra = {}) =>
 afterEach(() => vi.restoreAllMocks())
 
 describe('usage analytics', () => {
+  it('sums recorded standard costs while preserving unknown historical prices', () => {
+    const result = summarizeUsage([
+      record(1, { other: JSON.stringify({ agency_standard_quota: 40 }) }),
+      record(2, { other: JSON.stringify({ agency_standard_quota: 0 }) }),
+      record(3, { model_name: 'unknown-cost' }),
+      record(4, {
+        model_name: 'unknown-cost',
+        other: JSON.stringify({ agency_standard_quota: 80 }),
+      }),
+      record(5, {
+        model_name: 'invalid-cost',
+        other: JSON.stringify({ agency_standard_quota: -10 }),
+      }),
+    ])
+    expect(result.models).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'model-a',
+          requests: 2,
+          standardQuota: 40,
+        }),
+        expect.objectContaining({ name: 'unknown-cost', standardQuota: null }),
+        expect.objectContaining({ name: 'invalid-cost', standardQuota: null }),
+      ])
+    )
+    expect(result.groups[0].standardQuota).toBeNull()
+  })
   it('daily buckets follow the same local calendar dates as the date filter', () => {
     const first = new Date(2026, 8, 28, 0, 15).getTime() / 1000
     const last = new Date(2026, 8, 28, 23, 45).getTime() / 1000
@@ -114,11 +141,9 @@ describe('usage analytics', () => {
     }
   })
   it('stops duplicate pages and clearly reports incomplete analytics', async () => {
-    const get = vi
-      .spyOn(api, 'get')
-      .mockResolvedValue({
-        data: { success: true, data: { total: 5000, items: [record(1)] } },
-      })
+    const get = vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: { total: 5000, items: [record(1)] } },
+    })
     expect(await fetchUsageAnalytics({}, true)).toMatchObject({
       total: 5000,
       truncated: true,

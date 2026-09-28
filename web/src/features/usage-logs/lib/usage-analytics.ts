@@ -11,6 +11,14 @@ import { parseLogOther } from './format'
 
 export const ANALYTICS_LOG_LIMIT = 2000
 
+type UsageDistribution = {
+  name: string
+  tokens: number
+  quota: number
+  requests: number
+  standardQuota: number | null
+}
+
 export async function fetchUsageAnalytics(
   params: GetLogsParams,
   isAdmin: boolean,
@@ -45,18 +53,9 @@ export async function fetchUsageAnalytics(
 }
 
 export function summarizeUsage(rows: UsageLog[], bucketSeconds = 3600) {
-  const models = new Map<
-    string,
-    { name: string; tokens: number; quota: number; requests: number }
-  >()
-  const groups = new Map<
-    string,
-    { name: string; tokens: number; quota: number; requests: number }
-  >()
-  const endpoints = new Map<
-    string,
-    { name: string; tokens: number; quota: number; requests: number }
-  >()
+  const models = new Map<string, UsageDistribution>()
+  const groups = new Map<string, UsageDistribution>()
+  const endpoints = new Map<string, UsageDistribution>()
   const buckets = new Map<
     number,
     {
@@ -96,7 +95,17 @@ export function summarizeUsage(rows: UsageLog[], bucketSeconds = 3600) {
         tokens: 0,
         quota: 0,
         requests: 0,
+        standardQuota: 0,
       }
+      // Missing historical prices are unknown, never zero or inferred from a current rate.
+      const standard = other.agency_standard_quota
+      entry.standardQuota =
+        entry.standardQuota !== null &&
+        typeof standard === 'number' &&
+        Number.isFinite(standard) &&
+        standard >= 0
+          ? entry.standardQuota + standard
+          : null
       entry.tokens += tokens
       entry.quota += row.quota
       entry.requests++

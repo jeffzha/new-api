@@ -73,9 +73,12 @@ async function renderPage(preset: string) {
 }
 
 it.each(['signal-console', 'prism-console'])(
-  '%s opens records first and preserves URL filters when switching analytics and returning',
+  '%s preserves bill download and URL filters when switching analytics and returning',
   async (preset) => {
     const router = await renderPage(preset)
+    expect(
+      screen.getByRole('button', { name: 'Download usage bill' })
+    ).toBeVisible()
     expect(screen.getByRole('tab', { name: 'Log records' })).toHaveAttribute(
       'aria-selected',
       'true'
@@ -88,10 +91,16 @@ it.each(['signal-console', 'prism-console'])(
       await screen.findByRole('region', { name: 'Usage analytics' })
     ).toBeVisible()
     expect(
+      screen.getByRole('button', { name: 'Download usage bill' })
+    ).toBeVisible()
+    expect(
       screen.queryByRole('button', { name: 'Search' })
     ).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('tab', { name: 'Log records' }))
     expect(await screen.findByRole('button', { name: 'Search' })).toBeVisible()
+    expect(
+      screen.getByRole('button', { name: 'Download usage bill' })
+    ).toBeVisible()
     await waitFor(() =>
       expect(router.state.location.search).toMatchObject({
         model: 'production-model',

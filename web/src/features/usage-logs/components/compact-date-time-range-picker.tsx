@@ -34,11 +34,12 @@ interface CompactDateTimeRangePickerProps {
   start?: Date
   end?: Date
   onChange: (range: { start?: Date; end?: Date }) => void
+  emptyLabel?: string
   className?: string
 }
 
 function toInputValue(date?: Date): string {
-  return date ? dayjs(date).format('YYYY-MM-DDTHH:mm') : ''
+  return date ? dayjs(date).format('YYYY-MM-DDTHH:mm:ss') : ''
 }
 
 function fromInputValue(value: string): Date | undefined {
@@ -51,6 +52,7 @@ export function CompactDateTimeRangePicker({
   start,
   end,
   onChange,
+  emptyLabel,
   className,
 }: CompactDateTimeRangePickerProps) {
   const { t } = useTranslation()
@@ -59,20 +61,16 @@ export function CompactDateTimeRangePicker({
   const [draftEnd, setDraftEnd] = useState(toInputValue(end))
 
   const label = useMemo(() => {
-    if (!start && !end) return t('Date Range')
-    // The popover's <input type="datetime-local"> only supports minute
-    // precision, so seconds are always 00 (manual pick) or 59 (preset
-    // end-of-day). Hide them in the trigger label to keep the button
-    // width compact while still showing the meaningful timestamp.
-    const startText = start ? dayjs(start).format('YYYY-MM-DD HH:mm') : '-'
-    const endText = end ? dayjs(end).format('YYYY-MM-DD HH:mm') : '-'
+    if (!start && !end) return emptyLabel ?? t('Date Range')
+    const startText = start ? dayjs(start).format('YYYY-MM-DD HH:mm:ss') : '-'
+    const endText = end ? dayjs(end).format('YYYY-MM-DD HH:mm:ss') : '-'
     return `${startText} ~ ${endText}`
-  }, [end, start, t])
+  }, [emptyLabel, end, start, t])
 
   const mobileLabel = useMemo(() => {
     if (!start || !end) return label
     if (dayjs(start).isSame(end, 'day')) {
-      return `${dayjs(start).format('MM/DD HH:mm')}–${dayjs(end).format('HH:mm')}`
+      return `${dayjs(start).format('MM/DD HH:mm:ss')}–${dayjs(end).format('HH:mm:ss')}`
     }
     return label
   }, [start, end, label])
@@ -93,7 +91,9 @@ export function CompactDateTimeRangePicker({
     setOpen(false)
   }
 
-  const applyPreset = (kind: 'today' | '7d' | 'week' | '30d' | 'month') => {
+  const applyPreset = (
+    kind: 'today' | '7d' | 'week' | 'month' | 'last-month'
+  ) => {
     const now = dayjs()
     const presets = {
       today: {
@@ -108,13 +108,13 @@ export function CompactDateTimeRangePicker({
         start: now.startOf('week').toDate(),
         end: now.endOf('week').toDate(),
       },
-      '30d': {
-        start: now.subtract(29, 'day').startOf('day').toDate(),
-        end: now.endOf('day').toDate(),
-      },
       month: {
         start: now.startOf('month').toDate(),
         end: now.endOf('month').toDate(),
+      },
+      'last-month': {
+        start: now.subtract(1, 'month').startOf('month').toDate(),
+        end: now.subtract(1, 'month').endOf('month').toDate(),
       },
     }
     const range = presets[kind]
@@ -158,6 +158,7 @@ export function CompactDateTimeRangePicker({
               </div>
               <Input
                 type='datetime-local'
+                step={1}
                 value={draftStart}
                 aria-label={t('Start Time')}
                 onChange={(e) => setDraftStart(e.target.value)}
@@ -173,6 +174,7 @@ export function CompactDateTimeRangePicker({
               </div>
               <Input
                 type='datetime-local'
+                step={1}
                 value={draftEnd}
                 aria-label={t('End Time')}
                 onChange={(e) => setDraftEnd(e.target.value)}
@@ -214,18 +216,18 @@ export function CompactDateTimeRangePicker({
               variant='secondary'
               size='sm'
               className='h-7 flex-1 px-2 text-xs'
-              onClick={() => applyPreset('30d')}
+              onClick={() => applyPreset('month')}
             >
-              {t('30 Days')}
+              {t('Current month')}
             </Button>
             <Button
               type='button'
               variant='secondary'
               size='sm'
               className='h-7 flex-1 px-2 text-xs'
-              onClick={() => applyPreset('month')}
+              onClick={() => applyPreset('last-month')}
             >
-              {t('Current month')}
+              {t('Last month')}
             </Button>
           </div>
 

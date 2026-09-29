@@ -29,6 +29,7 @@ import { CacheStatsDialog } from '@/features/system-settings/general/channel-aff
 import { useSidebarConfig } from '@/hooks/use-sidebar-config'
 import { usesConsoleWorkspace } from '@/lib/theme-customization'
 
+import { CommonLogsHeaderActions } from './components/common-logs-header-actions'
 import { UserInfoDialog } from './components/dialogs/user-info-dialog'
 import { UsageAnalyticsPanel } from './components/usage-analytics-panel'
 import {
@@ -140,6 +141,7 @@ function UsageLogsContent() {
           {t(pageMeta.titleKey)}
         </SectionPageLayout.Title>
         <SectionPageLayout.Actions>
+          {activeCategory === 'common' && <CommonLogsHeaderActions />}
           {canManageScope && (
             <Tabs value={viewScope} onValueChange={handleViewScopeChange}>
               <TabsList>

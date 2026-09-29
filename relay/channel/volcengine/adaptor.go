@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	channelconstant "github.com/QuantumNous/new-api/constant"
@@ -108,6 +109,18 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
 	switch info.RelayMode {
 	case constant.RelayModeImagesGenerations:
+		isPro := isSeedream50Pro(request.Model) || isSeedream50Pro(info.OriginModelName)
+		if info.ChannelMeta != nil {
+			isPro = isPro || isSeedream50Pro(info.UpstreamModelName)
+		}
+		if isPro {
+			if request.Size == "" {
+				request.Size = "1024x1024"
+			}
+			if err := validateSeedream50ProSize(request.Size); err != nil {
+				return nil, err
+			}
+		}
 		return request, nil
 	// 根据官方文档,并没有发现豆包生图支持表单请求:https://www.volcengine.com/docs/82379/1824121
 	//case constant.RelayModeImagesEdits:
@@ -214,6 +227,40 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	default:
 		return request, nil
 	}
+}
+
+func isSeedream50Pro(modelName string) bool {
+	return strings.TrimSpace(modelName) == "doubao-seedream-5-0-pro-260628"
+}
+
+func validateSeedream50ProSize(size string) error {
+	const (
+		minPixels = int64(921_600)
+		maxPixels = int64(4_620_000)
+	)
+	widthText, heightText, ok := strings.Cut(strings.ToLower(strings.TrimSpace(size)), "x")
+	if !ok || strings.Contains(heightText, "x") {
+		return fmt.Errorf("Seedream 5.0 Pro size must use widthxheight format, for example 1024x1024")
+	}
+	width, widthErr := strconv.ParseInt(strings.TrimSpace(widthText), 10, 64)
+	height, heightErr := strconv.ParseInt(strings.TrimSpace(heightText), 10, 64)
+	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+		return fmt.Errorf("Seedream 5.0 Pro size must contain positive integer dimensions")
+	}
+	if width%16 != 0 || height%16 != 0 {
+		return fmt.Errorf("Seedream 5.0 Pro width and height must be multiples of 16")
+	}
+	if width > maxPixels/height {
+		return fmt.Errorf("Seedream 5.0 Pro output must contain between %d and %d pixels", minPixels, maxPixels)
+	}
+	pixels := width * height
+	if pixels < minPixels || pixels > maxPixels {
+		return fmt.Errorf("Seedream 5.0 Pro output must contain between %d and %d pixels", minPixels, maxPixels)
+	}
+	if width > 16*height || height > 16*width {
+		return fmt.Errorf("Seedream 5.0 Pro aspect ratio must be between 1:16 and 16:1")
+	}
+	return nil
 }
 
 func detectImageMimeType(filename string) string {

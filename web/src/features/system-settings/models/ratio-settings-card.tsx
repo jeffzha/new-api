@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation } from '@tanstack/react-query'
+import { Boxes, CircleHelp, RefreshCw, Users, Wrench } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -453,6 +454,13 @@ export function RatioSettingsCard({
     resetMutate()
   }, [resetMutate])
 
+  const tabIcons = {
+    models: <Boxes />,
+    'unset-models': <CircleHelp />,
+    groups: <Users />,
+    'tool-prices': <Wrench />,
+    'upstream-sync': <RefreshCw />,
+  }
   const tabLabels: Record<RatioTabId, string> = {
     models: 'Model prices',
     'unset-models': 'Unset price models',
@@ -526,7 +534,7 @@ export function RatioSettingsCard({
   const renderTabSwitcher = () => (
     <TabsList className={`grid w-fit max-w-full ${tabsGridClass}`}>
       {visibleTabs.map((tab) => (
-        <TabsTrigger key={tab} value={tab}>
+        <TabsTrigger key={tab} value={tab} icon={tabIcons[tab]}>
           {t(tabLabels[tab])}
         </TabsTrigger>
       ))}

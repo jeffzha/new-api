@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
+import { UserRound, Users } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -99,8 +100,12 @@ export function AuditLogs() {
             }
           >
             <TabsList aria-label={t('View scope')}>
-              <TabsTrigger value='all'>{t('All')}</TabsTrigger>
-              <TabsTrigger value='self'>{t('Only Mine')}</TabsTrigger>
+              <TabsTrigger value='all' icon={<Users />}>
+                {t('All')}
+              </TabsTrigger>
+              <TabsTrigger value='self' icon={<UserRound />}>
+                {t('Only Mine')}
+              </TabsTrigger>
             </TabsList>
           </Tabs>
         )}

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CircleHelp, Upload } from 'lucide-react'
+import { CircleHelp, PackageCheck, Store, Upload } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -141,8 +141,12 @@ export function TaskPlugins() {
             className='flex h-full min-h-0 flex-col gap-3'
           >
             <TabsList className='max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto'>
-              <TabsTrigger value='installed'>{t('Installed')}</TabsTrigger>
-              <TabsTrigger value='marketplace'>{t('Marketplace')}</TabsTrigger>
+              <TabsTrigger value='installed' icon={<PackageCheck />}>
+                {t('Installed')}
+              </TabsTrigger>
+              <TabsTrigger value='marketplace' icon={<Store />}>
+                {t('Marketplace')}
+              </TabsTrigger>
             </TabsList>
             <TabsContent value='installed' className='min-h-0 flex-1'>
               <PluginsTable

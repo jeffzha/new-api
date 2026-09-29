@@ -17,7 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, Download } from 'lucide-react'
+import {
+  AlertTriangle,
+  Code2,
+  Download,
+  FileDiff,
+  History,
+  Info,
+} from 'lucide-react'
 import { lazy, Suspense, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -338,12 +345,20 @@ function MarketplaceInstallContent(
             className='w-full min-w-max'
             aria-label={t('Plugin details')}
           >
-            <TabsTrigger value='details'>{t('Plugin details')}</TabsTrigger>
+            <TabsTrigger value='details' icon={<Info />}>
+              {t('Plugin details')}
+            </TabsTrigger>
             {hasInstalledPlugin && (
-              <TabsTrigger value='diff'>{t('Version differences')}</TabsTrigger>
+              <TabsTrigger value='diff' icon={<FileDiff />}>
+                {t('Version differences')}
+              </TabsTrigger>
             )}
-            <TabsTrigger value='source'>{t('Full source')}</TabsTrigger>
-            <TabsTrigger value='changelog'>{t('Changelog')}</TabsTrigger>
+            <TabsTrigger value='source' icon={<Code2 />}>
+              {t('Full source')}
+            </TabsTrigger>
+            <TabsTrigger value='changelog' icon={<History />}>
+              {t('Changelog')}
+            </TabsTrigger>
           </TabsList>
         </div>
         {hasInstalledPlugin && (

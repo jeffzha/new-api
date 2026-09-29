@@ -1,7 +1,14 @@
 /* Copyright (C) 2023-2026 QuantumNous
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
-import { Activity, Coins, Database, Timer } from 'lucide-react'
+import {
+  Activity,
+  CalendarDays,
+  Clock3,
+  Coins,
+  Database,
+  Timer,
+} from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts'
@@ -102,8 +109,12 @@ export function UsageAnalyticsView(props: {
           }
         >
           <TabsList aria-label={t('Distribution metric')}>
-            <TabsTrigger value='tokens'>{t('Tokens')}</TabsTrigger>
-            <TabsTrigger value='quota'>{t('Usage')}</TabsTrigger>
+            <TabsTrigger value='tokens' icon={<Database />}>
+              {t('Tokens')}
+            </TabsTrigger>
+            <TabsTrigger value='quota' icon={<Coins />}>
+              {t('Usage')}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
         <Tabs
@@ -111,8 +122,12 @@ export function UsageAnalyticsView(props: {
           onValueChange={(value) => setGranularity(String(value))}
         >
           <TabsList aria-label={t('Time granularity')}>
-            <TabsTrigger value='hour'>{t('Hourly')}</TabsTrigger>
-            <TabsTrigger value='day'>{t('Daily')}</TabsTrigger>
+            <TabsTrigger value='hour' icon={<Clock3 />}>
+              {t('Hourly')}
+            </TabsTrigger>
+            <TabsTrigger value='day' icon={<CalendarDays />}>
+              {t('Daily')}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
       </div>

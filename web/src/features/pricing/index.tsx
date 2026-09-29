@@ -279,7 +279,9 @@ export function Pricing() {
                 <TabsTrigger value='all' aria-label={t('All')}>
                   <Boxes aria-hidden />
                   {t('All')}
-                  <span aria-hidden>{publicModels.length}</span>
+                  <span data-slot='tabs-count' aria-hidden>
+                    {publicModels.length}
+                  </span>
                 </TabsTrigger>
                 {(vendors ?? [])
                   .filter((vendor) =>
@@ -299,7 +301,7 @@ export function Pricing() {
                         )}
                       </span>
                       {vendor.name}
-                      <span aria-hidden>
+                      <span data-slot='tabs-count' aria-hidden>
                         {
                           publicModels.filter(
                             (model) => model.vendor_id === vendor.id

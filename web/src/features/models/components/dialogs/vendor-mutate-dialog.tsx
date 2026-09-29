@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Boxes, Building2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -159,8 +160,10 @@ export function VendorMutateDialog(props: {
               className='shrink-0 px-4 pb-3'
             >
               <TabsList>
-                <TabsTrigger value='details'>{t('Vendor details')}</TabsTrigger>
-                <TabsTrigger value='models'>
+                <TabsTrigger value='details' icon={<Building2 />}>
+                  {t('Vendor details')}
+                </TabsTrigger>
+                <TabsTrigger value='models' icon={<Boxes />}>
                   {t('Linked models')} ({query.data?.model_count ?? 0})
                 </TabsTrigger>
               </TabsList>

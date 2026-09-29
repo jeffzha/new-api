@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { AlertTriangle, Save } from 'lucide-react'
+import { AlertTriangle, Braces, Coins, MousePointer2, Save } from 'lucide-react'
 import {
   forwardRef,
   useCallback,
@@ -930,13 +930,13 @@ export const ModelPricingEditorPanel = forwardRef<
                     className='gap-4'
                   >
                     <TabsList className='grid w-full grid-cols-3'>
-                      <TabsTrigger value='tiered_expr'>
+                      <TabsTrigger value='tiered_expr' icon={<Braces />}>
                         {t('Expression')}
                       </TabsTrigger>
-                      <TabsTrigger value='per-token'>
+                      <TabsTrigger value='per-token' icon={<Coins />}>
                         {t('Per-token (deprecated)')}
                       </TabsTrigger>
-                      <TabsTrigger value='per-request'>
+                      <TabsTrigger value='per-request' icon={<MousePointer2 />}>
                         {t('Per-request (deprecated)')}
                       </TabsTrigger>
                     </TabsList>

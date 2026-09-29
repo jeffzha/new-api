@@ -1,5 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { RotateCcw, X } from 'lucide-react'
+import {
+  Code2,
+  FileDiff,
+  FlaskConical,
+  History,
+  Info,
+  Receipt,
+  RotateCcw,
+  X,
+} from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -223,12 +232,24 @@ function PluginDetailContent(props: { plugin: TaskPluginListItem }) {
             className='min-w-max justify-start gap-4 group-data-horizontal/tabs:h-11'
             aria-label={t('Plugin details')}
           >
-            <TabsTrigger value='overview'>{t('Overview')}</TabsTrigger>
-            <TabsTrigger value='billing'>{t('Billing parameters')}</TabsTrigger>
-            <TabsTrigger value='source'>{t('Plugin source')}</TabsTrigger>
-            <TabsTrigger value='versions'>{t('Version history')}</TabsTrigger>
-            <TabsTrigger value='diff'>{t('Source diff')}</TabsTrigger>
-            <TabsTrigger value='sandbox'>{t('Plugin sandbox')}</TabsTrigger>
+            <TabsTrigger value='overview' icon={<Info />}>
+              {t('Overview')}
+            </TabsTrigger>
+            <TabsTrigger value='billing' icon={<Receipt />}>
+              {t('Billing parameters')}
+            </TabsTrigger>
+            <TabsTrigger value='source' icon={<Code2 />}>
+              {t('Plugin source')}
+            </TabsTrigger>
+            <TabsTrigger value='versions' icon={<History />}>
+              {t('Version history')}
+            </TabsTrigger>
+            <TabsTrigger value='diff' icon={<FileDiff />}>
+              {t('Source diff')}
+            </TabsTrigger>
+            <TabsTrigger value='sandbox' icon={<FlaskConical />}>
+              {t('Plugin sandbox')}
+            </TabsTrigger>
           </TabsList>
         </div>
         <TabsContent value='overview' className={panelClassName}>

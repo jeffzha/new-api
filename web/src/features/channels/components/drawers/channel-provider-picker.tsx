@@ -16,7 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Puzzle } from 'lucide-react'
+import {
+  Boxes,
+  Building2,
+  Network,
+  Puzzle,
+  SlidersHorizontal,
+} from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -217,21 +223,25 @@ export function ChannelProviderPicker(props: ChannelProviderPickerProps) {
         aria-label={t('Provider source')}
         className='max-w-full shrink-0 flex-wrap justify-start group-data-horizontal/tabs:h-auto'
       >
-        <TabsTrigger value='all' className='h-auto'>
+        <TabsTrigger value='all' icon={<Boxes />} className='h-auto'>
           {t('All')}
         </TabsTrigger>
-        <TabsTrigger value='builtin' className='h-auto'>
+        <TabsTrigger value='builtin' icon={<Building2 />} className='h-auto'>
           {t('Built-in')}
         </TabsTrigger>
         {props.canBindPlugin && (
-          <TabsTrigger value='plugin' className='h-auto'>
+          <TabsTrigger value='plugin' icon={<Puzzle />} className='h-auto'>
             {t('Plugins')}
           </TabsTrigger>
         )}
-        <TabsTrigger value='gateway' className='h-auto'>
+        <TabsTrigger value='gateway' icon={<Network />} className='h-auto'>
           {t('Gateways')}
         </TabsTrigger>
-        <TabsTrigger value='custom' className='h-auto'>
+        <TabsTrigger
+          value='custom'
+          icon={<SlidersHorizontal />}
+          className='h-auto'
+        >
           {t('Custom')}
         </TabsTrigger>
       </TabsList>

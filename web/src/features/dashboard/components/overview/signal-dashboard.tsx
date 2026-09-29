@@ -6,6 +6,9 @@ import { Link } from '@tanstack/react-router'
 import {
   Activity,
   ArrowRight,
+  CalendarDays,
+  CalendarRange,
+  CalendarClock,
   Coins,
   Database,
   Gauge,
@@ -193,9 +196,15 @@ export function SignalDashboard() {
               }}
             >
               <TabsList aria-label={t('Reporting period')}>
-                <TabsTrigger value='1'>{t('Today')}</TabsTrigger>
-                <TabsTrigger value='7'>{t('Last 7 days')}</TabsTrigger>
-                <TabsTrigger value='30'>{t('Last 30 days')}</TabsTrigger>
+                <TabsTrigger value='1' icon={<CalendarClock />}>
+                  {t('Today')}
+                </TabsTrigger>
+                <TabsTrigger value='7' icon={<CalendarDays />}>
+                  {t('Last 7 days')}
+                </TabsTrigger>
+                <TabsTrigger value='30' icon={<CalendarRange />}>
+                  {t('Last 30 days')}
+                </TabsTrigger>
               </TabsList>
             </Tabs>
             <Button

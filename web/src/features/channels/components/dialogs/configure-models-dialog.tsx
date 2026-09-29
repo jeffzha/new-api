@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Boxes } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -118,7 +119,9 @@ export function ConfigureModelsDialog(props: ConfigureModelsDialogProps) {
               aria-label={t('Models')}
               className='min-w-max'
             >
-              <TabsTrigger value='all'>{t('All')}</TabsTrigger>
+              <TabsTrigger value='all' icon={<Boxes />}>
+                {t('All')}
+              </TabsTrigger>
               {plugins.map((item) => (
                 <TabsTrigger
                   key={item.key}

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { ChevronDown, Info } from 'lucide-react'
+import { Boxes, ChevronDown, CircleMinus, CirclePlus, Info } from 'lucide-react'
 import { useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -255,11 +255,16 @@ export function UpstreamModelSelection(props: UpstreamModelSelectionProps) {
           defaultValue={defaultTab}
         >
           <TabsList className='flex h-auto w-full flex-wrap'>
-            <TabsTrigger value='new' disabled={!categorized.added.length}>
+            <TabsTrigger
+              value='new'
+              icon={<CirclePlus />}
+              disabled={!categorized.added.length}
+            >
               {t('New Models ({{count}})', { count: categorized.added.length })}
             </TabsTrigger>
             <TabsTrigger
               value='existing'
+              icon={<Boxes />}
               disabled={!categorized.existing.length}
             >
               {t('Existing Models ({{count}})', {
@@ -267,7 +272,7 @@ export function UpstreamModelSelection(props: UpstreamModelSelectionProps) {
               })}
             </TabsTrigger>
             {categorized.removed.length > 0 && (
-              <TabsTrigger value='removed'>
+              <TabsTrigger value='removed' icon={<CircleMinus />}>
                 {t('Removed Models ({{count}})', {
                   count: categorized.removed.length,
                 })}

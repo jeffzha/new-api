@@ -18,7 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import axios from 'axios'
-import { ExternalLink } from 'lucide-react'
+import {
+  ExternalLink,
+  GitBranch,
+  Globe,
+  MessageCircle,
+  MessagesSquare,
+  Send,
+  ShieldCheck,
+} from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -385,12 +393,24 @@ export function OAuthSection(props: OAuthSectionProps) {
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className='grid w-full grid-cols-6'>
-                <TabsTrigger value='github'>{t('GitHub')}</TabsTrigger>
-                <TabsTrigger value='discord'>{t('Discord')}</TabsTrigger>
-                <TabsTrigger value='oidc'>{t('OIDC')}</TabsTrigger>
-                <TabsTrigger value='telegram'>{t('Telegram')}</TabsTrigger>
-                <TabsTrigger value='linuxdo'>{t('LinuxDO')}</TabsTrigger>
-                <TabsTrigger value='wechat'>{t('WeChat')}</TabsTrigger>
+                <TabsTrigger value='github' icon={<GitBranch />}>
+                  {t('GitHub')}
+                </TabsTrigger>
+                <TabsTrigger value='discord' icon={<MessagesSquare />}>
+                  {t('Discord')}
+                </TabsTrigger>
+                <TabsTrigger value='oidc' icon={<ShieldCheck />}>
+                  {t('OIDC')}
+                </TabsTrigger>
+                <TabsTrigger value='telegram' icon={<Send />}>
+                  {t('Telegram')}
+                </TabsTrigger>
+                <TabsTrigger value='linuxdo' icon={<Globe />}>
+                  {t('LinuxDO')}
+                </TabsTrigger>
+                <TabsTrigger value='wechat' icon={<MessageCircle />}>
+                  {t('WeChat')}
+                </TabsTrigger>
               </TabsList>
 
               <TabsContent value='github' className={oauthTabContentClassName}>

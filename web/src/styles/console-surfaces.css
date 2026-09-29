@@ -167,47 +167,6 @@ body:is(
     border: 0;
     background: transparent;
   }
-  :is(
-      .console-keys-toolbar,
-      .console-audit-categories,
-      .console-task-views,
-      .console-log-views
-    )
-    [role='tablist'] {
-    height: 40px;
-    max-width: 100%;
-    justify-content: flex-start;
-    overflow-x: auto;
-    overflow-y: hidden;
-    border-bottom: 1px solid var(--border);
-    padding: 0;
-  }
-  :is(
-      .console-keys-toolbar,
-      .console-audit-categories,
-      .console-task-views,
-      .console-log-views
-    )
-    [role='tab'] {
-    flex: 0 0 auto;
-    padding: 0 14px;
-    height: 40px;
-    border-radius: 6px 6px 0 0;
-    gap: 8px;
-    font-size: 13px;
-    transition:
-      color 160ms ease,
-      background-color 160ms ease,
-      box-shadow 160ms ease;
-  }
-  [data-variant='line'] [role='tab'][aria-selected='true'] {
-    color: var(--primary);
-    background: color-mix(in srgb, var(--primary) 7%, transparent);
-    box-shadow: inset 0 -2px var(--primary);
-  }
-  [data-variant='line'] [role='tab']::after {
-    display: none;
-  }
 
   .console-model-distribution {
     display: grid;
@@ -372,51 +331,19 @@ body:is(
     flex-wrap: wrap;
   }
   .console-settings {
-    display: grid;
-    grid-template-columns: 156px minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
     align-items: stretch;
-    gap: 24px;
+    gap: 20px;
     height: 100%;
     min-height: 0;
     overflow: hidden;
     width: 100%;
   }
-  .console-settings > [role='tablist'] {
-    display: flex;
-    align-self: start;
-    margin-top: 0;
-    flex-direction: column;
-    justify-content: flex-start;
-    align-items: stretch;
-    width: 100%;
-    height: auto;
-    padding: 0;
-    gap: 4px;
-    overflow: visible;
-    border: 0;
-  }
-  .console-settings > [role='tablist'] [role='tab'] {
-    flex: none;
-    justify-content: flex-start;
-    height: auto;
-    min-height: 40px;
-    padding: 10px 12px;
-    white-space: normal;
-    text-align: left;
-    font-size: 13px;
-    line-height: 1.5;
-    border-radius: 5px;
-    box-shadow: none;
-  }
-  .console-settings > [role='tablist'] [role='tab'][aria-selected='true'] {
-    background: var(--secondary);
-    color: var(--primary);
-    box-shadow: inset 2px 0 var(--primary);
-  }
   .console-settings > [role='tabpanel'] {
-    padding: 0 12px 24px 24px;
-    border-left: 1px solid var(--border);
+    flex: 1;
+    padding: 0 8px 24px 0;
+    border: 0;
     min-width: 0;
     min-height: 0;
     overflow-y: auto;
@@ -490,6 +417,14 @@ body:is(
   .console-verification-methods {
     display: grid;
     gap: 24px;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  }
+  .console-verification-methods > [data-slot='card'] {
+    min-width: 0;
+    align-content: start;
+  }
+  .console-verification-methods [data-slot='card-content'] {
+    max-width: none;
   }
 
   .signal-wallet-layout:has(.console-wallet-operations) {
@@ -567,16 +502,6 @@ body:is(
     min-height: 0;
     flex: 1;
     gap: 16px;
-  }
-  .console-log-views > [role='tablist'] {
-    flex-shrink: 0;
-    height: 40px;
-    border-bottom: 1px solid var(--border);
-    padding: 0;
-  }
-  .console-log-views > [role='tablist'] [role='tab'] {
-    height: 40px;
-    padding-inline: 16px;
   }
   .console-log-views > [role='tabpanel'] {
     margin: 0;
@@ -1003,45 +928,6 @@ body:is(
     flex: 1;
     padding: 4px 4px 16px 0;
   }
-  .console-catalog-providers > [role='tablist'] {
-    height: 48px;
-    width: 100%;
-    gap: 6px;
-    padding: 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .console-catalog-providers [role='tab'] {
-    flex: 0 0 auto;
-    height: 48px;
-    gap: 8px;
-    padding: 0 16px;
-    border-radius: 6px 6px 0 0;
-    transition:
-      background-color 180ms ease,
-      color 180ms ease,
-      box-shadow 180ms ease;
-  }
-  .console-catalog-providers [role='tab'] > span:last-child {
-    color: var(--muted-foreground);
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
-  }
-  .console-catalog-providers [role='tab'][aria-selected='true'] {
-    box-shadow:
-      inset 0 -2px var(--primary),
-      inset 0 -7px 12px -12px var(--primary);
-  }
-  .console-catalog-providers [role='tab'][aria-selected='true']::after {
-    display: block;
-    opacity: 1;
-    inset: auto 16px 0;
-    height: 2px;
-    width: auto;
-    background: var(--primary);
-    box-shadow: 0 -2px 9px color-mix(in srgb, var(--primary) 35%, transparent);
-    transform-origin: center;
-    animation: console-tab-reveal 220ms ease-out;
-  }
   .console-catalog-results .signal-model-card {
     container: console-model / inline-size;
     border-radius: 8px;
@@ -1056,9 +942,7 @@ body:is(
     box-shadow: 0 4px 16px color-mix(in srgb, var(--primary) 10%, transparent);
   }
   @media (prefers-reduced-motion: reduce) {
-    .console-catalog-results .signal-model-card,
-    .console-catalog-providers [role='tab'],
-    .console-catalog-providers [role='tab']::after {
+    .console-catalog-results .signal-model-card {
       animation: none;
       transition: none;
       transform: none;
@@ -1144,24 +1028,7 @@ body:is(
       padding: 0 12px 16px;
     }
     .console-settings {
-      display: flex;
-      flex-direction: column;
       gap: 16px;
-    }
-    .console-settings > [role='tablist'] {
-      flex-shrink: 0;
-      flex-direction: row;
-      overflow-x: auto;
-      overflow-y: hidden;
-      border-bottom: 1px solid var(--border);
-      width: 100%;
-    }
-    .console-settings > [role='tablist'] [role='tab'] {
-      white-space: nowrap;
-      min-height: 44px;
-    }
-    .console-settings > [role='tablist'] [role='tab'][aria-selected='true'] {
-      box-shadow: inset 0 -2px var(--primary);
     }
     .console-settings > [role='tabpanel'] {
       flex: 1;
@@ -1248,16 +1115,6 @@ body:is(
   }
 }
 
-@keyframes console-tab-reveal {
-  from {
-    transform: scaleX(0.4);
-    opacity: 0;
-  }
-  to {
-    transform: scaleX(1);
-    opacity: 1;
-  }
-}
 @keyframes console-model-enter {
   from {
     transform: translateY(6px);

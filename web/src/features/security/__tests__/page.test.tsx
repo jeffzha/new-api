@@ -206,7 +206,7 @@ describe('security page migration', () => {
       ).toHaveClass('overflow-y-auto')
       expect(
         screen.getByRole('tablist', { name: 'Security & Access' })
-      ).toHaveAttribute('aria-orientation', 'vertical')
+      ).not.toHaveAttribute('aria-orientation', 'vertical')
       expect(
         screen.getByRole('button', { name: 'Change Password' })
       ).toBeVisible()
@@ -214,7 +214,7 @@ describe('security page migration', () => {
         screen.queryByRole('button', { name: 'Delete Account' })
       ).not.toBeInTheDocument()
       auth.focus()
-      await userEvent.keyboard('{ArrowDown}{Enter}')
+      await userEvent.keyboard('{ArrowRight}{Enter}')
       await waitFor(() =>
         expect(
           screen.getByRole('tab', { name: 'Sessions & Access' })
@@ -253,7 +253,11 @@ describe('security page migration', () => {
       expect(
         screen.queryByRole('tab', { name: 'Check-in' })
       ).not.toBeInTheDocument()
-      await userEvent.click(screen.getByRole('tab', { name: 'Preferences' }))
+      expect(
+        screen.getByRole('tablist', { name: 'Profile' })
+      ).not.toHaveAttribute('aria-orientation', 'vertical')
+      screen.getByRole('tab', { name: 'Account settings' }).focus()
+      await userEvent.keyboard('{ArrowRight}{Enter}')
       expect(screen.getByRole('tab', { name: 'Preferences' })).toHaveAttribute(
         'aria-selected',
         'true'

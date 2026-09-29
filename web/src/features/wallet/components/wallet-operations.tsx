@@ -6,7 +6,6 @@ import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useMediaQuery } from '@/hooks'
 
 export function WalletOperations(props: {
   workspace: boolean
@@ -15,7 +14,6 @@ export function WalletOperations(props: {
   subscriptions: ReactNode
 }) {
   const { t } = useTranslation()
-  const compact = useMediaQuery('(max-width: 767px)')
   if (!props.workspace) {
     return (
       <div
@@ -35,7 +33,7 @@ export function WalletOperations(props: {
   return (
     <Tabs
       defaultValue='funds'
-      orientation={compact ? 'horizontal' : 'vertical'}
+      orientation='horizontal'
       className='console-settings console-wallet-operations'
     >
       <TabsList variant='line' aria-label={t('Wallet')}>

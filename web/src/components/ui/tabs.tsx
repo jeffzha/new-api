@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Tabs as TabsPrimitive } from '@base-ui/react/tabs'
 import { cva, type VariantProps } from 'class-variance-authority'
+import type { ReactNode } from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -58,6 +59,7 @@ const tabsListVariants = cva(
 function TabsList({
   className,
   variant = 'default',
+  children,
   ...props
 }: TabsPrimitive.List.Props & VariantProps<typeof tabsListVariants>) {
   return (
@@ -66,11 +68,19 @@ function TabsList({
       data-variant={variant}
       className={cn(tabsListVariants({ variant }), className)}
       {...props}
-    />
+    >
+      {children}
+      <TabsPrimitive.Indicator data-slot='tabs-indicator' aria-hidden='true' />
+    </TabsPrimitive.List>
   )
 }
 
-function TabsTrigger({ className, ...props }: TabsPrimitive.Tab.Props) {
+function TabsTrigger({
+  className,
+  icon,
+  children,
+  ...props
+}: TabsPrimitive.Tab.Props & { icon?: ReactNode }) {
   return (
     <TabsPrimitive.Tab
       data-slot='tabs-trigger'
@@ -82,7 +92,14 @@ function TabsTrigger({ className, ...props }: TabsPrimitive.Tab.Props) {
         className
       )}
       {...props}
-    />
+    >
+      {icon && (
+        <span data-slot='tabs-icon' aria-hidden='true'>
+          {icon}
+        </span>
+      )}
+      {children}
+    </TabsPrimitive.Tab>
   )
 }
 

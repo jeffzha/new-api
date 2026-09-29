@@ -17,7 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
-import { Eye, EyeOff } from 'lucide-react'
+import {
+  ChartNoAxesCombined,
+  Eye,
+  EyeOff,
+  LayoutDashboard,
+  Network,
+  Users,
+} from 'lucide-react'
 import { useState, useCallback, useMemo, lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -195,6 +202,12 @@ const SECTION_META: Record<DashboardSectionId, { titleKey: string }> = {
 }
 
 export function Dashboard() {
+  const sectionIcons = {
+    overview: <LayoutDashboard />,
+    models: <ChartNoAxesCombined />,
+    flow: <Network />,
+    users: <Users />,
+  }
   const { t } = useTranslation()
   const { customization } = useThemeCustomization()
   const workspace = usesConsoleWorkspace(customization.preset)
@@ -341,7 +354,11 @@ export function Dashboard() {
               <Tabs value={activeSection} onValueChange={handleSectionChange}>
                 <TabsList className='max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto'>
                   {visibleSections.map((section) => (
-                    <TabsTrigger key={section} value={section}>
+                    <TabsTrigger
+                      key={section}
+                      value={section}
+                      icon={sectionIcons[section]}
+                    >
                       {t(SECTION_META[section].titleKey)}
                     </TabsTrigger>
                   ))}

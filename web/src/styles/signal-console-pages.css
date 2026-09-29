@@ -207,22 +207,6 @@ body[data-theme-preset='signal-console'] {
     border-top: 1px solid var(--border);
     padding-top: 12px;
   }
-  .signal-rankings-hero [role='tablist'] {
-    width: fit-content;
-    max-width: 100%;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 4px;
-    background: var(--muted);
-  }
-  .signal-rankings-hero [role='tab'][aria-selected='true'] {
-    background: var(--primary);
-    color: var(--primary-foreground);
-    border-radius: 7px;
-  }
-  .signal-rankings-hero [role='tab'] > span {
-    display: none;
-  }
   [data-slot='sidebar'][data-mobile='true'] {
     background: var(--sidebar);
     color: var(--sidebar-foreground);
@@ -420,7 +404,9 @@ body[data-theme-preset='signal-console'] {
   --signal-account-end: #28769a;
 }
 body[data-theme-preset='signal-console'] .signal-console-header,
-body[data-theme-preset='signal-console'] .signal-console-sidebar [data-slot='sidebar-inner'] {
+body[data-theme-preset='signal-console']
+  .signal-console-sidebar
+  [data-slot='sidebar-inner'] {
   background: var(--sidebar);
 }
 .dark body[data-theme-preset='signal-console'] {

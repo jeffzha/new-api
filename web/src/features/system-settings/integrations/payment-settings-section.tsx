@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Code2, Eye, ShieldAlert } from 'lucide-react'
+import { Code2, CreditCard, Eye, Settings2, ShieldAlert } from 'lucide-react'
 import * as React from 'react'
 import { useForm, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -880,12 +880,24 @@ export function PaymentSettingsSection({
           <Tabs defaultValue='general' className='min-w-0'>
             <div className='overflow-x-auto pb-1'>
               <TabsList className='grid min-w-[44rem] grid-cols-6'>
-                <TabsTrigger value='general'>{t('General')}</TabsTrigger>
-                <TabsTrigger value='epay'>Epay</TabsTrigger>
-                <TabsTrigger value='stripe'>{t('Stripe')}</TabsTrigger>
-                <TabsTrigger value='creem'>Creem</TabsTrigger>
-                <TabsTrigger value='waffo-pancake'>Waffo Pancake</TabsTrigger>
-                <TabsTrigger value='waffo'>Waffo</TabsTrigger>
+                <TabsTrigger value='general' icon={<Settings2 />}>
+                  {t('General')}
+                </TabsTrigger>
+                <TabsTrigger value='epay' icon={<CreditCard />}>
+                  Epay
+                </TabsTrigger>
+                <TabsTrigger value='stripe' icon={<CreditCard />}>
+                  {t('Stripe')}
+                </TabsTrigger>
+                <TabsTrigger value='creem' icon={<CreditCard />}>
+                  Creem
+                </TabsTrigger>
+                <TabsTrigger value='waffo-pancake' icon={<CreditCard />}>
+                  Waffo Pancake
+                </TabsTrigger>
+                <TabsTrigger value='waffo' icon={<CreditCard />}>
+                  Waffo
+                </TabsTrigger>
               </TabsList>
             </div>
 

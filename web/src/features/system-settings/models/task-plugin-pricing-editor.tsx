@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Boxes } from 'lucide-react'
 import {
   useId,
   useState,
@@ -86,7 +87,9 @@ export function TaskPluginPricingEditor(props: TaskPluginPricingEditorProps) {
         aria-label={t('Provider')}
         className='max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto'
       >
-        <TabsTrigger value='__model__'>{t('Default')}</TabsTrigger>
+        <TabsTrigger value='__model__' icon={<Boxes />}>
+          {t('Default')}
+        </TabsTrigger>
         {props.variants.map((variant) => (
           <TabsTrigger
             key={variant.plugin_key}

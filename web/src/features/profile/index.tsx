@@ -27,7 +27,6 @@ import {
 import { IconBadge } from '@/components/ui/icon-badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useThemeCustomization } from '@/context/theme-customization-provider'
-import { useMediaQuery } from '@/hooks'
 import { useStatus } from '@/hooks/use-status'
 import { usesConsoleWorkspace } from '@/lib/theme-customization'
 import { useAuthStore } from '@/stores/auth-store'
@@ -43,7 +42,6 @@ export function Profile() {
   const { t } = useTranslation()
   const { customization } = useThemeCustomization()
   const signal = usesConsoleWorkspace(customization.preset)
-  const compact = useMediaQuery('(max-width: 767px)')
   const { profile, loading, refreshProfile } = useProfile()
   const { status } = useStatus()
   const permissions = useAuthStore((s) => s.auth.user?.permissions)
@@ -77,7 +75,7 @@ export function Profile() {
               {signal ? (
                 <Tabs
                   defaultValue='account'
-                  orientation={compact ? 'horizontal' : 'vertical'}
+                  orientation='horizontal'
                   className='console-settings signal-settings-tabs col-span-full min-w-0'
                 >
                   <TabsList variant='line' aria-label={t('Profile')}>

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Clock3, Database } from 'lucide-react'
 import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -231,12 +231,14 @@ export function TierPriceFields(props: TierPriceFieldsProps) {
                   <TabsList className='h-8'>
                     <TabsTrigger
                       value={CACHE_MODE_GENERIC}
+                      icon={<Database />}
                       className='px-2 text-xs'
                     >
                       {t('Generic cache')}
                     </TabsTrigger>
                     <TabsTrigger
                       value={CACHE_MODE_TIMED}
+                      icon={<Clock3 />}
                       className='px-2 text-xs'
                     >
                       {t('Time-sliced cache (Claude)')}

@@ -24,11 +24,11 @@ it('switches funding and subscription panels by keyboard without losing the ente
   await user.clear(screen.getByRole('textbox', { name: 'Amount' }))
   await user.type(screen.getByRole('textbox', { name: 'Amount' }), '75')
   screen.getByRole('tab', { name: 'Add Funds' }).focus()
-  expect(screen.getByRole('tablist', { name: 'Wallet' })).toHaveAttribute(
+  expect(screen.getByRole('tablist', { name: 'Wallet' })).not.toHaveAttribute(
     'aria-orientation',
     'vertical'
   )
-  await user.keyboard('{ArrowDown}{Enter}')
+  await user.keyboard('{ArrowRight}{Enter}')
   expect(screen.getByRole('tab', { name: 'Subscriptions' })).toHaveAttribute(
     'aria-selected',
     'true'

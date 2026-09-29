@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Search } from 'lucide-react'
+import { CircleMinus, CirclePlus, Search } from 'lucide-react'
 import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -97,8 +97,8 @@ export function UpstreamUpdateDialog(props: UpstreamUpdateDialogProps) {
   const handleConfirm = () => {
     const hasAdd = props.addModels.length > 0
     const hasRemove = props.removeModels.length > 0
-    const selectedAddArr = Array.from(selectedAdd)
-    const selectedRemoveArr = Array.from(selectedRemove)
+    const selectedAddArr = [...selectedAdd]
+    const selectedRemoveArr = [...selectedRemove]
     const anyAdd = selectedAddArr.length > 0
     const anyRemove = selectedRemoveArr.length > 0
 
@@ -150,13 +150,17 @@ export function UpstreamUpdateDialog(props: UpstreamUpdateDialogProps) {
           onValueChange={(v) => setActiveTab(v as 'add' | 'remove')}
         >
           <TabsList className='grid w-full grid-cols-2'>
-            <TabsTrigger value='add' className='gap-1'>
+            <TabsTrigger value='add' icon={<CirclePlus />} className='gap-1'>
               {t('Add Models')}
               <StatusBadge variant='neutral' className='ml-1' copyable={false}>
                 {selectedAdd.size}/{props.addModels.length}
               </StatusBadge>
             </TabsTrigger>
-            <TabsTrigger value='remove' className='gap-1'>
+            <TabsTrigger
+              value='remove'
+              icon={<CircleMinus />}
+              className='gap-1'
+            >
               {t('Remove Models')}
               <StatusBadge variant='neutral' className='ml-1' copyable={false}>
                 {selectedRemove.size}/{props.removeModels.length}
@@ -282,8 +286,8 @@ export function UpstreamUpdateDialog(props: UpstreamUpdateDialogProps) {
         handleConfirm={() => {
           setPartialConfirmOpen(false)
           props.onConfirm({
-            addModels: Array.from(selectedAdd),
-            removeModels: Array.from(selectedRemove),
+            addModels: [...selectedAdd],
+            removeModels: [...selectedRemove],
           })
         }}
       />

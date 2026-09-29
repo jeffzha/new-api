@@ -17,6 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
+import {
+  CircleAlert,
+  Gauge,
+  LayoutDashboard,
+  ListTodo,
+  Server,
+  Settings2,
+} from 'lucide-react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -529,14 +537,24 @@ export function OperationsDashboard() {
 
         <Tabs defaultValue='overview' className='min-w-0 gap-4'>
           <TabsList className='max-w-full overflow-x-auto'>
-            <TabsTrigger value='overview'>{t('Overview')}</TabsTrigger>
-            <TabsTrigger value='infrastructure'>
+            <TabsTrigger value='overview' icon={<LayoutDashboard />}>
+              {t('Overview')}
+            </TabsTrigger>
+            <TabsTrigger value='infrastructure' icon={<Server />}>
               {t('Infrastructure')}
             </TabsTrigger>
-            <TabsTrigger value='concurrency'>{t('Concurrency')}</TabsTrigger>
-            <TabsTrigger value='tasks'>{t('Tasks and jobs')}</TabsTrigger>
-            <TabsTrigger value='errors'>{t('Errors')}</TabsTrigger>
-            <TabsTrigger value='settings'>{t('Settings')}</TabsTrigger>
+            <TabsTrigger value='concurrency' icon={<Gauge />}>
+              {t('Concurrency')}
+            </TabsTrigger>
+            <TabsTrigger value='tasks' icon={<ListTodo />}>
+              {t('Tasks and jobs')}
+            </TabsTrigger>
+            <TabsTrigger value='errors' icon={<CircleAlert />}>
+              {t('Errors')}
+            </TabsTrigger>
+            <TabsTrigger value='settings' icon={<Settings2 />}>
+              {t('Settings')}
+            </TabsTrigger>
           </TabsList>
           <TabsContent value='overview'>
             <OverviewPanel snapshot={snapshot} settings={settingsQuery.data} />

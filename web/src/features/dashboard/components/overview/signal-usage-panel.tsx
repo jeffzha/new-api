@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { RefreshCw } from 'lucide-react'
+import { CalendarDays, Clock3, RefreshCw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts'
@@ -183,8 +183,12 @@ export function SignalUsagePanel() {
             }}
           >
             <TabsList aria-label={t('signal.period')}>
-              <TabsTrigger value='1'>{t('signal.24h')}</TabsTrigger>
-              <TabsTrigger value='7'>{t('signal.7d')}</TabsTrigger>
+              <TabsTrigger value='1' icon={<Clock3 />}>
+                {t('signal.24h')}
+              </TabsTrigger>
+              <TabsTrigger value='7' icon={<CalendarDays />}>
+                {t('signal.7d')}
+              </TabsTrigger>
             </TabsList>
           </Tabs>
           <Button

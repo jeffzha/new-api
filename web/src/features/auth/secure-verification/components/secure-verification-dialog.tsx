@@ -16,7 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { KeyRound, Loader2, ShieldCheck } from 'lucide-react'
+import {
+  Fingerprint,
+  KeyRound,
+  Link2,
+  Loader2,
+  ShieldCheck,
+  Smartphone,
+} from 'lucide-react'
 import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -49,6 +56,14 @@ const methodLabels: Record<VerificationMethod, string> = {
   password: 'Password',
   oauth: 'Linked account',
   session: 'Login session',
+}
+
+const methodIcons = {
+  '2fa': <Smartphone />,
+  passkey: <Fingerprint />,
+  password: <KeyRound />,
+  oauth: <Link2 />,
+  session: <ShieldCheck />,
 }
 
 export function SecureVerificationDialog(props: SecureVerificationDialogProps) {
@@ -175,6 +190,7 @@ export function SecureVerificationDialog(props: SecureVerificationDialogProps) {
                   <TabsTrigger
                     key={option.method}
                     value={option.method}
+                    icon={methodIcons[option.method]}
                     disabled={!option.available || verifying}
                   >
                     {t(methodLabels[option.method])}

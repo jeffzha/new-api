@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Coins, FileText, Network } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -275,12 +276,14 @@ export function ModelMutateDrawer(props: {
             <TabsList className='grid w-full grid-cols-3 group-data-horizontal/tabs:h-auto'>
               <TabsTrigger
                 value='metadata'
+                icon={<FileText />}
                 className='h-auto min-w-0 whitespace-normal'
               >
                 {t('Model metadata')}
               </TabsTrigger>
               <TabsTrigger
                 value='pricing'
+                icon={<Coins />}
                 disabled={!hasModelName}
                 className='h-auto min-w-0 whitespace-normal'
               >
@@ -288,6 +291,7 @@ export function ModelMutateDrawer(props: {
               </TabsTrigger>
               <TabsTrigger
                 value='connections'
+                icon={<Network />}
                 disabled={!hasModelName}
                 className='h-auto min-w-0 whitespace-normal'
               >

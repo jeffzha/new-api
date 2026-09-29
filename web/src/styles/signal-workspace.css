@@ -1,7 +1,10 @@
 /* Copyright (C) 2023-2026 QuantumNous
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
-body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console']) {
+body:is(
+  [data-theme-preset='signal-console'],
+  [data-theme-preset='prism-console']
+) {
   --background: #eaf0f8;
   --foreground: #172b49;
   --card: #f5f8fc;
@@ -54,13 +57,6 @@ body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console'
       border-color 180ms ease,
       box-shadow 180ms ease;
   }
-  .signal-settings-tabs > [role='tablist'] {
-    max-width: 100%;
-    overflow-x: auto;
-    overflow-y: hidden;
-    flex-shrink: 0;
-    height: 44px;
-  }
   .signal-settings-tabs [data-slot='card'] {
     background: transparent;
     border: 0;
@@ -74,9 +70,6 @@ body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console'
   }
   .signal-settings-tabs [data-slot='button'] {
     border-radius: 6px;
-  }
-  .signal-settings-tabs [data-slot='tabs-trigger'] {
-    min-height: 36px;
   }
   .signal-settings-tabs [data-slot='card-header'],
   .signal-settings-tabs [data-slot='card-content'] {
@@ -276,7 +269,11 @@ body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console'
       0 8px 28px #18345914;
   }
 }
-.dark body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console']) {
+.dark
+  body:is(
+    [data-theme-preset='signal-console'],
+    [data-theme-preset='prism-console']
+  ) {
   --background: #101c2d;
   --foreground: #e4edf9;
   --card: #1b2c43;
@@ -310,7 +307,10 @@ body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console'
   --chart-5: #aac58e;
 }
 @media (min-width: 1280px) {
-  body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console']) {
+  body:is(
+    [data-theme-preset='signal-console'],
+    [data-theme-preset='prism-console']
+  ) {
     .signal-profile-grid {
       grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
     }
@@ -327,12 +327,18 @@ body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console'
   }
 }
 @media (max-width: 639px) {
-  body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console'])
+  body:is(
+      [data-theme-preset='signal-console'],
+      [data-theme-preset='prism-console']
+    )
     .signal-settings-tabs
     > [role='tablist'] {
     width: 100%;
   }
-  body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console']) {
+  body:is(
+    [data-theme-preset='signal-console'],
+    [data-theme-preset='prism-console']
+  ) {
     .signal-console-page-header {
       padding: 16px 12px;
     }
@@ -375,19 +381,38 @@ body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console'
   }
 }
 @media (prefers-reduced-motion: no-preference) {
-  body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console']) .signal-metric {
+  body:is(
+      [data-theme-preset='signal-console'],
+      [data-theme-preset='prism-console']
+    )
+    .signal-metric {
     animation: signal-enter 300ms ease-out both;
   }
-  body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console'])
+  body:is(
+      [data-theme-preset='signal-console'],
+      [data-theme-preset='prism-console']
+    )
     .signal-settings-tabs
     > [role='tabpanel'] {
     animation: signal-enter 180ms ease-out;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console']) *,
-  body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console']) *::before,
-  body:is([data-theme-preset='signal-console'], [data-theme-preset='prism-console']) *::after {
+  body:is(
+      [data-theme-preset='signal-console'],
+      [data-theme-preset='prism-console']
+    )
+    *,
+  body:is(
+      [data-theme-preset='signal-console'],
+      [data-theme-preset='prism-console']
+    )
+    *::before,
+  body:is(
+      [data-theme-preset='signal-console'],
+      [data-theme-preset='prism-console']
+    )
+    *::after {
     animation: none !important;
     transition: none !important;
     scroll-behavior: auto !important;

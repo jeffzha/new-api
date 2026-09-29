@@ -597,6 +597,7 @@ export function FlowCharts(props: FlowChartsProps) {
                   <TabsTrigger
                     key={limit}
                     value={String(limit)}
+                    icon={<Hash />}
                     className='px-2.5 text-xs'
                   >
                     {t('Top {{count}}', { count: limit })}
@@ -623,6 +624,7 @@ export function FlowCharts(props: FlowChartsProps) {
                     key={option.value}
                     value={option.value}
                     className='px-2.5 text-xs'
+                    icon={option.value === 'hide' ? <EyeOff /> : <GitBranch />}
                   >
                     {t(option.labelKey)}
                   </TabsTrigger>

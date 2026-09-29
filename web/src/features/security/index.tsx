@@ -40,7 +40,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TitledCard } from '@/components/ui/titled-card'
 import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { useProfile } from '@/features/profile/hooks/use-profile'
-import { useMediaQuery } from '@/hooks'
 import { ROLE } from '@/lib/roles'
 import { usesConsoleWorkspace } from '@/lib/theme-customization'
 import { useAuthStore } from '@/stores/auth-store'
@@ -58,7 +57,6 @@ export function Security() {
   const { t } = useTranslation()
   const { customization } = useThemeCustomization()
   const workspace = usesConsoleWorkspace(customization.preset)
-  const compact = useMediaQuery('(max-width: 767px)')
   const userRole = useAuthStore((state) => state.auth.user?.role)
   const isRoot = userRole === ROLE.SUPER_ADMIN
   const { profile, loading, refreshProfile, fetchProfile } = useProfile()
@@ -95,7 +93,7 @@ export function Security() {
       content = (
         <Tabs
           defaultValue='authentication'
-          orientation={compact ? 'horizontal' : 'vertical'}
+          orientation='horizontal'
           className='console-settings signal-settings-tabs min-w-0'
         >
           <TabsList variant='line' aria-label={t('Security & Access')}>

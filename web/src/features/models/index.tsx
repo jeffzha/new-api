@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
-import { Plus } from 'lucide-react'
+import { Boxes, Building2, Plus, Server } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -62,6 +62,11 @@ const SECTION_META: Record<
 }
 
 function ModelsContent() {
+  const sectionIcons = {
+    metadata: <Boxes />,
+    vendors: <Building2 />,
+    deployments: <Server />,
+  }
   const { t } = useTranslation()
   const navigate = useNavigate({ from: '/models/$section' })
   const { tabCategory, setTabCategory, setOpen, setCurrentVendor } = useModels()
@@ -131,7 +136,11 @@ function ModelsContent() {
             <Tabs value={activeSection} onValueChange={handleSectionChange}>
               <TabsList className='max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto'>
                 {MODELS_SECTION_IDS.map((section) => (
-                  <TabsTrigger key={section} value={section}>
+                  <TabsTrigger
+                    key={section}
+                    value={section}
+                    icon={sectionIcons[section]}
+                  >
                     {t(SECTION_META[section].tabKey)}
                   </TabsTrigger>
                 ))}

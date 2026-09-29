@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { VChart } from '@visactor/react-vchart'
-import { Users, Loader2 } from 'lucide-react'
+import { CalendarDays, Clock3, Users, Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -169,6 +169,7 @@ export function UserCharts(props: UserChartsProps) {
               <TabsTrigger
                 key={preset.days}
                 value={String(preset.days)}
+                icon={<CalendarDays />}
                 className='px-2.5 text-xs'
               >
                 {t(preset.label)}
@@ -189,6 +190,7 @@ export function UserCharts(props: UserChartsProps) {
               <TabsTrigger
                 key={opt.value}
                 value={opt.value}
+                icon={<Clock3 />}
                 className='px-2.5 text-xs'
               >
                 {t(opt.label)}
@@ -210,6 +212,7 @@ export function UserCharts(props: UserChartsProps) {
               <TabsTrigger
                 key={limit}
                 value={String(limit)}
+                icon={<Users />}
                 className='px-2.5 text-xs'
               >
                 {t('Top {{count}}', { count: limit })}

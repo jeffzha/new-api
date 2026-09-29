@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
+import { Code2, PanelsTopLeft } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -142,8 +143,12 @@ export function ChatSettingsSection({
             onValueChange={(value) => setEditMode(value as 'visual' | 'json')}
           >
             <TabsList className='grid w-full grid-cols-2'>
-              <TabsTrigger value='visual'>{t('Visual')}</TabsTrigger>
-              <TabsTrigger value='json'>{t('JSON')}</TabsTrigger>
+              <TabsTrigger value='visual' icon={<PanelsTopLeft />}>
+                {t('Visual')}
+              </TabsTrigger>
+              <TabsTrigger value='json' icon={<Code2 />}>
+                {t('JSON')}
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value='visual' className='mt-6'>

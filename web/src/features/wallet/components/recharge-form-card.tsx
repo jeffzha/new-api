@@ -57,6 +57,7 @@ import { CreemProductsSection } from './creem-products-section'
 const SHOW_CUSTOM_AMOUNT = false
 
 interface RechargeFormCardProps {
+  workspace?: boolean
   topupInfo: TopupInfo | null
   presetAmounts: PresetAmount[]
   selectedPreset: number | null
@@ -87,6 +88,7 @@ interface RechargeFormCardProps {
 }
 
 export function RechargeFormCard({
+  workspace,
   topupInfo,
   presetAmounts,
   selectedPreset,
@@ -202,7 +204,10 @@ export function RechargeFormCard({
   return (
     <TitledCard
       title={t('Add Funds')}
-      description={t('Choose an amount and payment method')}
+      description={
+        workspace ? undefined : t('Choose an amount and payment method')
+      }
+      className={workspace ? 'console-recharge' : undefined}
       icon={<WalletCards className='h-4 w-4' />}
       iconTone='success'
       disableHoverEffect
@@ -252,6 +257,7 @@ export function RechargeFormCard({
                         <Button
                           key={preset.value}
                           variant='outline'
+                          aria-pressed={selectedPreset === preset.value}
                           className={cn(
                             'flex min-h-16 flex-col items-start rounded-lg px-3 py-2.5 text-left whitespace-normal sm:min-h-[72px] sm:p-4',
                             selectedPreset === preset.value
@@ -271,11 +277,11 @@ export function RechargeFormCard({
                             )}
                           </div>
                           <div className='text-muted-foreground mt-1.5 w-full text-xs sm:mt-2'>
-                            Pay {formatCurrency(actualPrice)}
+                            {t('Pay')} {formatCurrency(actualPrice)}
                             {hasDiscount && savedAmount > 0 && (
                               <span className='text-green-600'>
                                 {' '}
-                                • Save {formatCurrency(savedAmount)}
+                                {t('You save')} {formatCurrency(savedAmount)}
                               </span>
                             )}
                           </div>

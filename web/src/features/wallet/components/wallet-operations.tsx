@@ -6,6 +6,7 @@ import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useMediaQuery } from '@/hooks'
 
 export function WalletOperations(props: {
   workspace: boolean
@@ -14,6 +15,7 @@ export function WalletOperations(props: {
   subscriptions: ReactNode
 }) {
   const { t } = useTranslation()
+  const compact = useMediaQuery('(max-width: 767px)')
   if (!props.workspace) {
     return (
       <div
@@ -31,7 +33,11 @@ export function WalletOperations(props: {
     )
   }
   return (
-    <Tabs defaultValue='funds' className='console-wallet-operations'>
+    <Tabs
+      defaultValue='funds'
+      orientation={compact ? 'horizontal' : 'vertical'}
+      className='console-settings console-wallet-operations'
+    >
       <TabsList variant='line' aria-label={t('Wallet')}>
         <TabsTrigger value='funds'>
           <WalletCards aria-hidden />
@@ -46,11 +52,15 @@ export function WalletOperations(props: {
         value='funds'
         keepMounted
         id='wallet-add-funds'
-        className='m-0 min-w-0 scroll-mt-4'
+        className='m-0 min-h-0 min-w-0 overflow-y-auto'
       >
         {props.funds}
       </TabsContent>
-      <TabsContent value='plans' keepMounted className='m-0 min-w-0'>
+      <TabsContent
+        value='plans'
+        keepMounted
+        className='m-0 min-h-0 min-w-0 overflow-y-auto'
+      >
         {!props.hasSubscriptions && (
           <p className='text-muted-foreground py-8 text-sm'>
             {t('No subscription plans available')}

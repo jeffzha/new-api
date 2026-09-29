@@ -98,6 +98,8 @@ beforeEach(() => {
                     type: 2,
                     content: '',
                     model_name: 'model-a',
+                    token_name: 'production',
+                    group: 'default',
                     prompt_tokens: 100,
                     completion_tokens: 20,
                     quota: 30,
@@ -141,6 +143,15 @@ describe('Signal dashboard', () => {
     expect(document.body).toHaveAttribute('data-theme-preset', 'prism-console')
     const recent = await screen.findByRole('region', { name: 'Recent usage' })
     expect(await within(recent).findByText('model-a')).toBeVisible()
+    const table = within(recent).getByRole('table', { name: 'Recent usage' })
+    expect(
+      within(table)
+        .getAllByRole('columnheader')
+        .map((cell) => cell.textContent)
+    ).toEqual(['Model', 'API Key', 'Tokens', 'Usage'])
+    expect(within(table).getByText('production')).toBeVisible()
+    expect(within(table).getByText('Group: default')).toBeVisible()
+    expect(within(table).getByText('120')).toBeVisible()
     expect(
       screen
         .getByTestId('signal-overview')

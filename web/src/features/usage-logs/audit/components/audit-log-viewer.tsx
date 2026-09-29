@@ -18,7 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
-import { Activity, KeyRound, LogIn, ShieldCheck } from 'lucide-react'
+import {
+  Activity,
+  KeyRound,
+  ListFilter,
+  LogIn,
+  ShieldCheck,
+} from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -132,15 +138,6 @@ export function AuditLogViewer(props: {
           <div className='shrink-0 space-y-2'>
             {workspace && (
               <div className='console-audit-categories'>
-                <div className='console-resource-heading'>
-                  <h3>
-                    {t('Audit Logs')}{' '}
-                    <span>{query.isSuccess ? query.data.total : '-'}</span>
-                  </h3>
-                  <span>
-                    {t('Current page')}: {table.getRowModel().rows.length}
-                  </span>
-                </div>
                 <Tabs
                   value={filters.category ?? 'all'}
                   onValueChange={(value) =>
@@ -150,7 +147,10 @@ export function AuditLogViewer(props: {
                   }
                 >
                   <TabsList variant='line' aria-label={t('Category')}>
-                    <TabsTrigger value='all'>{t('All categories')}</TabsTrigger>
+                    <TabsTrigger value='all'>
+                      <ListFilter aria-hidden />
+                      {t('All categories')}
+                    </TabsTrigger>
                     <TabsTrigger value='login'>
                       <LogIn aria-hidden />
                       {t('Login')}

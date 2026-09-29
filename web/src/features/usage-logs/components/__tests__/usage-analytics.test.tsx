@@ -29,6 +29,83 @@ import { UsageLogsProvider } from '../usage-logs-provider'
 
 let client: QueryClient
 
+it('keeps every model in the readable legend when the chart groups smaller shares', () => {
+  render(
+    <UsageAnalyticsView
+      rows={[
+        'gpt-4.1',
+        'claude-sonnet-4',
+        'gemini-pro',
+        'deepseek',
+        'qwen',
+        'small-model',
+        'another-model',
+      ].map((name, index) =>
+        usageLogSchema.parse({
+          id: index + 1,
+          user_id: 1,
+          created_at: 7200,
+          type: 2,
+          content: '',
+          model_name: name,
+          prompt_tokens: 100,
+          completion_tokens: 0,
+          quota: 0,
+        })
+      )}
+    />
+  )
+  const legend = screen.getByRole('list', { name: 'Distribution details' })
+  expect(within(legend).getAllByRole('listitem')).toHaveLength(7)
+  expect(within(legend).getByText('small-model')).toBeVisible()
+  expect(within(legend).getAllByText('14.3%')).toHaveLength(7)
+  expect(screen.getByLabelText('Distribution total')).toHaveTextContent('700')
+  expect(screen.getByText('Other: 200 (28.6%)')).toBeVisible()
+})
+
+it('shows a clear empty distribution instead of a fabricated total for no records', () => {
+  render(<UsageAnalyticsView rows={[]} />)
+  const models = screen.getByRole('region', { name: 'Model distribution' })
+  expect(within(models).getByText('No data')).toBeVisible()
+  expect(
+    within(models).queryByLabelText('Distribution total')
+  ).not.toBeInTheDocument()
+})
+
+it('labels each distribution with totals, shares and the selected metric without requiring hover', async () => {
+  render(
+    <UsageAnalyticsView
+      showDimensions
+      rows={[100, 300].map((tokens, index) =>
+        usageLogSchema.parse({
+          id: index + 1,
+          user_id: 1,
+          created_at: 7200,
+          type: 2,
+          content: '',
+          model_name: `model-${index}`,
+          group: 'default',
+          prompt_tokens: tokens,
+          completion_tokens: 0,
+          quota: 500000,
+          use_time: 1,
+        })
+      )}
+    />
+  )
+  const models = screen.getByRole('region', { name: 'Model distribution' })
+  expect(within(models).getByLabelText('Distribution total')).toHaveTextContent(
+    '400'
+  )
+  expect(within(models).getByText('75.0%')).toBeVisible()
+  expect(within(models).getByText('25.0%')).toBeVisible()
+  await userEvent.click(screen.getByRole('tab', { name: 'Usage' }))
+  expect(within(models).getByLabelText('Distribution total')).toHaveTextContent(
+    '$2'
+  )
+  expect(within(models).getAllByText('50.0%')).toHaveLength(2)
+})
+
 it('keeps model request counts visible when token usage and cost are zero', async () => {
   render(
     <UsageAnalyticsView

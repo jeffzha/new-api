@@ -456,6 +456,11 @@ it.each(['signal-console', 'prism-console'])(
         screen.queryByRole('combobox', { name: 'Category' })
       ).not.toBeInTheDocument()
       expect(screen.getByRole('combobox', { name: 'Result' })).toBeVisible()
+      expect(screen.queryByText(/Current page/)).not.toBeInTheDocument()
+      expect(screen.getByRole('tablist', { name: 'Category' })).toHaveAttribute(
+        'data-variant',
+        'line'
+      )
       await userEvent.click(screen.getByRole('tab', { name: 'All categories' }))
       await waitFor(() =>
         expect(get).toHaveBeenLastCalledWith('/api/audit/self', {

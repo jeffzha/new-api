@@ -57,6 +57,7 @@ import { TwoFACard } from './components/two-fa-card'
 export function Security() {
   const { t } = useTranslation()
   const { customization } = useThemeCustomization()
+  const workspace = usesConsoleWorkspace(customization.preset)
   const compact = useMediaQuery('(max-width: 767px)')
   const userRole = useAuthStore((state) => state.auth.user?.role)
   const isRoot = userRole === ROLE.SUPER_ADMIN
@@ -90,7 +91,7 @@ export function Security() {
       </Empty>
     )
   } else {
-    if (usesConsoleWorkspace(customization.preset)) {
+    if (workspace) {
       content = (
         <Tabs
           defaultValue='authentication'
@@ -111,7 +112,11 @@ export function Security() {
               {t('Privacy')}
             </TabsTrigger>
           </TabsList>
-          <TabsContent value='authentication' keepMounted className='space-y-5'>
+          <TabsContent
+            value='authentication'
+            keepMounted
+            className='min-h-0 space-y-5 overflow-y-auto'
+          >
             <header className='console-settings-heading'>
               <ShieldCheck aria-hidden />
               <h3>{t('Login & Authentication')}</h3>
@@ -134,7 +139,11 @@ export function Security() {
               <AccountBindings profile={profile} onUpdate={refreshProfile} />
             </TitledCard>
           </TabsContent>
-          <TabsContent value='access' keepMounted className='space-y-5'>
+          <TabsContent
+            value='access'
+            keepMounted
+            className='min-h-0 space-y-5 overflow-y-auto'
+          >
             <header className='console-settings-heading'>
               <KeyRound aria-hidden />
               <h3>{t('Sessions & Access')}</h3>
@@ -143,7 +152,11 @@ export function Security() {
             <AccessTokenCard />
             {isRoot && <MCPAccessCredentialCard />}
           </TabsContent>
-          <TabsContent value='privacy' keepMounted className='space-y-5'>
+          <TabsContent
+            value='privacy'
+            keepMounted
+            className='min-h-0 space-y-5 overflow-y-auto'
+          >
             <header className='console-settings-heading'>
               <LockKeyhole aria-hidden />
               <h3>{t('Privacy')}</h3>
@@ -229,7 +242,7 @@ export function Security() {
   }
 
   return (
-    <SectionPageLayout>
+    <SectionPageLayout fixedContent={workspace}>
       <SectionPageLayout.Title>
         {t('Security & Access')}
       </SectionPageLayout.Title>

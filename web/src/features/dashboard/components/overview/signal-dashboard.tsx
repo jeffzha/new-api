@@ -17,6 +17,7 @@ import {
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { StaticDataTable } from '@/components/data-table'
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
 import { SectionPageLayout } from '@/components/layout'
@@ -271,7 +272,7 @@ export function SignalDashboard() {
               <UsageAnalyticsView rows={query.data.rows} showModelTable />
             </>
           )}
-          <div className='console-activity-grid grid min-w-0 gap-8 xl:grid-cols-[minmax(0,2fr)_minmax(240px,1fr)]'>
+          <div className='console-activity-grid grid min-w-0 gap-8 xl:grid-cols-2'>
             {query.isSuccess && (
               <section className='min-w-0' aria-label={t('Recent usage')}>
                 <div className='mb-3 flex items-center justify-between'>
@@ -288,36 +289,83 @@ export function SignalDashboard() {
                 {!query.data.rows.length ? (
                   <EmptyState title={t('No recent usage')} />
                 ) : (
-                  <ul className='divide-y'>
-                    {[...query.data.rows]
+                  <StaticDataTable
+                    className='console-report-table console-recent-table'
+                    tableProps={{ 'aria-label': t('Recent usage') }}
+                    data={[...query.data.rows]
                       .sort(
                         (a, b) => b.created_at - a.created_at || b.id - a.id
                       )
-                      .slice(0, 5)
-                      .map((row) => (
-                        <li
-                          key={row.id}
-                          className='flex min-w-0 items-center justify-between gap-4 py-4'
-                        >
-                          <div className='min-w-0'>
-                            <p className='truncate text-sm font-medium'>
-                              {row.model_name}
-                            </p>
-                            <p className='text-muted-foreground mt-1 text-xs'>
+                      .slice(0, 5)}
+                    getRowKey={(row) => row.id}
+                    columns={[
+                      {
+                        id: 'model',
+                        header: t('Model'),
+                        cell: (row) => (
+                          <div className='grid max-w-52 gap-1'>
+                            <span
+                              className='truncate font-medium'
+                              title={row.model_name}
+                            >
+                              {row.model_name || t('Unknown')}
+                            </span>
+                            <time
+                              className='text-muted-foreground text-xs'
+                              dateTime={new Date(
+                                row.created_at * 1000
+                              ).toISOString()}
+                            >
                               {new Date(row.created_at * 1000).toLocaleString()}
-                            </p>
+                            </time>
                           </div>
-                          <div className='shrink-0 text-right'>
-                            <p className='text-primary text-sm font-medium tabular-nums'>
+                        ),
+                      },
+                      {
+                        id: 'key',
+                        header: t('API Key'),
+                        cell: (row) => (
+                          <div className='grid max-w-36 gap-1'>
+                            <span className='truncate' title={row.token_name}>
+                              {row.token_name || t('Not provided')}
+                            </span>
+                            <span
+                              className='text-muted-foreground truncate text-xs'
+                              title={row.group}
+                            >
+                              {t('Group')}: {row.group || t('Unknown')}
+                            </span>
+                          </div>
+                        ),
+                      },
+                      {
+                        id: 'tokens',
+                        header: t('Tokens'),
+                        className: 'text-right',
+                        cellClassName: 'text-right tabular-nums',
+                        cell: (row) =>
+                          formatNumber(
+                            row.prompt_tokens + row.completion_tokens
+                          ),
+                      },
+                      {
+                        id: 'usage',
+                        header: t('Usage'),
+                        className: 'text-right',
+                        cellClassName: 'text-right tabular-nums',
+                        cell: (row) => (
+                          <div className='grid gap-1'>
+                            <span className='text-primary font-medium'>
                               {formatQuota(row.quota)}
-                            </p>
-                            <p className='text-muted-foreground mt-1 text-xs'>
+                            </span>
+                            <span className='text-muted-foreground text-xs'>
                               {formatUseTime(row.use_time)}
-                            </p>
+                            </span>
                           </div>
-                        </li>
-                      ))}
-                  </ul>
+                        ),
+                      },
+                    ]}
+                  />
                 )}
               </section>
             )}

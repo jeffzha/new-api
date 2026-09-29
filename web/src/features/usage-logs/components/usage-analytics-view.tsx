@@ -4,20 +4,9 @@
 import { Activity, Coins, Database, Timer } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
-  XAxis,
-  YAxis,
-} from 'recharts'
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 
-import { StaticDataTable } from '@/components/data-table'
 import { EmptyState } from '@/components/empty-state'
-import { Button } from '@/components/ui/button'
 import {
   ChartContainer,
   ChartLegend,
@@ -30,6 +19,7 @@ import { formatNumber, formatQuota, formatUseTime } from '@/lib/format'
 
 import type { UsageLog } from '../data/schema'
 import { summarizeUsage } from '../lib/usage-analytics'
+import { UsageDistribution } from './usage-distribution'
 
 export function UsageAnalyticsView(props: {
   rows: UsageLog[]
@@ -127,199 +117,25 @@ export function UsageAnalyticsView(props: {
         </Tabs>
       </div>
       <div className='console-analysis-grid grid min-w-0 gap-x-8 gap-y-6 xl:grid-cols-2'>
-        {distributions.map((dimension) => {
-          const ordered = [...dimension.rows].sort(
-            (a, b) => b[metric] - a[metric]
-          )
-          const filter = dimension.filter
-          const showTable = filter === 'model' && props.showModelTable
-          const hasChartValues = ordered.some((row) => row[metric] > 0)
-          // Keep the chart legible while retaining the full distribution in the scrollable legend.
-          const plotted = ordered.slice(0, 7)
-          if (ordered.length > 7) {
-            plotted.push({
-              name: t('Other'),
-              tokens: ordered.slice(7).reduce((n, row) => n + row.tokens, 0),
-              quota: ordered.slice(7).reduce((n, row) => n + row.quota, 0),
-              requests: 0,
-              standardQuota: null,
-            })
-          }
-          return (
-            <section
-              key={dimension.title}
-              className='min-w-0 border-b pb-4'
-              aria-label={dimension.title}
-            >
-              <h3 className='mb-4 text-sm font-semibold'>{dimension.title}</h3>
-              {!ordered.length || (!showTable && !hasChartValues) ? (
-                <EmptyState title={t('No data')} className='min-h-56' />
-              ) : (
-                <div
-                  className={
-                    showTable
-                      ? 'console-model-distribution grid min-w-0 grid-cols-1 items-center gap-4 sm:grid-cols-[160px_minmax(0,1fr)]'
-                      : 'grid min-w-0 grid-cols-1 items-center gap-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)]'
-                  }
-                >
-                  {hasChartValues ? (
-                    <ChartContainer
-                      config={{
-                        value: {
-                          label: t(metric === 'tokens' ? 'Tokens' : 'Usage'),
-                        },
-                      }}
-                      className='aspect-auto h-56 w-full min-w-0'
-                    >
-                      <PieChart accessibilityLayer>
-                        <Pie
-                          data={plotted}
-                          dataKey={metric}
-                          nameKey='name'
-                          innerRadius='58%'
-                          outerRadius='85%'
-                          strokeWidth={2}
-                          isAnimationActive={false}
-                        >
-                          {plotted.map((row, i) => (
-                            <Cell
-                              key={row.name}
-                              fill={`var(--chart-${(i % 5) + 1})`}
-                            />
-                          ))}
-                        </Pie>
-                        <ChartTooltip
-                          content={
-                            <ChartTooltipContent
-                              formatter={(value, name) => (
-                                <span>
-                                  {name}:{' '}
-                                  {metric === 'quota'
-                                    ? formatQuota(Number(value))
-                                    : formatNumber(Number(value))}
-                                </span>
-                              )}
-                            />
-                          }
-                        />
-                      </PieChart>
-                    </ChartContainer>
-                  ) : (
-                    <EmptyState title={t('No data')} className='min-h-40' />
-                  )}
-                  {showTable ? (
-                    <StaticDataTable
-                      className='console-distribution-table'
-                      tableProps={{ 'aria-label': t('Model distribution') }}
-                      data={ordered}
-                      getRowKey={(row) => row.name}
-                      columns={[
-                        {
-                          id: 'model',
-                          header: t('Model'),
-                          cell: (row) =>
-                            props.onFilter && row.name !== 'Unknown' ? (
-                              <Button
-                                variant='link'
-                                size='sm'
-                                className='max-w-40 justify-start p-0 text-xs'
-                                title={row.name}
-                                onClick={() =>
-                                  props.onFilter?.('model', row.name)
-                                }
-                              >
-                                <span className='truncate'>{row.name}</span>
-                              </Button>
-                            ) : (
-                              <span
-                                className='block max-w-40 truncate'
-                                title={row.name}
-                              >
-                                {row.name === 'Unknown'
-                                  ? t('Unknown')
-                                  : row.name}
-                              </span>
-                            ),
-                        },
-                        {
-                          id: 'requests',
-                          header: t('Requests'),
-                          className: 'text-right',
-                          cellClassName: 'text-right tabular-nums',
-                          cell: (row) => formatNumber(row.requests),
-                        },
-                        {
-                          id: 'tokens',
-                          header: t('Tokens'),
-                          className: 'text-right',
-                          cellClassName: 'text-right tabular-nums',
-                          cell: (row) => formatNumber(row.tokens),
-                        },
-                        {
-                          id: 'actual',
-                          header: t('Actual'),
-                          className: 'text-right',
-                          cellClassName: 'text-right tabular-nums text-primary',
-                          cell: (row) => formatQuota(row.quota),
-                        },
-                        {
-                          id: 'standard',
-                          header: t('Standard'),
-                          className: 'text-right',
-                          cellClassName:
-                            'text-right tabular-nums text-muted-foreground',
-                          cell: (row) =>
-                            row.standardQuota === null
-                              ? t('Not provided')
-                              : formatQuota(row.standardQuota),
-                        },
-                      ]}
-                    />
-                  ) : (
-                    <ul className='max-h-56 min-w-0 overflow-y-auto'>
-                      {ordered.map((row) => (
-                        <li
-                          key={row.name}
-                          className='flex min-w-0 items-center justify-between gap-3 border-b py-2 text-xs'
-                        >
-                          {props.onFilter &&
-                          filter &&
-                          row.name !== 'Unknown' ? (
-                            <Button
-                              variant='link'
-                              size='sm'
-                              className='min-h-9 min-w-0 justify-start p-0 text-xs'
-                              onClick={() => props.onFilter?.(filter, row.name)}
-                              title={row.name}
-                            >
-                              <span className='truncate'>{row.name}</span>
-                            </Button>
-                          ) : (
-                            <span className='min-w-0 truncate' title={row.name}>
-                              {row.name === 'Unknown' ? t('Unknown') : row.name}
-                            </span>
-                          )}
-                          <span className='shrink-0 tabular-nums'>
-                            {metric === 'quota'
-                              ? formatQuota(row.quota)
-                              : formatNumber(row.tokens)}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </section>
-          )
-        })}
+        {distributions.map((dimension) => (
+          <UsageDistribution
+            key={dimension.title}
+            title={dimension.title}
+            rows={dimension.rows}
+            metric={metric}
+            filter={dimension.filter}
+            showTable={dimension.filter === 'model' && props.showModelTable}
+            onFilter={props.onFilter}
+          />
+        ))}
         <section
           className='min-w-0 border-b pb-4'
           aria-label={t('Token usage trend')}
         >
-          <h3 className='mb-4 text-sm font-semibold'>
-            {t('Token usage trend')}
-          </h3>
+          <header className='console-chart-heading'>
+            <h3>{t('Token usage trend')}</h3>
+            <span>{t(granularity === 'hour' ? 'Hourly' : 'Daily')}</span>
+          </header>
           {!summary.series.length ? (
             <EmptyState title={t('No data')} className='min-h-56' />
           ) : (
@@ -336,7 +152,7 @@ export function UsageAnalyticsView(props: {
                     color: 'var(--chart-3)',
                   },
                 }}
-                className='aspect-auto h-56 w-full min-w-0'
+                className='aspect-auto h-64 w-full min-w-0'
               >
                 <AreaChart
                   accessibilityLayer

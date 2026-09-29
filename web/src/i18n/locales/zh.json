@@ -6857,6 +6857,9 @@
     "Model cost breakdown": "模型成本明细",
     "Cost share": "费用占比",
     "No subscription plans available": "暂无可用订阅套餐",
-    "Log records": "日志记录"
+    "Log records": "日志记录",
+    "Distribution total": "分布总量",
+    "Distribution details": "分布明细",
+    "Token share": "Token 占比"
   }
 }

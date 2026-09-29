@@ -19,7 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import { flexRender, type Table as TanstackTable } from '@tanstack/react-table'
-import { Database } from 'lucide-react'
+import {
+  CircleCheck,
+  CirclePause,
+  Clock3,
+  Database,
+  KeyRound,
+  Wallet,
+} from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -70,6 +77,12 @@ import { DataTableRowActions } from './data-table-row-actions'
 
 const route = getRouteApi('/_authenticated/keys/')
 const API_KEYS_COLUMN_VISIBILITY_STORAGE_KEY = 'api-keys:column-visibility'
+const STATUS_ICONS: Record<string, typeof KeyRound> = {
+  '1': CircleCheck,
+  '2': CirclePause,
+  '3': Clock3,
+  '4': Wallet,
+}
 const API_KEYS_MOBILE_SKELETON_IDS = Array.from(
   { length: 5 },
   (_, index) => `api-key-mobile-skeleton-${index + 1}`
@@ -359,15 +372,6 @@ export function ApiKeysTable() {
       toolbar={
         workspace ? (
           <div className='console-keys-toolbar'>
-            <div className='console-resource-heading'>
-              <h3>
-                {t('API Keys')}{' '}
-                <span>{isLoading ? '-' : (data?.total ?? 0)}</span>
-              </h3>
-              <span>
-                {t('Current page')}: {table.getRowModel().rows.length}
-              </span>
-            </div>
             <Tabs
               value={String(
                 (
@@ -383,12 +387,19 @@ export function ApiKeysTable() {
               }
             >
               <TabsList variant='line' aria-label={t('Key status')}>
-                <TabsTrigger value='all'>{t('All')}</TabsTrigger>
-                {API_KEY_STATUS_OPTIONS.map((option) => (
-                  <TabsTrigger key={option.value} value={option.value}>
-                    {t(option.label)}
-                  </TabsTrigger>
-                ))}
+                <TabsTrigger value='all'>
+                  <KeyRound aria-hidden />
+                  {t('All')}
+                </TabsTrigger>
+                {API_KEY_STATUS_OPTIONS.map((option) => {
+                  const Icon = STATUS_ICONS[option.value] ?? KeyRound
+                  return (
+                    <TabsTrigger key={option.value} value={option.value}>
+                      <Icon aria-hidden />
+                      {t(option.label)}
+                    </TabsTrigger>
+                  )
+                })}
               </TabsList>
             </Tabs>
             <DataTableToolbar

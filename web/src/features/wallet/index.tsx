@@ -295,7 +295,7 @@ export function Wallet(props: WalletProps) {
 
   return (
     <>
-      <SectionPageLayout>
+      <SectionPageLayout fixedContent={workspace}>
         <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
         {workspace && (
           <SectionPageLayout.Actions>
@@ -321,6 +321,7 @@ export function Wallet(props: WalletProps) {
               hasSubscriptions={showSubscriptionPanel}
               funds={
                 <RechargeFormCard
+                  workspace={workspace}
                   topupInfo={topupInfo}
                   presetAmounts={presetAmounts}
                   selectedPreset={selectedPreset}

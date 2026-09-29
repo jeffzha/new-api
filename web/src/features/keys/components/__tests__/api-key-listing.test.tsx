@@ -358,6 +358,11 @@ it.each(['signal-console', 'prism-console'])(
   async (preset) => {
     document.cookie = `theme_preset=${preset}; path=/`
     const { router } = await renderKeysPage()
+    expect(screen.queryByText(/Current page/)).not.toBeInTheDocument()
+    expect(screen.getByRole('tablist', { name: 'Key status' })).toHaveAttribute(
+      'data-variant',
+      'line'
+    )
     await userEvent.click(screen.getByRole('tab', { name: 'Disabled' }))
     await waitFor(() =>
       expect(router.state.location.search).toMatchObject({ status: ['2'] })

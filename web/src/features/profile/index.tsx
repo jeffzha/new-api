@@ -55,10 +55,15 @@ export function Profile() {
   const canConfigureSidebar = permissions?.sidebar_settings !== false
 
   return (
-    <Main data-signal-page='profile'>
+    <Main data-signal-page='profile' data-signal-fixed={signal || undefined}>
+      {signal && (
+        <header className='signal-console-page-header shrink-0'>
+          <h2>{t('Profile')}</h2>
+        </header>
+      )}
       <div className='signal-profile-content min-h-0 flex-1 overflow-auto px-3 py-3 sm:px-4 sm:py-6'>
         <CardStaggerContainer className='signal-profile-layout mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-6'>
-          <CardStaggerItem>
+          <CardStaggerItem className='console-profile-summary'>
             <ProfileHeader
               profile={profile}
               loading={loading}
@@ -66,7 +71,7 @@ export function Profile() {
             />
           </CardStaggerItem>
 
-          <CardStaggerItem>
+          <CardStaggerItem className='console-profile-settings'>
             <div className='signal-profile-grid grid gap-4 sm:gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.46fr)] xl:items-start'>
               {signal ? (
                 <Tabs
@@ -93,7 +98,7 @@ export function Profile() {
                   <TabsContent
                     value='account'
                     keepMounted
-                    className='space-y-6'
+                    className='min-h-0 space-y-6 overflow-y-auto'
                   >
                     {profile && (
                       <section
@@ -138,7 +143,7 @@ export function Profile() {
                   <TabsContent
                     value='preferences'
                     keepMounted
-                    className='space-y-6'
+                    className='min-h-0 space-y-6 overflow-y-auto'
                   >
                     <LanguagePreferencesCard
                       profile={profile}
@@ -147,7 +152,11 @@ export function Profile() {
                     {canConfigureSidebar && <SidebarModulesCard />}
                   </TabsContent>
                   {checkinEnabled && (
-                    <TabsContent value='checkin' keepMounted>
+                    <TabsContent
+                      value='checkin'
+                      keepMounted
+                      className='min-h-0 overflow-y-auto'
+                    >
                       <CheckinCalendarCard
                         checkinEnabled={checkinEnabled}
                         turnstileEnabled={turnstileEnabled}

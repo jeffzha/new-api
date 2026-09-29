@@ -51,6 +51,7 @@ export function ConsoleModelBreakdown(props: {
         <Skeleton className='h-56 w-full' />
       ) : (
         <StaticDataTable
+          className='console-report-table'
           tableProps={{ 'aria-label': t('Model cost breakdown') }}
           data={rows}
           getRowKey={(row) => row.name}

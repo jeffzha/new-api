@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Boxes, Building2 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -23,7 +24,9 @@ import { PublicLayout } from '@/components/layout'
 import { PageTransition } from '@/components/page-transition'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useThemeCustomization } from '@/context/theme-customization-provider'
+import { getLobeIcon } from '@/lib/lobe-icon'
 import { usesConsoleWorkspace } from '@/lib/theme-customization'
+import { cn } from '@/lib/utils'
 
 import {
   LoadingSkeleton,
@@ -137,6 +140,7 @@ export function Pricing() {
   }, [clearFilters, clearSearch])
 
   const renderPricingContent = () => {
+    if (isLoading) return <LoadingSkeleton viewMode={viewMode} />
     if (error) {
       return (
         <PricingUnavailable
@@ -183,7 +187,7 @@ export function Pricing() {
     )
   }
 
-  if (isLoading) {
+  if (isLoading && !signal) {
     return (
       <PublicLayout showMainContainer={false}>
         <div className='mx-auto w-full max-w-[1800px] px-3 pt-16 pb-8 sm:px-6 sm:pt-20 sm:pb-10 xl:px-8'>
@@ -213,7 +217,12 @@ export function Pricing() {
             }}
           />
         )}
-        <PageTransition className='relative mx-auto w-full max-w-[1800px] px-3 pt-16 pb-8 sm:px-6 sm:pt-20 sm:pb-10 xl:px-8'>
+        <PageTransition
+          className={cn(
+            'relative mx-auto w-full max-w-[1800px] px-3 pt-16 pb-8 sm:px-6 sm:pt-20 sm:pb-10 xl:px-8',
+            signal && 'console-catalog-frame'
+          )}
+        >
           {signal ? (
             <ConsoleCatalogHeader
               models={publicModels.length}
@@ -260,21 +269,43 @@ export function Pricing() {
             <Tabs
               value={vendorFilter}
               onValueChange={(value) => setVendorFilter(String(value))}
-              className='mb-5 min-w-0'
+              className='console-catalog-providers mb-5 min-w-0'
             >
               <TabsList
                 variant='line'
                 aria-label={t('Providers')}
                 className='h-11 max-w-full justify-start overflow-x-auto'
               >
-                <TabsTrigger value='all'>{t('All')}</TabsTrigger>
+                <TabsTrigger value='all' aria-label={t('All')}>
+                  <Boxes aria-hidden />
+                  {t('All')}
+                  <span aria-hidden>{publicModels.length}</span>
+                </TabsTrigger>
                 {(vendors ?? [])
                   .filter((vendor) =>
                     publicModels.some((model) => model.vendor_id === vendor.id)
                   )
                   .map((vendor) => (
-                    <TabsTrigger key={vendor.id} value={vendor.name}>
+                    <TabsTrigger
+                      key={vendor.id}
+                      value={vendor.name}
+                      aria-label={vendor.name}
+                    >
+                      <span aria-hidden>
+                        {vendor.icon ? (
+                          getLobeIcon(vendor.icon, 18)
+                        ) : (
+                          <Building2 className='size-4' />
+                        )}
+                      </span>
                       {vendor.name}
+                      <span aria-hidden>
+                        {
+                          publicModels.filter(
+                            (model) => model.vendor_id === vendor.id
+                          ).length
+                        }
+                      </span>
                     </TabsTrigger>
                   ))}
               </TabsList>
@@ -283,7 +314,7 @@ export function Pricing() {
           <div
             className={
               signal
-                ? 'grid min-w-0 gap-4'
+                ? 'console-catalog-body min-w-0'
                 : 'signal-marketplace-grid grid gap-4 xl:grid-cols-[330px_minmax(0,1fr)]'
             }
           >
@@ -346,7 +377,17 @@ export function Pricing() {
                 onClearFilters={clearFilters}
               />
 
-              {renderPricingContent()}
+              {signal ? (
+                <section
+                  className='console-catalog-results min-h-0 overflow-y-auto'
+                  aria-label={t('Models')}
+                  tabIndex={0}
+                >
+                  {renderPricingContent()}
+                </section>
+              ) : (
+                renderPricingContent()
+              )}
             </main>
           </div>
 

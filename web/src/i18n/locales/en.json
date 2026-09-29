@@ -6857,6 +6857,9 @@
     "Model cost breakdown": "Model cost breakdown",
     "Cost share": "Cost share",
     "No subscription plans available": "No subscription plans available",
-    "Log records": "Log records"
+    "Log records": "Log records",
+    "Distribution total": "Distribution total",
+    "Distribution details": "Distribution details",
+    "Token share": "Token share"
   }
 }

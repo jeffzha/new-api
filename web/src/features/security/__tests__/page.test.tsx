@@ -197,6 +197,13 @@ describe('security page migration', () => {
         name: 'Login & Authentication',
       })
       expect(auth).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByRole('main')).toHaveAttribute(
+        'data-signal-fixed',
+        'true'
+      )
+      expect(
+        screen.getByRole('tabpanel', { name: 'Login & Authentication' })
+      ).toHaveClass('overflow-y-auto')
       expect(
         screen.getByRole('tablist', { name: 'Security & Access' })
       ).toHaveAttribute('aria-orientation', 'vertical')
@@ -232,6 +239,14 @@ describe('security page migration', () => {
     async (preset) => {
       document.cookie = `theme_preset=${preset}; path=/`
       await renderPage('/profile')
+      expect(screen.getByRole('heading', { name: 'Profile' })).toBeVisible()
+      expect(screen.getByRole('main')).toHaveAttribute(
+        'data-signal-fixed',
+        'true'
+      )
+      expect(
+        screen.getByRole('tabpanel', { name: 'Account settings' })
+      ).toHaveClass('overflow-y-auto')
       expect(
         await screen.findByRole('button', { name: 'Save Settings' })
       ).toBeVisible()

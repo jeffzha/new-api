@@ -129,7 +129,7 @@ export function UsageAnalyticsView(props: {
           />
         ))}
         <section
-          className='min-w-0 border-b pb-4'
+          className='console-token-trend flex min-w-0 flex-col border-b pb-4'
           aria-label={t('Token usage trend')}
         >
           <header className='console-chart-heading'>
@@ -152,7 +152,7 @@ export function UsageAnalyticsView(props: {
                     color: 'var(--chart-3)',
                   },
                 }}
-                className='aspect-auto h-64 w-full min-w-0'
+                className='aspect-auto h-64 min-h-64 w-full min-w-0 flex-1'
               >
                 <AreaChart
                   accessibilityLayer
@@ -203,6 +203,42 @@ export function UsageAnalyticsView(props: {
                   ))}
                 </AreaChart>
               </ChartContainer>
+              <dl
+                className='console-trend-totals mt-5 grid grid-cols-3 gap-3 border-t pt-4'
+                aria-label={t('Tokens')}
+              >
+                {[
+                  {
+                    label: t('Input tokens'),
+                    value: summary.input,
+                    color: 'var(--chart-1)',
+                  },
+                  {
+                    label: t('Output tokens'),
+                    value: summary.output,
+                    color: 'var(--chart-2)',
+                  },
+                  {
+                    label: t('Cache read tokens'),
+                    value: summary.cache,
+                    color: 'var(--chart-3)',
+                  },
+                ].map((item) => (
+                  <div key={item.label} className='min-w-0'>
+                    <dt className='text-muted-foreground flex items-center gap-2 text-xs'>
+                      <span
+                        className='console-chart-swatch'
+                        style={{ background: item.color }}
+                        aria-hidden
+                      />
+                      {item.label}
+                    </dt>
+                    <dd className='mt-2 text-lg font-semibold break-words tabular-nums'>
+                      {formatNumber(item.value)}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
               <p className='text-muted-foreground mt-2 text-xs'>
                 {t('Cache reads are included in input tokens.')}
               </p>

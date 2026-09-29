@@ -23,8 +23,17 @@ import { cn } from '@/lib/utils'
 function ScrollArea({
   className,
   children,
+  viewportProps,
+  contentProps,
+  verticalScrollbarProps,
+  horizontal = false,
   ...props
-}: ScrollAreaPrimitive.Root.Props) {
+}: ScrollAreaPrimitive.Root.Props & {
+  viewportProps?: ScrollAreaPrimitive.Viewport.Props
+  contentProps?: ScrollAreaPrimitive.Content.Props
+  verticalScrollbarProps?: ScrollAreaPrimitive.Scrollbar.Props
+  horizontal?: boolean
+}) {
   return (
     <ScrollAreaPrimitive.Root
       data-slot='scroll-area'
@@ -33,11 +42,22 @@ function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         data-slot='scroll-area-viewport'
-        className='focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1'
+        {...viewportProps}
+        className={cn(
+          'focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1',
+          viewportProps?.className
+        )}
       >
-        {children}
+        {contentProps ? (
+          <ScrollAreaPrimitive.Content {...contentProps}>
+            {children}
+          </ScrollAreaPrimitive.Content>
+        ) : (
+          children
+        )}
       </ScrollAreaPrimitive.Viewport>
-      <ScrollBar />
+      <ScrollBar {...verticalScrollbarProps} />
+      {horizontal && <ScrollBar orientation='horizontal' keepMounted />}
       <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>
   )

@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Eye } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -59,7 +60,8 @@ export function AuditLogDetailsDialog(props: { entry: AuditLog }) {
       description={t('View the complete details for this log entry')}
       descriptionClassName='sr-only'
       trigger={
-        <Button variant='ghost' size='sm' className='h-7 px-2'>
+        <Button variant='ghost' size='sm' className='h-8 gap-2 px-2'>
+          <Eye aria-hidden className='text-muted-foreground size-4 shrink-0' />
           {t('Details')}
         </Button>
       }

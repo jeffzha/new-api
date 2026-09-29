@@ -20,6 +20,9 @@ import type { Row, Table as TanstackTable } from '@tanstack/react-table'
 import * as React from 'react'
 
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
+import { TableScrollArea } from '@/components/ui/table-scroll-area'
+import { useThemeCustomization } from '@/context/theme-customization-provider'
+import { usesConsoleWorkspace } from '@/lib/theme-customization'
 import { cn } from '@/lib/utils'
 
 import {
@@ -100,7 +103,7 @@ function UnifiedTableView<TData>({
   const tableSizing = getTableSizing(props)
 
   return (
-    <div className={props.tableContainerClassName}>
+    <div className={cn('console-table-frame', props.tableContainerClassName)}>
       <Table className={props.tableClassName} style={tableSizing.style}>
         {tableSizing.colgroup}
         <DataTableHeader
@@ -127,7 +130,39 @@ function SplitHeaderTableView<TData>({
   colSpan: number
   getColumnClassName: DataTableColumnClassName
 }) {
+  const { customization } = useThemeCustomization()
   const tableSizing = getTableSizing(props)
+  const table = (
+    <Table
+      withContainer={false}
+      className={props.tableClassName}
+      style={tableSizing.style}
+    >
+      {tableSizing.colgroup}
+      <DataTableHeader
+        table={props.table}
+        applyHeaderSize={props.applyHeaderSize}
+        className={cn('sticky top-0 z-10', props.tableHeaderClassName)}
+        rowClassName={props.tableHeaderRowClassName}
+        getColumnClassName={getColumnClassName}
+      />
+      {renderTableBody(props, rows, colSpan, getColumnClassName)}
+    </Table>
+  )
+
+  if (usesConsoleWorkspace(customization.preset)) {
+    return (
+      <TableScrollArea
+        className={cn('table-scroll-area-fill', props.tableContainerClassName)}
+        viewportClassName={cn(
+          props.splitHeaderScrollClassName,
+          props.bodyContainerClassName
+        )}
+      >
+        {table}
+      </TableScrollArea>
+    )
+  }
 
   return (
     <div
@@ -145,21 +180,7 @@ function SplitHeaderTableView<TData>({
           props.bodyContainerClassName
         )}
       >
-        <Table
-          withContainer={false}
-          className={props.tableClassName}
-          style={tableSizing.style}
-        >
-          {tableSizing.colgroup}
-          <DataTableHeader
-            table={props.table}
-            applyHeaderSize={props.applyHeaderSize}
-            className={cn('sticky top-0 z-10', props.tableHeaderClassName)}
-            rowClassName={props.tableHeaderRowClassName}
-            getColumnClassName={getColumnClassName}
-          />
-          {renderTableBody(props, rows, colSpan, getColumnClassName)}
-        </Table>
+        {table}
       </div>
     </div>
   )

@@ -78,7 +78,11 @@ export function StaticDataTable<TData = unknown>(
 
   return (
     <div
-      className={cn(staticDataTableClassNames.container, className)}
+      className={cn(
+        staticDataTableClassNames.container,
+        'console-table-frame',
+        className
+      )}
       {...containerProps}
     >
       <Table className={tableClassName} {...tableProps}>

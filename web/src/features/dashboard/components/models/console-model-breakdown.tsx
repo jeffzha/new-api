@@ -1,10 +1,12 @@
 /* Copyright (C) 2023-2026 QuantumNous
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
+import { ReceiptText } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StaticDataTable } from '@/components/data-table'
+import { IconBadge } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatNumber, formatQuota } from '@/lib/format'
 
@@ -42,7 +44,12 @@ export function ConsoleModelBreakdown(props: {
       aria-label={t('Model cost breakdown')}
     >
       <div className='console-resource-heading'>
-        <h3>{t('Model cost breakdown')}</h3>
+        <div className='flex items-center gap-2'>
+          <IconBadge tone='info' size='sm'>
+            <ReceiptText aria-hidden />
+          </IconBadge>
+          <h3>{t('Model cost breakdown')}</h3>
+        </div>
         <span>
           {t('Models')}: {rows.length}
         </span>

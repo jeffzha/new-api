@@ -321,6 +321,7 @@ it('renders batch IDs compactly, copies the full list and preserves an empty res
 async function openDetails(log: AuditLog = entry) {
   render(<AuditLogDetailsDialog entry={log} />)
   const trigger = screen.getByRole('button', { name: 'Details' })
+  expect(trigger.querySelector('svg[aria-hidden="true"]')).toBeInTheDocument()
   trigger.focus()
   await userEvent.keyboard('{Enter}')
   return {

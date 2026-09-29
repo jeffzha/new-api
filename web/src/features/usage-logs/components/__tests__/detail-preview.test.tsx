@@ -34,8 +34,9 @@ import {
 } from '@/stores/system-config-store'
 
 import type { UsageLog } from '../../data/schema'
-import type { LogOtherData } from '../../types'
+import type { LogOtherData, TaskLog } from '../../types'
 import { useCommonLogsColumns } from '../columns/common-logs-columns'
+import { useTaskLogsColumns } from '../columns/task-logs-columns'
 
 vi.mock('@lobehub/icons', () => ({}))
 vi.hoisted(() => {
@@ -93,6 +94,51 @@ const plugin = {
   author: { name: 'Plugin maintainer' },
 }
 const previousConfig = useSystemConfigStore.getState().config
+
+function TaskDetailPreview() {
+  const table = useReactTable<TaskLog>({
+    data: [
+      {
+        id: 1,
+        user_id: 1,
+        platform: 'video',
+        task_id: 'task-preview',
+        action: 'GENERATE',
+        channel_id: 1,
+        group: 'default',
+        quota: 100,
+        submit_time: 1,
+        status: 'SUCCESS',
+      },
+    ],
+    columns: useTaskLogsColumns(false, false),
+    getCoreRowModel: getCoreRowModel(),
+  })
+  const cell = table
+    .getRowModel()
+    .rows[0].getAllCells()
+    .find((item) => item.column.id === 'fail_reason')
+  if (!cell) throw new Error('The task must have a details action')
+  return flexRender(cell.column.columnDef.cell, cell.getContext())
+}
+
+test('task details retains its accessible label and opens the task dialog with a decorative icon', async () => {
+  render(
+    <QueryClientProvider client={client}>
+      <TaskDetailPreview />
+    </QueryClientProvider>
+  )
+  const trigger = screen.getByRole('button', { name: 'View details' })
+  expect(trigger.querySelector('svg[aria-hidden="true"]')).toBeInTheDocument()
+  fireEvent.click(trigger)
+  expect(
+    await screen.findByRole('dialog', { name: /^Task Details/ })
+  ).toBeVisible()
+  expect(
+    within(screen.getByRole('dialog')).getByText('task-preview')
+  ).toBeVisible()
+})
+
 let client: QueryClient
 const i18n = createInstance()
 beforeEach(async () => {
@@ -200,6 +246,7 @@ test.each([true, false])(
       isAdmin
     )
     expect(preview.textContent).toBe('Per-call · $0.25')
+    expect(preview.querySelector('svg[aria-hidden="true"]')).toBeInTheDocument()
     fireEvent.click(preview)
     const dialog = within(await screen.findByRole('dialog'))
     if (isAdmin) {

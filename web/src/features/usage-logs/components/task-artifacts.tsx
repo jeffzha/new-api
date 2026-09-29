@@ -418,13 +418,21 @@ export function TaskArtifactsCell(props: { log: TaskLog }) {
   return (
     <>
       {previewMode === 'legacy-video' ? (
-        <button
+        <Button
           type='button'
-          className='text-foreground text-xs hover:underline'
+          variant='ghost'
+          size='sm'
+          className='h-8 gap-2 px-2 text-xs'
           onClick={() => setOpen(true)}
         >
+          <HugeiconsIcon
+            icon={Video01Icon}
+            className='size-4'
+            strokeWidth={2}
+            aria-hidden='true'
+          />
           {t('Click to preview video')}
-        </button>
+        </Button>
       ) : (
         <Button
           type='button'

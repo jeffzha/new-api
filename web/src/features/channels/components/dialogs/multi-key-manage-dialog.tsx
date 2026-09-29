@@ -372,7 +372,7 @@ export function MultiKeyManageDialog({
           )}
 
           {/* Table */}
-          <div className='min-h-0 flex-1 overflow-auto rounded-md border'>
+          <div className='console-table-frame min-h-0 flex-1 overflow-auto rounded-md border'>
             {isLoading && (
               <div className='flex items-center justify-center py-12'>
                 <Loader2 className='text-muted-foreground h-8 w-8 animate-spin' />

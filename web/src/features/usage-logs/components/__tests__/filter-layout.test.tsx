@@ -40,4 +40,11 @@ it('expanded log filters stay content-sized and return to the compact primary ro
   await userEvent.click(screen.getByRole('button', { name: 'Collapse' }))
   expect(screen.queryByLabelText('Request ID')).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Search' })).toBeEnabled()
+  for (const name of ['Search', 'Reset', 'View']) {
+    expect(
+      screen
+        .getByRole('button', { name })
+        .querySelector('svg[aria-hidden="true"]')
+    ).toBeInTheDocument()
+  }
 })

@@ -220,9 +220,8 @@ body:is(
     height: 180px;
   }
   .console-distribution-table {
+    --table-max-height: 260px;
     min-width: 0;
-    max-height: 260px;
-    overflow: auto;
     border: 0;
     border-radius: 0;
   }
@@ -502,16 +501,19 @@ body:is(
   }
   .signal-wallet-layout > .console-wallet-balance {
     display: grid;
-    grid-template-columns: 1.2fr 1fr 1fr;
+    grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(0, 1fr));
+    align-items: center;
     flex: 0 0 auto;
-    padding: 0 0 20px;
+    padding: 22px 0;
     border: 0;
+    border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
     border-radius: 0;
     background: transparent;
   }
   .console-wallet-balance > div {
-    padding: 12px 24px;
+    min-width: 0;
+    padding: 0 28px;
     border-right: 1px solid var(--border);
   }
   .console-wallet-balance > div:first-child {
@@ -520,22 +522,36 @@ body:is(
   .console-wallet-balance > div:last-child {
     border-right: 0;
   }
-  .console-wallet-balance > div > div:first-child {
-    align-items: flex-start;
-  }
-  .console-wallet-balance > div > div:first-child > div:last-child {
+  .console-wallet-stat-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted-foreground);
+    font-size: 13px;
     white-space: normal;
     overflow-wrap: anywhere;
     letter-spacing: 0;
   }
-  .console-wallet-balance > div:first-child > div:nth-child(2) {
-    font-size: 30px;
+  .console-wallet-stat:first-child .console-wallet-stat-value {
+    font-size: 36px;
     color: var(--primary);
   }
-  .console-wallet-balance > div > div:nth-child(2) {
-    font-size: 22px;
+  .console-wallet-stat-value {
+    margin-top: 10px;
+    font-size: 24px;
+    line-height: 1.2;
     font-family: inherit;
     font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+  .console-wallet-stat-note {
+    display: block;
+    margin-top: 8px;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.5;
+    color: var(--muted-foreground);
   }
   .console-wallet-operations {
     min-width: 0;
@@ -584,6 +600,7 @@ body:is(
   }
   .console-wallet-operations [data-slot='card-content'] {
     padding: 0;
+    max-width: none;
   }
   .console-wallet-operations [data-slot='card-title'] {
     font-size: 16px;
@@ -761,7 +778,7 @@ body:is(
   }
   .console-report-table {
     min-width: 0;
-    overflow: auto;
+    overflow: hidden;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--card);
@@ -850,22 +867,92 @@ body:is(
     padding-bottom: 18px;
     border-bottom: 1px solid var(--border);
   }
+  .console-recharge {
+    container: console-recharge / inline-size;
+  }
+  .console-recharge-body {
+    display: grid;
+    gap: 28px;
+  }
+  .console-recharge-online {
+    display: grid;
+    gap: 24px;
+    align-items: start;
+  }
+  .console-recharge-amounts,
+  .console-recharge-payment {
+    min-width: 0;
+  }
+  .console-recharge-label {
+    margin-bottom: 14px;
+    letter-spacing: 0;
+  }
+  .console-recharge-presets {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .console-payment-methods {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
   .console-recharge [aria-pressed] {
     position: relative;
-    min-height: 92px;
+    min-height: 104px;
     height: auto;
+    min-width: 0;
+    padding: 18px 14px;
     border-color: var(--border);
     background: var(--card);
     border-radius: 6px;
+    gap: 4px;
   }
   .console-recharge [aria-pressed='true'] {
     background: color-mix(in srgb, var(--primary) 7%, var(--card));
     box-shadow: inset 0 0 0 1px var(--primary);
   }
+  .console-recharge .console-preset-check {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 14px;
+    height: 14px;
+    color: var(--primary);
+  }
+  .console-recharge [aria-pressed] > div:first-of-type {
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    padding-right: 8px;
+    overflow-wrap: anywhere;
+  }
   .console-recharge [aria-pressed] > div:last-child {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
+    margin-top: 4px;
+    overflow-wrap: anywhere;
+  }
+  .console-recharge-redemption > div:nth-child(2) {
+    max-width: 560px;
+  }
+  @container console-recharge (min-width: 680px) {
+    .console-recharge-online {
+      grid-template-columns: minmax(0, 1fr) 240px;
+      gap: 28px;
+    }
+    .console-recharge-payment {
+      border-left: 1px solid var(--border);
+      padding-left: 28px;
+    }
+    .console-payment-methods {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  @container console-recharge (min-width: 880px) {
+    .console-recharge-presets {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
   }
 
   .public-layout:has(.console-catalog-frame) {
@@ -1051,25 +1138,6 @@ body:is(
     .console-catalog-search {
       grid-column: 1 / -1;
     }
-    .signal-wallet-layout:has(.console-wallet-operations) {
-      grid-template-columns: 1fr;
-      gap: 24px;
-    }
-    .signal-wallet-layout > .console-wallet-balance {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      border: 0;
-      border-bottom: 1px solid var(--border);
-      padding: 0;
-      gap: 16px;
-    }
-    .console-wallet-balance > div {
-      border: 0;
-      padding: 8px 0;
-    }
-    .console-wallet-balance > div:first-child > div:nth-child(2) {
-      font-size: 24px;
-    }
   }
   @media (max-width: 767px) {
     .signal-profile-content {
@@ -1081,6 +1149,7 @@ body:is(
       gap: 16px;
     }
     .console-settings > [role='tablist'] {
+      flex-shrink: 0;
       flex-direction: row;
       overflow-x: auto;
       overflow-y: hidden;
@@ -1095,6 +1164,7 @@ body:is(
       box-shadow: inset 0 -2px var(--primary);
     }
     .console-settings > [role='tabpanel'] {
+      flex: 1;
       padding: 0;
       border: 0;
       width: 100%;
@@ -1133,13 +1203,47 @@ body:is(
       max-height: none;
       overflow: visible;
     }
-    .console-wallet-balance > div > div:first-child {
-      min-height: 36px;
+    .signal-wallet-layout:has(.console-wallet-operations) {
+      gap: 16px;
     }
-    .console-wallet-balance > div > div:nth-child(2),
-    .console-wallet-balance > div:first-child > div:nth-child(2) {
+    .signal-wallet-layout > .console-wallet-balance {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px 20px;
+      padding: 16px 0;
+    }
+    .console-wallet-balance > div {
+      padding: 0;
+      border: 0;
+    }
+    .console-wallet-balance > div:first-child {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 8px 16px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .console-wallet-stat:first-child .console-wallet-stat-value {
+      margin-top: 0;
+      font-size: 28px;
+    }
+    .console-wallet-stat-note {
+      display: none;
+    }
+    .console-wallet-stat-value {
       font-size: 20px;
-      overflow-wrap: anywhere;
+    }
+    .console-wallet-stat-label {
+      font-size: 12px;
+    }
+    .console-recharge [data-slot='input'],
+    .console-recharge [data-slot='button'] {
+      min-height: 44px;
+    }
+    .console-recharge [aria-pressed] {
+      min-height: 92px;
     }
   }
 }

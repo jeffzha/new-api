@@ -29,6 +29,42 @@ import { UsageLogsProvider } from '../usage-logs-provider'
 
 let client: QueryClient
 
+it('fills the trend column and shows input, output and included cache totals without hover', () => {
+  render(
+    <UsageAnalyticsView
+      showModelTable
+      rows={[
+        usageLogSchema.parse({
+          id: 1,
+          user_id: 1,
+          created_at: 7200,
+          type: 2,
+          content: '',
+          model_name: 'model-a',
+          prompt_tokens: 800,
+          completion_tokens: 200,
+          other: JSON.stringify({ cache_tokens: 300 }),
+        }),
+      ]}
+    />
+  )
+  const trend = screen.getByRole('region', { name: 'Token usage trend' })
+  expect(trend).toHaveClass('flex', 'flex-col')
+  expect(trend.querySelector('[data-slot="chart"]')).toHaveClass(
+    'flex-1',
+    'min-h-64'
+  )
+  const totals = within(trend).getByLabelText('Tokens')
+  expect(
+    within(totals)
+      .getAllByRole('definition')
+      .map((node) => node.textContent)
+  ).toEqual(['800', '200', '300'])
+  expect(
+    within(trend).getByText('Cache reads are included in input tokens.')
+  ).toBeVisible()
+})
+
 it('keeps every model in the readable legend when the chart groups smaller shares', () => {
   render(
     <UsageAnalyticsView

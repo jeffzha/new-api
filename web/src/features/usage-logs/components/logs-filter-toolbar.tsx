@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { Table } from '@tanstack/react-table'
-import { ChevronDown, Loader2 } from 'lucide-react'
+import { ChevronDown, Columns3, Loader2, RotateCcw, Search } from 'lucide-react'
 import { useState, type ComponentProps, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -178,10 +178,17 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
                 disabled={props.searchLoading}
                 aria-busy={props.searchLoading}
               >
-                {props.searchLoading && <Loader2 className='animate-spin' />}
+                {props.searchLoading ? (
+                  <Loader2 aria-hidden className='animate-spin' />
+                ) : (
+                  <Search aria-hidden />
+                )}
                 {t('Search')}
               </Button>
-              <DataTableViewOptions table={props.table} />
+              <DataTableViewOptions
+                table={props.table}
+                icon={<Columns3 aria-hidden />}
+              />
             </>
           }
         >
@@ -223,6 +230,7 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
                 onClick={handleMobileReset}
                 disabled={!props.hasActiveFilters}
               >
+                <RotateCcw aria-hidden />
                 {t('Reset')}
               </Button>
               <Button
@@ -230,7 +238,11 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
                 onClick={handleMobileSearch}
                 disabled={props.searchLoading}
               >
-                {props.searchLoading && <Loader2 className='animate-spin' />}
+                {props.searchLoading ? (
+                  <Loader2 aria-hidden className='animate-spin' />
+                ) : (
+                  <Search aria-hidden />
+                )}
                 {t('Search')}
               </Button>
             </DrawerFooter>
@@ -276,6 +288,7 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
             onClick={props.onReset}
             disabled={!props.hasActiveFilters}
           >
+            <RotateCcw aria-hidden />
             {t('Reset')}
           </Button>
           <Button
@@ -283,10 +296,17 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
             onClick={props.onSearch}
             disabled={props.searchLoading}
           >
-            {props.searchLoading && <Loader2 className='animate-spin' />}
+            {props.searchLoading ? (
+              <Loader2 aria-hidden className='animate-spin' />
+            ) : (
+              <Search aria-hidden />
+            )}
             {t('Search')}
           </Button>
-          <DataTableViewOptions table={props.table} />
+          <DataTableViewOptions
+            table={props.table}
+            icon={<Columns3 aria-hidden />}
+          />
         </div>
       </div>
     </div>

@@ -43,7 +43,11 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
         }
       >
         {['balance', 'usage', 'requests'].map((key) => (
-          <div key={key} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
+          <div
+            key={key}
+            className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'
+            aria-label={t('Loading...')}
+          >
             <Skeleton className='h-3.5 w-full' />
             <Skeleton className='mt-2 h-6 w-full sm:h-7' />
             <Skeleton className='mt-1.5 hidden h-3.5 w-24 md:block' />
@@ -83,14 +87,31 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
     },
   ]
 
+  if (props.workspace) {
+    return (
+      <dl className='console-wallet-balance'>
+        {stats.map((item) => (
+          <div key={item.label} className='console-wallet-stat'>
+            <dt className='console-wallet-stat-label'>
+              <IconBadge tone={item.tone} size='sm'>
+                <item.icon aria-hidden />
+              </IconBadge>
+              {item.label}
+            </dt>
+            <dd className='console-wallet-stat-value'>
+              {props.user ? item.value : '-'}
+              <span className='console-wallet-stat-note'>
+                {item.description}
+              </span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    )
+  }
+
   return (
-    <div
-      className={
-        props.workspace
-          ? 'console-wallet-balance'
-          : 'grid grid-cols-3 divide-x rounded-lg border'
-      }
-    >
+    <div className='grid grid-cols-3 divide-x rounded-lg border'>
       {stats.map((item) => (
         <div key={item.label} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
           <div className='flex items-center gap-1.5 sm:gap-2.5'>

@@ -31,6 +31,7 @@ import {
   ChartTooltipContent,
 } from '@/components/ui/chart'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Table } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getUserQuotaDates } from '@/features/dashboard/api'
 import { buildSignalUsage } from '@/features/dashboard/lib/signal-usage'
@@ -66,7 +67,14 @@ export function SignalUsagePanel() {
     [query.data]
   )
   const metrics = [
-    { label: t('Models'), value: String(new Set((query.data?.data ?? []).map((row) => row.model_name).filter(Boolean)).size) },
+    {
+      label: t('Models'),
+      value: String(
+        new Set(
+          (query.data?.data ?? []).map((row) => row.model_name).filter(Boolean)
+        ).size
+      ),
+    },
     { label: t('Requests'), value: formatNumber(usage.requests) },
     { label: t('Usage'), value: formatQuota(usage.quota) },
     { label: t('Tokens'), value: formatNumber(usage.tokens) },
@@ -207,19 +215,41 @@ export function SignalUsagePanel() {
       </dl>
       <div className='min-w-0 px-3 pb-3'>{content}</div>
       {!query.isPending && !query.isError && (
-        <section aria-label={t('Model distribution')} className='border-t px-5 py-4'>
-          <h3 className='mb-3 text-sm font-semibold'>{t('Model distribution')}</h3>
+        <section
+          aria-label={t('Model distribution')}
+          className='border-t px-5 py-4'
+        >
+          <h3 className='mb-3 text-sm font-semibold'>
+            {t('Model distribution')}
+          </h3>
           <div className='grid gap-3 sm:grid-cols-2'>
-            {[...new Set((query.data?.data ?? []).map((row) => row.model_name))].map((model) => {
-              const rows = (query.data?.data ?? []).filter((row) => row.model_name === model)
+            {[
+              ...new Set((query.data?.data ?? []).map((row) => row.model_name)),
+            ].map((model) => {
+              const rows = (query.data?.data ?? []).filter(
+                (row) => row.model_name === model
+              )
               const total = buildSignalUsage(rows)
               return (
                 <div key={model ?? 'unknown'} className='min-w-0 border-b py-3'>
-                  <p className='truncate text-sm font-medium'>{model || t('Unknown')}</p>
+                  <p className='truncate text-sm font-medium'>
+                    {model || t('Unknown')}
+                  </p>
                   <dl className='mt-2 flex flex-wrap gap-x-5 gap-y-2 text-xs'>
-                    <div><dt className='text-muted-foreground'>{t('Requests')}</dt><dd>{total.requests.toLocaleString(locale)} {t('Requests')}</dd></div>
-                    <div><dt className='text-muted-foreground'>{t('Tokens')}</dt><dd>{formatNumber(total.tokens)}</dd></div>
-                    <div><dt className='text-muted-foreground'>{t('Usage')}</dt><dd>{formatQuota(total.quota)}</dd></div>
+                    <div>
+                      <dt className='text-muted-foreground'>{t('Requests')}</dt>
+                      <dd>
+                        {total.requests.toLocaleString(locale)} {t('Requests')}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className='text-muted-foreground'>{t('Tokens')}</dt>
+                      <dd>{formatNumber(total.tokens)}</dd>
+                    </div>
+                    <div>
+                      <dt className='text-muted-foreground'>{t('Usage')}</dt>
+                      <dd>{formatQuota(total.quota)}</dd>
+                    </div>
                   </dl>
                 </div>
               )
@@ -238,8 +268,8 @@ export function SignalUsagePanel() {
           <summary className='text-muted-foreground focus-visible:outline-ring cursor-pointer rounded-sm py-1 focus-visible:outline-2 focus-visible:outline-offset-4'>
             {t('signal.viewData')}
           </summary>
-          <div className='mt-3 max-h-48 overflow-auto'>
-            <table className='w-full text-left tabular-nums'>
+          <div className='console-table-frame mt-3 max-h-48 overflow-auto'>
+            <Table className='w-full text-left tabular-nums'>
               <caption className='sr-only'>{t('signal.traffic')}</caption>
               <thead>
                 <tr>
@@ -261,7 +291,7 @@ export function SignalUsagePanel() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         </details>
       )}

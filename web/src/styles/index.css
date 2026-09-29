@@ -34,6 +34,7 @@ For commercial licensing, please contact support@quantumnous.com
 @import './prism-console.css';
 @import './console-shell.css';
 @import './console-surfaces.css';
+@import './table-scroll-area.css';
 
 /* Shiki dual themes: token colors follow dark theme (pre background stays `bg-background` on the block) */
 @layer components {

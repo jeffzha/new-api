@@ -17,13 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
-import { GitBranch, Sparkles, KeyRound } from 'lucide-react'
+import { Eye, GitBranch, Sparkles, KeyRound } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
 import {
   Popover,
   PopoverContent,
@@ -844,14 +845,23 @@ export function useCommonLogsColumns(
 
         return (
           <>
-            <button
+            <Button
               type='button'
-              className='group flex max-w-[200px] items-center gap-1 text-left text-xs'
+              variant='ghost'
+              size='sm'
+              className='group h-8 max-w-[200px] justify-start gap-2 px-2 text-left text-xs'
               onClick={() => setDialogOpen(true)}
               title={t('Click to view full details')}
+              aria-label={
+                !primary && !log.content ? t('View details') : undefined
+              }
             >
+              <Eye
+                aria-hidden
+                className='text-muted-foreground size-4 shrink-0'
+              />
               {detailPreview}
-            </button>
+            </Button>
             <DetailsDialog
               log={log}
               isAdmin={isAdmin}

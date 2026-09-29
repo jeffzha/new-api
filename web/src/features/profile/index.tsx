@@ -24,6 +24,7 @@ import {
   CardStaggerContainer,
   CardStaggerItem,
 } from '@/components/page-transition'
+import { IconBadge } from '@/components/ui/icon-badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { useMediaQuery } from '@/hooks'
@@ -105,7 +106,10 @@ export function Profile() {
                         aria-label={t('Account Information')}
                         className='console-account-details border-b pb-6'
                       >
-                        <h3 className='mb-4 text-base font-semibold'>
+                        <h3 className='mb-4 flex items-center gap-3 text-base font-semibold'>
+                          <IconBadge tone='info' size='title'>
+                            <UserRound aria-hidden />
+                          </IconBadge>
                           {t('Account Information')}
                         </h3>
                         <dl className='grid min-w-0 gap-x-8 gap-y-5 sm:grid-cols-2'>

@@ -16,15 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { ViewIcon } from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
 import type { ColumnDef } from '@tanstack/react-table'
+import { Eye } from 'lucide-react'
 /* eslint-disable react-refresh/only-export-components */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -52,19 +52,16 @@ function TaskDetailsCell(props: {
   return (
     <>
       <div className='flex max-w-[220px] flex-col items-start gap-1'>
-        <button
+        <Button
           type='button'
-          className='text-foreground inline-flex items-center gap-1 text-xs font-medium hover:underline'
+          variant='ghost'
+          size='sm'
+          className='h-8 gap-2 px-2 text-xs'
           onClick={() => setDialogOpen(true)}
         >
-          <HugeiconsIcon
-            icon={ViewIcon}
-            className='size-3'
-            strokeWidth={2}
-            aria-hidden='true'
-          />
+          <Eye aria-hidden className='text-muted-foreground size-4 shrink-0' />
           {t('View details')}
-        </button>
+        </Button>
         {props.log.fail_reason ? (
           <span className='max-w-full truncate text-xs text-red-600 dark:text-red-400'>
             {props.log.fail_reason}

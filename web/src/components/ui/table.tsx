@@ -20,13 +20,18 @@ For commercial licensing, please contact support@quantumnous.com
 
 import * as React from 'react'
 
+import { useThemeCustomization } from '@/context/theme-customization-provider'
+import { usesConsoleWorkspace } from '@/lib/theme-customization'
 import { cn } from '@/lib/utils'
+
+import { TableScrollArea } from './table-scroll-area'
 
 function Table({
   className,
   withContainer = true,
   ...props
 }: React.ComponentProps<'table'> & { withContainer?: boolean }) {
+  const { customization } = useThemeCustomization()
   const table = (
     <table
       data-slot='table'
@@ -40,6 +45,10 @@ function Table({
   )
 
   if (!withContainer) return table
+
+  if (usesConsoleWorkspace(customization.preset)) {
+    return <TableScrollArea>{table}</TableScrollArea>
+  }
 
   return (
     <div

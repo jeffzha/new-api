@@ -518,7 +518,7 @@ export function OverviewPanel({
               {t('Models whose names start with gpt, over the last 30 days')}
             </CardDescription>
           </CardHeader>
-          <CardContent className='max-h-72 overflow-auto'>
+          <CardContent className='console-table-frame max-h-72 overflow-auto'>
             <Table>
               <TableHeader>
                 <TableRow>

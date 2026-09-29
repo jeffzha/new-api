@@ -1,0 +1,86 @@
+/* Copyright (C) 2023-2026 QuantumNous
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+body:is(
+  [data-theme-preset='signal-console'],
+  [data-theme-preset='prism-console']
+) {
+  .console-table-frame {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  [data-slot='table-container'].table-scroll-area {
+    --table-header-height: 0px;
+    --table-empty-height: auto;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    max-height: min(65dvh, var(--table-max-height, 480px));
+    overflow: hidden;
+  }
+
+  [data-slot='table-container'].table-scroll-area-fill {
+    --table-empty-height: max(0px, calc(100cqh - var(--table-header-height)));
+    container-type: size;
+    height: 100%;
+    max-height: none;
+  }
+
+  .table-scroll-area > .table-scroll-viewport {
+    min-height: 0;
+    max-height: inherit;
+    overscroll-behavior: contain;
+    scroll-padding-block-start: var(--table-header-height);
+    scrollbar-gutter: auto;
+  }
+
+  .table-scroll-area table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .table-scroll-area thead {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--table-header, var(--secondary));
+  }
+
+  .table-scroll-area thead th {
+    background: var(--table-header, var(--secondary));
+    border-bottom: 1px solid var(--border);
+  }
+
+  .table-scroll-area tbody td {
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Row transforms retain overflow beyond the final row after the entrance animation. */
+  .table-scroll-area tbody tr {
+    animation: none;
+  }
+
+  .table-scroll-area tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .table-scroll-area tfoot td {
+    border-top: 1px solid var(--border);
+  }
+
+  .table-scroll-area > [data-slot='scroll-area-scrollbar'] {
+    z-index: 30;
+    border: 0;
+  }
+
+  .table-scroll-area > [data-orientation='vertical']:not([data-has-overflow-y]),
+  .table-scroll-area
+    > [data-orientation='horizontal']:not([data-has-overflow-x]) {
+    display: none;
+  }
+}

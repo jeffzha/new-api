@@ -63,7 +63,8 @@ var MaxRecentItems = 1000
 var PasswordLoginEnabled = true
 var PasswordLoginEncryptionEnabled = false
 var PasswordRegisterEnabled = true
-var EmailVerificationEnabled = false
+// New password registrations require a verified mailbox.
+var EmailVerificationEnabled = true
 var GitHubOAuthEnabled = false
 var LinuxDOOAuthEnabled = false
 var WeChatAuthEnabled = false

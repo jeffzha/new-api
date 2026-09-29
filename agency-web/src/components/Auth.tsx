@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, hubConfig } from "../lib/api";
 import { startPlatformSSO } from "../lib/platform";
+import { ActionIcon } from "./Heading";
 import { ErrorNotice, Field } from "./ui";
 
 export function Login({ done }: { done: () => Promise<void> }) {
@@ -88,9 +89,11 @@ export function Login({ done }: { done: () => Promise<void> }) {
 export function PasswordChange({
   done,
   required = false,
+  onSignOut,
 }: {
   done: () => Promise<void>;
   required?: boolean;
+  onSignOut?: () => Promise<void>;
 }) {
   const { t } = useTranslation();
   const [current, setCurrent] = useState("");
@@ -98,6 +101,7 @@ export function PasswordChange({
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [saved, setSaved] = useState(false);
   async function submit() {
     if (busy) return;
@@ -129,11 +133,30 @@ export function PasswordChange({
       setBusy(false);
     }
   }
+  async function signOut() {
+    if (!onSignOut || busy || signingOut) return;
+    setError(null);
+    setSigningOut(true);
+    try {
+      await onSignOut();
+    } catch (cause) {
+      setError(cause);
+      setSigningOut(false);
+    }
+  }
   return (
-    <section className="password-change">
-      <h2>{t("Account security")}</h2>
+    <section className={`password-change${required ? " password-change-required" : ""}`}>
+      <div className="password-change-heading">
+        {required && <p className="eyebrow">NEXIGHT · AGENCY HUB</p>}
+        <h2>{t("Account security")}</h2>
+      </div>
       {required && (
-        <p className="notice">{t("Change your temporary password before continuing.")}</p>
+        <div className="notice password-change-notice">
+          <span className="password-change-notice-icon" aria-hidden="true">
+            <ActionIcon name="check" />
+          </span>
+          <p>{t("Change your temporary password before continuing.")}</p>
+        </div>
       )}
       <form
         onSubmit={(event) => {
@@ -147,7 +170,7 @@ export function PasswordChange({
             autoComplete="current-password"
             value={current}
             onChange={(event) => setCurrent(event.target.value)}
-            disabled={busy}
+            disabled={busy || signingOut}
             required
           />
         </Field>
@@ -157,7 +180,7 @@ export function PasswordChange({
             autoComplete="new-password"
             value={next}
             onChange={(event) => setNext(event.target.value)}
-            disabled={busy}
+            disabled={busy || signingOut}
             required
           />
         </Field>
@@ -167,13 +190,29 @@ export function PasswordChange({
             autoComplete="new-password"
             value={confirm}
             onChange={(event) => setConfirm(event.target.value)}
-            disabled={busy}
+            disabled={busy || signingOut}
             required
           />
         </Field>
         <ErrorNotice error={error} />
         {saved && <p role="status">{t("Password updated.")}</p>}
-        <button disabled={busy}>{t("Save password")}</button>
+        <div className={`password-actions${onSignOut ? "" : " password-actions-single"}`}>
+          {onSignOut && (
+            <button
+              className="secondary button-icon"
+              type="button"
+              disabled={busy || signingOut}
+              onClick={() => void signOut()}
+            >
+              <ActionIcon name="close" />
+              {t("Sign out")}
+            </button>
+          )}
+          <button className="button-icon" disabled={busy || signingOut}>
+            <ActionIcon name="save" />
+            {t("Save password")}
+          </button>
+        </div>
       </form>
     </section>
   );

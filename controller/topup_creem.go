@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"io"
 	"net/http"
@@ -366,6 +367,7 @@ func handleCheckoutCompleted(c *gin.Context, event *CreemWebhookEvent) {
 		providerReference = event.Object.Order.Id
 	}
 	payment := paymentSnapshotFromMinorUnits(paidAmount, event.Object.Order.Currency, providerReference, model.PaymentProviderCreem)
+	wasPending := topUp.Status == common.TopUpStatusPending
 	err := model.RechargeCreem(referenceId, customerEmail, customerName, c.ClientIP(), payment)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Creem 充值处理失败 trade_no=%s creem_order_id=%s client_ip=%s error=%q", referenceId, event.Object.Order.Id, c.ClientIP(), err.Error()))
@@ -374,6 +376,9 @@ func handleCheckoutCompleted(c *gin.Context, event *CreemWebhookEvent) {
 	}
 
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Creem 充值成功 trade_no=%s creem_order_id=%s quota=%d money=%.2f client_ip=%s", referenceId, event.Object.Order.Id, topUp.Amount, topUp.Money, c.ClientIP()))
+	if wasPending {
+		service.NotifyTopUpSuccess(referenceId)
+	}
 	c.Status(http.StatusOK)
 }
 

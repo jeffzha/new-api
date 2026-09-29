@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -252,6 +253,7 @@ func withSMTPSettings(t *testing.T) {
 	originalSMTPFrom := SMTPFrom
 	originalSMTPToken := SMTPToken
 	originalSystemName := SystemName
+	originalEmailVerificationEnabled := EmailVerificationEnabled
 
 	t.Cleanup(func() {
 		SMTPServer = originalSMTPServer
@@ -264,7 +266,31 @@ func withSMTPSettings(t *testing.T) {
 		SMTPFrom = originalSMTPFrom
 		SMTPToken = originalSMTPToken
 		SystemName = originalSystemName
+		EmailVerificationEnabled = originalEmailVerificationEnabled
 	})
+}
+
+func TestSMTPConfiguredRequiresCompleteDeliverySettings(t *testing.T) {
+	withSMTPSettings(t)
+	SMTPServer, SMTPPort = "", 465
+	SMTPAccount, SMTPFrom, SMTPToken = "", "", ""
+	assert.False(t, SMTPConfigured())
+
+	SMTPServer = "smtp.example.com"
+	SMTPFrom = "sender@example.com"
+	assert.True(t, SMTPConfigured(), "trusted relay configurations do not require credentials")
+
+	SMTPAccount = "sender@example.com"
+	assert.False(t, SMTPConfigured(), "partial credentials must not enable email")
+
+	SMTPToken = "secret"
+	assert.True(t, SMTPConfigured())
+	EmailVerificationEnabled = true
+	assert.True(t, EmailVerificationRequired())
+
+	SMTPFrom = "not-an-email"
+	assert.False(t, SMTPConfigured())
+	assert.False(t, EmailVerificationRequired())
 }
 
 func TestSendEmailUsesExplicitStartTLSWithInsecureCertificate(t *testing.T) {
@@ -452,7 +478,7 @@ func TestSendEmailSkipsAuthWhenCredentialsAreEmpty(t *testing.T) {
 	}
 }
 
-func TestSendEmailSkipsAuthWhenCredentialsAreIncomplete(t *testing.T) {
+func TestSendEmailRejectsIncompleteCredentials(t *testing.T) {
 	server := newFakeSMTPServerWithSTARTTLSAdvertisement(t, false)
 	defer server.close()
 	withSMTPSettings(t)
@@ -469,7 +495,8 @@ func TestSendEmailSkipsAuthWhenCredentialsAreIncomplete(t *testing.T) {
 	SystemName = "New API"
 
 	err := SendEmail("Verification", "receiver@example.com", "<p>123456</p>")
-	require.NoError(t, err)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "SMTP")
 
 	select {
 	case command := <-server.authCommands:
@@ -479,9 +506,8 @@ func TestSendEmailSkipsAuthWhenCredentialsAreIncomplete(t *testing.T) {
 
 	select {
 	case message := <-server.messages:
-		require.Contains(t, message, "<p>123456</p>")
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for SMTP DATA")
+		t.Fatalf("unexpected SMTP message: %s", message)
+	default:
 	}
 }
 

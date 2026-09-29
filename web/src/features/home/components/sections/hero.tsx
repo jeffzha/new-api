@@ -20,6 +20,7 @@ import { Link } from '@tanstack/react-router'
 import {
   ArrowRight,
   BookOpen,
+  Building2,
   CheckCircle2,
   ShieldCheck,
   WalletCards,
@@ -28,6 +29,9 @@ import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { useStatus } from '@/hooks/use-status'
+import { getAgencyCenterUrl } from '@/lib/agency-center'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { HeroTerminalDemo } from '../hero-terminal-demo'
 import { Stats } from './stats'
@@ -40,7 +44,12 @@ interface HeroProps {
 export function Hero({ isAuthenticated }: HeroProps) {
   const { t } = useTranslation()
   const { status } = useStatus()
+  const { auth } = useAuthStore()
   const docsUrl = (status?.docs_link as string | undefined) || '/docs'
+  const agencyUrl =
+    auth?.user?.role === ROLE.SUPER_ADMIN
+      ? getAgencyCenterUrl(true)
+      : '/sign-in?mode=agency'
   const capabilities = [
     {
       icon: ShieldCheck,
@@ -110,6 +119,14 @@ export function Hero({ isAuthenticated }: HeroProps) {
             >
               <BookOpen className='mr-2 size-4' />
               {t('Docs')}
+            </Button>
+            <Button
+              variant='ghost'
+              className='h-11 rounded-md px-5'
+              render={<a href={agencyUrl} />}
+            >
+              <Building2 className='mr-2 size-4' />
+              {t('Agency Center')}
             </Button>
           </div>
         </div>

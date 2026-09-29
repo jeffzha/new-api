@@ -38,11 +38,12 @@ func TestAgencyTaskControllerAcceptanceRetainsReservationUntilTerminal(t *testin
 	})
 	agency, _, err := app.CreateAgency(1, "Task Acceptance Agency", "task_acceptance_operator", agencyInviteTestPolicy())
 	require.NoError(t, err)
-	registered := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":"task_customer","password":"password123","invite":%q}`, agency.InviteCode))
+	customerEmail := "task.customer@example.com"
+	registered := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":%q,"password":"password123","invite":%q}`, customerEmail, agency.InviteCode))
 	require.Contains(t, registered.Body.String(), `"success":true`)
 	var customer model.User
 	var token model.Token
-	require.NoError(t, db.Where("username = ?", "task_customer").First(&customer).Error)
+	require.NoError(t, db.Where("username = ?", customerEmail).First(&customer).Error)
 	require.NoError(t, db.Where("user_id = ?", customer.Id).First(&token).Error)
 	require.NoError(t, model.ApplyAgencyQuotaDelta(int64(customer.Id), 200, "admin_grant"))
 	require.NoError(t, db.First(&customer, customer.Id).Error)

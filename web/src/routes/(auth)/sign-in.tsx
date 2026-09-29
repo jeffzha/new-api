@@ -21,11 +21,18 @@ import { z } from 'zod'
 
 import { sanitizeAuthRedirect } from '@/features/auth/lib/auth-redirect'
 import { SignIn } from '@/features/auth/sign-in'
+import {
+  getAgencyCenterUrl,
+  shouldAutoEnterAgencyCenter,
+} from '@/lib/agency-center'
 import { resolveAuthentication } from '@/lib/auth-session'
+import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 const searchSchema = z.object({
   redirect: z.string().optional(),
+  mode: z.enum(['agency']).optional(),
+  agency_signed_out: z.boolean().optional(),
 })
 
 export const Route = createFileRoute('/(auth)/sign-in')({
@@ -38,7 +45,22 @@ export const Route = createFileRoute('/(auth)/sign-in')({
 
     const { auth } = useAuthStore.getState()
 
-    // 如果已经有用户信息，说明已登录
+    // 代理商运营账号使用独立会话。只有主站超级管理员可以直接 SSO，
+    // 其他已登录主站用户以及刚主动退出代理商中心的管理员，仍停留在
+    // 统一页面输入代理商账号，避免退出后被主站会话立即自动登录回来。
+    if (auth.user && search?.mode === 'agency') {
+      if (
+        shouldAutoEnterAgencyCenter(
+          auth.user.role === ROLE.SUPER_ADMIN,
+          search.mode,
+          search.agency_signed_out
+        )
+      ) {
+        throw redirect({ href: getAgencyCenterUrl(true), replace: true })
+      }
+      return
+    }
+
     if (auth.user) {
       const target =
         sanitizeAuthRedirect(search?.redirect, window.location.origin) ??

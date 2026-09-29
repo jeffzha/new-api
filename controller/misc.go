@@ -54,7 +54,8 @@ func GetStatus(c *gin.Context) {
 	data := gin.H{
 		"version":                     common.Version,
 		"start_time":                  common.StartTime,
-		"email_verification":          common.EmailVerificationEnabled,
+		"email_verification":          common.EmailVerificationRequired(),
+		"smtp_configured":             common.SMTPConfigured(),
 		"github_oauth":                common.GitHubOAuthEnabled,
 		"github_client_id":            common.GitHubClientId,
 		"discord_oauth":               system_setting.GetDiscordSettings().Enabled,
@@ -230,6 +231,10 @@ func GetHomePageStats(c *gin.Context) {
 }
 
 func SendEmailVerification(c *gin.Context) {
+	if !common.EmailVerificationRequired() {
+		common.ApiErrorMsg(c, "SMTP email is not configured")
+		return
+	}
 	email, err := service.ValidateAccountEmail(c.Query("email"))
 	if err != nil {
 		writeSecurityOperationError(c, err)

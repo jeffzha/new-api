@@ -1,20 +1,20 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-function agencyBaseRedirect() {
+function agencyDevEntry() {
   return {
-    name: 'agency-base-redirect',
+    name: 'agency-dev-entry',
     configureServer(server: {
       middlewares: {
-        use: (handler: (req: { url?: string }, res: { statusCode: number; setHeader: (name: string, value: string) => void; end: () => void }, next: () => void) => void) => void
+        use: (handler: (req: { url?: string }, _res: unknown, next: () => void) => void) => void
       }
     }) {
-      server.middlewares.use((req, res, next) => {
-        if (req.url === '/agency' || req.url === '/agency/') {
-          res.statusCode = 302
-          res.setHeader('Location', '/agency/index.html')
-          res.end()
-          return
+      server.middlewares.use((req, _res, next) => {
+        if (req.url) {
+          const url = new URL(req.url, 'http://localhost')
+          if (url.pathname === '/agency' || url.pathname === '/agency/') {
+            req.url = `/agency/index.html${url.search}`
+          }
         }
         next()
       })
@@ -23,9 +23,10 @@ function agencyBaseRedirect() {
 }
 
 export default defineConfig({
-  plugins: [agencyBaseRedirect(), react()],
+  plugins: [agencyDevEntry(), react()],
   base: '/agency/',
   server: {
+    strictPort: true,
     proxy: {
       '/agency/api': 'http://127.0.0.1:3201',
       '/agency/sso': 'http://127.0.0.1:3201',

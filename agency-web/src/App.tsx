@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ActionIcon } from "./components/Heading";
-import { api, ApiError } from "./lib/api";
+import { api, ApiError, hubConfig } from "./lib/api";
+import { startPlatformSSO } from "./lib/platform";
 import type { Identity } from "./lib/types";
 import { useMutation } from "./lib/mutation-context";
 import { MutationProvider } from "./components/MutationProvider";
-import { Login, PasswordChange } from "./components/Auth";
+import { PasswordChange } from "./components/Auth";
 import { ErrorNotice, Loading } from "./components/ui";
 import { AgenciesPage } from "./features/agencies/AgenciesPage";
 import { ChildrenPage } from "./features/agencies/ChildrenPage";
@@ -27,7 +28,9 @@ export function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
-  const { t } = useTranslation();
+  const platformSSOAttempted = useRef(false);
+  const platformLoginRequested =
+    new URLSearchParams(window.location.search).get("platform_login") === "1";
   const refresh = useCallback(async () => {
     const current = await api<Identity>("/auth/me");
     setIdentity(current);
@@ -46,37 +49,46 @@ export function App() {
       });
     return () => controller.abort();
   }, []);
+  useEffect(() => {
+    if (loading || identity || platformSSOAttempted.current) return;
+    if (!platformLoginRequested) return;
+    platformSSOAttempted.current = true;
+    const controller = new AbortController();
+    void startPlatformSSO(controller.signal).then(() => {
+      if (!controller.signal.aborted) void refresh();
+    }).catch((cause) => {
+      if (!controller.signal.aborted) setError(cause);
+    });
+    return () => controller.abort();
+  }, [identity, loading, platformLoginRequested, refresh]);
   if (loading)
     return (
       <main className="shell">
         <Loading />
       </main>
     );
-  if (!identity)
+  if (!identity && platformLoginRequested && !error)
     return (
-      <>
-        {error && (
-          <div className="shell">
-            <ErrorNotice error={error} />
-          </div>
-        )}
-        <Login done={refresh} />
-      </>
+      <main className="shell">
+        <Loading />
+      </main>
     );
+  if (!identity)
+    return <PlatformLoginRedirect error={error} />;
   async function logout() {
-    await api("/auth/logout", { method: "POST", body: "{}" });
-    setIdentity(null);
+    try {
+      await api("/auth/logout", { method: "POST", body: "{}" });
+    } catch (cause) {
+      // An expired session is already signed out and should not strand the user.
+      if (!(cause instanceof ApiError && cause.status === 401)) throw cause;
+    }
+    window.location.replace(agencySignInURL(true));
   }
   if (identity.must_change_password)
     return (
-      <main className="shell">
-        <section className="auth">
-          <PasswordChange required done={refresh} />
-          <button className="secondary button-icon" type="button" onClick={() => void logout().catch(setError)}>
-            <ActionIcon name="close" />
-            {t("Sign out")}
-          </button>
-          <ErrorNotice error={error} />
+      <main className="shell required-password-shell">
+        <section className="auth required-password-card">
+          <PasswordChange required done={refresh} onSignOut={logout} />
         </section>
       </main>
     );
@@ -87,6 +99,33 @@ export function App() {
     >
       <Dashboard identity={identity} refresh={refresh} logout={logout} />
     </MutationProvider>
+  );
+}
+
+function agencySignInURL(signedOut = false) {
+  const target = new URL(
+    "/sign-in?mode=agency",
+    hubConfig().platform_base_url || location.origin,
+  );
+  if (signedOut) target.searchParams.set("agency_signed_out", "true");
+  return target.href;
+}
+
+function PlatformLoginRedirect(props: { error: unknown }) {
+  const { t } = useTranslation();
+  useEffect(() => {
+    if (props.error) return;
+    window.location.replace(agencySignInURL());
+  }, [props.error]);
+  return (
+    <main className="shell">
+      {props.error ? <ErrorNotice error={props.error} /> : <Loading />}
+      {Boolean(props.error) && (
+        <button type="button" onClick={() => window.location.replace(agencySignInURL())}>
+          {t("Sign in")}
+        </button>
+      )}
+    </main>
   );
 }
 

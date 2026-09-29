@@ -126,10 +126,7 @@ export function BasicAuthSection({ defaultValues }: BasicAuthSectionProps) {
                   </FormDescription>
                 </SettingsSwitchContent>
                 <FormControl>
-                  <Switch
-                    checked={field.value}
-                    onCheckedChange={field.onChange}
-                  />
+                  <Switch checked disabled onCheckedChange={field.onChange} />
                 </FormControl>
               </SettingsSwitchItem>
             )}

@@ -39,7 +39,7 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { login, wechatLoginByCode } from '@/features/auth/api'
+import { agencyLogin, login, wechatLoginByCode } from '@/features/auth/api'
 import { LegalConsent } from '@/features/auth/components/legal-consent'
 import { OAuthProviders } from '@/features/auth/components/oauth-providers'
 import { loginFormSchema } from '@/features/auth/constants'
@@ -54,6 +54,7 @@ import {
 import { PasskeyDomainSelector } from '@/features/auth/passkey/components/passkey-domain-selector'
 import type { AuthFormProps } from '@/features/auth/types'
 import { useStatus } from '@/hooks/use-status'
+import { getAgencyCenterUrl } from '@/lib/agency-center'
 import { handleServerError } from '@/lib/handle-server-error'
 import { isPasskeySupported as detectPasskeySupport } from '@/lib/passkey'
 import { AuthOperationError } from '@/lib/secure-verification'
@@ -63,6 +64,7 @@ import { cn } from '@/lib/utils'
 export function UserAuthForm({
   className,
   redirectTo,
+  loginMode = 'platform',
   ...props
 }: AuthFormProps) {
   const { t } = useTranslation()
@@ -88,6 +90,7 @@ export function UserAuthForm({
     status?.passkey_login ?? status?.data?.passkey_login
   )
   const passwordLoginEnabled =
+    loginMode === 'agency' ||
     (status?.password_login_enabled ??
       status?.data?.password_login_enabled ??
       true) !== false
@@ -106,7 +109,8 @@ export function UserAuthForm({
 
   const hasUserAgreement = Boolean(status?.user_agreement_enabled)
   const hasPrivacyPolicy = Boolean(status?.privacy_policy_enabled)
-  const requiresLegalConsent = hasUserAgreement || hasPrivacyPolicy
+  const requiresLegalConsent =
+    loginMode === 'platform' && (hasUserAgreement || hasPrivacyPolicy)
   const passkeyButtonDisabled =
     isPasskeyLoading ||
     !passkeySupported ||
@@ -121,7 +125,8 @@ export function UserAuthForm({
     (status?.custom_oauth_providers?.length ?? 0) > 0
   )
   const hasAlternativeLogin =
-    passkeyLoginEnabled || hasWeChatLogin || hasOAuthLogin
+    loginMode === 'platform' &&
+    (passkeyLoginEnabled || hasWeChatLogin || hasOAuthLogin)
 
   useEffect(() => {
     if (requiresLegalConsent) {
@@ -165,16 +170,26 @@ export function UserAuthForm({
       return
     }
 
-    if (!validateTurnstile()) return
+    if (loginMode === 'platform' && !validateTurnstile()) return
 
     const submittedTurnstileToken = turnstileToken
-    if (isTurnstileEnabled) {
+    if (loginMode === 'platform' && isTurnstileEnabled) {
       setTurnstileToken('')
       setTurnstileWidgetKey((current) => current + 1)
     }
 
     setIsLoading(true)
     try {
+      if (loginMode === 'agency') {
+        const response = await agencyLogin(data.username, data.password)
+        if (!response.success) {
+          handleServerError(createServerError(response, loginFailedMessage))
+          return
+        }
+        form.setValue('password', '')
+        window.location.assign(redirectTo || getAgencyCenterUrl())
+        return
+      }
       const res = await login({
         username: data.username,
         password: data.password,
@@ -299,7 +314,7 @@ export function UserAuthForm({
     }
   }
 
-  const alternativeLoginMethods = (
+  const alternativeLoginMethods = loginMode === 'platform' && (
     <>
       {passkeyLoginEnabled && (
         <div className='mt-2 space-y-1'>
@@ -359,10 +374,17 @@ export function UserAuthForm({
               name='username'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Username or Email')}</FormLabel>
+                  <FormLabel>{t('Account')}</FormLabel>
                   <FormControl>
                     <Input
-                      placeholder={t('Enter your username or email')}
+                      type='text'
+                      inputMode={loginMode === 'agency' ? 'text' : 'email'}
+                      autoComplete='username'
+                      placeholder={
+                        loginMode === 'agency'
+                          ? t('Enter agency account')
+                          : t('Enter your email')
+                      }
                       {...field}
                     />
                   </FormControl>
@@ -385,12 +407,14 @@ export function UserAuthForm({
                     />
                   </FormControl>
                   <FormMessage />
-                  <Link
-                    to='/forgot-password'
-                    className='text-muted-foreground absolute end-0 -top-0.5 z-10 text-sm font-medium hover:opacity-75'
-                  >
-                    {t('Forgot password?')}
-                  </Link>
+                  {loginMode === 'platform' && (
+                    <Link
+                      to='/forgot-password'
+                      className='text-muted-foreground absolute end-0 -top-0.5 z-10 text-sm font-medium hover:opacity-75'
+                    >
+                      {t('Forgot password?')}
+                    </Link>
+                  )}
                 </FormItem>
               )}
             />
@@ -406,7 +430,7 @@ export function UserAuthForm({
             </Button>
 
             {/* Turnstile */}
-            {isTurnstileEnabled && (
+            {loginMode === 'platform' && isTurnstileEnabled && (
               <div className='mt-2'>
                 <Turnstile
                   key={turnstileWidgetKey}
@@ -419,17 +443,19 @@ export function UserAuthForm({
           </>
         )}
 
-        <LegalConsent
-          status={status}
-          checked={agreedToLegal}
-          onCheckedChange={setAgreedToLegal}
-          className='mt-1'
-        />
+        {loginMode === 'platform' && (
+          <LegalConsent
+            status={status}
+            checked={agreedToLegal}
+            onCheckedChange={setAgreedToLegal}
+            className='mt-1'
+          />
+        )}
 
         {!hasAlternativeLogin && alternativeLoginMethods}
       </form>
 
-      {hasWeChatLogin && (
+      {loginMode === 'platform' && hasWeChatLogin && (
         <Dialog
           open={isWeChatDialogOpen}
           onOpenChange={handleWeChatDialogChange}

@@ -83,6 +83,26 @@ export async function login(payload: LoginPayload): Promise<LoginResponse> {
   }
 }
 
+export async function agencyLogin(
+  username: string,
+  password: string
+): Promise<ApiResponse> {
+  const nonceResponse = await api.get<ApiResponse<{ nonce: string }>>(
+    '/agency/api/v1/auth/nonce',
+    { skipAuthRefresh: true }
+  )
+  const nonce = nonceResponse.data.data?.nonce
+  if (!nonce) {
+    throw new AuthOperationError('Login failed')
+  }
+  const response = await api.post<ApiResponse>(
+    '/agency/api/v1/auth/login',
+    { username, password, nonce },
+    { skipAuthRefresh: true }
+  )
+  return response.data
+}
+
 // Two-factor authentication login
 export async function login2fa(payload: TwoFAPayload) {
   const res = await api.post<Login2FAResponse>('/api/user/login/2fa', payload, {

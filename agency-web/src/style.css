@@ -1240,6 +1240,104 @@ table input {
 .password-change {
   max-width: 540px;
 }
+.required-password-shell {
+  display: grid;
+  place-items: center;
+  padding-block: 32px;
+}
+.required-password-card {
+  width: min(480px, 100%);
+  max-width: none;
+  margin: 0;
+  padding: 34px 36px 36px;
+  border-color: #d9e2ef;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.12);
+}
+.required-password-card::before {
+  display: block;
+  width: 42px;
+  height: 3px;
+  margin-bottom: 24px;
+  border-radius: 3px;
+  background: #2563eb;
+  content: "";
+}
+.password-change-heading {
+  margin-bottom: 20px;
+}
+.password-change-heading h2 {
+  margin: 8px 0 0;
+  color: #172033;
+  font-size: 24px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+.password-change-required form {
+  display: grid;
+  gap: 18px;
+}
+.password-change-required form > .field {
+  gap: 8px;
+}
+.password-change-required input {
+  height: 46px;
+  background: #fbfcfe;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+.password-change-required input:focus {
+  border-color: #5281df;
+  outline: 0;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+.password-change-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 22px;
+  padding: 12px 14px;
+  border: 1px solid #d9e5fb;
+  border-radius: 6px;
+  background: #f6f9ff;
+  color: #344054;
+}
+.password-change-notice p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.password-change-notice-icon {
+  display: grid;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: #e7efff;
+  color: #185adb;
+}
+.password-change-notice-icon .action-icon {
+  width: 13px;
+  height: 13px;
+}
+.password-actions {
+  display: grid;
+  grid-template-columns: minmax(136px, auto) minmax(136px, auto);
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 4px;
+  padding-top: 20px;
+  border-top: 1px solid #eaecf0;
+}
+.password-actions-single {
+  display: flex;
+  justify-content: flex-end;
+}
+.password-actions button {
+  min-width: 136px;
+  white-space: nowrap;
+}
 .notice {
   overflow-wrap: anywhere;
 }
@@ -1310,6 +1408,18 @@ dd {
   }
   .auth {
     padding: 22px;
+  }
+  .required-password-card {
+    padding: 26px 22px 24px;
+  }
+  .password-actions {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    gap: 12px;
+  }
+  .password-actions button {
+    min-width: 0;
+    padding-inline: 8px;
+    font-size: 14px;
   }
   .dialog {
     padding: 18px;

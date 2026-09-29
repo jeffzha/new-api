@@ -529,6 +529,8 @@ func WaffoPancakeWebhook(c *gin.Context) {
 	if event.Data.OrderID != "" {
 		payment = &model.TopupPaymentSnapshot{PaymentReference: event.Data.OrderID}
 	}
+	topUp := model.GetTopUpByTradeNo(tradeNo)
+	wasPending := topUp != nil && topUp.Status == common.TopUpStatusPending
 	if err := model.RechargeWaffoPancake(tradeNo, payment); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 充值处理失败 trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), err.Error()))
 		c.String(http.StatusInternalServerError, "retry")
@@ -536,5 +538,8 @@ func WaffoPancakeWebhook(c *gin.Context) {
 	}
 
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 充值成功 trade_no=%s event_id=%s order_id=%s client_ip=%s", tradeNo, event.ID, event.Data.OrderID, c.ClientIP()))
+	if wasPending {
+		service.NotifyTopUpSuccess(tradeNo)
+	}
 	c.String(http.StatusOK, "OK")
 }

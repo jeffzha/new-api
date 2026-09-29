@@ -164,6 +164,14 @@ export async function requestAssistedPayment(
   return res.data
 }
 
+export async function sendUserEmail(
+  userId: number,
+  payload: { subject: string; message: string }
+): Promise<ApiResponse> {
+  const res = await api.post(`/api/user/${userId}/email`, payload)
+  return res.data
+}
+
 /**
  * Reset user's Passkey registration
  */

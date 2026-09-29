@@ -24,6 +24,7 @@ import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { Pricing } from '..'
+import { CustomerPricingNotice } from '../components/customer-pricing-status'
 
 let client: QueryClient
 
@@ -37,6 +38,39 @@ afterEach(() => {
   useAuthStore.getState().auth.reset()
   document.cookie = 'theme_preset=; Max-Age=0; path=/'
 })
+
+it.each(['default', 'signal-console', 'prism-console'])(
+  '%s shows agency pricing notice and discount details',
+  async (preset) => {
+    document.cookie = `theme_preset=${preset}; path=/`
+    render(
+      <ThemeCustomizationProvider>
+        <CustomerPricingNotice
+          models={[
+            {
+              id: 1,
+              model_name: 'gpt-4.1',
+              quota_type: 0,
+              model_ratio: 1,
+              completion_ratio: 2,
+              sales_bps: 9000,
+              enable_groups: ['default'],
+            },
+          ]}
+        />
+      </ThemeCustomizationProvider>
+    )
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'You are using agency-exclusive pricing.'
+    )
+    await userEvent.click(
+      screen.getByRole('button', { name: 'View exclusive pricing' })
+    )
+    expect(screen.getByRole('dialog')).toHaveTextContent('90.00%')
+    expect(screen.getByRole('dialog')).toHaveTextContent('Save 10.00%')
+  }
+)
 
 it.each(['signal-console', 'prism-console'])(
   '%s keeps search and provider tabs outside the scrollable model results',
@@ -56,6 +90,7 @@ it.each(['signal-console', 'prism-console'])(
                 quota_type: 0,
                 model_ratio: 1,
                 completion_ratio: 2,
+                sales_bps: 9000,
                 enable_groups: ['default'],
               },
               {
@@ -65,6 +100,7 @@ it.each(['signal-console', 'prism-console'])(
                 quota_type: 0,
                 model_ratio: 1,
                 completion_ratio: 2,
+                sales_bps: 8000,
                 enable_groups: ['default'],
               },
             ],
@@ -74,6 +110,7 @@ it.each(['signal-console', 'prism-console'])(
             ],
             usable_group: { default: { desc: '', ratio: 1 } },
             group_ratio: { default: 1 },
+            pricing_scope: 'agency',
           },
         }
       }
@@ -106,6 +143,12 @@ it.each(['signal-console', 'prism-console'])(
       </QueryClientProvider>
     )
     const providers = await screen.findByRole('tablist', { name: 'Providers' })
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'You are using agency-exclusive pricing.'
+    )
+    expect(
+      await screen.findByRole('button', { name: 'View exclusive pricing' })
+    ).toBeVisible()
     const results = screen.getByRole('region', { name: 'Models' })
     expect(results).toHaveClass('min-h-0', 'overflow-y-auto')
     expect(results).toHaveAttribute('tabindex', '0')

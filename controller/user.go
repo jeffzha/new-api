@@ -235,16 +235,25 @@ func Register(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
+	if user.Email == "" {
+		user.Email = user.Username
+	}
+	user.Email = model.NormalizeEmail(user.Email)
+	if err := common.Validate.Var(user.Email, "required,email"); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	// Every account registered on the main platform uses its mailbox in the
+	// legacy username column, including customers joining by agency invite.
+	// Agency operator accounts are provisioned through the separate hub.
+	user.Username = user.Email
 	if err := common.Validate.Struct(&user); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
 		return
 	}
-	if common.EmailVerificationEnabled {
-		if user.Email == "" || user.VerificationCode == "" {
-			common.ApiErrorI18n(c, i18n.MsgUserEmailVerificationRequired)
-			return
-		}
-		if !common.VerifyCodeWithKey(user.Email, user.VerificationCode, common.EmailVerificationPurpose) {
+	emailVerificationRequired := common.EmailVerificationRequired()
+	if emailVerificationRequired {
+		if user.VerificationCode == "" || !common.VerifyCodeWithKey(user.Email, user.VerificationCode, common.EmailVerificationPurpose) {
 			common.ApiErrorI18n(c, i18n.MsgUserVerificationCodeError)
 			return
 		}
@@ -257,10 +266,7 @@ func Register(c *gin.Context) {
 			return
 		}
 	}
-	emailForExistCheck := ""
-	if common.EmailVerificationEnabled {
-		emailForExistCheck = user.Email
-	}
+	emailForExistCheck := user.Email
 	exist, err := model.CheckUserExistOrDeleted(user.Username, emailForExistCheck)
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgDatabaseError)
@@ -274,15 +280,21 @@ func Register(c *gin.Context) {
 	affCode := user.AffCode // this code is the inviter's code, not the user's own code
 	inviterId, _ := model.GetUserIdByAffCode(affCode)
 	cleanUser := model.User{
-		Username:    user.Username,
-		Password:    user.Password,
-		DisplayName: user.Username,
-		InviterId:   inviterId,
-		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
+		Username:  user.Username,
+		Password:  user.Password,
+		InviterId: inviterId,
+		Role:      common.RoleCommonUser, // 明确设置角色为普通用户
 	}
-	if common.EmailVerificationEnabled {
-		cleanUser.Email = user.Email
+	displayName := user.Username
+	if localPart, _, ok := strings.Cut(displayName, "@"); ok && localPart != "" {
+		displayName = localPart
 	}
+	displayNameRunes := []rune(displayName)
+	if len(displayNameRunes) > 20 {
+		displayName = string(displayNameRunes[:20])
+	}
+	cleanUser.DisplayName = displayName
+	cleanUser.Email = user.Email
 	if strings.TrimSpace(user.AgencyInvite) != "" {
 		if !common.AgencyOnboardingEnabled() {
 			common.ApiErrorMsg(c, "agency onboarding is temporarily disabled")
@@ -290,6 +302,10 @@ func Register(c *gin.Context) {
 		}
 		if strings.TrimSpace(affCode) != "" {
 			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		if emailVerificationRequired && !common.ConsumeCodeWithKey(user.Email, user.VerificationCode, common.EmailVerificationPurpose) {
+			common.ApiErrorI18n(c, i18n.MsgUserVerificationCodeError)
 			return
 		}
 		if err := registerAgencyCustomer(&cleanUser, user.AgencyInvite); err != nil {
@@ -305,6 +321,10 @@ func Register(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+		return
+	}
+	if emailVerificationRequired && !common.ConsumeCodeWithKey(user.Email, user.VerificationCode, common.EmailVerificationPurpose) {
+		common.ApiErrorI18n(c, i18n.MsgUserVerificationCodeError)
 		return
 	}
 	if err := cleanUser.Insert(inviterId); err != nil {
@@ -1053,17 +1073,26 @@ func DeleteSelf(c *gin.Context) {
 func CreateUser(c *gin.Context) {
 	var user model.User
 	err := common.DecodeJson(c.Request.Body, &user)
-	user.Username = strings.TrimSpace(user.Username)
+	user.Username = model.NormalizeEmail(user.Username)
 	if err != nil || user.Username == "" || user.Password == "" {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
+	if err := common.Validate.Var(user.Username, "required,email,max=191"); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	user.Email = user.Username
 	if err := common.Validate.Struct(&user); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
 		return
 	}
 	if user.DisplayName == "" {
-		user.DisplayName = user.Username
+		user.DisplayName, _, _ = strings.Cut(user.Username, "@")
+		displayNameRunes := []rune(user.DisplayName)
+		if len(displayNameRunes) > 20 {
+			user.DisplayName = string(displayNameRunes[:20])
+		}
 	}
 	myRole := c.GetInt("role")
 	if user.Role >= myRole {
@@ -1073,6 +1102,7 @@ func CreateUser(c *gin.Context) {
 	// Even for admin users, we cannot fully trust them!
 	cleanUser := model.User{
 		Username:    user.Username,
+		Email:       user.Email,
 		Password:    user.Password,
 		DisplayName: user.DisplayName,
 		Role:        user.Role, // 保持管理员设置的角色
@@ -1106,6 +1136,53 @@ func CreateUser(c *gin.Context) {
 		"message": "",
 	})
 	return
+}
+
+type adminUserEmailRequest struct {
+	Subject string `json:"subject"`
+	Message string `json:"message"`
+}
+
+func AdminSendUserEmail(c *gin.Context) {
+	if !common.SMTPConfigured() {
+		common.ApiErrorMsg(c, "SMTP email is not configured")
+		return
+	}
+	userID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || userID <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	var request adminUserEmailRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	request.Subject = strings.TrimSpace(request.Subject)
+	request.Message = strings.TrimSpace(request.Message)
+	if request.Subject == "" || len([]rune(request.Subject)) > 120 || request.Message == "" || len([]rune(request.Message)) > 5000 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	user, err := model.GetUserById(userID, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	email := model.NormalizeEmail(user.Email)
+	if common.Validate.Var(email, "required,email") != nil {
+		common.ApiErrorMsg(c, "user has no verified email address")
+		return
+	}
+	if err := service.SendUserEmail(email, request.Subject, request.Message); err != nil {
+		common.SysError(fmt.Sprintf("failed to send user email: user_id=%d error=%v", userID, err))
+		common.ApiErrorMsg(c, "failed to send email")
+		return
+	}
+	recordManageAuditFor(c, userID, "user.email_send", map[string]any{
+		"subject": request.Subject,
+	})
+	common.ApiSuccess(c, nil)
 }
 
 func updateAdminPermissionsForUserInTx(c *gin.Context, tx *gorm.DB, userID int, userRole int, permissions map[string]map[string]bool) (bool, error) {

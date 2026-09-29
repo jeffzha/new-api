@@ -10,6 +10,27 @@ import (
 	"time"
 )
 
+// SMTPConfigured reports whether the current settings are sufficient to make
+// a delivery attempt. Authenticated and trusted relay configurations are both
+// supported, but partially configured credentials are rejected.
+func SMTPConfigured() bool {
+	server := strings.TrimSpace(SMTPServer)
+	from := strings.TrimSpace(SMTPFrom)
+	account := strings.TrimSpace(SMTPAccount)
+	token := strings.TrimSpace(SMTPToken)
+	if from == "" {
+		from = account
+	}
+	if server == "" || SMTPPort <= 0 || SMTPPort > 65535 || Validate.Var(from, "required,email") != nil {
+		return false
+	}
+	return (account == "" && token == "") || (account != "" && token != "")
+}
+
+func EmailVerificationRequired() bool {
+	return EmailVerificationEnabled && SMTPConfigured()
+}
+
 func generateMessageID() (string, error) {
 	split := strings.Split(SMTPFrom, "@")
 	if len(split) < 2 {
@@ -76,15 +97,15 @@ func newSMTPClient(addr string) (*smtp.Client, error) {
 }
 
 func SendEmail(subject string, receiver string, content string) error {
+	if !SMTPConfigured() {
+		return fmt.Errorf("SMTP 服务器未配置完整")
+	}
 	if SMTPFrom == "" { // for compatibility
 		SMTPFrom = SMTPAccount
 	}
 	id, err2 := generateMessageID()
 	if err2 != nil {
 		return err2
-	}
-	if SMTPServer == "" && SMTPAccount == "" {
-		return fmt.Errorf("SMTP 服务器未配置")
 	}
 	encodedSubject := fmt.Sprintf("=?UTF-8?B?%s?=", base64.StdEncoding.EncodeToString([]byte(subject)))
 	mail := []byte(fmt.Sprintf("To: %s\r\n"+

@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Account": "Tài khoản",
+    "Agency Center": "Trung tâm đại lý",
+    "Enter agency account": "Nhập tài khoản đại lý",
+    "Please enter your account or email": "Vui lòng nhập tài khoản hoặc email",
+    "Send email": "Gửi email",
+    "Send an email to {{username}}": "Gửi email đến {{username}}",
+    "Recipient": "Người nhận",
+    "Email subject": "Tiêu đề email",
+    "Enter email subject": "Nhập tiêu đề email",
+    "Email message": "Nội dung email",
+    "Enter email message": "Nhập nội dung email",
+    "Failed to send email": "Gửi email thất bại",
+    "Email sent successfully": "Đã gửi email",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

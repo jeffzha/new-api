@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Account": "Compte",
+    "Agency Center": "Centre des agences",
+    "Enter agency account": "Saisir le compte de l'agence",
+    "Please enter your account or email": "Veuillez saisir votre compte ou votre e-mail",
+    "Send email": "Envoyer un e-mail",
+    "Send an email to {{username}}": "Envoyer un e-mail à {{username}}",
+    "Recipient": "Destinataire",
+    "Email subject": "Objet de l'e-mail",
+    "Enter email subject": "Saisir l'objet de l'e-mail",
+    "Email message": "Message de l'e-mail",
+    "Enter email message": "Saisir le message de l'e-mail",
+    "Failed to send email": "Échec de l'envoi de l'e-mail",
+    "Email sent successfully": "E-mail envoyé",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

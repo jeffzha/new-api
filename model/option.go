@@ -235,6 +235,9 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
+	if key == "EmailVerificationEnabled" {
+		value = "true"
+	}
 	if IsPasskeyDomainOption(key) {
 		_, err := UpdatePasskeyDomainOptions(map[string]string{key: value}, false, "")
 		return err
@@ -268,6 +271,9 @@ func UpdateOption(key string, value string) error {
 func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
+	}
+	if _, ok := values["EmailVerificationEnabled"]; ok {
+		values["EmailVerificationEnabled"] = "true"
 	}
 	for key := range values {
 		if IsPasskeyDomainOption(key) {
@@ -342,7 +348,11 @@ func updateOptionMap(key string, value string) (err error) {
 		case "PasswordLoginEnabled":
 			common.PasswordLoginEnabled = boolValue
 		case "EmailVerificationEnabled":
-			common.EmailVerificationEnabled = boolValue
+			// Password registration requires a verified email account. Keep the
+			// legacy option readable for upgrades, but do not allow it to weaken
+			// the server-side registration boundary.
+			common.EmailVerificationEnabled = true
+			common.OptionMap[key] = "true"
 		case "GitHubOAuthEnabled":
 			common.GitHubOAuthEnabled = boolValue
 		case "LinuxDOOAuthEnabled":

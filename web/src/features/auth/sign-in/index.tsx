@@ -20,6 +20,7 @@ import { Link, useSearch } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
 import { useStatus } from '@/hooks/use-status'
+import { getAgencyCenterUrl } from '@/lib/agency-center'
 
 import { AuthLayout } from '../auth-layout'
 import { TermsFooter } from '../components/terms-footer'
@@ -27,7 +28,7 @@ import { UserAuthForm } from './components/user-auth-form'
 
 export function SignIn() {
   const { t } = useTranslation()
-  const { redirect } = useSearch({ from: '/(auth)/sign-in' })
+  const { redirect, mode } = useSearch({ from: '/(auth)/sign-in' })
   const { status } = useStatus()
 
   return (
@@ -35,9 +36,10 @@ export function SignIn() {
       <div className='w-full space-y-8'>
         <div className='space-y-2'>
           <h2 className='text-center text-2xl font-semibold tracking-tight sm:text-left'>
-            {t('Sign in')}
+            {mode === 'agency' ? t('Agency Center') : t('Sign in')}
           </h2>
-          {!status?.self_use_mode_enabled &&
+          {mode !== 'agency' &&
+            !status?.self_use_mode_enabled &&
             status?.register_enabled !== false && (
               <p className='text-muted-foreground text-left text-sm sm:text-base'>
                 {t("Don't have an account?")}{' '}
@@ -52,13 +54,18 @@ export function SignIn() {
             )}
         </div>
 
-        <UserAuthForm redirectTo={redirect} />
-
-        <TermsFooter
-          variant='sign-in'
-          status={status}
-          className='text-center'
+        <UserAuthForm
+          loginMode={mode === 'agency' ? 'agency' : 'platform'}
+          redirectTo={mode === 'agency' ? getAgencyCenterUrl() : redirect}
         />
+
+        {mode !== 'agency' && (
+          <TermsFooter
+            variant='sign-in'
+            status={status}
+            className='text-center'
+          />
+        )}
       </div>
     </AuthLayout>
   )

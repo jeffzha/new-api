@@ -58,10 +58,11 @@ func TestAgencyCoreLifecycleFromInvitationToAuthenticatedCommissionReport(t *tes
 
 			agency, temporaryPassword, err := app.CreateAgency(1, "Core Lifecycle Agency", "core_operator", agencyInviteTestPolicy())
 			require.NoError(t, err)
-			registered := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":"core_customer","password":"password123","invite":%q}`, agency.InviteCode))
+			customerEmail := "core.customer@example.com"
+			registered := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":%q,"password":"password123","invite":%q}`, customerEmail, agency.InviteCode))
 			require.Contains(t, registered.Body.String(), `"success":true`)
 			var customer model.User
-			require.NoError(t, db.Where("username = ?", "core_customer").First(&customer).Error)
+			require.NoError(t, db.Where("username = ?", customerEmail).First(&customer).Error)
 			require.Equal(t, model.AgencyDurableBillingMode, customer.BillingMode)
 			require.Zero(t, customer.Quota)
 			var token model.Token
@@ -247,10 +248,11 @@ func TestAgencyCoreCancelledReservationCompletesConsumerWithoutCommission(t *tes
 	t.Setenv("AGENCY_COMPONENT_BILLING_ENABLED", "true")
 	agency, _, err := app.CreateAgency(1, "Cancellation Agency", "cancel_operator", agencyInviteTestPolicy())
 	require.NoError(t, err)
-	registered := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":"cancel_customer","password":"password123","invite":%q}`, agency.InviteCode))
+	customerEmail := "cancel.customer@example.com"
+	registered := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":%q,"password":"password123","invite":%q}`, customerEmail, agency.InviteCode))
 	require.Contains(t, registered.Body.String(), `"success":true`)
 	var customer model.User
-	require.NoError(t, db.Where("username = ?", "cancel_customer").First(&customer).Error)
+	require.NoError(t, db.Where("username = ?", customerEmail).First(&customer).Error)
 	var token model.Token
 	require.NoError(t, db.Where("user_id = ?", customer.Id).First(&token).Error)
 	initialTokenQuota := token.RemainQuota
@@ -321,10 +323,11 @@ func TestAgencyCoreTextSettlementUsesUnroundedModelBasis(t *testing.T) {
 			})
 			agency, _, err := app.CreateAgency(1, "Small Usage Agency", "small_operator", agencyInviteTestPolicy())
 			require.NoError(t, err)
-			registered := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":"small_customer","password":"password123","invite":%q}`, agency.InviteCode))
+			customerEmail := "small.customer@example.com"
+			registered := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":%q,"password":"password123","invite":%q}`, customerEmail, agency.InviteCode))
 			require.Contains(t, registered.Body.String(), `"success":true`)
 			var customer model.User
-			require.NoError(t, db.Where("username = ?", "small_customer").First(&customer).Error)
+			require.NoError(t, db.Where("username = ?", customerEmail).First(&customer).Error)
 			var token model.Token
 			require.NoError(t, db.Where("user_id = ?", customer.Id).First(&token).Error)
 			require.NoError(t, model.ApplyAgencyQuotaDelta(int64(customer.Id), 100, "admin_grant"))

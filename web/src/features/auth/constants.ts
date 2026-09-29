@@ -25,14 +25,16 @@ import { accountPasswordSchema } from '@/lib/password-policy'
 // ============================================================================
 
 export const loginFormSchema = z.object({
-  username: z.string().min(1, 'Please enter your username or email'),
+  username: z.string().min(1, 'Please enter your account or email'),
   password: z.string().min(1, 'Please enter your password'),
 })
 
 export const registerFormSchema = z
   .object({
-    username: z.string().min(1, 'Please enter your username'),
-    email: z.string().optional(),
+    username: z
+      .string()
+      .email('Please enter a valid email address')
+      .max(191, 'Email address is too long'),
     password: accountPasswordSchema,
     confirmPassword: z.string().min(1, 'Please confirm your password'),
   })

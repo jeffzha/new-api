@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Account": "アカウント",
+    "Agency Center": "代理店センター",
+    "Enter agency account": "代理店アカウントを入力",
+    "Please enter your account or email": "アカウントまたはメールアドレスを入力してください",
+    "Send email": "メールを送信",
+    "Send an email to {{username}}": "{{username}} にメールを送信",
+    "Recipient": "宛先",
+    "Email subject": "件名",
+    "Enter email subject": "件名を入力",
+    "Email message": "本文",
+    "Enter email message": "本文を入力",
+    "Failed to send email": "メールを送信できませんでした",
+    "Email sent successfully": "メールを送信しました",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

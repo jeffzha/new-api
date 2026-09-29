@@ -89,12 +89,12 @@ import {
   userFormSchema,
   type UserFormValues,
   USER_FORM_DEFAULT_VALUES,
-	transformFormDataToPayload,
-	transformUserToFormDefaults,
+  transformFormDataToPayload,
+  transformUserToFormDefaults,
 } from '../lib'
 import type { User } from '../types'
-import { UserQuotaDialog } from './user-quota-dialog'
 import { AssistedPaymentDialog } from './assisted-payment-dialog'
+import { UserQuotaDialog } from './user-quota-dialog'
 import { useUsers } from './users-provider'
 
 type UsersMutateDrawerProps = {
@@ -257,11 +257,17 @@ export function UsersMutateDrawer({
                   name='username'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t('Username')}</FormLabel>
+                      <FormLabel>
+                        {t(isUpdate ? 'Username' : 'Account')}
+                      </FormLabel>
                       <FormControl>
                         <Input
                           {...field}
-                          placeholder={t('Enter username')}
+                          type={isUpdate ? 'text' : 'email'}
+                          autoComplete={isUpdate ? 'username' : 'email'}
+                          placeholder={t(
+                            isUpdate ? 'Enter username' : 'Enter your email'
+                          )}
                           disabled={isUpdate}
                         />
                       </FormControl>
@@ -283,7 +289,8 @@ export function UsersMutateDrawer({
                             { value: '10', label: t('Admin') },
                           ]}
                           onValueChange={(value) =>
-                            value !== null && field.onChange(Number.parseInt(value))
+                            value !== null &&
+                            field.onChange(Number.parseInt(value))
                           }
                           value={String(field.value)}
                         >

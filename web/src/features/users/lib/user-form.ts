@@ -18,23 +18,19 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
-import {
-  type PermissionCatalog,
-  type AdminPermissionMatrix,
-  normalizeAdminPermissions,
-} from '@/lib/admin-permissions'
+import * as AdminPermissions from '@/lib/admin-permissions'
 import { quotaUnitsToDollars } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
 
 import { DEFAULT_GROUP } from '../constants'
-import { type UserFormData, type User } from '../types'
+import type { UserFormData, User } from '../types'
 
 // ============================================================================
 // Form Schema
 // ============================================================================
 
 export const userFormSchema = z.object({
-  username: z.string().min(1, 'Username is required'),
+  username: z.string().email('Please enter a valid email address'),
   display_name: z.string().optional(),
   password: z.string().optional(),
   role: z.number().optional(),
@@ -74,7 +70,7 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
 export function transformFormDataToPayload(
   data: UserFormValues,
   userId?: number,
-  catalog?: PermissionCatalog
+  catalog?: AdminPermissions.PermissionCatalog
 ): UserFormData & { id?: number } {
   const payload: UserFormData & { id?: number } = {
     username: data.username,
@@ -88,8 +84,10 @@ export function transformFormDataToPayload(
   // is available; without the catalog we cannot build a full matrix, so we omit
   // the field (the backend then leaves existing permissions untouched).
   if (role >= ROLE.ADMIN && catalog) {
-    payload.admin_permissions = normalizeAdminPermissions(
-      data.admin_permissions as AdminPermissionMatrix | undefined,
+    payload.admin_permissions = AdminPermissions.normalizeAdminPermissions(
+      data.admin_permissions as
+        | AdminPermissions.AdminPermissionMatrix
+        | undefined,
       catalog
     )
   }

@@ -71,6 +71,9 @@ export function SignUpForm({
   const legalConsentErrorMessage = t('Please agree to the legal terms first')
 
   const { status } = useStatus()
+  const agencyInvite =
+    new URLSearchParams(window.location.search).get('invite')?.trim() ||
+    getAgencyInvite()
   const {
     isTurnstileEnabled,
     turnstileSiteKey,
@@ -93,14 +96,15 @@ export function SignUpForm({
     resolver: zodResolver(registerFormSchema),
     defaultValues: {
       username: '',
-      email: '',
       password: '',
       confirmPassword: '',
     },
   })
 
-  const emailValue = form.watch('email')
-  const emailVerificationRequired = !!status?.email_verification
+  const emailValue = form.watch('username')
+  const emailVerificationRequired = Boolean(
+    status?.email_verification ?? status?.data?.email_verification
+  )
   const hasUserAgreement = Boolean(status?.user_agreement_enabled)
   const hasPrivacyPolicy = Boolean(status?.privacy_policy_enabled)
   const requiresLegalConsent = hasUserAgreement || hasPrivacyPolicy
@@ -110,10 +114,6 @@ export function SignUpForm({
     true
   const hasWeChatLogin = Boolean(status?.wechat_login)
   const turnstileReady = !isTurnstileEnabled || Boolean(turnstileToken)
-  const agencyInvite =
-    new URLSearchParams(window.location.search).get('invite')?.trim() ||
-    getAgencyInvite()
-
   const wechatQrCodeUrl = useMemo(() => {
     return (
       status?.wechat_qrcode ||
@@ -155,7 +155,7 @@ export function SignUpForm({
 
     // Validate email verification if required
     if (emailVerificationRequired) {
-      if (!data.email) {
+      if (!data.username) {
         toast.error(t('Please enter your email'))
         return
       }
@@ -172,7 +172,7 @@ export function SignUpForm({
       const res = await register({
         username: data.username,
         password: data.password,
-        email: data.email || undefined,
+        email: data.username,
         verification_code: verificationCode || undefined,
         aff_code: agencyInvite ? undefined : getAffiliateCode(),
         invite: agencyInvite || undefined,
@@ -263,9 +263,34 @@ export function SignUpForm({
           name='username'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t('Username')}</FormLabel>
+              <FormLabel>{t('Account')}</FormLabel>
               <FormControl>
-                <Input placeholder={t('Enter your username')} {...field} />
+                <div className='flex gap-2'>
+                  <Input
+                    type='email'
+                    autoComplete='email'
+                    maxLength={191}
+                    placeholder={t('Enter your email')}
+                    {...field}
+                  />
+                  {emailVerificationRequired && (
+                    <Button
+                      className='shrink-0'
+                      variant='outline'
+                      type='button'
+                      disabled={
+                        isLoading ||
+                        isSendingCode ||
+                        isActive ||
+                        !emailValue ||
+                        !turnstileReady
+                      }
+                      onClick={handleSendVerificationCode}
+                    >
+                      {verificationCodeAction}
+                    </Button>
+                  )}
+                </div>
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -308,50 +333,19 @@ export function SignUpForm({
         {/* Email Verification Section */}
         {emailVerificationRequired && (
           <>
-            {/* Email Field */}
-            <FormField
-              control={form.control}
-              name='email'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    {t('Email (required for verification)')}
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder={t('name@example.com')}
-                      type='email'
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
             {/* Verification Code Field */}
-            <div className='flex items-end gap-2'>
-              <div className='flex-1'>
-                <Input
-                  placeholder={t('Verification code')}
-                  value={verificationCode}
-                  onChange={(e) => setVerificationCode(e.target.value)}
-                />
-              </div>
-              <Button
-                variant='outline'
-                type='button'
-                disabled={
-                  isLoading ||
-                  isSendingCode ||
-                  isActive ||
-                  !emailValue ||
-                  !turnstileReady
-                }
-                onClick={handleSendVerificationCode}
-              >
-                {verificationCodeAction}
-              </Button>
+            <div className='grid gap-2'>
+              <Label htmlFor='registration-verification-code'>
+                {t('Verification code')}
+              </Label>
+              <Input
+                id='registration-verification-code'
+                inputMode='numeric'
+                autoComplete='one-time-code'
+                placeholder={t('Enter the verification code')}
+                value={verificationCode}
+                onChange={(event) => setVerificationCode(event.target.value)}
+              />
             </div>
           </>
         )}

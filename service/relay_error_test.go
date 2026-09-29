@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -123,4 +124,72 @@ func TestProcessChannelErrorMasksDisableReasonAndNotification(t *testing.T) {
 	assert.NotContains(t, notification.Content, "review-token")
 	assert.NotContains(t, notification.Content, "review-secret")
 	assert.Equal(t, http.StatusUnauthorized, apiErr.StatusCode)
+}
+
+func TestFeishuRelayAlertSignsMasksAndDeduplicates(t *testing.T) {
+	assert.Equal(t, "wSds2BzzFIIGf/WrhUO+NI1q/9j+FRJd3JNHKAq0NZY=", signFeishuAlert(1599360473, "test-secret"))
+
+	previousClient := feishuAlertHTTPClient
+	feishuAlertState.Lock()
+	previousSeen := feishuAlertState.seen
+	feishuAlertState.seen = make(map[string]time.Time)
+	feishuAlertState.Unlock()
+	t.Cleanup(func() {
+		feishuAlertHTTPClient = previousClient
+		feishuAlertState.Lock()
+		feishuAlertState.seen = previousSeen
+		feishuAlertState.Unlock()
+	})
+
+	type capturedRequest struct {
+		query   string
+		payload feishuAlertPayload
+	}
+	captured := make(chan capturedRequest, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		var payload feishuAlertPayload
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		captured <- capturedRequest{query: r.URL.RawQuery, payload: payload}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"code":0,"msg":"success"}`)
+	}))
+	t.Cleanup(server.Close)
+	feishuAlertHTTPClient = server.Client()
+	t.Setenv("FEISHU_ALERT_WEBHOOK_URL", server.URL+"/hook?existing=1")
+	t.Setenv("FEISHU_ALERT_SECRET", "test-secret")
+
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions?api_key=should-not-leak", nil)
+	c.Set(common.RequestIdKey, "req-feishu-1")
+	apiErr := types.NewErrorWithStatusCode(
+		errors.New("upstream https://private.example.com/path?token=secret-token api_key:secret-key"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadGateway,
+	)
+	NotifyFeishuRelayError(c, nil, types.RelayFormatOpenAI, apiErr)
+
+	var request capturedRequest
+	select {
+	case request = <-captured:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Feishu alert was not delivered")
+	}
+	assert.Equal(t, "existing=1", request.query)
+	assert.Equal(t, "text", request.payload.MsgType)
+	assert.NotEmpty(t, request.payload.Timestamp)
+	assert.NotEmpty(t, request.payload.Sign)
+	assert.Contains(t, request.payload.Content.Text, "req-feishu-1")
+	assert.Contains(t, request.payload.Content.Text, "/v1/chat/completions")
+	assert.NotContains(t, request.payload.Content.Text, "should-not-leak")
+	assert.NotContains(t, request.payload.Content.Text, "secret-token")
+	assert.NotContains(t, request.payload.Content.Text, "secret-key")
+
+	NotifyFeishuRelayError(c, nil, types.RelayFormatOpenAI, apiErr)
+	select {
+	case <-captured:
+		t.Fatal("duplicate Feishu alert was delivered")
+	case <-time.After(200 * time.Millisecond):
+	}
 }

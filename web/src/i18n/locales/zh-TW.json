@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Account": "帳號",
+    "Agency Center": "代理商中心",
+    "Enter agency account": "輸入代理商帳號",
+    "Please enter your account or email": "請輸入帳號或電郵",
+    "Send email": "發送電郵",
+    "Send an email to {{username}}": "向 {{username}} 發送電郵",
+    "Recipient": "收件人",
+    "Email subject": "電郵主題",
+    "Enter email subject": "輸入電郵主題",
+    "Email message": "電郵內容",
+    "Enter email message": "輸入電郵內容",
+    "Failed to send email": "電郵發送失敗",
+    "Email sent successfully": "電郵發送成功",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

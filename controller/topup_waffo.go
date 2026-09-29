@@ -422,6 +422,8 @@ func handleWaffoPayment(c *gin.Context, wh *core.WebhookHandler, result *core.Pa
 	if providerReference != "" {
 		payment = &model.TopupPaymentSnapshot{PaymentReference: providerReference}
 	}
+	topUp := model.GetTopUpByTradeNo(merchantOrderId)
+	wasPending := topUp != nil && topUp.Status == common.TopUpStatusPending
 	if err := model.RechargeWaffo(merchantOrderId, c.ClientIP(), payment); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo 充值处理失败 trade_no=%s client_ip=%s error=%q", merchantOrderId, c.ClientIP(), err.Error()))
 		sendWaffoWebhookResponse(c, wh, false, err.Error())
@@ -429,6 +431,9 @@ func handleWaffoPayment(c *gin.Context, wh *core.WebhookHandler, result *core.Pa
 	}
 
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo 充值成功 trade_no=%s client_ip=%s", merchantOrderId, c.ClientIP()))
+	if wasPending {
+		service.NotifyTopUpSuccess(merchantOrderId)
+	}
 	sendWaffoWebhookResponse(c, wh, true, "")
 }
 

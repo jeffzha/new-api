@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Account": "Аккаунт",
+    "Agency Center": "Центр агентств",
+    "Enter agency account": "Введите аккаунт агентства",
+    "Please enter your account or email": "Введите аккаунт или адрес электронной почты",
+    "Send email": "Отправить письмо",
+    "Send an email to {{username}}": "Отправить письмо пользователю {{username}}",
+    "Recipient": "Получатель",
+    "Email subject": "Тема письма",
+    "Enter email subject": "Введите тему письма",
+    "Email message": "Текст письма",
+    "Enter email message": "Введите текст письма",
+    "Failed to send email": "Не удалось отправить письмо",
+    "Email sent successfully": "Письмо отправлено",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

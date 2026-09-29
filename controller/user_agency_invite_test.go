@@ -29,6 +29,8 @@ func setupAgencyInviteControllerTest(t *testing.T) (*gorm.DB, *agencyhub.App) {
 	previousRegisterEnabled := common.RegisterEnabled
 	previousPasswordRegisterEnabled := common.PasswordRegisterEnabled
 	previousEmailVerificationEnabled := common.EmailVerificationEnabled
+	previousSMTPServer, previousSMTPPort := common.SMTPServer, common.SMTPPort
+	previousSMTPAccount, previousSMTPFrom, previousSMTPToken := common.SMTPAccount, common.SMTPFrom, common.SMTPToken
 	previousQuotaForNewUser := common.QuotaForNewUser
 	previousGenerateDefaultToken := constant.GenerateDefaultToken
 
@@ -37,6 +39,7 @@ func setupAgencyInviteControllerTest(t *testing.T) (*gorm.DB, *agencyhub.App) {
 	common.RegisterEnabled = true
 	common.PasswordRegisterEnabled = true
 	common.EmailVerificationEnabled = false
+	common.SMTPServer, common.SMTPAccount, common.SMTPFrom, common.SMTPToken = "", "", "", ""
 	common.QuotaForNewUser = 12345
 	constant.GenerateDefaultToken = true
 
@@ -54,6 +57,8 @@ func setupAgencyInviteControllerTest(t *testing.T) (*gorm.DB, *agencyhub.App) {
 		common.RegisterEnabled = previousRegisterEnabled
 		common.PasswordRegisterEnabled = previousPasswordRegisterEnabled
 		common.EmailVerificationEnabled = previousEmailVerificationEnabled
+		common.SMTPServer, common.SMTPPort = previousSMTPServer, previousSMTPPort
+		common.SMTPAccount, common.SMTPFrom, common.SMTPToken = previousSMTPAccount, previousSMTPFrom, previousSMTPToken
 		common.QuotaForNewUser = previousQuotaForNewUser
 		constant.GenerateDefaultToken = previousGenerateDefaultToken
 		sqlDB, err := db.DB()
@@ -84,15 +89,26 @@ func postAgencyInviteRegister(t *testing.T, body string) *httptest.ResponseRecor
 
 func TestAgencyInviteRegistrationCreatesDurableUserBindingFundingAndDefaultToken(t *testing.T) {
 	db, app := setupAgencyInviteControllerTest(t)
+	common.EmailVerificationEnabled = true
+	common.SMTPServer, common.SMTPPort = "smtp.example.com", 465
+	common.SMTPAccount, common.SMTPFrom, common.SMTPToken = "sender@example.com", "sender@example.com", "secret"
 	agency, _, err := app.CreateAgency(1, "Invite Agency", "invite_operator", agencyInviteTestPolicy())
 	require.NoError(t, err)
 
-	recorder := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":"invite_customer","password":"password123","invite":%q}`, agency.InviteCode))
+	email := "invite.customer@example.com"
+	code := "539172"
+	common.RegisterVerificationCodeWithKey(email, code, common.EmailVerificationPurpose)
+	t.Cleanup(func() {
+		common.DeleteKey(email, common.EmailVerificationPurpose)
+	})
+	recorder := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":%q,"email":%q,"password":"password123","verification_code":%q,"invite":%q}`, email, email, code, agency.InviteCode))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), `"success":true`)
 
 	var user model.User
-	require.NoError(t, db.Where("username = ?", "invite_customer").First(&user).Error)
+	require.NoError(t, db.Where("username = ?", email).First(&user).Error)
+	assert.Equal(t, email, user.Email)
+	assert.False(t, common.VerifyCodeWithKey(email, code, common.EmailVerificationPurpose))
 	assert.Equal(t, 0, user.Quota)
 	assert.Equal(t, model.AgencyDurableBillingMode, user.BillingMode)
 	assert.EqualValues(t, 1, user.FundingVersion)
@@ -119,26 +135,95 @@ func TestAgencyInviteRegistrationCreatesDurableUserBindingFundingAndDefaultToken
 	assert.Equal(t, 500000, token.RemainQuota)
 }
 
+func TestRegistrationUsesVerifiedEmailAsAccountAndConsumesCode(t *testing.T) {
+	db, _ := setupAgencyInviteControllerTest(t)
+	common.EmailVerificationEnabled = true
+	common.SMTPServer, common.SMTPPort = "smtp.example.com", 465
+	common.SMTPAccount, common.SMTPFrom, common.SMTPToken = "sender@example.com", "sender@example.com", "secret"
+	email := "verified.customer@example.com"
+	code := "482913"
+	common.RegisterVerificationCodeWithKey(email, code, common.EmailVerificationPurpose)
+	t.Cleanup(func() {
+		common.DeleteKey(email, common.EmailVerificationPurpose)
+	})
+
+	recorder := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":%q,"email":%q,"password":"password123","verification_code":%q}`, email, email, code))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+
+	var user model.User
+	require.NoError(t, db.Where("username = ?", email).First(&user).Error)
+	assert.Equal(t, email, user.Username)
+	assert.Equal(t, email, user.Email)
+	assert.Equal(t, "verified.customer", user.DisplayName)
+	assert.False(t, common.VerifyCodeWithKey(email, code, common.EmailVerificationPurpose))
+}
+
+func TestRegistrationWithoutSMTPUsesEmailAccountWithoutCode(t *testing.T) {
+	db, _ := setupAgencyInviteControllerTest(t)
+	common.EmailVerificationEnabled = true
+	email := "unverified.customer@example.com"
+
+	recorder := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":%q,"password":"password123"}`, email))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+
+	var user model.User
+	require.NoError(t, db.Where("username = ?", email).First(&user).Error)
+	assert.Equal(t, email, user.Email)
+	assert.Equal(t, "unverified.customer", user.DisplayName)
+}
+
+func TestPlatformRegistrationRejectsNonEmailAccount(t *testing.T) {
+	db, _ := setupAgencyInviteControllerTest(t)
+	common.EmailVerificationEnabled = false
+
+	recorder := postAgencyInviteRegister(t, `{"username":"ordinary_username","password":"password123"}`)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"success":false`)
+
+	var count int64
+	require.NoError(t, db.Model(&model.User{}).Where("username = ?", "ordinary_username").Count(&count).Error)
+	assert.Zero(t, count)
+}
+
+func TestAgencyInviteRegistrationStillRejectsNonEmailAccount(t *testing.T) {
+	db, app := setupAgencyInviteControllerTest(t)
+	agency, _, err := app.CreateAgency(1, "Email Only Customers", "ordinary_operator", agencyInviteTestPolicy())
+	require.NoError(t, err)
+
+	recorder := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":"invite_customer","password":"password123","invite":%q}`, agency.InviteCode))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"success":false`)
+
+	var count int64
+	require.NoError(t, db.Model(&model.User{}).Where("username = ?", "invite_customer").Count(&count).Error)
+	assert.Zero(t, count)
+}
+
 func TestAgencyOnboardingPausePreservesOrdinaryRegistrationAndExistingMode(t *testing.T) {
 	db, app := setupAgencyInviteControllerTest(t)
 	agency, _, err := app.CreateAgency(1, "Pause Agency", "pause_operator", agencyInviteTestPolicy())
 	require.NoError(t, err)
-	recorder := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":"existing_durable","password":"password123","invite":%q}`, agency.InviteCode))
+	existingEmail := "existing.durable@example.com"
+	pausedEmail := "paused.invitee@example.com"
+	ordinaryEmail := "ordinary.customer@example.com"
+	recorder := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":%q,"password":"password123","invite":%q}`, existingEmail, agency.InviteCode))
 	require.Contains(t, recorder.Body.String(), `"success":true`)
 	t.Setenv("AGENCY_ONBOARDING_ENABLED", "false")
-	recorder = postAgencyInviteRegister(t, fmt.Sprintf(`{"username":"paused_invitee","password":"password123","invite":%q}`, agency.InviteCode))
+	recorder = postAgencyInviteRegister(t, fmt.Sprintf(`{"username":%q,"password":"password123","invite":%q}`, pausedEmail, agency.InviteCode))
 	assert.Contains(t, recorder.Body.String(), `"success":false`)
 	var count int64
-	require.NoError(t, db.Model(&model.User{}).Where("username = ?", "paused_invitee").Count(&count).Error)
+	require.NoError(t, db.Model(&model.User{}).Where("username = ?", pausedEmail).Count(&count).Error)
 	assert.Zero(t, count)
-	recorder = postAgencyInviteRegister(t, `{"username":"ordinary_customer","password":"password123"}`)
+	recorder = postAgencyInviteRegister(t, fmt.Sprintf(`{"username":%q,"password":"password123"}`, ordinaryEmail))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), `"success":true`)
 	var durable model.User
-	require.NoError(t, db.Where("username = ?", "existing_durable").First(&durable).Error)
+	require.NoError(t, db.Where("username = ?", existingEmail).First(&durable).Error)
 	assert.Equal(t, model.AgencyDurableBillingMode, durable.BillingMode)
 	var ordinary model.User
-	require.NoError(t, db.Where("username = ?", "ordinary_customer").First(&ordinary).Error)
+	require.NoError(t, db.Where("username = ?", ordinaryEmail).First(&ordinary).Error)
 	assert.NotEqual(t, model.AgencyDurableBillingMode, ordinary.BillingMode)
 }
 
@@ -153,8 +238,8 @@ func TestAgencyInviteRegistrationRollsBackUserWhenInviteIsInvalidOrDisabled(t *t
 		username string
 		invite   string
 	}{
-		{name: "invalid", username: "invalid_invite_user", invite: "NOTFOUND"},
-		{name: "disabled", username: "disabled_invite_user", invite: agency.InviteCode},
+		{name: "invalid", username: "invalid.invite@example.com", invite: "NOTFOUND"},
+		{name: "disabled", username: "disabled.invite@example.com", invite: agency.InviteCode},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -183,12 +268,13 @@ func TestAgencyInviteRegistrationRejectsLegacyAffiliateCode(t *testing.T) {
 	inviter := model.User{Username: "legacy_inviter", Password: "password", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, AffCode: "LEGACY"}
 	require.NoError(t, db.Create(&inviter).Error)
 
-	recorder := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":"mixed_invite_customer","password":"password123","invite":%q,"aff_code":"LEGACY"}`, agency.InviteCode))
+	email := "mixed.invite@example.com"
+	recorder := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":%q,"password":"password123","invite":%q,"aff_code":"LEGACY"}`, email, agency.InviteCode))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), `"success":false`)
 
 	var userCount int64
-	require.NoError(t, db.Model(&model.User{}).Where("username = ?", "mixed_invite_customer").Count(&userCount).Error)
+	require.NoError(t, db.Model(&model.User{}).Where("username = ?", email).Count(&userCount).Error)
 	assert.Zero(t, userCount)
 	var bindingCount int64
 	require.NoError(t, db.Model(&model.AgencyUserBinding{}).Count(&bindingCount).Error)
@@ -199,9 +285,10 @@ func TestAgencyInviteRegistrationRejectsDuplicateUserBeforeBinding(t *testing.T)
 	db, app := setupAgencyInviteControllerTest(t)
 	agency, _, err := app.CreateAgency(1, "Duplicate Agency", "duplicate_operator", agencyInviteTestPolicy())
 	require.NoError(t, err)
-	require.NoError(t, db.Create(&model.User{Username: "duplicate_customer", Password: "password", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, AffCode: "DUP"}).Error)
+	email := "duplicate.customer@example.com"
+	require.NoError(t, db.Create(&model.User{Username: email, Email: email, Password: "password", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, AffCode: "DUP"}).Error)
 
-	recorder := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":"duplicate_customer","password":"password123","invite":%q}`, agency.InviteCode))
+	recorder := postAgencyInviteRegister(t, fmt.Sprintf(`{"username":%q,"password":"password123","invite":%q}`, email, agency.InviteCode))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), `"success":false`)
 

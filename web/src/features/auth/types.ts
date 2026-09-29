@@ -39,7 +39,7 @@ export interface TwoFAPayload {
 export interface RegisterPayload {
   username: string
   password: string
-  email?: string
+  email: string
   verification_code?: string
   aff_code?: string
   invite?: string
@@ -119,6 +119,7 @@ export interface SystemStatus {
     turnstile_check?: boolean
     turnstile_site_key?: string
     email_verification?: boolean
+    smtp_configured?: boolean
     self_use_mode_enabled?: boolean
     display_in_currency?: boolean
     display_token_stat_enabled?: boolean
@@ -166,6 +167,7 @@ export interface SystemStatus {
   turnstile_check?: boolean
   turnstile_site_key?: string
   email_verification?: boolean
+  smtp_configured?: boolean
   self_use_mode_enabled?: boolean
   display_in_currency?: boolean
   display_token_stat_enabled?: boolean
@@ -214,4 +216,5 @@ export interface CustomOAuthProviderInfo {
 
 export interface AuthFormProps extends React.HTMLAttributes<HTMLFormElement> {
   redirectTo?: string
+  loginMode?: 'platform' | 'agency'
 }

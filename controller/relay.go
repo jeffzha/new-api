@@ -97,6 +97,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		if newAPIError != nil {
 			opsmonitor.ObserveError(c, relayInfo, relayFormat, newAPIError)
+			service.NotifyFeishuRelayError(c, relayInfo, relayFormat, newAPIError)
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			switch relayFormat {
@@ -544,16 +545,19 @@ func RelayTaskPluginEndpoint(c *gin.Context, fallback gin.HandlerFunc) {
 func RelayTaskFetch(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, &taskdto.TaskError{
+		taskErr := &taskdto.TaskError{
 			Code:       "gen_relay_info_failed",
 			Message:    err.Error(),
 			StatusCode: http.StatusInternalServerError,
-		})
+		}
+		service.NotifyFeishuTaskError(c, nil, taskErr)
+		c.JSON(http.StatusInternalServerError, taskErr)
 		return
 	}
 	opsmonitor.ObserveRelay(c, relayInfo)
 	if taskErr := relay.RelayTaskFetch(c, relayInfo.RelayMode); taskErr != nil {
 		opsmonitor.ObserveTaskError(c, relayInfo, taskErr)
+		service.NotifyFeishuTaskError(c, relayInfo, taskErr)
 		respondTaskError(c, taskErr)
 	}
 }
@@ -567,23 +571,27 @@ type taskSubmissionOutcome struct {
 func RelayTask(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
-		respondTaskSubmissionError(c, &taskdto.TaskError{
+		taskErr := &taskdto.TaskError{
 			Code:       "gen_relay_info_failed",
 			Message:    err.Error(),
 			StatusCode: http.StatusInternalServerError,
-		})
+		}
+		service.NotifyFeishuTaskError(c, nil, taskErr)
+		respondTaskSubmissionError(c, taskErr)
 		return
 	}
 	opsmonitor.ObserveRelay(c, relayInfo)
 
 	if taskErr := relay.ResolveOriginTask(c, relayInfo); taskErr != nil {
 		opsmonitor.ObserveTaskError(c, relayInfo, taskErr)
+		service.NotifyFeishuTaskError(c, relayInfo, taskErr)
 		respondTaskError(c, taskErr)
 		return
 	}
 
 	outcome, taskErr := executeTaskSubmission(c, relayInfo)
 	if taskErr != nil {
+		service.NotifyFeishuTaskError(c, relayInfo, taskErr)
 		respondTaskSubmissionError(c, taskErr)
 		return
 	}

@@ -59,7 +59,7 @@ describe('Signal page composition', () => {
       screen.getByRole('heading', { name: 'API credentials' })
     ).toBeInTheDocument()
     expect(screen.getByLabelText('Filter')).toBeInTheDocument()
-    expect(document.body).not.toHaveAttribute('data-theme-preset')
+    expect(document.body).toHaveAttribute('data-theme-preset', 'default')
   })
   it('fixed data pages retain bounded content and persistent pagination', () => {
     document.cookie = 'theme_preset=signal-console; path=/'

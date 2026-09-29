@@ -131,7 +131,7 @@ export type ThemeCustomization = {
 }
 
 export const DEFAULT_THEME_CUSTOMIZATION: ThemeCustomization = {
-  preset: 'default',
+  preset: 'prism-console',
   font: 'default',
   radius: 'default',
   scale: 'default',

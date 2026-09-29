@@ -54,7 +54,7 @@ describe('Prism theme selection', () => {
       within(presets).getByRole('radio', { name: 'preset.prism-console' })
     )
     expect(document.body).toHaveAttribute('data-theme-preset', 'prism-console')
-    expect(getCookie('theme_preset')).toBe('prism-console')
+    expect(getCookie('theme_preset')).toBeUndefined()
     expect(getCookie('vite-ui-theme')).toBe('light')
     expect(document.documentElement).toHaveClass('light')
     view.unmount()
@@ -81,24 +81,33 @@ describe('Prism theme selection', () => {
     expect(getCookie('vite-ui-theme')).toBe('dark')
   })
 
-  it('leaves fresh-browser defaults unchanged and removes Prism on reset', async () => {
+  it('uses Prism and light mode for fresh browsers and restores them on reset', async () => {
     mount()
-    expect(document.body).not.toHaveAttribute('data-theme-preset')
+    expect(document.body).toHaveAttribute('data-theme-preset', 'prism-console')
+    expect(document.documentElement).toHaveClass('light')
     const user = userEvent.setup()
     await user.click(
       screen.getByRole('button', { name: 'Open theme settings' })
     )
-    expect(screen.getByRole('radio', { name: 'Select system' })).toBeChecked()
-    await user.click(
-      screen.getByRole('radio', { name: 'preset.prism-console' })
-    )
+    expect(screen.getByRole('radio', { name: 'Select light' })).toBeChecked()
+    await user.click(screen.getByRole('radio', { name: 'preset.default' }))
+    await user.click(screen.getByRole('radio', { name: 'Select dark' }))
     await user.click(
       screen.getByRole('button', {
         name: 'Reset all settings to default values',
       })
     )
-    expect(document.body).not.toHaveAttribute('data-theme-preset')
+    expect(document.body).toHaveAttribute('data-theme-preset', 'prism-console')
     expect(getCookie('theme_preset')).toBeUndefined()
-    expect(screen.getByRole('radio', { name: 'Select system' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: 'Select light' })).toBeChecked()
+    expect(document.documentElement).toHaveClass('light')
+  })
+
+  it('keeps previously saved preset and color mode preferences', () => {
+    document.cookie = 'theme_preset=default; path=/'
+    document.cookie = 'vite-ui-theme=dark; path=/'
+    mount()
+    expect(document.body).toHaveAttribute('data-theme-preset', 'default')
+    expect(document.documentElement).toHaveClass('dark')
   })
 })

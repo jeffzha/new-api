@@ -48,7 +48,10 @@ it.each(['prism-console', 'signal-console'])(
     )
     const table = screen.getByRole('table')
     const scrollArea = table.closest('[data-slot="table-container"]')
-    expect(scrollArea).toHaveClass('table-scroll-area')
+    expect(scrollArea).toHaveClass(
+      'table-scroll-area',
+      '[&>[data-slot=scroll-area-scrollbar]]:p-0.5'
+    )
     expect(screen.getAllByRole('table')).toHaveLength(1)
     expect(within(table).getAllByRole('columnheader')).toHaveLength(2)
     expect(within(table).getAllByRole('row')).toHaveLength(21)
@@ -87,7 +90,10 @@ it.each(['prism-console', 'signal-console'])(
     )
     const table = screen.getByRole('table')
     const scrollArea = table.closest('[data-slot="table-container"]')
-    expect(scrollArea).toHaveClass('table-scroll-area')
+    expect(scrollArea).toHaveClass(
+      'table-scroll-area',
+      '[&>[data-slot=scroll-area-scrollbar]]:p-0.5'
+    )
     expect(
       scrollArea?.querySelector('[data-orientation="vertical"]')
     ).toHaveStyle({ top: 'var(--table-header-height)' })

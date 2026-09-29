@@ -35,7 +35,10 @@ export function TableScrollArea(props: {
     <ScrollArea
       ref={root}
       data-slot='table-container'
-      className={cn('table-scroll-area', props.className)}
+      className={cn(
+        'table-scroll-area [&>[data-slot=scroll-area-scrollbar]]:p-0.5',
+        props.className
+      )}
       viewportProps={{
         className: cn('table-scroll-viewport', props.viewportClassName),
       }}

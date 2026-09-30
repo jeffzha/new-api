@@ -4,7 +4,10 @@
 .vscode
 .gitignore
 Makefile
-docs
+docs/*
+!docs/openapi
+docs/openapi/*
+!docs/openapi/relay.json
 .eslintcache
 .gocache
 /web/node_modules

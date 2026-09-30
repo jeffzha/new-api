@@ -9,6 +9,7 @@ WORKDIR /build/web
 COPY web/package.json web/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY ./web ./
+COPY ./docs/openapi/relay.json /build/docs/openapi/relay.json
 COPY ./VERSION /build/VERSION
 RUN version="${BUILD_VERSION:-$(cat /build/VERSION)}" \
     && DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION="$version" bun run build

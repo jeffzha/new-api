@@ -429,7 +429,7 @@ func (a *TaskAdaptor) ParseTaskResult(_ *model.Task, _ *http.Response, body []by
 	return info, nil
 }
 func (a *TaskAdaptor) GetModelList() []string {
-	return []string{modelAlias}
+	return []string{modelAlias, legacyAlias}
 }
 func (a *TaskAdaptor) GetChannelName() string { return ChannelName }
 
@@ -457,7 +457,7 @@ func supportedModel(name string) bool {
 
 func resolveModelForRequest(name string, meta requestMetadata, prompt string) string {
 	name = strings.TrimSpace(name)
-	if name != modelAlias {
+	if !isUnifiedAlias(name) {
 		return name
 	}
 	if strings.TrimSpace(meta.Video) != "" {
@@ -560,10 +560,14 @@ func assignInputReference(req relaycommon.TaskSubmitReq, modelName string, meta 
 	if meta == nil || strings.TrimSpace(meta.Video) != "" || strings.TrimSpace(req.InputReference) == "" {
 		return
 	}
-	if modelName == modelEdit || (modelName == modelAlias && likelyVideoReference(req.InputReference)) {
+	if modelName == modelEdit || (isUnifiedAlias(modelName) && likelyVideoReference(req.InputReference)) {
 		meta.Video = strings.TrimSpace(req.InputReference)
 		meta.ReferenceImages = removeReference(meta.ReferenceImages, meta.Video)
 	}
+}
+
+func isUnifiedAlias(name string) bool {
+	return name == modelAlias || name == legacyAlias
 }
 
 func likelyVideoReference(value string) bool {

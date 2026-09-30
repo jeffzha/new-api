@@ -61,7 +61,7 @@ type ModelPricingSnapshot struct {
 
 func nativeTaskUsageSchema(name string) map[string]jsplugin.UsageFieldSchema {
 	switch name {
-	case "HappyHorse1.1", "happyhorse-1.1-t2v", "happyhorse-1.1-i2v", "happyhorse-1.1-r2v", "happyhorse-1.0-video-edit":
+	case "happyhorse-1.1", "HappyHorse1.1", "happyhorse-1.1-t2v", "happyhorse-1.1-i2v", "happyhorse-1.1-r2v", "happyhorse-1.0-video-edit":
 	default:
 		return nil
 	}

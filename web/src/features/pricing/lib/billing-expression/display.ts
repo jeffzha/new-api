@@ -47,6 +47,12 @@ export type TimeTokenTier = TokenTier & {
 }
 
 function isRequestCondition(node: ExpressionNode): boolean {
+  if (
+    node.kind !== 'binary' &&
+    !(node.kind === 'call' && node.name === 'has')
+  ) {
+    return false
+  }
   const dependencies = expressionDependencies(node)
   if (dependencies.variables.size > 0) return false
   const functions = [...dependencies.functions]

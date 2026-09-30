@@ -20,7 +20,7 @@ import (
 
 func TestHappyHorseModelListAndRatios(t *testing.T) {
 	assert.ElementsMatch(t, []string{modelT2V, modelI2V, modelR2V, modelEdit}, ModelList)
-	assert.Equal(t, []string{modelAlias}, (&TaskAdaptor{}).GetModelList())
+	assert.Equal(t, []string{modelAlias, legacyAlias}, (&TaskAdaptor{}).GetModelList())
 	assert.Equal(t, 1.0, resolutionRatio(modelT2V, "480P"))
 	assert.Equal(t, 2.0, resolutionRatio(modelT2V, "720P"))
 	assert.InDelta(t, 8.0/3, resolutionRatio(modelT2V, "1080P"), 1e-9)
@@ -29,10 +29,12 @@ func TestHappyHorseModelListAndRatios(t *testing.T) {
 }
 
 func TestHappyHorseUnifiedAliasRouting(t *testing.T) {
-	assert.Equal(t, modelT2V, resolveModelForRequest(modelAlias, requestMetadata{}, "a sunset"))
-	assert.Equal(t, modelI2V, resolveModelForRequest(modelAlias, requestMetadata{FirstFrame: "https://example.com/a.png"}, ""))
-	assert.Equal(t, modelR2V, resolveModelForRequest(modelAlias, requestMetadata{ReferenceImages: []string{"https://example.com/a.png"}}, "[Image 1] moves"))
-	assert.Equal(t, modelEdit, resolveModelForRequest(modelAlias, requestMetadata{Video: "https://example.com/a.mp4"}, "edit"))
+	for _, alias := range []string{modelAlias, legacyAlias} {
+		assert.Equal(t, modelT2V, resolveModelForRequest(alias, requestMetadata{}, "a sunset"))
+		assert.Equal(t, modelI2V, resolveModelForRequest(alias, requestMetadata{FirstFrame: "https://example.com/a.png"}, ""))
+		assert.Equal(t, modelR2V, resolveModelForRequest(alias, requestMetadata{ReferenceImages: []string{"https://example.com/a.png"}}, "[Image 1] moves"))
+		assert.Equal(t, modelEdit, resolveModelForRequest(alias, requestMetadata{Video: "https://example.com/a.mp4"}, "edit"))
+	}
 }
 
 func TestHappyHorseValidateRequestStoresParsedRequest(t *testing.T) {
@@ -57,9 +59,10 @@ func TestHappyHorseValidateRequestStoresParsedRequest(t *testing.T) {
 }
 
 func TestHappyHorseTieredPrices(t *testing.T) {
-	expression, ok := billing_setting.GetBuiltinBillingExpr(modelAlias)
-	require.True(t, ok)
-	for _, tc := range []struct {
+	for _, alias := range []string{modelAlias, legacyAlias} {
+		expression, ok := billing_setting.GetBuiltinBillingExpr(alias)
+		require.True(t, ok)
+		for _, tc := range []struct {
 		resolution string
 		want       float64
 	}{
@@ -67,10 +70,11 @@ func TestHappyHorseTieredPrices(t *testing.T) {
 		{"720P", 4.5 / 7.3},
 		{"1080P", 6.0 / 7.3},
 	} {
-		cost, trace, err := billingexpr.RunExprWithRequest(expression, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: map[string]any{"resolution": tc.resolution, "seconds": 5.0, "kind": "video"}})
-		require.NoError(t, err)
-		assert.InDelta(t, tc.want, cost, 1e-12)
-		assert.NotEmpty(t, trace.MatchedTier)
+			cost, trace, err := billingexpr.RunExprWithRequest(expression, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: map[string]any{"resolution": tc.resolution, "seconds": 5.0, "kind": "video"}})
+			require.NoError(t, err)
+			assert.InDelta(t, tc.want, cost, 1e-12)
+			assert.NotEmpty(t, trace.MatchedTier)
+		}
 	}
 }
 

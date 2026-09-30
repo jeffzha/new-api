@@ -110,50 +110,44 @@ export function Features(_props: FeaturesProps) {
   ]
 
   return (
-    <section className='bg-muted/20 relative z-10 px-5 py-20 sm:px-6 md:py-28'>
-      <div className='mx-auto max-w-6xl'>
-        <AnimateInView className='mx-auto mb-12 max-w-2xl text-center'>
-          <p className='text-primary mb-3 text-xs font-bold tracking-[0.14em] uppercase'>
-            {t('Why choose us')}
-          </p>
-          <h2 className='text-foreground text-3xl font-bold tracking-normal md:text-4xl'>
+    <section
+      className='gateway-reasons gateway-section'
+      aria-labelledby='gateway-reasons-title'
+    >
+      <div className='gateway-container'>
+        <div className='gateway-section-heading'>
+          <h2 id='gateway-reasons-title'>{t('Why choose us')}</h2>
+          <span className='gateway-reasons-subtitle'>
             {t('Professional, reliable, efficient AI infrastructure')}
-          </h2>
-        </AnimateInView>
+          </span>
+        </div>
 
-        <div className='grid gap-4 md:grid-cols-2 lg:grid-cols-3'>
+        <div className='gateway-reasons-grid'>
           {features.map((feature, index) => (
             <AnimateInView
               key={feature.title}
               delay={index * 70}
               animation='fade-up'
-              className='border-border/70 bg-card hover:border-primary/30 min-h-48 rounded-lg border p-6 shadow-sm transition-[border-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-md'
+              className='gateway-reason'
             >
-              <div className='bg-primary text-primary-foreground mb-6 flex size-10 items-center justify-center rounded-md shadow-sm'>
-                <feature.icon className='size-5' strokeWidth={1.8} />
+              <div className='gateway-reason-icon'>
+                <feature.icon size={18} strokeWidth={1.7} aria-hidden='true' />
               </div>
-              <h3 className='text-base font-semibold'>{feature.title}</h3>
-              <p className='text-muted-foreground mt-2 text-sm leading-6'>
-                {feature.description}
-              </p>
+              <div>
+                <h3>{feature.title}</h3>
+                <p>{feature.description}</p>
+              </div>
             </AnimateInView>
           ))}
         </div>
 
-        <div className='border-border/70 bg-card mt-12 grid overflow-hidden rounded-lg border sm:grid-cols-2 lg:grid-cols-4'>
+        <div className='gateway-capabilities'>
           {platformCapabilities.map((feature) => (
-            <div
-              key={feature.title}
-              className='border-border/60 flex gap-4 border-b p-5 last:border-b-0 lg:border-r lg:border-b-0 lg:last:border-r-0 sm:[&:nth-child(3)]:border-b-0 sm:[&:nth-child(odd)]:border-r'
-            >
-              <div className='text-primary bg-primary/10 flex size-9 shrink-0 items-center justify-center rounded-md'>
-                <feature.icon className='size-4.5' strokeWidth={1.8} />
-              </div>
+            <div key={feature.title} className='gateway-capability'>
+              <feature.icon size={17} strokeWidth={1.7} aria-hidden='true' />
               <div>
-                <h3 className='text-sm font-semibold'>{feature.title}</h3>
-                <p className='text-muted-foreground mt-1 text-xs leading-5'>
-                  {feature.description}
-                </p>
+                <h3>{feature.title}</h3>
+                <p>{feature.description}</p>
               </div>
             </div>
           ))}

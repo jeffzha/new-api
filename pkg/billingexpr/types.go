@@ -3,11 +3,15 @@ package billingexpr
 import (
 	"crypto/sha256"
 	"fmt"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 )
 
 type RequestInput struct {
+	// EvaluationTime is trusted server time, frozen for the billing lifecycle.
+	// A zero value uses the current time for standalone evaluations.
+	EvaluationTime time.Time
 	Headers map[string]string
 	Body    []byte
 	Usage   map[string]any
@@ -62,6 +66,7 @@ type TraceResult struct {
 // auto-group retry and settlement. It is fully serializable and contains no
 // compiled program pointers.
 type BillingSnapshot struct {
+	EvaluationTime            time.Time      `json:"evaluation_time"`
 	EstimatedImageCount       *int           `json:"estimated_image_count,omitempty"`
 	BillingMode               string         `json:"billing_mode"`
 	ModelName                 string         `json:"model_name"`

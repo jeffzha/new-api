@@ -7,7 +7,8 @@ const (
 	modelI2V     = "happyhorse-1.1-i2v"
 	modelR2V     = "happyhorse-1.1-r2v"
 	modelEdit    = "happyhorse-1.0-video-edit"
-	modelAlias   = "HappyHorse1.1"
+	modelAlias   = "happyhorse-1.1"
+	legacyAlias  = "HappyHorse1.1"
 )
 
 // ModelList contains provider-specific capability names. The unified alias is

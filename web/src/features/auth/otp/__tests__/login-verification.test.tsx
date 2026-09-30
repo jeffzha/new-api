@@ -178,6 +178,23 @@ it('accepts a completed Passkey login without opening another verification dialo
   expect(post).not.toHaveBeenCalled()
 })
 
+it('keeps the current verification and entered code when the input updates', async () => {
+  const post = vi.spyOn(api, 'post')
+  const { router } = renderLoginVerification()
+  const user = userEvent.setup()
+  const input = await screen.findByLabelText(
+    'Authenticator code or backup code'
+  )
+  await user.type(input, '123')
+  expect(input).toHaveValue('123')
+  await user.type(input, '456')
+  expect(input).toHaveValue('123456')
+  expect(input).toHaveFocus()
+  expect(router.state.location.pathname).toBe('/otp')
+  expect(post).not.toHaveBeenCalled()
+  expect(useAuthStore.getState().auth.user).toBeNull()
+})
+
 it('writes authentication only after verification and preserves the original destination', async () => {
   const pending = pendingLoginResponse()
   const post = vi.spyOn(api, 'post').mockReturnValue(pending.promise)

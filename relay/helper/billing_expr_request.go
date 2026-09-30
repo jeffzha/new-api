@@ -96,6 +96,7 @@ func readIncomingBillingExprBody(c *gin.Context) ([]byte, error) {
 
 func cloneRequestInput(src billingexpr.RequestInput) billingexpr.RequestInput {
 	input := billingexpr.RequestInput{
+		EvaluationTime: src.EvaluationTime,
 		Headers: cloneStringMap(src.Headers),
 	}
 	if src.ImageCount != nil {

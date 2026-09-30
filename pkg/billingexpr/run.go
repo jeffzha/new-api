@@ -56,6 +56,10 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 		RequestRules: append([]RequestRuleTrace(nil), requestRules...),
 	}
 	headers := normalizeHeaders(request.Headers)
+	evaluationTime := request.EvaluationTime
+	if evaluationTime.IsZero() {
+		evaluationTime = time.Now()
+	}
 	imageCount := 1
 	if usedVars["image_count"] {
 		if request.ImageCount != nil {
@@ -134,11 +138,12 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 			}
 			return strings.Contains(fmt.Sprint(source), substr)
 		},
-		"hour":    func(tz string) int { return timeInZone(tz).Hour() },
-		"minute":  func(tz string) int { return timeInZone(tz).Minute() },
-		"weekday": func(tz string) int { return int(timeInZone(tz).Weekday()) },
-		"month":   func(tz string) int { return int(timeInZone(tz).Month()) },
-		"day":     func(tz string) int { return timeInZone(tz).Day() },
+		"hour":       func(tz string) int { return timeInZone(evaluationTime, tz).Hour() },
+		"minute":     func(tz string) int { return timeInZone(evaluationTime, tz).Minute() },
+		"weekday":    func(tz string) int { return int(timeInZone(evaluationTime, tz).Weekday()) },
+		"month":      func(tz string) int { return int(timeInZone(evaluationTime, tz).Month()) },
+		"day":        func(tz string) int { return timeInZone(evaluationTime, tz).Day() },
+		"is_holiday": func(tz string) bool { return isChinaPublicHoliday(timeInZone(evaluationTime, tz)) },
 		"max":     math.Max,
 		"min":     math.Min,
 		"abs":     math.Abs,
@@ -157,16 +162,19 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 	return f, trace, nil
 }
 
-func timeInZone(tz string) time.Time {
+func timeInZone(now time.Time, tz string) time.Time {
 	tz = strings.TrimSpace(tz)
 	if tz == "" {
-		return time.Now().UTC()
+		return now.UTC()
+	}
+	if tz == "Asia/Shanghai" {
+		return now.In(chinaStandardTime)
 	}
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
-		return time.Now().UTC()
+		return now.UTC()
 	}
-	return time.Now().In(loc)
+	return now.In(loc)
 }
 
 func normalizeHeaders(headers map[string]string) map[string]string {

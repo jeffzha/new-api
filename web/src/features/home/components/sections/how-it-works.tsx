@@ -16,75 +16,136 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Settings, Zap, BarChart3 } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
+import {
+  ArrowRight,
+  ChevronRight,
+  CreditCard,
+  KeyRound,
+  PlugZap,
+} from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AnimateInView } from '@/components/animate-in-view'
+import { Dialog } from '@/components/dialog'
+import { Button } from '@/components/ui/button'
+import { useAuthStore } from '@/stores/auth-store'
 
 export function HowItWorks() {
   const { t } = useTranslation()
+  const user = useAuthStore((state) => state.auth.user)
+  const [pendingStep, setPendingStep] = useState<{
+    title: string
+    path: string
+  } | null>(null)
 
   const steps = [
     {
       num: '1',
-      title: t('Configure'),
-      desc: t(
-        'Add your API keys, set up channels and configure access permissions'
-      ),
-      icon: <Settings className='size-6' strokeWidth={1.5} />,
+      title: t('Recharge'),
+      desc: t('Top up your balance for model usage.'),
+      action: t('Go to recharge'),
+      path: '/wallet' as const,
+      icon: CreditCard,
     },
     {
       num: '2',
-      title: t('Connect'),
-      desc: t(
-        'Connect mainstream model services and compatible protocols with unified billing and usage management'
-      ),
-      icon: <Zap className='size-6' strokeWidth={1.5} />,
+      title: t('Configure'),
+      desc: t('Create an API key and set its permissions and quota.'),
+      action: t('Configure API keys'),
+      path: '/keys' as const,
+      icon: KeyRound,
     },
     {
       num: '3',
-      title: t('Monitor'),
-      desc: t('Track usage, costs and performance with real-time analytics'),
-      icon: <BarChart3 className='size-6' strokeWidth={1.5} />,
+      title: t('Connect'),
+      desc: t('Connect your application using the API documentation.'),
+      action: t('Open API documentation'),
+      path: '/docs' as const,
+      icon: PlugZap,
     },
   ]
 
   return (
-    <section className='border-border/60 relative z-10 border-t px-5 py-20 sm:px-6 md:py-28'>
-      <div className='mx-auto max-w-6xl'>
-        <AnimateInView className='mb-12 md:mb-14'>
-          <p className='text-primary mb-3 text-xs font-bold tracking-[0.14em] uppercase'>
-            {t('How It Works')}
-          </p>
-          <h2 className='text-3xl font-bold tracking-normal md:text-4xl'>
-            {t('Three steps to get started')}
-          </h2>
-        </AnimateInView>
+    <section
+      className='gateway-onboarding gateway-section'
+      aria-labelledby='gateway-steps-title'
+    >
+      <div className='gateway-container'>
+        <div className='gateway-section-heading'>
+          <h2 id='gateway-steps-title'>{t('Three steps to get started')}</h2>
+          <span className='gateway-section-index' aria-hidden='true'>
+            QUICK START
+          </span>
+        </div>
 
-        <div className='grid gap-4 md:grid-cols-3'>
+        <ol className='gateway-steps'>
           {steps.map((step, i) => (
             <AnimateInView
               key={step.num}
-              delay={i * 150}
+              as='li'
+              delay={i * 80}
               animation='fade-up'
-              className='border-border/70 bg-card relative rounded-lg border p-6 shadow-sm'
+              className='gateway-step'
             >
-              <div className='mb-7 flex items-center justify-between'>
-                <div className='text-primary bg-primary/10 flex size-11 items-center justify-center rounded-md'>
-                  {step.icon}
-                </div>
-                <span className='text-primary/30 text-4xl font-bold tabular-nums'>
-                  0{step.num}
+              <div className='gateway-step-top' aria-hidden='true'>
+                <span className='gateway-step-icon'>
+                  <step.icon size={19} strokeWidth={1.6} />
+                </span>
+                <span className='gateway-step-number'>0{step.num}</span>
+                <span className='gateway-step-connector'>
+                  <ChevronRight size={15} />
                 </span>
               </div>
-              <h3 className='mb-2 text-base font-semibold'>{step.title}</h3>
-              <p className='text-muted-foreground text-sm leading-6'>
-                {step.desc}
-              </p>
+              <h3>{step.title}</h3>
+              <p>{step.desc}</p>
+              <Button
+                variant='ghost'
+                className='gateway-step-action'
+                render={<Link to={step.path} />}
+                onClick={(event) => {
+                  if (!user) {
+                    event.preventDefault()
+                    setPendingStep({ title: step.title, path: step.path })
+                  }
+                }}
+              >
+                {step.action}
+                <ArrowRight size={15} aria-hidden='true' />
+              </Button>
             </AnimateInView>
           ))}
-        </div>
+        </ol>
       </div>
+      <Dialog
+        open={!!pendingStep}
+        onOpenChange={(open) => {
+          if (!open) setPendingStep(null)
+        }}
+        title={t('Sign in required')}
+        description={t('Please sign in to view {{module}}.', {
+          module: pendingStep?.title ?? '',
+        })}
+        contentClassName='sm:max-w-md'
+        contentHeight='auto'
+        footer={
+          <>
+            <Button variant='outline' onClick={() => setPendingStep(null)}>
+              {t('Cancel')}
+            </Button>
+            <Button
+              render={
+                <Link to='/sign-in' search={{ redirect: pendingStep?.path }} />
+              }
+            >
+              {t('Sign in now')}
+            </Button>
+          </>
+        }
+      >
+        {null}
+      </Dialog>
     </section>
   )
 }

@@ -46,6 +46,7 @@ import {
   ListTodo,
   MessageSquare,
   PlugZap,
+  FlaskConical,
   Radio,
   ServerCog,
   Settings,
@@ -174,6 +175,13 @@ export function useSidebarData(): SidebarData {
             title: t('Subscriptions'),
             url: '/subscriptions',
             icon: CreditCard,
+          },
+          {
+            title: t('Model mock scheduling'),
+            url: 'https://model-mock.nexus-reach.com',
+            icon: FlaskConical,
+            external: true,
+            requiredRole: ROLE.ADMIN,
           },
           {
             title: t('System Info'),

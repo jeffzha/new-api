@@ -30,7 +30,9 @@ func TestModelMockSSOPageRequiresAllowlistedOriginAndValidState(t *testing.T) {
 	}{
 		{name: "invalid state", target: "?state_hash=bad&origin=https://model-mock.example", status: http.StatusBadRequest},
 		{name: "untrusted origin", target: "?state_hash=" + stateHash + "&origin=https://evil.example", status: http.StatusForbidden},
+		{name: "invalid mode", target: "?state_hash=" + stateHash + "&origin=https://model-mock.example&mode=popup", status: http.StatusBadRequest},
 		{name: "allowlisted origin", target: "?state_hash=" + stateHash + "&origin=https://model-mock.example", status: http.StatusOK},
+		{name: "redirect mode", target: "?state_hash=" + stateHash + "&origin=https://model-mock.example&mode=redirect", status: http.StatusOK},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
@@ -40,6 +42,10 @@ func TestModelMockSSOPageRequiresAllowlistedOriginAndValidState(t *testing.T) {
 				require.Contains(t, recorder.Body.String(), "/api/model-mock/sso-ticket")
 				require.Contains(t, recorder.Body.String(), "new-api-model-mock-sso")
 				require.NotContains(t, recorder.Body.String(), "localStorage")
+				if strings.Contains(test.target, "mode=redirect") {
+					require.Contains(t, recorder.Body.String(), "location.replace")
+					require.Contains(t, recorder.Body.String(), "model_mock_ticket")
+				}
 				contentSecurityPolicy := recorder.Header().Get("Content-Security-Policy")
 				require.Contains(t, contentSecurityPolicy, "frame-ancestors")
 				require.Contains(t, contentSecurityPolicy, "https://model-mock.example")

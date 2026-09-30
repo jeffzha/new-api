@@ -28,11 +28,20 @@ const modelMockSSOPageTemplate = `<!doctype html>
 <body><div class="box"><h3>正在验证主平台登录状态</h3><p class="muted">请稍候，即将进入模型模拟调度。</p></div>
 <script>
 const PAYLOAD=__PAYLOAD__;
-function done(message){parent.postMessage(Object.assign({source:'new-api-model-mock-sso'},message),PAYLOAD.origin);}
+function done(message){
+  if(PAYLOAD.mode==='redirect'){
+    const params=new URLSearchParams();
+    if(message.ok&&message.ticket)params.set('model_mock_ticket',message.ticket);
+    else params.set('model_mock_error',message.error||'主站登录验证失败');
+    location.replace(PAYLOAD.origin+'/#'+params.toString());
+    return;
+  }
+  parent.postMessage(Object.assign({source:'new-api-model-mock-sso'},message),PAYLOAD.origin);
+}
 async function refresh(){
   const response=await fetch('/api/user/auth/refresh',{method:'POST',credentials:'include',cache:'no-store'});
   const data=await response.json();
-  if(!response.ok||!data.success||!data.data?.access_token)throw Error(data.message||'请先登录主平台');
+  if(!response.ok||!data.success||!data.data?.access_token)throw Error(response.status===401?'请先登录 New API 主站':(data.message||'主站登录验证失败'));
   return data.data.access_token;
 }
 async function run(){
@@ -101,7 +110,12 @@ func ModelMockSSOPage(c *gin.Context) {
 		c.String(http.StatusForbidden, "目标来源不在白名单内")
 		return
 	}
-	payload, err := common.Marshal(map[string]string{"state_hash": stateHash, "origin": origin})
+	mode := strings.TrimSpace(c.Query("mode"))
+	if mode != "" && mode != "redirect" {
+		c.String(http.StatusBadRequest, "无效的 SSO 模式")
+		return
+	}
+	payload, err := common.Marshal(map[string]string{"state_hash": stateHash, "origin": origin, "mode": mode})
 	if err != nil {
 		c.String(http.StatusInternalServerError, "页面初始化失败")
 		return

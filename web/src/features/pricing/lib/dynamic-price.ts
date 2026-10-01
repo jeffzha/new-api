@@ -391,6 +391,22 @@ export function getDynamicPriceEntries(
   })
 }
 
+/**
+ * Fixed, user-facing price line for a special-billing-expression model whose
+ * expression cannot be parsed into structured tiers. Returns the i18n key to
+ * render, or null to fall back to showing the raw expression.
+ */
+export function getSpecialExpressionPriceNote(
+  model: PricingModel
+): string | null {
+  // qwen-image-3.0 charges per generated image plus a small per-reference-image
+  // surcharge; show that as a simple line instead of the raw expression.
+  if (model.model_name === 'qwen-image-3.0') {
+    return 'Image input: ¥0.02/image, image generation: ¥0.18/image'
+  }
+  return null
+}
+
 export function getDynamicPricingSummary(
   model: PricingModel,
   options: DynamicPriceOptions

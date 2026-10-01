@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -26,7 +26,10 @@ import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import { DynamicPricingBreakdown } from '@/features/pricing/components/dynamic-pricing-breakdown'
 import { ModelPriceCell } from '@/features/pricing/components/model-price-cell'
-import { isDynamicPricingModel } from '@/features/pricing/lib/dynamic-price'
+import {
+  getSpecialExpressionPriceNote,
+  isDynamicPricingModel,
+} from '@/features/pricing/lib/dynamic-price'
 import {
   buildPreviewRows,
   createInitialLaneState,
@@ -130,6 +133,7 @@ export function ModelPricingPanel(props: {
   }
   if (!editData || !entry) return <LoadingState />
   const effectivePricing = modelPricingDisplay(entry)
+  const priceNote = getSpecialExpressionPriceNote(effectivePricing)
   const siteCurrency = getSitePricingCurrency(currencyConfig)
   const currency =
     currencyPreference === 'site' && isValidPricingCurrency(siteCurrency)
@@ -156,6 +160,38 @@ export function ModelPricingPanel(props: {
       row.key !== 'price' &&
       row.value !== t('Empty')
   )
+  let billingBody: ReactNode
+  if (isDynamicPricingModel(effectivePricing)) {
+    // For special-expression models with a friendly CNY note, ModelPriceCell
+    // above already renders the note, so render nothing extra here instead of
+    // the raw (USD-denominated) billing expression breakdown.
+    billingBody = priceNote ? null : (
+      <DynamicPricingBreakdown
+        compact
+        billingExpr={effectivePricing.billing_expr}
+        usageSchema={entry.usage_schema}
+      />
+    )
+  } else if (
+    effectivePricing.quota_type === 0 &&
+    Number.isFinite(effectivePricing.model_ratio)
+  ) {
+    billingBody = (
+      <dl className='grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3'>
+        {details.map((row) => (
+          <div key={row.key}>
+            <dt className='text-muted-foreground'>{row.label}</dt>
+            <dd className='mt-1 font-mono tabular-nums'>
+              {row.value}
+              {row.unit !== 'none' && ' / 1M'}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    )
+  } else {
+    billingBody = null
+  }
 
   return (
     <div className='flex min-h-0 min-w-0 flex-1 flex-col gap-3'>
@@ -202,28 +238,7 @@ export function ModelPricingPanel(props: {
                   showExpression={false}
                 />
               </div>
-              {isDynamicPricingModel(effectivePricing) ? (
-                <DynamicPricingBreakdown
-                  compact
-                  billingExpr={effectivePricing.billing_expr}
-                  usageSchema={entry.usage_schema}
-                />
-              ) : (
-                effectivePricing.quota_type === 0 &&
-                Number.isFinite(effectivePricing.model_ratio) && (
-                  <dl className='grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3'>
-                    {details.map((row) => (
-                      <div key={row.key}>
-                        <dt className='text-muted-foreground'>{row.label}</dt>
-                        <dd className='mt-1 font-mono tabular-nums'>
-                          {row.value}
-                          {row.unit !== 'none' && ' / 1M'}
-                        </dd>
-                      </div>
-                    ))}
-                  </dl>
-                )
-              )}
+              {billingBody}
             </section>
             {save.isError && (
               <div>

@@ -72,6 +72,7 @@ import {
   getDynamicPriceUnitLabelKey,
   getDynamicPricingSummary,
   getDynamicPricingTiers,
+  getSpecialExpressionPriceNote,
   getTaskUsageQuantityUnitLabelKey,
   isDynamicPricingModel,
   isUnconfiguredTaskUsageModel,
@@ -760,27 +761,34 @@ function PriceSection(props: {
 
   if (dynamicSummary) {
     if (dynamicSummary.isSpecialExpression) {
+      const priceNote = getSpecialExpressionPriceNote(props.model)
       return (
         <section>
           <SectionTitle>
             {t(props.model.sales_bps == null ? 'Base Price' : 'Your price')}
           </SectionTitle>
-          <div className='rounded-lg border border-amber-200/70 bg-amber-50/70 p-3 dark:border-amber-500/20 dark:bg-amber-500/10'>
-            <div className='text-sm font-medium text-amber-800 dark:text-amber-200'>
-              {t('Special billing expression')}
+          {priceNote ? (
+            <div className='rounded-lg border border-amber-200/70 bg-amber-50/70 p-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200'>
+              {t(priceNote)}
             </div>
-            <p className='text-muted-foreground mt-1 text-xs'>
-              {t('Unable to parse structured pricing')}
-            </p>
-            <div className='mt-3'>
-              <div className='text-muted-foreground mb-1 text-[10px] font-medium tracking-wider uppercase'>
-                {t('Raw expression')}
+          ) : (
+            <div className='rounded-lg border border-amber-200/70 bg-amber-50/70 p-3 dark:border-amber-500/20 dark:bg-amber-500/10'>
+              <div className='text-sm font-medium text-amber-800 dark:text-amber-200'>
+                {t('Special billing expression')}
               </div>
-              <code className='text-muted-foreground bg-background/80 block max-h-28 overflow-auto rounded-md border px-2 py-1.5 font-mono text-xs break-all'>
-                {dynamicSummary.rawExpression}
-              </code>
+              <p className='text-muted-foreground mt-1 text-xs'>
+                {t('Unable to parse structured pricing')}
+              </p>
+              <div className='mt-3'>
+                <div className='text-muted-foreground mb-1 text-[10px] font-medium tracking-wider uppercase'>
+                  {t('Raw expression')}
+                </div>
+                <code className='text-muted-foreground bg-background/80 block max-h-28 overflow-auto rounded-md border px-2 py-1.5 font-mono text-xs break-all'>
+                  {dynamicSummary.rawExpression}
+                </code>
+              </div>
             </div>
-          </div>
+          )}
         </section>
       )
     }
@@ -1205,30 +1213,37 @@ function ProviderGroupPricingSection(
     )
 
     if (dynamicTiers.length === 0) {
+      const priceNote = getSpecialExpressionPriceNote(props.model)
       return (
         <section>
           {!props.hideTitle && (
             <SectionTitle>{t('Pricing by Group')}</SectionTitle>
           )}
           <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
-          <div className='rounded-lg border border-amber-200/70 bg-amber-50/70 p-3 dark:border-amber-500/20 dark:bg-amber-500/10'>
-            <div className='text-sm font-medium text-amber-800 dark:text-amber-200'>
-              {t('Special billing expression')}
+          {priceNote ? (
+            <div className='rounded-lg border border-amber-200/70 bg-amber-50/70 p-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200'>
+              {t(priceNote)}
             </div>
-            <p className='text-muted-foreground mt-1 text-xs'>
-              {t(
-                'Group prices cannot be expanded because this expression is not a standard tiered pricing expression.'
-              )}
-            </p>
-            <div className='mt-3'>
-              <div className='text-muted-foreground mb-1 text-[10px] font-medium tracking-wider uppercase'>
-                {t('Raw expression')}
+          ) : (
+            <div className='rounded-lg border border-amber-200/70 bg-amber-50/70 p-3 dark:border-amber-500/20 dark:bg-amber-500/10'>
+              <div className='text-sm font-medium text-amber-800 dark:text-amber-200'>
+                {t('Special billing expression')}
               </div>
-              <code className='text-muted-foreground bg-background/80 block max-h-28 overflow-auto rounded-md border px-2 py-1.5 font-mono text-xs break-all'>
-                {props.model.billing_expr}
-              </code>
+              <p className='text-muted-foreground mt-1 text-xs'>
+                {t(
+                  'Group prices cannot be expanded because this expression is not a standard tiered pricing expression.'
+                )}
+              </p>
+              <div className='mt-3'>
+                <div className='text-muted-foreground mb-1 text-[10px] font-medium tracking-wider uppercase'>
+                  {t('Raw expression')}
+                </div>
+                <code className='text-muted-foreground bg-background/80 block max-h-28 overflow-auto rounded-md border px-2 py-1.5 font-mono text-xs break-all'>
+                  {props.model.billing_expr}
+                </code>
+              </div>
             </div>
-          </div>
+          )}
         </section>
       )
     }

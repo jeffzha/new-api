@@ -26,6 +26,7 @@ import { useBillingTime } from '../hooks/use-billing-time'
 import {
   getDynamicDisplayGroupRatio,
   getDynamicPricingSummary,
+  getSpecialExpressionPriceNote,
   isUnconfiguredTaskUsageModel,
 } from '../lib/dynamic-price'
 import { isTokenBasedModel } from '../lib/model-helpers'
@@ -77,9 +78,10 @@ export function CachedPriceCell(props: {
 
   if (dynamicSummary) {
     if (dynamicSummary.isSpecialExpression) {
+      const priceNote = getSpecialExpressionPriceNote(model)
       return (
         <span className='text-muted-foreground/50 text-xs'>
-          {t('Special billing expression')}
+          {priceNote ? t(priceNote) : t('Special billing expression')}
         </span>
       )
     }

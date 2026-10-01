@@ -193,6 +193,36 @@ it('updates count unit labels across cards, table cells and breakdowns with loca
   }
 })
 
+it('replaces the raw billing expression with a friendly price line for qwen-image-3.0', async () => {
+  const qwenModel: PricingModel = {
+    id: 2,
+    model_name: 'qwen-image-3.0',
+    quota_type: 0,
+    model_ratio: 1,
+    completion_ratio: 1,
+    enable_groups: ['default'],
+    billing_mode: 'tiered_expr',
+    billing_expr:
+      'tier("image", (0.0246575342465753 * image_count + 0.0027397260273972603 * reference_image_count) * 1000000)',
+  }
+  render(
+    <>
+      <div data-testid='cell'>
+        <ModelPriceCell model={qwenModel} />
+      </div>
+      <div data-testid='card'>
+        <ModelCard model={qwenModel} onClick={() => {}} />
+      </div>
+    </>
+  )
+  // The test i18n bundle is empty, so t() resolves to the English key value.
+  const friendly = 'Image input: ¥0.02/image, image generation: ¥0.18/image'
+  expect(screen.getByTestId('cell')).toHaveTextContent(friendly)
+  expect(screen.getByTestId('card')).toHaveTextContent(friendly)
+  expect(screen.queryByText(/reference_image_count/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/Special billing expression/)).not.toBeInTheDocument()
+})
+
 afterEach(async () => {
   cleanup()
   clients.forEach((client) => client.clear())

@@ -1,4 +1,5 @@
 {
+  "Image input: ¥0.02/image, image generation: ¥0.18/image": "图片输入：0.02元/张，图片生成：0.18元/张",
   "signal.page.analytics": "从消耗、模型需求到调用流向，在同一分析空间掌握业务表现。",
   "signal.page.keys": "集中管理接入凭证、额度与有效期，让每一次应用接入清晰可控。",
   "signal.page.usage": "追踪每一次请求与消耗，先缩小筛选范围，再深入查看调用细节。",

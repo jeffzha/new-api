@@ -161,6 +161,62 @@ it.each(['none', 'standard', 'claude_ttl'] as const)(
   }
 )
 
+it('shows qwen-image-3.0 pricing in CNY instead of the raw USD expression', async () => {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'administrator', role: 100 })
+  usePricingPreferencesStore.setState({ currency: 'USD' })
+  const effective = {
+    'billing_setting.billing_mode': 'tiered_expr',
+    'billing_setting.billing_expr':
+      'tier("image", (0.0246575342465753 * image_count + 0.0027397260273972603 * reference_image_count) * 1000000)',
+  }
+  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data:
+        url === '/api/option/model_pricing'
+          ? {
+              entries: [
+                {
+                  model_name: 'qwen-image-3.0',
+                  version: 'v1',
+                  configured: {},
+                  effective,
+                  cache_write_mode: 'none',
+                },
+              ],
+            }
+          : [],
+      vendors: [],
+    },
+  }))
+  vi.spyOn(api, 'post').mockResolvedValue({
+    data: { success: true, data: { effective, cache_write_mode: 'none' } },
+  })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  render(
+    <QueryClientProvider client={client}>
+      <ModelPricingPanel modelName='qwen-image-3.0' />
+    </QueryClientProvider>
+  )
+  const billing = await screen.findByRole('region', {
+    name: 'Current Billing',
+  })
+  expect(
+    within(billing).getByText(/image generation: ¥0\.18/)
+  ).toBeVisible()
+  expect(
+    within(billing).queryByText(/reference_image_count/)
+  ).not.toBeInTheDocument()
+  expect(
+    within(billing).queryByText('Special billing expression')
+  ).not.toBeInTheDocument()
+})
+
 function renderEditor(embedded = false) {
   vi.spyOn(api, 'get').mockResolvedValue({
     data: { success: true, data: [], vendors: [] },

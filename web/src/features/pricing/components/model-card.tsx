@@ -32,6 +32,7 @@ import {
   getDynamicPricingSummary,
   getDynamicPriceUnitLabelKey,
   getCardExamplePrice,
+  getSpecialExpressionPriceNote,
   isUnconfiguredTaskUsageModel,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
@@ -102,7 +103,12 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
     )
   } else if (dynamicSummary) {
     if (dynamicSummary.isSpecialExpression) {
-      priceSummary = (
+      const priceNote = getSpecialExpressionPriceNote(props.model)
+      priceSummary = priceNote ? (
+        <span className='text-muted-foreground text-xs break-words whitespace-normal'>
+          {t(priceNote)}
+        </span>
+      ) : (
         <span className='min-w-0'>
           <span className='text-amber-700 dark:text-amber-300'>
             {t('Special billing expression')}

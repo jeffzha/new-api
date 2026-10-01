@@ -28,6 +28,7 @@ import {
   getDynamicDisplayGroupRatio,
   getDynamicPriceUnitLabelKey,
   getDynamicPricingSummary,
+  getSpecialExpressionPriceNote,
   isUnconfiguredTaskUsageModel,
 } from '../lib/dynamic-price'
 import { isTokenBasedModel } from '../lib/model-helpers'
@@ -109,6 +110,14 @@ export function ModelPriceCell(props: {
 
   if (dynamic) {
     if (dynamic.isSpecialExpression) {
+      const priceNote = getSpecialExpressionPriceNote(props.model)
+      if (priceNote) {
+        return (
+          <span className='text-muted-foreground block max-w-full text-sm'>
+            {t(priceNote)}
+          </span>
+        )
+      }
       return (
         <span className='block max-w-full min-w-0'>
           <span className='text-muted-foreground block truncate text-sm'>

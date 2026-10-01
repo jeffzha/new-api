@@ -1,5 +1,4 @@
 {
-  "Image input: ¥0.02/image, image generation: ¥0.18/image": "图片输入：0.02元/张，图片生成：0.18元/张",
   "signal.page.analytics": "从消耗、模型需求到调用流向，在同一分析空间掌握业务表现。",
   "signal.page.keys": "集中管理接入凭证、额度与有效期，让每一次应用接入清晰可控。",
   "signal.page.usage": "追踪每一次请求与消耗，先缩小筛选范围，再深入查看调用细节。",
@@ -12,6 +11,7 @@
   "signal.page.marketplace": "探索模型能力，对比调用价格，找到下一款适合你的模型。",
   "signal.page.rankings": "通过平台调用数据，洞察模型需求与服务商趋势。",
   "translation": {
+    "Image input: ¥0.02/image, image generation: ¥0.18/image": "图片输入：0.02元/张，图片生成：0.18元/张",
     "Account": "账号",
     "Agency Center": "代理商中心",
     "Enter agency account": "输入代理商账号",

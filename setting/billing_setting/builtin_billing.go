@@ -38,5 +38,9 @@ var builtinBillingExpr = map[string]string{
 	// image (image-to-image). Converted to USD at the gateway's 7.3 rate:
 	// 0.18/7.3 = 0.0246575…, 0.02/7.3 = 0.0027397… . reference_image_count is 0
 	// for text-to-image, so the default stays exactly 0.18 CNY per image.
-	"qwen-image-3.0": `tier("image", fixed(0.0246575342465753)) * image_count + tier("reference", fixed(0.0027397260273972603)) * reference_image_count`,
+	// NOTE: the fixed-pricing validator enforces exactly one pricing leaf per
+	// execution, so an additive per-reference surcharge cannot use fixed() on
+	// two leaves. The whole request cost is folded into one tier and scaled by
+	// 1_000_000 to recover the per-1M-unit v1 encoding used by equity conversion.
+	"qwen-image-3.0": `tier("image", (0.0246575342465753 * image_count + 0.0027397260273972603 * reference_image_count) * 1000000)`,
 }

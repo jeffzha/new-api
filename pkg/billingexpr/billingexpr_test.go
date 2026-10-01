@@ -1198,7 +1198,7 @@ func TestFrontendSimulationContract(t *testing.T) {
 }
 
 func TestReferenceImageCountPricing(t *testing.T) {
-	const expr = `tier("image", fixed(0.0246575342465753)) * image_count + tier("reference", fixed(0.0027397260273972603)) * reference_image_count`
+	const expr = `tier("image", (0.0246575342465753 * image_count + 0.0027397260273972603 * reference_image_count) * 1000000)`
 	intp := func(n int) *int { return &n }
 	tests := []struct {
 		name       string

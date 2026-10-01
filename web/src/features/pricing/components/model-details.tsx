@@ -1592,6 +1592,10 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
     simpleTaskPricing ||
     taskTiers.length === 0
 
+  const specialExpressionPriceNote = getSpecialExpressionPriceNote(
+    props.model
+  )
+
   return (
     <div className='@container/details space-y-4'>
       <ModelHeader model={props.model} />
@@ -1630,22 +1634,24 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
                 showRechargePrice={showRechargePrice}
               />
             )}
-            {isDynamic && !simpleTaskPricing && (
-              <DynamicPricingBreakdown
-                billingExpr={props.model.billing_expr}
-                usageSchema={props.model.billing_usage_schema}
-                taskPriceOptions={{
-                  showRechargePrice,
-                  priceRate: props.priceRate,
-                  usdExchangeRate: props.usdExchangeRate,
-                  groupRatioMultiplier: getEffectiveGroupRatio(
-                    props.model,
-                    {},
-                    '_base'
-                  ),
-                }}
-              />
-            )}
+            {isDynamic &&
+              !simpleTaskPricing &&
+              !specialExpressionPriceNote && (
+                <DynamicPricingBreakdown
+                  billingExpr={props.model.billing_expr}
+                  usageSchema={props.model.billing_usage_schema}
+                  taskPriceOptions={{
+                    showRechargePrice,
+                    priceRate: props.priceRate,
+                    usdExchangeRate: props.usdExchangeRate,
+                    groupRatioMultiplier: getEffectiveGroupRatio(
+                      props.model,
+                      {},
+                      '_base'
+                    ),
+                  }}
+                />
+              )}
             <GroupPricingSection
               model={props.model}
               groupRatio={props.groupRatio}

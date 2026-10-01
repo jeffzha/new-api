@@ -223,6 +223,46 @@ it('replaces the raw billing expression with a friendly price line for qwen-imag
   expect(screen.queryByText(/Special billing expression/)).not.toBeInTheDocument()
 })
 
+it('shows only the friendly CNY note in the qwen-image-3.0 detail drawer, not the raw expression breakdown', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  const qwenModel: PricingModel = {
+    id: 4,
+    model_name: 'qwen-image-3.0',
+    quota_type: 0,
+    model_ratio: 1,
+    completion_ratio: 1,
+    enable_groups: ['default'],
+    billing_mode: 'tiered_expr',
+    billing_expr:
+      'tier("image", (0.0246575342465753 * image_count + 0.0027397260273972603 * reference_image_count) * 1000000)',
+  }
+  render(
+    <QueryClientProvider client={client}>
+      <ModelDetailsContent
+        model={qwenModel}
+        groupRatio={{ default: 2 }}
+        usableGroup={{ default: { desc: '', ratio: 2 } }}
+        endpointMap={{}}
+        autoGroups={[]}
+        priceRate={1}
+        usdExchangeRate={7}
+        tokenUnit='M'
+      />
+    </QueryClientProvider>
+  )
+  // The test i18n bundle is empty, so t() resolves to the English key value.
+  const friendly = 'Image input: ¥0.02/image, image generation: ¥0.18/image'
+  expect(screen.getAllByText(friendly).length).toBeGreaterThan(0)
+  // The raw billing expression / per-variable breakdown must not render.
+  expect(screen.queryByText(/reference_image_count/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/Raw expression/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/Special billing expression/)).not.toBeInTheDocument()
+})
+
 afterEach(async () => {
   cleanup()
   clients.forEach((client) => client.clear())

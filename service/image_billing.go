@@ -18,9 +18,14 @@ import (
 // PrepareImageBillingForRequest reserves the effective outbound image quantity
 // before each attempt, including channel retries and parameter overrides. The
 // client request body stays frozen; only the independent quantity is refreshed.
-func PrepareImageBillingForRequest(c *gin.Context, info *relaycommon.RelayInfo, count int, promptExtend bool) *types.NewAPIError {
+// refCount is the number of reference images attached to an image-to-image call
+// and feeds the additive per-reference-image surcharge for tiered expressions.
+func PrepareImageBillingForRequest(c *gin.Context, info *relaycommon.RelayInfo, count int, refCount int, promptExtend bool) *types.NewAPIError {
 	if count < 1 || count > dto.MaxImageN {
 		return types.NewErrorWithStatusCode(fmt.Errorf("image_count must be an integer between 1 and %d", dto.MaxImageN), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if refCount < 0 || refCount > dto.MaxReferenceImageN {
+		return types.NewErrorWithStatusCode(fmt.Errorf("reference_image_count must be between 0 and %d", dto.MaxReferenceImageN), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
 	info.ImageRequestCount = count
 	var quota int
@@ -35,6 +40,14 @@ func PrepareImageBillingForRequest(c *gin.Context, info *relaycommon.RelayInfo, 
 			request = *info.BillingRequestInput
 		}
 		request.ImageCount = &count
+		request.ReferenceImageCount = &refCount
+		// Persist the authoritative reference-image quantity so settlement
+		// (TryTieredSettle) replays the same surcharge instead of defaulting to 0.
+		if info.BillingRequestInput == nil {
+			info.BillingRequestInput = &billingexpr.RequestInput{}
+		}
+		info.BillingRequestInput.ImageCount = &count
+		info.BillingRequestInput.ReferenceImageCount = &refCount
 		cost, trace, runErr := billingexpr.RunExprByHashWithRequest(snap.ExprString, snap.ExprHash, billingexpr.TokenParams{
 			P: float64(snap.EstimatedPromptTokens), C: float64(snap.EstimatedCompletionTokens), Len: float64(snap.EstimatedPromptTokens),
 		}, request)

@@ -14,6 +14,11 @@ import (
 // wrapped-negative n overflows quota calculation into a negative charge.
 const MaxImageN = 128
 
+// MaxReferenceImageN caps the number of reference images counted for the
+// additive per-reference-image billing surcharge. Mirrors the generation-count
+// bound so a huge or wrapped array cannot overflow the surcharge computation.
+const MaxReferenceImageN = 128
+
 // ImageBillingParameters contains only the provider scalars parsed by request
 // validation. Keep this separate from the complete provider request payload.
 type ImageBillingParameters struct {
@@ -69,6 +74,74 @@ func (i *ImageRequest) ImageCount(useProviderParameters bool) (int, error) {
 		}
 	}
 	return int(n), nil
+}
+
+// ReferenceImageCount returns the number of reference images attached to an
+// image-to-image request. It detects the request mode:
+//   - Ali-native mode (a provider input object present): counts reference images
+//     from the input, covering both wan-style input.images arrays and ali
+//     message-style input.messages[].content[].image entries.
+//   - OpenAI-compatible mode: counts the top-level images array length.
+//
+// It is 0 when no reference images are supplied. A malformed payload is
+// rejected so billing never silently skips a surcharge.
+func (i *ImageRequest) ReferenceImageCount() (int, error) {
+	if input, ok := i.Extra["input"]; ok && len(input) > 0 {
+		return countAliInputReferenceImages(input)
+	}
+	if len(i.Images) == 0 {
+		return 0, nil
+	}
+	var refs []string
+	if err := json.Unmarshal(i.Images, &refs); err != nil {
+		return 0, fmt.Errorf("images must be an array of reference image URLs")
+	}
+	if err := validateReferenceImageCount(len(refs)); err != nil {
+		return 0, err
+	}
+	return len(refs), nil
+}
+
+// aliImageInputShape captures the provider input fields that can carry
+// reference images, independent of the channel implementation package.
+type aliImageInputShape struct {
+	Images   []string `json:"images"`
+	Messages []struct {
+		Content json.RawMessage `json:"content"`
+	} `json:"messages"`
+}
+
+func countAliInputReferenceImages(raw json.RawMessage) (int, error) {
+	var in aliImageInputShape
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return 0, fmt.Errorf("invalid ali input for reference image billing: %w", err)
+	}
+	count := len(in.Images)
+	for _, m := range in.Messages {
+		// content may be a plain string (text-only) or an array of media parts.
+		var contents []struct {
+			Image string `json:"image"`
+		}
+		if err := json.Unmarshal(m.Content, &contents); err != nil {
+			continue
+		}
+		for _, c := range contents {
+			if c.Image != "" {
+				count++
+			}
+		}
+	}
+	if err := validateReferenceImageCount(count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func validateReferenceImageCount(n int) error {
+	if n > MaxReferenceImageN {
+		return fmt.Errorf("reference image count must not exceed %d", MaxReferenceImageN)
+	}
+	return nil
 }
 
 func (i *ImageRequest) UnmarshalJSON(data []byte) error {

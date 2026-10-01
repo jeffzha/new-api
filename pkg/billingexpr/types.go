@@ -12,12 +12,17 @@ type RequestInput struct {
 	// EvaluationTime is trusted server time, frozen for the billing lifecycle.
 	// A zero value uses the current time for standalone evaluations.
 	EvaluationTime time.Time
-	Headers map[string]string
-	Body    []byte
-	Usage   map[string]any
+	Headers        map[string]string
+	Body           []byte
+	Usage          map[string]any
 	// ImageCount is a validated billing quantity, separate from the frozen
 	// request's n. Settlement can replace it with the actual returned count.
 	ImageCount *int
+	// ReferenceImageCount is the validated count of reference images attached
+	// to an image-to-image request. It defaults to 0 when the billing
+	// expression does not reference it. Used for additive per-reference-image
+	// surcharges (e.g. qwen-image-3.0 at +0.02 CNY per reference image).
+	ReferenceImageCount *int
 }
 
 // TokenParams holds all token dimensions passed into an Expr evaluation.
@@ -53,12 +58,13 @@ const (
 
 // TraceResult holds side-channel info captured while an expression runs.
 type TraceResult struct {
-	ImageCount   *int               `json:"image_count,omitempty"`
-	BillingUnit  BillingUnit        `json:"billing_unit"`
-	FixedPrice   *float64           `json:"fixed_price,omitempty"`
-	MatchedTier  string             `json:"matched_tier"`
-	RequestRules []RequestRuleTrace `json:"request_rules,omitempty"`
-	Cost         float64            `json:"cost"`
+	ImageCount          *int               `json:"image_count,omitempty"`
+	ReferenceImageCount *int               `json:"reference_image_count,omitempty"`
+	BillingUnit         BillingUnit        `json:"billing_unit"`
+	FixedPrice          *float64           `json:"fixed_price,omitempty"`
+	MatchedTier         string             `json:"matched_tier"`
+	RequestRules        []RequestRuleTrace `json:"request_rules,omitempty"`
+	Cost                float64            `json:"cost"`
 }
 
 // BillingSnapshot captures billing state at pre-consume time. Expression and

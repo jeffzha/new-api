@@ -1196,3 +1196,37 @@ func TestFrontendSimulationContract(t *testing.T) {
 		})
 	}
 }
+
+func TestReferenceImageCountPricing(t *testing.T) {
+	const expr = `tier("image", fixed(0.0246575342465753)) * image_count + tier("reference", fixed(0.0027397260273972603)) * reference_image_count`
+	intp := func(n int) *int { return &n }
+	tests := []struct {
+		name       string
+		image, ref int
+		want       float64
+	}{
+		{"no reference images", 1, 0, 0.0246575342465753 * 1e6},
+		{"one reference image", 1, 1, 0.0246575342465753*1e6 + 0.0027397260273972603*1e6},
+		{"two reference images", 2, 2, 0.0246575342465753*1e6*2 + 0.0027397260273972603*1e6*2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cost, trace, err := billingexpr.RunExprWithRequest(expr, billingexpr.TokenParams{}, billingexpr.RequestInput{
+				ImageCount: intp(tc.image), ReferenceImageCount: intp(tc.ref),
+			})
+			require.NoError(t, err)
+			assert.InDelta(t, tc.want, cost, 1e-3)
+			require.NotNil(t, trace.ReferenceImageCount)
+			assert.Equal(t, tc.ref, *trace.ReferenceImageCount)
+			require.NotNil(t, trace.ImageCount)
+			assert.Equal(t, tc.image, *trace.ImageCount)
+		})
+	}
+	// Bound enforcement: a negative or over-cap reference count is rejected.
+	for _, bad := range []int{-1, 129} {
+		_, _, err := billingexpr.RunExprWithRequest(expr, billingexpr.TokenParams{}, billingexpr.RequestInput{
+			ImageCount: intp(1), ReferenceImageCount: intp(bad),
+		})
+		require.Error(t, err)
+	}
+}

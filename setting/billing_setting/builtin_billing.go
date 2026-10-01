@@ -34,4 +34,9 @@ var builtinBillingExpr = map[string]string{
 	// Do not infer service-tier discounts from incoming request parameters:
 	// channels filter service_tier by default, so it may not reach the upstream.
 	"gpt-6-astra": `len <= 272000 ? tier("standard", p * 10 + c * 50 + cr * 1 + cc * 12.5) : tier("long_context", p * 20 + c * 75 + cr * 2 + cc * 25)`,
+	// qwen-image-3.0: base per generated image 0.18 CNY + 0.02 CNY per reference
+	// image (image-to-image). Converted to USD at the gateway's 7.3 rate:
+	// 0.18/7.3 = 0.0246575…, 0.02/7.3 = 0.0027397… . reference_image_count is 0
+	// for text-to-image, so the default stays exactly 0.18 CNY per image.
+	"qwen-image-3.0": `tier("image", fixed(0.0246575342465753)) * image_count + tier("reference", fixed(0.0027397260273972603)) * reference_image_count`,
 }

@@ -70,20 +70,31 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 		}
 		trace.ImageCount = &imageCount
 	}
+	refImageCount := 0
+	if usedVars["reference_image_count"] {
+		if request.ReferenceImageCount != nil {
+			refImageCount = *request.ReferenceImageCount
+		}
+		if refImageCount < 0 || refImageCount > dto.MaxReferenceImageN {
+			return 0, trace, fmt.Errorf("reference_image_count must be between 0 and %d", dto.MaxReferenceImageN)
+		}
+		trace.ReferenceImageCount = &refImageCount
+	}
 
 	env := map[string]any{
-		"image_count": float64(imageCount),
-		"p":           params.P,
-		"c":           params.C,
-		"len":         params.Len,
-		"cr":          params.CR,
-		"cc":          params.CC,
-		"cc1h":        params.CC1h,
-		"img":         params.Img,
-		"img_cr":      params.ImgCR,
-		"img_o":       params.ImgO,
-		"ai":          params.AI,
-		"ao":          params.AO,
+		"image_count":           float64(imageCount),
+		"reference_image_count": float64(refImageCount),
+		"p":                     params.P,
+		"c":                     params.C,
+		"len":                   params.Len,
+		"cr":                    params.CR,
+		"cc":                    params.CC,
+		"cc1h":                  params.CC1h,
+		"img":                   params.Img,
+		"img_cr":                params.ImgCR,
+		"img_o":                 params.ImgO,
+		"ai":                    params.AI,
+		"ao":                    params.AO,
 		"tier": func(name string, value float64) float64 {
 			trace.MatchedTier = name
 			trace.Cost = value
@@ -144,11 +155,11 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 		"month":      func(tz string) int { return int(timeInZone(evaluationTime, tz).Month()) },
 		"day":        func(tz string) int { return timeInZone(evaluationTime, tz).Day() },
 		"is_holiday": func(tz string) bool { return isChinaPublicHoliday(timeInZone(evaluationTime, tz)) },
-		"max":     math.Max,
-		"min":     math.Min,
-		"abs":     math.Abs,
-		"ceil":    math.Ceil,
-		"floor":   math.Floor,
+		"max":        math.Max,
+		"min":        math.Min,
+		"abs":        math.Abs,
+		"ceil":       math.Ceil,
+		"floor":      math.Floor,
 	}
 
 	out, err := expr.Run(prog, env)

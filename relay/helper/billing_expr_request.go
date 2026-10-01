@@ -50,6 +50,10 @@ func ResolveImageBillingRequestInput(c *gin.Context, info *relaycommon.RelayInfo
 	if err != nil {
 		return input, err
 	}
+	refCount, err := request.ReferenceImageCount()
+	if err != nil {
+		return input, err
+	}
 	topLevelCount, err := request.ImageCount(false)
 	if err != nil {
 		return input, err
@@ -64,6 +68,7 @@ func ResolveImageBillingRequestInput(c *gin.Context, info *relaycommon.RelayInfo
 	}
 	input.Body = encoded
 	input.ImageCount = &count
+	input.ReferenceImageCount = &refCount
 	return input, nil
 }
 
@@ -97,11 +102,15 @@ func readIncomingBillingExprBody(c *gin.Context) ([]byte, error) {
 func cloneRequestInput(src billingexpr.RequestInput) billingexpr.RequestInput {
 	input := billingexpr.RequestInput{
 		EvaluationTime: src.EvaluationTime,
-		Headers: cloneStringMap(src.Headers),
+		Headers:        cloneStringMap(src.Headers),
 	}
 	if src.ImageCount != nil {
 		count := *src.ImageCount
 		input.ImageCount = &count
+	}
+	if src.ReferenceImageCount != nil {
+		ref := *src.ReferenceImageCount
+		input.ReferenceImageCount = &ref
 	}
 	if len(src.Body) > 0 {
 		input.Body = append([]byte(nil), src.Body...)

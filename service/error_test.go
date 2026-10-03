@@ -152,6 +152,54 @@ func TestRelayErrorHandlerClassifiesTemporaryUpstreamOutage(t *testing.T) {
 	}
 }
 
+func TestRelayErrorHandlerClassifiesBedrockContentValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		statusCode int
+		message    string
+		wantCode   types.ErrorCode
+	}{
+		{
+			name:       "bedrock message content validation",
+			statusCode: http.StatusBadRequest,
+			message:    "InvokeModel: operation error Bedrock Runtime: ValidationException: messages.3.content: data did not match any variant of untagged enum MessageContent",
+			wantCode:   "invalid_request",
+		},
+		{
+			name:       "unrelated bad request",
+			statusCode: http.StatusBadRequest,
+			message:    "upstream rejected the request",
+			wantCode:   "unknown_error",
+		},
+		{
+			name:       "validation text on server error",
+			statusCode: http.StatusInternalServerError,
+			message:    "ValidationException: MessageContent",
+			wantCode:   "unknown_error",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			body := "{\"error\":{\"message\":\"" + tc.message + "\",\"type\":\"openai_error\",\"code\":null}}"
+			resp := &http.Response{
+				StatusCode: tc.statusCode,
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}
+
+			newAPIError := RelayErrorHandler(context.Background(), resp, false)
+
+			require.NotNil(t, newAPIError)
+			require.Equal(t, tc.wantCode, newAPIError.GetErrorCode())
+			require.Equal(t, tc.statusCode, newAPIError.StatusCode)
+			require.Equal(t, tc.message, newAPIError.Error())
+		})
+	}
+}
+
 func TestRelayErrorHandlerKeepsInvalidJSONBodyInDebugLog(t *testing.T) {
 	withDebugEnabled(t, true)
 

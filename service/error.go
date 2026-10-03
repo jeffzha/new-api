@@ -118,8 +118,13 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		oaiError := errResponse.TryToOpenAIError()
 		if oaiError != nil {
 			newApiErr = types.WithOpenAIError(*oaiError, resp.StatusCode)
-			if newApiErr.GetErrorCode() == types.ErrorCode("unknown_error") && isTemporaryServiceUnavailable(oaiError.Message) {
-				oaiError.Code = "service_unavailable"
+			if newApiErr.GetErrorCode() == types.ErrorCode("unknown_error") {
+				switch {
+				case isTemporaryServiceUnavailable(oaiError.Message):
+					oaiError.Code = "service_unavailable"
+				case isUpstreamInvalidRequest(resp.StatusCode, oaiError.Message):
+					oaiError.Code = "invalid_request"
+				}
 				newApiErr = types.WithOpenAIError(*oaiError, resp.StatusCode)
 			}
 			if showBodyWhenFail {
@@ -146,6 +151,15 @@ func isTemporaryServiceUnavailable(message string) bool {
 	return strings.Contains(message, "service temporarily unavailable") ||
 		strings.Contains(message, "service unavailable") ||
 		strings.Contains(message, "temporarily unavailable")
+}
+
+func isUpstreamInvalidRequest(statusCode int, message string) bool {
+	if statusCode != http.StatusBadRequest {
+		return false
+	}
+	message = strings.ToLower(message)
+	return strings.Contains(message, "validationexception") &&
+		(strings.Contains(message, "messagecontent") || strings.Contains(message, "request is invalid"))
 }
 
 func ResetStatusCode(newApiErr *types.NewAPIError, statusCodeMappingStr string) {

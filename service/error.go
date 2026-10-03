@@ -118,6 +118,10 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		oaiError := errResponse.TryToOpenAIError()
 		if oaiError != nil {
 			newApiErr = types.WithOpenAIError(*oaiError, resp.StatusCode)
+			if newApiErr.GetErrorCode() == types.ErrorCode("unknown_error") && isTemporaryServiceUnavailable(oaiError.Message) {
+				oaiError.Code = "service_unavailable"
+				newApiErr = types.WithOpenAIError(*oaiError, resp.StatusCode)
+			}
 			if showBodyWhenFail {
 				newApiErr.Err = buildErrWithBody(newApiErr.Error())
 			}
@@ -135,6 +139,13 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		newApiErr.Err = buildErrWithBody(newApiErr.Error())
 	}
 	return
+}
+
+func isTemporaryServiceUnavailable(message string) bool {
+	message = strings.ToLower(message)
+	return strings.Contains(message, "service temporarily unavailable") ||
+		strings.Contains(message, "service unavailable") ||
+		strings.Contains(message, "temporarily unavailable")
 }
 
 func ResetStatusCode(newApiErr *types.NewAPIError, statusCodeMappingStr string) {

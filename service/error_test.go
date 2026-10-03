@@ -121,6 +121,37 @@ func TestRelayErrorHandlerKeepsOpenAIErrorMessage(t *testing.T) {
 	require.Equal(t, message, newAPIError.Error())
 }
 
+func TestRelayErrorHandlerClassifiesTemporaryUpstreamOutage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		message  string
+		wantCode types.ErrorCode
+	}{
+		{name: "temporary outage", message: "Service temporarily unavailable. Please try again later.", wantCode: "service_unavailable"},
+		{name: "ordinary forbidden", message: "Access denied for this API key", wantCode: "unknown_error"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			body := `{"error":{"message":"` + tc.message + `","type":"openai_error","code":null}}`
+			resp := &http.Response{
+				StatusCode: http.StatusForbidden,
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}
+
+			newAPIError := RelayErrorHandler(context.Background(), resp, false)
+
+			require.NotNil(t, newAPIError)
+			require.Equal(t, tc.wantCode, newAPIError.GetErrorCode())
+			require.Equal(t, http.StatusForbidden, newAPIError.StatusCode)
+			require.Equal(t, tc.message, newAPIError.Error())
+		})
+	}
+}
+
 func TestRelayErrorHandlerKeepsInvalidJSONBodyInDebugLog(t *testing.T) {
 	withDebugEnabled(t, true)
 

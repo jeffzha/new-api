@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -27,6 +28,53 @@ type liveModelChannel struct {
 	Model       string
 	ChannelID   int
 	ChannelName string
+}
+
+type platformPricingAgencyPolicy struct {
+	AgencyID       int64
+	ParentAgencyID *int64
+	DisplayName    string
+	PolicyJSON     string
+}
+
+type platformPricingConflictError struct {
+	Conflicts []string
+}
+
+func (e *platformPricingConflictError) Error() string {
+	return strings.Join(e.Conflicts, "；")
+}
+
+func validatePlatformPricingCustomerSales(db *gorm.DB, policy agencycontract.PlatformPolicy) ([]string, error) {
+	var activePolicies []platformPricingAgencyPolicy
+	if err := db.Table((model.Agency{}).TableName() + " AS agency").
+		Select("agency.id AS agency_id, agency.parent_agency_id, agency.display_name, version.policy_json").
+		Joins("JOIN " + (model.AgencyPricePolicyVersion{}).TableName() + " AS version ON version.id = agency.current_policy_version_id AND version.agency_id = agency.id").
+		Scan(&activePolicies).Error; err != nil {
+		return nil, err
+	}
+
+	conflicts := make([]string, 0)
+	for _, row := range activePolicies {
+		var agencyPolicy agencycontract.Policy
+		if err := common.Unmarshal([]byte(row.PolicyJSON), &agencyPolicy); err != nil {
+			return nil, fmt.Errorf("代理商价格策略数据异常：%s", row.DisplayName)
+		}
+		var validationErr error
+		effectivePolicy := agencyPolicy
+		if row.ParentAgencyID == nil {
+			effectivePolicy, validationErr = agencycontract.ApplyPlatformPolicy(agencyPolicy, policy)
+		} else {
+			validationErr = agencycontract.ValidatePolicy(agencyPolicy)
+		}
+		if validationErr == nil {
+			validationErr = validateCustomerSalesPolicyTx(db, row.AgencyID, effectivePolicy)
+		}
+		if validationErr != nil {
+			conflicts = append(conflicts, row.DisplayName+"："+pricingErrorMessage(validationErr))
+		}
+	}
+	return conflicts, nil
 }
 
 type PlatformPricingCatalogChannel struct {
@@ -251,36 +299,10 @@ func (a *App) publishPlatformPricing(c *gin.Context) {
 			}
 		}
 	}
-	var activePolicies []struct {
-		AgencyID       int64
-		ParentAgencyID *int64
-		DisplayName    string
-		PolicyJSON     string
-	}
-	if err = a.db.Table((model.Agency{}).TableName() + " AS agency").
-		Select("agency.id AS agency_id, agency.parent_agency_id, agency.display_name, version.policy_json").
-		Joins("JOIN " + (model.AgencyPricePolicyVersion{}).TableName() + " AS version ON version.id = agency.current_policy_version_id AND version.agency_id = agency.id").
-		Scan(&activePolicies).Error; err != nil {
+	conflicts, err := validatePlatformPricingCustomerSales(a.db, policy)
+	if err != nil {
 		respondError(c, http.StatusInternalServerError, "database_error", "校验代理商价格策略失败", nil)
 		return
-	}
-	conflicts := make([]string, 0)
-	for _, row := range activePolicies {
-		var agencyPolicy agencycontract.Policy
-		if decodeErr := common.Unmarshal([]byte(row.PolicyJSON), &agencyPolicy); decodeErr != nil {
-			respondError(c, http.StatusConflict, "invalid_agency_pricing", "代理商价格策略数据异常："+row.DisplayName, nil)
-			return
-		}
-		var validationErr error
-		if row.ParentAgencyID == nil {
-			_, validationErr = agencycontract.ApplyPlatformPolicy(agencyPolicy, policy)
-		} else {
-			// Child agencies retain the cost inherited in their own policy revision.
-			validationErr = agencycontract.ValidatePolicy(agencyPolicy)
-		}
-		if validationErr != nil {
-			conflicts = append(conflicts, row.DisplayName+"："+pricingErrorMessage(validationErr))
-		}
 	}
 	if len(conflicts) > 0 {
 		respondError(c, http.StatusConflict, "agency_sales_below_cost", "以下代理商的价格策略不符合要求，请先调整："+strings.Join(conflicts, "；"), nil)
@@ -289,6 +311,19 @@ func (a *App) publishPlatformPricing(c *gin.Context) {
 	identity := currentIdentity(c)
 	now := time.Now().UnixMilli()
 	err = a.db.Transaction(func(tx *gorm.DB) error {
+		// Customer price changes lock their agency first. Taking the same locks
+		// here serializes the final validation with concurrent customer updates.
+		var agencies []model.Agency
+		if lockErr := model.AgencyLockForUpdate(tx).Order("id ASC").Find(&agencies).Error; lockErr != nil {
+			return lockErr
+		}
+		transactionConflicts, validationErr := validatePlatformPricingCustomerSales(tx, policy)
+		if validationErr != nil {
+			return validationErr
+		}
+		if len(transactionConflicts) > 0 {
+			return &platformPricingConflictError{Conflicts: transactionConflicts}
+		}
 		var state model.AgencyPlatformPriceState
 		findErr := tx.First(&state, 1).Error
 		if errors.Is(findErr, gorm.ErrRecordNotFound) {
@@ -328,6 +363,11 @@ func (a *App) publishPlatformPricing(c *gin.Context) {
 		return recordAuditTx(tx, c, identity, "pricing.platform.publish", "platform_pricing", "current", request.Reason, gin.H{"revision": request.ExpectedRevision}, gin.H{"revision": policy.Revision, "model_count": len(policy.ModelPrices)})
 	})
 	if err != nil {
+		var conflictErr *platformPricingConflictError
+		if errors.As(err, &conflictErr) {
+			respondError(c, http.StatusConflict, "agency_sales_below_cost", "以下代理商的价格策略不符合要求，请先调整："+conflictErr.Error(), nil)
+			return
+		}
 		if errors.Is(err, agencycontract.ErrPolicyRevision) {
 			respondError(c, http.StatusConflict, "price_revision_conflict", "平台价格策略已更新，请刷新后重试", nil)
 			return

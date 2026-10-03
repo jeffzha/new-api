@@ -352,6 +352,29 @@ func TestPlatformPricingPublishesLiveModelChannelMatrixAndRejectsAgencyConflict(
 	retainedResponse := client.post("/agency/api/v1/root/platform-pricing/publish", retained, "platform-pricing-retained", retainedProof)
 	require.Equal(t, http.StatusOK, retainedResponse.Code, retainedResponse.Body.String())
 
+	negotiatedSales := 6500
+	rootPolicy := agencycontract.Policy{
+		DefaultSettlementBPS: 5000, DefaultSalesBPS: 6500, MinSpreadBPS: 500, SalesCapBPS: 30000,
+		ModelOverrides: []agencycontract.ModelOverride{{OriginModelName: "glm-5.3", SalesBPS: &negotiatedSales}},
+	}
+	negotiatedAgency, _, err := client.app.CreateAgency(client.rootID, "Negotiated price agency", "negotiated-price-agency", rootPolicy)
+	require.NoError(t, err)
+	modelKey, err := agencycontract.ModelKey("glm-5.3")
+	require.NoError(t, err)
+	require.NoError(t, client.app.db.Create(&model.AgencyCustomerSalesOverride{
+		AgencyID: negotiatedAgency.ID, UserID: 175, ModelKey: modelKey, OriginModelName: "glm-5.3",
+		SalesBPS: 6000, Revision: 1, CreatedByType: ActorTypeRoot, CreatedByID: client.rootID,
+	}).Error)
+
+	staleOverride := fmt.Sprintf(`{"expected_revision":2,"model_prices":[{"origin_model_name":"glm-5.3","channel_costs":[{"channel_id":%d,"platform_cost_bps":5000},{"channel_id":%d,"platform_cost_bps":5400}],"agency_cost_bps":5600,"default_sales_bps":6500}],"reason":"raise agency cost"}`, channel.Id, backupChannel.Id)
+	staleOverrideProof := client.proof(t, staleOverride, "pricing.platform.publish", "platform_pricing:current", "platform-pricing-stale-customer")
+	staleOverrideResponse := client.post("/agency/api/v1/root/platform-pricing/publish", staleOverride, "platform-pricing-stale-customer", staleOverrideProof)
+	require.Equal(t, http.StatusConflict, staleOverrideResponse.Code, staleOverrideResponse.Body.String())
+	require.Contains(t, staleOverrideResponse.Body.String(), "Negotiated price agency")
+	require.Contains(t, staleOverrideResponse.Body.String(), "客户 175")
+	require.Contains(t, staleOverrideResponse.Body.String(), "glm-5.3")
+	require.NoError(t, client.app.db.Where("agency_id = ? AND user_id = ?", negotiatedAgency.ID, 175).Delete(&model.AgencyCustomerSalesOverride{}).Error)
+
 	lowSales := 6100
 	_, _, err = client.app.CreateAgency(client.rootID, "Low sale agency", "low-sale-agency", agencycontract.Policy{
 		DefaultSettlementBPS: 5000, DefaultSalesBPS: 6500, MinSpreadBPS: 500, SalesCapBPS: 30000,

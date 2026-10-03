@@ -42,6 +42,10 @@ type salesPricingRequest struct {
 }
 
 func pricingErrorMessage(err error) string {
+	var customerErr *customerSalesPolicyError
+	if errors.As(err, &customerErr) {
+		return fmt.Sprintf("客户 %d（模型 %s）：%s", customerErr.UserID, customerErr.ModelName, pricingErrorMessage(customerErr.Cause))
+	}
 	var coefficientErr *agencycontract.PolicyCoefficientError
 	if errors.As(err, &coefficientErr) {
 		field := map[string]string{

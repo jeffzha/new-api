@@ -1,6 +1,7 @@
 package moonshot
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"testing"
 
@@ -108,4 +109,28 @@ func TestConvertOpenAIRequestOtherMoonshotModelKeepsTemperature(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, convertedRequest.Temperature)
 	require.Equal(t, 0.7, *convertedRequest.Temperature)
+}
+
+func TestResponsesRequestUsesChatCompletionsUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatOpenAIResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://example.com"},
+	}
+	info.InitRequestConversionChain()
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(c, info, dto.OpenAIResponsesRequest{
+		Model: "kimi-k3",
+		Input: json.RawMessage(`"hello"`),
+	})
+	require.NoError(t, err)
+	request, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Equal(t, "kimi-k3", request.Model)
+	require.Equal(t, types.RelayFormatOpenAI, info.GetFinalRequestRelayFormat())
+
+	url, err := (&Adaptor{}).GetRequestURL(info)
+	require.NoError(t, err)
+	require.Equal(t, "https://example.com/v1/chat/completions", url)
 }

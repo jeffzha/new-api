@@ -2,7 +2,6 @@ package agencyhub
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -31,6 +30,15 @@ type customerSalesPricingBatchRequest struct {
 	} `json:"models"`
 	Reason string `json:"reason"`
 }
+
+type customerSalesPolicyError struct {
+	UserID    int64
+	ModelName string
+	Cause     error
+}
+
+func (e *customerSalesPolicyError) Error() string { return e.Cause.Error() }
+func (e *customerSalesPolicyError) Unwrap() error { return e.Cause }
 
 func customerSalesKey(modelName string) (string, string, error) {
 	modelName = strings.TrimSpace(modelName)
@@ -94,7 +102,7 @@ func validateCustomerSalesPolicyTx(tx *gorm.DB, agencyID int64, policy agencycon
 	}
 	for _, override := range overrides {
 		if err := validateCustomerSalesPolicy(policy, override.OriginModelName, override.SalesBPS); err != nil {
-			return fmt.Errorf("客户 %d（模型 %s，销售系数 %.4f）：%s", override.UserID, override.OriginModelName, float64(override.SalesBPS)/10000, pricingErrorMessage(err))
+			return &customerSalesPolicyError{UserID: override.UserID, ModelName: override.OriginModelName, Cause: err}
 		}
 	}
 	return nil

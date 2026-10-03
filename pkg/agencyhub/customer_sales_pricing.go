@@ -73,23 +73,31 @@ func validateCustomerSalesPolicy(effective agencycontract.Policy, modelName stri
 		if err != nil {
 			return err
 		}
-		if sales < resolved.SettlementBPS+effective.MinSpreadBPS {
-			return errors.New("customer sales coefficient is below agency cost plus minimum spread")
-		}
-		return nil
+		return validateCustomerSalesAgainstCost(resolved.SettlementBPS, effective.MinSpreadBPS, sales)
 	}
-	minimum := effective.DefaultSettlementBPS + effective.MinSpreadBPS
+	if err := validateCustomerSalesAgainstCost(effective.DefaultSettlementBPS, effective.MinSpreadBPS, sales); err != nil {
+		return errors.New("customer-wide sales coefficient is invalid for one or more model costs")
+	}
 	for _, override := range effective.ModelOverrides {
 		settlement := effective.DefaultSettlementBPS
 		if override.SettlementBPS != nil {
 			settlement = *override.SettlementBPS
 		}
-		if settlement+effective.MinSpreadBPS > minimum {
-			minimum = settlement + effective.MinSpreadBPS
+		if err := validateCustomerSalesAgainstCost(settlement, effective.MinSpreadBPS, sales); err != nil {
+			return errors.New("customer-wide sales coefficient is invalid for one or more model costs")
 		}
 	}
-	if sales < minimum {
-		return errors.New("customer-wide sales coefficient is below one or more model costs")
+	return nil
+}
+
+func validateCustomerSalesAgainstCost(cost, minSpread, sales int) error {
+	if sales < cost {
+		return errors.New("customer sales coefficient is below agency cost")
+	}
+	// Selling at the exact agency cost is an explicit zero-margin exception.
+	// Any price above cost must still preserve the complete minimum spread.
+	if sales != cost && sales < cost+minSpread {
+		return errors.New("customer sales coefficient is above cost but below the minimum spread")
 	}
 	return nil
 }

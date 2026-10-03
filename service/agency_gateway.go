@@ -355,7 +355,7 @@ func AgencyQuoteForUser(userID, tokenID int, originModelName string, acceptedAtM
 	if resolved.SalesBPS < resolved.SettlementBPS {
 		return nil, errors.New("customer sales coefficient is below agency cost")
 	}
-	hierarchy, hierarchyEligible, hierarchyReason, err := agencyPricingHierarchy(agency, originModelName, resolved.SalesBPS, modelKey, platform)
+	hierarchy, hierarchyEligible, hierarchyReason, err := agencyPricingHierarchy(agency, originModelName, resolved.SalesBPS, overrideErr == nil, modelKey, platform)
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +382,7 @@ func AgencyQuoteForUser(userID, tokenID int, originModelName string, acceptedAtM
 // Legacy agencies have a nil parent and naturally produce a one-node chain.
 // Any broken/disabled ancestor fails closed for new requests while preserving
 // the legacy snapshot fields used by existing settlement code.
-func agencyPricingHierarchy(leaf model.Agency, originModelName string, leafSales int, modelKey string, platform agencycontract.PlatformPolicy) ([]agencycontract.PricingTierNode, bool, string, error) {
+func agencyPricingHierarchy(leaf model.Agency, originModelName string, leafSales int, customerOverride bool, modelKey string, platform agencycontract.PlatformPolicy) ([]agencycontract.PricingTierNode, bool, string, error) {
 	const maxDepth = 10
 	chain := make([]model.Agency, 0, maxDepth)
 	seen := make(map[int64]struct{}, maxDepth)
@@ -459,8 +459,16 @@ func agencyPricingHierarchy(leaf model.Agency, originModelName string, leafSales
 			return nil, false, "agency_cost_invalid", errors.New("agency hierarchy cost spread is below minimum")
 		}
 	}
-	if len(nodes) > 0 && nodes[len(nodes)-1].SalesBPS != nil && *nodes[len(nodes)-1].SalesBPS < nodes[len(nodes)-1].CostBPS+minSpreadBPS {
-		return nil, false, "agency_sales_invalid", errors.New("leaf sales coefficient is below cost plus minimum spread")
+	if len(nodes) > 0 && nodes[len(nodes)-1].SalesBPS != nil {
+		costBPS := nodes[len(nodes)-1].CostBPS
+		salesBPS := *nodes[len(nodes)-1].SalesBPS
+		belowMinimum := salesBPS < costBPS+minSpreadBPS
+		if customerOverride && salesBPS == costBPS {
+			belowMinimum = false
+		}
+		if belowMinimum {
+			return nil, false, "agency_sales_invalid", errors.New("leaf sales coefficient is below the permitted minimum")
+		}
 	}
 	if len(nodes) > 0 {
 		if platformPrice, err := agencycontract.ResolvePlatform(platform, originModelName); err == nil && platformPrice != nil && platformPrice.PlatformCostBPS > nodes[0].CostBPS {

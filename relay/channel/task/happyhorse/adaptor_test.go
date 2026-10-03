@@ -52,7 +52,7 @@ func TestHappyHorseValidateRequestStoresParsedRequest(t *testing.T) {
 	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
 	req, err := relaycommon.GetTaskRequest(c)
 	require.NoError(t, err)
-	assert.Equal(t, modelAlias, req.Model)
+	assert.Equal(t, legacyAlias, req.Model)
 	assert.Equal(t, "a red ball", req.Prompt)
 	assert.Equal(t, 3, req.Duration)
 	assert.Equal(t, constant.TaskActionGenerate, info.Action)

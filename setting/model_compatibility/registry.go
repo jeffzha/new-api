@@ -115,6 +115,24 @@ var defaultRegistry = Registry{
 			Source:      "builtin",
 			Profiles: []Profile{
 				{
+					ID:           "glm-53-openai",
+					ChannelTypes: []int{1},
+					ModelRegex:   `^glm-5\.3(-flash)?$`,
+					RelayFormats: []string{"openai", "openai_responses"},
+					Rules: []Rule{
+						{
+							Path:   "reasoning_effort",
+							Action: "map",
+							Values: map[string]any{"none": "low", "minimal": "low", "medium": "high", "xhigh": "max"},
+						},
+						{
+							Path:   "reasoning.effort",
+							Action: "map",
+							Values: map[string]any{"none": "low", "minimal": "low", "medium": "high", "xhigh": "max"},
+						},
+					},
+				},
+				{
 					ID:           "deepseek-v4-openai",
 					ChannelTypes: []int{43},
 					ModelRegex:   `^deepseek-v4-(flash|pro)$`,

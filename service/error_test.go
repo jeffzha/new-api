@@ -174,6 +174,12 @@ func TestRelayErrorHandlerClassifiesBedrockContentValidation(t *testing.T) {
 			wantCode:   "unknown_error",
 		},
 		{
+			name:       "required messages field",
+			statusCode: http.StatusBadRequest,
+			message:    "field messages is required",
+			wantCode:   "invalid_request",
+		},
+		{
 			name:       "validation text on server error",
 			statusCode: http.StatusInternalServerError,
 			message:    "ValidationException: MessageContent",

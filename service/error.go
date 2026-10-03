@@ -158,8 +158,9 @@ func isUpstreamInvalidRequest(statusCode int, message string) bool {
 		return false
 	}
 	message = strings.ToLower(message)
-	return strings.Contains(message, "validationexception") &&
-		(strings.Contains(message, "messagecontent") || strings.Contains(message, "request is invalid"))
+	return (strings.Contains(message, "validationexception") &&
+		(strings.Contains(message, "messagecontent") || strings.Contains(message, "request is invalid"))) ||
+		strings.Contains(message, "field messages is required")
 }
 
 func ResetStatusCode(newApiErr *types.NewAPIError, statusCodeMappingStr string) {

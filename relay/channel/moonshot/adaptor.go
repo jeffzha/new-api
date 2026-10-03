@@ -29,6 +29,18 @@ func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dt
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, req *dto.ClaudeRequest) (any, error) {
+	if useOpenAICompatibleClaude(info) {
+		adaptor := openai.Adaptor{}
+		convertedRequest, err := adaptor.ConvertClaudeRequest(c, info, req)
+		if err != nil {
+			return nil, err
+		}
+		openAIRequest, ok := convertedRequest.(*dto.GeneralOpenAIRequest)
+		if !ok {
+			return convertedRequest, nil
+		}
+		return a.ConvertOpenAIRequest(c, info, openAIRequest)
+	}
 	adaptor := claude.Adaptor{}
 	return adaptor.ConvertClaudeRequest(c, info, req)
 }
@@ -44,9 +56,16 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
+	if useOpenAICompatibleClaude(info) {
+		adaptor := openai.Adaptor{}
+		adaptor.Init(info)
+	}
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	if info.RelayFormat == types.RelayFormatClaude && useOpenAICompatibleClaude(info) {
+		return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
+	}
 	baseURL := info.ChannelBaseUrl
 	if specialPlan, ok := channelconstant.ChannelSpecialBases[baseURL]; ok {
 		if info.RelayFormat == types.RelayFormatClaude {
@@ -118,12 +137,20 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
 	switch info.RelayFormat {
 	case types.RelayFormatClaude:
+		if useOpenAICompatibleClaude(info) {
+			adaptor := openai.Adaptor{}
+			return adaptor.DoResponse(c, resp, info)
+		}
 		adaptor := claude.Adaptor{}
 		return adaptor.DoResponse(c, resp, info)
 	default:
 		adaptor := openai.Adaptor{}
 		return adaptor.DoResponse(c, resp, info)
 	}
+}
+
+func useOpenAICompatibleClaude(info *relaycommon.RelayInfo) bool {
+	return info != nil && info.ChannelMeta != nil && info.ChannelOtherSettings.ClaudeUseOpenAICompatible
 }
 
 func (a *Adaptor) GetModelList() []string {

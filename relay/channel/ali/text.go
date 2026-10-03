@@ -1,6 +1,8 @@
 package ali
 
 import (
+	"strings"
+
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/samber/lo"
 )
@@ -13,6 +15,18 @@ func requestOpenAI2Ali(request dto.GeneralOpenAIRequest, upstreamModelName strin
 	modelName := upstreamModelName
 	if modelName == "" {
 		modelName = request.Model
+	}
+	if isQwenImageChatModel(modelName) {
+		request.Messages = append([]dto.Message(nil), request.Messages...)
+		for index := range request.Messages {
+			message := &request.Messages[index]
+			if message.IsStringContent() {
+				message.SetMediaContent([]dto.MediaContent{{
+					Type: dto.ContentTypeText,
+					Text: message.StringContent(),
+				}})
+			}
+		}
 	}
 	if !dto.IsQwenThinkingBudgetModel(modelName) {
 		request.ThinkingBudget = nil
@@ -33,4 +47,8 @@ func requestOpenAI2Ali(request dto.GeneralOpenAIRequest, upstreamModelName strin
 		}
 	}
 	return &request
+}
+
+func isQwenImageChatModel(modelName string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(modelName)), "qwen-image-3.0")
 }

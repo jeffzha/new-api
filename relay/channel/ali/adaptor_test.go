@@ -137,6 +137,60 @@ func TestConvertOpenAIRequestFiltersThinkingBudgetByUpstreamModel(t *testing.T) 
 	}
 }
 
+func TestConvertOpenAIRequestNormalizesQwenImageStringContent(t *testing.T) {
+	request := &dto.GeneralOpenAIRequest{
+		Model:    "qwen-image-3.0",
+		Messages: []dto.Message{{Role: "user", Content: "Draw a blue cube."}},
+	}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+		UpstreamModelName: "qwen-image-3.0",
+	}}
+
+	convertedValue, err := (&Adaptor{}).ConvertOpenAIRequest(nil, info, request)
+	require.NoError(t, err)
+	converted := convertedValue.(*dto.GeneralOpenAIRequest)
+
+	encoded, err := common.Marshal(converted)
+	require.NoError(t, err)
+	expected := "{\"model\":\"qwen-image-3.0\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Draw a blue cube.\"}]}]}"
+	assert.JSONEq(t, expected, string(encoded))
+	assert.Equal(t, "Draw a blue cube.", request.Messages[0].Content, "conversion must not mutate the incoming request")
+}
+
+func TestConvertOpenAIRequestPreservesQwenImageMultimodalContent(t *testing.T) {
+	content := []any{
+		map[string]any{"type": "text", "text": "Restyle this image."},
+		map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://example.com/input.png"}},
+	}
+	request := &dto.GeneralOpenAIRequest{
+		Model:    "qwen-image-3.0",
+		Messages: []dto.Message{{Role: "user", Content: content}},
+	}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+		UpstreamModelName: "qwen-image-3.0",
+	}}
+
+	convertedValue, err := (&Adaptor{}).ConvertOpenAIRequest(nil, info, request)
+	require.NoError(t, err)
+	converted := convertedValue.(*dto.GeneralOpenAIRequest)
+	assert.Equal(t, content, converted.Messages[0].Content)
+}
+
+func TestConvertOpenAIRequestLeavesTextModelsStringContent(t *testing.T) {
+	request := &dto.GeneralOpenAIRequest{
+		Model:    "qwen3.8-flash",
+		Messages: []dto.Message{{Role: "user", Content: "Hello."}},
+	}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+		UpstreamModelName: "qwen3.8-flash",
+	}}
+
+	convertedValue, err := (&Adaptor{}).ConvertOpenAIRequest(nil, info, request)
+	require.NoError(t, err)
+	converted := convertedValue.(*dto.GeneralOpenAIRequest)
+	assert.Equal(t, "Hello.", converted.Messages[0].Content)
+}
+
 func TestConvertOpenAIRequestPreservesExplicitZeroForMappedQwenModel(t *testing.T) {
 	const (
 		clientModel   = "customer-model"

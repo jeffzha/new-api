@@ -298,7 +298,7 @@ func (a *App) listPublicModels(c *gin.Context) {
 	query := strings.ToLower(strings.TrimSpace(c.Query("q")))
 	limit := 200
 	if value := strings.TrimSpace(c.Query("limit")); value != "" {
-		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 && parsed <= 200 {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 && parsed <= 1000 {
 			limit = parsed
 		}
 	}

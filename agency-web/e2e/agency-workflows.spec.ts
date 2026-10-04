@@ -234,7 +234,7 @@ test("root creates an agency, acknowledges delivery and the operator must change
   });
   const operatorContext = await browser.newContext({
     locale: "en-US",
-    baseURL: test.info().project.use.baseURL,
+    baseURL: process.env.AGENCY_BROWSER_URL || "http://127.0.0.1:4328",
   });
   const operator = await operatorContext.newPage();
   try {
@@ -269,16 +269,15 @@ test("root publishes platform pricing and an operator manages direct-child and c
   await expect(page.getByRole("cell", { name: "browser-chat-model", exact: true })).toBeVisible();
   await expect(page.getByText("Browser model channel", { exact: true })).toBeVisible();
   await page
-    .getByLabel("Platform cost coefficient: browser-chat-model / Browser model channel", { exact: true })
+    .getByLabel("My cost (coefficient): browser-chat-model / Browser model channel", { exact: true })
     .fill("0.75");
-  await page.getByLabel("Agency cost coefficient: browser-chat-model", { exact: true }).fill("0.80");
-  await page.getByLabel("Sales coefficient: browser-chat-model", { exact: true }).fill("0.90");
-  await page.getByLabel("Change reason", { exact: true }).first().fill("Browser platform pricing");
+  await page.getByLabel("My downstream channel price (coefficient): browser-chat-model", { exact: true }).fill("0.80");
+  await page.getByLabel("Sales price (coefficient): browser-chat-model", { exact: true }).fill("0.90");
+  await page.getByLabel("Change reason (optional)", { exact: true }).first().fill("Browser platform pricing");
   const platformPublished = page.waitForResponse((response) =>
     response.url().endsWith("/root/platform-pricing/publish"),
   );
   await page.getByRole("button", { name: "Publish platform pricing", exact: true }).click();
-  await confirm(page, rootPassword);
   const platformResponse = await platformPublished;
   expect(platformResponse.status()).toBe(200);
   expect(platformResponse.request().postDataJSON()).toMatchObject({
@@ -293,7 +292,7 @@ test("root publishes platform pricing and an operator manages direct-child and c
 
   const operatorContext = await browser.newContext({
     locale: "en-US",
-    baseURL: test.info().project.use.baseURL,
+    baseURL: process.env.AGENCY_BROWSER_URL || "http://127.0.0.1:4328",
   });
   const operator = await operatorContext.newPage();
   try {
@@ -301,19 +300,18 @@ test("root publishes platform pricing and an operator manages direct-child and c
     await operator.getByRole("button", { name: "Pricing", exact: true }).click();
     const row = operator.getByRole("row").filter({ hasText: "browser-chat-model" });
     await expect(row.getByText("0.8000", { exact: true })).toBeVisible();
-    const sales = operator.getByLabel("Sales coefficient: browser-chat-model", { exact: true });
+    const sales = operator.getByLabel("Sales price (coefficient): browser-chat-model", { exact: true });
     await expect(sales).toHaveValue("");
     await expect(sales).toHaveAttribute("placeholder", "0.9000");
     await sales.fill("0.95");
-    const childCost = operator.getByLabel("Child agency cost coefficient: browser-chat-model", { exact: true });
+    const childCost = operator.getByLabel("My downstream channel price (coefficient): browser-chat-model", { exact: true });
     await expect(childCost).toHaveAttribute("placeholder", "Not configured");
     await childCost.fill("0.85");
-    await operator.getByLabel("Change reason", { exact: true }).fill("Browser agency sales override");
+    await operator.getByLabel("Change reason (optional)", { exact: true }).fill("Browser agency sales override");
     const published = operator.waitForResponse((response) =>
       response.url().endsWith("/pricing/sales/publish"),
     );
     await operator.getByRole("button", { name: "Publish sales coefficients", exact: true }).click();
-    await confirm(operator, operatorPassword);
     const publishResponse = await published;
     expect(publishResponse.status()).toBe(200);
     expect(publishResponse.request().postDataJSON()).toMatchObject({
@@ -352,7 +350,6 @@ test("root publishes platform pricing and an operator manages direct-child and c
       response.request().method() === "POST" && response.url().endsWith("/api/v1/children"),
     );
     await createChild.getByRole("button", { name: "Create child agency", exact: true }).click();
-    await confirm(operator, operatorPassword);
     expect((await createdChild).status()).toBe(201);
     await expect(createChild).toHaveCount(0);
     const delivery = operator.getByRole("dialog", { name: "Child agency login details", exact: true });
@@ -373,22 +370,22 @@ test("root publishes platform pricing and an operator manages direct-child and c
     const customerPricing = operator.locator(".customer-pricing-page");
     await expect(customerPricing.getByRole("heading", { name: "Customer sales pricing · browser-managed", exact: true })).toBeVisible();
     await expect(customerPricing.getByRole("columnheader", { name: "Model name", exact: true })).toBeVisible();
-    await expect(customerPricing.getByRole("columnheader", { name: "Agency sales coefficient", exact: true })).toBeVisible();
-    await expect(customerPricing.getByRole("columnheader", { name: "Customer sales coefficient", exact: true })).toBeVisible();
-    const customerModelPrice = customerPricing.getByLabel("Customer sales coefficient: browser-chat-model", { exact: true });
+    await expect(customerPricing.getByRole("columnheader", { name: "My cost (coefficient)", exact: true })).toBeVisible();
+    await expect(customerPricing.getByRole("columnheader", { name: "Sales price (coefficient)", exact: true })).toBeVisible();
+    const customerModelPrice = customerPricing.getByLabel("Sales price (coefficient): browser-chat-model", { exact: true });
     await expect(customerModelPrice).toHaveAttribute("placeholder", "0.9500");
-    await customerModelPrice.fill("0.97");
-    await customerPricing.getByLabel("Change reason", { exact: true }).fill("Browser customer model price");
+    await customerPricing.getByRole("button", { name: "Set all models to cost", exact: true }).click();
+    await expect(customerModelPrice).toHaveValue("0.8000");
+    await customerPricing.getByLabel("Change reason (optional)", { exact: true }).fill("Approved zero-margin customer");
     const fixtureState = await (await operator.request.get("/__fixture/state")).json();
     const customerPublished = operator.waitForResponse((response) =>
       response.request().method() === "PUT" && response.url().endsWith(`/customers/${fixtureState.managed_user_id}/pricing/batch`),
     );
     await customerPricing.getByRole("button", { name: "Save customer pricing", exact: true }).click();
-    await confirm(operator, operatorPassword);
     const customerResponse = await customerPublished;
     expect(customerResponse.status()).toBe(200);
     expect(customerResponse.request().postDataJSON()).toMatchObject({
-      models: [{ model_name: "browser-chat-model", sales_bps: 9700 }],
+      models: [{ model_name: "browser-chat-model", sales_bps: 8000 }],
     });
     await expect(operator.getByRole("heading", { name: "Customers", exact: true })).toBeVisible();
   } finally {

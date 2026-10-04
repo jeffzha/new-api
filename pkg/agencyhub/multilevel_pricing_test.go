@@ -166,6 +166,23 @@ func TestCustomerSalesPricingBatchPublishesAtomically(t *testing.T) {
 	require.NoError(t, app.db.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, keyB).First(&retained).Error)
 	require.Equal(t, 9500, retained.SalesBPS)
 
+	costBody, err := common.Marshal(gin.H{
+		"models": []gin.H{{"model_name": modelA, "sales_bps": 7000}},
+		"reason": "approved zero-margin customer",
+	})
+	require.NoError(t, err)
+	costRecorder := httptest.NewRecorder()
+	costContext, _ := gin.CreateTestContext(costRecorder)
+	costContext.Request = httptest.NewRequest(http.MethodPut, "/agency/api/v1/customers/7/pricing/batch", bytes.NewReader(costBody))
+	costContext.Request.Header.Set("Content-Type", "application/json")
+	costContext.Params = gin.Params{{Key: "user_id", Value: "7"}}
+	costContext.Set("agency_identity", &Identity{ActorType: ActorTypeOperator, ActorID: 1, AgencyID: &agency.ID})
+	app.putCustomerSalesPricingBatch(costContext)
+	require.Equal(t, http.StatusOK, costRecorder.Code, costRecorder.Body.String())
+	retained = model.AgencyCustomerSalesOverride{}
+	require.NoError(t, app.db.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, keyA).First(&retained).Error)
+	require.Equal(t, 7000, retained.SalesBPS)
+
 	invalidSales := 7400
 	invalidBody, err := common.Marshal(gin.H{
 		"models": []gin.H{{"model_name": modelA, "sales_bps": invalidSales}},
@@ -182,7 +199,7 @@ func TestCustomerSalesPricingBatchPublishesAtomically(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, invalidRecorder.Code, invalidRecorder.Body.String())
 	retained = model.AgencyCustomerSalesOverride{}
 	require.NoError(t, app.db.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, keyA).First(&retained).Error)
-	require.Equal(t, modelASales, retained.SalesBPS)
+	require.Equal(t, 7000, retained.SalesBPS)
 }
 
 func TestCreateChildAgencyReturnsCredentialsAndHierarchy(t *testing.T) {

@@ -26,6 +26,69 @@ export function parseCoefficient(value: string): number {
   return bps;
 }
 
+export function parseSignedCoefficient(value: string): number {
+  if (!/^[+-]?\d+(?:\.\d{1,4})?$/.test(value)) {
+    throw new Error("Use a signed coefficient with up to four decimal places.");
+  }
+  const sign = value.startsWith("-") ? -1 : 1;
+  const unsigned = value.replace(/^[+-]/, "");
+  return sign * parseCoefficient(unsigned);
+}
+
+export type CustomerSalesAdjustmentError =
+  | "invalid_value"
+  | "below_cost"
+  | "below_spread"
+  | "above_cap";
+
+type CustomerSalesAdjustmentRow = {
+  model: string;
+  agencyCostBPS: number;
+  inheritedSalesBPS: number;
+};
+
+export function adjustCustomerSalesValues(
+  rows: CustomerSalesAdjustmentRow[],
+  values: Record<string, string>,
+  selectedModels: Iterable<string>,
+  deltaBPS: number,
+  minSpreadBPS: number,
+  salesCapBPS: number,
+) {
+  const selected = new Set(selectedModels);
+  const nextValues = { ...values };
+  const errors: Record<string, CustomerSalesAdjustmentError> = {};
+  let updated = 0;
+
+  for (const row of rows) {
+    if (!selected.has(row.model)) continue;
+    let currentBPS: number;
+    try {
+      currentBPS = values[row.model]?.trim()
+        ? parseCoefficient(values[row.model].trim())
+        : row.inheritedSalesBPS;
+    } catch {
+      errors[row.model] = "invalid_value";
+      continue;
+    }
+    const nextBPS = currentBPS + deltaBPS;
+    if (!Number.isSafeInteger(nextBPS)) {
+      errors[row.model] = "invalid_value";
+    } else if (nextBPS < row.agencyCostBPS) {
+      errors[row.model] = "below_cost";
+    } else if (nextBPS > salesCapBPS) {
+      errors[row.model] = "above_cap";
+    } else if (nextBPS !== row.agencyCostBPS && nextBPS < row.agencyCostBPS + minSpreadBPS) {
+      errors[row.model] = "below_spread";
+    } else {
+      nextValues[row.model] = formatCoefficient(nextBPS);
+      updated++;
+    }
+  }
+
+  return { values: nextValues, errors, updated };
+}
+
 export function policyToDraft(policy: Policy): PricingDraft {
   return {
     settlement: formatCoefficient(policy.default_settlement_bps),

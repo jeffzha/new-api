@@ -112,6 +112,10 @@ header {
   .dashboard-shell {
     padding: 16px;
   }
+  .customer-pricing-summary-actions button {
+    width: 100%;
+    justify-content: center;
+  }
   .shell {
     padding: 24px 16px;
   }
@@ -1016,6 +1020,9 @@ h3 {
 .pricing-matrix td small { display: block; max-width: 230px; margin-top: .35rem; color: #667085; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; }
 .customer-pricing-summary { max-width: 440px; margin: 12px 0 16px; padding: 14px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; }
 .customer-pricing-summary .field { margin: 0; }
+.customer-pricing-summary-actions { display: grid; gap: 7px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #dbeafe; }
+.customer-pricing-summary-actions button { justify-self: start; }
+.customer-pricing-summary-actions small { color: #667085; line-height: 1.45; }
 .customer-pricing-matrix-wrap { max-height: min(46vh, 480px); }
 .customer-pricing-page .page-header { margin-bottom: 18px; }
 .customer-pricing-page .customer-pricing-summary { max-width: 560px; }
@@ -1026,6 +1033,13 @@ h3 {
 .customer-pricing-bulk { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 14px 0; padding: 12px 14px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; }
 .customer-pricing-bulk input { width: 180px; }
 .customer-pricing-bulk small { flex-basis: 100%; color: #667085; }
+.customer-pricing-bulk-result { flex-basis: 100%; margin: 0; padding: 9px 11px; border-radius: 6px; font-size: 13px; font-weight: 650; }
+.customer-pricing-bulk-result.success { color: #067647; background: #ecfdf3; }
+.customer-pricing-bulk-result.warning { color: #93370d; background: #fffaeb; }
+.customer-pricing-matrix tr.customer-pricing-row-error td { background: #fff7f6; }
+.customer-pricing-matrix tr.customer-pricing-row-error td:first-child { box-shadow: inset 3px 0 #d92d20; }
+.customer-pricing-row-error input[aria-invalid="true"] { border-color: #d92d20; box-shadow: 0 0 0 2px #fee4e2; }
+.customer-pricing-matrix td small.customer-pricing-inline-error { color: #b42318; font-weight: 600; }
 .customer-pricing-page-actions { margin-top: 18px; padding-top: 16px; border-top: 1px solid #eaecf0; }
 .dialog-actions { margin-top: 20px; padding-top: 16px; border-top: 1px solid #eaecf0; }
 .list-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; color: #667085; font-size: 13px; }

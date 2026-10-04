@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  adjustCustomerSalesValues,
   draftToPolicy,
   initialPolicy,
   parseCoefficient,
+  parseSignedCoefficient,
   policyToDraft,
   pricingRequest,
 } from "../policy";
@@ -125,5 +127,44 @@ describe("pricing request contracts", () => {
     expect(() => parseCoefficient("1e2")).toThrow();
     expect(() => parseCoefficient("10.0001")).toThrow();
     expect(() => parseCoefficient("")).toThrow();
+  });
+
+  test("signed coefficient conversion preserves exact basis points", () => {
+    expect(parseSignedCoefficient("+0.1001")).toBe(1001);
+    expect(parseSignedCoefficient("-0.1001")).toBe(-1001);
+    expect(parseSignedCoefficient("0.0001")).toBe(1);
+    expect(() => parseSignedCoefficient("-0.10001")).toThrow();
+  });
+
+  test("batch customer adjustment keeps valid changes and reports invalid rows", () => {
+    const values = { valid: "0.9000", belowCost: "0.8000", aboveCap: "1.1900", untouched: "0.9500" };
+    const result = adjustCustomerSalesValues(
+      [
+        { model: "valid", agencyCostBPS: 7000, inheritedSalesBPS: 9000 },
+        { model: "belowCost", agencyCostBPS: 8000, inheritedSalesBPS: 9000 },
+        { model: "aboveCap", agencyCostBPS: 7000, inheritedSalesBPS: 9000 },
+        { model: "untouched", agencyCostBPS: 7000, inheritedSalesBPS: 9000 },
+      ],
+      values,
+      ["valid", "belowCost", "aboveCap"],
+      200,
+      500,
+      12000,
+    );
+    expect(result.values).toEqual({ ...values, valid: "0.9200" });
+    expect(result.errors).toEqual({ belowCost: "below_spread", aboveCap: "above_cap" });
+    expect(result.updated).toBe(1);
+  });
+
+  test("batch customer adjustment permits the exact agency cost", () => {
+    const result = adjustCustomerSalesValues(
+      [{ model: "model-a", agencyCostBPS: 8000, inheritedSalesBPS: 9000 }],
+      { "model-a": "0.8500" },
+      ["model-a"],
+      -500,
+      500,
+      30000,
+    );
+    expect(result).toEqual({ values: { "model-a": "0.8000" }, errors: {}, updated: 1 });
   });
 });

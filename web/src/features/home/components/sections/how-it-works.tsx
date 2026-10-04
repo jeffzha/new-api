@@ -75,9 +75,6 @@ export function HowItWorks() {
       <div className='gateway-container'>
         <div className='gateway-section-heading'>
           <h2 id='gateway-steps-title'>{t('Three steps to get started')}</h2>
-          <span className='gateway-section-index' aria-hidden='true'>
-            QUICK START
-          </span>
         </div>
 
         <ol className='gateway-steps'>

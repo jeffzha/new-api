@@ -20,13 +20,9 @@ import {
   Blocks,
   ChartNoAxesCombined,
   Code2,
-  Gauge,
-  Headphones,
-  Network,
   ShieldCheck,
   UsersRound,
   WalletCards,
-  Zap,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -40,11 +36,9 @@ export function Features(_props: FeaturesProps) {
   const { t } = useTranslation()
   const features = [
     {
-      icon: Zap,
-      title: t('Lightning performance'),
-      description: t(
-        'Optimized network architecture ensures millisecond response times'
-      ),
+      icon: WalletCards,
+      title: t('Transparent Billing'),
+      description: t('Pay-as-you-go with real-time usage monitoring'),
     },
     {
       icon: ShieldCheck,
@@ -54,10 +48,10 @@ export function Features(_props: FeaturesProps) {
       ),
     },
     {
-      icon: Network,
-      title: t('Unified model access'),
+      icon: UsersRound,
+      title: t('Team Collaboration'),
       description: t(
-        'Connect mainstream model services and compatible protocols with unified billing and usage management'
+        'Multi-user management with flexible permission allocation'
       ),
     },
     {
@@ -72,34 +66,6 @@ export function Features(_props: FeaturesProps) {
       title: t('Real-time monitoring'),
       description: t(
         'Track usage, costs and performance with real-time analytics'
-      ),
-    },
-    {
-      icon: Headphones,
-      title: t('24/7 support'),
-      description: t(
-        'Professional technical support with fast response around the clock'
-      ),
-    },
-  ]
-  const platformCapabilities = [
-    {
-      icon: Gauge,
-      title: t('High Performance'),
-      description: t(
-        'Support for high concurrency with automatic load balancing'
-      ),
-    },
-    {
-      icon: WalletCards,
-      title: t('Transparent Billing'),
-      description: t('Pay-as-you-go with real-time usage monitoring'),
-    },
-    {
-      icon: UsersRound,
-      title: t('Team Collaboration'),
-      description: t(
-        'Multi-user management with flexible permission allocation'
       ),
     },
     {
@@ -138,18 +104,6 @@ export function Features(_props: FeaturesProps) {
                 <p>{feature.description}</p>
               </div>
             </AnimateInView>
-          ))}
-        </div>
-
-        <div className='gateway-capabilities'>
-          {platformCapabilities.map((feature) => (
-            <div key={feature.title} className='gateway-capability'>
-              <feature.icon size={17} strokeWidth={1.7} aria-hidden='true' />
-              <div>
-                <h3>{feature.title}</h3>
-                <p>{feature.description}</p>
-              </div>
-            </div>
           ))}
         </div>
       </div>

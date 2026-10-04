@@ -26,7 +26,7 @@ import { getAgencyCenterUrl } from '@/lib/agency-center'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { HeroDataFlow } from '../hero-data-flow'
+import { HeroStarfield } from '../hero-starfield'
 
 interface HeroProps {
   className?: string
@@ -44,7 +44,7 @@ export function Hero(props: HeroProps) {
 
   return (
     <section className='gateway-hero' aria-labelledby='gateway-title'>
-      <HeroDataFlow />
+      <HeroStarfield />
       <div className='gateway-container gateway-hero-copy'>
         <div className='gateway-hero-content'>
           <p className='gateway-eyebrow'>

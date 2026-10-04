@@ -440,8 +440,14 @@ body .public-layout:has(> .gateway-home):has(.console-public-header) {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  padding-right: 8px;
+  width: 58px;
+  height: 56px;
+  padding: 6px;
+  text-align: center;
+  border: 1px solid var(--home-border);
+  border-radius: 6px;
   background: var(--card);
   color: var(--home-accent);
   font-size: 9px;

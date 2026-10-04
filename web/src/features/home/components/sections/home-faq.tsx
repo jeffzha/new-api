@@ -74,7 +74,7 @@ export function HomeFaq() {
                 <span className='gateway-faq-number' aria-hidden='true'>
                   0{index + 1}
                 </span>
-                {item.question}
+                <span className='gateway-faq-question'>{item.question}</span>
               </AccordionTrigger>
               <AccordionContent>
                 <p>{item.answer}</p>

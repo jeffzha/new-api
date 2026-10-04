@@ -51,6 +51,11 @@ export function AnimateInView(props: AnimateInViewProps) {
       el.classList.add(`landing-animate-${animation}`)
       return
     }
+    if (typeof IntersectionObserver === 'undefined') {
+      el.classList.remove('opacity-0')
+      el.classList.add(`landing-animate-${animation}`)
+      return
+    }
 
     const observer = new IntersectionObserver(
       ([entry]) => {

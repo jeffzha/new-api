@@ -50,19 +50,25 @@ export function ShowcaseVideo(props: ShowcaseVideoProps) {
           if (!disposed && version === revision) setPlaying(false)
         })
     }
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        visible = entry.isIntersecting
-        sync()
-      },
-      { threshold: 0.15 }
-    )
-    observer.observe(video)
+    let observer: IntersectionObserver | null = null
+    if (typeof IntersectionObserver === 'undefined') {
+      visible = true
+      sync()
+    } else {
+      observer = new IntersectionObserver(
+        ([entry]) => {
+          visible = entry.isIntersecting
+          sync()
+        },
+        { threshold: 0.15 }
+      )
+      observer.observe(video)
+    }
     document.addEventListener('visibilitychange', sync)
     motion.addEventListener('change', sync)
     return () => {
       disposed = true
-      observer.disconnect()
+      observer?.disconnect()
       document.removeEventListener('visibilitychange', sync)
       motion.removeEventListener('change', sync)
       video.pause()

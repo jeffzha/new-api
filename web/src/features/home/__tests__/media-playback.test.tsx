@@ -135,6 +135,14 @@ describe('Homepage media playback', () => {
     expect(screen.getByRole('button', { name: /Pause preview/ })).toBeVisible()
   })
 
+  it('keeps the preview usable when intersection observation is unavailable', async () => {
+    vi.stubGlobal('IntersectionObserver', undefined)
+    mount()
+    expect(
+      await screen.findByRole('button', { name: /Pause preview/ })
+    ).toBeVisible()
+  })
+
   it('stops automatic playback when reduced motion is enabled after mount', async () => {
     mount()
     await screen.findByRole('button', { name: /Pause preview/ })

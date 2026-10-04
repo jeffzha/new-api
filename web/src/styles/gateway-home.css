@@ -2,48 +2,24 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 .public-layout:has(> .gateway-home) {
-  --background: #f8fafb;
-  --foreground: #152a32;
-  --card: #ffffff;
-  --muted: #edf3f5;
-  --muted-foreground: #52616b;
-  --border: #dbe5e9;
-  --primary: #097c71;
-  --primary-foreground: #ffffff;
-  --home-ink: #152a32;
-  --home-muted: #52616b;
-  --home-accent: #097c71;
+  --home-ink: var(--foreground);
+  --home-muted: var(--muted-foreground);
+  --home-accent: var(--primary);
   --home-blue: #376fc5;
   --home-amber: #a97826;
-  --home-grid: #d5e3e9;
-  --home-glass: #ffffffb8;
-  --home-surface: #f8fafb;
-  --home-tint: #edf3f5;
-  --home-border: #dbe5e9;
+  --home-grid: var(--border);
+  --home-glass: var(--card);
+  --home-surface: var(--background);
+  --home-tint: var(--muted);
+  --home-border: var(--border);
   --home-glass-shadow: #234b5b20;
   --home-glass-highlight: #ffffffed;
   font-family:
     'Public Sans Variable', 'Microsoft YaHei', 'PingFang SC', sans-serif;
 }
 .dark .public-layout:has(> .gateway-home) {
-  --background: #141b1e;
-  --foreground: #e4edf1;
-  --card: #1d282d;
-  --muted: #263339;
-  --muted-foreground: #aabdc7;
-  --border: #35474f;
-  --primary: #86d6c9;
-  --primary-foreground: #122c29;
-  --home-ink: #e4edf1;
-  --home-muted: #aabdc7;
-  --home-accent: #86d6c9;
   --home-blue: #95b9fa;
   --home-amber: #dfc183;
-  --home-grid: #293940;
-  --home-glass: #1f2a30d9;
-  --home-surface: #141b1e;
-  --home-tint: #1c282e;
-  --home-border: #35474f;
   --home-glass-shadow: #00000040;
   --home-glass-highlight: #d9efff18;
 }
@@ -464,8 +440,14 @@ body .public-layout:has(> .gateway-home):has(.console-public-header) {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  padding-right: 8px;
+  width: 58px;
+  height: 56px;
+  padding: 6px;
+  text-align: center;
+  border: 1px solid var(--home-border);
+  border-radius: 6px;
   background: var(--card);
   color: var(--home-accent);
   font-size: 9px;

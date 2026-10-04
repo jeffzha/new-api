@@ -109,9 +109,6 @@ export function PlatformValue() {
       <div className='gateway-container'>
         <div className='gateway-section-heading'>
           <h2 id='gateway-value-title'>{t('Platform value')}</h2>
-          <span className='gateway-section-index' aria-hidden='true'>
-            PLATFORM VALUE
-          </span>
         </div>
         <div className='gateway-value-grid'>
           {values.map((value, index) => (

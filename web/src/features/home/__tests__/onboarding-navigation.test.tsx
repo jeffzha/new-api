@@ -72,6 +72,23 @@ const destinations = [
 ] as const
 
 describe('Homepage quick start navigation', () => {
+  it('keeps each accessible step title beside its number in the header row', async () => {
+    await mount()
+    for (const [index, title] of [
+      'Recharge',
+      'Configure',
+      'Connect',
+    ].entries()) {
+      const heading = screen.getByRole('heading', { name: title, level: 3 })
+      const row = heading.closest('.gateway-step-top')
+      expect(row).not.toBeNull()
+      expect(row?.querySelector('.gateway-step-number')).toHaveTextContent(
+        `0${index + 1}`
+      )
+      expect(row).not.toHaveAttribute('aria-hidden', 'true')
+    }
+  })
+
   it.each(destinations)(
     'prompts before %s and retains %s for sign-in',
     async (action, destination) => {

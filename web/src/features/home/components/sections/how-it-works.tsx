@@ -17,13 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
-import {
-  ArrowRight,
-  ChevronRight,
-  CreditCard,
-  KeyRound,
-  PlugZap,
-} from 'lucide-react'
+import { ArrowRight, CreditCard, KeyRound, PlugZap } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -75,9 +69,6 @@ export function HowItWorks() {
       <div className='gateway-container'>
         <div className='gateway-section-heading'>
           <h2 id='gateway-steps-title'>{t('Three steps to get started')}</h2>
-          <span className='gateway-section-index' aria-hidden='true'>
-            QUICK START
-          </span>
         </div>
 
         <ol className='gateway-steps'>
@@ -89,16 +80,15 @@ export function HowItWorks() {
               animation='fade-up'
               className='gateway-step'
             >
-              <div className='gateway-step-top' aria-hidden='true'>
-                <span className='gateway-step-icon'>
+              <div className='gateway-step-top'>
+                <span className='gateway-step-icon' aria-hidden='true'>
                   <step.icon size={19} strokeWidth={1.6} />
                 </span>
-                <span className='gateway-step-number'>0{step.num}</span>
-                <span className='gateway-step-connector'>
-                  <ChevronRight size={15} />
+                <span className='gateway-step-number' aria-hidden='true'>
+                  0{step.num}
                 </span>
+                <h3>{step.title}</h3>
               </div>
-              <h3>{step.title}</h3>
               <p>{step.desc}</p>
               <Button
                 variant='ghost'

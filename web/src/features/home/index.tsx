@@ -27,6 +27,9 @@ import { isLikelyHtml } from '@/lib/content-format'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { Features, Hero, HowItWorks } from './components'
+import { ApiScenarios } from './components/sections/api-scenarios'
+import { HomeFaq } from './components/sections/home-faq'
+import { ModelShowcase } from './components/sections/model-showcase'
 import { PlatformValue } from './components/sections/platform-value'
 import { useHomePageContent } from './hooks'
 
@@ -125,9 +128,12 @@ export function Home() {
     <PublicLayout showMainContainer={false}>
       <main className='gateway-home'>
         <Hero isAuthenticated={isAuthenticated} />
+        <ModelShowcase />
+        <ApiScenarios />
         <PlatformValue />
         <HowItWorks />
         <Features />
+        <HomeFaq />
       </main>
       <Footer />
     </PublicLayout>

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, BookOpen, Building2, Layers3 } from 'lucide-react'
+import { ArrowRight, BookOpen, Building2, KeyRound } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -26,7 +26,7 @@ import { getAgencyCenterUrl } from '@/lib/agency-center'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { RoutingScene } from '../routing-scene'
+import { HeroStarfield } from '../hero-starfield'
 
 interface HeroProps {
   className?: string
@@ -44,24 +44,21 @@ export function Hero(props: HeroProps) {
 
   return (
     <section className='gateway-hero' aria-labelledby='gateway-title'>
-      <RoutingScene systemName={systemName} />
+      <HeroStarfield />
       <div className='gateway-container gateway-hero-copy'>
         <div className='gateway-hero-content'>
           <p className='gateway-eyebrow'>
-            <Layers3 size={15} aria-hidden='true' /> AI MODEL GATEWAY
+            {systemName} <span aria-hidden='true'>/</span> AI MODEL GATEWAY
           </p>
           <h1 id='gateway-title'>
-            <span className='gateway-brand-name'>{systemName}</span>
-            <span className='gateway-product-title'>
-              {t('Enterprise AI access platform')}
-            </span>
+            {t('Large model Token aggregation and routing platform')}
           </h1>
           <p className='gateway-hero-description'>
-            {t('Connect models to your business.')}
+            {t('One API. More possibilities.')}
           </p>
           <p className='gateway-hero-detail'>
             {t(
-              'Unified access, intelligent routing, and precise cost control.'
+              'From conversation and code to images and video, connect your AI applications with unified access, intelligent routing, and transparent usage.'
             )}
           </p>
           <nav
@@ -72,13 +69,14 @@ export function Hero(props: HeroProps) {
               className='gateway-primary-action'
               render={
                 props.isAuthenticated ? (
-                  <Link to='/dashboard' />
+                  <Link to='/keys' />
                 ) : (
-                  <Link to='/sign-in' search={{ redirect: '/dashboard' }} />
+                  <Link to='/sign-in' search={{ redirect: '/keys' }} />
                 )
               }
             >
-              {t('Go to Dashboard')}
+              <KeyRound className='size-4' aria-hidden='true' />
+              {t('Get API key')}
               <ArrowRight className='size-4' aria-hidden='true' />
             </Button>
             <Button

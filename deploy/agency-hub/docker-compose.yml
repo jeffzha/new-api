@@ -35,7 +35,7 @@ services:
     expose:
       - "3201"
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:3201/agency/readyz"]
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3201/agency/readyz"]
       interval: 10s
       timeout: 3s
       retries: 6

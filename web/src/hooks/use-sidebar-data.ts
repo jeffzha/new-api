@@ -60,6 +60,7 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import type { SidebarData } from '@/components/layout/types'
+import { getModelMockUrl } from '@/lib/model-mock'
 import { ROLE } from '@/lib/roles'
 
 /**
@@ -70,6 +71,7 @@ import { ROLE } from '@/lib/roles'
  */
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
+  const modelMockUrl = getModelMockUrl()
   return {
     navGroups: [
       {
@@ -176,13 +178,17 @@ export function useSidebarData(): SidebarData {
             url: '/subscriptions',
             icon: CreditCard,
           },
-          {
-            title: t('Model mock scheduling'),
-            url: 'https://model-mock.nexus-reach.com',
-            icon: FlaskConical,
-            external: true,
-            requiredRole: ROLE.ADMIN,
-          },
+          ...(modelMockUrl
+            ? [
+                {
+                  title: t('Model mock scheduling'),
+                  url: modelMockUrl,
+                  icon: FlaskConical,
+                  external: true as const,
+                  requiredRole: ROLE.ADMIN,
+                },
+              ]
+            : []),
           {
             title: t('System Info'),
             url: '/system-info',

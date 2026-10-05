@@ -162,6 +162,7 @@ describe('Shared console navigation', () => {
         'Users',
         'Redemption Codes',
         'Subscriptions',
+        'Model mock scheduling',
         'System Info',
         'Workbench administration',
         'Task Plugins',

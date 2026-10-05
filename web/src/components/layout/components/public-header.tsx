@@ -39,6 +39,7 @@ import { defaultTopNavLinks } from '../config/top-nav.config'
 import type { TopNavLink } from '../types'
 import { ConsoleProductNav } from './console-product-nav'
 import { HeaderLogo } from './header-logo'
+import { ProductSwitcher } from './product-switcher'
 
 const AUTH_PROMPT_SECONDS = 5
 
@@ -243,6 +244,7 @@ export function PublicHeader(props: PublicHeaderProps) {
                   )}
                 </span>
               </Link>
+              {workspace && isAuthenticated && <ProductSwitcher />}
             </div>
 
             {/* Desktop nav */}

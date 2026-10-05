@@ -31,6 +31,7 @@ import { defaultTopNavLinks } from '../config/top-nav.config'
 import type { TopNavLink } from '../types'
 import { ConsoleProductNav } from './console-product-nav'
 import { Header } from './header'
+import { ProductSwitcher } from './product-switcher'
 import { SystemBrand } from './system-brand'
 import { TopNav } from './top-nav'
 
@@ -121,6 +122,7 @@ export function AppHeader({
       <div className='console-brand @container/system-brand flex min-w-0 flex-1 items-center gap-1'>
         {workspace && <SidebarTrigger variant='ghost' className='size-8' />}
         <SystemBrand variant='inline' />
+        {workspace && <ProductSwitcher />}
       </div>
 
       {workspace && showTopNav && <ConsoleProductNav links={links} console />}

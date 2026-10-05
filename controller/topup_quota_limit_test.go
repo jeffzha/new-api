@@ -190,6 +190,8 @@ func TestRequestAmountRejectsTopUpThatWouldOverflowWallet(t *testing.T) {
 func TestValidateCreditedQuotaRejectsOverflow(t *testing.T) {
 	_, err := validateCreditedQuota(decimal.NewFromInt(int64(common.MaxWalletQuota / 2)))
 	require.NoError(t, err)
+	_, err = validateCreditedQuota(decimal.NewFromInt(int64(common.MaxQuota) + 1))
+	require.NoError(t, err, "wallet credits above the single-request limit must remain valid")
 	_, err = validateCreditedQuota(decimal.Zero)
 	require.EqualError(t, err, "充值额度必须大于 0")
 	_, err = validateCreditedQuota(decimal.NewFromInt(common.MaxWalletQuota + 1))

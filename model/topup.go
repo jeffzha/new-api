@@ -43,7 +43,7 @@ func (topUp *TopUp) creditedQuotaOr(defaultQuota int, defaultErr error) (int, er
 	if topUp == nil || topUp.CreditedQuota <= 0 {
 		return defaultQuota, defaultErr
 	}
-	if topUp.CreditedQuota >= int64(common.MaxQuota) {
+	if topUp.CreditedQuota > int64(common.MaxWalletQuota) {
 		return 0, ErrInvalidTopUpQuota
 	}
 	return int(topUp.CreditedQuota), nil
@@ -373,7 +373,7 @@ func Recharge(referenceId string, customerId string, callerIp string, payment ..
 			return errors.New("充值订单状态错误")
 		}
 
-		quota, err = common.QuotaFromDecimalStrict(
+		quota, err = common.WalletQuotaFromDecimalStrict(
 			decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
 		)
 		quota, err = topUp.creditedQuotaOr(quota, err)
@@ -677,7 +677,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		}
 
 		// Creem 直接使用 Amount 作为充值额度（整数）
-		quota, err = common.QuotaFromDecimalStrict(decimal.NewFromInt(topUp.Amount))
+		quota, err = common.WalletQuotaFromDecimalStrict(decimal.NewFromInt(topUp.Amount))
 		quota, err = topUp.creditedQuotaOr(quota, err)
 		if err != nil || quota <= 0 {
 			return ErrInvalidTopUpQuota

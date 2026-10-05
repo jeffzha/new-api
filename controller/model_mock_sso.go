@@ -33,7 +33,7 @@ function done(message){
     const params=new URLSearchParams();
     if(message.ok&&message.ticket)params.set('model_mock_ticket',message.ticket);
     else params.set('model_mock_error',message.error||'主站登录验证失败');
-    location.replace(PAYLOAD.origin+'/#'+params.toString());
+    location.replace(PAYLOAD.origin+PAYLOAD.return_path+'#'+params.toString());
     return;
   }
   parent.postMessage(Object.assign({source:'new-api-model-mock-sso'},message),PAYLOAD.origin);
@@ -62,6 +62,14 @@ func allowedModelMockSSOOrigins() map[string]struct{} {
 		}
 	}
 	return allowed
+}
+
+func modelMockSSOReturnPath() string {
+	configured := strings.TrimSpace(os.Getenv("MODEL_MOCK_SSO_RETURN_PATH"))
+	if configured == "" || configured == "/" {
+		return "/"
+	}
+	return "/" + strings.Trim(configured, "/") + "/"
 }
 
 func allowedModelMockRoles() map[int]struct{} {
@@ -115,7 +123,15 @@ func ModelMockSSOPage(c *gin.Context) {
 		c.String(http.StatusBadRequest, "无效的 SSO 模式")
 		return
 	}
-	payload, err := common.Marshal(map[string]string{"state_hash": stateHash, "origin": origin, "mode": mode})
+	returnPath := strings.TrimSpace(c.Query("return_path"))
+	if returnPath == "" {
+		returnPath = "/"
+	}
+	if returnPath != modelMockSSOReturnPath() {
+		c.String(http.StatusForbidden, "目标路径不在白名单内")
+		return
+	}
+	payload, err := common.Marshal(map[string]string{"state_hash": stateHash, "origin": origin, "return_path": returnPath, "mode": mode})
 	if err != nil {
 		c.String(http.StatusInternalServerError, "页面初始化失败")
 		return

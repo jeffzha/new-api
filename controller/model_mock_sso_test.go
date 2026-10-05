@@ -3,6 +3,7 @@ package controller
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -52,6 +53,21 @@ func TestModelMockSSOPageRequiresAllowlistedOriginAndValidState(t *testing.T) {
 				require.Contains(t, contentSecurityPolicy, "https://mocktest.example")
 			}
 		})
+	}
+
+	t.Setenv("MODEL_MOCK_SSO_RETURN_PATH", "/model-mock/")
+	for _, test := range []struct {
+		path   string
+		status int
+	}{
+		{path: "/model-mock/", status: http.StatusOK},
+		{path: "/", status: http.StatusForbidden},
+		{path: "//evil.example/", status: http.StatusForbidden},
+	} {
+		recorder := httptest.NewRecorder()
+		target := "/api/model-mock/sso?state_hash=" + stateHash + "&origin=https://model-mock.example&return_path=" + url.QueryEscape(test.path) + "&mode=redirect"
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
+		require.Equal(t, test.status, recorder.Code)
 	}
 }
 

@@ -254,7 +254,11 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 							}
 						}
 						assert.Equal(t, float64(count), other["image_count"])
-						assert.Equal(t, tc.requestedImages, *request.ImageCount, "actual count must not mutate the frozen request")
+						expectedBillingCount := tc.requestedImages
+						if tc.outboundImages > 0 {
+							expectedBillingCount = tc.outboundImages
+						}
+						assert.Equal(t, expectedBillingCount, *request.ImageCount, "billing input must retain the final outbound count for settlement")
 					}
 					if tc.expression == imageExpression {
 						billable, ok := other["billing_tokens"].(map[string]any)

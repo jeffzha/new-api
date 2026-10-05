@@ -46,7 +46,7 @@ export function CustomerManagementDialog(props: {
         <Field label={t("Customer account")}>
           <input
             autoComplete="off"
-            maxLength={20}
+            maxLength={191}
             required
             value={input}
             onChange={(event) => setInput(event.target.value)}

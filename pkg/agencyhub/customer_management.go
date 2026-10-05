@@ -19,7 +19,7 @@ func (a *App) customerManagement(c *gin.Context) {
 	username := strings.TrimSpace(c.Query("username"))
 	var err error
 	if username != "" {
-		if len([]rune(username)) > 20 {
+		if len([]rune(username)) > 191 {
 			respondError(c, http.StatusBadRequest, "invalid_username", "请输入有效的客户账号", nil)
 			return
 		}

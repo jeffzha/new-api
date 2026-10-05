@@ -732,7 +732,7 @@ func (a *App) listCustomers(c *gin.Context) {
 		}
 		for _, binding := range bindings {
 			user := byID[binding.UserID]
-			views = append(views, customerView{UserID: binding.UserID, Username: userAccountName(user), AccountName: userAccountName(user), BindingID: binding.BindingID, Revision: binding.Revision, EffectiveAtMS: effectiveAt[binding.BindingID]})
+			views = append(views, customerView{UserID: binding.UserID, Username: user.Username, AccountName: userAccountName(user), BindingID: binding.BindingID, Revision: binding.Revision, EffectiveAtMS: effectiveAt[binding.BindingID]})
 		}
 	}
 	nextCursor := ""

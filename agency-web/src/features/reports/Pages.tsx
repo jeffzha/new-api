@@ -282,7 +282,7 @@ export function CustomersPage({
               rows={query.data?.items || []}
               rowKey={(row) => String(row.user_id)}
               columns={[
-                { key: "account_name", label: "Customer account" },
+                { key: "username", label: "Customer account" },
                 ...(global ? [{
                   key: "agency_name",
                   label: "Agency",

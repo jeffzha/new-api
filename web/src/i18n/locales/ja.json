@@ -6421,6 +6421,8 @@
     "Use authenticator code": "認証コードを使用",
     "Use backup code": "バックアップコードを使用",
     "Use Bearer for all protocols": "すべてのプロトコルで Bearer を使用",
+    "Use Chat Completions for Responses": "Use Chat Completions for Responses",
+    "Convert /v1/responses requests to upstream /v1/chat/completions and convert responses back": "Convert /v1/responses requests to upstream /v1/chat/completions and convert responses back",
     "Use channel type {{type}}": "チャネルタイプ {{type}} を使用",
     "Use default": "既定値を使用",
     "Use disk cache when request body exceeds this size": "リクエストボディがこのサイズを超えた場合にディスクキャッシュを使用",

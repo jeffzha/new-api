@@ -6421,6 +6421,8 @@
     "Use authenticator code": "使用驗證器代碼",
     "Use backup code": "使用備用代碼",
     "Use Bearer for all protocols": "所有協議統一使用 Bearer",
+    "Use Chat Completions for Responses": "使用 Chat Completions 相容 Responses",
+    "Convert /v1/responses requests to upstream /v1/chat/completions and convert responses back": "將 /v1/responses 請求轉換到上游 /v1/chat/completions，並將回應轉換回來",
     "Use channel type {{type}}": "使用通道類型 {{type}}",
     "Use default": "使用預設值",
     "Use disk cache when request body exceeds this size": "請求體超過此大小時使用磁碟緩存",

@@ -298,6 +298,7 @@ export const channelFormSchema = z
     allow_inference_geo: z.boolean().optional(), // OpenAI/Anthropic: inference geography
     allow_speed: z.boolean().optional(), // Anthropic: speed mode control
     claude_beta_query: z.boolean().optional(), // Anthropic: beta query passthrough
+    responses_use_chat_completions: z.boolean().optional(), // DeepSeek: bridge Responses through Chat Completions
     ollama_openai_chat: z.boolean().optional(), // Ollama: OpenAI-compatible /v1/chat/completions instead of native /api/chat
     disable_task_polling_sleep: z.boolean().optional(),
     doubao_video_submit_path: z.string().optional(),
@@ -526,6 +527,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   allow_inference_geo: false,
   allow_speed: false,
   claude_beta_query: false,
+  responses_use_chat_completions: false,
   ollama_openai_chat: false,
   disable_task_polling_sleep: false,
   doubao_video_submit_path: DEFAULT_DOUBAO_VIDEO_SUBMIT_PATH,
@@ -598,6 +600,7 @@ export function transformChannelToFormDefaults(
   let allowInferenceGeo = false
   let allowSpeed = false
   let claudeBetaQuery = false
+  let responsesUseChatCompletions = false
   let ollamaOpenAIChat = false
   let disableTaskPollingSleep = false
   let doubaoVideoSubmitPath = DEFAULT_DOUBAO_VIDEO_SUBMIT_PATH
@@ -621,6 +624,8 @@ export function transformChannelToFormDefaults(
       allowInferenceGeo = parsed.allow_inference_geo === true
       allowSpeed = parsed.allow_speed === true
       claudeBetaQuery = parsed.claude_beta_query === true
+      responsesUseChatCompletions =
+        parsed.responses_use_chat_completions === true
       ollamaOpenAIChat = parsed.ollama_openai_chat === true
       disableTaskPollingSleep = parsed.disable_task_polling_sleep === true
       doubaoVideoSubmitPath =
@@ -686,6 +691,7 @@ export function transformChannelToFormDefaults(
     allow_inference_geo: allowInferenceGeo,
     allow_speed: allowSpeed,
     claude_beta_query: claudeBetaQuery,
+    responses_use_chat_completions: responsesUseChatCompletions,
     ollama_openai_chat: ollamaOpenAIChat,
     disable_task_polling_sleep: disableTaskPollingSleep,
     doubao_video_submit_path: doubaoVideoSubmitPath,
@@ -828,6 +834,13 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     settingsObj.claude_beta_query = formData.claude_beta_query === true
   } else if ('claude_beta_query' in settingsObj) {
     delete settingsObj.claude_beta_query
+  }
+
+  if (formData.type === 43) {
+    settingsObj.responses_use_chat_completions =
+      formData.responses_use_chat_completions === true
+  } else if ('responses_use_chat_completions' in settingsObj) {
+    delete settingsObj.responses_use_chat_completions
   }
 
   // Only the Ollama adaptor can switch chat completions to the OpenAI-compatible endpoint.

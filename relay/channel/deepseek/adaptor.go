@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/gin-gonic/gin"
@@ -92,6 +93,9 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		case constant.RelayModeCompletions:
 			return fmt.Sprintf("%s/completions", fimBaseUrl), nil
 		case constant.RelayModeResponses:
+			if responsesUseChatCompletionsUpstream(info) {
+				return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
+			}
 			return fmt.Sprintf("%s/responses", info.ChannelBaseUrl), nil
 		default:
 			return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
@@ -189,7 +193,21 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 	return nil, errors.New("not implemented")
 }
 
-func (a *Adaptor) ConvertOpenAIResponsesRequest(_ *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+	if useChatCompletionsForResponses(info) {
+		result, err := service.ConvertRequest(c, info, types.RelayFormatOpenAI, &request)
+		if err != nil {
+			return nil, err
+		}
+		chatRequest, ok := result.Value.(*dto.GeneralOpenAIRequest)
+		if !ok {
+			return nil, fmt.Errorf("expected OpenAI chat completions request, got %T", result.Value)
+		}
+		if err := applyDeepSeekV4OpenAIThinkingSuffix(info, chatRequest); err != nil {
+			return nil, err
+		}
+		return chatRequest, nil
+	}
 	applyDeepSeekV4ResponsesThinkingSuffix(info, &request)
 	return request, nil
 }
@@ -236,12 +254,26 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		return adaptor.DoResponse(c, resp, info)
 	default:
 		adaptor := openai.Adaptor{}
+		if info.RelayMode == constant.RelayModeResponses && responsesUseChatCompletionsUpstream(info) {
+			if info.IsStream {
+				return openai.OaiChatToResponsesStreamHandler(c, info, resp)
+			}
+			return openai.OaiChatToResponsesHandler(c, info, resp)
+		}
 		return adaptor.DoResponse(c, resp, info)
 	}
 }
 
 func useOpenAICompatibleClaude(info *relaycommon.RelayInfo) bool {
 	return info != nil && info.ChannelMeta != nil && info.ChannelOtherSettings.ClaudeUseOpenAICompatible
+}
+
+func useChatCompletionsForResponses(info *relaycommon.RelayInfo) bool {
+	return info != nil && info.ChannelMeta != nil && info.ChannelOtherSettings.ResponsesUseChatCompletions
+}
+
+func responsesUseChatCompletionsUpstream(info *relaycommon.RelayInfo) bool {
+	return useChatCompletionsForResponses(info) && info.GetFinalRequestRelayFormat() == types.RelayFormatOpenAI
 }
 
 func (a *Adaptor) GetModelList() []string {

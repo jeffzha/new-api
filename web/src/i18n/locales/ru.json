@@ -6421,6 +6421,8 @@
     "Use authenticator code": "Использовать код аутентификатора",
     "Use backup code": "Использовать резервный код",
     "Use Bearer for all protocols": "Использовать Bearer для всех протоколов",
+    "Use Chat Completions for Responses": "Use Chat Completions for Responses",
+    "Convert /v1/responses requests to upstream /v1/chat/completions and convert responses back": "Convert /v1/responses requests to upstream /v1/chat/completions and convert responses back",
     "Use channel type {{type}}": "Использовать тип канала {{type}}",
     "Use default": "Использовать значение по умолчанию",
     "Use disk cache when request body exceeds this size": "Использовать дисковый кэш, когда тело запроса превышает этот размер",

@@ -6421,6 +6421,8 @@
     "Use authenticator code": "Sử dụng mã xác thực",
     "Use backup code": "Sử dụng mã dự phòng",
     "Use Bearer for all protocols": "Dùng Bearer cho mọi giao thức",
+    "Use Chat Completions for Responses": "Use Chat Completions for Responses",
+    "Convert /v1/responses requests to upstream /v1/chat/completions and convert responses back": "Convert /v1/responses requests to upstream /v1/chat/completions and convert responses back",
     "Use channel type {{type}}": "Sử dụng loại kênh {{type}}",
     "Use default": "Dùng mặc định",
     "Use disk cache when request body exceeds this size": "Sử dụng bộ nhớ đệm đĩa khi nội dung yêu cầu vượt quá kích thước này",

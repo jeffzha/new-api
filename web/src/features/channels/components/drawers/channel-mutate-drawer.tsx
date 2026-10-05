@@ -285,6 +285,7 @@ const SENSITIVE_FORM_FIELDS = [
   'allow_inference_geo',
   'allow_speed',
   'claude_beta_query',
+  'responses_use_chat_completions',
   'ollama_openai_chat',
   'disable_task_polling_sleep',
   'doubao_video_submit_path',
@@ -1697,6 +1698,32 @@ export function ChannelMutateDrawer({
     />
   )
 
+  const responsesUseChatCompletionsFields = currentType === 43 && (
+    <FormField
+      control={form.control}
+      name='responses_use_chat_completions'
+      render={({ field }) => (
+        <FormItem className='flex items-center justify-between px-4 py-3'>
+          <div className='space-y-0.5'>
+            <FormLabel>{t('Use Chat Completions for Responses')}</FormLabel>
+            <FormDescription>
+              {t(
+                'Convert /v1/responses requests to upstream /v1/chat/completions and convert responses back'
+              )}
+            </FormDescription>
+          </div>
+          <FormControl>
+            <Switch
+              disabled={sensitiveLocked}
+              checked={field.value === true}
+              onCheckedChange={field.onChange}
+            />
+          </FormControl>
+        </FormItem>
+      )}
+    />
+  )
+
   const notesFields = (
     <div
       role='group'
@@ -1948,7 +1975,9 @@ export function ChannelMutateDrawer({
                     />
                   </FormControl>
                   <FormDescription>
-                    {t('Relative upstream path used to query tasks; include {task_id}')}
+                    {t(
+                      'Relative upstream path used to query tasks; include {task_id}'
+                    )}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -2834,25 +2863,24 @@ export function ChannelMutateDrawer({
                   </FormControl>
                   {canBindTaskPlugin &&
                     canHavePluginExtensions &&
-                    !showProviderPicker && (
-                      taskPluginOptionsQuery.isError ? (
-                        <ErrorState
-                          className='min-h-0 p-3'
-                          title={t('Failed to load plugins')}
-                          onRetry={() => {
-                            void taskPluginOptionsQuery.refetch()
-                          }}
-                        />
-                      ) : (
-                        <ChannelPluginExtensions
-                          plugins={pluginExtensions}
-                          selected={currentModelsArray}
-                          onConfigure={(pluginKey) =>
-                            setModelConfiguration({ pluginKey })
-                          }
-                        />
-                      )
-                    )}
+                    !showProviderPicker &&
+                    (taskPluginOptionsQuery.isError ? (
+                      <ErrorState
+                        className='min-h-0 p-3'
+                        title={t('Failed to load plugins')}
+                        onRetry={() => {
+                          void taskPluginOptionsQuery.refetch()
+                        }}
+                      />
+                    ) : (
+                      <ChannelPluginExtensions
+                        plugins={pluginExtensions}
+                        selected={currentModelsArray}
+                        onConfigure={(pluginKey) =>
+                          setModelConfiguration({ pluginKey })
+                        }
+                      />
+                    ))}
                   {modelMappingGuardrail.exposedTargetModels.length > 0 && (
                     <Alert className='border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
                       <AlertDescription className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
@@ -4224,6 +4252,7 @@ export function ChannelMutateDrawer({
                   disabled={sensitiveLocked || isSubmitting}
                 />
                 {formatFields}
+                {responsesUseChatCompletionsFields}
                 {ollamaOpenAIChatFields}
                 {thinkingFields}
                 {currentType !== CHANNEL_TYPE_ADVANCED_CUSTOM &&

@@ -6495,6 +6495,8 @@
     "Use authenticator code": "Use authenticator code",
     "Use backup code": "Use backup code",
     "Use Bearer for all protocols": "Use Bearer for all protocols",
+    "Use Chat Completions for Responses": "Use Chat Completions for Responses",
+    "Convert /v1/responses requests to upstream /v1/chat/completions and convert responses back": "Convert /v1/responses requests to upstream /v1/chat/completions and convert responses back",
     "Use channel type {{type}}": "Use channel type {{type}}",
     "Use default": "Use default",
     "Use disk cache when request body exceeds this size": "Use disk cache when request body exceeds this size",

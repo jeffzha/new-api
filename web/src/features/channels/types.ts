@@ -104,6 +104,7 @@ export interface ChannelOtherSettings {
   allow_inference_geo?: boolean
   allow_speed?: boolean
   claude_beta_query?: boolean
+  responses_use_chat_completions?: boolean
   ollama_openai_chat?: boolean
   disable_task_polling_sleep?: boolean
   doubao_video_endpoints?: {

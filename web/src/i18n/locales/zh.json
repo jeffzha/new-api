@@ -6495,6 +6495,8 @@
     "Use authenticator code": "使用验证器代码",
     "Use backup code": "使用备用代码",
     "Use Bearer for all protocols": "所有协议统一使用 Bearer",
+    "Use Chat Completions for Responses": "使用 Chat Completions 兼容 Responses",
+    "Convert /v1/responses requests to upstream /v1/chat/completions and convert responses back": "将 /v1/responses 请求转换到上游 /v1/chat/completions，并将响应转换回来",
     "Use channel type {{type}}": "使用通道类型 {{type}}",
     "Use default": "使用预设值",
     "Use disk cache when request body exceeds this size": "请求体超过此大小时使用磁盘缓存",

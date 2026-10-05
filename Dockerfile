@@ -14,7 +14,11 @@ COPY ./web ./
 COPY ./docs/openapi/relay.json /build/docs/openapi/relay.json
 COPY ./VERSION /build/VERSION
 RUN version="${BUILD_VERSION:-$(cat /build/VERSION)}" \
-    && DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION="$version" bun run build
+    && DISABLE_ESLINT_PLUGIN='true' \
+        VITE_REACT_APP_VERSION="$version" \
+        VITE_AGENCY_CENTER_URL="$VITE_AGENCY_CENTER_URL" \
+        VITE_MODEL_MOCK_URL="$VITE_MODEL_MOCK_URL" \
+        bun run build
 
 # Agency's lockfileVersion 2 requires Bun 1.4; keep frozen-lockfile validation.
 FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS agency-web-builder

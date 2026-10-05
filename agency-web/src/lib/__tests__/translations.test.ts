@@ -13,7 +13,18 @@ import { reportMessages } from "../../features/reports/messages";
 import { invitationMessages } from "../../features/invitations/messages";
 import { statusMessages } from "../../features/reports/statusMessages";
 import { evidenceLabels } from "../../features/reconciliation/labels";
+import { resolveAgencyLocale } from "../language";
 import type { Locale } from "../types";
+
+test("overseas agency defaults to English without an explicit saved choice", () => {
+  expect(resolveAgencyLocale(null)).toBe("en");
+  expect(resolveAgencyLocale("zh-CN")).toBe("en");
+});
+
+test("overseas agency restores a supported language explicitly chosen by the user", () => {
+  expect(resolveAgencyLocale("zh")).toBe("zh");
+  expect(resolveAgencyLocale("fr")).toBe("fr");
+});
 
 test("every shipped language includes the same complete feature dictionary", () => {
   for (const messages of [

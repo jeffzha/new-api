@@ -8,6 +8,7 @@ import { useMutation } from "./lib/mutation-context";
 import { MutationProvider } from "./components/MutationProvider";
 import { PasswordChange } from "./components/Auth";
 import { ErrorNotice, Loading } from "./components/ui";
+import { agencyLanguageStorageKey } from "./lib/language";
 import { AgenciesPage } from "./features/agencies/AgenciesPage";
 import { ChildrenPage } from "./features/agencies/ChildrenPage";
 import { PricingPage } from "./features/pricing/PricingPage";
@@ -331,7 +332,10 @@ function Dashboard({
           <select
             aria-label={t("Language")}
             value={i18n.language}
-            onChange={(event) => void i18n.changeLanguage(event.target.value)}
+            onChange={(event) => {
+              window.localStorage.setItem(agencyLanguageStorageKey, event.target.value);
+              void i18n.changeLanguage(event.target.value);
+            }}
           >
             <option value="zh">简体中文</option>
             <option value="zh-TW">繁體中文</option>

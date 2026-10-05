@@ -10,15 +10,10 @@ import { reconciliationMessages } from "./features/reconciliation/messages";
 import { reportMessages } from "./features/reports/messages";
 import { invitationMessages } from "./features/invitations/messages";
 import { statusMessages } from "./features/reports/statusMessages";
+import { agencyLanguageStorageKey, resolveAgencyLocale } from "./lib/language";
 import type { Locale } from "./lib/types";
 
-const language = navigator.language.toLowerCase();
-let locale = language.split("-")[0];
-if (language === "zh-tw" || language === "zh-hk") {
-  locale = "zh-TW";
-} else if (language.startsWith("zh")) {
-  locale = "zh";
-}
+const locale = resolveAgencyLocale(window.localStorage.getItem(agencyLanguageStorageKey));
 const zhAgencyOverrides: Record<string, string> = {
   "Agency Center": "\u4ee3\u7406\u5546\u4e2d\u5fc3",
   Overview: "\u6982\u89c8", Agencies: "\u4ee3\u7406\u5546\u7ba1\u7406", Pricing: "\u4ef7\u683c\u7b56\u7565",

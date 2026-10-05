@@ -35,19 +35,25 @@ import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ThemeCustomizationProvider } from '@/context/theme-customization-provider'
+import {
+  ThemeCustomizationProvider,
+  useThemeCustomization,
+} from '@/context/theme-customization-provider'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { buildSignalUsage } from '../../../lib/signal-usage'
-import { SignalConsoleOverview } from '../signal-console-overview'
 import { OverviewDashboard } from '../overview-dashboard'
-import { useThemeCustomization } from '@/context/theme-customization-provider'
+import { SignalConsoleOverview } from '../signal-console-overview'
 
 function LegacyOverview() {
   const { customization } = useThemeCustomization()
-  return customization.preset === 'signal-console' ? <SignalConsoleOverview /> : <OverviewDashboard />
+  return customization.preset === 'signal-console' ? (
+    <SignalConsoleOverview />
+  ) : (
+    <OverviewDashboard />
+  )
 }
 
 let client: QueryClient
@@ -143,7 +149,9 @@ async function mountOverview() {
 describe('signal overview', () => {
   it('shows model distribution from the selected reporting window', async () => {
     await mountOverview()
-    const distribution = await screen.findByRole('region', { name: 'Model distribution' })
+    const distribution = await screen.findByRole('region', {
+      name: 'Model distribution',
+    })
     expect(await within(distribution).findByText('model-a')).toBeVisible()
     expect(within(distribution).getByText('12 Requests')).toBeVisible()
     expect(within(distribution).getByText('500')).toBeVisible()
@@ -225,7 +233,7 @@ describe('signal overview', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('signal-overview')).not.toBeInTheDocument()
     )
-    expect(document.cookie).not.toContain('theme_preset=')
+    expect(document.cookie).toContain('theme_preset=default')
     expect(await screen.findByText('Usage at a glance')).toBeInTheDocument()
   })
   it('shows loading placeholders instead of zero usage while the request is pending', async () => {

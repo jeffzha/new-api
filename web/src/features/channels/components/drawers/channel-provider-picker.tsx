@@ -23,7 +23,7 @@ import {
   Puzzle,
   SlidersHorizontal,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
@@ -75,6 +75,7 @@ type ChannelProviderPickerProps = {
 
 export function ChannelProviderPicker(props: ChannelProviderPickerProps) {
   const { t, i18n } = useTranslation()
+  const descriptionId = useId()
   const shouldReduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   const [search, setSearch] = useState('')
   const [selectedFilter, setSelectedFilter] = useState('all')
@@ -116,6 +117,7 @@ export function ChannelProviderPicker(props: ChannelProviderPickerProps) {
       detail?: string
       extensionNames?: string
       extensionSummary?: string
+      accessibleDescription?: string
       badge?: ChannelProviderPresentation['badge']
       searchText: string
     }> = []
@@ -181,9 +183,20 @@ export function ChannelProviderPicker(props: ChannelProviderPickerProps) {
         })
       }
     }
-    return entries.filter((entry) =>
-      entry.searchText.toLocaleLowerCase().includes(keyword)
-    )
+    return entries
+      .filter((entry) => entry.searchText.toLocaleLowerCase().includes(keyword))
+      .map((entry) => ({
+        ...entry,
+        accessibleDescription:
+          [
+            entry.badge && t(entry.badge.labelKey),
+            entry.detail || entry.description,
+            entry.extensionSummary && t('Supports plugin extensions'),
+            entry.extensionSummary,
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined,
+      }))
   }, [
     filter,
     i18n.language,
@@ -267,6 +280,16 @@ export function ChannelProviderPicker(props: ChannelProviderPickerProps) {
           />
           <CommandList className='mt-3 max-h-none min-h-0 flex-1'>
             <CommandEmpty>{t('No matching provider')}</CommandEmpty>
+            <span className='sr-only'>
+              {options.map(
+                (option) =>
+                  option.accessibleDescription && (
+                    <span key={option.id} id={`${descriptionId}-${option.id}`}>
+                      {option.accessibleDescription}
+                    </span>
+                  )
+              )}
+            </span>
             <CommandGroup className='p-1 [&_[cmdk-group-items]]:grid [&_[cmdk-group-items]]:gap-2.5 md:[&_[cmdk-group-items]]:grid-cols-2 xl:[&_[cmdk-group-items]]:grid-cols-3'>
               {options.map((option) => (
                 <CommandItem
@@ -281,16 +304,10 @@ export function ChannelProviderPicker(props: ChannelProviderPickerProps) {
                       ? `${option.label} ${t('Built-in')} #${option.target.type}`
                       : `${option.label} ${t('Plugin')} ${option.target.key}`
                   }
-                  aria-description={
-                    [
-                      option.badge && t(option.badge.labelKey),
-                      option.detail || option.description,
-                      option.extensionSummary &&
-                        t('Supports plugin extensions'),
-                      option.extensionSummary,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ') || undefined
+                  aria-describedby={
+                    option.accessibleDescription
+                      ? `${descriptionId}-${option.id}`
+                      : undefined
                   }
                   disabled={props.disabled}
                   onSelect={() => props.onSelect(option.target)}

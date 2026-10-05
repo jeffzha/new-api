@@ -274,6 +274,7 @@ describe('security page migration', () => {
     }
   )
   it('places account management on the left and verification and privacy on the right', async () => {
+    document.cookie = 'theme_preset=default; path=/'
     await renderPage()
     const login = await screen.findByRole('region', {
       name: 'Login & Authentication',
@@ -326,6 +327,7 @@ describe('security page migration', () => {
   })
 
   it('built-in and custom bindings share one compact responsive grid', async () => {
+    document.cookie = 'theme_preset=default; path=/'
     await renderPage()
     const bindings = await screen.findByRole('list', {
       name: 'Account Bindings',
@@ -342,6 +344,7 @@ describe('security page migration', () => {
   })
 
   it('the password action opens the existing dialog by keyboard and Escape closes it', async () => {
+    document.cookie = 'theme_preset=default; path=/'
     const user = userEvent.setup()
     await renderPage()
     const action = await screen.findByRole('button', {
@@ -382,6 +385,7 @@ describe('security page migration', () => {
   })
 
   it('a failed profile load offers retry before exposing account actions', async () => {
+    document.cookie = 'theme_preset=default; path=/'
     vi.mocked(api.get).mockResolvedValueOnce({ data: { success: false } })
     const user = userEvent.setup()
     await renderPage()

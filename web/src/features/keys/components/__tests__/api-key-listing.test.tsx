@@ -428,6 +428,8 @@ it.each([
     const { post, put } = await renderKeysPage(status)
     const user = userEvent.setup()
     const button = screen.getByRole('button', { name: action })
+    const row = button.closest('tr')
+    if (!row) throw new Error('Expected API key action inside a table row')
     act(() => button.focus())
     await user.keyboard('{Enter}')
     await waitFor(() =>
@@ -436,7 +438,7 @@ it.each([
         status: nextStatus,
       })
     )
-    await screen.findByText(nextLabel)
+    await within(row).findByText(nextLabel)
     expect(post).not.toHaveBeenCalled()
   }
 )
@@ -444,10 +446,13 @@ it.each([
 it('keeps expired status when the server refuses reactivation', async () => {
   const { put, post } = await renderKeysPage(3)
   put.mockResolvedValue({ data: { success: false, message: 'Token expired' } })
-  await userEvent.click(screen.getByRole('button', { name: 'Enable' }))
+  const button = screen.getByRole('button', { name: 'Enable' })
+  const row = button.closest('tr')
+  if (!row) throw new Error('Expected API key action inside a table row')
+  await userEvent.click(button)
   await screen.findByText('Token expired')
-  expect(screen.getByText('Expired')).toBeInTheDocument()
-  expect(screen.queryByText('Enabled')).not.toBeInTheDocument()
+  expect(within(row).getByText('Expired')).toBeInTheDocument()
+  expect(within(row).queryByText('Enabled')).not.toBeInTheDocument()
   expect(post).not.toHaveBeenCalled()
 })
 

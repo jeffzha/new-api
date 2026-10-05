@@ -39,7 +39,7 @@ import { parseTags } from '../lib/filters'
 import { getDisplayGroupRatio, isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import { getVideoTokenMatrixPricing } from '../lib/provider-pricing'
-import { taskUsageUnitLabel } from '../lib/task-price-display'
+import { taskPriceLabel, taskUsageUnitLabel } from '../lib/task-price-display'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
@@ -135,7 +135,11 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
               >
                 <span>
                   {entry.labelKind === 'schema'
-                    ? entry.shortLabel
+                    ? taskPriceLabel(
+                        entry.description,
+                        entry.field,
+                        i18n.language
+                      )
                     : t(entry.shortLabel)}
                 </span>{' '}
                 <span className='text-foreground font-mono font-semibold'>
@@ -153,6 +157,15 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
           {examplePrice && (
             <span className='text-muted-foreground basis-full text-xs'>
               {examplePrice.label} ≈ {examplePrice.formatted}
+            </span>
+          )}
+          {dynamicSummary.providerCount && (
+            <span className='text-muted-foreground basis-full text-xs'>
+              {t('{{count}} providers', {
+                count: dynamicSummary.providerCount,
+              })}
+              {dynamicSummary.hasUnconfiguredProviders &&
+                ` · ${t('Not configured for some providers')}`}
             </span>
           )}
         </>

@@ -25,6 +25,7 @@ export { getUserActionMessage } from './user-actions'
 // Form Utilities
 // ============================================================================
 export {
+  newUserAccountSchema,
   userFormSchema,
   type UserFormValues,
   USER_FORM_DEFAULT_VALUES,

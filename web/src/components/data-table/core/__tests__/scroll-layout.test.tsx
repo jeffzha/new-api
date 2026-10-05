@@ -163,6 +163,7 @@ it('lets empty rows fit their scroll area while preserving the default height', 
 })
 
 it('retains the existing native scroll container outside the console themes', () => {
+  document.cookie = 'theme_preset=default; path=/'
   render(
     <ThemeCustomizationProvider>
       <Fixture />

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CustomerPricingNotice,
@@ -11,6 +11,8 @@ import { ModelCard } from '../components/model-card'
 import { ModelDetailsContent } from '../components/model-details'
 import { PricingTable } from '../components/pricing-table'
 import type { PricingModel } from '../types'
+
+vi.mock('@visactor/react-vchart', () => ({ VChart: () => null }))
 
 const customer: PricingModel = {
   id: 1,
@@ -67,9 +69,9 @@ describe('customer pricing display', () => {
       />
     )
 
-    await userEvent.setup().click(
-      screen.getByRole('button', { name: 'View exclusive pricing' })
-    )
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'View exclusive pricing' }))
 
     expect(screen.getByRole('dialog')).toHaveTextContent(
       'Agency-exclusive pricing details'
@@ -117,7 +119,7 @@ describe('customer pricing display', () => {
     expect(screen.getByText('0.9x')).toBeInTheDocument()
     expect(screen.queryByText('2x')).not.toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'Prices include your agency sales policy.'
+      "Prices are calculated using your agency's sales policy."
     )
   })
 
@@ -127,9 +129,9 @@ describe('customer pricing display', () => {
       { ...customer, model_name: 'second-model', sales_bps: 8000 },
     ])
 
-    await userEvent.setup().click(
-      screen.getByRole('button', { name: 'View exclusive pricing' })
-    )
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'View exclusive pricing' }))
 
     const dialog = screen.getByRole('dialog')
     expect(dialog).toHaveTextContent('hy3')
@@ -146,7 +148,7 @@ describe('customer pricing display', () => {
         onClick={() => undefined}
       />
     )
-    expect(within(card.container).getByText('$1.8')).toBeInTheDocument()
+    expect(card.container).toHaveTextContent('$1.8 / request')
     card.unmount()
     const table = render(
       <PricingTable models={[model]} selectedGroup='default' />

@@ -186,7 +186,11 @@ function selectComboboxOption(
   fireEvent.click(trigger)
   const option = [
     ...document.querySelectorAll<HTMLElement>('[data-slot="command-item"]'),
-  ].find((candidate) => candidate.textContent?.includes(optionDescription))
+  ].find(
+    (candidate) =>
+      candidate.closest('[data-open]') &&
+      candidate.textContent?.includes(optionDescription)
+  )
   if (!option) {
     throw new Error(`Expected option containing "${optionDescription}"`)
   }
@@ -261,12 +265,18 @@ describe('API keys mutate drawer Auto group integration', () => {
 
     const groupTrigger = getControlByLabel('Group')
     selectComboboxOption(groupTrigger, 'Standard access')
-    expect(document.querySelector('button[aria-label="Remove vip"]')).toBe(null)
+    await waitFor(() =>
+      expect(document.querySelector('button[aria-label="Remove vip"]')).toBe(
+        null
+      )
+    )
     selectComboboxOption(groupTrigger, 'Automatic routing')
 
-    expect(
-      document.querySelector('button[aria-label="Remove vip"]')
-    ).toBeTruthy()
+    await waitFor(() =>
+      expect(
+        document.querySelector('button[aria-label="Remove vip"]')
+      ).toBeTruthy()
+    )
     expect(document.body.textContent?.includes('1 / 3 groups selected')).toBe(
       true
     )

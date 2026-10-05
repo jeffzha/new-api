@@ -29,8 +29,12 @@ import type { UserFormData, User } from '../types'
 // Form Schema
 // ============================================================================
 
+export const newUserAccountSchema = z
+  .string()
+  .email('Please enter a valid email address')
+
 export const userFormSchema = z.object({
-  username: z.string().email('Please enter a valid email address'),
+  username: z.string().min(1, 'Please enter an account'),
   display_name: z.string().optional(),
   password: z.string().optional(),
   role: z.number().optional(),

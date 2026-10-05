@@ -87,6 +87,7 @@ import {
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
   userFormSchema,
+  newUserAccountSchema,
   type UserFormValues,
   USER_FORM_DEFAULT_VALUES,
   transformFormDataToPayload,
@@ -164,6 +165,14 @@ export function UsersMutateDrawer({
   const targetIsAdmin = (selectedRole ?? currentRow?.role ?? 0) >= ROLE.ADMIN
 
   const onSubmit = async (data: UserFormValues) => {
+    if (!isUpdate && !newUserAccountSchema.safeParse(data.username).success) {
+      form.setError('username', {
+        type: 'manual',
+        message: t('Please enter a valid email address'),
+      })
+      return
+    }
+
     if (!isUpdate || data.password) {
       if (!accountPasswordSchema.safeParse(data.password ?? '').success) {
         form.setError('password', {

@@ -18,6 +18,7 @@ const (
 	Seedance25Model       = "doubao-seedance-2-5-260628"
 	AimodelSeedance20Model = "doubao-seedance-2.0"
 	AimodelSeedance25Model = "doubao-seedance-2.5"
+	MiniSeedanceModel     = "doubao-seedance-2.0-mini"
 	MaxPriceCNYPerMillion = 1_000_000.0
 
 	WithoutVideoKey = "without_video"
@@ -36,6 +37,7 @@ var requiredResolutions = map[string][]string{
 	Seedance25Model:       {"720p", "1080p"},
 	AimodelSeedance20Model: {"720p", "1080p", "4k"},
 	AimodelSeedance25Model: {"720p", "1080p"},
+	MiniSeedanceModel:     {"720p"},
 }
 
 var defaultPricesCNY = func() PricesCNY {
@@ -73,6 +75,15 @@ var defaultPricesCNY = func() PricesCNY {
 		"1080p": {
 			WithoutVideoKey: 77,
 			WithVideoKey:    46,
+		},
+	},
+	MiniSeedanceModel: {
+		// 480P and 720P share the same list price (480P normalizes to the
+		// configured 720P tier); 1080P / 4K are NOT supported, so no tier is
+		// configured and those resolutions are rejected at billing time.
+		"720p": {
+			WithoutVideoKey: 9.2,
+			WithVideoKey:    5.6,
 		},
 	},
 	}

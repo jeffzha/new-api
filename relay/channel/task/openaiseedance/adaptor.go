@@ -36,6 +36,7 @@ var ModelList = []string{
 	defaultModel,
 	seedancepricing.Seedance25Model,
 	seedancepricing.AimodelSeedance25Model,
+	seedancepricing.MiniSeedanceModel,
 }
 
 type TaskAdaptor struct {

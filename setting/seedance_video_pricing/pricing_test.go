@@ -34,6 +34,9 @@ func TestDefaultPricesCNYAreComplete(t *testing.T) {
 		{name: "2.5 1080p video list price", model: Seedance25Model, resolution: "1080p", hasVideo: true, want: 46},
 		{name: "aimodel 2.0 pricing alias", model: AimodelSeedance20Model, resolution: "720p", want: 46},
 		{name: "aimodel 2.5 pricing alias", model: AimodelSeedance25Model, resolution: "480p", want: 70},
+		{name: "mini 720p", model: MiniSeedanceModel, resolution: "720p", want: 9.2},
+		{name: "mini 480p uses 720p tier", model: MiniSeedanceModel, resolution: "480p", want: 9.2},
+		{name: "mini 720p video", model: MiniSeedanceModel, resolution: "720p", hasVideo: true, want: 5.6},
 	}
 
 	for _, tt := range tests {
@@ -54,6 +57,13 @@ func TestSeedance25RejectsUnsupportedResolutionWithoutChangingSeedance20Fallback
 	price, ok := GetUnitPriceCNY(StandardSeedanceModel, "future-resolution", false)
 	require.True(t, ok)
 	assert.Equal(t, 46.0, price.InexactFloat64())
+}
+
+func TestMiniSeedanceRejectsUnsupportedResolutions(t *testing.T) {
+	for _, res := range []string{"1080p", "4k", "4K"} {
+		_, ok := GetUnitPriceCNY(MiniSeedanceModel, res, false)
+		assert.False(t, ok, "resolution %q should be unsupported for mini", res)
+	}
 }
 
 func TestRebuildPriceIndexMigratesLegacySeedanceMatrix(t *testing.T) {

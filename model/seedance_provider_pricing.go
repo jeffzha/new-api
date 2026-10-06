@@ -38,6 +38,10 @@ func getProviderPricing(modelName string) *ProviderPricing {
 	case seedancepricing.Seedance25Model, seedancepricing.AimodelSeedance25Model:
 		priceModel = modelName
 		resolutions = []string{"480p", "720p", "1080p"}
+	case seedancepricing.MiniSeedanceModel:
+		// 480P and 720P share one tier; 1080P / 4K are not supported.
+		priceModel = modelName
+		resolutions = []string{"480p", "720p"}
 	default:
 		return nil
 	}

@@ -59,6 +59,23 @@ func TestInternalMockGroupIsNotUserSelectable(t *testing.T) {
 	assert.False(t, IsUserSelectableGroup("default", "mock-default"))
 }
 
+func TestInternalMockGroupMembersKeepAccessToOwnGroup(t *testing.T) {
+	configureRequestAutoGroupsTest(t)
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","mock-default":"Mock"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"mock-default":1}`))
+
+	// The model mock runner authenticates with a token bound to its own
+	// mock-default group, so that group must stay authorized for its members.
+	assert.Contains(t, GetUserUsableGroups("mock-default"), "mock-default")
+	assert.True(t, GroupInUserUsableGroups("mock-default", "mock-default"))
+	assert.True(t, IsUserSelectableGroup("mock-default", "mock-default"))
+
+	// Everyone else still cannot see or select the internal group.
+	assert.NotContains(t, GetUserUsableGroups("default"), "mock-default")
+	assert.False(t, GroupInUserUsableGroups("default", "mock-default"))
+	assert.False(t, IsUserSelectableGroup("default", "mock-default"))
+}
+
 func TestGetRequestAutoGroupsFiltersBeforeApplyingCurrentLimit(t *testing.T) {
 	configureRequestAutoGroupsTest(t)
 	ctx := newRequestAutoGroupsContext()

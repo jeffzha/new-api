@@ -139,4 +139,22 @@ describe('Homepage discovery and navigation', () => {
     await user.keyboard('{Enter}')
     expect(question).toHaveAttribute('aria-expanded', 'false')
   })
+
+  it('shows the domestic provider lineup in the model ecosystem strip', async () => {
+    await mount()
+    const ecosystem = screen.getByLabelText('Model ecosystem')
+    for (const provider of [
+      'GLM',
+      'Kimi',
+      'DeepSeek',
+      'Tencent Hunyuan',
+      'Qwen',
+      'ByteDance',
+    ]) {
+      expect(ecosystem).toHaveTextContent(provider)
+    }
+    for (const legacy of ['OpenAI', 'Claude', 'Gemini']) {
+      expect(ecosystem).not.toHaveTextContent(legacy)
+    }
+  })
 })

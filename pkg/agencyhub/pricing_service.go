@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -190,6 +191,16 @@ func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agen
 		respondError(c, http.StatusInternalServerError, "database_error", "读取平台价格策略失败", nil)
 		return
 	}
+	rows, err := loadLiveModelChannels(a.db)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取实时模型与渠道失败", nil)
+		return
+	}
+	internalChannels := internalChannelIDs(rows)
+	publicModels := make(map[string]struct{})
+	for _, row := range publicLiveModelChannels(rows) {
+		publicModels[row.Model] = struct{}{}
+	}
 	effective, err := a.effectiveAgencyPolicy(agency, policy)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "invalid_pricing", "代理商价格策略无效", nil)
@@ -209,6 +220,10 @@ func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agen
 	}
 	items := make([]gin.H, 0, len(platform.ModelPrices))
 	for _, price := range platform.ModelPrices {
+		_, hasPublicAbility := publicModels[price.OriginModelName]
+		if !priceVisibleToAgencies(price, hasPublicAbility, internalChannels) {
+			continue
+		}
 		resolved, resolveErr := agencycontract.Resolve(effective, price.OriginModelName)
 		if resolveErr != nil {
 			respondError(c, http.StatusInternalServerError, "invalid_pricing", "代理商价格策略无效", nil)
@@ -302,19 +317,26 @@ func (a *App) listPublicModels(c *gin.Context) {
 			limit = parsed
 		}
 	}
-	var models []string
-	db := a.db.Table("abilities").
-		Select("DISTINCT abilities.model").
-		Joins("JOIN channels ON channels.id = abilities.channel_id").
-		Where("abilities.enabled = ? AND channels.status = ?", true, common.ChannelStatusEnabled).
-		Order("abilities.model ASC").
-		Limit(limit)
-	if query != "" {
-		db = db.Where("LOWER(abilities.model) LIKE ?", "%"+query+"%")
-	}
-	if err := db.Pluck("abilities.model", &models).Error; err != nil {
+	rows, err := loadLiveModelChannels(a.db)
+	if err != nil {
 		respondError(c, http.StatusInternalServerError, "database_error", "读取模型列表失败", nil)
 		return
+	}
+	seen := make(map[string]struct{}, len(rows))
+	models := make([]string, 0, len(rows))
+	for _, row := range publicLiveModelChannels(rows) {
+		if query != "" && !strings.Contains(strings.ToLower(row.Model), query) {
+			continue
+		}
+		if _, exists := seen[row.Model]; exists {
+			continue
+		}
+		seen[row.Model] = struct{}{}
+		models = append(models, row.Model)
+	}
+	sort.Strings(models)
+	if len(models) > limit {
+		models = models[:limit]
 	}
 	respondOK(c, gin.H{"items": models, "count": len(models)})
 }

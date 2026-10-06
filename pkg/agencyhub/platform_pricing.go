@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -26,6 +27,7 @@ type platformPricingPublishRequest struct {
 
 type liveModelChannel struct {
 	Model       string
+	Group       string
 	ChannelID   int
 	ChannelName string
 }
@@ -105,19 +107,70 @@ type PlatformPricingCatalog struct {
 	RefreshedAtMS int64                       `json:"refreshed_at_ms"`
 }
 
-func (a *App) liveModelChannels() ([]liveModelChannel, error) {
-	return loadLiveModelChannels(a.db)
-}
-
 func loadLiveModelChannels(db *gorm.DB) ([]liveModelChannel, error) {
 	var rows []liveModelChannel
 	err := db.Table("abilities").
-		Select("abilities.model, channels.id AS channel_id, channels.name AS channel_name").
+		Select("abilities.*, channels.name AS channel_name").
 		Joins("JOIN channels ON channels.id = abilities.channel_id").
 		Where("abilities.enabled = ? AND channels.status = ?", true, common.ChannelStatusEnabled).
-		Order("abilities.model ASC, channels.name ASC, channels.id ASC").
+		Order("abilities.model ASC, channels.name ASC, abilities.channel_id ASC").
 		Scan(&rows).Error
 	return rows, err
+}
+
+// publicLiveModelChannels drops abilities that only route platform-internal
+// traffic, so mock upstreams never reach agency or customer catalogs.
+func publicLiveModelChannels(rows []liveModelChannel) []liveModelChannel {
+	live := make([]liveModelChannel, 0, len(rows))
+	for _, row := range rows {
+		if ratio_setting.IsInternalGroup(row.Group) {
+			continue
+		}
+		live = append(live, row)
+	}
+	return live
+}
+
+// internalChannelIDs lists channels whose enabled abilities all belong to
+// internal routing groups. Costs published for them must stay hidden even if
+// they were configured while the channel was still public.
+func internalChannelIDs(rows []liveModelChannel) map[int]struct{} {
+	internal := make(map[int]struct{})
+	public := make(map[int]struct{})
+	for _, row := range rows {
+		if ratio_setting.IsInternalGroup(row.Group) {
+			internal[row.ChannelID] = struct{}{}
+			continue
+		}
+		public[row.ChannelID] = struct{}{}
+	}
+	for channelID := range public {
+		delete(internal, channelID)
+	}
+	return internal
+}
+
+// publicChannelCosts keeps only the configured costs that belong to channels
+// reachable through a public routing group.
+func publicChannelCosts(costs []agencycontract.PlatformChannelCost, internalChannels map[int]struct{}) []agencycontract.PlatformChannelCost {
+	public := make([]agencycontract.PlatformChannelCost, 0, len(costs))
+	for _, cost := range costs {
+		if _, internal := internalChannels[cost.ChannelID]; internal {
+			continue
+		}
+		public = append(public, cost)
+	}
+	return public
+}
+
+// priceVisibleToAgencies hides a configured price only when every one of its
+// channels is internal and no public ability routes the model. Configured
+// prices without channel costs stay visible for backward compatibility.
+func priceVisibleToAgencies(price agencycontract.PlatformModelPrice, hasPublicAbility bool, internalChannels map[int]struct{}) bool {
+	if hasPublicAbility || len(price.ChannelCosts) == 0 {
+		return true
+	}
+	return len(publicChannelCosts(price.ChannelCosts, internalChannels)) > 0
 }
 
 func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
@@ -125,11 +178,17 @@ func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	live, err := loadLiveModelChannels(db)
+	rows, err := loadLiveModelChannels(db)
 	if err != nil {
 		return nil, err
 	}
+	live := publicLiveModelChannels(rows)
+	internalChannels := internalChannelIDs(rows)
 	configured := make(map[string]agencycontract.PlatformModelPrice, len(policy.ModelPrices))
+	publicModels := make(map[string]struct{}, len(live))
+	for _, item := range live {
+		publicModels[item.Model] = struct{}{}
+	}
 	for _, price := range policy.ModelPrices {
 		configured[price.OriginModelName] = price
 	}
@@ -163,6 +222,13 @@ func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
 	// Keep a configured row visible even if its channel was disabled after publication.
 	for name, price := range configured {
 		row := byModel[name]
+		_, hasPublicAbility := publicModels[name]
+		if !priceVisibleToAgencies(price, hasPublicAbility, internalChannels) {
+			// A model priced only through internal channels must not reappear
+			// in any outward facing catalog.
+			continue
+		}
+		publicCosts := publicChannelCosts(price.ChannelCosts, internalChannels)
 		if row == nil {
 			agencyCost, defaultSales := price.AgencyCostBPS, price.DefaultSalesBPS
 			row = &PlatformPricingCatalogRow{OriginModelName: name, ChannelNames: []string{}, AgencyCostBPS: &agencyCost, DefaultSalesBPS: &defaultSales}
@@ -173,7 +239,7 @@ func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
 			byModel[name] = row
 			order = append(order, name)
 		}
-		for _, cost := range price.ChannelCosts {
+		for _, cost := range publicCosts {
 			if containsCatalogChannel(row.ChannelCosts, cost.ChannelID) {
 				continue
 			}
@@ -242,11 +308,13 @@ func (a *App) publishPlatformPricing(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "database_error", "读取当前平台价格策略失败", nil)
 		return
 	}
-	live, err := a.liveModelChannels()
+	rows, err := loadLiveModelChannels(a.db)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "database_error", "读取实时模型与渠道失败", nil)
 		return
 	}
+	live := publicLiveModelChannels(rows)
+	internalChannels := internalChannelIDs(rows)
 	liveModels := make(map[string]struct{}, len(live))
 	liveChannels := make(map[string]map[int]struct{}, len(live))
 	for _, item := range live {
@@ -278,6 +346,10 @@ func (a *App) publishPlatformPricing(c *gin.Context) {
 			continue
 		}
 		for _, cost := range price.ChannelCosts {
+			if _, internal := internalChannels[cost.ChannelID]; internal {
+				respondError(c, http.StatusConflict, "channel_unavailable", "渠道已不属于该模型或当前不可用，请刷新后重试。", nil)
+				return
+			}
 			_, liveNow := liveChannels[price.OriginModelName][cost.ChannelID]
 			_, configuredBefore := previousChannelCosts[price.OriginModelName][cost.ChannelID]
 			if liveNow || configuredBefore {

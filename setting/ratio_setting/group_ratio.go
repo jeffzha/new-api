@@ -3,6 +3,7 @@ package ratio_setting
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/config"
@@ -26,6 +27,15 @@ var defaultGroupGroupRatio = map[string]map[string]float64{
 var groupGroupRatioMap = types.NewRWMap[string, map[string]float64]()
 
 var defaultGroupSpecialUsableGroup = map[string]map[string]string{}
+
+// internalGroupNames are routing groups reserved for platform-internal traffic
+// such as upstream mock channels. They must never surface in customer or agency
+// facing catalogs, even when a model is also routed through a public group.
+var internalGroupNames = []string{"mock-default"}
+
+func IsInternalGroup(name string) bool {
+	return slices.Contains(internalGroupNames, name)
+}
 
 type GroupRatioSetting struct {
 	GroupRatio              *types.RWMap[string, float64]            `json:"group_ratio"`

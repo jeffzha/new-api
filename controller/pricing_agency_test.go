@@ -175,3 +175,34 @@ func TestGetPricingRetainsLegacyCatalogWithoutAgencyTables(t *testing.T) {
 	assert.Equal(t, "standard", response["pricing_scope"])
 	assert.NotContains(t, recorder.Body.String(), "sales_bps")
 }
+
+func TestFilterPricingByUsableGroupsHidesInternalMockGroup(t *testing.T) {
+	usable := map[string]string{"default": "Default", "mock-default": "Mock"}
+	pricing := []model.Pricing{
+		{ModelName: "public-model", EnableGroup: []string{"default", "mock-default"}},
+		{ModelName: "mock-only-model", EnableGroup: []string{"mock-default"}},
+		{ModelName: "wildcard-model", EnableGroup: []string{"all"}},
+	}
+
+	filtered := filterPricingByUsableGroups(pricing, usable)
+
+	require.Len(t, filtered, 2)
+	assert.Equal(t, "public-model", filtered[0].ModelName)
+	assert.Equal(t, []string{"default"}, filtered[0].EnableGroup, "public model must lose its internal routing group")
+	assert.Equal(t, "wildcard-model", filtered[1].ModelName)
+	assert.Equal(t, []string{"default"}, filtered[1].EnableGroup, "wildcard groups must never expand to internal groups")
+}
+
+func TestGetUserGroupsHidesInternalMockGroup(t *testing.T) {
+	agencyPricingCatalogFixture(t)
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","mock-default":"Mock"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":2,"mock-default":1}`))
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/user/self/groups", nil)
+	context.Set("id", 2)
+	GetUserGroups(context)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Contains(t, recorder.Body.String(), "default")
+	assert.NotContains(t, recorder.Body.String(), "mock-default")
+}

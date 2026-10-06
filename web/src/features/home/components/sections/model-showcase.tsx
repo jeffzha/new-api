@@ -66,10 +66,10 @@ export function ModelShowcase() {
           aria-label={t('Model ecosystem')}
         >
           {[
-            ['OpenAI', 'OpenAI'],
-            ['Claude.Color', 'Claude'],
+            ['GLMV.Color', 'GLM'],
+            ['Kimi.Color', 'Kimi'],
             ['DeepSeek.Color', 'DeepSeek'],
-            ['Gemini.Color', 'Gemini'],
+            ['Hunyuan.Color', t('Tencent Hunyuan')],
             ['Qwen.Color', 'Qwen'],
             ['ByteDance.Color', 'ByteDance'],
           ].map(([icon, name]) => (

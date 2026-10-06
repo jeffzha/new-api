@@ -37,6 +37,13 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 			groupsCopy[userGroup] = "用户分组"
 		}
 	}
+	// Platform-internal routing groups must never be selectable by users or
+	// agencies, even when an operator configures them globally.
+	for groupName := range groupsCopy {
+		if ratio_setting.IsInternalGroup(groupName) {
+			delete(groupsCopy, groupName)
+		}
+	}
 	return groupsCopy
 }
 

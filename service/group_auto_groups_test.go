@@ -47,6 +47,18 @@ func TestGetRequestAutoGroupsInheritedListIsNotLimited(t *testing.T) {
 	assert.Equal(t, []string{"vip", "default", "svip"}, groups)
 }
 
+func TestInternalMockGroupIsNotUserSelectable(t *testing.T) {
+	configureRequestAutoGroupsTest(t)
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","mock-default":"Mock"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"mock-default":1}`))
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["mock-default","default"]`))
+
+	assert.Contains(t, GetUserUsableGroups("default"), "default")
+	assert.NotContains(t, GetUserUsableGroups("default"), "mock-default")
+	assert.Equal(t, []string{"default"}, GetUserAutoGroup("default"))
+	assert.False(t, IsUserSelectableGroup("default", "mock-default"))
+}
+
 func TestGetRequestAutoGroupsFiltersBeforeApplyingCurrentLimit(t *testing.T) {
 	configureRequestAutoGroupsTest(t)
 	ctx := newRequestAutoGroupsContext()

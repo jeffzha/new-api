@@ -3,6 +3,7 @@ package controller
 import (
 	"maps"
 	"net/http"
+	"slices"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -22,18 +23,42 @@ func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string
 
 	filtered := make([]model.Pricing, 0, len(pricing))
 	for _, item := range pricing {
-		if common.StringsContains(item.EnableGroup, "all") {
-			filtered = append(filtered, item)
+		groups := visibleModelGroups(item.EnableGroup, usableGroup)
+		if len(groups) == 0 {
 			continue
 		}
-		for _, group := range item.EnableGroup {
-			if _, ok := usableGroup[group]; ok {
-				filtered = append(filtered, item)
-				break
-			}
-		}
+		item.EnableGroup = groups
+		filtered = append(filtered, item)
 	}
 	return filtered
+}
+
+// visibleModelGroups keeps only the routing groups the caller may select. A
+// model routed through the "all" wildcard is visible in every usable group,
+// while internal routing groups never leave the backend.
+func visibleModelGroups(enableGroups []string, usableGroup map[string]string) []string {
+	if common.StringsContains(enableGroups, "all") {
+		groups := make([]string, 0, len(usableGroup))
+		for group := range usableGroup {
+			if ratio_setting.IsInternalGroup(group) {
+				continue
+			}
+			groups = append(groups, group)
+		}
+		slices.Sort(groups)
+		return groups
+	}
+	groups := make([]string, 0, len(enableGroups))
+	for _, group := range enableGroups {
+		if ratio_setting.IsInternalGroup(group) {
+			continue
+		}
+		if _, ok := usableGroup[group]; !ok {
+			continue
+		}
+		groups = append(groups, group)
+	}
+	return groups
 }
 
 func GetPricing(c *gin.Context) {

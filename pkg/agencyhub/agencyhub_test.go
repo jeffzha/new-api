@@ -1580,3 +1580,84 @@ func TestProvisioningFencingTokenPreventsStaleCommit(t *testing.T) {
 	var binding model.AgencyActiveUserBinding
 	require.ErrorIs(t, app.db.Where("user_id = ?", user.Id).First(&binding).Error, gorm.ErrRecordNotFound)
 }
+
+func TestInternalMockChannelsStayHiddenFromAgencyCatalogs(t *testing.T) {
+	app := newAgencyTestApp(t)
+	require.NoError(t, app.db.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	publicChannel := model.Channel{Name: "public-deepseek", Type: 1, Key: "unused", Status: common.ChannelStatusEnabled}
+	require.NoError(t, app.db.Create(&publicChannel).Error)
+	mockChannel := model.Channel{Name: "model-mock-deepseek", Type: 1, Key: "unused", Status: common.ChannelStatusEnabled}
+	require.NoError(t, app.db.Create(&mockChannel).Error)
+	abilities := []model.Ability{
+		{Group: "default", Model: "glm-5.3", ChannelId: publicChannel.Id, Enabled: true},
+		{Group: "default", Model: "deepseek-v4-flash", ChannelId: publicChannel.Id, Enabled: true},
+		{Group: "mock-default", Model: "deepseek-v4-flash", ChannelId: mockChannel.Id, Enabled: true},
+		{Group: "mock-default", Model: "model-mock-deepseek", ChannelId: mockChannel.Id, Enabled: true},
+		{Group: "mock-default", Model: "doubao-seedance-2-0-fast-260128", ChannelId: mockChannel.Id, Enabled: true},
+	}
+	for index := range abilities {
+		require.NoError(t, app.db.Create(&abilities[index]).Error)
+	}
+	platformPolicy := agencycontract.PlatformPolicy{
+		Revision: 1,
+		ModelPrices: []agencycontract.PlatformModelPrice{
+			{OriginModelName: "glm-5.3", ChannelCosts: []agencycontract.PlatformChannelCost{{ChannelID: publicChannel.Id, PlatformCostBPS: 5000}}, AgencyCostBPS: 5500, DefaultSalesBPS: 9000},
+			{OriginModelName: "deepseek-v4-flash", ChannelCosts: []agencycontract.PlatformChannelCost{{ChannelID: publicChannel.Id, PlatformCostBPS: 3000}, {ChannelID: mockChannel.Id, PlatformCostBPS: 100}}, AgencyCostBPS: 3500, DefaultSalesBPS: 9000},
+			{OriginModelName: "model-mock-deepseek", ChannelCosts: []agencycontract.PlatformChannelCost{{ChannelID: mockChannel.Id, PlatformCostBPS: 100}}, AgencyCostBPS: 1500, DefaultSalesBPS: 9000},
+			{OriginModelName: "doubao-seedance-2-0-fast-260128", ChannelCosts: []agencycontract.PlatformChannelCost{{ChannelID: mockChannel.Id, PlatformCostBPS: 100}}, AgencyCostBPS: 1500, DefaultSalesBPS: 9000},
+		},
+	}
+	require.NoError(t, agencycontract.ValidatePlatformPolicy(platformPolicy))
+	policyJSON, err := common.Marshal(platformPolicy)
+	require.NoError(t, err)
+	require.NoError(t, app.db.Create(&model.AgencyPlatformPriceVersion{ID: 1, Revision: 1, PolicyJSON: string(policyJSON), PolicyHash: "test", CreatedByID: 1, CreatedAtMS: 1}).Error)
+	require.NoError(t, app.db.Create(&model.AgencyPlatformPriceState{ID: 1, Revision: 1, CurrentVersionID: 1, UpdatedAtMS: 1}).Error)
+
+	catalog, err := LoadPlatformPricingCatalog(app.db)
+	require.NoError(t, err)
+	catalogModels := make([]string, 0, len(catalog.Items))
+	for _, item := range catalog.Items {
+		catalogModels = append(catalogModels, item.OriginModelName)
+		for _, cost := range item.ChannelCosts {
+			assert.NotEqual(t, mockChannel.Id, cost.ChannelID, "mock channel costs must not leak into the catalog")
+		}
+	}
+	assert.Equal(t, []string{"deepseek-v4-flash", "glm-5.3"}, catalogModels)
+
+	modelsRecorder := httptest.NewRecorder()
+	modelsContext, _ := gin.CreateTestContext(modelsRecorder)
+	modelsContext.Request = httptest.NewRequest(http.MethodGet, "/agency/api/v1/models", nil)
+	app.listPublicModels(modelsContext)
+	require.Equal(t, http.StatusOK, modelsRecorder.Code, modelsRecorder.Body.String())
+	var modelsResponse struct {
+		Data struct {
+			Items []string `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(modelsRecorder.Body.Bytes(), &modelsResponse))
+	assert.Equal(t, []string{"deepseek-v4-flash", "glm-5.3"}, modelsResponse.Data.Items)
+
+	parentAgencyID := int64(1)
+	agency := model.Agency{ID: 99, DisplayName: "internal-mock-test", ParentAgencyID: &parentAgencyID}
+	agencyPolicy := agencycontract.Policy{DefaultSettlementBPS: 5000, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
+	salesRecorder := httptest.NewRecorder()
+	salesContext, _ := gin.CreateTestContext(salesRecorder)
+	salesContext.Request = httptest.NewRequest(http.MethodGet, "/agency/api/v1/pricing/model-sales", nil)
+	app.respondModelSales(salesContext, agency, agencyPolicy)
+	require.Equal(t, http.StatusOK, salesRecorder.Code, salesRecorder.Body.String())
+	var salesResponse struct {
+		Data struct {
+			Items []struct {
+				OriginModelName string `json:"origin_model_name"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(salesRecorder.Body.Bytes(), &salesResponse))
+	salesModels := make([]string, 0, len(salesResponse.Data.Items))
+	for _, item := range salesResponse.Data.Items {
+		salesModels = append(salesModels, item.OriginModelName)
+	}
+	assert.ElementsMatch(t, []string{"deepseek-v4-flash", "glm-5.3"}, salesModels)
+	assert.NotContains(t, salesRecorder.Body.String(), "model-mock")
+	assert.NotContains(t, salesRecorder.Body.String(), "doubao-seedance-2-0-fast-260128")
+}

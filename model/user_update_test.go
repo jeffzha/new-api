@@ -42,6 +42,23 @@ func createUserBindTestUser(t *testing.T) User {
 	return user
 }
 
+func TestBillingModeLookupTreatsNullAsLegacy(t *testing.T) {
+	truncateTables(t)
+	user := User{Username: "null-billing-mode", Password: "unused-password-hash", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AffCode: "null-billing-mode"}
+	require.NoError(t, DB.Create(&user).Error)
+	require.NoError(t, DB.Exec("UPDATE users SET billing_mode = NULL WHERE id = ?", user.Id).Error)
+
+	mode, err := loadUserBillingMode(DB, user.Id)
+	require.NoError(t, err)
+	assert.Empty(t, mode, "historical NULL billing modes must be treated as legacy")
+	assert.False(t, IsAgencyDurableUser(user.Id))
+	assert.False(t, IsAgencyProvisioningUser(user.Id))
+
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).UpdateColumn("billing_mode", AgencyDurableBillingMode).Error)
+	assert.True(t, IsAgencyDurableUser(user.Id))
+	assert.False(t, IsAgencyProvisioningUser(user.Id))
+}
+
 func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing.T) {
 	setupUserUpdateTestState(t)
 

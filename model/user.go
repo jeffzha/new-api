@@ -1521,8 +1521,8 @@ func isAgencyDurableUser(id int) bool {
 	if id <= 0 || DB == nil {
 		return false
 	}
-	var mode string
-	if err := DB.Model(&User{}).Where("id = ?", id).Pluck("billing_mode", &mode).Error; err != nil {
+	mode, err := loadUserBillingMode(DB, id)
+	if err != nil {
 		// Fail closed: a transient database error must not silently route a
 		// durable agency user through the legacy quota-only path.
 		common.SysLog("failed to resolve user billing mode: " + err.Error())
@@ -1538,8 +1538,8 @@ func isAgencyProvisioningUser(id int) bool {
 	if id <= 0 || DB == nil {
 		return false
 	}
-	var mode string
-	if err := DB.Model(&User{}).Where("id = ?", id).Pluck("billing_mode", &mode).Error; err != nil {
+	mode, err := loadUserBillingMode(DB, id)
+	if err != nil {
 		// A failed mode lookup must not reopen the legacy quota path while a
 		// provisioning barrier may be active. Callers treat this as a hard
 		// admission failure, preserving the fail-closed invariant.
@@ -1551,6 +1551,16 @@ func isAgencyProvisioningUser(id int) bool {
 
 // IsAgencyProvisioningUser reports the temporary provisioning barrier mode.
 func IsAgencyProvisioningUser(id int) bool { return isAgencyProvisioningUser(id) }
+
+// loadUserBillingMode treats historical NULL rows as legacy users. Legacy
+// rows predate the durable agency billing modes and are still valid accounts.
+func loadUserBillingMode(query *gorm.DB, userID int) (string, error) {
+	var mode sql.NullString
+	if err := query.Model(&User{}).Where("id = ?", userID).Pluck("billing_mode", &mode).Error; err != nil {
+		return "", err
+	}
+	return mode.String, nil
+}
 
 // IsAgencyDurableUser reports whether the user is managed by the durable
 // agency funding ledger. It is exported for asynchronous billing paths that

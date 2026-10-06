@@ -206,8 +206,8 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 		var firstJournal AgencyBillingJournal
 		initialAgencyFinalization := false
 		frozenAgencyBasis := false
-		var billingMode string
-		if err := tx.Model(&User{}).Where("id = ?", task.UserId).Pluck("billing_mode", &billingMode).Error; err != nil {
+		billingMode, err := loadUserBillingMode(tx, task.UserId)
+		if err != nil {
 			return err
 		}
 		if billingMode == AgencyDurableBillingMode && (task.PrivateData.BillingSource != TaskBillingSourceSubscription || task.PrivateData.SubscriptionId <= 0) {
@@ -318,8 +318,8 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 
 		if result.QuotaDelta != 0 && !agencyHandled {
 			if result.WalletAdjusted {
-				var billingMode string
-				if err := tx.Model(&User{}).Where("id = ?", task.UserId).Pluck("billing_mode", &billingMode).Error; err != nil {
+				billingMode, err := loadUserBillingMode(tx, task.UserId)
+				if err != nil {
 					return err
 				}
 				if billingMode == AgencyProvisioningBillingMode {

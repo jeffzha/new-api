@@ -190,8 +190,8 @@ func applyTaskFundingDeltaTx(tx *gorm.DB, task *Task, delta, targetQuota int) er
 			Update("amount_used", newUsed).Error
 	}
 
-	var billingMode string
-	if err := tx.Model(&User{}).Where("id = ?", task.UserId).Pluck("billing_mode", &billingMode).Error; err != nil {
+	billingMode, err := loadUserBillingMode(tx, task.UserId)
+	if err != nil {
 		return err
 	}
 	if billingMode == AgencyProvisioningBillingMode {

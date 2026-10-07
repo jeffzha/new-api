@@ -1060,6 +1060,7 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	aux := &struct {
 		Metadata json.RawMessage `json:"metadata,omitempty"`
 		Duration json.RawMessage `json:"duration,omitempty"`
+		Image    json.RawMessage `json:"image,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(t),
@@ -1067,6 +1068,12 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 
 	if err := common.Unmarshal(data, &aux); err != nil {
 		return err
+	}
+
+	if len(aux.Image) > 0 {
+		if err := applyTaskImageField(t, aux.Image); err != nil {
+			return err
+		}
 	}
 
 	if len(aux.Duration) > 0 {
@@ -1101,6 +1108,23 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 
 	return nil
 }
+
+// applyTaskImageField 归一化任务请求的 image 字段：既接受单张图片字符串，也接受图片数组。
+// 数组形式会写入 Images，使支持多参考图的渠道可以拿到全部图片。
+func applyTaskImageField(req *TaskSubmitReq, raw json.RawMessage) error {
+	var single string
+	if err := common.Unmarshal(raw, &single); err == nil {
+		req.Image = single
+		return nil
+	}
+	var list []string
+	if err := common.Unmarshal(raw, &list); err == nil {
+		req.Images = append(req.Images, list...)
+		return nil
+	}
+	return errors.New("image must be a string or an array of strings")
+}
+
 func (t *TaskSubmitReq) UnmarshalMetadata(v any) error {
 	metadata := t.Metadata
 	if metadata != nil {

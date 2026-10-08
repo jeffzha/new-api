@@ -75,7 +75,7 @@ async function mount(authenticated = false) {
 }
 
 beforeAll(() => {
-  i18next.addResourceBundle('zh', 'translation', zhCN.translation, true, true)
+  i18next.addResourceBundle('zhCN', 'translation', zhCN.translation, true, true)
 })
 
 afterEach(() => useAuthStore.getState().auth.reset())

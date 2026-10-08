@@ -346,6 +346,7 @@ body[data-theme-preset='signal-console'] .gateway-home {
   font-size: 13px;
   font-weight: 500;
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 .gateway-home .gateway-region-notice-copy p + p {
   margin-top: 2px;
@@ -877,7 +878,7 @@ body[data-theme-preset='signal-console'] .gateway-home {
     line-height: 1.8;
   }
   .gateway-home .gateway-region-notice {
-    width: 100%;
+    width: min(100%, calc(100vw - 36px));
     margin-top: 18px;
     padding: 10px 12px;
   }

@@ -70,7 +70,7 @@ export function Hero(props: HeroProps) {
                 )}
               </p>
               <p lang='zh-CN'>
-                {i18n.getFixedT('zh')(
+                {i18n.getFixedT('zhCN')(
                   'This website is not available in Mainland China.'
                 )}
               </p>

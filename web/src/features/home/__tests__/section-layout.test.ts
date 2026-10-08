@@ -37,9 +37,14 @@ describe('Homepage section layout', () => {
       'text-align': 'left',
     })
     expect(styles('.gateway-home .gateway-region-notice', true)).toMatchObject({
-      width: '100%',
+      width: 'min(100%, calc(100vw - 36px))',
       padding: '10px 12px',
     })
+    expect(styles('.gateway-home .gateway-region-notice-copy p')).toMatchObject(
+      {
+        'overflow-wrap': 'anywhere',
+      }
+    )
   })
 
   it('overrides the legacy mobile side rail with a horizontal step heading', () => {

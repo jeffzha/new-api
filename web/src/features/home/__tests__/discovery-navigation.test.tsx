@@ -12,8 +12,10 @@ import {
 } from '@tanstack/react-router'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it } from 'vitest'
+import i18next from 'i18next'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 
+import zhCN from '@/i18n/locales/zh.json'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { ApiScenarios } from '../components/sections/api-scenarios'
@@ -72,9 +74,23 @@ async function mount(authenticated = false) {
   return router
 }
 
+beforeAll(() => {
+  i18next.addResourceBundle('zh', 'translation', zhCN.translation, true, true)
+})
+
 afterEach(() => useAuthStore.getState().auth.reset())
 
 describe('Homepage discovery and navigation', () => {
+  it('shows the regional availability notice in English and Chinese', async () => {
+    await mount()
+    expect(
+      screen.getByText('This website is not available in Mainland China.')
+    ).toHaveAttribute('lang', 'en')
+    expect(
+      screen.getByText('本网站不向中国大陆地区提供访问服务。')
+    ).toHaveAttribute('lang', 'zh-CN')
+  })
+
   it('sends visitors to sign-in with the API key destination preserved', async () => {
     const user = userEvent.setup()
     const router = await mount()

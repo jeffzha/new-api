@@ -29,6 +29,19 @@ function styles(selector: string, mobile = false): Record<string, string> {
 }
 
 describe('Homepage section layout', () => {
+  it('keeps the bilingual regional notice readable on desktop and mobile', () => {
+    expect(styles('.gateway-home .gateway-region-notice')).toMatchObject({
+      display: 'grid',
+      'grid-template-columns': 'auto minmax(0, 1fr)',
+      'max-width': 'min(620px, 100%)',
+      'text-align': 'left',
+    })
+    expect(styles('.gateway-home .gateway-region-notice', true)).toMatchObject({
+      width: '100%',
+      padding: '10px 12px',
+    })
+  })
+
   it('overrides the legacy mobile side rail with a horizontal step heading', () => {
     expect(styles('.gateway-home .gateway-step', true).display).toBe('flex')
     expect(

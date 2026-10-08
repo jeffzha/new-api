@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, BookOpen, Building2, KeyRound } from 'lucide-react'
+import { ArrowRight, BookOpen, Building2, Globe2, KeyRound } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -34,7 +34,7 @@ interface HeroProps {
 }
 
 export function Hero(props: HeroProps) {
-  const { t } = useTranslation()
+  const { i18n, t } = useTranslation()
   const { systemName } = useSystemConfig()
   const user = useAuthStore((state) => state.auth.user)
   const agencyUrl =
@@ -61,6 +61,21 @@ export function Hero(props: HeroProps) {
               'From conversation and code to images and video, connect your AI applications with unified access, intelligent routing, and transparent usage.'
             )}
           </p>
+          <aside className='gateway-region-notice'>
+            <Globe2 className='size-4' aria-hidden='true' />
+            <div className='gateway-region-notice-copy'>
+              <p lang='en'>
+                {i18n.getFixedT('en')(
+                  'This website is not available in Mainland China.'
+                )}
+              </p>
+              <p lang='zh-CN'>
+                {i18n.getFixedT('zh')(
+                  'This website is not available in Mainland China.'
+                )}
+              </p>
+            </div>
+          </aside>
           <nav
             className='gateway-hero-actions'
             aria-label={t('Platform navigation')}

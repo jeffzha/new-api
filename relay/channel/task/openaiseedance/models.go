@@ -28,6 +28,11 @@ type generateRequest struct {
 	Ratio       string `json:"ratio"`
 	Duration    int    `json:"duration"`
 	AudioStatus int    `json:"audio_status"`
+	// ReferenceImages holds every reference image supplied by the client
+	// (up to maxReferenceImages). The first one is also mirrored into Image so
+	// single-image upstreams that only understand a top-level "image" field keep
+	// working unchanged.
+	ReferenceImages []string `json:"-"`
 }
 
 // responseTask mirrors the OpenAI-compatible video task status response that
@@ -45,7 +50,7 @@ type responseTask struct {
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 	} `json:"usage"`
-	CreatedAt int64 `json:"created_at"`
+	CreatedAt int64  `json:"created_at"`
 	ResultURL string `json:"result_url"`
 	Error     *struct {
 		Code    string `json:"code"`

@@ -91,9 +91,14 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if prompt == "" && len(request.Content) == 0 {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("prompt is required"), "invalid_request", http.StatusBadRequest)
 	}
+	referenceImages, err := collectReferenceImages(request)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
 	normalized := &generateRequest{
-		Prompt: prompt,
-		Image:  firstReferenceImage(request),
+		Prompt:          prompt,
+		Image:           firstOf(referenceImages),
+		ReferenceImages: referenceImages,
 	}
 	var metadata requestMetadata
 	if err := request.UnmarshalMetadata(&metadata); err != nil {
@@ -276,10 +281,25 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		"metadata": metadata,
 	}
 	if isAimodelGateway(a.baseURL) {
-		// aimodel requires the prompt in its content array as well.
-		outbound["content"] = []map[string]string{{"type": "text", "text": request.Prompt}}
-	}
-	if request.Image != "" {
+		// aimodel requires the prompt in its content array as well, and accepts
+		// multiple reference images as content items with role "reference_image".
+		content := []map[string]any{{"type": "text", "text": request.Prompt}}
+		for _, url := range request.ReferenceImages {
+			content = append(content, map[string]any{
+				"type":      "image_url",
+				"image_url": map[string]string{"url": url},
+				"role":      "reference_image",
+			})
+		}
+		outbound["content"] = content
+		// A single reference image is also exposed via the top-level "image"
+		// field for upstreams that only understand that shape.
+		if len(request.ReferenceImages) == 1 && request.Image != "" {
+			outbound["image"] = request.Image
+		}
+	} else if request.Image != "" {
+		// Non-aimodel gateways (e.g. vedioapi.laomandi.com) read the reference
+		// image from the top-level OpenAI "image" field.
 		outbound["image"] = request.Image
 	}
 	data, err := common.Marshal(outbound)
@@ -486,35 +506,56 @@ func hasVideoInput(c *gin.Context) bool {
 	return false
 }
 
-// firstReferenceImage extracts a single reference image URL from the OpenAI-format
-// video request. It checks, in order: the top-level "image" field, the first entry
-// of "images", then the first "content"[].image_url.url. An empty result means no
-// reference image was supplied (pure text-to-video).
-func firstReferenceImage(request relaycommon.TaskSubmitReq) string {
-	if url := strings.TrimSpace(request.Image); url != "" {
-		return url
-	}
-	if url := strings.TrimSpace(request.InputReference); url != "" {
-		return url
-	}
-	for _, url := range request.Images {
-		if url = strings.TrimSpace(url); url != "" {
-			return url
+// maxReferenceImages is the upper bound on reference images forwarded to a
+// multi-reference seedance upstream. It mirrors the seedance cap used by the
+// SeedanceDomestic and MobileCloudSeedance task adaptors.
+const maxReferenceImages = 9
+
+// collectReferenceImages extracts every reference image URL from an OpenAI-format
+// video request, in order: the top-level "image" field, "input_reference",
+// every entry of "images", then every "content"[].image_url.url. Empty strings
+// are skipped and duplicates are collapsed. More than maxReferenceImages images
+// are rejected so a client cannot bypass the configured billing/image bound.
+func collectReferenceImages(request relaycommon.TaskSubmitReq) ([]string, error) {
+	var urls []string
+	appendURL := func(url string) {
+		url = strings.TrimSpace(url)
+		if url == "" {
+			return
 		}
+		for _, existing := range urls {
+			if existing == url {
+				return
+			}
+		}
+		urls = append(urls, url)
+	}
+	appendURL(request.Image)
+	appendURL(request.InputReference)
+	for _, url := range request.Images {
+		appendURL(url)
 	}
 	for _, item := range request.Content {
 		switch v := item["image_url"].(type) {
 		case string:
-			if url := strings.TrimSpace(v); url != "" {
-				return url
-			}
+			appendURL(v)
 		case map[string]any:
-			if url, ok := v["url"].(string); ok && strings.TrimSpace(url) != "" {
-				return strings.TrimSpace(url)
+			if url, ok := v["url"].(string); ok {
+				appendURL(url)
 			}
 		}
 	}
-	return ""
+	if len(urls) > maxReferenceImages {
+		return nil, fmt.Errorf("reference images support at most %d images", maxReferenceImages)
+	}
+	return urls, nil
+}
+
+func firstOf(urls []string) string {
+	if len(urls) == 0 {
+		return ""
+	}
+	return urls[0]
 }
 
 func resolutionFromSize(size string) string {

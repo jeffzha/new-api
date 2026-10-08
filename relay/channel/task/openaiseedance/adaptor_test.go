@@ -45,6 +45,66 @@ func TestOpenAISeedanceBuildsNativeRequestFromOpenAIVideoShape(t *testing.T) {
 	require.Equal(t, "https://vedioapi.laomandi.com/v1/video/generations", url)
 }
 
+func TestOpenAISeedanceForwardsMultipleReferenceImagesToAimodel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	body := `{"model":"doubao-seedance-2.0","prompt":"A blue bird","seconds":"5","content":[
+		{"type":"image_url","image_url":{"url":"https://example.com/r1.png"},"role":"reference_image"},
+		{"type":"image_url","image_url":{"url":"https://example.com/r2.png"},"role":"reference_image"},
+		{"type":"image_url","image_url":{"url":"https://example.com/r3.png"},"role":"reference_image"}]}`
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: seedancepricing.AimodelSeedance20Model,
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: seedancepricing.AimodelSeedance20Model},
+	}
+	adaptor := &TaskAdaptor{baseURL: "https://aimodel.szhtp.com"}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+	request, err := getTaskRequest(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"https://example.com/r1.png",
+		"https://example.com/r2.png",
+		"https://example.com/r3.png",
+	}, request.ReferenceImages)
+
+	bodyReader, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(bodyReader)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	content, ok := payload["content"].([]any)
+	require.True(t, ok)
+	var refRoles []any
+	for _, item := range content {
+		entry := item.(map[string]any)
+		if entry["type"] == "image_url" {
+			refRoles = append(refRoles, entry["role"])
+		}
+	}
+	require.Equal(t, []any{"reference_image", "reference_image", "reference_image"}, refRoles)
+	// With multiple reference images the top-level "image" field is omitted so
+	// the upstream does not double-count the first image.
+	require.Nil(t, payload["image"])
+}
+
+func TestOpenAISeedanceRejectsTooManyReferenceImages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	urls := make([]string, 0, maxReferenceImages+1)
+	for i := 0; i < maxReferenceImages+1; i++ {
+		urls = append(urls, fmt.Sprintf("https://example.com/r%d.png", i))
+	}
+	encodedImages := strings.Join(urls, `","`)
+	body := fmt.Sprintf(`{"model":"doubao-seedance-2.0","prompt":"A blue bird","seconds":"5","images":["%s"]}`, encodedImages)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{OriginModelName: seedancepricing.AimodelSeedance20Model}
+	result := (&TaskAdaptor{baseURL: "https://aimodel.szhtp.com"}).ValidateRequestAndSetAction(ctx, info)
+	require.NotNil(t, result)
+}
+
 func TestOpenAISeedanceDurationLimitDependsOnModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {

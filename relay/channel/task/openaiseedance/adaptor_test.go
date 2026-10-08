@@ -105,6 +105,68 @@ func TestOpenAISeedanceRejectsTooManyReferenceImages(t *testing.T) {
 	require.NotNil(t, result)
 }
 
+func TestOpenAISeedanceForwardsMultipleReferenceImagesToLaomandi(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	body := `{"model":"doubao-seedance-2-0-260128","prompt":"A blue bird","seconds":"10","images":[
+		"https://example.com/r1.png",
+		"https://example.com/r2.png",
+		"https://example.com/r3.png"]}`
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: defaultModel,
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: defaultModel},
+	}
+	adaptor := &TaskAdaptor{baseURL: "https://vedioapi.laomandi.com"}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+
+	bodyReader, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(bodyReader)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	content, ok := payload["content"].([]any)
+	require.True(t, ok, "expected content[] for laomandi multi-image request")
+	require.Equal(t, 4, len(content), "text + 3 reference images")
+	refRoles := make([]any, 0, 3)
+	refURLs := make([]any, 0, 3)
+	for _, item := range content {
+		entry := item.(map[string]any)
+		if entry["type"] == "image_url" {
+			refRoles = append(refRoles, entry["role"])
+			refURLs = append(refURLs, entry["image_url"].(map[string]any)["url"])
+		}
+	}
+	require.Equal(t, []any{"reference_image", "reference_image", "reference_image"}, refRoles)
+	require.Equal(t, []any{"https://example.com/r1.png", "https://example.com/r2.png", "https://example.com/r3.png"}, refURLs)
+	// Laomandi keeps its single-image top-level field only for one image.
+	require.Nil(t, payload["image"])
+}
+
+func TestOpenAISeedanceSingleImageLaomandiKeepsLegacyShape(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	body := `{"model":"doubao-seedance-2-0-260128","prompt":"A blue bird","seconds":"10","input_reference":"https://example.com/frame.png"}`
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: defaultModel,
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: defaultModel},
+	}
+	adaptor := &TaskAdaptor{baseURL: "https://vedioapi.laomandi.com"}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+	bodyReader, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(bodyReader)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	require.Equal(t, "https://example.com/frame.png", payload["image"])
+	require.Nil(t, payload["content"])
+}
+
 func TestOpenAISeedanceDurationLimitDependsOnModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {

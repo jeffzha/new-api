@@ -285,11 +285,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		// multiple reference images as content items with role "reference_image".
 		content := []map[string]any{{"type": "text", "text": request.Prompt}}
 		for _, url := range request.ReferenceImages {
-			content = append(content, map[string]any{
-				"type":      "image_url",
-				"image_url": map[string]string{"url": url},
-				"role":      "reference_image",
-			})
+			content = append(content, referenceImageContentItem(url))
 		}
 		outbound["content"] = content
 		// A single reference image is also exposed via the top-level "image"
@@ -297,9 +293,18 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if len(request.ReferenceImages) == 1 && request.Image != "" {
 			outbound["image"] = request.Image
 		}
+	} else if isLaomandiGateway(a.baseURL) && len(request.ReferenceImages) >= 2 {
+		// laomandi complete mode: multiple reference images ride in the volcengine
+		// content[] array with role "reference_image" (see Normandy_AI_API docs).
+		// Single-image and text-only requests keep the legacy top-level shape.
+		content := []map[string]any{{"type": "text", "text": request.Prompt}}
+		for _, url := range request.ReferenceImages {
+			content = append(content, referenceImageContentItem(url))
+		}
+		outbound["content"] = content
 	} else if request.Image != "" {
-		// Non-aimodel gateways (e.g. vedioapi.laomandi.com) read the reference
-		// image from the top-level OpenAI "image" field.
+		// Other gateways (e.g. vedioapi.laomandi.com single-image) read the
+		// reference image from the top-level OpenAI "image" field.
 		outbound["image"] = request.Image
 	}
 	data, err := common.Marshal(outbound)
@@ -307,6 +312,16 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, err
 	}
 	return bytes.NewReader(data), nil
+}
+
+// referenceImageContentItem renders one reference image as a volcengine-style
+// content item that the seedance gateways understand.
+func referenceImageContentItem(url string) map[string]any {
+	return map[string]any{
+		"type":      "image_url",
+		"image_url": map[string]string{"url": url},
+		"role":      "reference_image",
+	}
 }
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
@@ -615,4 +630,12 @@ func buildFetchURL(baseURL string, taskID string) string {
 func isAimodelGateway(baseURL string) bool {
 	baseURL = strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(baseURL), "https://"), "http://")
 	return strings.EqualFold(strings.TrimRight(baseURL, "/"), "aimodel.szhtp.com")
+}
+
+// isLaomandiGateway reports whether the upstream is a laomandi video gateway
+// (e.g. vedioapi.laomandi.com). These gateways accept multiple reference images
+// in the volcengine content[] shape with role "reference_image".
+func isLaomandiGateway(baseURL string) bool {
+	baseURL = strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(baseURL), "https://"), "http://")
+	return strings.HasSuffix(strings.ToLower(strings.TrimRight(baseURL, "/")), ".laomandi.com")
 }

@@ -318,6 +318,7 @@ body[data-theme-preset='signal-console'] .gateway-home {
   line-height: 1.9;
 }
 .gateway-home .gateway-region-notice {
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;

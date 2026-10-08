@@ -31,6 +31,7 @@ function styles(selector: string, mobile = false): Record<string, string> {
 describe('Homepage section layout', () => {
   it('keeps the bilingual regional notice readable on desktop and mobile', () => {
     expect(styles('.gateway-home .gateway-region-notice')).toMatchObject({
+      'box-sizing': 'border-box',
       display: 'grid',
       'grid-template-columns': 'auto minmax(0, 1fr)',
       'max-width': 'min(620px, 100%)',

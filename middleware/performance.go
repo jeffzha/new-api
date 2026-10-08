@@ -1,71 +1,73 @@
 package middleware
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service/opsmonitor"
 	"github.com/gin-gonic/gin"
 )
 
 // SystemPerformanceCheck 检查系统性能中间件
 func SystemPerformanceCheck() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		err := checkSystemPerformance(c)
+		if err == nil {
+			c.Next()
+			return
+		}
 		// 仅检查 Relay 接口 (/v1, /v1beta 等)
 		// 这里简单判断路径前缀，可以根据实际路由调整
-		path := c.Request.URL.Path
-		if strings.HasPrefix(path, "/v1/messages") {
-			if err := checkSystemPerformance(); err != nil {
-				c.JSON(err.StatusCode, gin.H{
-					"error": err.ToClaudeError(),
-				})
-				c.Abort()
-				return
-			}
+		if strings.HasPrefix(c.Request.URL.Path, "/v1/messages") {
+			c.JSON(err.StatusCode, gin.H{
+				"error": err.ToClaudeError(),
+			})
 		} else {
-			if err := checkSystemPerformance(); err != nil {
-				c.JSON(err.StatusCode, gin.H{
-					"error": err.ToOpenAIError(),
-				})
-				c.Abort()
-				return
-			}
+			c.JSON(err.StatusCode, gin.H{
+				"error": err.ToOpenAIError(),
+			})
 		}
-		c.Next()
+		c.Abort()
 	}
 }
 
 // checkSystemPerformance 检查系统性能是否超过阈值
-func checkSystemPerformance() *types.NewAPIError {
+func checkSystemPerformance(c *gin.Context) *types.NewAPIError {
 	config := common.GetPerformanceMonitorConfig()
 	if !config.Enabled {
+		systemOverloadGuard.closeEpisode(common.GetSystemStatus(), config, "monitor_disabled")
+		return nil
+	}
+	return evaluateSystemOverload(c, common.GetSystemStatus(), config)
+}
+
+// evaluateSystemOverload keeps the host metric gate unchanged and records which
+// metric tripped, so the rejection is traceable in the gateway log and in the
+// operational request store.
+func evaluateSystemOverload(c *gin.Context, status common.SystemStatus, config common.PerformanceMonitorConfig) *types.NewAPIError {
+	breach := evaluateOverload(status, config)
+	if breach == nil {
+		systemOverloadGuard.closeEpisode(status, config, "recovered")
 		return nil
 	}
 
-	status := common.GetSystemStatus()
-
-	// 检查 CPU
-	if config.CPUThreshold > 0 && int(status.CPUUsage) > config.CPUThreshold {
-		return types.NewErrorWithStatusCode(
-			fmt.Errorf("system cpu overloaded (current: %.1f%%, threshold: %d%%)", status.CPUUsage, config.CPUThreshold),
-			"system_cpu_overloaded", http.StatusServiceUnavailable)
+	path := ""
+	requestID := ""
+	if c != nil {
+		requestID = c.GetString(common.RequestIdKey)
+		if c.Request != nil {
+			path = c.Request.URL.Path
+		}
 	}
+	systemOverloadGuard.recordRejection(breach, status, config, path, requestID)
 
-	// 检查内存
-	if config.MemoryThreshold > 0 && int(status.MemoryUsage) > config.MemoryThreshold {
-		return types.NewErrorWithStatusCode(
-			fmt.Errorf("system memory overloaded (current: %.1f%%, threshold: %d%%)", status.MemoryUsage, config.MemoryThreshold),
-			"system_memory_overloaded", http.StatusServiceUnavailable)
+	message := fmt.Sprintf("system %s overloaded (current: %.1f%%, threshold: %d%%)", breach.reason, breach.value, breach.threshold)
+	if c != nil {
+		opsmonitor.ObserveGatewayRejection(c, http.StatusServiceUnavailable, "openai_error", string(breach.code), message)
 	}
-
-	// 检查磁盘
-	if config.DiskThreshold > 0 && int(status.DiskUsage) > config.DiskThreshold {
-		return types.NewErrorWithStatusCode(
-			fmt.Errorf("system disk overloaded (current: %.1f%%, threshold: %d%%)", status.DiskUsage, config.DiskThreshold),
-			"system_disk_overloaded", http.StatusServiceUnavailable)
-	}
-
-	return nil
+	return types.NewErrorWithStatusCode(errors.New(message), breach.code, http.StatusServiceUnavailable)
 }

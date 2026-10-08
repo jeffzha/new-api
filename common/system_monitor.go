@@ -1,6 +1,7 @@
 package common
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,6 +29,14 @@ type SystemStatus struct {
 }
 
 var latestSystemStatus atomic.Value
+
+// systemSampleHooks receive every successful sample so other packages can keep
+// their own guard state (for example the overload protection) without running a
+// second sampler.
+var (
+	systemSampleHooksMu sync.Mutex
+	systemSampleHooks   []func(SystemStatus)
+)
 
 func init() {
 	latestSystemStatus.Store(SystemStatus{})
@@ -73,9 +82,31 @@ func updateSystemStatus() {
 	}
 
 	latestSystemStatus.Store(status)
+	notifySystemSampleHooks(status)
 }
 
 // GetSystemStatus 获取当前系统状态
 func GetSystemStatus() SystemStatus {
 	return latestSystemStatus.Load().(SystemStatus)
+}
+
+// RegisterSystemSampleHook appends a callback invoked after each successful
+// system sample. Hooks run serially inside the monitor loop and must not block.
+func RegisterSystemSampleHook(hook func(SystemStatus)) {
+	if hook == nil {
+		return
+	}
+	systemSampleHooksMu.Lock()
+	defer systemSampleHooksMu.Unlock()
+	systemSampleHooks = append(systemSampleHooks, hook)
+}
+
+func notifySystemSampleHooks(status SystemStatus) {
+	systemSampleHooksMu.Lock()
+	hooks := make([]func(SystemStatus), len(systemSampleHooks))
+	copy(hooks, systemSampleHooks)
+	systemSampleHooksMu.Unlock()
+	for _, hook := range hooks {
+		hook(status)
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -16,6 +17,28 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestObserveGatewayRejectionAddsOverloadDetailsToEvent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	observation := &requestObservation{
+		requestID: "overload-request",
+		startedAt: time.Now(),
+		method:    http.MethodPost,
+		path:      "/v1/chat/completions",
+	}
+	c.Set(observationContextKey, observation)
+
+	ObserveGatewayRejection(c, http.StatusServiceUnavailable, "openai_error", "system_overload_disk", "system disk overloaded")
+	event := observation.event(http.StatusServiceUnavailable, time.Now())
+
+	assert.False(t, event.Success)
+	assert.Equal(t, "gateway", event.ErrorOwner)
+	assert.False(t, event.BusinessLimited)
+	assert.Equal(t, "openai_error", event.ErrorType)
+	assert.Equal(t, "system_overload_disk", event.ErrorCode)
+	assert.Equal(t, "system disk overloaded", event.ErrorSummary)
+}
 
 func TestClassifyEndpointSeparatesVideoLifecycleAndMobileAssets(t *testing.T) {
 	tests := []struct {

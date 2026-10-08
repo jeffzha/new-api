@@ -25,6 +25,13 @@ import { formatQuota } from '@/lib/format'
 
 import type { UserWalletData } from '../types'
 
+const balanceLabelKeys: Record<string, string> = {
+  recharge: 'Recharge balance',
+  gift: 'Gift balance',
+  redemption: 'Redemption code balance',
+  other: 'Other balance',
+}
+
 interface WalletStatsCardProps {
   user: UserWalletData | null
   loading?: boolean
@@ -39,20 +46,30 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
         className={
           props.workspace
             ? 'console-wallet-balance'
-            : 'grid grid-cols-3 divide-x rounded-lg border'
+            : 'grid grid-cols-2 rounded-lg border sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]'
         }
       >
-        {['balance', 'usage', 'requests'].map((key) => (
-          <div
-            key={key}
-            className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'
-            aria-label={t('Loading...')}
-          >
-            <Skeleton className='h-3.5 w-full' />
-            <Skeleton className='mt-2 h-6 w-full sm:h-7' />
-            <Skeleton className='mt-1.5 hidden h-3.5 w-24 md:block' />
-          </div>
-        ))}
+        {['balance', 'usage', 'requests'].map((key, index) => {
+          let loadingClassName = 'min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'
+          if (!props.workspace && index === 0) {
+            loadingClassName =
+              'col-span-2 min-w-0 border-b px-2.5 py-2.5 sm:col-span-1 sm:border-r sm:border-b-0 sm:px-5 sm:py-4'
+          } else if (!props.workspace && index === 1) {
+            loadingClassName += ' border-r'
+          }
+
+          return (
+            <div
+              key={key}
+              className={loadingClassName}
+              aria-label={t('Loading...')}
+            >
+              <Skeleton className='h-3.5 w-full' />
+              <Skeleton className='mt-2 h-6 w-full sm:h-7' />
+              <Skeleton className='mt-1.5 hidden h-3.5 w-24 md:block' />
+            </div>
+          )
+        })}
       </div>
     )
   }
@@ -86,11 +103,36 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
       tone: 'chart-4',
     },
   ]
+  const balanceBreakdown = props.user?.wallet_balances ?? []
+
+  const breakdown = balanceBreakdown.length > 0 && (
+    <dl
+      role='group'
+      aria-label={t('Balance breakdown')}
+      className='wallet-balance-breakdown text-muted-foreground mt-2.5 grid grid-cols-1 gap-x-4 gap-y-1.5 text-xs font-normal sm:grid-cols-2'
+    >
+      {balanceBreakdown.map((balance) => (
+        <div
+          key={balance.type}
+          className='wallet-balance-breakdown-item flex min-w-0 justify-between gap-2'
+        >
+          <dt className='min-w-0 break-words'>
+            {balanceLabelKeys[balance.type]
+              ? t(balanceLabelKeys[balance.type])
+              : t('Balance category', { type: balance.type })}
+          </dt>
+          <dd className='text-foreground shrink-0 font-mono tabular-nums'>
+            {formatQuota(balance.quota)}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
 
   if (props.workspace) {
     return (
       <dl className='console-wallet-balance'>
-        {stats.map((item) => (
+        {stats.map((item, index) => (
           <div key={item.label} className='console-wallet-stat'>
             <dt className='console-wallet-stat-label'>
               <IconBadge tone={item.tone} size='sm'>
@@ -100,9 +142,12 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
             </dt>
             <dd className='console-wallet-stat-value'>
               {props.user ? item.value : '-'}
-              <span className='console-wallet-stat-note'>
-                {item.description}
-              </span>
+              {index === 0 && breakdown}
+              {index !== 0 && (
+                <span className='console-wallet-stat-note'>
+                  {item.description}
+                </span>
+              )}
             </dd>
           </div>
         ))}
@@ -111,9 +156,16 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
   }
 
   return (
-    <div className='grid grid-cols-3 divide-x rounded-lg border'>
-      {stats.map((item) => (
-        <div key={item.label} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
+    <div className='grid grid-cols-2 rounded-lg border sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]'>
+      {stats.map((item, index) => (
+        <div
+          key={item.label}
+          className={
+            index === 0
+              ? 'col-span-2 min-w-0 border-b px-2.5 py-2.5 sm:col-span-1 sm:border-r sm:border-b-0 sm:px-5 sm:py-4'
+              : `min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4 ${index === 1 ? 'border-r' : ''}`
+          }
+        >
           <div className='flex items-center gap-1.5 sm:gap-2.5'>
             <IconBadge tone={item.tone} size='stat'>
               <item.icon />
@@ -126,9 +178,13 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
           <div className='text-foreground mt-1.5 font-mono text-sm font-bold tracking-tight break-all tabular-nums sm:mt-2.5 sm:text-2xl'>
             {props.user ? item.value : '-'}
           </div>
-          <div className='text-muted-foreground/60 mt-1 hidden text-xs md:block'>
-            {item.description}
-          </div>
+          {index === 0 ? (
+            breakdown
+          ) : (
+            <div className='text-muted-foreground/60 mt-1 hidden text-xs md:block'>
+              {item.description}
+            </div>
+          )}
         </div>
       ))}
     </div>

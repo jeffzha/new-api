@@ -223,6 +223,13 @@ export interface AffiliateTransferRequest {
 /**
  * User wallet data
  */
+export interface WalletBalance {
+  /** Stable balance category identifier */
+  type: string
+  /** Currently available quota for this category */
+  quota: number
+}
+
 export interface UserWalletData {
   /** User ID */
   id: number
@@ -230,6 +237,8 @@ export interface UserWalletData {
   username: string
   /** Current quota balance */
   quota: number
+  /** Extensible balance breakdown returned by the wallet API */
+  wallet_balances?: WalletBalance[]
   /** Total used quota */
   used_quota: number
   /** Total request count */

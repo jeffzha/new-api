@@ -454,6 +454,29 @@ func TestSecurityAccountProfileReadsPasswordStatusInOneQuery(t *testing.T) {
 	}
 }
 
+func TestGetSelfReturnsExtensibleWalletBalanceBreakdownForLegacyUser(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("quota", 123).Error)
+
+	response := securityEnrollmentRequest(http.MethodGet, "/api/user/self", "", "", identity, GetSelf)
+	var result struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Quota          int                   `json:"quota"`
+			WalletBalances []model.WalletBalance `json:"wallet_balances"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	require.True(t, result.Success, response.Body.String())
+	assert.Equal(t, 123, result.Data.Quota)
+	assert.Equal(t, []model.WalletBalance{
+		{Type: model.WalletBalanceTypeRecharge, Quota: 0},
+		{Type: model.WalletBalanceTypeGift, Quota: 0},
+		{Type: model.WalletBalanceTypeRedemption, Quota: 0},
+		{Type: model.WalletBalanceTypeOther, Quota: 123},
+	}, result.Data.WalletBalances)
+}
+
 func TestSecurityAccountProfileUpdateDoesNotRequireProof(t *testing.T) {
 	user, identity := setupSecurityEnrollmentTest(t)
 	response := securityEnrollmentRequest(http.MethodPut, "/api/user/self", `{"display_name":"Updated"}`, "", identity, UpdateSelf)

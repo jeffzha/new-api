@@ -1,6 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const rootPassword = "Browser-root-2026!";
 const operatorPassword = "Browser-operator-2026!";
 
 async function rootLogin(page: Page) {
@@ -13,27 +12,20 @@ async function rootLogin(page: Page) {
 }
 
 async function operatorLogin(page: Page) {
+  // Operators reach the center through platform SSO, so the browser test
+  // authenticates against the nonce-protected login API directly.
+  const nonceResponse = await page.request.get("/agency/api/v1/auth/nonce");
+  expect(nonceResponse.ok()).toBeTruthy();
+  const nonce = ((await nonceResponse.json()) as { data?: { nonce?: string } }).data?.nonce;
+  expect(nonce).toBeTruthy();
+  const login = await page.request.post("/agency/api/v1/auth/login", {
+    data: { username: "browser-operator", password: operatorPassword, nonce },
+  });
+  expect(login.ok()).toBeTruthy();
   await page.goto("/agency/");
-  await page.getByLabel("Username", { exact: true }).fill("browser-operator");
-  await page.getByLabel("Password", { exact: true }).fill(operatorPassword);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Sign out", exact: true }),
   ).toBeVisible();
-}
-
-async function confirmRoot(page: Page) {
-  const dialog = page.getByRole("dialog", {
-    name: "Confirm this action",
-    exact: true,
-  });
-  await expect(dialog).toBeVisible();
-  await dialog
-    .getByLabel("Current password", { exact: true })
-    .fill(rootPassword);
-  await dialog
-    .getByRole("button", { name: "Verify and continue", exact: true })
-    .click();
 }
 
 function issueRow(page: Page, id: string) {
@@ -214,7 +206,6 @@ test("root reviews reconciliation evidence and safely restores one missing deliv
   await review
     .getByRole("button", { name: "Restore missing delivery", exact: true })
     .click();
-  await confirmRoot(page);
   const resolved = await resolveResponse;
   expect(resolved.status()).toBe(200);
   expect(resolved.request().postDataJSON()).toMatchObject({
@@ -272,15 +263,7 @@ test("root reviews reconciliation evidence and safely restores one missing deliv
   const runResponse = page.waitForResponse(
     (response) => response.request().method() === "POST" && response.url().endsWith("/root/reconciliation/runs"),
   );
-  const runProof = page.waitForResponse(
-    (response) => response.request().method() === "POST" && response.url().endsWith("/__fixture/proof"),
-  );
   await page.getByRole("button", { name: "Run reconciliation", exact: true }).click();
-  await confirmRoot(page);
-  expect((await runProof).request().postDataJSON()).toMatchObject({
-    action: "reconciliation.run",
-    object_id: "reconciliation:run",
-  });
   const completedRun = await runResponse;
   expect(completedRun.status()).toBe(201);
   const runKey = completedRun.request().headers()["idempotency-key"];

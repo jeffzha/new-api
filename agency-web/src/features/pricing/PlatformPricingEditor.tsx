@@ -5,7 +5,9 @@ import { ErrorNotice, Field, Loading, Pager } from "../../components/ui";
 import { useQuery } from "../../lib/client";
 import { useMutation } from "../../lib/mutations";
 import { CoefficientAdjustDialog, type AdjustmentOutcome } from "./AdjustDialog";
-import { ChannelFilter, ChannelTags, type ChannelFilterOption } from "./ChannelFilter";
+import { ChannelTags, type ChannelFilterOption } from "./ChannelFilter";
+import { ChannelFilterMenu, VendorTabs } from "./VendorFilter";
+import { activeVendorKey, buildVendorOptions, matchesPricingSearch, vendorKeyOf } from "./vendorOptions";
 import {
   formatCoefficient,
   parseCoefficient,
@@ -44,6 +46,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
   const [reason, setReason] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [channels, setChannels] = useState<string[]>([]);
+  const [vendorFilter, setVendorFilter] = useState("all");
   const [selected, setSelected] = useState<string[]>([]);
   const [adjustTarget, setAdjustTarget] = useState<AdjustTarget | null>(null);
   const [rowErrors, setRowErrors] = useState<Record<string, CoefficientAdjustmentError>>({});
@@ -77,22 +80,28 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
     }
     return [...map.values()].sort((left, right) => left.name.localeCompare(right.name));
   }, [props.data.items]);
+  const channelRows = useMemo(() => {
+    if (!channels.length) return props.data.items;
+    return props.data.items.filter((row) =>
+      row.channel_costs.some((channel) => channels.includes(String(channel.channel_id))),
+    );
+  }, [channels, props.data.items]);
+  const vendorOptions = useMemo(
+    () => buildVendorOptions(channelRows, t("Other providers")),
+    [channelRows, t],
+  );
+  const activeVendor = activeVendorKey(vendorFilter, vendorOptions);
   const visible = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return props.data.items.filter((row) => {
-      if (
-        channels.length &&
-        !row.channel_costs.some((channel) => channels.includes(String(channel.channel_id)))
-      ) {
-        return false;
-      }
-      if (!query) return true;
-      return (
-        row.origin_model_name.toLowerCase().includes(query) ||
-        row.channel_names.some((name) => name.toLowerCase().includes(query))
-      );
-    });
-  }, [channels, props.data.items, search]);
+    return channelRows.filter(
+      (row) =>
+        (activeVendor === "all" || vendorKeyOf(row) === activeVendor) &&
+        matchesPricingSearch(search, {
+          origin_model_name: row.origin_model_name,
+          vendor_name: row.vendor_name,
+          channelNames: row.channel_names,
+        }),
+    );
+  }, [activeVendor, channelRows, search]);
   const pageSize = 20;
   const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
   const currentPage = Math.min(page, pageCount - 1);
@@ -255,16 +264,28 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
         </button>
       </div>
       <div className="pricing-search">
-        <Field label={t("Search models or channels")}>
-          <input value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} />
-        </Field>
+        <label className="search-field">
+          <ActionIcon name="search" />
+          <input
+            aria-label={t("Search models, providers, or channels")}
+            placeholder={t("Search models, providers, or channels")}
+            value={search}
+            onChange={(event) => { setSearch(event.target.value); setPage(0); }}
+          />
+        </label>
+        <ChannelFilterMenu
+          channels={channelOptions}
+          selected={channels}
+          onToggle={toggleChannel}
+          onClear={() => { setChannels([]); setPage(0); }}
+        />
         <span className="pricing-live-badge">{t("Live platform data")} · {visible.length}</span>
       </div>
-      <ChannelFilter
-        channels={channelOptions}
-        selected={channels}
-        onToggle={toggleChannel}
-        onClear={() => { setChannels([]); setPage(0); }}
+      <VendorTabs
+        vendors={vendorOptions}
+        selected={activeVendor}
+        total={channelRows.length}
+        onSelect={(key) => { setVendorFilter(key); setPage(0); }}
       />
       <div className="pricing-bulk-bar">
         <strong>{t("Batch adjust selected models")}</strong>

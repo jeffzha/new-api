@@ -27,7 +27,10 @@ export type ActionIconName =
   | "ban"
   | "arrow-left"
   | "user"
-  | "check";
+  | "check"
+  | "grid"
+  | "filter"
+  | "chevron-down";
 
 function Icon({ name }: { name: HeadingIconName }) {
   const common = {
@@ -93,6 +96,9 @@ export function ActionIcon({ name }: { name: ActionIconName }) {
     "arrow-left": <path d="M19 12H5M12 19l-7-7 7-7" />,
     user: <path d="M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z" />,
     check: <path d="m5 12 4 4L19 6" />,
+    grid: <><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" /></>,
+    filter: <path d="M3 5h18M6 12h12M10 19h4" />,
+    "chevron-down": <path d="m6 9 6 6 6-6" />,
   };
   return <svg className="action-icon" {...common}>{paths[name]}</svg>;
 }

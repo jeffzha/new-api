@@ -581,6 +581,11 @@ const rows = [
   ["My cost is missing for this model.", "该模型缺少我的成本系数。", "該模型缺少我的成本係數。", "Mon coût est manquant pour ce modèle.", "このモデルの原価が未設定です。", "Для этой модели не задана моя себестоимость.", "Mô hình này chưa có chi phí của tôi."],
   ["No selected models can be adjusted with this amount.", "已选模型都无法按此幅度调整。", "已選模型都無法依此幅度調整。", "Aucun modèle sélectionné ne peut être ajusté avec ce montant.", "選択したモデルはこの調整幅では変更できません。", "Ни одну из выбранных моделей нельзя изменить на эту величину.", "Không mô hình đã chọn nào có thể điều chỉnh với mức này."],
   ["The current coefficient is invalid. Enter a valid coefficient before adjusting it.", "当前系数无效，请先输入有效系数再调整。", "目前係數無效，請先輸入有效係數再調整。", "Le coefficient actuel est invalide. Saisissez un coefficient valide avant de l’ajuster.", "現在の係数が無効です。調整前に有効な係数を入力してください。", "Текущий коэффициент некорректен. Введите допустимый коэффициент перед изменением.", "Hệ số hiện tại không hợp lệ. Hãy nhập hệ số hợp lệ trước khi điều chỉnh."],
+  ["Providers", "发行商", "發行商", "Fournisseurs", "プロバイダー", "Поставщики", "Nhà cung cấp"],
+  ["All", "全部", "全部", "Tout", "すべて", "Все", "Tất cả"],
+  ["Other providers", "其他发行商", "其他發行商", "Autres fournisseurs", "その他のプロバイダー", "Другие поставщики", "Nhà cung cấp khác"],
+  ["All channels", "全部渠道", "全部渠道", "Tous les canaux", "すべてのチャネル", "Все каналы", "Tất cả kênh"],
+  ["Search models, providers, or channels", "搜索模型、发行商或渠道", "搜尋模型、發行商或渠道", "Rechercher un modèle, un fournisseur ou un canal", "モデル・プロバイダー・チャネルを検索", "Поиск модели, поставщика или канала", "Tìm mô hình, nhà cung cấp hoặc kênh"],
 ] as const;
 
 const locales: Locale[] = ["en", "zh", "zh-TW", "fr", "ja", "ru", "vi"];

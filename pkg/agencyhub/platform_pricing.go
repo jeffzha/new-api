@@ -87,6 +87,10 @@ type PlatformPricingCatalogChannel struct {
 }
 
 type PlatformPricingCatalogRow struct {
+	// VendorName and VendorIcon mirror the model square provider so the
+	// pricing matrix filters by the vendor an agency actually resells.
+	VendorName      string                          `json:"vendor_name,omitempty"`
+	VendorIcon      string                          `json:"vendor_icon,omitempty"`
 	OriginModelName string                          `json:"origin_model_name"`
 	ChannelNames    []string                        `json:"channel_names"`
 	ChannelCosts    []PlatformPricingCatalogChannel `json:"channel_costs"`
@@ -270,8 +274,19 @@ func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
 		}
 	}
 	sort.Strings(order)
+	// Provider names only decorate the matrix, so a metadata read failure must
+	// never take the pricing catalog down.
+	vendors, vendorErr := model.ResolveModelVendors(db, order)
+	if vendorErr != nil {
+		common.SysLog("agency hub pricing: resolve model vendors failed: " + vendorErr.Error())
+		vendors = nil
+	}
 	items := make([]PlatformPricingCatalogRow, 0, len(order))
 	for _, name := range order {
+		if vendor, ok := vendors[name]; ok {
+			byModel[name].VendorName = vendor.Name
+			byModel[name].VendorIcon = vendor.Icon
+		}
 		items = append(items, *byModel[name])
 	}
 	return &PlatformPricingCatalog{Revision: policy.Revision, Items: items, RefreshedAtMS: time.Now().UnixMilli()}, nil

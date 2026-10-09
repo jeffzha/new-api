@@ -1,57 +1,6 @@
 import { useTranslation } from "react-i18next";
-import { ActionIcon } from "../../components/Heading";
 
 export type ChannelFilterOption = { id: string; name: string; models: number };
-
-/** Channel chip filter shared by the platform and agency pricing matrices. */
-export function ChannelFilter(props: {
-  channels: ChannelFilterOption[];
-  selected: string[];
-  onToggle: (id: string) => void;
-  onClear: () => void;
-}) {
-  const { t } = useTranslation();
-  if (!props.channels.length) return null;
-  return (
-    <div className="channel-filter" role="group" aria-label={t("Filter by channel")}>
-      <div className="channel-filter-head">
-        <span className="channel-filter-label">
-          <ActionIcon name="search" />
-          {t("Filter by channel")}
-        </span>
-        <button
-          type="button"
-          className="secondary button-icon compact-action"
-          disabled={!props.selected.length}
-          onClick={props.onClear}
-        >
-          <ActionIcon name="refresh" />
-          {t("Clear filters")}
-        </button>
-      </div>
-      <div className="channel-filter-chips">
-        {props.channels.map((channel) => {
-          const active = props.selected.includes(channel.id);
-          return (
-            <button
-              key={channel.id}
-              type="button"
-              className={active ? "channel-chip active" : "channel-chip"}
-              aria-pressed={active}
-              onClick={() => props.onToggle(channel.id)}
-            >
-              <span className="channel-filter-icon" aria-hidden="true">
-                <ChannelGlyph />
-              </span>
-              <span className="channel-chip-name">{channel.name}</span>
-              <small>{channel.models}</small>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 export function ChannelGlyph() {
   return (

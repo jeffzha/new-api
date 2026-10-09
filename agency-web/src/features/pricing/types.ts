@@ -49,6 +49,8 @@ export type PricePreview = {
 
 export type PlatformPriceRow = {
   origin_model_name: string;
+  vendor_name?: string;
+  vendor_icon?: string;
   channel_names: string[];
   channel_costs: {
     channel_id: number;
@@ -70,6 +72,8 @@ export type PlatformPricing = {
 
 export type ModelSaleRow = {
   origin_model_name: string;
+  vendor_name?: string;
+  vendor_icon?: string;
   channels?: { channel_id: number; channel_name: string }[];
   agency_cost_bps: number;
   child_cost_bps: number;

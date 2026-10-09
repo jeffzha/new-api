@@ -50,7 +50,7 @@ func TestAgencyBrowserFixture(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	require.NoError(t, model.MigrateAgency(db))
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Task{}, &model.Log{}, &model.Channel{}, &model.Ability{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Task{}, &model.Log{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}))
 	previousDB := model.DB
 	model.DB = db
 	t.Cleanup(func() { model.DB = previousDB })
@@ -76,6 +76,11 @@ func TestAgencyBrowserFixture(t *testing.T) {
 	channel := model.Channel{Name: "Browser model channel", Type: 1, Key: "browser-only", Status: common.ChannelStatusEnabled}
 	require.NoError(t, db.Create(&channel).Error)
 	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: "browser-chat-model", ChannelId: channel.Id, Enabled: true}).Error)
+	// Provider metadata drives the pricing filter tabs, so the browser run
+	// covers the same vendor enrichment the production catalog returns.
+	vendor := model.Vendor{Name: "DeepSeek", Icon: "DeepSeek.Color", Status: 1}
+	require.NoError(t, db.Create(&vendor).Error)
+	require.NoError(t, db.Create(&model.Model{ModelName: "browser-chat-model", VendorID: vendor.Id, NameRule: model.NameRuleExact, Status: 1}).Error)
 	agency, _, err := app.CreateAgency(int64(root.Id), "Browser Agency", "browser-operator", policy)
 	require.NoError(t, err)
 	passwordHash, err := common.Password2Hash("Browser-operator-2026!")

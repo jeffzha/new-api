@@ -2,7 +2,6 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
 
 const operatorPassword = "Browser-operator-2026!";
-const rootPassword = "Browser-root-2026!";
 
 async function rootLogin(page: Page) {
   const response = await page.request.post("/__fixture/root");
@@ -11,22 +10,23 @@ async function rootLogin(page: Page) {
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
 }
 
-async function operatorLogin(page: Page, username = "browser-operator") {
-  await page.goto("/agency/");
-  await page.getByLabel("Username", { exact: true }).fill(username);
-  await page.getByLabel("Password", { exact: true }).fill(operatorPassword);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
-}
-
-async function confirm(page: Page, password: string) {
-  const dialog = page.getByRole("dialog", {
-    name: "Confirm this action",
-    exact: true,
+async function operatorLogin(
+  page: Page,
+  username = "browser-operator",
+  password = operatorPassword,
+) {
+  // The center signs operators in through the platform, so the browser test
+  // authenticates against the same nonce-protected API the SSO handoff uses.
+  const nonceResponse = await page.request.get("/agency/api/v1/auth/nonce");
+  expect(nonceResponse.ok()).toBeTruthy();
+  const nonce = ((await nonceResponse.json()) as { data?: { nonce?: string } }).data?.nonce;
+  expect(nonce).toBeTruthy();
+  const login = await page.request.post("/agency/api/v1/auth/login", {
+    data: { username, password, nonce },
   });
-  await expect(dialog).toBeVisible();
-  await dialog.getByLabel("Current password", { exact: true }).fill(password);
-  await dialog.getByRole("button", { name: "Verify and continue", exact: true }).click();
+  expect(login.ok()).toBeTruthy();
+  await page.goto("/agency/");
+  await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
 }
 
 test("operator copies its invitation and downloads the QR code after a recoverable image error", async ({
@@ -194,7 +194,6 @@ test("root creates an agency, acknowledges delivery and the operator must change
       response.request().method() === "POST" && response.url().endsWith("/api/v1/root/agencies"),
   );
   await page.locator("form").getByRole("button", { name: "Create agency", exact: true }).click();
-  await confirm(page, rootPassword);
   expect((await createResponse).status()).toBe(201);
   const password = page.getByLabel("Temporary password", { exact: true });
   await expect(password).not.toHaveValue("");
@@ -209,7 +208,6 @@ test("root creates an agency, acknowledges delivery and the operator must change
       /\/root\/deliveries\/\d+\/ack$/.test(response.url()),
   );
   await page.getByRole("button", { name: "Confirm receipt", exact: true }).click();
-  await confirm(page, rootPassword);
   expect((await acknowledgement).status()).toBe(200);
   await expect(page.getByRole("status")).toContainText("Receipt confirmed");
   await page.getByRole("button", { name: "Close", exact: true }).click();
@@ -238,10 +236,7 @@ test("root creates an agency, acknowledges delivery and the operator must change
   });
   const operator = await operatorContext.newPage();
   try {
-    await operator.goto("/agency/");
-    await operator.getByLabel("Username", { exact: true }).fill("browser-created-operator");
-    await operator.getByLabel("Password", { exact: true }).fill(temporaryPassword);
-    await operator.getByRole("button", { name: "Sign in", exact: true }).click();
+    await operatorLogin(operator, "browser-created-operator", temporaryPassword);
     await expect(
       operator.getByText("Change your temporary password before continuing.", {
         exact: true,
@@ -268,6 +263,20 @@ test("root publishes platform pricing and an operator manages direct-child and c
   await page.getByRole("button", { name: "Pricing", exact: true }).click();
   await expect(page.getByRole("cell", { name: "browser-chat-model", exact: true })).toBeVisible();
   await expect(page.getByText("Browser model channel", { exact: true })).toBeVisible();
+  // Provider tabs mirror the model square and search filters the matrix.
+  const providerTab = page.getByRole("tab", { name: /DeepSeek/ }).first();
+  await expect(providerTab).toBeVisible();
+  await providerTab.click();
+  await expect(page.getByRole("cell", { name: "browser-chat-model", exact: true })).toBeVisible();
+  const providerSearch = page
+    .getByLabel("Search models, providers, or channels", { exact: true })
+    .first();
+  await providerSearch.fill("deepseek");
+  await expect(page.getByRole("cell", { name: "browser-chat-model", exact: true })).toBeVisible();
+  await providerSearch.fill("missing-provider");
+  await expect(page.getByText("No models match the current filters.", { exact: true }).first()).toBeVisible();
+  await providerSearch.fill("");
+  await page.getByRole("tab", { name: /^All/ }).first().click();
   await page
     .getByLabel("My cost (coefficient): browser-chat-model / Browser model channel", { exact: true })
     .fill("0.75");
@@ -412,7 +421,6 @@ test("withdrawal uses a real account and exact decimal lease through review and 
       response.request().method() === "POST" && response.url().endsWith("/withdrawal-accounts"),
   );
   await accountDialog.getByRole("button", { name: "Save account version", exact: true }).click();
-  await confirm(page, operatorPassword);
   expect((await accountResponse).status()).toBe(201);
   await expect(accountDialog).toHaveCount(0);
   await expect(page.getByRole("row").filter({ hasText: "1234" })).toBeVisible();
@@ -434,7 +442,6 @@ test("withdrawal uses a real account and exact decimal lease through review and 
   await withdrawalDialog
     .getByRole("button", { name: "Confirm withdrawal request", exact: true })
     .click();
-  await confirm(page, operatorPassword);
   const createdResponse = await created;
   expect(createdResponse.status()).toBe(201);
   expect(createdResponse.request().postDataJSON()).toMatchObject({
@@ -499,7 +506,6 @@ test("withdrawal uses a real account and exact decimal lease through review and 
           /\/root\/withdrawals\/\d+\/(review|transition)$/.test(result.url()),
       );
       await dialog.getByRole("button", { name: action, exact: true }).click();
-      await confirm(root, rootPassword);
       expect((await response).status()).toBe(200);
       await expect(dialog).toHaveCount(0);
       if (action === "Confirm unpaid and restore approval") {
@@ -534,7 +540,6 @@ test("withdrawal uses a real account and exact decimal lease through review and 
       /\/root\/withdrawals\/\d+\/mark-paid$/.test(response.url()),
     );
     await paidDialog.getByRole("button", { name: "Record confirmed payment", exact: true }).click();
-    await confirm(root, rootPassword);
     const paidResponse = await paid;
     expect(paidResponse.request().postDataJSON().payment_lease_token).toBe(lease);
     expect(paidResponse.status()).toBe(200);
@@ -611,7 +616,6 @@ test("root can inspect and cancel a blocked binding, then transfer a managed cus
       response.request().method() === "POST" && /\/root\/users\/\d+\/bind$/.test(response.url()),
   );
   await dialog.getByRole("button", { name: "Bind existing customer", exact: true }).click();
-  await confirm(page, rootPassword);
   expect((await bound).status()).toBe(202);
   await expect(dialog.getByText("BROWSER-BINDING-BLOCKER", { exact: true })).toBeVisible();
   await dialog
@@ -623,7 +627,6 @@ test("root can inspect and cancel a blocked binding, then transfer a managed cus
       /\/root\/provisioning\/\d+\/cancel$/.test(response.url()),
   );
   await dialog.getByRole("button", { name: "Cancel binding", exact: true }).click();
-  await confirm(page, rootPassword);
   expect((await cancelled).status()).toBe(200);
   const afterCancel = await (await page.request.get("/__fixture/state")).json();
   expect(afterCancel).toMatchObject({
@@ -645,7 +648,9 @@ test("root can inspect and cancel a blocked binding, then transfer a managed cus
     .fill("browser-target");
   await dialog.getByRole("button", { name: "Check target agency", exact: true }).click();
   await expect(dialog.getByText(/Transfer Target/)).toBeVisible();
-  await dialog.getByLabel("Reason", { exact: true }).fill("Verified customer move");
+  await dialog
+    .getByLabel("Transfer reason (optional)", { exact: true })
+    .fill("Verified customer move");
   await dialog.getByRole("checkbox").check();
   const transferred = page.waitForResponse(
     (response) =>
@@ -653,7 +658,6 @@ test("root can inspect and cancel a blocked binding, then transfer a managed cus
       /\/root\/users\/\d+\/transfer$/.test(response.url()),
   );
   await dialog.getByRole("button", { name: "Transfer customer", exact: true }).click();
-  await confirm(page, rootPassword);
   const transfer = await transferred;
   expect(transfer.status()).toBe(200);
   expect(transfer.request().postDataJSON()).toMatchObject({

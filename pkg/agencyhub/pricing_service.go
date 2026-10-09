@@ -219,6 +219,17 @@ func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agen
 		}
 	}
 	items := make([]gin.H, 0, len(platform.ModelPrices))
+	platformModelNames := make([]string, 0, len(platform.ModelPrices))
+	for _, price := range platform.ModelPrices {
+		platformModelNames = append(platformModelNames, price.OriginModelName)
+	}
+	// Provider names only decorate the matrix, so a metadata read failure must
+	// never block an agency from reading its sales coefficients.
+	modelVendors, vendorErr := model.ResolveModelVendors(a.db, platformModelNames)
+	if vendorErr != nil {
+		common.SysLog("agency hub model sales: resolve model vendors failed: " + vendorErr.Error())
+		modelVendors = nil
+	}
 	// The agency sees the same live channel set the platform catalog lists, so
 	// its pricing table can be filtered by channel as well as by model.
 	modelChannels := liveModelChannelSummary(rows)
@@ -245,7 +256,7 @@ func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agen
 		if channels == nil {
 			channels = []gin.H{}
 		}
-		items = append(items, gin.H{
+		item := gin.H{
 			"origin_model_name":          price.OriginModelName,
 			"channels":                   channels,
 			"agency_cost_bps":            resolved.SettlementBPS,
@@ -255,7 +266,12 @@ func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agen
 			"override_sales_bps":         override,
 			"override_child_cost_bps":    childOverrides[price.OriginModelName],
 			"default_child_cost_bps":     effective.DefaultChildCostBPS,
-		})
+		}
+		if vendor, ok := modelVendors[price.OriginModelName]; ok {
+			item["vendor_name"] = vendor.Name
+			item["vendor_icon"] = vendor.Icon
+		}
+		items = append(items, item)
 	}
 	respondOK(c, gin.H{"agency_id": agency.ID, "agency_name": agency.DisplayName, "revision": policy.Revision, "platform_revision": platform.Revision, "min_spread_bps": effective.MinSpreadBPS, "default_sales_bps": effective.DefaultSalesBPS, "default_child_cost_bps": effective.DefaultChildCostBPS, "items": items})
 }

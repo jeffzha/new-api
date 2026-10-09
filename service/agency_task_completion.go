@@ -12,6 +12,20 @@ import (
 func completeAgencyTaskBilling(ctx context.Context, task *model.Task, expectedStatus model.TaskStatus, totalTokens int64) error {
 	result, err := model.CompleteAgencyTask(task, expectedStatus, totalTokens)
 	if err != nil {
+		// Tiered and plugin video models are priced from request parameters
+		// (seconds, resolution) and never report tokens, so the frozen token
+		// basis can never value their final charge. The wallet already holds
+		// the accepted charge: settle it at that quota instead of parking the
+		// charge in reconcile_required, where the call stays invisible to
+		// agency usage and commission forever.
+		if errors.Is(err, model.ErrAgencyTaskUsagePending) && task.Status == model.TaskStatusSuccess {
+			if settleErr := ensureAgencyTaskFinalUsage(task, int64(task.Quota)); settleErr == nil {
+				logger.LogInfo(ctx, fmt.Sprintf("agency task %s finalized at charged quota without provider usage", task.TaskID))
+				return nil
+			} else {
+				logger.LogError(ctx, fmt.Sprintf("agency task %s charged-quota finalize failed: %v", task.TaskID, settleErr))
+			}
+		}
 		reason := "terminal_settlement_failed"
 		if errors.Is(err, model.ErrAgencyTaskUsagePending) {
 			reason = "final_usage_pending"
@@ -43,7 +57,14 @@ func completeAgencyTaskBilling(ctx context.Context, task *model.Task, expectedSt
 		if bc := task.PrivateData.BillingContext; bc != nil && bc.ProviderBilling != nil {
 			provider = bc.ProviderBilling.Provider
 		}
-		if provider != model.TaskBillingProviderSeedanceDomestic {
+		// A provider bill that is still pending stays authoritative: its
+		// reconciler finalizes the charge at the exact amount, including the
+		// reconciliation delta the platform already moved through the wallet.
+		// Finalizing here would freeze the estimate and desynchronise the
+		// agency usage/commission from the platform consumption log.
+		billPending := task.PrivateData.BillingContext != nil && task.PrivateData.BillingContext.ProviderBilling != nil &&
+			task.PrivateData.BillingContext.ProviderBilling.AsyncReconciliationRequired
+		if provider != model.TaskBillingProviderSeedanceDomestic && !billPending {
 			if finErr := ensureAgencyTaskFinalUsage(task, int64(task.Quota)); finErr != nil {
 				logger.LogError(ctx, fmt.Sprintf("record agency task final usage %s failed: %v", task.TaskID, finErr))
 			}

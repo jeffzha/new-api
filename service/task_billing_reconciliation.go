@@ -51,6 +51,12 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 	if repaired := repairNonCanonicalAgencyTaskSettlements(ctx, limit); repaired > 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("agency task settlement repair finalized %d legacy charge(s)", repaired))
 	}
+	// Charges that could never be priced from token usage (tiered and plugin
+	// video models) stay in reconcile_required until they are settled at the
+	// quota the wallet already paid.
+	if repaired := repairPendingFinalUsageTaskSettlements(ctx, limit); repaired > 0 {
+		logger.LogInfo(ctx, fmt.Sprintf("agency task final usage repair finalized %d charge(s)", repaired))
+	}
 	if _, err := model.EnqueuePendingTaskBillingReconciliations(limit); err != nil {
 		logger.LogError(ctx, "recover task billing reconciliation enqueue failed: "+err.Error())
 	}
@@ -274,6 +280,48 @@ func repairNonCanonicalAgencyTaskSettlements(ctx context.Context, limit int) int
 		}
 		if settleErr := model.SettleAgencyTaskAtChargedQuota(task, int64(task.Quota)); settleErr != nil {
 			logger.LogWarn(ctx, fmt.Sprintf("agency task charge %s repair failed: %s", chargeID, settleErr.Error()))
+			continue
+		}
+		repaired++
+	}
+	return repaired
+}
+
+// repairedFinalUsageAttempts bounds the final-usage repair to one attempt per
+// charge per process. A charge that still cannot settle (for example because
+// the wallet allocation no longer matches the frozen task quota) stays visible
+// for operator reconciliation instead of being retried on every poll tick.
+var repairedFinalUsageAttempts sync.Map
+
+// repairPendingFinalUsageTaskSettlements finalizes successful async task charges
+// whose frozen token basis could never price a final usage. Tiered and plugin
+// video models report seconds and resolution instead of tokens, so the token
+// basis returns ErrAgencyTaskUsagePending and the charge used to sit in
+// reconcile_required forever: the customer's wallet was charged and the platform
+// consumption log recorded the call, while agency usage and commission showed
+// nothing. Settling at the charged quota makes both sides agree without moving
+// any money the wallet has not already paid.
+func repairPendingFinalUsageTaskSettlements(ctx context.Context, limit int) int {
+	charges, err := model.PendingFinalUsageTaskCharges(limit)
+	if err != nil {
+		logger.LogError(ctx, "load agency task charges pending final usage failed: "+err.Error())
+		return 0
+	}
+	repaired := 0
+	for _, chargeID := range charges {
+		if _, attempted := repairedFinalUsageAttempts.LoadOrStore(chargeID, struct{}{}); attempted {
+			continue
+		}
+		task, findErr := model.AgencyTaskForCharge(chargeID)
+		if findErr != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("agency final usage charge %s repair skipped: %s", chargeID, findErr.Error()))
+			continue
+		}
+		if task.Status != model.TaskStatusSuccess {
+			continue
+		}
+		if settleErr := model.SettleAgencyTaskAtChargedQuota(task, int64(task.Quota)); settleErr != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("agency final usage charge %s repair failed: %s", chargeID, settleErr.Error()))
 			continue
 		}
 		repaired++

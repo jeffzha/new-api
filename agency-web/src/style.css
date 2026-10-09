@@ -594,6 +594,16 @@ th {
 }
 .dashboard-panel > * { min-width: 0; }
 .dashboard-panel .table-wrap { max-height: min(68vh, 780px); }
+/* Keep the page title and its description in place while the body scrolls. */
+.dashboard-panel > .page-header,
+.dashboard-panel > section > .page-header {
+  position: sticky;
+  top: -10px;
+  z-index: 6;
+  margin-top: -10px;
+  padding-top: 10px;
+  background: #fff;
+}
 .dashboard-panel .actions { align-items: center; }
 .dashboard-panel .actions button { min-height: 36px; height: auto; }
 .agency-header select { appearance: auto; }
@@ -964,6 +974,8 @@ h3 {
 .pricing-toolbar { align-items: flex-start; margin-bottom: .5rem; }
 .pricing-toolbar h3 { margin: 0 0 .25rem; }
 .pricing-toolbar p { margin: 0; }
+.pricing-toolbar > div { min-width: 0; }
+.pricing-toolbar > button { margin-left: auto; }
 .pricing-search { display: flex; align-items: center; gap: .6rem; margin-bottom: .55rem; flex-wrap: wrap; }
 .pricing-search .field { flex: 1; margin: 0; }
 .search-field { display: flex; flex: 1 1 260px; align-items: center; gap: 8px; min-height: 40px; padding: 0 12px; border: 1px solid #b4becf; border-radius: 6px; background: #fff; color: #98a2b3; }
@@ -1257,8 +1269,12 @@ table input {
   margin-bottom: 0;
 }
 .invitation-page {
-  max-width: 800px;
-  padding: 24px;
+  width: 100%;
+  max-width: none;
+  padding: 18px 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
   background: #fff;
   border: 1px solid #dfe4ea;
   border-radius: 8px;
@@ -1553,4 +1569,13 @@ dd {
   color: #344054;
   background: #f8fafc;
   font-weight: 600;
+}
+@media (min-width: 1024px) {
+  /* Use the full workspace width: details on the left, QR on the right. */
+  .invitation-page {
+    grid-template-columns: minmax(0, 1fr) 300px;
+    column-gap: 28px;
+  }
+  .invitation-page > .page-header { grid-column: 1 / -1; }
+  .invitation-page > .invitation-qr { grid-column: 2; grid-row: 2; align-self: start; }
 }

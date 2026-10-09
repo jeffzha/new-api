@@ -150,6 +150,27 @@ func NonCanonicalTaskFinalizeCharges(limit int) ([]string, error) {
 	return chargeIDs, nil
 }
 
+// PendingFinalUsageTaskCharges lists successful async task charges parked in
+// reconcile_required because the frozen token basis could not price a final
+// usage. Tiered and plugin video models are billed from request parameters
+// (seconds, resolution) and never report tokens, so the wallet keeps the
+// accepted charge while the agency ledger waits forever. The settlement
+// backfill finalizes them at the charged quota so the call stops being
+// missing from agency usage and commission.
+func PendingFinalUsageTaskCharges(limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	var chargeIDs []string
+	err := DB.Model(&AgencyBillingJournal{}).
+		Where("status = ? AND last_error = ?", "reconcile_required", "final_usage_pending").
+		Order("id").Limit(limit).Pluck("charge_id", &chargeIDs).Error
+	if err != nil {
+		return nil, err
+	}
+	return chargeIDs, nil
+}
+
 // AgencyTaskForCharge resolves the task that owns a durable agency charge
 // through its submission receipt, which is written before provider I/O.
 func AgencyTaskForCharge(chargeID string) (*Task, error) {

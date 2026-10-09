@@ -8,12 +8,18 @@ import type { AgencyList } from "../agencies/types";
 import { AgencySalesEditor } from "./AgencySalesEditor";
 import { PlatformPricingEditor } from "./PlatformPricingEditor";
 
-export function PricingPage(props: { root: boolean; agencyId: string | null }) {
+export function PricingPage(props: {
+  root: boolean;
+  agencyId: string | null;
+  actingAgencyId?: string | null;
+}) {
   const { t } = useTranslation();
   const [selected, setSelected] = useState(props.agencyId ?? "");
   const [cursor, setCursor] = useState("");
   const agencies = useQuery<AgencyList>(
-    props.root ? "/root/agencies?limit=200&cursor=" + encodeURIComponent(cursor) : null,
+    props.root && !props.actingAgencyId
+      ? "/root/agencies?limit=200&cursor=" + encodeURIComponent(cursor)
+      : null,
   );
 
   if (!props.root) {
@@ -25,6 +31,21 @@ export function PricingPage(props: { root: boolean; agencyId: string | null }) {
           description={t("Review your platform cost and set customer sales coefficients by model.")}
         />
         <AgencySalesEditor root={false} agencyId={null} />
+      </>
+    );
+  }
+
+  // While a root administrator is acting as an agency, pricing stays inside that
+  // agency: the platform matrix and the agency picker are both hidden.
+  if (props.actingAgencyId) {
+    return (
+      <>
+        <PageHeader
+          icon="pricing"
+          title={t("Agency sales coefficients")}
+          description={t("Review your platform cost and set customer sales coefficients by model.")}
+        />
+        <AgencySalesEditor key={props.actingAgencyId} root agencyId={props.actingAgencyId} />
       </>
     );
   }

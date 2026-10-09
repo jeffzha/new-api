@@ -70,6 +70,7 @@ export type PlatformPricing = {
 
 export type ModelSaleRow = {
   origin_model_name: string;
+  channels?: { channel_id: number; channel_name: string }[];
   agency_cost_bps: number;
   child_cost_bps: number;
   platform_default_sales_bps: number;
@@ -85,6 +86,7 @@ export type ModelSales = {
   revision: number;
   platform_revision: number;
   min_spread_bps: number;
+  sales_cap_bps?: number;
   default_sales_bps: number;
   default_child_cost_bps?: number;
   items: ModelSaleRow[];

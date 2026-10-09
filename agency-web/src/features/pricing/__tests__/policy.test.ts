@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  adjustCoefficientValues,
   adjustCustomerSalesValues,
   draftToPolicy,
   initialPolicy,
@@ -166,5 +167,81 @@ describe("pricing request contracts", () => {
       30000,
     );
     expect(result).toEqual({ values: { "model-a": "0.8000" }, errors: {}, updated: 1 });
+  });
+
+  test("bulk coefficient adjustment from cost rewrites selected rows and reports missing costs", () => {
+    const rows = [
+      { model: "with-cost", costBPS: 8000, inheritedBPS: 9000 },
+      { model: "no-cost", costBPS: null, inheritedBPS: 9000 },
+      { model: "untouched", costBPS: 7000, inheritedBPS: 8000 },
+    ];
+    const result = adjustCoefficientValues(
+      rows,
+      { untouched: "0.8000", "with-cost": "0.8500" },
+      ["with-cost", "no-cost"],
+      1000,
+      { anchor: "cost" },
+    );
+    expect(result.values).toEqual({ untouched: "0.8000", "with-cost": "0.9000" });
+    expect(result.errors).toEqual({ "no-cost": "missing_cost" });
+    expect(result.updated).toBe(1);
+  });
+
+  test("bulk coefficient adjustment from the drafted value enforces cost, spread and cap", () => {
+    const rows = [
+      { model: "inherited", costBPS: 8000, inheritedBPS: 9000 },
+      { model: "invalid", costBPS: 7000, inheritedBPS: 9000 },
+      { model: "below-cost", costBPS: 8000, inheritedBPS: 9000 },
+      { model: "below-spread", costBPS: 8000, inheritedBPS: 9000 },
+      { model: "above-cap", costBPS: 8000, inheritedBPS: 9000 },
+    ];
+    const result = adjustCoefficientValues(
+      rows,
+      {
+        invalid: "not-a-number",
+        "below-cost": "0.7500",
+        "below-spread": "0.8200",
+        "above-cap": "9.9900",
+      },
+      rows.map((row) => row.model),
+      200,
+      { anchor: "current", minSpreadBPS: 500, capBPS: 100000 },
+    );
+    expect(result.values).toEqual({
+      invalid: "not-a-number",
+      "below-cost": "0.7500",
+      "below-spread": "0.8200",
+      "above-cap": "9.9900",
+      inherited: "0.9200",
+    });
+    expect(result.errors).toEqual({
+      invalid: "invalid_current",
+      "below-cost": "below_cost",
+      "below-spread": "below_spread",
+      "above-cap": "above_cap",
+    });
+    expect(result.updated).toBe(1);
+  });
+
+  test("bulk coefficient adjustment allows the exact cost and rejects an unknown anchor", () => {
+    const exact = adjustCoefficientValues(
+      [{ model: "model-a", costBPS: 8000, inheritedBPS: 9000 }],
+      { "model-a": "0.7500" },
+      ["model-a"],
+      500,
+      { anchor: "current", minSpreadBPS: 500 },
+    );
+    expect(exact.errors).toEqual({});
+    expect(exact.values).toEqual({ "model-a": "0.8000" });
+
+    const unknown = adjustCoefficientValues(
+      [{ model: "model-b", costBPS: null, inheritedBPS: null }],
+      {},
+      ["model-b"],
+      500,
+      { anchor: "current" },
+    );
+    expect(unknown.errors).toEqual({ "model-b": "invalid_current" });
+    expect(unknown.updated).toBe(0);
   });
 });

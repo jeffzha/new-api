@@ -89,6 +89,91 @@ export function adjustCustomerSalesValues(
   return { values: nextValues, errors, updated };
 }
 
+export type CoefficientAdjustmentError =
+  | "missing_cost"
+  | "invalid_current"
+  | "below_cost"
+  | "below_spread"
+  | "above_cap";
+
+export type CoefficientAdjustmentRow = {
+  model: string;
+  costBPS: number | null;
+  inheritedBPS: number | null;
+};
+
+export type CoefficientAdjustmentOptions = {
+  anchor: "cost" | "current";
+  minSpreadBPS?: number;
+  capBPS?: number;
+};
+
+// Bulk-adjusts coefficients for the selected rows. The anchor decides whether
+// the delta applies to the row cost or to the drafted value (falling back to the
+// inherited value). Rows that would break the cost, spread or cap rules are
+// reported instead of written.
+export function adjustCoefficientValues(
+  rows: CoefficientAdjustmentRow[],
+  values: Record<string, string>,
+  selectedModels: Iterable<string>,
+  deltaBPS: number,
+  options: CoefficientAdjustmentOptions,
+) {
+  const selected = new Set(selectedModels);
+  const capBPS = options.capBPS ?? 100000;
+  const minSpreadBPS = options.minSpreadBPS ?? 0;
+  const nextValues = { ...values };
+  const errors: Record<string, CoefficientAdjustmentError> = {};
+  let updated = 0;
+
+  for (const row of rows) {
+    if (!selected.has(row.model)) continue;
+    let baseBPS: number;
+    if (options.anchor === "cost") {
+      if (row.costBPS == null) {
+        errors[row.model] = "missing_cost";
+        continue;
+      }
+      baseBPS = row.costBPS;
+    } else {
+      const raw = values[row.model]?.trim() ?? "";
+      if (raw) {
+        try {
+          baseBPS = parseCoefficient(raw);
+        } catch {
+          errors[row.model] = "invalid_current";
+          continue;
+        }
+      } else if (row.inheritedBPS != null) {
+        baseBPS = row.inheritedBPS;
+      } else {
+        errors[row.model] = "invalid_current";
+        continue;
+      }
+    }
+    const nextBPS = baseBPS + deltaBPS;
+    if (!Number.isSafeInteger(nextBPS) || nextBPS < 0) {
+      errors[row.model] = "below_cost";
+    } else if (row.costBPS != null && nextBPS < row.costBPS) {
+      errors[row.model] = "below_cost";
+    } else if (nextBPS > capBPS) {
+      errors[row.model] = "above_cap";
+    } else if (
+      row.costBPS != null &&
+      minSpreadBPS > 0 &&
+      nextBPS !== row.costBPS &&
+      nextBPS < row.costBPS + minSpreadBPS
+    ) {
+      errors[row.model] = "below_spread";
+    } else {
+      nextValues[row.model] = formatCoefficient(nextBPS);
+      updated++;
+    }
+  }
+
+  return { values: nextValues, errors, updated };
+}
+
 export function policyToDraft(policy: Policy): PricingDraft {
   return {
     settlement: formatCoefficient(policy.default_settlement_bps),

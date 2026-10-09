@@ -159,6 +159,22 @@ const tabLabels: Record<Tab, string> = {
   security: "Account security",
 };
 
+// Agency workspaces (and root administrators acting as an agency) share this
+// navigation so the acting root never sees the platform-wide agency list.
+const agencyWorkspaceTabs: Tab[] = [
+  "overview",
+  "children",
+  "customers",
+  "invitation",
+  "pricing",
+  "ledger",
+  "withdrawals",
+  "accounts",
+  "exports",
+  "security",
+  "audit",
+];
+
 function NavIcon({ tab }: { tab: Tab }) {
   const common = {
     width: 18,
@@ -212,6 +228,9 @@ function Dashboard({
 }) {
   const { t, i18n } = useTranslation();
   const root = identity.actor_type === "root";
+  // A root administrator who entered an agency works inside that agency scope:
+  // the agency list becomes its direct children and pricing stays agency-only.
+  const actingAgencyID = root && identity.agency_id ? String(identity.agency_id) : null;
   const [tab, setTab] = useState<Tab>("overview");
   const [exportKind, setExportKind] = useState<ExportKind>("usage");
   const [pricingAgency, setPricingAgency] = useState<string | null>(
@@ -221,29 +240,11 @@ function Dashboard({
   const [busy, setBusy] = useState(false);
   const mutate = useMutation();
   const tabs: Tab[] = root
-    ? [
-        "overview",
-        "agencies",
-        "pricing",
-        "customers",
-        ...(identity.agency_id ? (["invitation", "ledger", "accounts", "exports"] as Tab[]) : []),
-        "withdrawals",
-        "sync",
-        "audit",
-      ]
-    : [
-        "overview",
-        "children",
-        "customers",
-        "invitation",
-        "pricing",
-        "ledger",
-        "withdrawals",
-        "accounts",
-        "exports",
-        "security",
-        "audit",
-      ];
+    ? actingAgencyID
+      ? agencyWorkspaceTabs
+      : ["overview", "agencies", "pricing", "customers", "withdrawals", "sync", "audit"]
+    : agencyWorkspaceTabs;
+
   async function enter(id: string) {
     await mutate({ path: `/root/agencies/${id}/enter`, body: {} });
     await refresh();
@@ -277,7 +278,7 @@ function Dashboard({
       content = <ChildrenPage />;
       break;
     case "pricing":
-      content = <PricingPage root={root} agencyId={pricingAgency} />;
+      content = <PricingPage root={root} agencyId={pricingAgency} actingAgencyId={actingAgencyID} />;
       break;
     case "withdrawals":
       content = <WithdrawalsPage identity={identity} onAddAccount={() => setTab("accounts")} />;

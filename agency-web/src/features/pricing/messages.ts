@@ -564,6 +564,23 @@ const rows = [
   ["The server also checks agency cost, minimum spread and sales cap.", "服务端还会校验代理商成本、最低价差和销售系数上限。", "伺服器也會檢查代理商成本、最低價差與銷售係數上限。", "Le serveur vérifie également le coût agence, l’écart minimum et le plafond.", "サーバーでも代理店原価、最低価格差、販売上限を検証します。", "Сервер также проверяет стоимость агентства, минимальную разницу и предел продаж.", "Máy chủ cũng kiểm tra chi phí đại lý, chênh lệch tối thiểu và trần bán hàng."],
   ["Select visible models", "选择当前模型", "選擇目前模型", "Sélectionner les modèles visibles", "表示中のモデルを選択", "Выбрать видимые модели", "Chọn các mô hình đang hiển thị"],
   ["Select model", "选择模型", "選擇模型", "Sélectionner le modèle", "モデルを選択", "Выберите модель", "Chọn mô hình"],
+  ["Filter by channel", "按渠道筛选", "依渠道篩選", "Filtrer par canal", "チャネルで絞り込み", "Фильтр по каналу", "Lọc theo kênh"],
+  ["Clear filters", "清除筛选", "清除篩選", "Effacer les filtres", "フィルターを解除", "Сбросить фильтры", "Xóa bộ lọc"],
+  ["Channels", "渠道", "渠道", "Canaux", "チャネル", "Каналы", "Kênh"],
+  ["Select all models on this page", "选择当前页全部模型", "選擇目前頁面全部模型", "Sélectionner tous les modèles de cette page", "このページのモデルをすべて選択", "Выбрать все модели на странице", "Chọn tất cả mô hình trên trang này"],
+  ["No models match the current filters.", "没有符合当前筛选条件的模型。", "沒有符合目前篩選條件的模型。", "Aucun modèle ne correspond aux filtres actuels.", "現在のフィルターに一致するモデルがありません。", "Нет моделей, соответствующих текущим фильтрам.", "Không có mô hình nào khớp bộ lọc hiện tại."],
+  ["Increase/decrease downstream channel prices", "统一增/减下级渠道价格", "統一增/減下級渠道價格", "Augmenter/réduire les prix des canaux enfants", "下級チャネル価格を一括増減", "Увеличить/уменьшить цены дочерних каналов", "Tăng/giảm đồng loạt giá kênh cấp dưới"],
+  ["Adjusted downstream channel prices must stay at or above my cost.", "调整后的下级渠道价不能低于我的成本。", "調整後的下級渠道價不能低於我的成本。", "Les prix ajustés des canaux enfants doivent rester au moins égaux à mon coût.", "調整後の下級チャネル価格は自身の原価以上である必要があります。", "Изменённые цены дочерних каналов не могут быть ниже моей себестоимости.", "Giá kênh cấp dưới sau điều chỉnh không được thấp hơn chi phí của tôi."],
+  ["Adjusted sales prices must stay at or above my cost plus the minimum spread and within the sales cap.", "调整后的销售价格不能低于我的成本加最低价差，也不能超过销售价格上限。", "調整後的銷售價格不能低於我的成本加最低價差，也不能超過銷售價格上限。", "Les prix de vente ajustés doivent rester au moins égaux à mon coût plus l’écart minimum et respecter le plafond.", "調整後の販売価格は自身の原価と最低価格差の合計以上、販売上限以下である必要があります。", "Изменённые цены продажи должны быть не ниже моей себестоимости плюс минимальная разница и не выше предела продаж.", "Giá bán sau điều chỉnh phải không thấp hơn chi phí của tôi cộng chênh lệch tối thiểu và không vượt trần bán hàng."],
+  ["Anchor", "基准", "基準", "Référence", "基準", "Основа", "Mốc"],
+  ["From my cost", "基于我的成本", "依我的成本", "À partir de mon coût", "自身の原価基準", "От моей себестоимости", "Theo chi phí của tôi"],
+  ["From current value", "基于当前值", "依目前值", "À partir de la valeur actuelle", "現在値基準", "От текущего значения", "Theo giá trị hiện tại"],
+  ["Current value", "当前值", "目前值", "Valeur actuelle", "現在値", "Текущее значение", "Giá trị hiện tại"],
+  ["After adjustment", "调整后", "調整後", "Après ajustement", "調整後", "После изменения", "Sau điều chỉnh"],
+  ["Apply to selected models", "应用到已选模型", "套用到已選模型", "Appliquer aux modèles sélectionnés", "選択したモデルに適用", "Применить к выбранным моделям", "Áp dụng cho mô hình đã chọn"],
+  ["My cost is missing for this model.", "该模型缺少我的成本系数。", "該模型缺少我的成本係數。", "Mon coût est manquant pour ce modèle.", "このモデルの原価が未設定です。", "Для этой модели не задана моя себестоимость.", "Mô hình này chưa có chi phí của tôi."],
+  ["No selected models can be adjusted with this amount.", "已选模型都无法按此幅度调整。", "已選模型都無法依此幅度調整。", "Aucun modèle sélectionné ne peut être ajusté avec ce montant.", "選択したモデルはこの調整幅では変更できません。", "Ни одну из выбранных моделей нельзя изменить на эту величину.", "Không mô hình đã chọn nào có thể điều chỉnh với mức này."],
+  ["The current coefficient is invalid. Enter a valid coefficient before adjusting it.", "当前系数无效，请先输入有效系数再调整。", "目前係數無效，請先輸入有效係數再調整。", "Le coefficient actuel est invalide. Saisissez un coefficient valide avant de l’ajuster.", "現在の係数が無効です。調整前に有効な係数を入力してください。", "Текущий коэффициент некорректен. Введите допустимый коэффициент перед изменением.", "Hệ số hiện tại không hợp lệ. Hãy nhập hệ số hợp lệ trước khi điều chỉnh."],
 ] as const;
 
 const locales: Locale[] = ["en", "zh", "zh-TW", "fr", "ja", "ru", "vi"];

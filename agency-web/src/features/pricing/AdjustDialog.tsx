@@ -5,10 +5,14 @@ import {
   adjustCoefficientValues,
   formatCoefficient,
   parseSignedCoefficient,
+  stepSignedCoefficient,
   type CoefficientAdjustmentError,
   type CoefficientAdjustmentOptions,
   type CoefficientAdjustmentRow,
 } from "./policy";
+
+// Fixed step used by the +/- shortcuts in the adjustment amount field.
+const STEP_BPS = 1000;
 
 export type AdjustmentOutcome = {
   values: Record<string, string>;
@@ -64,6 +68,11 @@ export function CoefficientAdjustDialog(props: {
     return t("The current coefficient is invalid. Enter a valid coefficient before adjusting it.");
   }
 
+  function step(deltaBPS: number) {
+    setAmount((current) => stepSignedCoefficient(current, deltaBPS));
+    setError(null);
+  }
+
   function currentText(row: CoefficientAdjustmentRow) {
     const drafted = props.values[row.model]?.trim();
     if (drafted) return drafted;
@@ -116,10 +125,10 @@ export function CoefficientAdjustDialog(props: {
                 setError(null);
               }}
             />
-            <button type="button" className="secondary compact-action" onClick={() => setAmount("-0.1000")}>
+            <button type="button" className="secondary compact-action" onClick={() => step(-STEP_BPS)}>
               -0.1
             </button>
-            <button type="button" className="secondary compact-action" onClick={() => setAmount("0.1000")}>
+            <button type="button" className="secondary compact-action" onClick={() => step(STEP_BPS)}>
               +0.1
             </button>
           </div>

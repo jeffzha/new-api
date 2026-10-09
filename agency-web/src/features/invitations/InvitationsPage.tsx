@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "../../components/PageHeader";
+import { ActionIcon } from "../../components/Heading";
 import { ErrorNotice, Field, Loading } from "../../components/ui";
 import { ApiError } from "../../lib/api";
 import { useQuery } from "../../lib/query";
@@ -95,40 +96,53 @@ function InvitationDetails({ invitation }: { invitation: Invitation }) {
   return (
     <section className="invitation-page" aria-label={t("Invite customers")}>
       <PageHeader icon="invitation" title={t("Invite customers")} description={t("Share your registration link or QR code with new customers.")} />
-      <dl>
-        <dt>{t("Agency name")}</dt>
-        <dd>{invitation.display_name}</dd>
-        <dt>{t("Invitation code")}</dt>
-        <dd>
-          <code>{invitation.invite_code}</code>
-        </dd>
-      </dl>
-      <Field
-        label={t("Invitation link")}
-        hint={t("New customers who register through this link will be assigned to your agency.")}
-      >
-        <textarea
-          className="invitation-link"
-          rows={3}
-          readOnly
-          value={invitation.invite_url}
-          spellCheck={false}
-        />
-      </Field>
-      <div className="actions">
-        <button type="button" disabled={copying} onClick={() => void copyLink()}>
-          {t("Copy invitation link")}
-        </button>
-        <a href={invitation.invite_url} target="_blank" rel="noopener noreferrer">
-          {t("Open registration page")}
-        </a>
+      <div className="invitation-details">
+        <dl>
+          <dt>{t("Agency name")}</dt>
+          <dd>{invitation.display_name}</dd>
+          <dt>{t("Invitation code")}</dt>
+          <dd>
+            <code>{invitation.invite_code}</code>
+          </dd>
+        </dl>
+        <Field
+          label={t("Invitation link")}
+          hint={t("New customers who register through this link will be assigned to your agency.")}
+        >
+          <textarea
+            className="invitation-link"
+            rows={3}
+            readOnly
+            value={invitation.invite_url}
+            spellCheck={false}
+          />
+        </Field>
+        <div className="invitation-actions">
+          <button type="button" className="button-icon" disabled={copying} onClick={() => void copyLink()}>
+            <ActionIcon name="copy" />
+            {t("Copy invitation link")}
+          </button>
+          <a
+            className="button secondary"
+            href={invitation.invite_url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <ActionIcon name="external-link" />
+            {t("Open registration page")}
+          </a>
+          {copied && (
+            <p className="invitation-status" role="status">
+              {t("Invitation link copied.")}
+            </p>
+          )}
+        </div>
+        {copyError && (
+          <ErrorNotice
+            error={new Error("Copy failed. Select and copy the full invitation link above.")}
+          />
+        )}
       </div>
-      {copied && <p role="status">{t("Invitation link copied.")}</p>}
-      {copyError && (
-        <ErrorNotice
-          error={new Error("Copy failed. Select and copy the full invitation link above.")}
-        />
-      )}
       <div className="invitation-qr">
         <h3>{t("Invitation QR code")}</h3>
         {qr.loading && <Loading />}
@@ -143,11 +157,10 @@ function InvitationDetails({ invitation }: { invitation: Invitation }) {
                 agency: invitation.display_name,
               })}
             />
-            <div className="actions">
-              <a className="button secondary" href={qr.url} download="agency-invitation.png">
-                {t("Download QR code (PNG)")}
-              </a>
-            </div>
+            <a className="button secondary" href={qr.url} download="agency-invitation.png">
+              <ActionIcon name="download" />
+              {t("Download QR code (PNG)")}
+            </a>
           </>
         )}
         {qr.error && (

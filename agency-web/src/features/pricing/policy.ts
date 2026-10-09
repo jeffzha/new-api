@@ -35,6 +35,23 @@ export function parseSignedCoefficient(value: string): number {
   return sign * parseCoefficient(unsigned);
 }
 
+// Steps a signed adjustment amount by a fixed delta so repeated clicks of the
+// +/- shortcuts accumulate instead of re-setting the same value. Empty or
+// invalid input starts from zero, and the result stays inside the signed
+// coefficient range that parseSignedCoefficient accepts.
+export function stepSignedCoefficient(current: string, stepBPS: number): string {
+  let base = 0;
+  const trimmed = current.trim();
+  if (trimmed) {
+    try {
+      base = parseSignedCoefficient(trimmed);
+    } catch {
+      base = 0;
+    }
+  }
+  return formatCoefficient(Math.max(-100000, Math.min(100000, base + stepBPS)));
+}
+
 export type CustomerSalesAdjustmentError =
   | "invalid_value"
   | "below_cost"

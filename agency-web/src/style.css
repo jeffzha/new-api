@@ -1292,20 +1292,81 @@ table input {
   background: #f8fafc;
   overflow-wrap: anywhere;
 }
+.invitation-details {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+.invitation-details dl {
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 10px 18px;
+}
+.invitation-details .field {
+  margin: 0;
+}
+.invitation-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.invitation-actions .button-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.invitation-status {
+  margin: 0;
+  color: #067647;
+  font-size: 13px;
+  font-weight: 600;
+}
+.invitation-qr {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #e4e9f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.invitation-qr h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.invitation-qr .error,
+.invitation-qr .muted {
+  margin: 0;
+  text-align: center;
+}
 .invitation-qr img {
   display: block;
   max-width: 100%;
   height: auto;
 }
-.invitation-qr .button {
+a.button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  gap: 8px;
   min-height: 40px;
-  border: 1px solid #a8b7d1;
-  border-radius: 6px;
   padding: 8px 14px;
-  color: #185adb;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: #185adb;
+  color: #fff;
+  font: inherit;
   text-decoration: none;
+}
+a.button svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+a.button.secondary {
+  background: transparent;
+  color: #185adb;
+  border-color: #a8b7d1;
 }
 .success {
   color: #067647;
@@ -1582,9 +1643,37 @@ dd {
 @media (min-width: 1024px) {
   /* Use the full workspace width: details on the left, QR on the right. */
   .invitation-page {
-    grid-template-columns: minmax(0, 1fr) 300px;
-    column-gap: 28px;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    column-gap: 24px;
   }
   .invitation-page > .page-header { grid-column: 1 / -1; }
+  .invitation-page > .invitation-details { grid-column: 1; grid-row: 2; }
   .invitation-page > .invitation-qr { grid-column: 2; grid-row: 2; align-self: start; }
+  /* Account security uses the panel width instead of a narrow column. */
+  .password-change:not(.password-change-required) {
+    max-width: 100%;
+    padding: 18px 20px 20px;
+    border: 1px solid #dfe4ea;
+    border-radius: 8px;
+    background: #fff;
+  }
+  .password-change:not(.password-change-required) > .page-header {
+    position: static;
+    margin: 0 0 18px;
+    padding: 0 0 14px;
+  }
+  .password-change:not(.password-change-required) form {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+    gap: 16px 20px;
+  }
+  .password-change:not(.password-change-required) form > .field {
+    margin: 0;
+  }
+  .password-change:not(.password-change-required) form > .password-actions,
+  .password-change:not(.password-change-required) form > .error,
+  .password-change:not(.password-change-required) form > [role="status"] {
+    grid-column: 1 / -1;
+  }
 }

@@ -273,6 +273,23 @@ func TestCreateChildAgencyReturnsCredentialsAndHierarchy(t *testing.T) {
 	require.Equal(t, "Child agency", hierarchyResponse.Data.Children[0].DisplayName)
 	require.Equal(t, "child-operator", hierarchyResponse.Data.Children[0].OperatorUsername)
 	require.Equal(t, 2, hierarchyResponse.Data.Children[0].Depth)
+
+	// A root administrator working inside the same agency scope sees the same
+	// read-only hierarchy instead of a 403.
+	rootHierarchy := httptest.NewRecorder()
+	rootHierarchyContext, _ := gin.CreateTestContext(rootHierarchy)
+	rootHierarchyContext.Request = httptest.NewRequest(http.MethodGet, "/agency/api/v1/hierarchy", nil)
+	rootHierarchyContext.Set("agency_identity", &Identity{ActorType: ActorTypeRoot, ActorID: 1, AgencyID: &parent.ID})
+	app.getAgencyHierarchy(rootHierarchyContext)
+	require.Equal(t, http.StatusOK, rootHierarchy.Code, rootHierarchy.Body.String())
+
+	// A session without an agency scope still gets the explicit error.
+	unscoped := httptest.NewRecorder()
+	unscopedContext, _ := gin.CreateTestContext(unscoped)
+	unscopedContext.Request = httptest.NewRequest(http.MethodGet, "/agency/api/v1/hierarchy", nil)
+	unscopedContext.Set("agency_identity", &Identity{ActorType: ActorTypeRoot, ActorID: 1})
+	app.getAgencyHierarchy(unscopedContext)
+	require.Equal(t, http.StatusForbidden, unscoped.Code, unscoped.Body.String())
 }
 
 func TestCreateChildAgencyRequiresParentChildCost(t *testing.T) {

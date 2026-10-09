@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { api, hubConfig } from "../lib/api";
 import { startPlatformSSO } from "../lib/platform";
 import { ActionIcon } from "./Heading";
+import { PageHeader } from "./PageHeader";
 import { ErrorNotice, Field } from "./ui";
 
 export function Login({ done }: { done: () => Promise<void> }) {
@@ -146,10 +147,14 @@ export function PasswordChange({
   }
   return (
     <section className={`password-change${required ? " password-change-required" : ""}`}>
-      <div className="password-change-heading">
-        {required && <p className="eyebrow">NEXIGHT · AGENCY HUB</p>}
-        <h2>{t("Account security")}</h2>
-      </div>
+      {required ? (
+        <div className="password-change-heading">
+          <p className="eyebrow">NEXIGHT · AGENCY HUB</p>
+          <h2>{t("Account security")}</h2>
+        </div>
+      ) : (
+        <PageHeader icon="security" title={t("Account security")} />
+      )}
       {required && (
         <div className="notice password-change-notice">
           <span className="password-change-notice-icon" aria-hidden="true">

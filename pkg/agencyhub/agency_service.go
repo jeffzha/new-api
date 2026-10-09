@@ -346,7 +346,10 @@ func (a *App) listChildAgencies(c *gin.Context) {
 // financial fields are intentionally omitted.
 func (a *App) getAgencyHierarchy(c *gin.Context) {
 	identity := currentIdentity(c)
-	if identity == nil || identity.AgencyID == nil || identity.ActorType != ActorTypeOperator {
+	// Root administrators working inside an agency scope see the same read-only
+	// hierarchy view as the operator: the payload carries no pricing, finance or
+	// credential fields. Sessions without an agency scope are still rejected.
+	if identity == nil || identity.AgencyID == nil || (identity.ActorType != ActorTypeOperator && identity.ActorType != ActorTypeRoot) {
 		respondError(c, http.StatusForbidden, "agency_required", "当前会话没有代理商范围", nil)
 		return
 	}

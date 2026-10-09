@@ -12,6 +12,7 @@ export type HeadingIconName =
   | "invitation"
   | "pricing"
   | "withdrawals"
+  | "security"
   | "agency";
 
 export type ActionIconName =
@@ -29,6 +30,8 @@ export type ActionIconName =
   | "user"
   | "check"
   | "grid"
+  | "copy"
+  | "external-link"
   | "filter"
   | "chevron-down";
 
@@ -69,6 +72,8 @@ function Icon({ name }: { name: HeadingIconName }) {
       return <svg {...common}><path d="M12 3v12M7 10l5 5 5-5M5 21h14" /></svg>;
     case "agency":
       return <svg {...common}><path d="M4 21v-8h16v8M7 13V4h10v9M2 21h20M9 8h6M9 11h6" /></svg>;
+    case "security":
+      return <svg {...common}><path d="M12 3 20 6v5c0 5-3.4 8.5-8 10-4.6-1.5-8-5-8-10V6l8-3Z" /><path d="m9 12 2 2 4-4" /></svg>;
   }
 }
 
@@ -97,6 +102,8 @@ export function ActionIcon({ name }: { name: ActionIconName }) {
     user: <path d="M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z" />,
     check: <path d="m5 12 4 4L19 6" />,
     grid: <><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" /></>,
+    copy: <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
+    "external-link": <><path d="M14 4h6v6" /><path d="M20 4 11 13" /><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" /></>,
     filter: <path d="M3 5h18M6 12h12M10 19h4" />,
     "chevron-down": <path d="m6 9 6 6 6-6" />,
   };

@@ -6,6 +6,7 @@ import {
   initialPolicy,
   parseCoefficient,
   parseSignedCoefficient,
+  stepSignedCoefficient,
   policyToDraft,
   pricingRequest,
 } from "../policy";
@@ -135,6 +136,27 @@ describe("pricing request contracts", () => {
     expect(parseSignedCoefficient("-0.1001")).toBe(-1001);
     expect(parseSignedCoefficient("0.0001")).toBe(1);
     expect(() => parseSignedCoefficient("-0.10001")).toThrow();
+  });
+
+  test("repeated +/- clicks accumulate the signed adjustment instead of resetting it", () => {
+    let amount = "0.1000";
+    amount = stepSignedCoefficient(amount, 1000);
+    expect(amount).toBe("0.2000");
+    amount = stepSignedCoefficient(amount, 1000);
+    expect(amount).toBe("0.3000");
+    amount = stepSignedCoefficient(amount, -1000);
+    expect(amount).toBe("0.2000");
+    expect(stepSignedCoefficient("0.1000", -1000)).toBe("0.0000");
+    expect(stepSignedCoefficient("0.1000", -2000)).toBe("-0.1000");
+  });
+
+  test("stepping recovers from empty or invalid input and stays inside the signed range", () => {
+    expect(stepSignedCoefficient("", 1000)).toBe("0.1000");
+    expect(stepSignedCoefficient("  ", -1000)).toBe("-0.1000");
+    expect(stepSignedCoefficient("abc", 1000)).toBe("0.1000");
+    expect(stepSignedCoefficient("10.0000", 1000)).toBe("10.0000");
+    expect(stepSignedCoefficient("-10.0000", -1000)).toBe("-10.0000");
+    expect(parseSignedCoefficient(stepSignedCoefficient("9.9000", 1000))).toBe(100000);
   });
 
   test("batch customer adjustment keeps valid changes and reports invalid rows", () => {

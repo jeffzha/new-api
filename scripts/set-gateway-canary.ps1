@@ -393,11 +393,23 @@ check_public_status() {
     done
 }
 
+# Feed the freshly written host file through stdin before validating and
+# reloading. The Caddyfile is a file-level bind mount: if the host inode was
+# ever replaced, the container keeps seeing the old inode and a plain
+# `caddy reload --config /etc/caddy/Caddyfile` would silently reload stale
+# configuration while reporting success.
+load_caddy_config() {
+    config_container="`$1"
+    config_source="`$2"
+    docker exec -i "`$config_container" sh -c 'cat > /tmp/Caddyfile.canary.load' < "`$config_source" || return 1
+    docker exec "`$config_container" caddy validate --config /tmp/Caddyfile.canary.load --adapter caddyfile || return 1
+    docker exec "`$config_container" caddy reload --config /tmp/Caddyfile.canary.load --adapter caddyfile || return 1
+}
+
 restore_previous_config() {
     echo "Restoring the previous Caddy configuration..." >&2
     cp "`$backup_dir/Caddyfile" "`$caddyfile" || return 1
-    docker exec "`$caddy_container" caddy validate --config /etc/caddy/Caddyfile || return 1
-    docker exec "`$caddy_container" caddy reload --config /etc/caddy/Caddyfile || return 1
+    load_caddy_config "`$caddy_container" "`$backup_dir/Caddyfile" || return 1
     check_public_status || return 1
 }
 
@@ -453,15 +465,20 @@ trap 'rm -f "`$tmp_file"' EXIT
 printf '%s' "`$config_b64" | base64 -d > "`$tmp_file"
 chmod --reference="`$caddyfile" "`$tmp_file"
 
-# The Caddyfile is bind-mounted as a file. Copy into the existing inode so the
-# running container sees the update; replacing it with mv would leave the bind
-# mount attached to the old inode.
+# Keep the host copy inside the existing inode (so a bind mount that still
+# points at this inode keeps working) and hand the same bytes to the container
+# through stdin, because the mounted inode can lag behind after a host-side
+# replace.
 cp "`$tmp_file" "`$caddyfile"
-if ! docker exec "`$caddy_container" caddy validate --config /etc/caddy/Caddyfile; then
+if ! docker exec -i "`$caddy_container" sh -c 'cat > /tmp/Caddyfile.canary.load' < "`$tmp_file"; then
+    fail_with_rollback "Caddy configuration handoff failed."
+fi
+
+if ! docker exec "`$caddy_container" caddy validate --config /tmp/Caddyfile.canary.load --adapter caddyfile; then
     fail_with_rollback "Caddy validation failed."
 fi
 
-if ! docker exec "`$caddy_container" caddy reload --config /etc/caddy/Caddyfile; then
+if ! docker exec "`$caddy_container" caddy reload --config /tmp/Caddyfile.canary.load --adapter caddyfile; then
     fail_with_rollback "Caddy reload failed."
 fi
 

@@ -114,7 +114,13 @@ func writeAgencyJournalEventTx(tx *gorm.DB, journal *AgencyBillingJournal, event
 	event.JournalRevision = journal.Revision + 1
 	event.MoneySeq = after.MoneySeq
 	event.EventIndex, event.EventCount = 0, 1
-	event.OccurredAtMS = time.Now().UnixMilli()
+	// Callers that reconcile a historical charge keep the occurrence of the
+	// original call so downstream usage projections (agency center records,
+	// daily statistics) stay aligned with the platform consumption log.
+	// A zero value means "now".
+	if event.OccurredAtMS <= 0 {
+		event.OccurredAtMS = time.Now().UnixMilli()
+	}
 	digest := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d:%s", journal.ChargeID, journal.SegmentNo, event.JournalRevision, operation)))
 	event.OperationID = "agency-op-" + hex.EncodeToString(digest[:])
 	if event.EventID == "" {

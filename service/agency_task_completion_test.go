@@ -191,6 +191,10 @@ func TestEnsureAgencyTaskFinalUsageEmitsForwardFact(t *testing.T) {
 	ok := task.PrivateData.BillingContext != nil && task.PrivateData.BillingContext.AgencyPricing != nil
 	require.True(t, ok)
 	task.PrivateData.BillingContext.AgencyPricing.OriginModelName = "doubao-seedance-2-0-260128"
+	// The polling path stores SUCCESS before the forward finalization runs, and
+	// the canonical settlement only finalizes a successful task.
+	task.Status = model.TaskStatusSuccess
+	require.NoError(t, db.Model(&model.Task{}).Where("id = ?", task.ID).Update("status", model.TaskStatusSuccess).Error)
 	// A terminal SUCCESS must finalize the reconcile_required journal into a
 	// forward usage fact for async video tasks whose resolver cannot bill.
 	require.NoError(t, ensureAgencyTaskFinalUsage(task, int64(task.Quota)))
@@ -200,19 +204,27 @@ func TestEnsureAgencyTaskFinalUsageEmitsForwardFact(t *testing.T) {
 	assert.Equal(t, "finalized", journal.Status)
 	assert.Equal(t, "success", journal.BusinessStatus)
 
-	var fact model.AgencyUsageFact
-	require.NoError(t, db.Where("user_id = ? AND charged_quota = ?", task.UserId, task.Quota).First(&fact).Error)
-	assert.Equal(t, "success", fact.BusinessStatus)
-	assert.Equal(t, task.PrivateData.BillingContext.AgencyPricing.OriginModelName, fact.OriginModelName)
+	// The canonical settlement writes the receipt, outbox event and delivery.
+	// The agency hub projects the usage fact from that event, so the charge is
+	// accepted instead of being rejected for missing operation identity.
+	var outbox model.AgencyBillingOutbox
+	require.NoError(t, db.Where("user_id = ?", task.UserId).Order("id desc").First(&outbox).Error)
+	assert.NotEmpty(t, outbox.OperationID)
+	assert.Greater(t, outbox.MoneySeq, int64(0))
+	var finalize model.AgencyBillingOperation
+	require.NoError(t, db.Where("charge_id = ? AND segment_no = ? AND operation = ?",
+		task.PrivateData.BillingContext.AgencyChargeID, 0, "finalize").First(&finalize).Error)
+	assert.Equal(t, outbox.OperationID, finalize.OperationID)
+	// The event occurrence is the charge time, which keeps the agency usage
+	// record aligned with the platform consumption log.
+	assert.Equal(t, journal.CreatedAtMS, outbox.CreatedAtMS)
 
-	// Idempotent: a second call must not duplicate the fact or mutate the event.
-	var outboxCount int64
-	db.Model(&model.AgencyBillingOutbox{}).Where("event_id = ?", fact.EventID).Count(&outboxCount)
-	require.Equal(t, int64(1), outboxCount)
+	// Idempotent: a second call must not add another receipt or event.
 	require.NoError(t, ensureAgencyTaskFinalUsage(task, int64(task.Quota)))
-	var factCount int64
-	db.Model(&model.AgencyUsageFact{}).Where("event_id = ?", fact.EventID).Count(&factCount)
-	assert.Equal(t, int64(1), factCount)
+	var finalizeCount int64
+	db.Model(&model.AgencyBillingOperation{}).Where("charge_id = ? AND operation = ?",
+		task.PrivateData.BillingContext.AgencyChargeID, "finalize").Count(&finalizeCount)
+	assert.Equal(t, int64(1), finalizeCount)
 
 	// Failure tasks that were cancelled are never overwritten.
 	var cancelled model.AgencyBillingJournal

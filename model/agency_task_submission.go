@@ -130,3 +130,39 @@ func agencyTaskSubmissionReason(reason string) string {
 		return "unknown"
 	}
 }
+
+// NonCanonicalTaskFinalizeCharges lists charges whose task finalization was
+// written without the operation identity and money sequence the agency hub
+// verifies. Those receipts predate the canonical settlement path; their
+// delivery stays in a permanent retry loop and their projected usage facts
+// carry the repair time instead of the charge time, so they are re-settled.
+func NonCanonicalTaskFinalizeCharges(limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	var chargeIDs []string
+	err := DB.Model(&AgencyBillingOperation{}).
+		Where("operation = ? AND money_seq = 0 AND (operation_id IS NULL OR operation_id = ?)", "finalize", "").
+		Order("id").Limit(limit).Pluck("charge_id", &chargeIDs).Error
+	if err != nil {
+		return nil, err
+	}
+	return chargeIDs, nil
+}
+
+// AgencyTaskForCharge resolves the task that owns a durable agency charge
+// through its submission receipt, which is written before provider I/O.
+func AgencyTaskForCharge(chargeID string) (*Task, error) {
+	if strings.TrimSpace(chargeID) == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var attempt AgencyTaskSubmissionAttempt
+	if err := DB.Where("charge_id = ?", chargeID).Order("id").First(&attempt).Error; err != nil {
+		return nil, err
+	}
+	var task Task
+	if err := DB.Where("task_id = ?", attempt.PublicTaskID).First(&task).Error; err != nil {
+		return nil, err
+	}
+	return &task, nil
+}

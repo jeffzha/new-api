@@ -1649,15 +1649,29 @@ func TestInternalMockChannelsStayHiddenFromAgencyCatalogs(t *testing.T) {
 		Data struct {
 			Items []struct {
 				OriginModelName string `json:"origin_model_name"`
+				Channels        []struct {
+					ChannelID   int    `json:"channel_id"`
+					ChannelName string `json:"channel_name"`
+				} `json:"channels"`
 			} `json:"items"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(salesRecorder.Body.Bytes(), &salesResponse))
 	salesModels := make([]string, 0, len(salesResponse.Data.Items))
+	salesChannels := make(map[string][]string, len(salesResponse.Data.Items))
 	for _, item := range salesResponse.Data.Items {
 		salesModels = append(salesModels, item.OriginModelName)
+		names := make([]string, 0, len(item.Channels))
+		for _, channel := range item.Channels {
+			names = append(names, channel.ChannelName)
+		}
+		salesChannels[item.OriginModelName] = names
 	}
 	assert.ElementsMatch(t, []string{"deepseek-v4-flash", "glm-5.3"}, salesModels)
+	// The agency pricing table filters by channel, so it needs the live public
+	// channel names while internal mock channels stay hidden.
+	assert.Equal(t, []string{"public-deepseek"}, salesChannels["glm-5.3"])
+	assert.Equal(t, []string{"public-deepseek"}, salesChannels["deepseek-v4-flash"])
 	assert.NotContains(t, salesRecorder.Body.String(), "model-mock")
 	assert.NotContains(t, salesRecorder.Body.String(), "doubao-seedance-2-0-fast-260128")
 }

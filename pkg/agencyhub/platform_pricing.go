@@ -163,6 +163,28 @@ func publicChannelCosts(costs []agencycontract.PlatformChannelCost, internalChan
 	return public
 }
 
+// liveModelChannelSummary groups the enabled channels that route each model
+// through a public group. Channels that only serve internal routing groups
+// stay hidden, so an agency can filter its pricing table by the same channel
+// names the platform catalog shows.
+func liveModelChannelSummary(rows []liveModelChannel) map[string][]gin.H {
+	summary := make(map[string][]gin.H)
+	seen := make(map[string]map[int]struct{})
+	for _, row := range publicLiveModelChannels(rows) {
+		channels := seen[row.Model]
+		if channels == nil {
+			channels = make(map[int]struct{})
+			seen[row.Model] = channels
+		}
+		if _, exists := channels[row.ChannelID]; exists {
+			continue
+		}
+		channels[row.ChannelID] = struct{}{}
+		summary[row.Model] = append(summary[row.Model], gin.H{"channel_id": row.ChannelID, "channel_name": row.ChannelName})
+	}
+	return summary
+}
+
 // priceVisibleToAgencies hides a configured price only when every one of its
 // channels is internal and no public ability routes the model. Configured
 // prices without channel costs stay visible for backward compatibility.

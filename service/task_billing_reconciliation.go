@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -44,6 +45,12 @@ type TaskBillingReconciliationSummary struct {
 
 func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillingReconciliationSummary {
 	summary := TaskBillingReconciliationSummary{}
+	// Re-settle task finalizations written by the pre-fix backfill, which the
+	// agency hub rejects for missing operation identity and which projected
+	// usage facts at the repair time instead of the charge time.
+	if repaired := repairNonCanonicalAgencyTaskSettlements(ctx, limit); repaired > 0 {
+		logger.LogInfo(ctx, fmt.Sprintf("agency task settlement repair finalized %d legacy charge(s)", repaired))
+	}
 	if _, err := model.EnqueuePendingTaskBillingReconciliations(limit); err != nil {
 		logger.LogError(ctx, "recover task billing reconciliation enqueue failed: "+err.Error())
 	}
@@ -233,4 +240,43 @@ func finishTaskBillingReconciliation(id int64, status string, message string) er
 		"last_error":    message,
 	}
 	return model.UpdateTaskBillingReconciliation(id, updates)
+}
+
+// repairedTaskSettlements bounds the legacy repair to one attempt per charge
+// per process. A charge that cannot be re-settled (for example because its
+// wallet allocation no longer matches the frozen task quota) stays visible for
+// operator reconciliation instead of being retried on every poll tick.
+var repairedTaskSettlements sync.Map
+
+// repairNonCanonicalAgencyTaskSettlements re-finalizes task charges whose
+// finalize receipt was written without the operation identity and money
+// sequence the agency hub verifies. Those receipts keep their delivery in a
+// permanent retry loop, and the usage facts written beside them carry the
+// repair time, which is what made agent-center video calls look like they
+// never reached the platform consumption log. Re-settling through the
+// canonical writer fixes both: the hub accepts the event and projects the
+// usage fact at the charge time.
+func repairNonCanonicalAgencyTaskSettlements(ctx context.Context, limit int) int {
+	charges, err := model.NonCanonicalTaskFinalizeCharges(limit)
+	if err != nil {
+		logger.LogError(ctx, "load non-canonical agency task finalizations failed: "+err.Error())
+		return 0
+	}
+	repaired := 0
+	for _, chargeID := range charges {
+		if _, attempted := repairedTaskSettlements.LoadOrStore(chargeID, struct{}{}); attempted {
+			continue
+		}
+		task, findErr := model.AgencyTaskForCharge(chargeID)
+		if findErr != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("agency task charge %s repair skipped: %s", chargeID, findErr.Error()))
+			continue
+		}
+		if settleErr := model.SettleAgencyTaskAtChargedQuota(task, int64(task.Quota)); settleErr != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("agency task charge %s repair failed: %s", chargeID, settleErr.Error()))
+			continue
+		}
+		repaired++
+	}
+	return repaired
 }

@@ -359,3 +359,79 @@ func TestAgencyTaskMissingUsageRemainsUnfinalized(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.FinancialFinal, "later authoritative usage can resolve the retained reservation")
 }
+
+// A charge finalized by the pre-fix backfill carries a receipt without the
+// operation identity the agency hub verifies, which left its delivery in a
+// permanent retry loop and projected its usage fact at the repair time
+// instead of the call time. Re-settling through the canonical writer must
+// replace that receipt, keep the charge time and move no money.
+func TestSettleAgencyTaskAtChargedQuotaRepairsLegacyFinalizeReceipt(t *testing.T) {
+	basis := AgencyTaskChargeBasis{Version: AgencyTaskChargeBasisVersion, Mode: "cny_tokens", QuotaPerUnit: 500000,
+		OtherMultiplier: 1, ProviderBilling: &TaskProviderBillingSnapshot{Provider: "openai_seedance", Currency: "CNY",
+			UnitPricePerMillionTokens: "6.3", CNYPerUSD: "7.2", EstimatedTokens: 108680, AsyncReconciliationRequired: true}}
+	db, task, user, _ := agencySubmittedTaskFixture(t, basis, 100)
+	chargeID := task.PrivateData.BillingContext.AgencyChargeID
+	var journal AgencyBillingJournal
+	require.NoError(t, db.Where("charge_id = ?", chargeID).First(&journal).Error)
+	require.NoError(t, db.First(&user, user.Id).Error)
+	quotaBefore := user.Quota
+
+	const legacyEventID = "agency-task-final-legacy-receipt"
+	legacyPayload, err := common.Marshal(agencycontract.BillingEvent{SchemaVersion: agencycontract.SchemaVersion,
+		EventID: legacyEventID, EventType: "agency.billing_finalized", FinancialChargeID: chargeID,
+		UserID: int64(user.Id), BusinessStatus: "success", BillingStatus: "finalized", FinancialFinal: true})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&AgencyBillingOperation{ChargeID: chargeID, SegmentNo: 0, Revision: 1,
+		Operation: "finalize", InputHash: "legacy", CommittedResult: string(legacyPayload), EventCount: 1,
+		CreatedAtMS: journal.CreatedAtMS}).Error)
+	require.NoError(t, db.Model(&AgencyBillingJournal{}).Where("id = ?", journal.ID).
+		Updates(map[string]any{"status": "finalized", "business_status": "success", "delivery_status": "pending"}).Error)
+	require.NoError(t, db.Create(&AgencyUsageFact{EventID: legacyEventID, ComponentID: "task",
+		FinancialChargeID: chargeID, UserID: int64(user.Id), OriginModelName: "doubao-seedance-2-0-260128",
+		ModelKey: "doubao-seedance-2-0-260128", BusinessStatus: "success",
+		OccurredAtMS: journal.CreatedAtMS + 3_600_000}).Error)
+	require.NoError(t, db.Create(&AgencyBillingOutbox{EventID: legacyEventID, OperationID: "agency-task-finalize-" + legacyEventID,
+		EventCount: 1, EventKind: "agency.billing_finalized", UserID: int64(user.Id), Payload: string(legacyPayload),
+		PayloadHash: "legacy", SchemaVersion: agencycontract.SchemaVersion, CreatedAtMS: journal.CreatedAtMS}).Error)
+	require.NoError(t, db.Create(&AgencyEventDelivery{EventID: legacyEventID, Status: "retry", CreatedAt: 1}).Error)
+
+	task.Status = TaskStatusSuccess
+	task.PrivateData.BillingContext.AgencyPricing.OriginModelName = "doubao-seedance-2-0-260128"
+	require.NoError(t, db.Model(&Task{}).Where("id = ?", task.ID).Update("status", TaskStatusSuccess).Error)
+	require.NoError(t, SettleAgencyTaskAtChargedQuota(&task, int64(task.Quota)))
+
+	// The canonical receipt carries the identity the hub verifies, at the
+	// revision after the reservation instead of colliding with it.
+	var receipts []AgencyBillingOperation
+	require.NoError(t, db.Where("charge_id = ? AND operation = ?", chargeID, "finalize").Order("id").Find(&receipts).Error)
+	require.Len(t, receipts, 1)
+	assert.Equal(t, int64(2), receipts[0].Revision)
+	assert.NotEmpty(t, receipts[0].OperationID)
+	assert.Greater(t, receipts[0].MoneySeq, int64(0))
+
+	// Legacy delivery artifacts are gone, so the stuck retry loop ends.
+	for _, target := range []any{&AgencyUsageFact{}, &AgencyBillingOutbox{}, &AgencyEventDelivery{}} {
+		var count int64
+		require.NoError(t, db.Model(target).Where("event_id = ?", legacyEventID).Count(&count).Error)
+		assert.Zero(t, count)
+	}
+
+	// The replacement event keeps the charge time, which is what the agency
+	// center shows next to the platform consumption log.
+	var outbox AgencyBillingOutbox
+	require.NoError(t, db.Where("operation_id = ?", receipts[0].OperationID).First(&outbox).Error)
+	assert.Equal(t, journal.CreatedAtMS, outbox.CreatedAtMS)
+	var settled AgencyBillingJournal
+	require.NoError(t, db.First(&settled, journal.ID).Error)
+	assert.Equal(t, "finalized", settled.Status)
+	assert.Equal(t, "success", settled.BusinessStatus)
+
+	// Re-settling at the already charged quota must not move money, and a
+	// second attempt stays inert.
+	require.NoError(t, db.First(&user, user.Id).Error)
+	assert.Equal(t, quotaBefore, user.Quota)
+	require.NoError(t, SettleAgencyTaskAtChargedQuota(&task, int64(task.Quota)))
+	var finalizeCount int64
+	require.NoError(t, db.Model(&AgencyBillingOperation{}).Where("charge_id = ? AND operation = ?", chargeID, "finalize").Count(&finalizeCount).Error)
+	assert.Equal(t, int64(1), finalizeCount)
+}

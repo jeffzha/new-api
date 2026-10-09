@@ -219,6 +219,9 @@ func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agen
 		}
 	}
 	items := make([]gin.H, 0, len(platform.ModelPrices))
+	// The agency sees the same live channel set the platform catalog lists, so
+	// its pricing table can be filtered by channel as well as by model.
+	modelChannels := liveModelChannelSummary(rows)
 	for _, price := range platform.ModelPrices {
 		_, hasPublicAbility := publicModels[price.OriginModelName]
 		if !priceVisibleToAgencies(price, hasPublicAbility, internalChannels) {
@@ -238,8 +241,13 @@ func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agen
 		// children. A blank value is intentional and requires the agency to set
 		// its child cost before creating a new level.
 		childCost := resolvedChildCost(effective, price.OriginModelName, 0)
+		channels := modelChannels[price.OriginModelName]
+		if channels == nil {
+			channels = []gin.H{}
+		}
 		items = append(items, gin.H{
 			"origin_model_name":          price.OriginModelName,
+			"channels":                   channels,
 			"agency_cost_bps":            resolved.SettlementBPS,
 			"child_cost_bps":             childCost,
 			"platform_default_sales_bps": price.DefaultSalesBPS,

@@ -190,6 +190,7 @@ func TestEnsureAgencyTaskFinalUsageEmitsForwardFact(t *testing.T) {
 	db, task, _, _, _ := agencyTerminalPollingFixture(t)
 	ok := task.PrivateData.BillingContext != nil && task.PrivateData.BillingContext.AgencyPricing != nil
 	require.True(t, ok)
+	task.PrivateData.BillingContext.AgencyPricing.OriginModelName = "doubao-seedance-2-0-260128"
 	// A terminal SUCCESS must finalize the reconcile_required journal into a
 	// forward usage fact for async video tasks whose resolver cannot bill.
 	require.NoError(t, ensureAgencyTaskFinalUsage(task, int64(task.Quota)))

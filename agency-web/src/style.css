@@ -596,13 +596,22 @@ th {
 .dashboard-panel .table-wrap { max-height: min(68vh, 780px); }
 /* Keep the page title and its description in place while the body scrolls. */
 .dashboard-panel > .page-header,
-.dashboard-panel > section > .page-header {
+.dashboard-panel > .reconciliation-page-header,
+.dashboard-panel > section > .page-header,
+.dashboard-panel > section > .reconciliation-page-header {
   position: sticky;
   top: -10px;
   z-index: 6;
   margin-top: -10px;
   padding-top: 10px;
   background: #fff;
+}
+/* A sub-panel opened from a page keeps its own title in the flow so two page
+   headers never stack at the same offset. */
+.dashboard-panel > section.panel > .page-header {
+  position: static;
+  margin-top: 0;
+  padding-top: 0;
 }
 .dashboard-panel .actions { align-items: center; }
 .dashboard-panel .actions button { min-height: 36px; height: auto; }

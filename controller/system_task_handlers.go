@@ -148,6 +148,14 @@ func (asyncTaskPollHandler) Interval() time.Duration { return 15 * time.Second }
 func (asyncTaskPollHandler) NewPayload() any { return nil }
 
 func (asyncTaskPollHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	// Drain provider-billing reconciliations (async video tasks such as
+	// seedance) so their final agency usage event is emitted; without this the
+	// forwarded agency.billing_finalized success event is never produced and
+	// agent-center usage stays empty for those models.
+	reconSummary := service.RunTaskBillingReconciliationOnce(ctx, service.TaskBillingReconciliationDefaultBatch)
+	if reconSummary.Settled > 0 || reconSummary.Retried > 0 {
+		common.SysLog(fmt.Sprintf("task billing reconciliation pass: %+v", reconSummary))
+	}
 	summary := service.RunTaskPollingOnce(ctx, service.NewSystemTaskProgressReporter(task, runnerID))
 	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
 }

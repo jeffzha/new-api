@@ -15,6 +15,12 @@ import (
 
 var ErrTaskBillingRecordNotReady = errors.New("task billing record is not ready")
 
+// TaskBillingReconciliationDefaultBatch bounds how many provider-billing task
+// reconciliations run per scheduled pass (every task-poll tick). Each entry
+// performs at least one upstream bill fetch, so keep it modest to avoid
+// hammering providers while still draining the backlog.
+const TaskBillingReconciliationDefaultBatch = 20
+
 type TaskBillingResolution struct {
 	ActualQuota        int
 	TotalTokens        int64
@@ -120,14 +126,29 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 		}
 
 		resolution, resolveErr := reconciler.ResolveTaskBilling(ctx, &task)
-		if resolveErr != nil {
-			retryTaskBillingReconciliation(record, resolveErr)
-			summary.Retried++
-			continue
-		}
-		if resolution == nil || resolution.TotalTokens <= 0 || resolution.ActualQuota < 0 ||
+		if resolveErr != nil || resolution == nil || resolution.TotalTokens <= 0 || resolution.ActualQuota < 0 ||
 			(resolution.ActualQuota == 0 && !model.IsAgencyDurableUser(task.UserId)) {
-			retryTaskBillingReconciliation(record, errors.New("provider returned invalid billing usage"))
+			// Some async video upstreams (e.g. openai_seedance via laomandi)
+			// never report a billable token usage, so this reconciliation can
+			// never settle. For agency-durable users, finalize the successful
+			// charge at the quota that was actually charged instead of retrying
+			// forever with no provider bill, so the usage fact still appears.
+			if model.IsAgencyDurableUser(task.UserId) &&
+				task.PrivateData.BillingContext != nil &&
+				task.PrivateData.BillingContext.AgencyPricing != nil {
+				if finErr := ensureAgencyTaskFinalUsage(&task, int64(task.Quota)); finErr != nil {
+					logger.LogError(ctx, fmt.Sprintf("agency task %s provider-bill fallback finalize failed: %s", task.TaskID, finErr.Error()))
+				} else {
+					_ = finishTaskBillingReconciliation(record.ID, model.TaskBillingReconciliationNotNeeded, "provider bill unavailable; finalized at charged quota")
+					summary.Settled++
+					continue
+				}
+			}
+			if resolveErr != nil {
+				retryTaskBillingReconciliation(record, resolveErr)
+			} else {
+				retryTaskBillingReconciliation(record, errors.New("provider returned invalid billing usage"))
+			}
 			summary.Retried++
 			continue
 		}

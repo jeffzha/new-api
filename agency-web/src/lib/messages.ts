@@ -232,6 +232,15 @@ const rows: [string, string, string, string, string, string, string][] = [
     "Trang đầu",
   ],
   [
+    "Back to latest",
+    "回到最新",
+    "回到最新",
+    "Retour aux plus récents",
+    "最新に戻る",
+    "К последним записям",
+    "Về mục mới nhất",
+  ],
+  [
     "Next page",
     "下一页",
     "下一頁",

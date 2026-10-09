@@ -116,7 +116,7 @@ header {
   .coefficient-step input { flex: 1 1 auto; width: auto; min-width: 0; }
   .pricing-publish-row button { width: 100%; }
   .dashboard-shell {
-    padding: 16px;
+    padding: 12px;
   }
   .customer-pricing-summary-actions button {
     width: 100%;
@@ -135,10 +135,10 @@ header {
 }
 .tabs {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   overflow: auto;
   border-bottom: 1px solid #dfe4ea;
-  margin-bottom: 24px;
+  margin-bottom: 12px;
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 transparent;
 }
@@ -148,8 +148,9 @@ header {
   border-radius: 0;
   border-bottom: 2px solid transparent;
   white-space: nowrap;
-  min-height: 44px;
-  padding: 8px 14px;
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 13px;
   transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
 }
 .tab:hover {
@@ -173,12 +174,12 @@ header {
 table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 14px;
+  font-size: 13px;
 }
 th,
 td {
   text-align: left;
-  padding: 12px 16px;
+  padding: 8px 10px;
   border-bottom: 1px solid #eef1f4;
   white-space: nowrap;
 }
@@ -231,7 +232,7 @@ th {
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 .toolbar input {
   max-width: 280px;
@@ -273,7 +274,7 @@ th {
   margin-right: 8px;
 }
 .notice {
-  padding: 12px;
+  padding: 10px 12px;
   background: #fff8e6;
   border: 1px solid #f0cf76;
   border-radius: 6px;
@@ -515,7 +516,9 @@ th {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 14px 18px 16px;
+  width: 100%;
+  max-width: none;
+  padding: 10px 12px 12px;
 }
 .dashboard-shell > header,
 .dashboard-shell > .toolbar,
@@ -527,14 +530,14 @@ th {
   min-height: 0;
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: 208px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 10px;
   align-items: stretch;
 }
 .dashboard-panel {
   min-width: 0;
   min-height: 0;
-  padding: 12px 14px;
+  padding: 10px 12px;
   margin: 0;
   overflow: auto;
   overscroll-behavior: contain;
@@ -544,13 +547,13 @@ th {
   min-width: 0;
   min-height: 0;
   margin: 0;
-  padding: 14px 10px;
+  padding: 10px 8px;
   display: flex;
   flex-direction: column;
   gap: 4px;
   overflow-y: auto;
   border: 1px solid #dfe4ea;
-  border-radius: 12px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 14px 34px #1018280c;
 }
@@ -590,7 +593,7 @@ th {
   box-shadow: inset 3px 0 0 #2563eb;
 }
 .dashboard-panel > * { min-width: 0; }
-.dashboard-panel .table-wrap { max-height: min(72vh, 860px); }
+.dashboard-panel .table-wrap { max-height: min(68vh, 780px); }
 .dashboard-panel .actions { align-items: center; }
 .dashboard-panel .actions button { min-height: 36px; height: auto; }
 .agency-header select { appearance: auto; }
@@ -749,9 +752,9 @@ body {
   line-height: 1.55;
 }
 .agency-header {
-  min-height: 68px;
-  margin-bottom: 18px;
-  padding: 0 0 15px;
+  min-height: 58px;
+  margin-bottom: 12px;
+  padding: 0 0 12px;
   border-bottom: 1px solid #e4e7ec;
 }
 .brand-lockup {
@@ -867,9 +870,9 @@ h3 {
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
-  min-height: 66px;
-  margin-bottom: 22px;
-  padding-bottom: 17px;
+  min-height: 0;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
   border-bottom: 1px solid #eaecf0;
 }
 .page-header-copy {
@@ -951,24 +954,25 @@ h3 {
   margin: 0;
 }
 .pricing-matrix-card {
-  margin-top: .6rem;
-  padding: .8rem .9rem;
+  margin-top: .25rem;
+  padding: .45rem .5rem;
   border: 1px solid #e3e8ef;
   border-radius: 10px;
   background: linear-gradient(145deg, #fff, #fbfcff);
   box-shadow: 0 12px 32px rgb(15 23 42 / 5%);
 }
-.pricing-toolbar { align-items: flex-start; margin-bottom: .85rem; }
+.pricing-toolbar { align-items: flex-start; margin-bottom: .5rem; }
 .pricing-toolbar h3 { margin: 0 0 .25rem; }
 .pricing-toolbar p { margin: 0; }
-.pricing-search { display: flex; align-items: center; gap: .6rem; margin-bottom: .8rem; flex-wrap: wrap; }
+.pricing-search { display: flex; align-items: center; gap: .6rem; margin-bottom: .55rem; flex-wrap: wrap; }
 .pricing-search .field { flex: 1; margin: 0; }
 .search-field { display: flex; flex: 1 1 260px; align-items: center; gap: 8px; min-height: 40px; padding: 0 12px; border: 1px solid #b4becf; border-radius: 6px; background: #fff; color: #98a2b3; }
 .search-field:focus-within { border-color: #185adb; box-shadow: 0 0 0 3px #dbeafe; }
 .search-field .action-icon { width: 16px; height: 16px; flex: 0 0 auto; color: #98a2b3; }
 .search-field input { flex: 1; width: 100%; min-height: 38px; padding: 0; border: 0; background: transparent; }
 .search-field input:focus-visible { outline: none; }
-.vendor-tabs { display: flex; align-items: center; gap: 2px; margin: 0 0 .8rem; border-bottom: 1px solid #e3e8ef; overflow-x: auto; scrollbar-width: thin; }
+.vendor-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin: 0 0 .55rem; padding: 0 1px; border-bottom: 1px solid #e3e8ef; overflow-x: auto; scrollbar-width: none; }
+.vendor-tabs::-webkit-scrollbar { display: none; }
 .vendor-tab { position: relative; display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; border: 0; border-radius: 6px 6px 0 0; background: transparent; color: #475467; font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; }
 .vendor-tab:hover { color: #185adb; background: #f5f8ff; }
 .vendor-tab.active { color: #185adb; font-weight: 650; }
@@ -1007,12 +1011,14 @@ h3 {
   font-weight: 650;
   white-space: nowrap;
 }
-.pricing-matrix-wrap { max-height: 520px; }
-.pricing-matrix { min-width: 980px; }
-.agency-sales-card .pricing-matrix { min-width: 900px; }
+.pricing-matrix-wrap { max-height: min(62vh, 680px); }
+.pricing-matrix { min-width: 860px; }
+.agency-sales-card .pricing-matrix { min-width: 800px; }
 .pricing-matrix th { white-space: nowrap; }
+.pricing-matrix th,
+.pricing-matrix td { padding: 9px 10px; }
 .pricing-matrix td { vertical-align: middle; }
-.pricing-matrix input { min-width: 118px; width: 100%; }
+.pricing-matrix input { min-width: 96px; width: 100%; }
 .channel-tags { display: flex; flex-wrap: wrap; gap: .35rem; min-width: 170px; }
 .channel-tags span {
   display: inline-flex;
@@ -1186,7 +1192,7 @@ legend {
   margin: 0;
 }
 .table-wrap {
-  margin: 16px 0;
+  margin: 10px 0;
   max-width: 100%;
   overflow-x: auto;
 }
@@ -1195,7 +1201,7 @@ legend {
 }
 
 .table-wrap table {
-  min-width: 980px;
+  min-width: 840px;
   table-layout: auto;
 }
 td {
@@ -1230,7 +1236,7 @@ td .toolbar {
 }
 th {
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 12px;
 }
 table input {
   min-width: 110px;
@@ -1431,7 +1437,7 @@ dd {
 }
 @media (max-width: 640px) {
   .dashboard-shell {
-    padding: 16px;
+    padding: 12px;
   }
   .hierarchy-card-header,
   .credential-delivery-footer {

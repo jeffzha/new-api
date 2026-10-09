@@ -449,6 +449,12 @@ function PagedReport({ path, columns }: { path: string; columns: Column<Row>[] }
           <ActionIcon name="refresh" />
           {t("Refresh")}
         </button>
+        {cursor && (
+          <button type="button" className="secondary button-icon" onClick={() => setCursor("")}>
+            <ActionIcon name="arrow-left" />
+            {t("Back to latest")}
+          </button>
+        )}
       </div>
       <ErrorNotice error={query.error} />
       {query.loading ? <Loading /> : <DataTable rows={query.data?.items || []} columns={columns} />}

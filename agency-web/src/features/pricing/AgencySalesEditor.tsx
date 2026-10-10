@@ -5,8 +5,8 @@ import { ErrorNotice, Field, Loading, Pager } from "../../components/ui";
 import { useQuery } from "../../lib/client";
 import { useMutation } from "../../lib/mutations";
 import { CoefficientAdjustDialog, type AdjustmentOutcome } from "./AdjustDialog";
-import { ChannelTags, type ChannelFilterOption } from "./ChannelFilter";
-import { ChannelFilterMenu, VendorTabs } from "./VendorFilter";
+import { type ChannelFilterOption } from "./ChannelFilter";
+import { ChannelFilterMenu, VendorMark, VendorTabs } from "./VendorFilter";
 import { activeVendorKey, buildVendorOptions, matchesPricingSearch, vendorKeyOf } from "./vendorOptions";
 import {
   formatCoefficient,
@@ -329,13 +329,11 @@ function AgencySalesForm(props: {
                       onChange={() => toggleModel(row.origin_model_name)}
                     />
                   </td>
-                  <td><strong>{row.origin_model_name}</strong></td>
+                  <td><div className="model-name-cell">{row.vendor_name && <VendorMark icon={row.vendor_icon} name={row.vendor_name} />}<strong>{row.origin_model_name}</strong></div></td>
                   <td>
-                    <ChannelTags
-                      names={(row.channels ?? []).map((channel) => ({ id: channel.channel_id, name: channel.channel_name }))}
-                    />
+                    <ChannelNames channels={row.channels ?? []} />
                   </td>
-                  <td><span className="coefficient-readonly">{formatCoefficient(row.agency_cost_bps)}</span></td>
+                  <td><ChannelCostValues channels={row.channels ?? []} cost={row.agency_cost_bps} /></td>
                   <td>
                     <input
                       aria-label={`${t("My downstream channel price (coefficient)")}: ${row.origin_model_name}`}
@@ -443,6 +441,17 @@ function AgencySalesForm(props: {
       )}
     </section>
   );
+}
+
+function ChannelNames(props: { channels: { channel_id: number; channel_name: string }[] }) {
+  const { t } = useTranslation();
+  if (!props.channels.length) return <span className="muted">{t("Channel unavailable")}</span>;
+  return <div className="channel-line-list">{props.channels.map((channel) => <div className="channel-line" key={channel.channel_id}><span className="channel-mark" aria-hidden="true">{Array.from(channel.channel_name.trim())[0]?.toUpperCase() || "·"}</span><span>{channel.channel_name}</span></div>)}</div>;
+}
+
+function ChannelCostValues(props: { channels: { channel_id: number; channel_name: string }[]; cost: number | null }) {
+  if (!props.channels.length) return <span className="coefficient-readonly">{props.cost == null ? "—" : formatCoefficient(props.cost)}</span>;
+  return <div className="channel-line-list"><div className="channel-line"><span className="channel-line-placeholder" aria-hidden="true" /> <span className="coefficient-readonly">{props.cost == null ? "—" : formatCoefficient(props.cost)}</span></div>{props.channels.slice(1).map((channel) => <div className="channel-line" key={channel.channel_id}><span className="channel-line-placeholder" aria-hidden="true" /><span className="coefficient-readonly">{props.cost == null ? "—" : formatCoefficient(props.cost)}</span></div>)}</div>;
 }
 
 function pickAdjusted(outcome: AdjustmentOutcome, selected: string[]) {

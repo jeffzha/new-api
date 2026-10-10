@@ -274,6 +274,12 @@ func (a *App) listAudit(c *gin.Context) {
 	}
 	var rows []model.AgencyAuditLog
 	query := a.db.Model(&model.AgencyAuditLog{})
+	// A root session remains root for authorization, but once it enters an
+	// agency it must see only that agency's audit scope. Audit rows created in
+	// the acting session carry acting_agency_id via recordAuditTx.
+	if identity != nil && identity.AgencyID != nil {
+		query = query.Where("acting_agency_id = ?", *identity.AgencyID)
+	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		respondError(c, http.StatusInternalServerError, "database_error", "读取审计日志失败", nil)

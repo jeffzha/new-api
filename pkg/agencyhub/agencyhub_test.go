@@ -63,6 +63,43 @@ func TestCreateAgencyAndInvitePreview(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), "invite_qr_url")
 }
 
+func TestRootActingAgencyCanReadDirectChildPricing(t *testing.T) {
+	app := newAgencyTestApp(t)
+	policy := agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultChildCostBPS: 8000, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
+	parent, _, err := app.CreateAgency(1, "代管父代理商", "acting-parent", policy)
+	require.NoError(t, err)
+	child, _, err := app.CreateAgency(1, "直属下级", "acting-child", policy)
+	require.NoError(t, err)
+	require.NoError(t, app.db.Model(&model.Agency{}).Where("id = ?", child.ID).Updates(map[string]any{"parent_agency_id": parent.ID, "depth": 2}).Error)
+	rootID := int64(9)
+	identity := &Identity{ActorType: ActorTypeRoot, ActorID: rootID, AgencyID: &parent.ID}
+	loaded, loadedPolicy, err := app.directChild(identity, child.ID)
+	require.NoError(t, err)
+	require.Equal(t, child.ID, loaded.ID)
+	require.Equal(t, policy.DefaultSalesBPS, loadedPolicy.DefaultSalesBPS)
+	_, _, err = app.directChild(identity, parent.ID)
+	require.Error(t, err)
+}
+
+func TestRootActingAuditIsScopedToAgency(t *testing.T) {
+	app := newAgencyTestApp(t)
+	first, _, err := app.CreateAgency(1, "审计范围一", "audit-scope-one", agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000})
+	require.NoError(t, err)
+	second, _, err := app.CreateAgency(1, "审计范围二", "audit-scope-two", agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000})
+	require.NoError(t, err)
+	root := &Identity{ActorType: ActorTypeRoot, ActorID: 1, AgencyID: &first.ID}
+	require.NoError(t, app.db.Create(&model.AgencyAuditLog{EventID: "acting-audit", ActorType: ActorTypeRoot, ActorID: 1, ActingAgencyID: &first.ID, Action: "test", ObjectType: "agency", ObjectID: stringID(first.ID), CreatedAtMS: 2}).Error)
+	require.NoError(t, app.db.Create(&model.AgencyAuditLog{EventID: "other-audit", ActorType: ActorTypeRoot, ActorID: 1, ActingAgencyID: &second.ID, Action: "test", ObjectType: "agency", ObjectID: stringID(second.ID), CreatedAtMS: 1}).Error)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agency/api/v1/root/audit?page_size=20", nil)
+	ctx.Set("agency_identity", root)
+	app.listAudit(ctx)
+	require.Equal(t, http.StatusOK, ctx.Writer.Status())
+	require.Contains(t, recorder.Body.String(), "acting-audit")
+	require.NotContains(t, recorder.Body.String(), "other-audit")
+}
+
 func TestRootCustomerListIsCrossAgencyScopedAndCursorBound(t *testing.T) {
 	app := newAgencyTestApp(t)
 	require.NoError(t, app.db.AutoMigrate(&model.User{}, &model.UserSession{}))
@@ -1631,11 +1668,20 @@ func TestInternalMockChannelsStayHiddenFromAgencyCatalogs(t *testing.T) {
 	require.Equal(t, http.StatusOK, modelsRecorder.Code, modelsRecorder.Body.String())
 	var modelsResponse struct {
 		Data struct {
-			Items []string `json:"items"`
+			Items   []string `json:"items"`
+			Catalog []struct {
+				Model    string `json:"model"`
+				Channels []struct {
+					ChannelID   int    `json:"channel_id"`
+					ChannelName string `json:"channel_name"`
+				} `json:"channels"`
+			} `json:"catalog"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(modelsRecorder.Body.Bytes(), &modelsResponse))
 	assert.Equal(t, []string{"deepseek-v4-flash", "glm-5.3"}, modelsResponse.Data.Items)
+	assert.Len(t, modelsResponse.Data.Catalog, 2)
+	assert.Equal(t, "public-deepseek", modelsResponse.Data.Catalog[0].Channels[0].ChannelName)
 
 	parentAgencyID := int64(1)
 	agency := model.Agency{ID: 99, DisplayName: "internal-mock-test", ParentAgencyID: &parentAgencyID}

@@ -5,8 +5,8 @@ import { ErrorNotice, Field, Loading, Pager } from "../../components/ui";
 import { useQuery } from "../../lib/client";
 import { useMutation } from "../../lib/mutations";
 import { CoefficientAdjustDialog, type AdjustmentOutcome } from "./AdjustDialog";
-import { ChannelTags, type ChannelFilterOption } from "./ChannelFilter";
-import { ChannelFilterMenu, VendorTabs } from "./VendorFilter";
+import { type ChannelFilterOption } from "./ChannelFilter";
+import { ChannelFilterMenu, VendorMark, VendorTabs } from "./VendorFilter";
 import { activeVendorKey, buildVendorOptions, matchesPricingSearch, vendorKeyOf } from "./vendorOptions";
 import {
   formatCoefficient,
@@ -425,33 +425,29 @@ function PlatformPricingRow(props: {
           onChange={() => props.toggle(props.row.origin_model_name)}
         />
       </td>
-      <td><strong>{props.row.origin_model_name}</strong></td>
+      <td><div className="model-name-cell">{props.row.vendor_name && <VendorMark icon={props.row.vendor_icon} name={props.row.vendor_name} />}<strong>{props.row.origin_model_name}</strong></div></td>
       <td>
-        <ChannelTags
-          names={props.row.channel_costs.map((channel) => ({ id: channel.channel_id, name: channel.channel_name }))}
-        />
+        <ChannelNameLines channels={props.row.channel_costs} />
       </td>
       <td>
-        <div className="channel-cost-list">
-          {props.row.channel_costs.map((channel) => (
-            <input
-              key={channel.channel_id}
-              aria-label={`${t("My cost (coefficient)")}: ${props.row.origin_model_name} / ${channel.channel_name}`}
-              inputMode="decimal"
-              placeholder="0.5000"
-              value={value.channelCosts[String(channel.channel_id)] ?? ""}
-              onChange={(event) => props.updateChannelCost(props.row.origin_model_name, channel.channel_id, event.target.value)}
-            />
-          ))}
-          {props.row.channel_costs.length === 0 && (
-            <span className="muted">{t("Channel unavailable")}</span>
-          )}
-        </div>
+        <ChannelCostInputs row={props.row} value={value} update={props.updateChannelCost} />
       </td>
       <CoefficientInput label={t("My downstream channel price (coefficient)")} model={props.row.origin_model_name} value={value.agencyCost} placeholder="0.5500" onChange={(value) => props.update(props.row.origin_model_name, "agencyCost", value)} />
       <CoefficientInput label={t("Sales price (coefficient)")} model={props.row.origin_model_name} value={value.defaultSales} placeholder="0.6000" onChange={(value) => props.update(props.row.origin_model_name, "defaultSales", value)} />
     </tr>
   );
+}
+
+function ChannelNameLines(props: { channels: PlatformPriceRow["channel_costs"] }) {
+  const { t } = useTranslation();
+  if (!props.channels.length) return <span className="muted">{t("Channel unavailable")}</span>;
+  return <div className="channel-line-list">{props.channels.map((channel) => <div className="channel-line" key={channel.channel_id}><span className="channel-mark" aria-hidden="true">{Array.from(channel.channel_name.trim())[0]?.toUpperCase() || "·"}</span><span>{channel.channel_name}</span></div>)}</div>;
+}
+
+function ChannelCostInputs(props: { row: PlatformPriceRow; value: PlatformDraft[string]; update: (model: string, channelID: number, value: string) => void }) {
+  const { t } = useTranslation();
+  if (!props.row.channel_costs.length) return <span className="muted">{t("Channel unavailable")}</span>;
+  return <div className="channel-line-list">{props.row.channel_costs.map((channel) => <div className="channel-line" key={channel.channel_id}><span className="channel-line-placeholder" aria-hidden="true" /><input aria-label={`${t("My cost (coefficient)")}: ${props.row.origin_model_name} / ${channel.channel_name}`} inputMode="decimal" placeholder="0.5000" value={props.value.channelCosts[String(channel.channel_id)] ?? ""} onChange={(event) => props.update(props.row.origin_model_name, channel.channel_id, event.target.value)} /></div>)}</div>;
 }
 
 function CoefficientInput(props: { label: string; model: string; value: string; placeholder: string; onChange: (value: string) => void }) {

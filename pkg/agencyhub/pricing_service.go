@@ -348,10 +348,12 @@ func (a *App) listPublicModels(c *gin.Context) {
 	}
 	seen := make(map[string]struct{}, len(rows))
 	models := make([]string, 0, len(rows))
+	modelChannels := make(map[string][]gin.H)
 	for _, row := range publicLiveModelChannels(rows) {
 		if query != "" && !strings.Contains(strings.ToLower(row.Model), query) {
 			continue
 		}
+		modelChannels[row.Model] = append(modelChannels[row.Model], gin.H{"channel_id": row.ChannelID, "channel_name": row.ChannelName})
 		if _, exists := seen[row.Model]; exists {
 			continue
 		}
@@ -362,7 +364,21 @@ func (a *App) listPublicModels(c *gin.Context) {
 	if len(models) > limit {
 		models = models[:limit]
 	}
-	respondOK(c, gin.H{"items": models, "count": len(models)})
+	vendors, vendorErr := model.ResolveModelVendors(a.db, models)
+	if vendorErr != nil {
+		common.SysLog("agency hub public model catalog: resolve model vendors failed: " + vendorErr.Error())
+		vendors = nil
+	}
+	catalog := make([]gin.H, 0, len(models))
+	for _, name := range models {
+		item := gin.H{"model": name, "channels": modelChannels[name]}
+		if vendor, ok := vendors[name]; ok {
+			item["vendor_name"] = vendor.Name
+			item["vendor_icon"] = vendor.Icon
+		}
+		catalog = append(catalog, item)
+	}
+	respondOK(c, gin.H{"items": models, "catalog": catalog, "count": len(models)})
 }
 
 func (a *App) previewRootPricing(c *gin.Context) {

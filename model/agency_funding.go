@@ -2183,6 +2183,9 @@ func reserveAgencyFundingTxWithRule(tx *gorm.DB, userID int64, chargeID string, 
 			debtDelta = uncovered
 		}
 		if debtDelta > 0 {
+			if err := ensureAgencyCreditAvailableTx(tx, userID, account.DebtQuota, debtDelta); err != nil {
+				return err
+			}
 			row := AgencyFundingAllocation{ChargeID: chargeID, SegmentNo: segmentNo, ComponentID: "default", UserID: userID, DebtConsumed: debtDelta, Version: 1}
 			if err := tx.Create(&row).Error; err != nil {
 				return err

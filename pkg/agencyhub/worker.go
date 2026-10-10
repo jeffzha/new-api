@@ -26,6 +26,7 @@ func (a *App) StartBackground(ctx context.Context) {
 	nextReconcile := time.Now().Add(a.config.ReconcileInterval)
 	shanghai := time.FixedZone("Asia/Shanghai", 8*60*60)
 	dailyRunDate := ""
+	creditRunDate := ""
 	// CSV generation can take much longer than a tick. Give exports their own
 	// bounded worker so a large file never stops commissions or provisioning.
 	if strings.TrimSpace(a.config.ExportDir) != "" {
@@ -56,6 +57,12 @@ func (a *App) StartBackground(ctx context.Context) {
 				return
 			case <-ticker.C:
 				localNow := time.Now().In(shanghai)
+				if key := localNow.Format("2006-01-02"); key != creditRunDate {
+					if _, err := a.ProcessCreditInvoices(ctx, localNow); err != nil {
+						common.SysError("agency credit invoice worker failed: " + err.Error())
+					}
+					creditRunDate = key
+				}
 				if dailyKey, cutoff, due := agencyDailyReconciliationSchedule(localNow, dailyRunDate); due {
 					dailyCtx, dailyCancel := context.WithTimeout(ctx, 2*time.Minute)
 					_, err := a.RunReconciliation(dailyCtx, "daily", dailyKey, cutoff)

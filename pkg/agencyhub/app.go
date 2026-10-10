@@ -201,6 +201,7 @@ func (a *App) Router() *gin.Engine {
 	root.POST("/withdrawals/:id/mark-paid", a.markWithdrawalPaid)
 	root.POST("/withdrawals/:id/reject", a.rejectWithdrawal)
 	root.POST("/withdrawal-accounts/:id/reveal", a.revealWithdrawalAccount)
+	a.creditRoutes(api)
 	return r
 }
 
@@ -303,6 +304,8 @@ func (a *App) agencySchemaStatus() (gin.H, error) {
 		(model.AgencyFundingAllocation{}).TableName():    {"source_snapshot_json"},
 		(model.AgencyDebtRepayment{}).TableName():        {"source_kind"},
 		(model.AgencyFundingDebt{}).TableName():          {"allocation_id"},
+		(model.AgencyCreditTerms{}).TableName():          {"credit_limit", "payment_term_days", "repayment_day", "email_enabled"},
+		(model.AgencyCreditInvoice{}).TableName():        {"period", "amount_quota", "payment_term_days", "due_at_ms", "overdue_at_ms", "bad_debt_quota", "email_status"},
 		(model.AgencyCommissionLedger{}).TableName():     {"component_key"},
 	}
 	for table, columns := range required {
@@ -357,6 +360,8 @@ func (a *App) agencyCapabilities() gin.H {
 		"fact_projection":      a.config.FactProjectionEnabled,
 		"withdrawals":          a.config.WithdrawalsEnabled,
 		"exports":              strings.TrimSpace(a.config.ExportDir) != "",
+		"credit_terms_v1":      true,
+		"credit_invoices_v1":   true,
 	}
 }
 

@@ -18,7 +18,7 @@ export const meta = {
     en: "Wangpai AI video generation (MiniMax H3 multimodal reference-to-video)",
     zh: "王牌AI 视频生成（MiniMax H3 多模态参考生视频）",
   },
-  version: "1.0.7",
+  version: "1.0.8",
   author: { name: "NexusReach" },
   baseUrl: "https://wangpaiai.com",
   models: ["MiniMax-H3", "MiniMax-H3-2K", "MiniMax-H3-Sensitive"],
@@ -27,12 +27,12 @@ export const meta = {
     output_credits: {
       type: "number",
       unit: "credit",
-      description: { en: "Video output credit unit price", zh: "视频输出额度单价" },
+      description: { en: "Video output unit price", zh: "视频输出单价" },
     },
     material_credits: {
       type: "number",
       unit: "credit",
-      description: { en: "Reference material credit unit price", zh: "参考素材额度单价" },
+      description: { en: "Material unit price", zh: "参考素材单价" },
     },
     input_images: {
       type: "number",

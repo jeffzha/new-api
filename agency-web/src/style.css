@@ -1103,13 +1103,12 @@ h3 {
 .pricing-matrix td small { display: block; max-width: 230px; margin-top: .35rem; color: #667085; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; }
 .model-name-cell { display: flex; align-items: center; gap: 8px; min-width: 180px; }
 .model-name-cell strong { overflow-wrap: anywhere; }
-.channel-line-list { display: grid; gap: .42rem; min-width: 190px; }
-.channel-line { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: 7px; min-height: 38px; }
-.channel-line > span:last-child { white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
-.channel-mark { display: inline-grid; place-items: center; width: 22px; height: 22px; border: 1px solid #c7d7fe; border-radius: 6px; color: #175cd3; background: #eff4ff; font-size: 11px; font-weight: 750; }
-.channel-line-placeholder { width: 22px; height: 22px; }
-.channel-line input { min-width: 138px; }
 .model-name-cell .vendor-mark { width: 24px; height: 24px; }
+.pricing-matrix th:nth-child(3), .pricing-matrix .pricing-channel-cell { min-width: 210px; text-align: left; }
+.pricing-matrix th:nth-child(4), .pricing-matrix .pricing-cost-cell { min-width: 190px; text-align: left; }
+.pricing-matrix .pricing-channel-cell { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
+.pricing-matrix .pricing-cost-cell input { min-width: 138px; }
+.pricing-matrix .pricing-cost-cell .coefficient-readonly { justify-content: flex-start; }
 .coefficient-adjust-dialog { width: min(1080px, calc(100vw - 32px)); }
 .dialog:has(.coefficient-adjust-preview) { width: min(1080px, calc(100vw - 32px)); }
 .coefficient-adjust-preview table { min-width: 760px; }
@@ -1123,8 +1122,8 @@ h3 {
 .customer-pricing-page .customer-pricing-summary { max-width: 560px; }
 .customer-pricing-page-matrix { max-height: min(60vh, 680px); }
 .customer-pricing-matrix { min-width: 820px; }
-.customer-pricing-matrix td:last-child { min-width: 260px; }
-.customer-pricing-matrix td:last-child input { width: 100%; }
+.customer-pricing-matrix td[rowspan]:last-child { min-width: 260px; }
+.customer-pricing-matrix td[rowspan]:last-child input { width: 100%; }
 .customer-pricing-bulk { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 14px 0; padding: 12px 14px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; }
 .customer-pricing-bulk input { width: 180px; }
 .customer-pricing-bulk small { flex-basis: 100%; color: #667085; }

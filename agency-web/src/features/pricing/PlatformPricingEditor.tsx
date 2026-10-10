@@ -5,9 +5,14 @@ import { ErrorNotice, Field, Loading, Pager } from "../../components/ui";
 import { useQuery } from "../../lib/client";
 import { useMutation } from "../../lib/mutations";
 import { CoefficientAdjustDialog, type AdjustmentOutcome } from "./AdjustDialog";
-import { type ChannelFilterOption } from "./ChannelFilter";
+import { ChannelPricingRows, type ChannelFilterOption } from "./ChannelFilter";
 import { ChannelFilterMenu, VendorMark, VendorTabs } from "./VendorFilter";
-import { activeVendorKey, buildVendorOptions, matchesPricingSearch, vendorKeyOf } from "./vendorOptions";
+import {
+  activeVendorKey,
+  buildVendorOptions,
+  matchesPricingSearch,
+  vendorKeyOf,
+} from "./vendorOptions";
 import {
   formatCoefficient,
   parseCoefficient,
@@ -35,7 +40,13 @@ export function PlatformPricingEditor() {
   const pricing = useQuery<PlatformPricing>("/root/platform-pricing");
   if (pricing.loading) return <Loading />;
   if (!pricing.data) return <ErrorNotice error={pricing.error} />;
-  return <PlatformPricingForm key={`${pricing.data.revision}:${pricing.data.refreshed_at_ms}`} data={pricing.data} reload={pricing.reload} />;
+  return (
+    <PlatformPricingForm
+      key={`${pricing.data.revision}:${pricing.data.refreshed_at_ms}`}
+      data={pricing.data}
+      reload={pricing.reload}
+    />
+  );
 }
 
 function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void }) {
@@ -107,7 +118,8 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
   const currentPage = Math.min(page, pageCount - 1);
   const pageRows = visible.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
   const selectedRows = props.data.items.filter((row) => selected.includes(row.origin_model_name));
-  const allPageSelected = pageRows.length > 0 && pageRows.every((row) => selected.includes(row.origin_model_name));
+  const allPageSelected =
+    pageRows.length > 0 && pageRows.every((row) => selected.includes(row.origin_model_name));
 
   function update(model: string, key: "agencyCost" | "defaultSales", value: string) {
     setDraft((current) => ({ ...current, [model]: { ...current[model], [key]: value } }));
@@ -195,49 +207,78 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
   async function publish() {
     setError(null);
     try {
-      const modelPrices: PublishedPlatformModelPrice[] = props.data.items.flatMap<PublishedPlatformModelPrice>((row) => {
-        const value = draft[row.origin_model_name];
-        if (row.channel_costs.length === 0) {
-          const values = [coefficientValue(row.platform_cost_bps), value.agencyCost, value.defaultSales];
+      const modelPrices: PublishedPlatformModelPrice[] =
+        props.data.items.flatMap<PublishedPlatformModelPrice>((row) => {
+          const value = draft[row.origin_model_name];
+          if (row.channel_costs.length === 0) {
+            const values = [
+              coefficientValue(row.platform_cost_bps),
+              value.agencyCost,
+              value.defaultSales,
+            ];
+            if (values.every((item) => item === "")) return [];
+            if (values.some((item) => item === "")) {
+              throw new Error(
+                t(
+                  "Complete the platform cost, agency cost, and sales coefficient for a configured model.",
+                ),
+              );
+            }
+            const platformCost = parseCoefficient(coefficientValue(row.platform_cost_bps));
+            const agencyCost = parseCoefficient(value.agencyCost);
+            const defaultSales = parseCoefficient(value.defaultSales);
+            if (defaultSales < agencyCost) {
+              throw new Error(
+                t(
+                  "Sales coefficient cannot be lower than agency cost coefficient. Model: {{model}}",
+                  { model: row.origin_model_name },
+                ),
+              );
+            }
+            return [
+              {
+                origin_model_name: row.origin_model_name,
+                platform_cost_bps: platformCost,
+                agency_cost_bps: agencyCost,
+                default_sales_bps: defaultSales,
+              },
+            ];
+          }
+          const channelValues = row.channel_costs.map(
+            (channel) => value.channelCosts[String(channel.channel_id)] ?? "",
+          );
+          const values = [...channelValues, value.agencyCost, value.defaultSales];
           if (values.every((item) => item === "")) return [];
           if (values.some((item) => item === "")) {
-            throw new Error(t("Complete the platform cost, agency cost, and sales coefficient for a configured model."));
+            throw new Error(
+              t(
+                "Complete every enabled channel cost, agency cost, and sales coefficient for a configured model.",
+              ),
+            );
           }
-          const platformCost = parseCoefficient(coefficientValue(row.platform_cost_bps));
+          const channelCosts = row.channel_costs.map((channel) => ({
+            channel_id: channel.channel_id,
+            platform_cost_bps: parseCoefficient(value.channelCosts[String(channel.channel_id)]),
+          }));
           const agencyCost = parseCoefficient(value.agencyCost);
           const defaultSales = parseCoefficient(value.defaultSales);
           if (defaultSales < agencyCost) {
-            throw new Error(t("Sales coefficient cannot be lower than agency cost coefficient. Model: {{model}}", { model: row.origin_model_name }));
+            throw new Error(
+              t(
+                "Sales coefficient cannot be lower than agency cost coefficient. Model: {{model}}",
+                { model: row.origin_model_name },
+              ),
+            );
           }
-          return [{
-            origin_model_name: row.origin_model_name,
-            platform_cost_bps: platformCost,
-            agency_cost_bps: agencyCost,
-            default_sales_bps: defaultSales,
-          }];
-        }
-        const channelValues = row.channel_costs.map((channel) => value.channelCosts[String(channel.channel_id)] ?? "");
-        const values = [...channelValues, value.agencyCost, value.defaultSales];
-        if (values.every((item) => item === "")) return [];
-        if (values.some((item) => item === "")) {
-          throw new Error(t("Complete every enabled channel cost, agency cost, and sales coefficient for a configured model."));
-        }
-        const channelCosts = row.channel_costs.map((channel) => ({
-          channel_id: channel.channel_id,
-          platform_cost_bps: parseCoefficient(value.channelCosts[String(channel.channel_id)]),
-        }));
-        const agencyCost = parseCoefficient(value.agencyCost);
-        const defaultSales = parseCoefficient(value.defaultSales);
-        if (defaultSales < agencyCost) {
-          throw new Error(t("Sales coefficient cannot be lower than agency cost coefficient. Model: {{model}}", { model: row.origin_model_name }));
-        }
-        return [{
-          origin_model_name: row.origin_model_name,
-          channel_costs: channelCosts,
-          agency_cost_bps: agencyCost,
-          default_sales_bps: defaultSales,
-        }];
-      });
+          return [
+            {
+              origin_model_name: row.origin_model_name,
+              channel_costs: channelCosts,
+              agency_cost_bps: agencyCost,
+              default_sales_bps: defaultSales,
+            },
+          ];
+        });
       await mutation.mutate(
         "/root/platform-pricing/publish",
         { expected_revision: props.data.revision, model_prices: modelPrices, reason },
@@ -255,7 +296,9 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
         <div>
           <h3>{t("Platform model coefficient matrix")}</h3>
           <p className="muted">
-            {t("Model and channel data refresh from enabled platform routes. Blank rows are not configured.")}
+            {t(
+              "Model and channel data refresh from enabled platform routes. Blank rows are not configured.",
+            )}
           </p>
         </div>
         <button className="secondary button-icon" type="button" onClick={props.reload}>
@@ -270,26 +313,39 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
             aria-label={t("Search models, providers, or channels")}
             placeholder={t("Search models, providers, or channels")}
             value={search}
-            onChange={(event) => { setSearch(event.target.value); setPage(0); }}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              setPage(0);
+            }}
           />
         </label>
         <ChannelFilterMenu
           channels={channelOptions}
           selected={channels}
           onToggle={toggleChannel}
-          onClear={() => { setChannels([]); setPage(0); }}
+          onClear={() => {
+            setChannels([]);
+            setPage(0);
+          }}
         />
-        <span className="pricing-live-badge">{t("Live platform data")} · {visible.length}</span>
+        <span className="pricing-live-badge">
+          {t("Live platform data")} · {visible.length}
+        </span>
       </div>
       <VendorTabs
         vendors={vendorOptions}
         selected={activeVendor}
         total={channelRows.length}
-        onSelect={(key) => { setVendorFilter(key); setPage(0); }}
+        onSelect={(key) => {
+          setVendorFilter(key);
+          setPage(0);
+        }}
       />
       <div className="pricing-bulk-bar">
         <strong>{t("Batch adjust selected models")}</strong>
-        <span>{t("Selected")}: {selected.length}</span>
+        <span>
+          {t("Selected")}: {selected.length}
+        </span>
         <button
           type="button"
           className="secondary button-icon compact-action"
@@ -310,7 +366,11 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
         </button>
         {bulkResult && (
           <p
-            className={bulkResult.failed ? "customer-pricing-bulk-result warning" : "customer-pricing-bulk-result success"}
+            className={
+              bulkResult.failed
+                ? "customer-pricing-bulk-result warning"
+                : "customer-pricing-bulk-result success"
+            }
             role="status"
           >
             {t("Adjusted {{updated}} models. {{failed}} models were not changed.", bulkResult)}
@@ -341,6 +401,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
               <PlatformPricingRow
                 key={row.origin_model_name}
                 row={row}
+                hasError={Boolean(rowErrors[row.origin_model_name])}
                 value={draft[row.origin_model_name]}
                 selected={selected.includes(row.origin_model_name)}
                 toggle={toggleModel}
@@ -367,9 +428,18 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
       )}
       <div className="pricing-publish-row">
         <Field label={t("Change reason (optional)")}>
-          <input value={reason} maxLength={2000} onChange={(event) => setReason(event.target.value)} />
+          <input
+            value={reason}
+            maxLength={2000}
+            onChange={(event) => setReason(event.target.value)}
+          />
         </Field>
-        <button className="button-icon" type="button" disabled={mutation.pending} onClick={() => void publish()}>
+        <button
+          className="button-icon"
+          type="button"
+          disabled={mutation.pending}
+          onClick={() => void publish()}
+        >
           <ActionIcon name="save" />
           {t("Publish platform pricing")}
         </button>
@@ -385,15 +455,17 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
           description={
             adjustTarget === "agencyCost"
               ? t("Adjusted downstream channel prices must stay at or above my cost.")
-              : t("Adjusted sales prices must stay at or above my cost plus the minimum spread and within the sales cap.")
+              : t(
+                  "Adjusted sales prices must stay at or above my cost plus the minimum spread and within the sales cap.",
+                )
           }
           rows={adjustmentRows()}
           values={Object.fromEntries(
             selectedRows.map((row) => [
               row.origin_model_name,
               adjustTarget === "agencyCost"
-                ? draft[row.origin_model_name]?.agencyCost ?? ""
-                : draft[row.origin_model_name]?.defaultSales ?? "",
+                ? (draft[row.origin_model_name]?.agencyCost ?? "")
+                : (draft[row.origin_model_name]?.defaultSales ?? ""),
             ]),
           )}
           options={{ anchor: "cost", capBPS: 100000 }}
@@ -407,6 +479,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
 
 function PlatformPricingRow(props: {
   row: PlatformPriceRow;
+  hasError: boolean;
   value: PlatformDraft[string];
   selected: boolean;
   toggle: (model: string) => void;
@@ -416,45 +489,80 @@ function PlatformPricingRow(props: {
   const { t } = useTranslation();
   const value = props.value ?? { channelCosts: {}, agencyCost: "", defaultSales: "" };
   return (
-    <tr>
-      <td>
+    <ChannelPricingRows
+      className={props.hasError ? "customer-pricing-row-error" : undefined}
+      leading={[
         <input
+          key="selection"
           type="checkbox"
           aria-label={`${t("Select model")}: ${props.row.origin_model_name}`}
           checked={props.selected}
           onChange={() => props.toggle(props.row.origin_model_name)}
-        />
-      </td>
-      <td><div className="model-name-cell">{props.row.vendor_name && <VendorMark icon={props.row.vendor_icon} name={props.row.vendor_name} />}<strong>{props.row.origin_model_name}</strong></div></td>
-      <td>
-        <ChannelNameLines channels={props.row.channel_costs} />
-      </td>
-      <td>
-        <ChannelCostInputs row={props.row} value={value} update={props.updateChannelCost} />
-      </td>
-      <CoefficientInput label={t("My downstream channel price (coefficient)")} model={props.row.origin_model_name} value={value.agencyCost} placeholder="0.5500" onChange={(value) => props.update(props.row.origin_model_name, "agencyCost", value)} />
-      <CoefficientInput label={t("Sales price (coefficient)")} model={props.row.origin_model_name} value={value.defaultSales} placeholder="0.6000" onChange={(value) => props.update(props.row.origin_model_name, "defaultSales", value)} />
-    </tr>
+        />,
+        <div key="model" className="model-name-cell">
+          <VendorMark
+            icon={props.row.vendor_icon}
+            name={props.row.vendor_name?.trim() || t("Other providers")}
+          />
+          <strong>{props.row.origin_model_name}</strong>
+        </div>,
+      ]}
+      channels={props.row.channel_costs.map((channel) => ({
+        id: channel.channel_id,
+        name: channel.channel_name,
+        cost: (
+          <input
+            aria-label={`${t("My cost (coefficient)")}: ${props.row.origin_model_name} / ${channel.channel_name}`}
+            inputMode="decimal"
+            placeholder="0.5000"
+            value={value.channelCosts[String(channel.channel_id)] ?? ""}
+            onChange={(event) =>
+              props.updateChannelCost(
+                props.row.origin_model_name,
+                channel.channel_id,
+                event.target.value,
+              )
+            }
+          />
+        ),
+      }))}
+      trailing={[
+        <CoefficientInput
+          key="downstream"
+          label={t("My downstream channel price (coefficient)")}
+          model={props.row.origin_model_name}
+          value={value.agencyCost}
+          placeholder="0.5500"
+          onChange={(value) => props.update(props.row.origin_model_name, "agencyCost", value)}
+        />,
+        <CoefficientInput
+          key="sales"
+          label={t("Sales price (coefficient)")}
+          model={props.row.origin_model_name}
+          value={value.defaultSales}
+          placeholder="0.6000"
+          onChange={(value) => props.update(props.row.origin_model_name, "defaultSales", value)}
+        />,
+      ]}
+    />
   );
 }
 
-function ChannelNameLines(props: { channels: PlatformPriceRow["channel_costs"] }) {
-  const { t } = useTranslation();
-  if (!props.channels.length) return <span className="muted">{t("Channel unavailable")}</span>;
-  return <div className="channel-line-list">{props.channels.map((channel) => <div className="channel-line" key={channel.channel_id}><span className="channel-mark" aria-hidden="true">{Array.from(channel.channel_name.trim())[0]?.toUpperCase() || "·"}</span><span>{channel.channel_name}</span></div>)}</div>;
-}
-
-function ChannelCostInputs(props: { row: PlatformPriceRow; value: PlatformDraft[string]; update: (model: string, channelID: number, value: string) => void }) {
-  const { t } = useTranslation();
-  if (!props.row.channel_costs.length) return <span className="muted">{t("Channel unavailable")}</span>;
-  return <div className="channel-line-list">{props.row.channel_costs.map((channel) => <div className="channel-line" key={channel.channel_id}><span className="channel-line-placeholder" aria-hidden="true" /><input aria-label={`${t("My cost (coefficient)")}: ${props.row.origin_model_name} / ${channel.channel_name}`} inputMode="decimal" placeholder="0.5000" value={props.value.channelCosts[String(channel.channel_id)] ?? ""} onChange={(event) => props.update(props.row.origin_model_name, channel.channel_id, event.target.value)} /></div>)}</div>;
-}
-
-function CoefficientInput(props: { label: string; model: string; value: string; placeholder: string; onChange: (value: string) => void }) {
+function CoefficientInput(props: {
+  label: string;
+  model: string;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
   return (
-    <td>
-      <input aria-label={`${props.label}: ${props.model}`} inputMode="decimal" placeholder={props.placeholder} value={props.value} onChange={(event) => props.onChange(event.target.value)} />
-    </td>
+    <input
+      aria-label={`${props.label}: ${props.model}`}
+      inputMode="decimal"
+      placeholder={props.placeholder}
+      value={props.value}
+      onChange={(event) => props.onChange(event.target.value)}
+    />
   );
 }
 

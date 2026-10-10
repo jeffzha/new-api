@@ -5,9 +5,14 @@ import { ErrorNotice, Field, Loading, Pager } from "../../components/ui";
 import { useQuery } from "../../lib/client";
 import { useMutation } from "../../lib/mutations";
 import { CoefficientAdjustDialog, type AdjustmentOutcome } from "./AdjustDialog";
-import { type ChannelFilterOption } from "./ChannelFilter";
+import { ChannelPricingRows, type ChannelFilterOption } from "./ChannelFilter";
 import { ChannelFilterMenu, VendorMark, VendorTabs } from "./VendorFilter";
-import { activeVendorKey, buildVendorOptions, matchesPricingSearch, vendorKeyOf } from "./vendorOptions";
+import {
+  activeVendorKey,
+  buildVendorOptions,
+  matchesPricingSearch,
+  vendorKeyOf,
+} from "./vendorOptions";
 import {
   formatCoefficient,
   parseCoefficient,
@@ -54,13 +59,19 @@ function AgencySalesForm(props: {
   const [rowErrors, setRowErrors] = useState<Record<string, CoefficientAdjustmentError>>({});
   const [errorTarget, setErrorTarget] = useState<AdjustTarget | null>(null);
   const [bulkResult, setBulkResult] = useState<{ updated: number; failed: number } | null>(null);
-  const [defaultSales, setDefaultSales] = useState(() => formatCoefficient(props.data.default_sales_bps));
-  const [defaultChildCost, setDefaultChildCost] = useState(() => props.data.default_child_cost_bps ? formatCoefficient(props.data.default_child_cost_bps) : "");
+  const [defaultSales, setDefaultSales] = useState(() =>
+    formatCoefficient(props.data.default_sales_bps),
+  );
+  const [defaultChildCost, setDefaultChildCost] = useState(() =>
+    props.data.default_child_cost_bps ? formatCoefficient(props.data.default_child_cost_bps) : "",
+  );
   const [childCosts, setChildCosts] = useState<Record<string, string>>(() =>
-    Object.fromEntries(props.data.items.map((row) => [
-      row.origin_model_name,
-      row.override_child_cost_bps == null ? "" : formatCoefficient(row.override_child_cost_bps),
-    ])),
+    Object.fromEntries(
+      props.data.items.map((row) => [
+        row.origin_model_name,
+        row.override_child_cost_bps == null ? "" : formatCoefficient(row.override_child_cost_bps),
+      ]),
+    ),
   );
   const [sales, setSales] = useState<Record<string, string>>(() =>
     Object.fromEntries(
@@ -109,7 +120,8 @@ function AgencySalesForm(props: {
   const currentPage = Math.min(page, pageCount - 1);
   const pageRows = visible.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
   const selectedRows = props.data.items.filter((row) => selected.includes(row.origin_model_name));
-  const allPageSelected = pageRows.length > 0 && pageRows.every((row) => selected.includes(row.origin_model_name));
+  const allPageSelected =
+    pageRows.length > 0 && pageRows.every((row) => selected.includes(row.origin_model_name));
   const capBPS = props.data.sales_cap_bps ?? 100000;
 
   function toggleChannel(id: string) {
@@ -194,7 +206,8 @@ function AgencySalesForm(props: {
           expected_revision: props.data.revision,
           ...(props.root ? { min_spread_bps: parseCoefficient(minSpread) } : {}),
           default_sales_bps: parseCoefficient(defaultSales),
-          default_child_cost_bps: defaultChildCost.trim() === "" ? 0 : parseCoefficient(defaultChildCost),
+          default_child_cost_bps:
+            defaultChildCost.trim() === "" ? 0 : parseCoefficient(defaultChildCost),
           model_sales_overrides: props.data.items.map((row) => ({
             origin_model_name: row.origin_model_name,
             sales_bps:
@@ -204,7 +217,10 @@ function AgencySalesForm(props: {
           })),
           model_child_cost_overrides: props.data.items.map((row) => ({
             origin_model_name: row.origin_model_name,
-            child_cost_bps: childCosts[row.origin_model_name] === "" ? null : parseCoefficient(childCosts[row.origin_model_name]),
+            child_cost_bps:
+              childCosts[row.origin_model_name] === ""
+                ? null
+                : parseCoefficient(childCosts[row.origin_model_name]),
           })),
           reason,
         },
@@ -222,7 +238,9 @@ function AgencySalesForm(props: {
         <div>
           <h3>{props.data.agency_name}</h3>
           <p className="muted">
-            {t("Agency cost is inherited and read-only. Set your customer sales coefficient and the cost inherited by your direct child agencies.")}
+            {t(
+              "Agency cost is inherited and read-only. Set your customer sales coefficient and the cost inherited by your direct child agencies.",
+            )}
           </p>
         </div>
         <button className="secondary button-icon" type="button" onClick={props.reload}>
@@ -232,15 +250,30 @@ function AgencySalesForm(props: {
       </div>
       <div className="pricing-defaults-grid">
         <Field label={t("Minimum spread")}>
-          <input inputMode="decimal" value={minSpread} readOnly={!props.root} onChange={(event) => setMinSpread(event.target.value)} />
+          <input
+            inputMode="decimal"
+            value={minSpread}
+            readOnly={!props.root}
+            onChange={(event) => setMinSpread(event.target.value)}
+          />
         </Field>
         <Field label={t("Default sales price (coefficient)")}>
-          <input inputMode="decimal" value={defaultSales} onChange={(event) => setDefaultSales(event.target.value)} />
+          <input
+            inputMode="decimal"
+            value={defaultSales}
+            onChange={(event) => setDefaultSales(event.target.value)}
+          />
           <small>{t("Used when a model or customer has no more specific sales override.")}</small>
         </Field>
         <Field label={t("Default downstream channel price (coefficient)")}>
-          <input inputMode="decimal" value={defaultChildCost} onChange={(event) => setDefaultChildCost(event.target.value)} />
-          <small>{t("Used by direct child agencies when a model has no specific cost override.")}</small>
+          <input
+            inputMode="decimal"
+            value={defaultChildCost}
+            onChange={(event) => setDefaultChildCost(event.target.value)}
+          />
+          <small>
+            {t("Used by direct child agencies when a model has no specific cost override.")}
+          </small>
         </Field>
       </div>
       <div className="pricing-search">
@@ -250,26 +283,39 @@ function AgencySalesForm(props: {
             aria-label={t("Search models, providers, or channels")}
             placeholder={t("Search models, providers, or channels")}
             value={search}
-            onChange={(event) => { setSearch(event.target.value); setPage(0); }}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              setPage(0);
+            }}
           />
         </label>
         <ChannelFilterMenu
           channels={channelOptions}
           selected={channels}
           onToggle={toggleChannel}
-          onClear={() => { setChannels([]); setPage(0); }}
+          onClear={() => {
+            setChannels([]);
+            setPage(0);
+          }}
         />
-        <span className="pricing-live-badge">{t("Models")} · {visible.length}</span>
+        <span className="pricing-live-badge">
+          {t("Models")} · {visible.length}
+        </span>
       </div>
       <VendorTabs
         vendors={vendorOptions}
         selected={activeVendor}
         total={channelRows.length}
-        onSelect={(key) => { setVendorFilter(key); setPage(0); }}
+        onSelect={(key) => {
+          setVendorFilter(key);
+          setPage(0);
+        }}
       />
       <div className="pricing-bulk-bar">
         <strong>{t("Batch adjust selected models")}</strong>
-        <span>{t("Selected")}: {selected.length}</span>
+        <span>
+          {t("Selected")}: {selected.length}
+        </span>
         <button
           type="button"
           className="secondary button-icon compact-action"
@@ -290,7 +336,11 @@ function AgencySalesForm(props: {
         </button>
         {bulkResult && (
           <p
-            className={bulkResult.failed ? "customer-pricing-bulk-result warning" : "customer-pricing-bulk-result success"}
+            className={
+              bulkResult.failed
+                ? "customer-pricing-bulk-result warning"
+                : "customer-pricing-bulk-result success"
+            }
             role="status"
           >
             {t("Adjusted {{updated}} models. {{failed}} models were not changed.", bulkResult)}
@@ -320,41 +370,70 @@ function AgencySalesForm(props: {
             {pageRows.map((row) => {
               const rowError = rowErrors[row.origin_model_name];
               return (
-                <tr key={row.origin_model_name} className={rowError ? "customer-pricing-row-error" : undefined}>
-                  <td>
+                <ChannelPricingRows
+                  key={row.origin_model_name}
+                  className={rowError ? "customer-pricing-row-error" : undefined}
+                  leading={[
                     <input
+                      key="selection"
                       type="checkbox"
                       aria-label={`${t("Select model")}: ${row.origin_model_name}`}
                       checked={selected.includes(row.origin_model_name)}
                       onChange={() => toggleModel(row.origin_model_name)}
-                    />
-                  </td>
-                  <td><div className="model-name-cell">{row.vendor_name && <VendorMark icon={row.vendor_icon} name={row.vendor_name} />}<strong>{row.origin_model_name}</strong></div></td>
-                  <td>
-                    <ChannelNames channels={row.channels ?? []} />
-                  </td>
-                  <td><ChannelCostValues channels={row.channels ?? []} cost={row.agency_cost_bps} /></td>
-                  <td>
-                    <input
-                      aria-label={`${t("My downstream channel price (coefficient)")}: ${row.origin_model_name}`}
-                      inputMode="decimal"
-                      value={childCosts[row.origin_model_name]}
-                      placeholder={row.child_cost_bps ? formatCoefficient(row.child_cost_bps) : t("Not configured")}
-                      onChange={(event) => updateChildCost(row.origin_model_name, event.target.value)}
-                    />
-                    <small>
-                      {childCosts[row.origin_model_name] === ""
-                        ? row.child_cost_bps
-                          ? t("Using inherited child cost {{value}}", { value: formatCoefficient(row.child_cost_bps) })
-                          : t("Not configured")
-                        : t("Agency override")}
-                    </small>
-                    {rowError && errorTarget === "childCost" && (
-                      <small className="customer-pricing-inline-error">{rowErrorMessage(rowError)}</small>
-                    )}
-                  </td>
-                  <td>
-                    <div className="sales-coefficient-field">
+                    />,
+                    <div key="model" className="model-name-cell">
+                      <VendorMark
+                        icon={row.vendor_icon}
+                      name={row.vendor_name?.trim() || t("Other providers")}
+                      />
+                      <strong>{row.origin_model_name}</strong>
+                    </div>,
+                  ]}
+                  channels={(row.channels ?? []).map((channel) => ({
+                    id: channel.channel_id,
+                    name: channel.channel_name,
+                    cost: (
+                      <span className="coefficient-readonly">
+                        {row.agency_cost_bps == null ? "—" : formatCoefficient(row.agency_cost_bps)}
+                      </span>
+                    ),
+                  }))}
+                  emptyCost={
+                    <span className="coefficient-readonly">
+                      {row.agency_cost_bps == null ? "—" : formatCoefficient(row.agency_cost_bps)}
+                    </span>
+                  }
+                  trailing={[
+                    <div key="downstream">
+                      <input
+                        aria-label={`${t("My downstream channel price (coefficient)")}: ${row.origin_model_name}`}
+                        inputMode="decimal"
+                        value={childCosts[row.origin_model_name]}
+                        placeholder={
+                          row.child_cost_bps
+                            ? formatCoefficient(row.child_cost_bps)
+                            : t("Not configured")
+                        }
+                        onChange={(event) =>
+                          updateChildCost(row.origin_model_name, event.target.value)
+                        }
+                      />
+                      <small>
+                        {childCosts[row.origin_model_name] === ""
+                          ? row.child_cost_bps
+                            ? t("Using inherited child cost {{value}}", {
+                                value: formatCoefficient(row.child_cost_bps),
+                              })
+                            : t("Not configured")
+                          : t("Agency override")}
+                      </small>
+                      {rowError && errorTarget === "childCost" && (
+                        <small className="customer-pricing-inline-error">
+                          {rowErrorMessage(rowError)}
+                        </small>
+                      )}
+                    </div>,
+                    <div key="sales" className="sales-coefficient-field">
                       <input
                         aria-label={`${t("Sales price (coefficient)")}: ${row.origin_model_name}`}
                         inputMode="decimal"
@@ -370,11 +449,13 @@ function AgencySalesForm(props: {
                           : t("Agency override")}
                       </small>
                       {rowError && errorTarget === "sales" && (
-                        <small className="customer-pricing-inline-error">{rowErrorMessage(rowError)}</small>
+                        <small className="customer-pricing-inline-error">
+                          {rowErrorMessage(rowError)}
+                        </small>
                       )}
-                    </div>
-                  </td>
-                </tr>
+                    </div>,
+                  ]}
+                />
               );
             })}
           </tbody>
@@ -396,7 +477,11 @@ function AgencySalesForm(props: {
       )}
       <div className="pricing-publish-row">
         <Field label={t("Change reason (optional)")}>
-          <input value={reason} maxLength={2000} onChange={(event) => setReason(event.target.value)} />
+          <input
+            value={reason}
+            maxLength={2000}
+            onChange={(event) => setReason(event.target.value)}
+          />
         </Field>
         <button
           className="button-icon"
@@ -419,15 +504,17 @@ function AgencySalesForm(props: {
           description={
             adjustTarget === "childCost"
               ? t("Adjusted downstream channel prices must stay at or above my cost.")
-              : t("Adjusted sales prices must stay at or above my cost plus the minimum spread and within the sales cap.")
+              : t(
+                  "Adjusted sales prices must stay at or above my cost plus the minimum spread and within the sales cap.",
+                )
           }
           rows={adjustmentRows()}
           values={Object.fromEntries(
             selectedRows.map((row) => [
               row.origin_model_name,
               adjustTarget === "childCost"
-                ? childCosts[row.origin_model_name] ?? ""
-                : sales[row.origin_model_name] ?? "",
+                ? (childCosts[row.origin_model_name] ?? "")
+                : (sales[row.origin_model_name] ?? ""),
             ]),
           )}
           options={{
@@ -441,17 +528,6 @@ function AgencySalesForm(props: {
       )}
     </section>
   );
-}
-
-function ChannelNames(props: { channels: { channel_id: number; channel_name: string }[] }) {
-  const { t } = useTranslation();
-  if (!props.channels.length) return <span className="muted">{t("Channel unavailable")}</span>;
-  return <div className="channel-line-list">{props.channels.map((channel) => <div className="channel-line" key={channel.channel_id}><span className="channel-mark" aria-hidden="true">{Array.from(channel.channel_name.trim())[0]?.toUpperCase() || "·"}</span><span>{channel.channel_name}</span></div>)}</div>;
-}
-
-function ChannelCostValues(props: { channels: { channel_id: number; channel_name: string }[]; cost: number | null }) {
-  if (!props.channels.length) return <span className="coefficient-readonly">{props.cost == null ? "—" : formatCoefficient(props.cost)}</span>;
-  return <div className="channel-line-list"><div className="channel-line"><span className="channel-line-placeholder" aria-hidden="true" /> <span className="coefficient-readonly">{props.cost == null ? "—" : formatCoefficient(props.cost)}</span></div>{props.channels.slice(1).map((channel) => <div className="channel-line" key={channel.channel_id}><span className="channel-line-placeholder" aria-hidden="true" /><span className="coefficient-readonly">{props.cost == null ? "—" : formatCoefficient(props.cost)}</span></div>)}</div>;
 }
 
 function pickAdjusted(outcome: AdjustmentOutcome, selected: string[]) {

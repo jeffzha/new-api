@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Audio material": "Chất liệu âm thanh",
+    "Billing rule": "Quy tắc tính phí",
+    "Charged at the upstream credit cost": "Tính theo mức tiêu thụ tín dụng thực tế của nhà cung cấp",
+    "Fixed {{seconds}}s": "Cố định {{seconds}} giây",
+    "Image material": "Chất liệu hình ảnh",
+    "Material": "Chất liệu",
+    "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "Phí chất liệu theo mức thu thực tế của nhà cung cấp; không thu thêm nếu nhà cung cấp không tính phí đầu vào.",
+    "Model / API": "Mô hình / API",
+    "No extra material charge": "Không thu thêm phí chất liệu",
+    "Per second": "Theo giây",
+    "Video material": "Chất liệu video",
+    "Video material pricing": "Giá chất liệu video",
+    "Video output pricing": "Giá đầu ra video",
     "Image input: ¥0.02/image, image generation: ¥0.18/image": "Nhập ảnh: 0,02 ¥/ảnh, tạo ảnh: 0,18 ¥/ảnh",
     "Account": "Tài khoản",
     "Agency Center": "Trung tâm đại lý",

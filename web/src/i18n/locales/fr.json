@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Audio material": "Matériau audio",
+    "Billing rule": "Règle de facturation",
+    "Charged at the upstream credit cost": "Facturé selon la consommation réelle de crédits en amont",
+    "Fixed {{seconds}}s": "Fixe {{seconds}} s",
+    "Image material": "Matériau image",
+    "Material": "Matériau",
+    "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "Les frais de matériaux suivent la facturation du fournisseur ; aucun supplément n'est ajouté lorsqu'il ne facture pas les entrées.",
+    "Model / API": "Modèle / API",
+    "No extra material charge": "Aucun frais de matériau supplémentaire",
+    "Per second": "Par seconde",
+    "Video material": "Matériau vidéo",
+    "Video material pricing": "Tarification des matériaux vidéo",
+    "Video output pricing": "Tarification de la sortie vidéo",
     "Image input: ¥0.02/image, image generation: ¥0.18/image": "Entrée d'image : 0,02 ¥/image, génération d'image : 0,18 ¥/image",
     "Account": "Compte",
     "Agency Center": "Centre des agences",

@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Audio material": "音声素材",
+    "Billing rule": "課金ルール",
+    "Charged at the upstream credit cost": "上流のクレジット消費に応じて課金",
+    "Fixed {{seconds}}s": "固定 {{seconds}} 秒",
+    "Image material": "画像素材",
+    "Material": "素材",
+    "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "素材費は上流の実際の消費に応じて課金され、上流が入力を課金しない場合は追加されません。",
+    "Model / API": "モデル / API",
+    "No extra material charge": "素材の追加料金なし",
+    "Per second": "秒単位",
+    "Video material": "動画素材",
+    "Video material pricing": "動画素材の料金",
+    "Video output pricing": "動画出力の料金",
     "Image input: ¥0.02/image, image generation: ¥0.18/image": "画像入力：0.02元/枚、画像生成：0.18元/枚",
     "Account": "アカウント",
     "Agency Center": "代理店センター",

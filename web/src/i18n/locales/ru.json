@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Audio material": "Материал: аудио",
+    "Billing rule": "Правило тарификации",
+    "Charged at the upstream credit cost": "Списание по фактическому расходу кредитов у поставщика",
+    "Fixed {{seconds}}s": "Фиксированные {{seconds}} с",
+    "Image material": "Материал: изображение",
+    "Material": "Материал",
+    "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "Плата за материалы соответствует списанию поставщика; если поставщик не тарифицирует входные данные, доплата не взимается.",
+    "Model / API": "Модель / API",
+    "No extra material charge": "Без доплаты за материалы",
+    "Per second": "За секунду",
+    "Video material": "Материал: видео",
+    "Video material pricing": "Цены на материалы для видео",
+    "Video output pricing": "Цены на вывод видео",
     "Image input: ¥0.02/image, image generation: ¥0.18/image": "Ввод изображения: 0,02 ¥/изобр., генерация: 0,18 ¥/изобр.",
     "Account": "Аккаунт",
     "Agency Center": "Центр агентств",

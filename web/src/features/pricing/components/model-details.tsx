@@ -84,9 +84,9 @@ import {
   getEffectiveGroupRatio,
   isTokenBasedModel,
 } from '../lib/model-helpers'
-import { getVideoTokenMatrixPricing } from '../lib/provider-pricing'
 import { withPluginPricing } from '../lib/plugin-pricing'
 import { formatFixedPrice, formatGroupPrice } from '../lib/price'
+import { getVideoTokenMatrixPricing } from '../lib/provider-pricing'
 import {
   evaluateTaskUsageExamples,
   getTaskEnumFields,
@@ -99,18 +99,20 @@ import {
   taskUsageUnitLabel,
   taskPricingConditions,
 } from '../lib/task-price-display'
+import { getVideoPricingTable } from '../lib/video-pricing-table'
 import type {
   ModelCapability,
   PriceType,
   PricingModel,
   TokenUnit,
 } from '../types'
-import { DynamicPricingBreakdown } from './dynamic-pricing-breakdown'
 import { CustomerPricingNotice } from './customer-pricing-status'
-import { VideoTokenMatrixPricing } from './video-token-matrix-pricing'
+import { DynamicPricingBreakdown } from './dynamic-pricing-breakdown'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelDetailsApi } from './model-details-api'
 import { ModelDetailsPerformance } from './model-details-performance'
+import { VideoPricingTables } from './video-pricing-tables'
+import { VideoTokenMatrixPricing } from './video-token-matrix-pricing'
 
 // ----------------------------------------------------------------------------
 // Local UI helpers
@@ -687,11 +689,7 @@ function PriceSection(props: {
         showRechargePrice: props.showRechargePrice,
         priceRate: props.priceRate,
         usdExchangeRate: props.usdExchangeRate,
-        groupRatioMultiplier: getEffectiveGroupRatio(
-          props.model,
-          {},
-          '_base'
-        ),
+        groupRatioMultiplier: getEffectiveGroupRatio(props.model, {}, '_base'),
       }),
     // Currency is read indirectly by the price formatter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1161,7 +1159,8 @@ function ProviderGroupPricingSection(
               <div className='bg-muted/20 flex items-center justify-between border-b px-3 py-2'>
                 <GroupBadge group={group} size='sm' />
                 <span className='text-muted-foreground font-mono text-xs'>
-                  {getEffectiveGroupRatio(props.model, props.groupRatio, group)}x
+                  {getEffectiveGroupRatio(props.model, props.groupRatio, group)}
+                  x
                 </span>
               </div>
               <VideoTokenMatrixPricing
@@ -1200,6 +1199,45 @@ function ProviderGroupPricingSection(
     'text-muted-foreground py-2 text-xs font-medium whitespace-normal break-words',
     !props.model.billing_usage_schema && 'tracking-wider uppercase'
   )
+
+  const videoPricingTable = getVideoPricingTable(props.model)
+  if (videoPricingTable) {
+    return (
+      <section>
+        {!props.hideTitle && (
+          <SectionTitle>{t('Pricing by Group')}</SectionTitle>
+        )}
+        <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
+        <div className='space-y-3'>
+          {availableGroups.map((group) => (
+            <div key={group} className='overflow-hidden rounded-lg border'>
+              <div className='bg-muted/20 flex items-center justify-between border-b px-3 py-2'>
+                <GroupBadge group={group} size='sm' />
+                <span className='text-muted-foreground font-mono text-xs'>
+                  {getEffectiveGroupRatio(props.model, props.groupRatio, group)}
+                  x
+                </span>
+              </div>
+              <div className='p-3'>
+                <VideoPricingTables
+                  table={videoPricingTable}
+                  tokenUnit={props.tokenUnit}
+                  showRechargePrice={showRechargePrice}
+                  priceRate={props.priceRate}
+                  usdExchangeRate={props.usdExchangeRate}
+                  groupRatio={getEffectiveGroupRatio(
+                    props.model,
+                    props.groupRatio,
+                    group
+                  )}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    )
+  }
 
   if (isDynamicPricingModel(props.model)) {
     const dynamicTiers = props.model.billing_usage_schema
@@ -1592,9 +1630,9 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
     simpleTaskPricing ||
     taskTiers.length === 0
 
-  const specialExpressionPriceNote = getSpecialExpressionPriceNote(
-    props.model
-  )
+  const specialExpressionPriceNote = getSpecialExpressionPriceNote(props.model)
+
+  const videoPricingTable = getVideoPricingTable(props.model)
 
   return (
     <div className='@container/details space-y-4'>
@@ -1625,7 +1663,17 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
 
           <section className='bg-card/60 space-y-5 rounded-xl border p-4 shadow-sm'>
             <SectionTitle>{t('Pricing')}</SectionTitle>
-            {showBasePrices && (
+            {videoPricingTable && (
+              <VideoPricingTables
+                table={videoPricingTable}
+                tokenUnit={props.tokenUnit}
+                showRechargePrice={showRechargePrice}
+                priceRate={props.priceRate}
+                usdExchangeRate={props.usdExchangeRate}
+                groupRatio={getEffectiveGroupRatio(props.model, {}, '_base')}
+              />
+            )}
+            {!videoPricingTable && showBasePrices && (
               <PriceSection
                 model={props.model}
                 priceRate={props.priceRate}
@@ -1634,7 +1682,8 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
                 showRechargePrice={showRechargePrice}
               />
             )}
-            {isDynamic &&
+            {!videoPricingTable &&
+              isDynamic &&
               !simpleTaskPricing &&
               !specialExpressionPriceNote && (
                 <DynamicPricingBreakdown

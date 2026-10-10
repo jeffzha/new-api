@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Audio material": "音訊素材",
+    "Billing rule": "計費規則",
+    "Charged at the upstream credit cost": "依上游額度實際扣費",
+    "Fixed {{seconds}}s": "固定 {{seconds}} 秒",
+    "Image material": "圖片素材",
+    "Material": "素材",
+    "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "素材費用依上游實際扣費，上游未對輸入計費時不額外收取。",
+    "Model / API": "模型 / API",
+    "No extra material charge": "不額外收取素材費用",
+    "Per second": "依秒計費",
+    "Video material": "影片素材",
+    "Video material pricing": "影片素材定價",
+    "Video output pricing": "影片輸出定價",
     "Image input: ¥0.02/image, image generation: ¥0.18/image": "圖片輸入：0.02元/張，圖片生成：0.18元/張",
     "Account": "帳號",
     "Agency Center": "代理商中心",

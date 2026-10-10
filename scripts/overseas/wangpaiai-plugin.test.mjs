@@ -39,4 +39,13 @@ assert.equal(plugin.extractUsageOnComplete({}, { status: 'FAILURE' }, { generati
 assert.equal(plugin.parseTaskResult({}, { generation: { status: 'done', resultUrl: null } }).status, 'IN_PROGRESS');
 assert.equal(plugin.parseTaskResult({}, { generation: {} }).status, 'UNKNOWN');
 for (const example of plugin.meta.usageExamples) assert.deepEqual(Object.keys(example.facts).sort(), Object.keys(plugin.meta.usageSchema).sort());
+assert.equal(plugin.meta.usageExamples.length, 4);
+assert.ok(plugin.meta.usageExamples.every(example => example.facts.mode === 'reference'));
+const fixedProfile = plugin.meta.usageProfiles.find(profile => profile.models.includes('MiniMax-H3-2K'));
+assert.deepEqual(fixedProfile.schema, plugin.meta.usageSchema);
+assert.equal(fixedProfile.examples.length, 1);
+assert.equal(fixedProfile.examples[0].facts.output_credits, 19);
+assert.equal(fixedProfile.examples[0].facts.seconds, 15);
+assert.equal(fixedProfile.examples[0].facts.resolution, '2K');
+for (const example of fixedProfile.examples) assert.deepEqual(Object.keys(example.facts).sort(), Object.keys(fixedProfile.schema).sort());
 console.log('Passed 97 upstream price tiers and reference, billing, validation and pending-media regressions');

@@ -18,7 +18,7 @@ export const meta = {
     en: "Wangpai AI video generation (MiniMax H3 multimodal reference-to-video)",
     zh: "王牌AI 视频生成（MiniMax H3 多模态参考生视频）",
   },
-  version: "1.0.6",
+  version: "1.0.7",
   author: { name: "NexusReach" },
   baseUrl: "https://wangpaiai.com",
   models: ["MiniMax-H3", "MiniMax-H3-2K", "MiniMax-H3-Sensitive"],
@@ -73,10 +73,18 @@ export const meta = {
     { label: "H3 reference 720P 5s", facts: { material_credits: 0, output_credits: 7.5, input_images: 0, vendor_credits: 7.5, mode: "reference", seconds: 5, resolution: "720P" } },
     { label: "H3 reference 1080P 5s", facts: { material_credits: 0, output_credits: 10, input_images: 0, vendor_credits: 10, mode: "reference", seconds: 5, resolution: "1080P" } },
     { label: "H3 reference 2K 15s", facts: { material_credits: 0, output_credits: 45, input_images: 0, vendor_credits: 45, mode: "reference", seconds: 15, resolution: "2K" } },
-    { label: "H3 prompt only (15s 2K)", facts: { material_credits: 0, output_credits: 19, input_images: 0, vendor_credits: 19, mode: "text", seconds: 15, resolution: "2K" } },
   ],
   protocols: ["openai_video"],
 };
+
+meta.usageProfiles = [{
+  models: ["MiniMax-H3-2K"],
+  schema: meta.usageSchema,
+  examples: [{
+    label: "H3 2K fixed 15s",
+    facts: { material_credits: 0, output_credits: 19, input_images: 0, vendor_credits: 19, mode: "text", seconds: 15, resolution: "2K" },
+  }],
+}];
 
 // Unified downstream model name -> wangpaiai shelf id. The shelf id is stable
 // on the vendor side; swap the value here when the vendor rotates the shelf.
@@ -377,7 +385,7 @@ export function parseSubmitResponse(ctx, resp) {
 }
 
 // Billing facts feed the tiered billing expression configured for MiniMax-H3.
-// The price table itself lives on the gateway, never in the plugin.
+// The USD conversion and sales coefficients live on the gateway.
 // Snapshot of the authenticated upstream catalog on 2026-10-10.
 // Coefficients here are vendor credits. USD conversion belongs in the gateway
 // pricing expression and requires the account's confirmed settlement rate.

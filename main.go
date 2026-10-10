@@ -172,6 +172,11 @@ func main() {
 	}
 	service.StartAgencyCommandWorker(commandWorkerCtx)
 
+	// Realign historical agency charges whose usage record still disagrees with
+	// the funding the wallet paid. Opt-in, idempotent and audited: it keeps every
+	// earlier receipt and adds a correction revision per charge.
+	model.StartAgencyChargeCorrectionBackfill()
+
 	// Register the periodic channel test, upstream model update, and async task
 	// polling (Midjourney / Suno / video) jobs as scheduled system tasks
 	// (DB-lease dedup across masters + run history), then start the runner that

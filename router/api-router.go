@@ -29,6 +29,11 @@ func SetApiRouter(router *gin.Engine) {
 	agencyRoute.POST("/verify", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-verification"), middleware.DisableCache(), controller.IssueAgencyVerification)
 	agencyRoute.POST("/command-proof", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-verification"), middleware.DisableCache(), controller.IssueAgencyCommandProof)
 	agencyRoute.GET("/effective-pricing", middleware.UserAuth(), controller.GetAgencyEffectivePricing)
+	// Historical charge corrections are Root-only and audited: they realign the
+	// agency projection with the funding the wallet already paid and never move
+	// money. The GET preview is read-only.
+	agencyRoute.GET("/charge-corrections", middleware.RootAuth(), middleware.DisableCache(), controller.ListAgencyChargeCorrections)
+	agencyRoute.POST("/charge-corrections", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-charge-correction"), middleware.DisableCache(), controller.ApplyAgencyChargeCorrections)
 	modelMockRoute := apiRouter.Group("/model-mock")
 	modelMockRoute.GET("/sso", controller.ModelMockSSOPage)
 	modelMockRoute.POST("/sso-ticket", middleware.UserAuth(), middleware.UserCriticalRateLimit("model-mock-sso"), middleware.DisableCache(), controller.IssueModelMockSSOTicket)

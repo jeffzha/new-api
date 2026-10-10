@@ -1,0 +1,1271 @@
+{
+  "checked_at": "2026-10-10",
+  "source": "https://wangpaiai.com/api/v1/models",
+  "price_unit": "vendor_credit",
+  "cny_per_credit": 0.1,
+  "cny_per_usd": 7.3,
+  "models": [
+    {
+      "id": "wp_a4f5de6f0c3a",
+      "name": "官方特价minimax h3 2k画质按次计费 (wp_a4f5de6f0c3a)",
+      "outputTypes": [
+        "videoUrl"
+      ],
+      "capabilities": [
+        "mixed-to-video"
+      ],
+      "priceCredits": 19,
+      "priceByTier": {
+        "15": 19
+      },
+      "proratesByDuration": false,
+      "priceTiers": [
+        {
+          "inputs": {
+            "duration": "15"
+          },
+          "priceCredits": 19
+        }
+      ],
+      "inputs": [
+        {
+          "id": "prompt",
+          "type": "text",
+          "label": "提示词",
+          "required": true,
+          "max": 7000
+        },
+        {
+          "id": "image_url",
+          "type": "imageUrl",
+          "label": "参考图 1",
+          "required": false
+        },
+        {
+          "id": "image_url_2",
+          "type": "imageUrl",
+          "label": "参考图 2",
+          "required": false
+        },
+        {
+          "id": "image_url_3",
+          "type": "imageUrl",
+          "label": "参考图 3",
+          "required": false
+        },
+        {
+          "id": "image_url_4",
+          "type": "imageUrl",
+          "label": "参考图 4",
+          "required": false
+        },
+        {
+          "id": "image_url_5",
+          "type": "imageUrl",
+          "label": "参考图 5",
+          "required": false
+        },
+        {
+          "id": "image_url_6",
+          "type": "imageUrl",
+          "label": "参考图 6",
+          "required": false
+        },
+        {
+          "id": "image_url_7",
+          "type": "imageUrl",
+          "label": "参考图 7",
+          "required": false
+        },
+        {
+          "id": "image_url_8",
+          "type": "imageUrl",
+          "label": "参考图 8",
+          "required": false
+        },
+        {
+          "id": "image_url_9",
+          "type": "imageUrl",
+          "label": "参考图 9",
+          "required": false
+        },
+        {
+          "id": "video_url",
+          "type": "videoUrl",
+          "label": "参考视频 1",
+          "required": false
+        },
+        {
+          "id": "video_url_2",
+          "type": "videoUrl",
+          "label": "参考视频 2",
+          "required": false
+        },
+        {
+          "id": "video_url_3",
+          "type": "videoUrl",
+          "label": "参考视频 3",
+          "required": false
+        },
+        {
+          "id": "audio_url",
+          "type": "audioUrl",
+          "label": "参考音频 1",
+          "required": false
+        },
+        {
+          "id": "audio_url_2",
+          "type": "audioUrl",
+          "label": "参考音频 2",
+          "required": false
+        },
+        {
+          "id": "audio_url_3",
+          "type": "audioUrl",
+          "label": "参考音频 3",
+          "required": false
+        },
+        {
+          "id": "aspect_ratio",
+          "type": "enum",
+          "label": "画面比例",
+          "required": false,
+          "options": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "3:4",
+            "4:3"
+          ],
+          "default": "16:9"
+        },
+        {
+          "id": "duration",
+          "type": "enum",
+          "label": "时长(秒)",
+          "required": false,
+          "options": [
+            "15"
+          ],
+          "default": "15"
+        }
+      ]
+    },
+    {
+      "id": "h3-1",
+      "name": "h3-1 (h3-1)",
+      "outputTypes": [
+        "videoUrl"
+      ],
+      "capabilities": [
+        "mixed-to-video"
+      ],
+      "priceCredits": 3.2,
+      "priceByTier": {
+        "4/Pro 480p": 3.2,
+        "5/Pro 480p": 4,
+        "6/Pro 480p": 4.8,
+        "7/Pro 480p": 5.6,
+        "8/Pro 480p": 6.4,
+        "9/Pro 480p": 7.2,
+        "10/Pro 480p": 8,
+        "11/Pro 480p": 8.8,
+        "12/Pro 480p": 9.6,
+        "13/Pro 480p": 10.4,
+        "14/Pro 480p": 11.2,
+        "15/Pro 480p": 12,
+        "4/Pro 720p": 6,
+        "5/Pro 720p": 7.5,
+        "6/Pro 720p": 9,
+        "7/Pro 720p": 10.5,
+        "8/Pro 720p": 12,
+        "9/Pro 720p": 13.5,
+        "10/Pro 720p": 15,
+        "11/Pro 720p": 16.5,
+        "12/Pro 720p": 18,
+        "13/Pro 720p": 19.5,
+        "14/Pro 720p": 21,
+        "15/Pro 720p": 22.5,
+        "4/Pro 1080p": 8,
+        "5/Pro 1080p": 10,
+        "6/Pro 1080p": 12,
+        "7/Pro 1080p": 14,
+        "8/Pro 1080p": 16,
+        "9/Pro 1080p": 18,
+        "10/Pro 1080p": 20,
+        "11/Pro 1080p": 22,
+        "12/Pro 1080p": 24,
+        "13/Pro 1080p": 26,
+        "14/Pro 1080p": 28,
+        "15/Pro 1080p": 30,
+        "4/Pro 2k": 12,
+        "5/Pro 2k": 15,
+        "6/Pro 2k": 18,
+        "7/Pro 2k": 21,
+        "8/Pro 2k": 24,
+        "9/Pro 2k": 27,
+        "10/Pro 2k": 30,
+        "11/Pro 2k": 33,
+        "12/Pro 2k": 36,
+        "13/Pro 2k": 39,
+        "14/Pro 2k": 42,
+        "15/Pro 2k": 45
+      },
+      "proratesByDuration": false,
+      "priceTiers": [
+        {
+          "inputs": {
+            "duration": "4",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 3.2
+        },
+        {
+          "inputs": {
+            "duration": "5",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 4
+        },
+        {
+          "inputs": {
+            "duration": "6",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 4.8
+        },
+        {
+          "inputs": {
+            "duration": "7",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 5.6
+        },
+        {
+          "inputs": {
+            "duration": "8",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 6.4
+        },
+        {
+          "inputs": {
+            "duration": "9",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 7.2
+        },
+        {
+          "inputs": {
+            "duration": "10",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 8
+        },
+        {
+          "inputs": {
+            "duration": "11",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 8.8
+        },
+        {
+          "inputs": {
+            "duration": "12",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 9.6
+        },
+        {
+          "inputs": {
+            "duration": "13",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 10.4
+        },
+        {
+          "inputs": {
+            "duration": "14",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 11.2
+        },
+        {
+          "inputs": {
+            "duration": "15",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 12
+        },
+        {
+          "inputs": {
+            "duration": "4",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 6
+        },
+        {
+          "inputs": {
+            "duration": "5",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 7.5
+        },
+        {
+          "inputs": {
+            "duration": "6",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 9
+        },
+        {
+          "inputs": {
+            "duration": "7",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 10.5
+        },
+        {
+          "inputs": {
+            "duration": "8",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 12
+        },
+        {
+          "inputs": {
+            "duration": "9",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 13.5
+        },
+        {
+          "inputs": {
+            "duration": "10",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 15
+        },
+        {
+          "inputs": {
+            "duration": "11",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 16.5
+        },
+        {
+          "inputs": {
+            "duration": "12",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 18
+        },
+        {
+          "inputs": {
+            "duration": "13",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 19.5
+        },
+        {
+          "inputs": {
+            "duration": "14",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 21
+        },
+        {
+          "inputs": {
+            "duration": "15",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 22.5
+        },
+        {
+          "inputs": {
+            "duration": "4",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 8
+        },
+        {
+          "inputs": {
+            "duration": "5",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 10
+        },
+        {
+          "inputs": {
+            "duration": "6",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 12
+        },
+        {
+          "inputs": {
+            "duration": "7",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 14
+        },
+        {
+          "inputs": {
+            "duration": "8",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 16
+        },
+        {
+          "inputs": {
+            "duration": "9",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 18
+        },
+        {
+          "inputs": {
+            "duration": "10",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 20
+        },
+        {
+          "inputs": {
+            "duration": "11",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 22
+        },
+        {
+          "inputs": {
+            "duration": "12",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 24
+        },
+        {
+          "inputs": {
+            "duration": "13",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 26
+        },
+        {
+          "inputs": {
+            "duration": "14",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 28
+        },
+        {
+          "inputs": {
+            "duration": "15",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 30
+        },
+        {
+          "inputs": {
+            "duration": "4",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 12
+        },
+        {
+          "inputs": {
+            "duration": "5",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 15
+        },
+        {
+          "inputs": {
+            "duration": "6",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 18
+        },
+        {
+          "inputs": {
+            "duration": "7",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 21
+        },
+        {
+          "inputs": {
+            "duration": "8",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 24
+        },
+        {
+          "inputs": {
+            "duration": "9",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 27
+        },
+        {
+          "inputs": {
+            "duration": "10",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 30
+        },
+        {
+          "inputs": {
+            "duration": "11",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 33
+        },
+        {
+          "inputs": {
+            "duration": "12",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 36
+        },
+        {
+          "inputs": {
+            "duration": "13",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 39
+        },
+        {
+          "inputs": {
+            "duration": "14",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 42
+        },
+        {
+          "inputs": {
+            "duration": "15",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 45
+        }
+      ],
+      "inputs": [
+        {
+          "id": "prompt",
+          "type": "text",
+          "label": "提示词",
+          "required": true,
+          "max": 30000
+        },
+        {
+          "id": "h3_mode",
+          "type": "enum",
+          "label": "生成方式",
+          "required": true,
+          "options": [
+            "多模态"
+          ],
+          "default": "多模态"
+        },
+        {
+          "id": "image_url",
+          "type": "imageUrl",
+          "label": "参考图 1",
+          "required": false
+        },
+        {
+          "id": "image_url_2",
+          "type": "imageUrl",
+          "label": "参考图 2",
+          "required": false
+        },
+        {
+          "id": "image_url_3",
+          "type": "imageUrl",
+          "label": "参考图 3",
+          "required": false
+        },
+        {
+          "id": "image_url_4",
+          "type": "imageUrl",
+          "label": "参考图 4",
+          "required": false
+        },
+        {
+          "id": "image_url_5",
+          "type": "imageUrl",
+          "label": "参考图 5",
+          "required": false
+        },
+        {
+          "id": "image_url_6",
+          "type": "imageUrl",
+          "label": "参考图 6",
+          "required": false
+        },
+        {
+          "id": "image_url_7",
+          "type": "imageUrl",
+          "label": "参考图 7",
+          "required": false
+        },
+        {
+          "id": "image_url_8",
+          "type": "imageUrl",
+          "label": "参考图 8",
+          "required": false
+        },
+        {
+          "id": "image_url_9",
+          "type": "imageUrl",
+          "label": "参考图 9",
+          "required": false
+        },
+        {
+          "id": "video_url",
+          "type": "videoUrl",
+          "label": "参考视频 1",
+          "required": false
+        },
+        {
+          "id": "video_url_2",
+          "type": "videoUrl",
+          "label": "参考视频 2",
+          "required": false
+        },
+        {
+          "id": "video_url_3",
+          "type": "videoUrl",
+          "label": "参考视频 3",
+          "required": false
+        },
+        {
+          "id": "audio_url",
+          "type": "audioUrl",
+          "label": "参考音频 1",
+          "required": false
+        },
+        {
+          "id": "audio_url_2",
+          "type": "audioUrl",
+          "label": "参考音频 2",
+          "required": false
+        },
+        {
+          "id": "audio_url_3",
+          "type": "audioUrl",
+          "label": "参考音频 3",
+          "required": false
+        },
+        {
+          "id": "aspect_ratio",
+          "type": "enum",
+          "label": "画面比例",
+          "required": false,
+          "options": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:3",
+            "3:2",
+            "2:3"
+          ],
+          "default": "16:9"
+        },
+        {
+          "id": "quality",
+          "type": "enum",
+          "label": "版本 / 画质",
+          "required": true,
+          "options": [
+            "Pro 480p",
+            "Pro 720p",
+            "Pro 1080p",
+            "Pro 2k"
+          ],
+          "default": "Pro 480p"
+        },
+        {
+          "id": "duration",
+          "type": "enum",
+          "label": "时长(秒)",
+          "required": true,
+          "options": [
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+            "15"
+          ],
+          "default": "15"
+        }
+      ]
+    },
+    {
+      "id": "h3-vip",
+      "name": "h3-vip (h3-vip)",
+      "outputTypes": [
+        "videoUrl"
+      ],
+      "capabilities": [
+        "mixed-to-video"
+      ],
+      "priceCredits": 3.2,
+      "priceByTier": {
+        "4/Pro 480p": 3.2,
+        "5/Pro 480p": 4,
+        "6/Pro 480p": 4.8,
+        "7/Pro 480p": 5.6,
+        "8/Pro 480p": 6.4,
+        "9/Pro 480p": 7.2,
+        "10/Pro 480p": 8,
+        "11/Pro 480p": 8.8,
+        "12/Pro 480p": 9.6,
+        "13/Pro 480p": 10.4,
+        "14/Pro 480p": 11.2,
+        "15/Pro 480p": 12,
+        "4/Pro 720p": 6,
+        "5/Pro 720p": 7.5,
+        "6/Pro 720p": 9,
+        "7/Pro 720p": 10.5,
+        "8/Pro 720p": 12,
+        "9/Pro 720p": 13.5,
+        "10/Pro 720p": 15,
+        "11/Pro 720p": 16.5,
+        "12/Pro 720p": 18,
+        "13/Pro 720p": 19.5,
+        "14/Pro 720p": 21,
+        "15/Pro 720p": 22.5,
+        "4/Pro 1080p": 8,
+        "5/Pro 1080p": 10,
+        "6/Pro 1080p": 12,
+        "7/Pro 1080p": 14,
+        "8/Pro 1080p": 16,
+        "9/Pro 1080p": 18,
+        "10/Pro 1080p": 20,
+        "11/Pro 1080p": 22,
+        "12/Pro 1080p": 24,
+        "13/Pro 1080p": 26,
+        "14/Pro 1080p": 28,
+        "15/Pro 1080p": 30,
+        "4/Pro 2k": 12,
+        "5/Pro 2k": 15,
+        "6/Pro 2k": 18,
+        "7/Pro 2k": 21,
+        "8/Pro 2k": 24,
+        "9/Pro 2k": 27,
+        "10/Pro 2k": 30,
+        "11/Pro 2k": 33,
+        "12/Pro 2k": 36,
+        "13/Pro 2k": 39,
+        "14/Pro 2k": 42,
+        "15/Pro 2k": 45
+      },
+      "proratesByDuration": false,
+      "priceTiers": [
+        {
+          "inputs": {
+            "duration": "4",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 3.2
+        },
+        {
+          "inputs": {
+            "duration": "5",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 4
+        },
+        {
+          "inputs": {
+            "duration": "6",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 4.8
+        },
+        {
+          "inputs": {
+            "duration": "7",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 5.6
+        },
+        {
+          "inputs": {
+            "duration": "8",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 6.4
+        },
+        {
+          "inputs": {
+            "duration": "9",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 7.2
+        },
+        {
+          "inputs": {
+            "duration": "10",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 8
+        },
+        {
+          "inputs": {
+            "duration": "11",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 8.8
+        },
+        {
+          "inputs": {
+            "duration": "12",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 9.6
+        },
+        {
+          "inputs": {
+            "duration": "13",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 10.4
+        },
+        {
+          "inputs": {
+            "duration": "14",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 11.2
+        },
+        {
+          "inputs": {
+            "duration": "15",
+            "quality": "Pro 480p"
+          },
+          "priceCredits": 12
+        },
+        {
+          "inputs": {
+            "duration": "4",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 6
+        },
+        {
+          "inputs": {
+            "duration": "5",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 7.5
+        },
+        {
+          "inputs": {
+            "duration": "6",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 9
+        },
+        {
+          "inputs": {
+            "duration": "7",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 10.5
+        },
+        {
+          "inputs": {
+            "duration": "8",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 12
+        },
+        {
+          "inputs": {
+            "duration": "9",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 13.5
+        },
+        {
+          "inputs": {
+            "duration": "10",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 15
+        },
+        {
+          "inputs": {
+            "duration": "11",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 16.5
+        },
+        {
+          "inputs": {
+            "duration": "12",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 18
+        },
+        {
+          "inputs": {
+            "duration": "13",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 19.5
+        },
+        {
+          "inputs": {
+            "duration": "14",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 21
+        },
+        {
+          "inputs": {
+            "duration": "15",
+            "quality": "Pro 720p"
+          },
+          "priceCredits": 22.5
+        },
+        {
+          "inputs": {
+            "duration": "4",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 8
+        },
+        {
+          "inputs": {
+            "duration": "5",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 10
+        },
+        {
+          "inputs": {
+            "duration": "6",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 12
+        },
+        {
+          "inputs": {
+            "duration": "7",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 14
+        },
+        {
+          "inputs": {
+            "duration": "8",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 16
+        },
+        {
+          "inputs": {
+            "duration": "9",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 18
+        },
+        {
+          "inputs": {
+            "duration": "10",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 20
+        },
+        {
+          "inputs": {
+            "duration": "11",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 22
+        },
+        {
+          "inputs": {
+            "duration": "12",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 24
+        },
+        {
+          "inputs": {
+            "duration": "13",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 26
+        },
+        {
+          "inputs": {
+            "duration": "14",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 28
+        },
+        {
+          "inputs": {
+            "duration": "15",
+            "quality": "Pro 1080p"
+          },
+          "priceCredits": 30
+        },
+        {
+          "inputs": {
+            "duration": "4",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 12
+        },
+        {
+          "inputs": {
+            "duration": "5",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 15
+        },
+        {
+          "inputs": {
+            "duration": "6",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 18
+        },
+        {
+          "inputs": {
+            "duration": "7",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 21
+        },
+        {
+          "inputs": {
+            "duration": "8",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 24
+        },
+        {
+          "inputs": {
+            "duration": "9",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 27
+        },
+        {
+          "inputs": {
+            "duration": "10",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 30
+        },
+        {
+          "inputs": {
+            "duration": "11",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 33
+        },
+        {
+          "inputs": {
+            "duration": "12",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 36
+        },
+        {
+          "inputs": {
+            "duration": "13",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 39
+        },
+        {
+          "inputs": {
+            "duration": "14",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 42
+        },
+        {
+          "inputs": {
+            "duration": "15",
+            "quality": "Pro 2k"
+          },
+          "priceCredits": 45
+        }
+      ],
+      "inputs": [
+        {
+          "id": "prompt",
+          "type": "text",
+          "label": "提示词",
+          "required": true,
+          "max": 30000
+        },
+        {
+          "id": "h3_mode",
+          "type": "enum",
+          "label": "生成方式",
+          "required": true,
+          "options": [
+            "多模态"
+          ],
+          "default": "多模态"
+        },
+        {
+          "id": "image_url",
+          "type": "imageUrl",
+          "label": "参考图 1",
+          "required": false
+        },
+        {
+          "id": "image_url_2",
+          "type": "imageUrl",
+          "label": "参考图 2",
+          "required": false
+        },
+        {
+          "id": "image_url_3",
+          "type": "imageUrl",
+          "label": "参考图 3",
+          "required": false
+        },
+        {
+          "id": "image_url_4",
+          "type": "imageUrl",
+          "label": "参考图 4",
+          "required": false
+        },
+        {
+          "id": "image_url_5",
+          "type": "imageUrl",
+          "label": "参考图 5",
+          "required": false
+        },
+        {
+          "id": "image_url_6",
+          "type": "imageUrl",
+          "label": "参考图 6",
+          "required": false
+        },
+        {
+          "id": "image_url_7",
+          "type": "imageUrl",
+          "label": "参考图 7",
+          "required": false
+        },
+        {
+          "id": "image_url_8",
+          "type": "imageUrl",
+          "label": "参考图 8",
+          "required": false
+        },
+        {
+          "id": "image_url_9",
+          "type": "imageUrl",
+          "label": "参考图 9",
+          "required": false
+        },
+        {
+          "id": "video_url",
+          "type": "videoUrl",
+          "label": "参考视频 1",
+          "required": false
+        },
+        {
+          "id": "video_url_2",
+          "type": "videoUrl",
+          "label": "参考视频 2",
+          "required": false
+        },
+        {
+          "id": "video_url_3",
+          "type": "videoUrl",
+          "label": "参考视频 3",
+          "required": false
+        },
+        {
+          "id": "audio_url",
+          "type": "audioUrl",
+          "label": "参考音频 1",
+          "required": false
+        },
+        {
+          "id": "audio_url_2",
+          "type": "audioUrl",
+          "label": "参考音频 2",
+          "required": false
+        },
+        {
+          "id": "audio_url_3",
+          "type": "audioUrl",
+          "label": "参考音频 3",
+          "required": false
+        },
+        {
+          "id": "aspect_ratio",
+          "type": "enum",
+          "label": "画面比例",
+          "required": false,
+          "options": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:3",
+            "3:2",
+            "2:3"
+          ],
+          "default": "16:9"
+        },
+        {
+          "id": "quality",
+          "type": "enum",
+          "label": "版本 / 画质",
+          "required": true,
+          "options": [
+            "Pro 480p",
+            "Pro 720p",
+            "Pro 1080p",
+            "Pro 2k"
+          ],
+          "default": "Pro 480p"
+        },
+        {
+          "id": "duration",
+          "type": "enum",
+          "label": "时长(秒)",
+          "required": true,
+          "options": [
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+            "15"
+          ],
+          "default": "15"
+        }
+      ]
+    }
+  ]
+}

@@ -2,13 +2,13 @@ package openaiseedance
 
 import (
 	"fmt"
-	"github.com/QuantumNous/new-api/common"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	seedancepricing "github.com/QuantumNous/new-api/setting/seedance_video_pricing"
 	"github.com/gin-gonic/gin"
@@ -43,6 +43,37 @@ func TestOpenAISeedanceBuildsNativeRequestFromOpenAIVideoShape(t *testing.T) {
 	url, err := adaptor.BuildRequestURL(info)
 	require.NoError(t, err)
 	require.Equal(t, "https://vedioapi.laomandi.com/v1/video/generations", url)
+}
+
+func TestOpenAISeedanceExtractsPromptFromContentText(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"doubao-seedance-2.0","seconds":5,"content":[{"type":"text","text":"A blue bird"},{"type":"image_url","image_url":{"url":"https://example.com/frame.png"}}]}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{OriginModelName: seedancepricing.AimodelSeedance20Model, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: seedancepricing.AimodelSeedance20Model}}
+	adaptor := &TaskAdaptor{baseURL: "https://aimodel.szhtp.com"}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+
+	body, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	require.Equal(t, "A blue bird", payload["prompt"])
+	content := payload["content"].([]any)
+	require.Equal(t, "A blue bird", content[0].(map[string]any)["text"])
+}
+
+func TestOpenAISeedanceRejectsImageOnlyContent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"doubao-seedance-2.0","seconds":5,"content":[{"type":"image_url","image_url":{"url":"https://example.com/frame.png"}}]}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{OriginModelName: seedancepricing.AimodelSeedance20Model}
+	result := (&TaskAdaptor{baseURL: "https://aimodel.szhtp.com"}).ValidateRequestAndSetAction(ctx, info)
+	require.NotNil(t, result)
+	require.Equal(t, "invalid_request", result.Code)
 }
 
 func TestOpenAISeedanceForwardsMultipleReferenceImagesToAimodel(t *testing.T) {

@@ -88,7 +88,10 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
 	prompt := strings.TrimSpace(request.Prompt)
-	if prompt == "" && len(request.Content) == 0 {
+	if prompt == "" {
+		prompt = promptFromContent(request.Content)
+	}
+	if prompt == "" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("prompt is required"), "invalid_request", http.StatusBadRequest)
 	}
 	referenceImages, err := collectReferenceImages(request)
@@ -331,7 +334,7 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 func (a *TaskAdaptor) DoResponse(c *gin.Context, response *http.Response, info *relaycommon.RelayInfo) (string, []byte, *taskdto.TaskError) {
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
-		return "", nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
+		return "", nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusBadGateway)
 	}
 	_ = response.Body.Close()
 	var dResp responseTask
@@ -564,6 +567,21 @@ func collectReferenceImages(request relaycommon.TaskSubmitReq) ([]string, error)
 		return nil, fmt.Errorf("reference images support at most %d images", maxReferenceImages)
 	}
 	return urls, nil
+}
+
+func promptFromContent(content []map[string]interface{}) string {
+	var parts []string
+	for _, item := range content {
+		text, ok := item["text"].(string)
+		if !ok {
+			continue
+		}
+		text = strings.TrimSpace(text)
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
 func firstOf(urls []string) string {

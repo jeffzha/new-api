@@ -37,6 +37,8 @@ type TopUp struct {
 	Status                  string `json:"status"`
 	PaymentSnapshot         string `json:"-" gorm:"type:text"`
 	QuotaConversionSnapshot string `json:"-" gorm:"type:text"`
+	InvoiceReservedCents    int64  `json:"-" gorm:"not null;default:0;index"`
+	InvoiceIssuedCents      int64  `json:"-" gorm:"not null;default:0;index"`
 }
 
 func (topUp *TopUp) creditedQuotaOr(defaultQuota int, defaultErr error) (int, error) {

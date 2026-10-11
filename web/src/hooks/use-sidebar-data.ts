@@ -41,6 +41,7 @@ import {
   ClipboardList,
   CreditCard,
   FileText,
+  ReceiptText,
   Key,
   LayoutDashboard,
   ListTodo,
@@ -136,6 +137,11 @@ export function useSidebarData(): SidebarData {
             icon: Wallet,
           },
           {
+            title: t('My Invoices'),
+            url: '/invoices',
+            icon: ReceiptText,
+          },
+          {
             title: t('Profile'),
             url: '/profile',
             icon: User,
@@ -175,6 +181,12 @@ export function useSidebarData(): SidebarData {
             title: t('Subscriptions'),
             url: '/subscriptions',
             icon: CreditCard,
+          },
+          {
+            title: t('Invoice Review'),
+            url: '/invoice-review',
+            icon: ReceiptText,
+            requiredRole: ROLE.ADMIN,
           },
           {
             title: t('Model mock scheduling'),

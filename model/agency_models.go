@@ -922,11 +922,54 @@ type AgencyDebtRepayment struct {
 
 func (AgencyDebtRepayment) TableName() string { return AgencyTablePrefix + "debt_repayments" }
 
+// AgencyCreditTerms is the customer's approved credit contract. Credit is
+// intentionally kept outside AgencyFundingDebt so chargeback/reversal debt
+// remains distinguishable from ordinary monthly credit usage.
+type AgencyCreditTerms struct {
+	UserID          int64  `gorm:"primaryKey" json:"user_id"`
+	CreditLimit     int64  `gorm:"not null" json:"credit_limit"`
+	PaymentTermDays int    `gorm:"not null;default:0" json:"payment_term_days"`
+	RepaymentDay    int    `gorm:"not null;default:1" json:"repayment_day"`
+	Status          string `gorm:"size:16;not null;index:idx_agency_credit_terms_status" json:"status"`
+	EmailEnabled    bool   `gorm:"not null;default:true" json:"email_enabled"`
+	UpdatedBy       int64  `gorm:"not null" json:"updated_by"`
+	CreatedAtMS     int64  `gorm:"not null" json:"created_at_ms"`
+	UpdatedAtMS     int64  `gorm:"not null" json:"updated_at_ms"`
+}
+
+func (AgencyCreditTerms) TableName() string { return AgencyTablePrefix + "credit_terms" }
+
+type AgencyCreditInvoice struct {
+	ID              int64  `gorm:"primaryKey" json:"id"`
+	UserID          int64  `gorm:"not null;index:idx_agency_credit_invoice_user_due;uniqueIndex:uidx_agency_credit_invoice_period,priority:1" json:"user_id"`
+	Period          string `gorm:"size:7;not null;uniqueIndex:uidx_agency_credit_invoice_period,priority:2" json:"period"`
+	PeriodStartMS   int64  `gorm:"not null" json:"period_start_ms"`
+	PeriodEndMS     int64  `gorm:"not null" json:"period_end_ms"`
+	AmountQuota     int64  `gorm:"not null" json:"amount_quota"`
+	PaidQuota       int64  `gorm:"not null;default:0" json:"paid_quota"`
+	BadDebtQuota    int64  `gorm:"not null;default:0" json:"bad_debt_quota"`
+	CurrencyCode    string `gorm:"size:16;not null" json:"currency_code"`
+	Status          string `gorm:"size:16;not null;index:idx_agency_credit_invoice_status" json:"status"`
+	RepaymentDay    int    `gorm:"not null;default:1" json:"repayment_day"`
+	PaymentTermDays int    `gorm:"not null;default:0" json:"payment_term_days"`
+	DueAtMS         int64  `gorm:"not null;index:idx_agency_credit_invoice_user_due" json:"due_at_ms"`
+	OverdueAtMS     int64  `gorm:"not null;index:idx_agency_credit_invoice_status" json:"overdue_at_ms"`
+	BadDebtAtMS     *int64 `json:"bad_debt_at_ms,omitempty"`
+	BadDebtReason   string `gorm:"type:text" json:"bad_debt_reason,omitempty"`
+	EmailStatus     string `gorm:"size:16;not null" json:"email_status"`
+	EmailSentAtMS   *int64 `json:"email_sent_at_ms,omitempty"`
+	AttachmentName  string `gorm:"size:191" json:"attachment_name"`
+	CreatedAtMS     int64  `gorm:"not null" json:"created_at_ms"`
+	UpdatedAtMS     int64  `gorm:"not null" json:"updated_at_ms"`
+}
+
+func (AgencyCreditInvoice) TableName() string { return AgencyTablePrefix + "credit_invoices" }
+
 func AgencyModels() []any {
 	return []any{
 		&Agency{}, &AgencyOperatorAccount{}, &AgencySession{}, &AgencySSOTicketUse{}, &AgencyVerificationUse{}, &AgencyDeliverySecret{},
 		&AgencyUserBinding{}, &AgencyActiveUserBinding{}, &AgencyCustomerSalesOverride{}, &AgencyPricePolicyVersion{}, &AgencyPricePolicyItem{}, &AgencyPlatformPriceState{}, &AgencyPlatformPriceVersion{}, &AgencyIdempotencyRecord{},
-		&AgencyFundingAccount{}, &AgencyFundingLot{}, &AgencyFundingAllocation{}, &AgencyFundingLedger{}, &AgencyFundingDebt{}, &AgencyDebtRepayment{}, &AgencyFundingReversal{}, &AgencyFundingReversalChargeRecord{},
+		&AgencyFundingAccount{}, &AgencyFundingLot{}, &AgencyFundingAllocation{}, &AgencyFundingLedger{}, &AgencyFundingDebt{}, &AgencyDebtRepayment{}, &AgencyFundingReversal{}, &AgencyFundingReversalChargeRecord{}, &AgencyCreditTerms{}, &AgencyCreditInvoice{},
 		&AgencyBillingJournal{}, &AgencyBillingOperation{}, &AgencyBillingOutbox{}, &AgencyEventDelivery{}, &AgencyTaskSubmissionAttempt{},
 		&AgencyBillingCorrection{},
 		&AgencyChargeComponent{}, &AgencyComponentFunding{},

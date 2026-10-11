@@ -131,6 +131,11 @@ export function SidebarModulesCard() {
           title: t('Security & Access'),
           description: t('Manage your security settings and account access'),
         },
+        {
+          key: 'invoices',
+          title: t('My Invoices'),
+          description: t('Submit and track recharge invoice applications.'),
+        },
       ],
     },
   ]

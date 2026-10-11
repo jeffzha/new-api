@@ -35,6 +35,54 @@ func TestQuotaFromCNYPerMillionTokensAppliesFrozenGroupRatio(t *testing.T) {
 	assert.Equal(t, common.QuotaFromDecimal(expected), quota)
 }
 
+func TestQuotaFromProviderPerMillionTokensUsesUSDWithoutExchangeRate(t *testing.T) {
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500_000
+	t.Cleanup(func() {
+		common.QuotaPerUnit = oldQuotaPerUnit
+	})
+	snapshot := &model.TaskProviderBillingSnapshot{
+		Provider:                  model.TaskBillingProviderDoubaoVideoUSD,
+		Currency:                  "USD",
+		UnitPricePerMillionTokens: "7",
+		GroupRatio:                1.2,
+	}
+
+	quota, clamp, err := QuotaFromProviderPerMillionTokens(1_000_000, snapshot)
+
+	require.NoError(t, err)
+	assert.Nil(t, clamp)
+	expected := decimal.NewFromInt(7).
+		Mul(decimal.NewFromInt(500_000)).
+		Mul(decimal.NewFromFloat(1.2))
+	assert.Equal(t, common.QuotaFromDecimal(expected), quota)
+}
+
+func TestQuotaFromProviderPerMillionTokensKeepsLegacyCNYSnapshot(t *testing.T) {
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500_000
+	t.Cleanup(func() {
+		common.QuotaPerUnit = oldQuotaPerUnit
+	})
+	snapshot := &model.TaskProviderBillingSnapshot{
+		Provider:                  model.TaskBillingProviderDoubaoVideoCNY,
+		Currency:                  "CNY",
+		UnitPricePerMillionTokens: "46",
+		CNYPerUSD:                 "7.3",
+		GroupRatio:                1.2,
+	}
+
+	quota, clamp, err := QuotaFromProviderPerMillionTokens(1_000_000, snapshot)
+
+	require.NoError(t, err)
+	assert.Nil(t, clamp)
+	expected := decimal.NewFromInt(46).
+		Div(decimal.NewFromFloat(7.3)).
+		Mul(decimal.NewFromInt(500_000)).
+		Mul(decimal.NewFromFloat(1.2))
+	assert.Equal(t, common.QuotaFromDecimal(expected), quota)
+}
+
 func TestQuotaFromCNYPerMillionTokensReportsOverflow(t *testing.T) {
 	oldQuotaPerUnit := common.QuotaPerUnit
 	common.QuotaPerUnit = 500_000

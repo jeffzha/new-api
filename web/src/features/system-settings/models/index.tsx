@@ -23,7 +23,7 @@ import {
   getModelsSectionContent,
   getModelsSectionMeta,
 } from './section-registry.tsx'
-import { DEFAULT_SEEDANCE_VIDEO_PRICES_CNY_JSON } from './seedance-video-pricing'
+import { DEFAULT_SEEDANCE_VIDEO_PRICES_USD_JSON } from './seedance-video-pricing'
 
 const defaultModelSettings: ModelSettings = {
   'global.pass_through_request_enabled': false,
@@ -60,7 +60,7 @@ const defaultModelSettings: ModelSettings = {
   'billing_setting.billing_expr': '{}',
   'billing_setting.plugin_billing_expr': '{}',
   'tool_price_setting.prices': '{}',
-  'seedance_video_pricing.prices_cny': DEFAULT_SEEDANCE_VIDEO_PRICES_CNY_JSON,
+  'seedance_video_pricing.prices_usd': DEFAULT_SEEDANCE_VIDEO_PRICES_USD_JSON,
   TopupGroupRatio: '',
   GroupRatio: '',
   UserUsableGroups: '',

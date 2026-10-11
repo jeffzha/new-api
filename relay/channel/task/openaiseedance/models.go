@@ -16,18 +16,19 @@ type requestMetadata struct {
 // generateRequest is the normalized OpenAI-format video generate request that
 // is forwarded upstream. The client speaks OpenAI /v1/video/generations, so
 // the prompt is sent as a top-level "prompt" field (not volcengine content[]).
-// Image carries an optional single reference image URL (image-to-video), read
-// from any OpenAI-format field (image/images/content[].image_url) and forwarded
-// as the top-level OpenAI "image" field that the upstream seedance gateway
-// understands.
+// Image/Images carry the optional reference image URL(s) (image-to-video), read
+// from any OpenAI-format field (image/images/input_reference/content[].image_url).
+// A single reference is forwarded as the top-level OpenAI "image" field; two or
+// more are forwarded as the "images" array so every reference reaches upstream.
 type generateRequest struct {
-	Prompt      string `json:"prompt"`
-	Model       string `json:"model"`
-	Image       string `json:"image,omitempty"`
-	Resolution  string `json:"resolution"`
-	Ratio       string `json:"ratio"`
-	Duration    int    `json:"duration"`
-	AudioStatus int    `json:"audio_status"`
+	Prompt      string   `json:"prompt"`
+	Model       string   `json:"model"`
+	Image       string   `json:"image,omitempty"`
+	Images      []string `json:"images,omitempty"`
+	Resolution  string   `json:"resolution"`
+	Ratio       string   `json:"ratio"`
+	Duration    int      `json:"duration"`
+	AudioStatus int      `json:"audio_status"`
 }
 
 // responseTask mirrors the OpenAI-compatible video task status response that
@@ -45,7 +46,7 @@ type responseTask struct {
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 	} `json:"usage"`
-	CreatedAt int64 `json:"created_at"`
+	CreatedAt int64  `json:"created_at"`
 	ResultURL string `json:"result_url"`
 	Error     *struct {
 		Code    string `json:"code"`

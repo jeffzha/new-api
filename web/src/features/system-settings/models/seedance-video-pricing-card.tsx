@@ -62,7 +62,7 @@ import { safeNumberFieldProps } from '../utils/numeric-field'
 import {
   applySeedancePricingFormValues,
   buildSeedancePricingFormValues,
-  MAX_SEEDANCE_VIDEO_PRICE_CNY,
+  MAX_SEEDANCE_VIDEO_PRICE_USD,
   parseSeedanceVideoPrices,
   SEEDANCE_25_MODEL,
   SEEDANCE_FAST_MODEL,
@@ -78,7 +78,7 @@ function createSeedancePricingSchema(t: TFunction) {
     .finite(t('Each price must be a finite number.'))
     .positive(t('Each price must be greater than 0.'))
     .max(
-      MAX_SEEDANCE_VIDEO_PRICE_CNY,
+      MAX_SEEDANCE_VIDEO_PRICE_USD,
       t('Each price must not exceed 1,000,000.')
     )
 
@@ -154,12 +154,12 @@ export function SeedanceVideoPricingCard({ defaultValue }: Props) {
   }
 
   return (
-    <SettingsSection title={t('Seedance CNY Pricing')}>
+    <SettingsSection title={t('Seedance USD Pricing')}>
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)}>
           <SettingsPageTitleStatusPortal>
             <span className='text-muted-foreground text-xs font-normal'>
-              {t('CNY / 1M tokens')}
+              {t('USD / 1M tokens')}
             </span>
           </SettingsPageTitleStatusPortal>
           <SettingsPageActionsPortal>
@@ -193,7 +193,7 @@ export function SeedanceVideoPricingCard({ defaultValue }: Props) {
 
           <Card>
             <CardHeader>
-              <CardTitle>{t('Seedance CNY Pricing')}</CardTitle>
+              <CardTitle>{t('Seedance USD Pricing')}</CardTitle>
               <CardDescription>
                 {t(
                   'Set the customer base price per million video tokens for each model and resolution.'
@@ -275,7 +275,7 @@ export function SeedanceVideoPricingCard({ defaultValue }: Props) {
                                         id={inputId}
                                         type='number'
                                         min={0.01}
-                                        max={MAX_SEEDANCE_VIDEO_PRICE_CNY}
+                                        max={MAX_SEEDANCE_VIDEO_PRICE_USD}
                                         step={0.01}
                                         inputMode='decimal'
                                         aria-invalid={fieldState.invalid}
@@ -321,7 +321,7 @@ export function SeedanceVideoPricingCard({ defaultValue }: Props) {
                                         id={inputId}
                                         type='number'
                                         min={0.01}
-                                        max={MAX_SEEDANCE_VIDEO_PRICE_CNY}
+                                        max={MAX_SEEDANCE_VIDEO_PRICE_USD}
                                         step={0.01}
                                         inputMode='decimal'
                                         aria-invalid={fieldState.invalid}

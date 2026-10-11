@@ -21,7 +21,6 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	seedancepricing "github.com/QuantumNous/new-api/setting/seedance_video_pricing"
 	"github.com/QuantumNous/new-api/types"
 
@@ -177,7 +176,7 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 	_, ok := seedancepricing.NormalizeResolution(info.OriginModelName, resolution)
 	if !ok {
 		return nil, service.TaskErrorWrapperLocal(
-			fmt.Errorf("CNY pricing does not support model %s", info.OriginModelName),
+			fmt.Errorf("USD pricing does not support model %s", info.OriginModelName),
 			"model_price_error",
 			http.StatusBadRequest,
 		)
@@ -188,20 +187,12 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 	default:
 		effectiveResolution = "720p"
 	}
-	unitPrice, ok := seedancepricing.GetUnitPriceCNY(info.OriginModelName, resolution, hasVideo)
+	unitPrice, ok := seedancepricing.GetUnitPriceUSD(info.OriginModelName, resolution, hasVideo)
 	if !ok {
 		return nil, service.TaskErrorWrapperLocal(
-			fmt.Errorf("CNY price is not configured for model %s at resolution %s", info.OriginModelName, resolution),
+			fmt.Errorf("USD price is not configured for model %s at resolution %s", info.OriginModelName, resolution),
 			"model_price_error",
 			http.StatusBadRequest,
-		)
-	}
-	exchangeRate := operation_setting.USDExchangeRate
-	if exchangeRate <= 0 || math.IsNaN(exchangeRate) || math.IsInf(exchangeRate, 0) {
-		return nil, service.TaskErrorWrapperLocal(
-			fmt.Errorf("USD exchange rate must be positive and finite"),
-			"model_price_error",
-			http.StatusInternalServerError,
 		)
 	}
 	groupRatio := info.PriceData.GroupRatioInfo.GroupRatio
@@ -275,17 +266,16 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 		Ceil().
 		IntPart()
 	snapshot := &model.TaskProviderBillingSnapshot{
-		Provider:                    model.TaskBillingProviderDoubaoVideoCNY,
-		Currency:                    "CNY",
+		Provider:                    model.TaskBillingProviderDoubaoVideoUSD,
+		Currency:                    "USD",
 		UnitPricePerMillionTokens:   unitPrice.String(),
-		CNYPerUSD:                   strconv.FormatFloat(exchangeRate, 'f', -1, 64),
 		GroupRatio:                  groupRatio,
 		Resolution:                  effectiveResolution,
 		HasVideoInput:               hasVideo,
 		EstimatedTokens:             estimatedTokens,
 		AsyncReconciliationRequired: false,
 	}
-	quota, clamp, err := taskcommon.QuotaFromCNYPerMillionTokens(estimatedTokens, snapshot)
+	quota, clamp, err := taskcommon.QuotaFromProviderPerMillionTokens(estimatedTokens, snapshot)
 	if err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "model_price_error", http.StatusInternalServerError)
 	}
@@ -294,7 +284,7 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 	}
 	return &channel.TaskBillingEstimate{
 		PriceData: types.PriceData{
-			ModelPrice:     unitPrice.DivRound(decimal.NewFromFloat(exchangeRate), 12).InexactFloat64(),
+			ModelPrice:     unitPrice.InexactFloat64(),
 			Quota:          quota,
 			FreeModel:      groupRatio == 0,
 			GroupRatioInfo: info.PriceData.GroupRatioInfo,
@@ -345,11 +335,12 @@ func (a *TaskAdaptor) AdjustBillingOnCompleteChecked(task *model.Task, taskResul
 	if bc == nil {
 		return 0, nil, false, nil
 	}
-	if snapshot := bc.ProviderBilling; snapshot != nil && snapshot.Provider == model.TaskBillingProviderDoubaoVideoCNY {
+	if snapshot := bc.ProviderBilling; snapshot != nil &&
+		(snapshot.Provider == model.TaskBillingProviderDoubaoVideoUSD || snapshot.Provider == model.TaskBillingProviderDoubaoVideoCNY) {
 		if taskResult.TotalTokens <= 0 {
 			return 0, nil, true, fmt.Errorf("Doubao Video succeeded without usage.total_tokens")
 		}
-		quota, clamp, err := taskcommon.QuotaFromCNYPerMillionTokens(int64(taskResult.TotalTokens), snapshot)
+		quota, clamp, err := taskcommon.QuotaFromProviderPerMillionTokens(int64(taskResult.TotalTokens), snapshot)
 		return quota, clamp, true, err
 	}
 	if taskResult.TotalTokens <= 0 {

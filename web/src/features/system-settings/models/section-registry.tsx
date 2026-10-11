@@ -163,10 +163,10 @@ const MODELS_SECTIONS = [
   },
   {
     id: 'seedance-pricing',
-    titleKey: 'Seedance CNY Pricing',
+    titleKey: 'Seedance USD Pricing',
     build: (settings: ModelSettings) => (
       <SeedanceVideoPricingCard
-        defaultValue={settings['seedance_video_pricing.prices_cny']}
+        defaultValue={settings['seedance_video_pricing.prices_usd']}
       />
     ),
   },

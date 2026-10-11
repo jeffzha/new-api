@@ -17,11 +17,9 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relaydto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	seedancepricing "github.com/QuantumNous/new-api/setting/seedance_video_pricing"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
-	"github.com/shopspring/decimal"
 )
 
 const (
@@ -55,8 +53,7 @@ func (a *TaskAdaptor) GetChannelName() string { return channelName }
 func (a *TaskAdaptor) GetModelList() []string { return ModelList }
 
 // SupportsTaskBilling reports whether this channel type provides its own price
-// for the model using the shared seedance_video_pricing.prices_cny table —
-// the same pricing source as "Seedance Domestic".
+// for the model using the overseas Seedance USD price matrix.
 func (a *TaskAdaptor) SupportsTaskBilling(_ int, modelName string) bool {
 	return seedancepricing.SupportsModel(modelName)
 }
@@ -92,7 +89,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	}
 	normalized := &generateRequest{
 		Prompt: prompt,
-		Image:  firstReferenceImage(request),
+		Images: referenceImages(request),
 	}
 	var metadata requestMetadata
 	if err := request.UnmarshalMetadata(&metadata); err != nil {
@@ -198,22 +195,17 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 			fmt.Errorf("unsupported resolution %q", request.Resolution), "model_price_error", http.StatusBadRequest)
 	}
 	hasVideo := hasVideoInput(c)
-	exchangeRate := operation_setting.USDExchangeRate
-	if exchangeRate <= 0 {
-		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("USD exchange rate must be positive"), "model_price_error", http.StatusInternalServerError)
-	}
-	unitPrice, ok := seedancepricing.GetUnitPriceCNY(info.OriginModelName, request.Resolution, hasVideo)
+	unitPrice, ok := seedancepricing.GetUnitPriceUSD(info.OriginModelName, request.Resolution, hasVideo)
 	if !ok {
 		return nil, service.TaskErrorWrapperLocal(
-			fmt.Errorf("CNY price is not configured for model %s at resolution %s", info.OriginModelName, request.Resolution),
+			fmt.Errorf("USD price is not configured for model %s at resolution %s", info.OriginModelName, request.Resolution),
 			"model_price_error", http.StatusBadRequest)
 	}
 	tokens := estimateVideoTokens(request.Duration, request.Resolution, request.Ratio)
 	snapshot := &model.TaskProviderBillingSnapshot{
 		Provider:                    providerName,
-		Currency:                    "CNY",
+		Currency:                    "USD",
 		UnitPricePerMillionTokens:   unitPrice.String(),
-		CNYPerUSD:                   decimal.NewFromFloat(exchangeRate).String(),
 		GroupRatio:                  info.PriceData.GroupRatioInfo.GroupRatio,
 		Resolution:                  request.Resolution,
 		HasVideoInput:               hasVideo,
@@ -228,7 +220,7 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 		info.QuotaClamp = clamp
 	}
 	priceData := types.PriceData{
-		ModelPrice:     unitPrice.Div(decimal.NewFromFloat(exchangeRate)).InexactFloat64(),
+		ModelPrice:     unitPrice.InexactFloat64(),
 		Quota:          quota,
 		FreeModel:      info.PriceData.GroupRatioInfo.GroupRatio == 0,
 		GroupRatioInfo: info.PriceData.GroupRatioInfo,
@@ -278,8 +270,16 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		// aimodel requires the prompt in its content array as well.
 		outbound["content"] = []map[string]string{{"type": "text", "text": request.Prompt}}
 	}
-	if request.Image != "" {
-		outbound["image"] = request.Image
+	// Forward every reference image. A single reference keeps the historical
+	// top-level "image" field; multiple references use the OpenAI "images"
+	// array so upstream gateways (e.g. Uzoom) can pass them all downstream.
+	switch len(request.Images) {
+	case 0:
+		// no reference image (text-to-video)
+	case 1:
+		outbound["image"] = request.Images[0]
+	default:
+		outbound["images"] = request.Images
 	}
 	data, err := common.Marshal(outbound)
 	if err != nil {
@@ -495,35 +495,41 @@ func hasVideoInput(c *gin.Context) bool {
 	return false
 }
 
-// firstReferenceImage extracts a single reference image URL from the OpenAI-format
-// video request. It checks, in order: the top-level "image" field, the first entry
-// of "images", then the first "content"[].image_url.url. An empty result means no
-// reference image was supplied (pure text-to-video).
-func firstReferenceImage(request relaycommon.TaskSubmitReq) string {
-	if url := strings.TrimSpace(request.Image); url != "" {
-		return url
-	}
-	if url := strings.TrimSpace(request.InputReference); url != "" {
-		return url
-	}
-	for _, url := range request.Images {
-		if url = strings.TrimSpace(url); url != "" {
-			return url
+// referenceImages collects every reference image URL from the OpenAI-format video
+// request, preserving order and dropping duplicates. It reads the top-level
+// "image" and "input_reference" fields, every entry of "images", then the
+// "content"[].image_url.url values. An empty result means no reference image was
+// supplied (pure text-to-video).
+func referenceImages(request relaycommon.TaskSubmitReq) []string {
+	images := make([]string, 0, len(request.Images)+2)
+	seen := make(map[string]struct{}, len(request.Images)+2)
+	appendImage := func(raw string) {
+		url := strings.TrimSpace(raw)
+		if url == "" {
+			return
 		}
+		if _, ok := seen[url]; ok {
+			return
+		}
+		seen[url] = struct{}{}
+		images = append(images, url)
+	}
+	appendImage(request.Image)
+	appendImage(request.InputReference)
+	for _, url := range request.Images {
+		appendImage(url)
 	}
 	for _, item := range request.Content {
 		switch v := item["image_url"].(type) {
 		case string:
-			if url := strings.TrimSpace(v); url != "" {
-				return url
-			}
+			appendImage(v)
 		case map[string]any:
-			if url, ok := v["url"].(string); ok && strings.TrimSpace(url) != "" {
-				return strings.TrimSpace(url)
+			if url, ok := v["url"].(string); ok {
+				appendImage(url)
 			}
 		}
 	}
-	return ""
+	return images
 }
 
 func resolutionFromSize(size string) string {
@@ -555,7 +561,7 @@ func quotaFromUsage(totalTokens int64, snapshot *model.TaskProviderBillingSnapsh
 	if snapshot == nil || snapshot.Provider != providerName {
 		return 0, nil, fmt.Errorf("missing OpenAISeedance billing snapshot")
 	}
-	return taskcommon.QuotaFromCNYPerMillionTokens(totalTokens, snapshot)
+	return taskcommon.QuotaFromProviderPerMillionTokens(totalTokens, snapshot)
 }
 
 func buildUpstreamURL(baseURL string, path string) (string, error) {

@@ -492,7 +492,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			ModelRatio: info.PriceData.ModelRatio, OtherMultiplier: info.PriceData.OtherRatioMultiplier(),
 			IgnoreOtherRatios: common.StringsContains(constant.TaskPricePatches, modelName), ProviderBilling: providerBilling}
 		if providerBilling != nil {
-			basis.Mode = "cny_tokens"
+			basis.Mode = "provider_tokens"
 		} else if info.PriceData.UsePrice || basis.IgnoreOtherRatios {
 			basis.Mode = "fixed"
 		}

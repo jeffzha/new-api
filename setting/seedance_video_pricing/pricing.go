@@ -12,69 +12,49 @@ import (
 )
 
 const (
-	OptionKey             = "seedance_video_pricing.prices_cny"
-	StandardSeedanceModel = "doubao-seedance-2-0-260128"
-	FastSeedanceModel     = "doubao-seedance-2-0-fast-260128"
-	Seedance25Model       = "doubao-seedance-2-5-260628"
+	OptionKey              = "seedance_video_pricing.prices_usd"
+	StandardSeedanceModel  = "doubao-seedance-2-0-260128"
+	FastSeedanceModel      = "doubao-seedance-2-0-fast-260128"
+	Seedance25Model        = "doubao-seedance-2-5-260628"
 	AimodelSeedance20Model = "doubao-seedance-2.0"
 	AimodelSeedance25Model = "doubao-seedance-2.5"
-	MaxPriceCNYPerMillion = 1_000_000.0
+	MaxPriceUSDPerMillion  = 1_000_000.0
 
 	WithoutVideoKey = "without_video"
 	WithVideoKey    = "with_video"
 )
 
-type PricesCNY map[string]map[string]map[string]float64
+type PricesUSD map[string]map[string]map[string]float64
 
 type Setting struct {
-	PricesCNY PricesCNY `json:"prices_cny"`
+	PricesUSD PricesUSD `json:"prices_usd"`
 }
 
 var requiredResolutions = map[string][]string{
-	StandardSeedanceModel: {"720p", "1080p", "4k"},
-	FastSeedanceModel:     {"default"},
-	Seedance25Model:       {"720p", "1080p"},
+	StandardSeedanceModel:  {"720p", "1080p", "4k"},
+	FastSeedanceModel:      {"default"},
+	Seedance25Model:        {"720p", "1080p"},
 	AimodelSeedance20Model: {"720p", "1080p", "4k"},
 	AimodelSeedance25Model: {"720p", "1080p"},
 }
 
-var defaultPricesCNY = func() PricesCNY {
-	prices := PricesCNY{
-	StandardSeedanceModel: {
-		"720p": {
-			WithoutVideoKey: 46,
-			WithVideoKey:    28,
+var defaultPricesUSD = func() PricesUSD {
+	prices := PricesUSD{
+		// Overseas prices are real USD per million video tokens. These are
+		// provider list prices, not CNY values converted at runtime.
+		StandardSeedanceModel: {
+			"720p":  {WithoutVideoKey: 7.0, WithVideoKey: 4.3},
+			"1080p": {WithoutVideoKey: 7.7, WithVideoKey: 4.7},
+			"4k":    {WithoutVideoKey: 4.0, WithVideoKey: 2.4},
 		},
-		"1080p": {
-			WithoutVideoKey: 51,
-			WithVideoKey:    31,
+		FastSeedanceModel: {
+			"default": {WithoutVideoKey: 5.6, WithVideoKey: 3.3},
 		},
-		"4k": {
-			WithoutVideoKey: 26,
-			WithVideoKey:    16,
+		Seedance25Model: {
+			// 480P and 720P share the provider's 720P tier.
+			"720p":  {WithoutVideoKey: 10.7, WithVideoKey: 6.4},
+			"1080p": {WithoutVideoKey: 11.7, WithVideoKey: 7.0},
 		},
-	},
-	FastSeedanceModel: {
-		"default": {
-			WithoutVideoKey: 37,
-			WithVideoKey:    22,
-		},
-	},
-	Seedance25Model: {
-		// The official 480P and 720P tiers have the same list price, so
-		// 480P is normalized to this tier during billing.
-		"720p": {
-			WithoutVideoKey: 70,
-			WithVideoKey:    42,
-		},
-		// The console's temporary 72%-discounted prices are 55.44/33.12.
-		// Store the restored official list prices: 55.44/0.72=77 and
-		// 33.12/0.72=46 CNY per million tokens.
-		"1080p": {
-			WithoutVideoKey: 77,
-			WithVideoKey:    46,
-		},
-	},
 	}
 	// aimodel uses the vendor's dotted model IDs. Keep their public pricing
 	// aligned with the equivalent dated Seedance models.
@@ -84,7 +64,7 @@ var defaultPricesCNY = func() PricesCNY {
 }()
 
 var seedanceVideoPricing = Setting{
-	PricesCNY: clonePrices(defaultPricesCNY),
+	PricesUSD: clonePrices(defaultPricesUSD),
 }
 
 type priceIndex struct {
@@ -100,27 +80,27 @@ func init() {
 	}
 }
 
-func ValidatePricesCNYJSON(raw string) error {
-	var prices PricesCNY
+func ValidatePricesUSDJSON(raw string) error {
+	var prices PricesUSD
 	if err := common.Unmarshal([]byte(raw), &prices); err != nil {
-		return fmt.Errorf("parse Seedance video CNY prices: %w", err)
+		return fmt.Errorf("parse Seedance video USD prices: %w", err)
 	}
-	return ValidatePricesCNY(prices)
+	return ValidatePricesUSD(prices)
 }
 
-func ValidatePricesCNY(prices PricesCNY) error {
+func ValidatePricesUSD(prices PricesUSD) error {
 	if len(prices) != len(requiredResolutions) {
-		return fmt.Errorf("Seedance video CNY prices must configure exactly %d supported models", len(requiredResolutions))
+		return fmt.Errorf("Seedance video USD prices must configure exactly %d supported models", len(requiredResolutions))
 	}
 	for modelName := range prices {
 		if _, ok := requiredResolutions[modelName]; !ok {
-			return fmt.Errorf("unsupported Seedance CNY-priced model %q", modelName)
+			return fmt.Errorf("unsupported Seedance USD-priced model %q", modelName)
 		}
 	}
 	for modelName, resolutions := range requiredResolutions {
 		modelPrices, ok := prices[modelName]
 		if !ok {
-			return fmt.Errorf("Seedance video CNY prices are missing model %q", modelName)
+			return fmt.Errorf("Seedance video USD prices are missing model %q", modelName)
 		}
 		if len(modelPrices) != len(resolutions) {
 			return fmt.Errorf("model %q must configure exactly %d resolution tiers", modelName, len(resolutions))
@@ -138,8 +118,8 @@ func ValidatePricesCNY(prices PricesCNY) error {
 				if !ok {
 					return fmt.Errorf("model %q resolution %q is missing %q", modelName, resolution, inputType)
 				}
-				if price <= 0 || price > MaxPriceCNYPerMillion || math.IsNaN(price) || math.IsInf(price, 0) {
-					return fmt.Errorf("model %q resolution %q price %q must be positive, finite, and no greater than %.0f", modelName, resolution, inputType, MaxPriceCNYPerMillion)
+				if price <= 0 || price > MaxPriceUSDPerMillion || math.IsNaN(price) || math.IsInf(price, 0) {
+					return fmt.Errorf("model %q resolution %q price %q must be positive, finite, and no greater than %.0f", modelName, resolution, inputType, MaxPriceUSDPerMillion)
 				}
 			}
 		}
@@ -150,19 +130,19 @@ func ValidatePricesCNY(prices PricesCNY) error {
 func RebuildPriceIndex() error {
 	// Preserve all existing custom prices during schema upgrades and add only
 	// newly supported model matrices from defaults.
-	prices := clonePrices(seedanceVideoPricing.PricesCNY)
-	defaults := clonePrices(defaultPricesCNY)
+	prices := clonePrices(seedanceVideoPricing.PricesUSD)
+	defaults := clonePrices(defaultPricesUSD)
 	for modelName := range requiredResolutions {
 		if _, ok := prices[modelName]; !ok {
 			prices[modelName] = defaults[modelName]
 		}
 	}
-	seedanceVideoPricing.PricesCNY = prices
-	if err := ValidatePricesCNY(seedanceVideoPricing.PricesCNY); err != nil {
+	seedanceVideoPricing.PricesUSD = prices
+	if err := ValidatePricesUSD(seedanceVideoPricing.PricesUSD); err != nil {
 		return err
 	}
 	next := &priceIndex{prices: make(map[string]decimal.Decimal, 8)}
-	for modelName, resolutionPrices := range seedanceVideoPricing.PricesCNY {
+	for modelName, resolutionPrices := range seedanceVideoPricing.PricesUSD {
 		for resolution, inputPrices := range resolutionPrices {
 			for inputType, price := range inputPrices {
 				next.prices[priceIndexKey(modelName, resolution, inputType)] = decimal.NewFromFloat(price)
@@ -178,7 +158,7 @@ func SupportsModel(modelName string) bool {
 	return ok
 }
 
-func GetUnitPriceCNY(modelName string, resolution string, hasVideo bool) (decimal.Decimal, bool) {
+func GetUnitPriceUSD(modelName string, resolution string, hasVideo bool) (decimal.Decimal, bool) {
 	modelName = strings.TrimSpace(modelName)
 	resolution, ok := NormalizeResolution(modelName, resolution)
 	if !ok {
@@ -224,16 +204,16 @@ func NormalizeResolution(modelName string, resolution string) (string, bool) {
 	}
 }
 
-func DefaultPricesCNY() PricesCNY {
-	return clonePrices(defaultPricesCNY)
+func DefaultPricesUSD() PricesUSD {
+	return clonePrices(defaultPricesUSD)
 }
 
 func priceIndexKey(modelName string, resolution string, inputType string) string {
 	return modelName + "\x00" + resolution + "\x00" + inputType
 }
 
-func clonePrices(source PricesCNY) PricesCNY {
-	cloned := make(PricesCNY, len(source))
+func clonePrices(source PricesUSD) PricesUSD {
+	cloned := make(PricesUSD, len(source))
 	for modelName, resolutions := range source {
 		clonedResolutions := make(map[string]map[string]float64, len(resolutions))
 		for resolution, inputPrices := range resolutions {
@@ -249,5 +229,5 @@ func clonePrices(source PricesCNY) PricesCNY {
 }
 
 func cloneModelPrices(source map[string]map[string]float64) map[string]map[string]float64 {
-	return clonePrices(PricesCNY{"model": source})["model"]
+	return clonePrices(PricesUSD{"model": source})["model"]
 }

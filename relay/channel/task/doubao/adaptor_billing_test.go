@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func estimateCNYBilling(t *testing.T, modelName string, resolution string, hasVideo bool, groupRatio float64, duration int) *channel.TaskBillingEstimate {
+func estimateUSDBilling(t *testing.T, modelName string, resolution string, hasVideo bool, groupRatio float64, duration int) *channel.TaskBillingEstimate {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -56,7 +56,7 @@ func estimateCNYBilling(t *testing.T, modelName string, resolution string, hasVi
 	return estimate
 }
 
-func replaceCNYPricesForTest(t *testing.T, prices seedancepricing.PricesCNY) {
+func replaceUSDPricesForTest(t *testing.T, prices seedancepricing.PricesUSD) {
 	t.Helper()
 	var original string
 	require.NoError(t, config.GlobalConfig.SaveToDB(func(key, value string) error {
@@ -69,7 +69,7 @@ func replaceCNYPricesForTest(t *testing.T, prices seedancepricing.PricesCNY) {
 	t.Cleanup(func() {
 		cfg := config.GlobalConfig.Get("seedance_video_pricing")
 		require.NotNil(t, cfg)
-		require.NoError(t, config.UpdateConfigFromMap(cfg, map[string]string{"prices_cny": original}))
+		require.NoError(t, config.UpdateConfigFromMap(cfg, map[string]string{"prices_usd": original}))
 		require.NoError(t, seedancepricing.RebuildPriceIndex())
 	})
 
@@ -77,11 +77,11 @@ func replaceCNYPricesForTest(t *testing.T, prices seedancepricing.PricesCNY) {
 	require.NoError(t, err)
 	cfg := config.GlobalConfig.Get("seedance_video_pricing")
 	require.NotNil(t, cfg)
-	require.NoError(t, config.UpdateConfigFromMap(cfg, map[string]string{"prices_cny": string(encoded)}))
+	require.NoError(t, config.UpdateConfigFromMap(cfg, map[string]string{"prices_usd": string(encoded)}))
 	require.NoError(t, seedancepricing.RebuildPriceIndex())
 }
 
-func TestEstimateTaskBillingUsesConfiguredCNYMatrix(t *testing.T) {
+func TestEstimateTaskBillingUsesConfiguredUSDMatrix(t *testing.T) {
 	oldQuotaPerUnit := appcommon.QuotaPerUnit
 	oldExchangeRate := operation_setting.USDExchangeRate
 	appcommon.QuotaPerUnit = 500_000
@@ -96,40 +96,39 @@ func TestEstimateTaskBillingUsesConfiguredCNYMatrix(t *testing.T) {
 		model          string
 		resolution     string
 		hasVideo       bool
-		priceCNY       float64
+		priceUSD       float64
 		tokens         int64
 		wantResolution string
 	}{
-		{name: "standard 720p", model: seedancepricing.StandardSeedanceModel, resolution: "720p", priceCNY: 46, tokens: 108_000, wantResolution: "720p"},
-		{name: "standard 720p with video", model: seedancepricing.StandardSeedanceModel, resolution: "720p", hasVideo: true, priceCNY: 28, tokens: 432_000, wantResolution: "720p"},
-		{name: "standard 1080p", model: seedancepricing.StandardSeedanceModel, resolution: "1080p", priceCNY: 51, tokens: 243_000, wantResolution: "1080p"},
-		{name: "standard 1080p with video", model: seedancepricing.StandardSeedanceModel, resolution: "1080p", hasVideo: true, priceCNY: 31, tokens: 972_000, wantResolution: "1080p"},
-		{name: "standard 4k", model: seedancepricing.StandardSeedanceModel, resolution: "4K", priceCNY: 26, tokens: 972_000, wantResolution: "4k"},
-		{name: "standard 4k with video", model: seedancepricing.StandardSeedanceModel, resolution: "4K", hasVideo: true, priceCNY: 16, tokens: 3_888_000, wantResolution: "4k"},
-		{name: "fast default", model: seedancepricing.FastSeedanceModel, resolution: "1080p", priceCNY: 37, tokens: 243_000, wantResolution: "1080p"},
-		{name: "fast default with video", model: seedancepricing.FastSeedanceModel, resolution: "4K", hasVideo: true, priceCNY: 22, tokens: 3_888_000, wantResolution: "4k"},
-		{name: "2.5 480p", model: seedancepricing.Seedance25Model, resolution: "480p", priceCNY: 70, tokens: 48_038, wantResolution: "480p"},
-		{name: "2.5 720p", model: seedancepricing.Seedance25Model, resolution: "720p", priceCNY: 70, tokens: 108_000, wantResolution: "720p"},
-		{name: "2.5 720p with video", model: seedancepricing.Seedance25Model, resolution: "720p", hasVideo: true, priceCNY: 42, tokens: 756_000, wantResolution: "720p"},
-		{name: "2.5 1080p list price", model: seedancepricing.Seedance25Model, resolution: "1080p", priceCNY: 77, tokens: 243_000, wantResolution: "1080p"},
-		{name: "2.5 1080p with video list price", model: seedancepricing.Seedance25Model, resolution: "1080p", hasVideo: true, priceCNY: 46, tokens: 1_701_000, wantResolution: "1080p"},
+		{name: "standard 720p", model: seedancepricing.StandardSeedanceModel, resolution: "720p", priceUSD: 7, tokens: 108_000, wantResolution: "720p"},
+		{name: "standard 720p with video", model: seedancepricing.StandardSeedanceModel, resolution: "720p", hasVideo: true, priceUSD: 4.3, tokens: 432_000, wantResolution: "720p"},
+		{name: "standard 1080p", model: seedancepricing.StandardSeedanceModel, resolution: "1080p", priceUSD: 7.7, tokens: 243_000, wantResolution: "1080p"},
+		{name: "standard 1080p with video", model: seedancepricing.StandardSeedanceModel, resolution: "1080p", hasVideo: true, priceUSD: 4.7, tokens: 972_000, wantResolution: "1080p"},
+		{name: "standard 4k", model: seedancepricing.StandardSeedanceModel, resolution: "4K", priceUSD: 4, tokens: 972_000, wantResolution: "4k"},
+		{name: "standard 4k with video", model: seedancepricing.StandardSeedanceModel, resolution: "4K", hasVideo: true, priceUSD: 2.4, tokens: 3_888_000, wantResolution: "4k"},
+		{name: "fast default", model: seedancepricing.FastSeedanceModel, resolution: "1080p", priceUSD: 5.6, tokens: 243_000, wantResolution: "1080p"},
+		{name: "fast default with video", model: seedancepricing.FastSeedanceModel, resolution: "4K", hasVideo: true, priceUSD: 3.3, tokens: 3_888_000, wantResolution: "4k"},
+		{name: "2.5 480p", model: seedancepricing.Seedance25Model, resolution: "480p", priceUSD: 10.7, tokens: 48_038, wantResolution: "480p"},
+		{name: "2.5 720p", model: seedancepricing.Seedance25Model, resolution: "720p", priceUSD: 10.7, tokens: 108_000, wantResolution: "720p"},
+		{name: "2.5 720p with video", model: seedancepricing.Seedance25Model, resolution: "720p", hasVideo: true, priceUSD: 6.4, tokens: 756_000, wantResolution: "720p"},
+		{name: "2.5 1080p list price", model: seedancepricing.Seedance25Model, resolution: "1080p", priceUSD: 11.7, tokens: 243_000, wantResolution: "1080p"},
+		{name: "2.5 1080p with video list price", model: seedancepricing.Seedance25Model, resolution: "1080p", hasVideo: true, priceUSD: 7, tokens: 1_701_000, wantResolution: "1080p"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			estimate := estimateCNYBilling(t, tt.model, tt.resolution, tt.hasVideo, 1, 5)
+			estimate := estimateUSDBilling(t, tt.model, tt.resolution, tt.hasVideo, 1, 5)
 			snapshot := estimate.Snapshot
 			require.NotNil(t, snapshot)
-			assert.Equal(t, model.TaskBillingProviderDoubaoVideoCNY, snapshot.Provider)
-			assert.Equal(t, "CNY", snapshot.Currency)
-			assert.Equal(t, decimal.NewFromFloat(tt.priceCNY).String(), snapshot.UnitPricePerMillionTokens)
+			assert.Equal(t, model.TaskBillingProviderDoubaoVideoUSD, snapshot.Provider)
+			assert.Equal(t, "USD", snapshot.Currency)
+			assert.Equal(t, decimal.NewFromFloat(tt.priceUSD).String(), snapshot.UnitPricePerMillionTokens)
 			assert.Equal(t, tt.hasVideo, snapshot.HasVideoInput)
 			assert.Equal(t, tt.tokens, snapshot.EstimatedTokens)
 			assert.Equal(t, tt.wantResolution, snapshot.Resolution)
 			expected := decimal.NewFromInt(tt.tokens).
 				Div(decimal.NewFromInt(1_000_000)).
-				Mul(decimal.NewFromFloat(tt.priceCNY)).
-				Div(decimal.NewFromFloat(7.3)).
+				Mul(decimal.NewFromFloat(tt.priceUSD)).
 				Mul(decimal.NewFromFloat(appcommon.QuotaPerUnit))
 			assert.Equal(t, appcommon.QuotaFromDecimal(expected), estimate.PriceData.Quota)
 			assert.False(t, estimate.PriceData.UsePrice)
@@ -217,8 +216,7 @@ func TestEstimateAndSettlementFreezeConfiguredGroupRatio(t *testing.T) {
 
 			baseQuota := decimal.NewFromInt(108_000).
 				Div(decimal.NewFromInt(1_000_000)).
-				Mul(decimal.NewFromInt(46)).
-				Div(decimal.NewFromFloat(7.3)).
+				Mul(decimal.NewFromInt(7)).
 				Mul(decimal.NewFromInt(500_000))
 			expectedEstimate := baseQuota.Mul(decimal.NewFromFloat(tt.expectedRatio))
 			assert.Equal(t, appcommon.QuotaFromDecimal(expectedEstimate), estimate.PriceData.Quota)
@@ -243,8 +241,7 @@ func TestEstimateAndSettlementFreezeConfiguredGroupRatio(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, handled)
 			assert.Nil(t, clamp)
-			expectedSettlement := decimal.NewFromInt(46).
-				Div(decimal.NewFromFloat(7.3)).
+			expectedSettlement := decimal.NewFromInt(7).
 				Mul(decimal.NewFromInt(500_000)).
 				Mul(decimal.NewFromFloat(tt.expectedRatio))
 			assert.Equal(t, appcommon.QuotaFromDecimal(expectedSettlement), quota)
@@ -252,7 +249,7 @@ func TestEstimateAndSettlementFreezeConfiguredGroupRatio(t *testing.T) {
 	}
 }
 
-func TestAdjustBillingOnCompleteUsesFrozenCNYPriceExchangeAndGroup(t *testing.T) {
+func TestAdjustBillingOnCompleteUsesFrozenUSDPriceAndGroup(t *testing.T) {
 	oldQuotaPerUnit := appcommon.QuotaPerUnit
 	oldExchangeRate := operation_setting.USDExchangeRate
 	appcommon.QuotaPerUnit = 500_000
@@ -262,10 +259,10 @@ func TestAdjustBillingOnCompleteUsesFrozenCNYPriceExchangeAndGroup(t *testing.T)
 		operation_setting.USDExchangeRate = oldExchangeRate
 	})
 
-	estimate := estimateCNYBilling(t, seedancepricing.StandardSeedanceModel, "720p", false, 1.2, 5)
-	prices := seedancepricing.DefaultPricesCNY()
+	estimate := estimateUSDBilling(t, seedancepricing.StandardSeedanceModel, "720p", false, 1.2, 5)
+	prices := seedancepricing.DefaultPricesUSD()
 	prices[seedancepricing.StandardSeedanceModel]["720p"][seedancepricing.WithoutVideoKey] = 99
-	replaceCNYPricesForTest(t, prices)
+	replaceUSDPricesForTest(t, prices)
 	operation_setting.USDExchangeRate = 9.9
 
 	task := &model.Task{}
@@ -281,8 +278,7 @@ func TestAdjustBillingOnCompleteUsesFrozenCNYPriceExchangeAndGroup(t *testing.T)
 	require.NoError(t, err)
 	require.True(t, handled)
 	assert.Nil(t, clamp)
-	expected := decimal.NewFromInt(46).
-		Div(decimal.NewFromFloat(7.3)).
+	expected := decimal.NewFromInt(7).
 		Mul(decimal.NewFromFloat(500_000)).
 		Mul(decimal.NewFromFloat(1.2))
 	assert.Equal(t, appcommon.QuotaFromDecimal(expected), quota)

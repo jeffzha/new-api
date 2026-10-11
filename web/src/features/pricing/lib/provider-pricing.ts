@@ -50,7 +50,7 @@ export function getVideoTokenMatrixPricing(
   const candidate = pricing as Record<string, unknown>
   if (
     candidate.kind !== 'video_token_matrix' ||
-    candidate.currency !== 'CNY' ||
+    candidate.currency !== 'USD' ||
     candidate.unit !== '1M_video_tokens' ||
     !Array.isArray(candidate.tiers) ||
     candidate.tiers.length === 0 ||

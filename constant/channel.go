@@ -77,7 +77,7 @@ const (
 	// ChannelTypeOpenAISeedance is an OpenAI-compatible seedance video channel:
 	// it accepts OpenAI /v1/video/generations (prompt) and proxies to an
 	// OpenAI-compatible seedance upstream (e.g. vedioapi.laomandi.com), billing
-	// via the shared seedance_video_pricing.prices_cny table like "Seedance
+	// via the shared seedance_video_pricing.prices_usd table like "Seedance
 	// Domestic".
 	ChannelTypeOpenAISeedance = 1000
 )

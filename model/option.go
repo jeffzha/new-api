@@ -688,7 +688,7 @@ func handleConfigUpdate(key, value string) bool {
 		ratio_setting.InvalidateExposedDataCache()
 	} else if configName == "seedance_video_pricing" {
 		if err := seedancepricing.RebuildPriceIndex(); err != nil {
-			common.SysError("failed to rebuild Seedance video CNY price index: " + err.Error())
+			common.SysError("failed to rebuild Seedance video USD price index: " + err.Error())
 		} else {
 			InvalidatePricingCache()
 		}

@@ -2,13 +2,13 @@ package openaiseedance
 
 import (
 	"fmt"
-	"github.com/QuantumNous/new-api/common"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	seedancepricing "github.com/QuantumNous/new-api/setting/seedance_video_pricing"
 	"github.com/gin-gonic/gin"
@@ -73,4 +73,65 @@ func TestOpenAISeedanceDurationLimitDependsOnModel(t *testing.T) {
 			require.NotNil(t, result)
 		})
 	}
+}
+
+func TestOpenAISeedanceForwardsMultipleReferenceImages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"doubao-seedance-2-0-260128","prompt":"Two cars","seconds":"5","size":"1280x720","images":["https://example.com/a.png","https://example.com/b.png"]}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: defaultModel,
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: defaultModel},
+	}
+	adaptor := &TaskAdaptor{baseURL: "https://api.uzoomtech.com"}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+	body, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	require.NotContains(t, payload, "image")
+	images, ok := payload["images"].([]any)
+	require.True(t, ok)
+	require.Equal(t, []any{"https://example.com/a.png", "https://example.com/b.png"}, images)
+}
+
+func TestOpenAISeedanceKeepsSingleImageShape(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"doubao-seedance-2-0-260128","prompt":"One car","seconds":"5","images":["https://example.com/a.png"]}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: defaultModel,
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: defaultModel},
+	}
+	adaptor := &TaskAdaptor{baseURL: "https://api.uzoomtech.com"}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+	body, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	require.Equal(t, "https://example.com/a.png", payload["image"])
+	require.NotContains(t, payload, "images")
+}
+
+func TestOpenAISeedancePreservesReferenceOrderAndDropsDuplicates(t *testing.T) {
+	request := relaycommon.TaskSubmitReq{
+		Image:          " https://example.com/a.png ",
+		InputReference: "https://example.com/a.png",
+		Images:         []string{"https://example.com/b.png", "https://example.com/a.png"},
+		Content: []map[string]any{{
+			"image_url": map[string]any{"url": "https://example.com/c.png"},
+		}},
+	}
+
+	require.Equal(t, []string{
+		"https://example.com/a.png",
+		"https://example.com/b.png",
+		"https://example.com/c.png",
+	}, referenceImages(request))
 }

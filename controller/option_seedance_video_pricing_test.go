@@ -17,7 +17,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestUpdateOptionRejectsIncompleteSeedanceVideoCNYPrices(t *testing.T) {
+func TestUpdateOptionRejectsIncompleteSeedanceVideoUSDPrices(t *testing.T) {
 	originalDB := model.DB
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
@@ -32,7 +32,7 @@ func TestUpdateOptionRejectsIncompleteSeedanceVideoCNYPrices(t *testing.T) {
 		}
 	})
 
-	incomplete := `{"doubao-seedance-2-0-260128":{"720p":{"without_video":46,"with_video":28}}}`
+	incomplete := `{"doubao-seedance-2-0-260128":{"720p":{"without_video":7,"with_video":4.3}}}`
 	requestBody, err := common.Marshal(OptionUpdateRequest{
 		Key:   seedancepricing.OptionKey,
 		Value: incomplete,

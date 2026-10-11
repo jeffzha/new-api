@@ -72,7 +72,7 @@ func TestSeedanceProviderPricingMatrixByPublicModel(t *testing.T) {
 			require.NotNil(t, pricing.ProviderPricing)
 			providerPricing := pricing.ProviderPricing
 			assert.Equal(t, providerPricingKindVideoTokenMatrix, providerPricing.Kind)
-			assert.Equal(t, "CNY", providerPricing.Currency)
+			assert.Equal(t, "USD", providerPricing.Currency)
 			assert.Equal(t, "1M_video_tokens", providerPricing.Unit)
 			resolutions := make([]string, 0, len(providerPricing.Tiers))
 			for _, tier := range providerPricing.Tiers {
@@ -82,22 +82,22 @@ func TestSeedanceProviderPricingMatrixByPublicModel(t *testing.T) {
 			if tt.model == seedancepricing.FastSeedanceModel {
 				assert.Equal(t, VideoTokenPricingTier{
 					Resolution:   "default",
-					WithoutVideo: 37,
-					WithVideo:    22,
+					WithoutVideo: 5.6,
+					WithVideo:    3.3,
 				}, providerPricing.Tiers[0])
 			} else if tt.model == seedancepricing.Seedance25Model || tt.model == seedancepricing.AimodelSeedance25Model {
 				assert.Equal(t, VideoTokenPricingTier{
 					Resolution:   "480p",
-					WithoutVideo: 70,
-					WithVideo:    42,
+					WithoutVideo: 10.7,
+					WithVideo:    6.4,
 				}, providerPricing.Tiers[0])
-				assert.Equal(t, 77.0, providerPricing.Tiers[2].WithoutVideo)
-				assert.Equal(t, 46.0, providerPricing.Tiers[2].WithVideo)
+				assert.Equal(t, 11.7, providerPricing.Tiers[2].WithoutVideo)
+				assert.Equal(t, 7.0, providerPricing.Tiers[2].WithVideo)
 			} else {
 				assert.Equal(t, VideoTokenPricingTier{
 					Resolution:   tt.wantResolutions[0],
-					WithoutVideo: 46,
-					WithVideo:    28,
+					WithoutVideo: 7,
+					WithVideo:    4.3,
 				}, providerPricing.Tiers[0])
 			}
 
@@ -141,15 +141,15 @@ func TestProviderPricingReflectsConfiguredSeedancePrices(t *testing.T) {
 	// invalidation after administrators change the Seedance matrix.
 	require.NotEmpty(t, GetPricing())
 
-	defaults := seedancepricing.DefaultPricesCNY()
+	defaults := seedancepricing.DefaultPricesUSD()
 	defaultJSON, err := common.Marshal(defaults)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.True(t, handleConfigUpdate(seedancepricing.OptionKey, string(defaultJSON)))
 	})
 
-	updated := seedancepricing.DefaultPricesCNY()
-	updated[seedancepricing.StandardSeedanceModel]["720p"][seedancepricing.WithoutVideoKey] = 47.5
+	updated := seedancepricing.DefaultPricesUSD()
+	updated[seedancepricing.StandardSeedanceModel]["720p"][seedancepricing.WithoutVideoKey] = 7.5
 	updatedJSON, err := common.Marshal(updated)
 	require.NoError(t, err)
 	require.True(t, handleConfigUpdate(seedancepricing.OptionKey, string(updatedJSON)))
@@ -162,7 +162,7 @@ func TestProviderPricingReflectsConfiguredSeedancePrices(t *testing.T) {
 	mobileCloud := pricingByModel[mobileCloudSeedanceModel].ProviderPricing
 	require.NotNil(t, domestic)
 	require.NotNil(t, mobileCloud)
-	assert.Equal(t, 47.5, domestic.Tiers[0].WithoutVideo)
-	assert.Equal(t, 47.5, mobileCloud.Tiers[0].WithoutVideo)
-	assert.Equal(t, 47.5, mobileCloud.Tiers[1].WithoutVideo)
+	assert.Equal(t, 7.5, domestic.Tiers[0].WithoutVideo)
+	assert.Equal(t, 7.5, mobileCloud.Tiers[0].WithoutVideo)
+	assert.Equal(t, 7.5, mobileCloud.Tiers[1].WithoutVideo)
 }

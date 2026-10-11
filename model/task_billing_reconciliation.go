@@ -19,6 +19,7 @@ const (
 	TaskBillingProviderSeedanceDomestic = "seedance_domestic"
 	TaskBillingProviderOpenAISeedance   = "openai_seedance"
 	TaskBillingProviderDoubaoVideoCNY   = "doubao_video_cny"
+	TaskBillingProviderDoubaoVideoUSD   = "doubao_video_usd"
 )
 
 type TaskBillingReconciliation struct {

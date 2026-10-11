@@ -160,12 +160,12 @@ describe('customer pricing display', () => {
     expect(screen.queryByText('$4')).not.toBeInTheDocument()
   })
 
-  it('shows customer video tier amounts in every pricing view without applying USD conversion', () => {
+  it('shows customer video tier amounts in every pricing view without applying a second conversion', () => {
     const model: PricingModel = {
       ...customer,
       provider_pricing: {
         kind: 'video_token_matrix',
-        currency: 'CNY',
+        currency: 'USD',
         unit: '1M_video_tokens',
         tiers: [{ resolution: '720p', without_video: 20, with_video: 10 }],
       },
@@ -177,20 +177,20 @@ describe('customer pricing display', () => {
         onClick={() => undefined}
       />
     )
-    expect(card.container).toHaveTextContent('¥18/¥9')
-    expect(card.container).not.toHaveTextContent('¥40')
+    expect(card.container).toHaveTextContent('$18/$9')
+    expect(card.container).not.toHaveTextContent('$40')
     card.unmount()
     const table = render(
       <PricingTable models={[model]} selectedGroup='default' />
     )
     expect(
-      screen.getByRole('cell', { name: /¥18\s*\/\s*¥9/ })
+      screen.getByRole('cell', { name: /\$18\s*\/\s*\$9/ })
     ).toBeInTheDocument()
     table.unmount()
     renderDetails(model)
-    expect(screen.getAllByRole('cell', { name: '¥18' })).toHaveLength(2)
-    expect(screen.getAllByRole('cell', { name: '¥9' })).toHaveLength(2)
-    expect(screen.queryByText('¥40')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('cell', { name: '$18' })).toHaveLength(2)
+    expect(screen.getAllByRole('cell', { name: '$9' })).toHaveLength(2)
+    expect(screen.queryByText('$40')).not.toBeInTheDocument()
   })
 
   it('scales every dynamic tier display, including detailed expression breakdown', () => {

@@ -44,7 +44,7 @@ func getProviderPricing(modelName string) *ProviderPricing {
 
 	tiers := make([]VideoTokenPricingTier, 0, len(resolutions))
 	for _, resolution := range resolutions {
-		withoutVideo, ok := seedancepricing.GetUnitPriceCNY(
+		withoutVideo, ok := seedancepricing.GetUnitPriceUSD(
 			priceModel,
 			resolution,
 			false,
@@ -52,7 +52,7 @@ func getProviderPricing(modelName string) *ProviderPricing {
 		if !ok {
 			return nil
 		}
-		withVideo, ok := seedancepricing.GetUnitPriceCNY(
+		withVideo, ok := seedancepricing.GetUnitPriceUSD(
 			priceModel,
 			resolution,
 			true,
@@ -69,7 +69,7 @@ func getProviderPricing(modelName string) *ProviderPricing {
 
 	return &ProviderPricing{
 		Kind:     providerPricingKindVideoTokenMatrix,
-		Currency: "CNY",
+		Currency: "USD",
 		Unit:     "1M_video_tokens",
 		Tiers:    tiers,
 	}

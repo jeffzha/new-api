@@ -29,11 +29,11 @@ import {
 
 const matrix: VideoTokenMatrixPricing = {
   kind: 'video_token_matrix',
-  currency: 'CNY',
+  currency: 'USD',
   unit: '1M_video_tokens',
   tiers: [
-    { resolution: '720p', without_video: 46, with_video: 28 },
-    { resolution: '1080p', without_video: 51, with_video: 31 },
+    { resolution: '720p', without_video: 7, with_video: 4.3 },
+    { resolution: '1080p', without_video: 7.7, with_video: 4.7 },
   ],
 }
 
@@ -72,14 +72,17 @@ describe('provider pricing', () => {
     assert.equal(getVideoTokenMatrixPricing(malformedModel), null)
   })
 
-  test('applies the selected group ratio directly to CNY matrix prices', () => {
-    assert.deepEqual(scaleVideoTokenPricingTiers(matrix, 1.5), [
-      { resolution: '720p', without_video: 69, with_video: 42 },
-      { resolution: '1080p', without_video: 76.5, with_video: 46.5 },
-    ])
+  test('applies the selected group ratio directly to USD matrix prices', () => {
+    const scaled = scaleVideoTokenPricingTiers(matrix, 1.5)
+    assert.equal(scaled[0]?.resolution, '720p')
+    assert.closeTo(scaled[0]?.without_video ?? 0, 10.5, 1e-12)
+    assert.closeTo(scaled[0]?.with_video ?? 0, 6.45, 1e-12)
+    assert.equal(scaled[1]?.resolution, '1080p')
+    assert.closeTo(scaled[1]?.without_video ?? 0, 11.55, 1e-12)
+    assert.closeTo(scaled[1]?.with_video ?? 0, 7.05, 1e-12)
   })
 
-  test('sorts matrix models by their lowest valid base CNY price', () => {
+  test('sorts matrix models by their lowest valid base USD price', () => {
     const providerModel = modelWithProviderPricing(matrix)
     const genericModel = {
       ...modelWithProviderPricing(),
@@ -88,7 +91,7 @@ describe('provider pricing', () => {
       model_ratio: 30,
     }
 
-    assert.equal(getLowestVideoTokenMatrixPrice(matrix), 28)
+    assert.equal(getLowestVideoTokenMatrixPrice(matrix), 4.3)
     assert.deepEqual(
       sortModels([genericModel, providerModel], SORT_OPTIONS.PRICE_LOW).map(
         (model) => model.model_name

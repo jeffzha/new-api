@@ -67,7 +67,7 @@ func FreezeAgencyTaskChargeBasis(userID int, chargeID string, basis AgencyTaskCh
 
 // quotaAtRatio preserves the task engine's original rounding order. Fixed
 // prices truncate the price/group product before applying task multipliers;
-// token prices truncate the final product; CNY token prices use decimal math.
+// token prices truncate the final product; provider-token prices use decimal math.
 func (basis AgencyTaskChargeBasis) quotaAtRatio(totalTokens int64, ratio float64) (int, error) {
 	if basis.Version != AgencyTaskChargeBasisVersion || basis.QuotaPerUnit <= 0 || math.IsNaN(basis.QuotaPerUnit) || math.IsInf(basis.QuotaPerUnit, 0) ||
 		ratio < 0 || math.IsNaN(ratio) || math.IsInf(ratio, 0) || basis.OtherMultiplier <= 0 || math.IsNaN(basis.OtherMultiplier) || math.IsInf(basis.OtherMultiplier, 0) {
@@ -91,24 +91,27 @@ func (basis AgencyTaskChargeBasis) quotaAtRatio(totalTokens int64, ratio float64
 			return 0, errors.New("invalid frozen task model ratio")
 		}
 		return common.QuotaFromFloatStrict(float64(totalTokens) * basis.ModelRatio * ratio * basis.OtherMultiplier)
-	case "cny_tokens":
+	case "provider_tokens", "cny_tokens":
 		if totalTokens <= 0 {
 			return 0, ErrAgencyTaskUsagePending
 		}
 		provider := basis.ProviderBilling
-		if provider == nil || provider.Provider == "" || provider.Currency != "CNY" {
+		if provider == nil || provider.Provider == "" || (provider.Currency != "USD" && provider.Currency != "CNY") {
 			return 0, errors.New("invalid frozen task provider billing snapshot")
 		}
 		unitPrice, err := decimal.NewFromString(provider.UnitPricePerMillionTokens)
 		if err != nil || !unitPrice.IsPositive() {
 			return 0, errors.New("invalid frozen provider unit price")
 		}
-		exchangeRate, err := decimal.NewFromString(provider.CNYPerUSD)
-		if err != nil || !exchangeRate.IsPositive() {
-			return 0, errors.New("invalid frozen provider exchange rate")
+		quota := decimal.NewFromInt(totalTokens).Div(decimal.NewFromInt(1_000_000)).Mul(unitPrice)
+		if provider.Currency == "CNY" {
+			exchangeRate, err := decimal.NewFromString(provider.CNYPerUSD)
+			if err != nil || !exchangeRate.IsPositive() {
+				return 0, errors.New("invalid frozen provider exchange rate")
+			}
+			quota = quota.Div(exchangeRate)
 		}
-		quota := decimal.NewFromInt(totalTokens).Div(decimal.NewFromInt(1_000_000)).Mul(unitPrice).
-			Div(exchangeRate).Mul(decimal.NewFromFloat(basis.QuotaPerUnit)).Mul(decimal.NewFromFloat(ratio))
+		quota = quota.Mul(decimal.NewFromFloat(basis.QuotaPerUnit)).Mul(decimal.NewFromFloat(ratio))
 		return common.QuotaFromDecimalStrict(quota)
 	default:
 		return 0, errors.New("unsupported frozen task pricing mode")

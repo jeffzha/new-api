@@ -66,7 +66,7 @@ describe('agency customer prices', () => {
       scaleVideoTokenPricingTiers(
         {
           kind: 'video_token_matrix',
-          currency: 'CNY',
+          currency: 'USD',
           unit: '1M_video_tokens',
           tiers: [{ resolution: '720p', without_video: 20, with_video: 10 }],
         },

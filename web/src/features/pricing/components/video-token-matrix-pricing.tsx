@@ -74,7 +74,7 @@ export function VideoTokenMatrixPricing(props: VideoTokenMatrixPricingProps) {
         </div>
         <div className='text-muted-foreground/60 mt-1 truncate text-[10px]'>
           {t('Without input video')} / {t('With input video')} {'\u00b7'}{' '}
-          {t('CNY / 1M video tokens')}
+          {t('USD / 1M video tokens')}
         </div>
       </div>
     )
@@ -118,7 +118,7 @@ export function VideoTokenMatrixPricing(props: VideoTokenMatrixPricingProps) {
         ]}
       />
       <p className='text-muted-foreground/50 mt-1.5 text-[10px]'>
-        {t('Prices shown per')} {t('CNY / 1M video tokens')}
+        {t('Prices shown per')} {t('USD / 1M video tokens')}
       </p>
     </div>
   )

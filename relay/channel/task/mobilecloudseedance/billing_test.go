@@ -9,7 +9,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -17,14 +16,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestEstimateTaskBillingUsesExistingCNYPriceMatrix(t *testing.T) {
+func TestEstimateTaskBillingUsesUSDPriceMatrix(t *testing.T) {
 	oldQuotaPerUnit := appcommon.QuotaPerUnit
-	oldExchangeRate := operation_setting.USDExchangeRate
 	appcommon.QuotaPerUnit = 500_000
-	operation_setting.USDExchangeRate = 7.3
 	t.Cleanup(func() {
 		appcommon.QuotaPerUnit = oldQuotaPerUnit
-		operation_setting.USDExchangeRate = oldExchangeRate
 	})
 
 	tests := []struct {
@@ -34,9 +30,9 @@ func TestEstimateTaskBillingUsesExistingCNYPriceMatrix(t *testing.T) {
 		wantPrice  string
 		wantTokens int64
 	}{
-		{name: "480p reserves 720p tier", resolution: "480p", wantPrice: "46", wantTokens: 108_000},
-		{name: "720p with video", resolution: "720p", hasVideo: true, wantPrice: "28", wantTokens: 432_000},
-		{name: "1080p", resolution: "1080p", wantPrice: "51", wantTokens: 243_000},
+		{name: "480p reserves 720p tier", resolution: "480p", wantPrice: "7", wantTokens: 108_000},
+		{name: "720p with video", resolution: "720p", hasVideo: true, wantPrice: "4.3", wantTokens: 432_000},
+		{name: "1080p", resolution: "1080p", wantPrice: "7.7", wantTokens: 243_000},
 	}
 
 	for _, test := range tests {
@@ -70,12 +66,13 @@ func TestEstimateTaskBillingUsesExistingCNYPriceMatrix(t *testing.T) {
 			require.Nil(t, taskErr)
 			require.NotNil(t, estimate)
 			assert.Equal(t, billingProvider, estimate.Snapshot.Provider)
+			assert.Equal(t, "USD", estimate.Snapshot.Currency)
+			assert.Empty(t, estimate.Snapshot.CNYPerUSD)
 			assert.Equal(t, test.wantPrice, estimate.Snapshot.UnitPricePerMillionTokens)
 			assert.Equal(t, test.wantTokens, estimate.Snapshot.EstimatedTokens)
 			expected := decimal.NewFromInt(test.wantTokens).
 				Div(decimal.NewFromInt(1_000_000)).
 				Mul(decimal.RequireFromString(test.wantPrice)).
-				Div(decimal.NewFromFloat(7.3)).
 				Mul(decimal.NewFromInt(500_000))
 			assert.Equal(t, appcommon.QuotaFromDecimal(expected), estimate.PriceData.Quota)
 		})
@@ -94,9 +91,8 @@ func TestAdjustBillingOnCompleteUsesFrozenSnapshot(t *testing.T) {
 			BillingContext: &model.TaskBillingContext{
 				ProviderBilling: &model.TaskProviderBillingSnapshot{
 					Provider:                  billingProvider,
-					Currency:                  "CNY",
-					UnitPricePerMillionTokens: "46",
-					CNYPerUSD:                 "7.3",
+					Currency:                  "USD",
+					UnitPricePerMillionTokens: "7",
 					GroupRatio:                1.2,
 				},
 			},
@@ -110,8 +106,7 @@ func TestAdjustBillingOnCompleteUsesFrozenSnapshot(t *testing.T) {
 	assert.True(t, handled)
 	expected := decimal.NewFromInt(250_000).
 		Div(decimal.NewFromInt(1_000_000)).
-		Mul(decimal.NewFromInt(46)).
-		Div(decimal.NewFromFloat(7.3)).
+		Mul(decimal.NewFromInt(7)).
 		Mul(decimal.NewFromInt(500_000)).
 		Mul(decimal.NewFromFloat(1.2))
 	assert.Equal(t, appcommon.QuotaFromDecimal(expected), quota)

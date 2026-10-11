@@ -39,7 +39,7 @@ var resolutionPixels = map[string]map[string]int64{
 }
 
 // estimateVideoTokens approximates the number of video tokens a generated clip
-// consumes so billing can pre-charge against the per-million-token CNY price.
+// consumes so billing can pre-charge against the per-million-token USD price.
 // Mirrors the "Seedance Domestic" estimation: duration × output pixels × fps.
 func estimateVideoTokens(duration int, resolution string, ratio string) int64 {
 	if duration <= 0 {

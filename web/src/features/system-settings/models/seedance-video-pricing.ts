@@ -17,12 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 export const SEEDANCE_VIDEO_PRICING_OPTION_KEY =
-  'seedance_video_pricing.prices_cny'
+  'seedance_video_pricing.prices_usd'
 
 export const SEEDANCE_STANDARD_MODEL = 'doubao-seedance-2-0-260128'
 export const SEEDANCE_FAST_MODEL = 'doubao-seedance-2-0-fast-260128'
 export const SEEDANCE_25_MODEL = 'doubao-seedance-2-5-260628'
-export const MAX_SEEDANCE_VIDEO_PRICE_CNY = 1_000_000
+export const MAX_SEEDANCE_VIDEO_PRICE_USD = 1_000_000
 
 export type SeedanceVideoPrice = {
   without_video: number
@@ -71,41 +71,41 @@ export const SEEDANCE_PRICE_ROWS = [
   },
 ] as const
 
-export const DEFAULT_SEEDANCE_VIDEO_PRICES_CNY: SeedanceVideoPrices = {
+export const DEFAULT_SEEDANCE_VIDEO_PRICES_USD: SeedanceVideoPrices = {
   [SEEDANCE_STANDARD_MODEL]: {
     '720p': {
-      without_video: 46,
-      with_video: 28,
+      without_video: 7,
+      with_video: 4.3,
     },
     '1080p': {
-      without_video: 51,
-      with_video: 31,
+      without_video: 7.7,
+      with_video: 4.7,
     },
     '4k': {
-      without_video: 26,
-      with_video: 16,
+      without_video: 4,
+      with_video: 2.4,
     },
   },
   [SEEDANCE_FAST_MODEL]: {
     default: {
-      without_video: 37,
-      with_video: 22,
+      without_video: 5.6,
+      with_video: 3.3,
     },
   },
   [SEEDANCE_25_MODEL]: {
     '720p': {
-      without_video: 70,
-      with_video: 42,
+      without_video: 10.7,
+      with_video: 6.4,
     },
     '1080p': {
-      without_video: 77,
-      with_video: 46,
+      without_video: 11.7,
+      with_video: 7,
     },
   },
 }
 
-export const DEFAULT_SEEDANCE_VIDEO_PRICES_CNY_JSON = JSON.stringify(
-  DEFAULT_SEEDANCE_VIDEO_PRICES_CNY
+export const DEFAULT_SEEDANCE_VIDEO_PRICES_USD_JSON = JSON.stringify(
+  DEFAULT_SEEDANCE_VIDEO_PRICES_USD
 )
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -130,7 +130,7 @@ function clonePrices(prices: SeedanceVideoPrices): SeedanceVideoPrices {
 }
 
 export function parseSeedanceVideoPrices(raw: string): SeedanceVideoPrices {
-  const prices = clonePrices(DEFAULT_SEEDANCE_VIDEO_PRICES_CNY)
+  const prices = clonePrices(DEFAULT_SEEDANCE_VIDEO_PRICES_USD)
 
   let parsed: unknown
   try {
@@ -166,7 +166,7 @@ export function buildSeedancePricingFormValues(
 ): SeedancePricingFormValues {
   return {
     rows: SEEDANCE_PRICE_ROWS.map(({ model, resolution }) => ({
-      ...DEFAULT_SEEDANCE_VIDEO_PRICES_CNY[model][resolution],
+      ...DEFAULT_SEEDANCE_VIDEO_PRICES_USD[model][resolution],
       ...prices[model]?.[resolution],
     })),
   }
@@ -175,7 +175,7 @@ export function buildSeedancePricingFormValues(
 export function applySeedancePricingFormValues(
   values: SeedancePricingFormValues
 ): SeedanceVideoPrices {
-  const prices = clonePrices(DEFAULT_SEEDANCE_VIDEO_PRICES_CNY)
+  const prices = clonePrices(DEFAULT_SEEDANCE_VIDEO_PRICES_USD)
 
   SEEDANCE_PRICE_ROWS.forEach(({ model, resolution }, index) => {
     prices[model] ??= {}

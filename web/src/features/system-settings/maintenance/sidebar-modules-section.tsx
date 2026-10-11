@@ -136,6 +136,10 @@ export function SidebarModulesSection({
         title: t('Security & Access'),
         description: t('Manage your security settings and account access'),
       },
+      invoices: {
+        title: t('My Invoices'),
+        description: t('Submit and track recharge invoice applications.'),
+      },
     },
     admin: {
       channel: {
@@ -161,6 +165,10 @@ export function SidebarModulesSection({
       subscription: {
         title: t('Subscription Management'),
         description: t('Manage subscription plans and pricing.'),
+      },
+      invoiceReview: {
+        title: t('Invoice Review'),
+        description: t('Review applications and register issued invoices.'),
       },
     },
   }

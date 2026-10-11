@@ -225,6 +225,31 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/subscription/epay/notify", controller.SubscriptionEpayNotify)
 		apiRouter.GET("/subscription/epay/return", controller.SubscriptionEpayReturn)
 		apiRouter.POST("/subscription/epay/return", anonymousRequestBodyLimit, controller.SubscriptionEpayReturn)
+
+		// Register the static admin prefix before the user :id routes for clarity.
+		invoiceAdminRoute := apiRouter.Group("/invoice-applications/admin")
+		invoiceAdminRoute.Use(middleware.DisableCache(), middleware.AdminAuth())
+		{
+			invoiceAdminRoute.GET("", controller.GetAdminInvoiceApplications)
+			invoiceAdminRoute.GET("/:id", controller.GetAdminInvoiceApplication)
+			invoiceAdminRoute.POST("/:id/review", controller.ReviewInvoiceApplication)
+			invoiceAdminRoute.POST("/:id/issue", controller.IssueInvoiceApplication)
+			invoiceAdminRoute.POST("/:id/void-review", controller.ReviewInvoiceVoid)
+			invoiceAdminRoute.POST("/:id/resend", controller.ResendInvoiceEmail)
+			invoiceAdminRoute.GET("/:id/document", controller.DownloadInvoiceDocument)
+		}
+		invoiceRoute := apiRouter.Group("/invoice-applications")
+		invoiceRoute.Use(middleware.DisableCache(), middleware.UserAuth())
+		{
+			invoiceRoute.GET("/summary", controller.GetInvoiceSummary)
+			invoiceRoute.GET("/sources", controller.GetInvoiceSources)
+			invoiceRoute.GET("", controller.GetInvoiceApplications)
+			invoiceRoute.GET("/:id", controller.GetInvoiceApplication)
+			invoiceRoute.POST("", middleware.CriticalRateLimit(), controller.CreateInvoiceApplication)
+			invoiceRoute.POST("/:id/withdraw", controller.WithdrawInvoiceApplication)
+			invoiceRoute.POST("/:id/void-request", controller.RequestInvoiceVoid)
+			invoiceRoute.GET("/:id/document", controller.DownloadInvoiceDocument)
+		}
 		optionRoute := apiRouter.Group("/option")
 		optionRoute.Use(middleware.RootAuth())
 		{

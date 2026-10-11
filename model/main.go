@@ -349,6 +349,10 @@ func migrateDB() error {
 		&Log{},
 		&Midjourney{},
 		&TopUp{},
+		&InvoiceApplication{},
+		&InvoiceApplicationLine{},
+		&InvoiceApplicationEvent{},
+		&InvoiceApplicationDocument{},
 		&QuotaData{},
 		&Task{},
 		&TaskBillingReconciliation{},
@@ -482,6 +486,17 @@ func migrateDBFast() error {
 		if err != nil {
 			return err
 		}
+	}
+	// InvoiceApplication has a HasMany relationship to its line records. Keep
+	// these tables out of the parallel fast-migration batch so a fresh database
+	// cannot create the dependent schema before the application table exists.
+	if err := DB.AutoMigrate(
+		&InvoiceApplication{},
+		&InvoiceApplicationLine{},
+		&InvoiceApplicationEvent{},
+		&InvoiceApplicationDocument{},
+	); err != nil {
+		return fmt.Errorf("failed to migrate invoice tables: %w", err)
 	}
 	if err := migratePrivateChannelTypeIDs(); err != nil {
 		return err

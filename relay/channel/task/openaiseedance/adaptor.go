@@ -370,6 +370,13 @@ func (a *TaskAdaptor) ParseTaskResult(_ *model.Task, _ *http.Response, respBody 
 	if err := common.Unmarshal(respBody, &resTask); err != nil {
 		return nil, fmt.Errorf("unmarshal task result failed: %w", err)
 	}
+	if strings.TrimSpace(resTask.Status) == "" {
+		// Some OpenAI-compatible gateways (for example Uzoom) wrap their task
+		// record in a {code,message,data} envelope; flatten it when the flat
+		// shape did not carry a status.
+		applyTaskEnvelope(respBody, &resTask)
+	}
+	resTask.Status = normalizeUpstreamTaskStatus(resTask.Status)
 	result := &relaycommon.TaskInfo{Code: 0}
 	switch resTask.Status {
 	case "queued", "pending":
@@ -476,6 +483,9 @@ func (a *TaskAdaptor) queryTotalTokens(ctx context.Context, upstreamID string) (
 	}
 	if err := common.Unmarshal(body, &resTask); err != nil {
 		return 0, err
+	}
+	if resTask.Usage.TotalTokens <= 0 {
+		applyTaskEnvelope(body, &resTask)
 	}
 	return int64(resTask.Usage.TotalTokens), nil
 }

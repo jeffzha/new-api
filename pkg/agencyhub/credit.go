@@ -25,22 +25,28 @@ const shanghaiCreditLocation = "Asia/Shanghai"
 // statement so a broken mailbox or SMTP outage cannot turn into a mail flood.
 const creditFailedEmailRetryDelay = 15 * time.Minute
 
-// creditRoutes exposes the platform credit book. Credit is granted by the
-// super administrator for the whole site: it never belongs to an agency, so
-// every route here stays root-only and is not narrowed by the acting-agency
-// scope. Agencies only read the resulting position of their own customers
-// through the customer reports.
-func (a *App) creditRoutes(api *gin.RouterGroup) {
-	root := api.Group("/root")
-	root.Use(a.requireRoot())
-	root.GET("/credit/terms", a.listCreditTerms)
-	root.GET("/credit/users/resolve", a.resolveCreditUser)
-	root.GET("/users/:user_id/credit", a.getCreditTerms)
-	root.PUT("/users/:user_id/credit", a.putCreditTerms)
-	root.GET("/credit-invoices", a.listCreditInvoices)
-	root.POST("/credit-invoices/:id/mark-paid", a.markCreditInvoicePaid)
-	root.POST("/credit-invoices/:id/mark-bad-debt", a.markCreditInvoiceBadDebt)
-	root.POST("/credit-invoices/:id/resend-email", a.resendCreditInvoiceEmail)
+// CreditBookRoutes mounts the platform credit book under a group that is already
+// authenticated as the super administrator. The gateway uses it to serve the
+// book straight from the main site admin console, where the platform root
+// session is the proof. The Agency Center has no management routes for this
+// platform-wide capability.
+func (a *App) CreditBookRoutes(book *gin.RouterGroup) {
+	book.GET("/terms", a.listCreditTerms)
+	book.GET("/resolve-user", a.resolveCreditUser)
+	book.GET("/users/:user_id", a.getCreditTerms)
+	book.PUT("/users/:user_id", a.putCreditTerms)
+	book.GET("/statements", a.listCreditInvoices)
+	book.POST("/statements/:id/mark-paid", a.markCreditInvoicePaid)
+	book.POST("/statements/:id/mark-bad-debt", a.markCreditInvoiceBadDebt)
+	book.POST("/statements/:id/resend-email", a.resendCreditInvoiceEmail)
+}
+
+// PlatformRootIdentity describes the super administrator of the main site when
+// the gateway serves the credit book there. Both the audit trail and the
+// updated_by column record this actor, and without it every mutation would fail
+// closed because the audit helper refuses an anonymous writer.
+func PlatformRootIdentity(actorID int64) *Identity {
+	return &Identity{ActorType: ActorTypeRoot, ActorID: actorID}
 }
 
 func creditLocation() *time.Location {
@@ -177,15 +183,50 @@ func (a *App) resolveCreditUser(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "database_error", "读取授信余额失败", nil)
 		return
 	}
+	// The main-site book opens this result directly after a search. Return the
+	// persisted contract fields too, rather than making the browser infer them
+	// from the balance overview and accidentally reset existing terms on save.
+	if !overview.Configured {
+		respondOK(c, gin.H{
+			"user_id":              strconv.FormatInt(int64(user.Id), 10),
+			"username":             user.Username,
+			"account_name":         userAccountName(user),
+			"configured":           false,
+			"status":               model.AgencyCreditStatusSuspended,
+			"credit_limit":         0,
+			"used_quota":           overview.UsedQuota,
+			"available_quota":      0,
+			"payment_term_days":    0,
+			"repayment_day":        model.AgencyCreditRepaymentDay,
+			"email_enabled":        false,
+			"next_statement_at_ms": overview.NextStatementAtMS,
+		})
+		return
+	}
+	var terms model.AgencyCreditTerms
+	err = a.db.Where("user_id = ?", user.Id).First(&terms).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取授信条款失败", nil)
+		return
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		respondError(c, http.StatusConflict, "credit_terms_inconsistent", "授信条款状态异常，请稍后重试", nil)
+		return
+	}
 	respondOK(c, gin.H{
-		"user_id":         strconv.FormatInt(int64(user.Id), 10),
-		"username":        user.Username,
-		"account_name":    userAccountName(user),
-		"configured":      overview.Configured,
-		"status":          overview.Status,
-		"credit_limit":    overview.CreditLimit,
-		"used_quota":      overview.UsedQuota,
-		"available_quota": overview.AvailableQuota,
+		"user_id":              strconv.FormatInt(int64(user.Id), 10),
+		"username":             user.Username,
+		"account_name":         userAccountName(user),
+		"configured":           true,
+		"status":               terms.Status,
+		"credit_limit":         terms.CreditLimit,
+		"used_quota":           overview.UsedQuota,
+		"available_quota":      overview.AvailableQuota,
+		"payment_term_days":    terms.PaymentTermDays,
+		"repayment_day":        model.AgencyCreditRepaymentDay,
+		"email_enabled":        terms.EmailEnabled,
+		"next_statement_at_ms": overview.NextStatementAtMS,
+		"updated_at_ms":        terms.UpdatedAtMS,
 	})
 }
 

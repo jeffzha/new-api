@@ -189,6 +189,12 @@ export function useSidebarData(): SidebarData {
             requiredRole: ROLE.ADMIN,
           },
           {
+            title: t('Credit & statements'),
+            url: '/credit',
+            icon: Wallet,
+            requiredRole: ROLE.SUPER_ADMIN,
+          },
+          {
             title: t('Model mock scheduling'),
             url: 'https://model-mock.nexus-reach.com',
             icon: FlaskConical,

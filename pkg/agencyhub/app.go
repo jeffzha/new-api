@@ -201,7 +201,6 @@ func (a *App) Router() *gin.Engine {
 	root.POST("/withdrawals/:id/mark-paid", a.markWithdrawalPaid)
 	root.POST("/withdrawals/:id/reject", a.rejectWithdrawal)
 	root.POST("/withdrawal-accounts/:id/reveal", a.revealWithdrawalAccount)
-	a.creditRoutes(api)
 	return r
 }
 

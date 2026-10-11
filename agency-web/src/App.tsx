@@ -14,7 +14,6 @@ import { PricingPage } from "./features/pricing/PricingPage";
 import { WithdrawalsPage } from "./features/finance/WithdrawalsPage";
 import { AccountsPage } from "./features/finance/AccountsPage";
 import { ExportsPage } from "./features/exports/ExportsPage";
-import { CreditPage } from "./features/credit/CreditPage";
 import type { ExportKind } from "./features/exports/contracts";
 import { InvitationsPage } from "./features/invitations/InvitationsPage";
 import {
@@ -139,7 +138,6 @@ type Tab =
   | "invitation"
   | "ledger"
   | "withdrawals"
-  | "credit"
   | "accounts"
   | "exports"
   | "sync"
@@ -154,7 +152,6 @@ const tabLabels: Record<Tab, string> = {
   invitation: "Invite customers",
   ledger: "Commission ledger",
   withdrawals: "Withdrawals",
-  credit: "Credit & statements",
   accounts: "Payout accounts",
   exports: "Data exports",
   sync: "Sync & reconciliation",
@@ -207,8 +204,6 @@ function NavIcon({ tab }: { tab: Tab }) {
       return <svg {...common}><path d="M6 3h12a2 2 0 0 1 2 2v16H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3ZM3 18a3 3 0 0 1 3-3h14M8 7h7M8 11h5" /></svg>;
     case "withdrawals":
       return <svg {...common}><path d="M12 3v12M7 10l5 5 5-5M5 21h14" /></svg>;
-    case "credit":
-      return <svg {...common}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18M7 15h4" /></svg>;
     case "accounts":
       return <svg {...common}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18M7 15h4" /></svg>;
     case "exports":
@@ -253,7 +248,6 @@ function Dashboard({
           "pricing",
           "customers",
           "withdrawals",
-          "credit",
           "sync",
           "audit",
         ]
@@ -296,9 +290,6 @@ function Dashboard({
       break;
     case "withdrawals":
       content = <WithdrawalsPage identity={identity} onAddAccount={() => setTab("accounts")} />;
-      break;
-    case "credit":
-      content = <CreditPage identity={identity} />;
       break;
     case "accounts":
       content = <AccountsPage identity={identity} />;

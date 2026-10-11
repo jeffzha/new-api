@@ -34,6 +34,13 @@ func SetApiRouter(router *gin.Engine) {
 	// money. The GET preview is read-only.
 	agencyRoute.GET("/charge-corrections", middleware.RootAuth(), middleware.DisableCache(), controller.ListAgencyChargeCorrections)
 	agencyRoute.POST("/charge-corrections", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-charge-correction"), middleware.DisableCache(), controller.ApplyAgencyChargeCorrections)
+	// The platform credit book is granted by the super administrator and never
+	// belongs to an agency, so it is served straight from the main site admin
+	// console instead of hiding behind the Agency Center login. Statement
+	// generation and the retrying mail lane stay in the Agency Hub sidecar.
+	creditBookRoute := apiRouter.Group("/credit")
+	creditBookRoute.Use(middleware.RootAuth(), middleware.DisableCache(), controller.CreditBookRootIdentity())
+	controller.RegisterCreditBookRoutes(creditBookRoute)
 	modelMockRoute := apiRouter.Group("/model-mock")
 	modelMockRoute.GET("/sso", controller.ModelMockSSOPage)
 	modelMockRoute.POST("/sso-ticket", middleware.UserAuth(), middleware.UserCriticalRateLimit("model-mock-sso"), middleware.DisableCache(), controller.IssueModelMockSSOTicket)

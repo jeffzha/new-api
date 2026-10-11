@@ -5,11 +5,12 @@ export type ChannelFilterOption = { id: string; name: string; models: number };
 
 /** One physical table row per channel keeps wrapped names aligned with their cost. */
 export function ChannelPricingRows(props: {
-  channels: { id: string | number; name: string; cost: ReactNode }[];
+  channels: { id: string | number; name: string; cost?: ReactNode }[];
   leading: ReactNode[];
   trailing: ReactNode[];
   emptyCost?: ReactNode;
   className?: string;
+  showChannelCost?: boolean;
 }) {
   const { t } = useTranslation();
   const channels = props.channels.length
@@ -32,7 +33,7 @@ export function ChannelPricingRows(props: {
               </td>
             ))}
           <td className="pricing-channel-cell">{channel.name}</td>
-          <td className="pricing-cost-cell">{channel.cost}</td>
+          {props.showChannelCost !== false && <td className="pricing-cost-cell">{channel.cost}</td>}
           {index === 0 &&
             props.trailing.map((cell, position) => (
               <td key={position} rowSpan={channels.length}>

@@ -22,6 +22,30 @@ type childPricingRequest struct {
 	Reason string `json:"reason"`
 }
 
+type childPricingModel struct {
+	OriginModelName string                `json:"origin_model_name"`
+	SettlementBPS   *int                  `json:"settlement_bps"`
+	ChildCostBPS    *int                  `json:"child_cost_bps"`
+	VendorName      string                `json:"vendor_name,omitempty"`
+	VendorIcon      string                `json:"vendor_icon,omitempty"`
+	Channels        []childPricingChannel `json:"channels"`
+}
+
+// Child pricing only needs the public channel identity. Keep platform
+// procurement costs out of the agency operator response.
+type childPricingChannel struct {
+	ChannelID   int    `json:"channel_id"`
+	ChannelName string `json:"channel_name"`
+}
+
+func childPricingChannels(channels []PlatformPricingCatalogChannel) []childPricingChannel {
+	result := make([]childPricingChannel, 0, len(channels))
+	for _, channel := range channels {
+		result = append(result, childPricingChannel{ChannelID: channel.ChannelID, ChannelName: channel.ChannelName})
+	}
+	return result
+}
+
 func (a *App) directChild(identity *Identity, childID int64) (model.Agency, agencycontract.Policy, error) {
 	if identity == nil || identity.AgencyID == nil || (identity.ActorType != ActorTypeOperator && identity.ActorType != ActorTypeRoot) {
 		return model.Agency{}, agencycontract.Policy{}, errors.New("agency operator required")
@@ -49,6 +73,27 @@ func (a *App) getChildPricing(c *gin.Context) {
 		return
 	}
 	view := a.policyView(child, policy)
+	// Keep child-cost editing on the same live catalog as platform pricing so
+	// provider tabs, channel filters, and model rows cannot drift apart.
+	catalog, catalogErr := LoadPlatformPricingCatalog(a.db)
+	if catalogErr != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取实时模型与渠道失败", nil)
+		return
+	}
+	models := make([]childPricingModel, 0, len(catalog.Items)+len(policy.ModelOverrides))
+	for _, catalogRow := range catalog.Items {
+		modelRow := childPricingModel{OriginModelName: catalogRow.OriginModelName, VendorName: catalogRow.VendorName, VendorIcon: catalogRow.VendorIcon, Channels: childPricingChannels(catalogRow.ChannelCosts)}
+		for _, override := range policy.ModelOverrides {
+			if override.OriginModelName == catalogRow.OriginModelName {
+				modelRow.SettlementBPS = override.SettlementBPS
+				modelRow.ChildCostBPS = override.ChildCostBPS
+				break
+			}
+		}
+		models = append(models, modelRow)
+	}
+	view["model_overrides"] = models
+	view["catalog_revision"] = catalog.Revision
 	view["parent_agency_id"] = child.ParentAgencyID
 	view["can_edit_cost"] = child.Status == AgencyStatusActive
 	respondOK(c, view)

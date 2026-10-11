@@ -72,6 +72,12 @@ async function openWorkspace(page: Page, root: boolean) {
       data = { default_sales_bps: 8000, default_agency_cost_bps: 7000, items: [] };
     if (path === "/models")
       data = { items: ["unlisted-model"], catalog: [{ model: "unlisted-model", channels }] };
+    if (path === "/children")
+      data = { items: [{ id: 9, display_name: "Child agency", operator_username: "child", status: "active", depth: 1, price_revision: 3 }] };
+    if (path === "/hierarchy")
+      data = { current: { id: 1, display_name: "Root agency", status: "active", depth: 0, price_revision: 1 }, parents: [], children: [] };
+    if (path === "/children/9/pricing")
+      data = { revision: 3, default_settlement_bps: 7000, model_overrides: [{ origin_model_name: "unlisted-model", settlement_bps: 7000, channels }] };
     await route.fulfill({ json: { success: true, data } });
   });
   await page.goto("/agency/");
@@ -170,4 +176,19 @@ test("reconciliation keeps checks and history visible while hiding service statu
   for (const name of ["Service status", "Capability", "Pending work"]) {
     await expect(page.getByRole("heading", { name, exact: true })).toHaveCount(0);
   }
+});
+
+test("child pricing uses the shared search and provider tabs without dropping untouched edits", async ({ page }) => {
+  await openWorkspace(page, false);
+  await page.getByRole("button", { name: "Agencies", exact: true }).click();
+  await page.getByRole("button", { name: "Manage child pricing", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByPlaceholder("Search models, providers, or channels", { exact: true })).toBeVisible();
+  const input = dialog.getByLabel("Child cost coefficient: unlisted-model", { exact: true });
+  await input.fill("0.7300");
+  await dialog.getByPlaceholder("Search models, providers, or channels", { exact: true }).fill("unlisted");
+  await expect(input).toHaveValue("0.7300");
+  const published = page.waitForRequest((request) => request.method() === "POST" && request.url().endsWith("/children/9/pricing/publish"));
+  await dialog.getByRole("button", { name: "Publish child pricing", exact: true }).click();
+  expect((await published).postDataJSON()).toMatchObject({ model_cost_overrides: [{ origin_model_name: "unlisted-model", settlement_bps: 7300 }] });
 });

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { useTranslation } from "react-i18next";
 import { ActionIcon } from "../../components/Heading";
 import { PageHeader } from "../../components/PageHeader";
@@ -6,13 +6,17 @@ import { Dialog, ErrorNotice, Field, Loading, Pager, Table, Time } from "../../c
 import { useMutation } from "../../lib/mutations";
 import { useQuery } from "../../lib/client";
 import { formatCoefficient, parseCoefficient } from "../pricing/policy";
+import { childPricingOverridePayload, type ChildPricingModel } from "./childPricing";
+import { ChannelPricingRows, type ChannelFilterOption } from "../pricing/ChannelFilter";
+import { ChannelFilterMenu, VendorMark, VendorTabs } from "../pricing/VendorFilter";
+import { activeVendorKey, buildVendorOptions, matchesPricingSearch, vendorKeyOf } from "../pricing/vendorOptions";
 
 type Child = { id: number | string; display_name: string; operator_username?: string; status: string; depth: number; price_revision: number };
 type ChildrenResponse = { items: Child[] };
 type HierarchyResponse = { current: Child; parents: Child[]; children: Child[] };
 type PasswordDelivery = { temporary_password?: string; invite_url?: string; invite_qr_url?: string; temporary_password_expires_at?: number; operator_username?: string };
-type ModelCostOverride = { origin_model_name: string; settlement_bps?: number | null };
-type Pricing = { revision: number; default_settlement_bps: number; model_overrides?: ModelCostOverride[] };
+type ModelCostOverride = ChildPricingModel;
+type Pricing = { revision: number; default_settlement_bps: number; catalog_revision?: number; model_overrides?: ModelCostOverride[] };
 
 export function ChildrenPage() {
   const { t } = useTranslation();
@@ -99,9 +103,90 @@ function ChildPricing(props: { child: Child; onClose: () => void; onSaved: () =>
   const { t } = useTranslation();
   const query = useQuery<Pricing>(`/children/${props.child.id}/pricing`);
   const mutation = useMutation();
-  const [cost, setCost] = useState(""); const [modelCosts, setModelCosts] = useState<Record<string, string>>({}); const [reason, setReason] = useState(""); const [error, setError] = useState<unknown>(null);
+  const [cost, setCost] = useState("");
+  const [modelCosts, setModelCosts] = useState<Record<string, string>>({});
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const [search, setSearch] = useState("");
+  const [channels, setChannels] = useState<string[]>([]);
+  const [vendorFilter, setVendorFilter] = useState("all");
+  const [page, setPage] = useState(0);
   if (query.loading || !query.data) return <Dialog title={t("Manage child pricing")} onClose={props.onClose}><Loading /><ErrorNotice error={query.error} /></Dialog>;
-  const data = query.data; const modelOverrides = data.model_overrides ?? [];
-  async function save() { try { const overrides = modelOverrides.flatMap((row) => { const value = modelCosts[row.origin_model_name] ?? (row.settlement_bps == null ? "" : formatCoefficient(row.settlement_bps)); return value.trim() ? [{ origin_model_name: row.origin_model_name, settlement_bps: parseCoefficient(value) }] : []; }); await mutation.mutate(`/children/${props.child.id}/pricing/publish`, { expected_revision: data.revision, default_settlement_bps: parseCoefficient(cost || formatCoefficient(data.default_settlement_bps)), model_cost_overrides: overrides, reason: reason.trim() }, { action: "agency.child.pricing.publish", objectId: `agency:${props.child.id}`, title: t("Manage child pricing") }); props.onSaved(); props.onClose(); } catch (cause) { setError(cause); } }
-  return <Dialog title={t("Manage child pricing") + " · " + props.child.display_name} onClose={props.onClose} busy={mutation.pending}><p className="muted">{t("Only direct child cost can be changed. Sales pricing remains managed by the child agency for its customers.")}</p><Field label={t("Child cost coefficient")}><input inputMode="decimal" value={cost || formatCoefficient(data.default_settlement_bps)} onChange={(event) => setCost(event.target.value)} /></Field>{modelOverrides.length > 0 && <fieldset className="form-grid"><legend>{t("Model cost overrides")}</legend>{modelOverrides.map((row) => <Field key={row.origin_model_name} label={row.origin_model_name}><input inputMode="decimal" value={modelCosts[row.origin_model_name] ?? (row.settlement_bps == null ? "" : formatCoefficient(row.settlement_bps))} onChange={(event) => setModelCosts((current) => ({ ...current, [row.origin_model_name]: event.target.value }))} /></Field>)}</fieldset>}<Field label={t("Change reason (optional)")}><input maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} /></Field><ErrorNotice error={error} /><div className="actions dialog-actions"><button className="secondary" type="button" onClick={props.onClose}>{t("Cancel")}</button><button type="button" disabled={mutation.pending} onClick={() => void save()}>{t("Publish child pricing")}</button></div></Dialog>;
+  return <ChildPricingMatrix child={props.child} onClose={props.onClose} onSaved={props.onSaved} data={query.data} mutation={mutation} cost={cost} setCost={setCost} modelCosts={modelCosts} setModelCosts={setModelCosts} reason={reason} setReason={setReason} error={error} setError={setError} search={search} setSearch={setSearch} channels={channels} setChannels={setChannels} vendorFilter={vendorFilter} setVendorFilter={setVendorFilter} page={page} setPage={setPage} />;
+}
+
+function ChildPricingMatrix(props: {
+  child: Child;
+  onClose: () => void;
+  onSaved: () => void;
+  data: Pricing;
+  mutation: ReturnType<typeof useMutation>;
+  cost: string;
+  setCost: (value: string) => void;
+  modelCosts: Record<string, string>;
+  setModelCosts: Dispatch<SetStateAction<Record<string, string>>>;
+  reason: string;
+  setReason: (value: string) => void;
+  error: unknown;
+  setError: (value: unknown) => void;
+  search: string;
+  setSearch: (value: string) => void;
+  channels: string[];
+  setChannels: Dispatch<SetStateAction<string[]>>;
+  vendorFilter: string;
+  setVendorFilter: (value: string) => void;
+  page: number;
+  setPage: (value: number | ((current: number) => number)) => void;
+}) {
+  const { t } = useTranslation();
+  const data = props.data;
+  const modelOverrides = data.model_overrides ?? [];
+  const channelOptions = useMemo<ChannelFilterOption[]>(() => {
+    const map = new Map<string, ChannelFilterOption>();
+    for (const row of modelOverrides) {
+      for (const channel of row.channels ?? []) {
+        const id = String(channel.channel_id);
+        const current = map.get(id) ?? { id, name: channel.channel_name, models: 0 };
+        current.models += 1;
+        map.set(id, current);
+      }
+    }
+    return [...map.values()].sort((left, right) => left.name.localeCompare(right.name));
+  }, [modelOverrides]);
+  const channelRows = useMemo(() => props.channels.length === 0 ? modelOverrides : modelOverrides.filter((row) => (row.channels ?? []).some((channel) => props.channels.includes(String(channel.channel_id)))), [props.channels, modelOverrides]);
+  const vendorOptions = useMemo(() => buildVendorOptions(channelRows, t("Other providers")), [channelRows, t]);
+  const activeVendor = activeVendorKey(props.vendorFilter, vendorOptions);
+  const visibleRows = useMemo(() => channelRows.filter((row) => (activeVendor === "all" || vendorKeyOf(row) === activeVendor) && matchesPricingSearch(props.search, { origin_model_name: row.origin_model_name, vendor_name: row.vendor_name, channelNames: (row.channels ?? []).map((channel) => channel.channel_name) })), [activeVendor, channelRows, props.search]);
+  const pageSize = 20;
+  const pageCount = Math.max(1, Math.ceil(visibleRows.length / pageSize));
+  const currentPage = Math.min(props.page, pageCount - 1);
+  const pageRows = visibleRows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+  async function save() {
+    try {
+      const overrides = childPricingOverridePayload(modelOverrides, props.modelCosts);
+      await props.mutation.mutate(`/children/${props.child.id}/pricing/publish`, { expected_revision: data.revision, default_settlement_bps: parseCoefficient(props.cost || formatCoefficient(data.default_settlement_bps)), model_cost_overrides: overrides, reason: props.reason.trim() }, { action: "agency.child.pricing.publish", objectId: `agency:${props.child.id}`, title: t("Manage child pricing") });
+      props.onSaved();
+      props.onClose();
+    } catch (cause) {
+      props.setError(cause);
+    }
+  }
+  return <Dialog className="child-pricing-dialog" title={t("Manage child pricing") + " · " + props.child.display_name} onClose={props.onClose} busy={props.mutation.pending}>
+    <p className="muted">{t("Only direct child cost can be changed. Sales pricing remains managed by the child agency for its customers.")}</p>
+    <Field label={t("Child cost coefficient")}><input inputMode="decimal" value={props.cost || formatCoefficient(data.default_settlement_bps)} onChange={(event) => props.setCost(event.target.value)} /></Field>
+    <div className="pricing-search child-pricing-search">
+      <label className="search-field"><ActionIcon name="search" /><input aria-label={t("Search models, providers, or channels")} placeholder={t("Search models, providers, or channels")} value={props.search} onChange={(event) => { props.setSearch(event.target.value); props.setPage(0); }} /></label>
+      <ChannelFilterMenu channels={channelOptions} selected={props.channels} onToggle={(id) => { props.setChannels((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]); props.setPage(0); }} onClear={() => { props.setChannels([]); props.setPage(0); }} />
+      <span className="pricing-live-badge">{t("Models")} · {visibleRows.length}</span>
+    </div>
+    <VendorTabs vendors={vendorOptions} selected={activeVendor} total={channelRows.length} onSelect={(key) => { props.setVendorFilter(key); props.setPage(0); }} />
+    <div className="table-wrap pricing-matrix-wrap child-pricing-matrix-wrap">
+      <table className="pricing-matrix child-pricing-matrix"><thead><tr><th>{t("Model name")}</th><th>{t("Channels")}</th><th>{t("Child cost coefficient")}</th></tr></thead><tbody>
+        {pageRows.map((row) => <ChannelPricingRows key={row.origin_model_name} showChannelCost={false} leading={[<div key="model" className="model-name-cell"><VendorMark icon={row.vendor_icon} name={row.vendor_name?.trim() || t("Other providers")} /><strong>{row.origin_model_name}</strong></div>]} channels={(row.channels ?? []).map((channel) => ({ id: channel.channel_id, name: channel.channel_name }))} trailing={[<input key="cost" aria-label={`${t("Child cost coefficient")}: ${row.origin_model_name}`} inputMode="decimal" placeholder={formatCoefficient(row.settlement_bps ?? data.default_settlement_bps)} value={props.modelCosts[row.origin_model_name] ?? (row.settlement_bps == null ? "" : formatCoefficient(row.settlement_bps))} onChange={(event) => props.setModelCosts((current) => ({ ...current, [row.origin_model_name]: event.target.value }))} />]} />)}
+      </tbody></table>
+    </div>
+    {visibleRows.length > pageSize && <Pager nextCursor={currentPage < pageCount - 1 ? String(currentPage + 1) : undefined} hasPrevious={currentPage > 0} onNext={() => props.setPage((value) => Math.min(value + 1, pageCount - 1))} onReset={() => props.setPage(0)} />}
+    {visibleRows.length === 0 && <p className="empty">{t("No models match the current filters.")}</p>}
+    <Field label={t("Change reason (optional)")}><input maxLength={2000} value={props.reason} onChange={(event) => props.setReason(event.target.value)} /></Field><ErrorNotice error={props.error} /><div className="actions dialog-actions"><button className="secondary" type="button" onClick={props.onClose}>{t("Cancel")}</button><button type="button" disabled={props.mutation.pending} onClick={() => void save()}>{t("Publish child pricing")}</button></div>
+  </Dialog>;
 }

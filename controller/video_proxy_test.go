@@ -139,3 +139,16 @@ func TestWriteVideoDataURLUsesPrivateNoStore(t *testing.T) {
 	assert.Equal(t, "0123", recorder.Body.String())
 	assert.Equal(t, []string{privateVideoCacheControl}, recorder.Header().Values("Cache-Control"))
 }
+
+func TestExtractTaskMediaURLFromWrappedOpenAISeedanceEnvelope(t *testing.T) {
+	body := []byte(`{"code":"success","data":{"task_id":"task_upstream","status":"SUCCESS","result_url":"http://provider.example/v1/tasks/task_upstream/artifacts/video/content?access=signed","data":{"content":{"video_url":"http://provider.example/v1/tasks/task_upstream/artifacts/video/content?access=signed"}}}}`)
+	assert.Equal(t,
+		"http://provider.example/v1/tasks/task_upstream/artifacts/video/content?access=signed",
+		extractTaskMediaURLFromPayload(body, "task_public"),
+	)
+}
+
+func TestExtractTaskMediaURLRejectsSelfProxyLoop(t *testing.T) {
+	body := []byte(`{"result_url":"https://gateway.example/v1/videos/task_public/content"}`)
+	assert.Empty(t, extractTaskMediaURLFromPayload(body, "task_public"))
+}

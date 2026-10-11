@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -109,16 +110,6 @@ func VideoProxy(c *gin.Context) {
 			logger.LogWarn(c.Request.Context(), fmt.Sprintf("Failed to project plugin video for task %s", taskID))
 		}
 	}
-	if descriptor == nil {
-		resultURL := task.GetResultURL()
-		if isTaskMediaFallbackLoop(resultURL, task.TaskID) {
-			writeTaskMediaProxyError(c, &taskMediaProxyError{
-				status: http.StatusGone, code: "artifact_gone",
-				message: "Artifact content is no longer available",
-			})
-			return
-		}
-	}
 	channel, err := model.CacheGetChannel(task.ChannelId)
 	if err != nil {
 		videoProxyError(c, http.StatusServiceUnavailable, "server_error", "Failed to retrieve channel information")
@@ -127,6 +118,28 @@ func VideoProxy(c *gin.Context) {
 	baseURL := channel.GetBaseURL()
 	if baseURL == "" {
 		baseURL = "https://api.openai.com"
+	}
+
+	if descriptor == nil {
+		resultURL := strings.TrimSpace(task.GetResultURL())
+		if isTaskMediaFallbackLoop(resultURL, task.TaskID) || resultURL == "" {
+			if channel.Type == constant.ChannelTypeOpenAISeedance {
+				resolvedURL, resolveErr := resolveOpenAISeedanceTaskResultURL(task, channel, baseURL)
+				if resolveErr == nil {
+					snap := task.Snapshot()
+					task.PrivateData.ResultURL = resolvedURL
+					_, _ = task.UpdateWithStatus(snap.Status)
+					resultURL = resolvedURL
+				}
+			}
+		}
+		if resultURL == "" || isTaskMediaFallbackLoop(resultURL, task.TaskID) {
+			writeTaskMediaProxyError(c, &taskMediaProxyError{
+				status: http.StatusGone, code: "artifact_gone",
+				message: "Artifact content is no longer available",
+			})
+			return
+		}
 	}
 	proxy := channel.GetSetting().Proxy
 	client := service.GetSSRFProtectedHTTPClient()
@@ -640,6 +653,84 @@ func isTaskMediaProxyPath(path string) bool {
 	return strings.HasPrefix(path, "/v1/tasks/") &&
 		strings.Contains(path, "/artifacts/") &&
 		strings.HasSuffix(path, "/content")
+}
+
+// resolveOpenAISeedanceTaskResultURL refreshes a completed OpenAI-format
+// Seedance task from the upstream status endpoint when the persisted result
+// URL was written as this gateway's own /content proxy URL. Older polling
+// paths could store that self URL, which the download proxy intentionally
+// rejects as a loop. Re-reading the upstream record recovers the direct
+// provider artifact URL without changing the public task ID.
+func resolveOpenAISeedanceTaskResultURL(task *model.Task, ch *model.Channel, baseURL string) (string, error) {
+	if task == nil || ch == nil {
+		return "", fmt.Errorf("invalid task or channel")
+	}
+	adaptor := relay.GetTaskAdaptor(task.Platform)
+	if adaptor == nil {
+		return "", fmt.Errorf("task adaptor not found for platform %s", task.Platform)
+	}
+	key := strings.TrimSpace(ch.Key)
+	if storedKey := strings.TrimSpace(task.PrivateData.Key); storedKey != "" {
+		key = storedKey
+	}
+	if key == "" {
+		return "", fmt.Errorf("channel key not available for task")
+	}
+	resp, err := adaptor.FetchTask(baseURL, key, task, ch.GetSetting().Proxy)
+	if err != nil {
+		return "", fmt.Errorf("fetch upstream task failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read upstream task response failed: %w", err)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("upstream task status returned HTTP %d", resp.StatusCode)
+	}
+	if taskInfo, parseErr := adaptor.ParseTaskResult(task, resp, body); parseErr == nil && taskInfo != nil {
+		if resolved := strings.TrimSpace(taskInfo.Url); resolved != "" && !strings.HasPrefix(resolved, "data:") && !isTaskMediaFallbackLoop(resolved, task.TaskID) {
+			return resolved, nil
+		}
+	}
+	if resolved := extractTaskMediaURLFromPayload(body, task.TaskID); resolved != "" {
+		return resolved, nil
+	}
+	return "", fmt.Errorf("upstream task response did not contain a usable artifact URL")
+}
+
+func extractTaskMediaURLFromPayload(body []byte, taskID string) string {
+	var payload map[string]any
+	if err := common.Unmarshal(body, &payload); err != nil {
+		return ""
+	}
+	for _, candidate := range []any{
+		payload["result_url"],
+		payload["video_url"],
+		lookupTaskMediaURL(payload, "content", "video_url"),
+		lookupTaskMediaURL(payload, "data", "result_url"),
+		lookupTaskMediaURL(payload, "data", "content", "video_url"),
+		lookupTaskMediaURL(payload, "data", "data", "content", "video_url"),
+	} {
+		resolved, _ := candidate.(string)
+		resolved = strings.TrimSpace(resolved)
+		if resolved != "" && !isTaskMediaFallbackLoop(resolved, taskID) && !strings.HasPrefix(resolved, "data:") {
+			return resolved
+		}
+	}
+	return ""
+}
+
+func lookupTaskMediaURL(payload map[string]any, path ...string) any {
+	var current any = payload
+	for _, key := range path {
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return nil
+		}
+		current = obj[key]
+	}
+	return current
 }
 
 func isTaskMediaFallbackLoop(rawURL, taskID string) bool {

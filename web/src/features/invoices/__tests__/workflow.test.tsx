@@ -84,20 +84,23 @@ it('requires confirmation before withdrawing and refreshes the visible status', 
 })
 
 it('loads the next page instead of silently hiding older applications', async () => {
-  vi.spyOn(api, 'get').mockImplementation(async (_url, config) => ({
-    data: {
-      success: true,
+  vi.spyOn(api, 'get').mockImplementation(async (_url, config) => {
+    const params = config?.params as { p?: number } | undefined
+    return {
       data: {
-        total: 11,
-        items: [
-          {
-            ...application,
-            application_no: config?.params?.p === 2 ? 'INV-OLD' : 'INV-7',
-          },
-        ],
+        success: true,
+        data: {
+          total: 11,
+          items: [
+            {
+              ...application,
+              application_no: params?.p === 2 ? 'INV-OLD' : 'INV-7',
+            },
+          ],
+        },
       },
-    },
-  }))
+    }
+  })
   renderHistory()
   await screen.findByText('INV-7')
   expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled()

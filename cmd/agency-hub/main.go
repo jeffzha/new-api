@@ -71,6 +71,10 @@ func run() error {
 			return err
 		}
 	}
+	// Credit statements are emailed with the platform's SMTP settings, which
+	// live in the options table. Without this the sidecar would render its
+	// email path as unconfigured even though the main service can send mail.
+	model.InitOptionMap()
 	if err := model.InitLogDB(); err != nil {
 		return fmt.Errorf("initialize log database: %w", err)
 	}

@@ -305,7 +305,7 @@ func (a *App) agencySchemaStatus() (gin.H, error) {
 		(model.AgencyDebtRepayment{}).TableName():        {"source_kind"},
 		(model.AgencyFundingDebt{}).TableName():          {"allocation_id"},
 		(model.AgencyCreditTerms{}).TableName():          {"credit_limit", "payment_term_days", "repayment_day", "email_enabled"},
-		(model.AgencyCreditInvoice{}).TableName():        {"period", "amount_quota", "payment_term_days", "due_at_ms", "overdue_at_ms", "bad_debt_quota", "email_status"},
+		(model.AgencyCreditInvoice{}).TableName():        {"period", "amount_quota", "payment_term_days", "due_at_ms", "overdue_at_ms", "bad_debt_quota", "email_status", "email_last_error", "paid_at_ms", "payment_reference", "received_by"},
 		(model.AgencyCommissionLedger{}).TableName():     {"component_key"},
 	}
 	for table, columns := range required {
@@ -362,6 +362,7 @@ func (a *App) agencyCapabilities() gin.H {
 		"exports":              strings.TrimSpace(a.config.ExportDir) != "",
 		"credit_terms_v1":      true,
 		"credit_invoices_v1":   true,
+		"credit_settlement_v1": true,
 	}
 }
 

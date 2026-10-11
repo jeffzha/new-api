@@ -154,6 +154,13 @@ interface Customer {
   agency_account?: string;
   effective_at_ms: string;
   revision: string;
+  // Read-only credit position granted by the super administrator. Agents
+  // never edit it; they only see how much of it their customers consumed.
+  credit_configured?: boolean;
+  credit_status?: string;
+  credit_limit?: number;
+  credit_used_quota?: number;
+  credit_available_quota?: number;
 }
 interface SyncStatus {
   schema: { ready: boolean };
@@ -283,6 +290,21 @@ export function CustomersPage({
               rowKey={(row) => String(row.user_id)}
               columns={[
                 { key: "username", label: "Customer account" },
+                {
+                  key: "credit_limit",
+                  label: "Credit limit",
+                  render: (row: Customer) => (row.credit_configured ? formatYuan(row.credit_limit) : "—"),
+                },
+                {
+                  key: "credit_used_quota",
+                  label: "Used credit",
+                  render: (row: Customer) => (row.credit_configured ? formatYuan(row.credit_used_quota) : "—"),
+                },
+                {
+                  key: "credit_available_quota",
+                  label: "Available credit",
+                  render: (row: Customer) => (row.credit_configured ? formatYuan(row.credit_available_quota) : "—"),
+                },
                 ...(global ? [{
                   key: "agency_name",
                   label: "Agency",

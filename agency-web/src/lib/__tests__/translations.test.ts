@@ -8,6 +8,7 @@ import { pricingMessages } from "../../features/pricing/messages";
 import { financeMessages } from "../../features/finance/messages";
 import { exportMessages } from "../../features/exports/messages";
 import { customerMessages } from "../../features/customers/messages";
+import { creditMessages } from "../../features/credit/messages";
 import { reconciliationMessages } from "../../features/reconciliation/messages";
 import { reportMessages } from "../../features/reports/messages";
 import { invitationMessages } from "../../features/invitations/messages";
@@ -23,6 +24,7 @@ test("every shipped language includes the same complete feature dictionary", () 
     financeMessages,
     exportMessages,
     customerMessages,
+    creditMessages,
     reconciliationMessages,
     reportMessages,
     invitationMessages,
@@ -86,6 +88,7 @@ test("rendered UI source strings have translations in every supported language",
       ...financeMessages[lang],
       ...exportMessages[lang],
       ...customerMessages[lang],
+      ...creditMessages[lang],
       ...reconciliationMessages[lang],
       ...reportMessages[lang],
       ...invitationMessages[lang],

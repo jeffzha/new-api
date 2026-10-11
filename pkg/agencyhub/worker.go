@@ -26,7 +26,33 @@ func (a *App) StartBackground(ctx context.Context) {
 	nextReconcile := time.Now().Add(a.config.ReconcileInterval)
 	shanghai := time.FixedZone("Asia/Shanghai", 8*60*60)
 	dailyRunDate := ""
-	creditRunDate := ""
+	// Credit statements run in their own slow lane: SMTP delivery can block for
+	// tens of seconds, and the daily generation pass must not delay billing.
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		creditRunDate := ""
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				localNow := time.Now().In(shanghai)
+				if key := localNow.Format("2006-01-02"); key != creditRunDate {
+					if _, err := a.ProcessCreditInvoices(ctx, localNow); err != nil {
+						common.SysError("agency credit invoice worker failed: " + err.Error())
+					}
+					creditRunDate = key
+				}
+				if _, err := a.ProcessCreditOverdue(ctx, localNow); err != nil {
+					common.SysError("agency credit overdue worker failed: " + err.Error())
+				}
+				if _, err := a.RetryCreditInvoiceEmails(ctx, 5); err != nil {
+					common.SysError("agency credit invoice email worker failed: " + err.Error())
+				}
+			}
+		}
+	}()
 	// CSV generation can take much longer than a tick. Give exports their own
 	// bounded worker so a large file never stops commissions or provisioning.
 	if strings.TrimSpace(a.config.ExportDir) != "" {
@@ -57,12 +83,6 @@ func (a *App) StartBackground(ctx context.Context) {
 				return
 			case <-ticker.C:
 				localNow := time.Now().In(shanghai)
-				if key := localNow.Format("2006-01-02"); key != creditRunDate {
-					if _, err := a.ProcessCreditInvoices(ctx, localNow); err != nil {
-						common.SysError("agency credit invoice worker failed: " + err.Error())
-					}
-					creditRunDate = key
-				}
 				if dailyKey, cutoff, due := agencyDailyReconciliationSchedule(localNow, dailyRunDate); due {
 					dailyCtx, dailyCancel := context.WithTimeout(ctx, 2*time.Minute)
 					_, err := a.RunReconciliation(dailyCtx, "daily", dailyKey, cutoff)

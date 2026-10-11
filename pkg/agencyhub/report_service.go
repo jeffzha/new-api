@@ -698,13 +698,23 @@ func (a *App) listCustomers(c *gin.Context) {
 	for _, binding := range bindings {
 		ids = append(ids, binding.UserID)
 	}
+	creditOverviews, err := model.GetAgencyCreditOverviews(ids)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取授信余额失败", nil)
+		return
+	}
 	type customerView struct {
-		UserID        int64  `json:"user_id"`
-		Username      string `json:"username"`
-		AccountName   string `json:"account_name"`
-		BindingID     int64  `json:"binding_id"`
-		Revision      int64  `json:"revision"`
-		EffectiveAtMS int64  `json:"effective_at_ms"`
+		UserID               int64  `json:"user_id"`
+		Username             string `json:"username"`
+		AccountName          string `json:"account_name"`
+		BindingID            int64  `json:"binding_id"`
+		Revision             int64  `json:"revision"`
+		EffectiveAtMS        int64  `json:"effective_at_ms"`
+		CreditConfigured     bool   `json:"credit_configured"`
+		CreditStatus         string `json:"credit_status"`
+		CreditLimit          int64  `json:"credit_limit"`
+		CreditUsedQuota      int64  `json:"credit_used_quota"`
+		CreditAvailableQuota int64  `json:"credit_available_quota"`
 	}
 	views := make([]customerView, 0, len(bindings))
 	if len(ids) > 0 {
@@ -732,7 +742,10 @@ func (a *App) listCustomers(c *gin.Context) {
 		}
 		for _, binding := range bindings {
 			user := byID[binding.UserID]
-			views = append(views, customerView{UserID: binding.UserID, Username: user.Username, AccountName: userAccountName(user), BindingID: binding.BindingID, Revision: binding.Revision, EffectiveAtMS: effectiveAt[binding.BindingID]})
+			overview := creditOverviews[binding.UserID]
+			views = append(views, customerView{UserID: binding.UserID, Username: user.Username, AccountName: userAccountName(user), BindingID: binding.BindingID, Revision: binding.Revision, EffectiveAtMS: effectiveAt[binding.BindingID],
+				CreditConfigured: overview.Configured, CreditStatus: overview.Status, CreditLimit: overview.CreditLimit,
+				CreditUsedQuota: overview.UsedQuota, CreditAvailableQuota: overview.AvailableQuota})
 		}
 	}
 	nextCursor := ""
@@ -806,19 +819,29 @@ func (a *App) listRootCustomers(c *gin.Context) {
 		ids = append(ids, binding.UserID)
 	}
 	type rootCustomerView struct {
-		UserID        string `json:"user_id"`
-		Username      string `json:"username"`
-		AccountName   string `json:"account_name"`
-		AgencyName    string `json:"agency_name"`
-		AgencyAccount string `json:"agency_account"`
-		Status        int    `json:"status"`
-		AgencyID      string `json:"agency_id"`
-		BindingID     string `json:"binding_id"`
-		Revision      string `json:"revision"`
-		EffectiveAtMS string `json:"effective_at_ms"`
+		UserID               string `json:"user_id"`
+		Username             string `json:"username"`
+		AccountName          string `json:"account_name"`
+		AgencyName           string `json:"agency_name"`
+		AgencyAccount        string `json:"agency_account"`
+		Status               int    `json:"status"`
+		AgencyID             string `json:"agency_id"`
+		BindingID            string `json:"binding_id"`
+		Revision             string `json:"revision"`
+		EffectiveAtMS        string `json:"effective_at_ms"`
+		CreditConfigured     bool   `json:"credit_configured"`
+		CreditStatus         string `json:"credit_status"`
+		CreditLimit          int64  `json:"credit_limit"`
+		CreditUsedQuota      int64  `json:"credit_used_quota"`
+		CreditAvailableQuota int64  `json:"credit_available_quota"`
 	}
 	views := make([]rootCustomerView, 0, len(bindings))
 	if len(ids) > 0 {
+		creditOverviews, err := model.GetAgencyCreditOverviews(ids)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "database_error", "读取授信余额失败", nil)
+			return
+		}
 		var users []model.User
 		if err := a.db.Select("id, username, display_name, status").Where("id IN ?", ids).Find(&users).Error; err != nil {
 			respondError(c, http.StatusInternalServerError, "database_error", "读取客户失败", nil)
@@ -865,10 +888,13 @@ func (a *App) listRootCustomers(c *gin.Context) {
 		}
 		for _, binding := range bindings {
 			user := byID[binding.UserID]
+			creditOverview := creditOverviews[binding.UserID]
 			views = append(views, rootCustomerView{
 				UserID: strconv.FormatInt(binding.UserID, 10), Username: user.Username, AccountName: userAccountName(user), AgencyName: agencyNames[binding.AgencyID], AgencyAccount: agencyAccounts[binding.AgencyID], Status: user.Status,
 				AgencyID: strconv.FormatInt(binding.AgencyID, 10), BindingID: strconv.FormatInt(binding.BindingID, 10),
 				Revision: strconv.FormatInt(binding.Revision, 10), EffectiveAtMS: strconv.FormatInt(effectiveAt[binding.BindingID], 10),
+				CreditConfigured: creditOverview.Configured, CreditStatus: creditOverview.Status, CreditLimit: creditOverview.CreditLimit,
+				CreditUsedQuota: creditOverview.UsedQuota, CreditAvailableQuota: creditOverview.AvailableQuota,
 			})
 		}
 	}

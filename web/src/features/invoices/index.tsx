@@ -8,6 +8,7 @@ import { toast } from 'sonner'
 
 import { EmptyState } from '@/components/empty-state'
 import { SectionPageLayout } from '@/components/layout'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -106,6 +107,16 @@ function UserInvoices() {
             summary={summary.data}
             loading={summary.isPending}
           />
+          {summary.isSuccess && (summary.data?.available_cents ?? 0) <= 0 && (
+            <Alert>
+              <AlertTitle>{t('Why is the invoiceable amount zero?')}</AlertTitle>
+              <AlertDescription>
+                {t(
+                  'An invoice can only be issued against a verified payment receipt. Top-ups without a payment reference, such as historical or manually credited amounts, cannot be invoiced automatically. Model usage, gift balance, redemption codes and credit debt are not recharge receipts.'
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
           <div className='grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]'>
             <Card>
               <CardHeader>

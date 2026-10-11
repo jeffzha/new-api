@@ -13,6 +13,7 @@ export type HeadingIconName =
   | "pricing"
   | "withdrawals"
   | "security"
+  | "credit"
   | "agency";
 
 export type ActionIconName =
@@ -72,6 +73,8 @@ function Icon({ name }: { name: HeadingIconName }) {
       return <svg {...common}><path d="M12 3v12M7 10l5 5 5-5M5 21h14" /></svg>;
     case "agency":
       return <svg {...common}><path d="M4 21v-8h16v8M7 13V4h10v9M2 21h20M9 8h6M9 11h6" /></svg>;
+    case "credit":
+      return <svg {...common}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18M7 15h4" /></svg>;
     case "security":
       return <svg {...common}><path d="M12 3 20 6v5c0 5-3.4 8.5-8 10-4.6-1.5-8-5-8-10V6l8-3Z" /><path d="m9 12 2 2 4-4" /></svg>;
   }

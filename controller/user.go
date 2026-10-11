@@ -578,7 +578,13 @@ func buildSelfUserData(user *model.User) map[string]any {
 	userSetting := user.GetSetting()
 	permissions := calculateUserPermissions(user.Role)
 	permissions["admin_permissions"] = authz.Capabilities(user.Id, user.Role)
-	return map[string]any{
+	// The credit position is display-only here. Managing the contract stays in
+	// Agency Hub so the wallet never becomes a second source of truth.
+	creditOverview, creditErr := model.GetAgencyCreditOverview(int64(user.Id))
+	if creditErr != nil {
+		creditOverview = nil
+	}
+	data := map[string]any{
 		"id":                user.Id,
 		"username":          user.Username,
 		"display_name":      user.DisplayName,
@@ -606,6 +612,10 @@ func buildSelfUserData(user *model.User) map[string]any {
 		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
 		"permissions":       permissions,
 	}
+	if creditOverview != nil {
+		data["credit"] = creditOverview
+	}
+	return data
 }
 
 // 计算用户权限的辅助函数

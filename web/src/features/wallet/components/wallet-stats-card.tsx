@@ -105,6 +105,41 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
   ]
   const balanceBreakdown = props.user?.wallet_balances ?? []
 
+  const credit = props.user?.credit
+  // Credit is a repayable position rather than wallet money, so it renders in
+  // its own block beside the balance card instead of inside the balance.
+  const creditSummary = credit?.configured ? (
+    <dl
+      aria-label={t('Credit account')}
+      className='min-w-0 rounded-lg border px-2.5 py-2.5 sm:px-5 sm:py-3'
+    >
+      <div className='flex flex-wrap items-baseline gap-x-5 gap-y-1.5'>
+        {(
+          [
+            ['Credit limit', credit.credit_limit],
+            ['Used credit', credit.used_quota],
+            ['Available credit', credit.available_quota],
+          ] as const
+        ).map(([label, value]) => (
+          <div key={label} className='flex items-baseline gap-1.5'>
+            <dt className='text-muted-foreground text-xs'>{t(label)}</dt>
+            <dd className='font-mono text-sm font-medium tabular-nums'>
+              {formatQuota(value)}
+            </dd>
+          </div>
+        ))}
+      </div>
+      <p className='text-muted-foreground mt-1.5 text-xs'>
+        {credit.status !== 'active'
+          ? t('Credit line suspended')
+          : t('Credit terms summary', {
+              day: credit.repayment_day,
+              days: credit.payment_term_days,
+            })}
+      </p>
+    </dl>
+  ) : null
+
   const breakdown = balanceBreakdown.length > 0 && (
     <dl
       role='group'
@@ -131,62 +166,68 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
 
   if (props.workspace) {
     return (
-      <dl className='console-wallet-balance'>
-        {stats.map((item, index) => (
-          <div key={item.label} className='console-wallet-stat'>
-            <dt className='console-wallet-stat-label'>
-              <IconBadge tone={item.tone} size='sm'>
-                <item.icon aria-hidden />
-              </IconBadge>
-              {item.label}
-            </dt>
-            <dd className='console-wallet-stat-value'>
-              {props.user ? item.value : '-'}
-              {index === 0 && breakdown}
-              {index !== 0 && (
-                <span className='console-wallet-stat-note'>
-                  {item.description}
-                </span>
-              )}
-            </dd>
-          </div>
-        ))}
-      </dl>
+      <>
+        <dl className='console-wallet-balance'>
+          {stats.map((item, index) => (
+            <div key={item.label} className='console-wallet-stat'>
+              <dt className='console-wallet-stat-label'>
+                <IconBadge tone={item.tone} size='sm'>
+                  <item.icon aria-hidden />
+                </IconBadge>
+                {item.label}
+              </dt>
+              <dd className='console-wallet-stat-value'>
+                {props.user ? item.value : '-'}
+                {index === 0 && breakdown}
+                {index !== 0 && (
+                  <span className='console-wallet-stat-note'>
+                    {item.description}
+                  </span>
+                )}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        {creditSummary}
+      </>
     )
   }
 
   return (
-    <div className='grid grid-cols-2 rounded-lg border sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]'>
-      {stats.map((item, index) => (
-        <div
-          key={item.label}
-          className={
-            index === 0
-              ? 'col-span-2 min-w-0 border-b px-2.5 py-2.5 sm:col-span-1 sm:border-r sm:border-b-0 sm:px-5 sm:py-4'
-              : `min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4 ${index === 1 ? 'border-r' : ''}`
-          }
-        >
-          <div className='flex items-center gap-1.5 sm:gap-2.5'>
-            <IconBadge tone={item.tone} size='stat'>
-              <item.icon />
-            </IconBadge>
-            <div className='text-muted-foreground truncate text-[11px] font-medium tracking-wider uppercase sm:text-xs'>
-              {item.label}
+    <div className='flex flex-col gap-3'>
+      <div className='grid grid-cols-2 rounded-lg border sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]'>
+        {stats.map((item, index) => (
+          <div
+            key={item.label}
+            className={
+              index === 0
+                ? 'col-span-2 min-w-0 border-b px-2.5 py-2.5 sm:col-span-1 sm:border-r sm:border-b-0 sm:px-5 sm:py-4'
+                : `min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4 ${index === 1 ? 'border-r' : ''}`
+            }
+          >
+            <div className='flex items-center gap-1.5 sm:gap-2.5'>
+              <IconBadge tone={item.tone} size='stat'>
+                <item.icon />
+              </IconBadge>
+              <div className='text-muted-foreground truncate text-[11px] font-medium tracking-wider uppercase sm:text-xs'>
+                {item.label}
+              </div>
             </div>
-          </div>
 
-          <div className='text-foreground mt-1.5 font-mono text-sm font-bold tracking-tight break-all tabular-nums sm:mt-2.5 sm:text-2xl'>
-            {props.user ? item.value : '-'}
-          </div>
-          {index === 0 ? (
-            breakdown
-          ) : (
-            <div className='text-muted-foreground/60 mt-1 hidden text-xs md:block'>
-              {item.description}
+            <div className='text-foreground mt-1.5 font-mono text-sm font-bold tracking-tight break-all tabular-nums sm:mt-2.5 sm:text-2xl'>
+              {props.user ? item.value : '-'}
             </div>
-          )}
-        </div>
-      ))}
+            {index === 0 ? (
+              breakdown
+            ) : (
+              <div className='text-muted-foreground/60 mt-1 hidden text-xs md:block'>
+                {item.description}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {creditSummary}
     </div>
   )
 }

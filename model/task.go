@@ -68,6 +68,9 @@ type Task struct {
 	Action     string                `json:"action" gorm:"type:varchar(40);index"` // 任务类型, song, lyrics, description-mode
 	Status     TaskStatus            `json:"status" gorm:"type:varchar(20);index"` // 任务状态
 	FailReason string                `json:"fail_reason"`
+	// ResultURL carries the artifact URL that some upstream New API instances
+	// return at the top level of their task record instead of inside private_data.
+	ResultURL  string                `json:"result_url" gorm:"-"`
 	SubmitTime int64                 `json:"submit_time" gorm:"index"`
 	StartTime  int64                 `json:"start_time" gorm:"index"`
 	FinishTime int64                 `json:"finish_time" gorm:"index"`
@@ -227,6 +230,9 @@ func (t *Task) GetUpstreamTaskID() string {
 func (t *Task) GetResultURL() string {
 	if t.PrivateData.ResultURL != "" {
 		return t.PrivateData.ResultURL
+	}
+	if t.ResultURL != "" {
+		return t.ResultURL
 	}
 	return t.FailReason
 }

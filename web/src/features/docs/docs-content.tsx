@@ -27,11 +27,13 @@ import { EndpointDetail } from './components/endpoint-detail'
 import { buildDocModel } from './lib/openapi-doc'
 import mobileOfficialSpec from './openapi-mobile-official-spec.json'
 import openApiSpec from './openapi-spec.json'
+import overseasSeedanceSpec from './openapi-overseas-seedance-spec.json'
 import type { DocSource, OpenApiPathItem, OpenApiSpec } from './types'
 
 const legacySpec = openApiSpec as unknown as OpenApiSpec
 const mobileSpec = mobileOfficialSpec as unknown as OpenApiSpec
 const relaySpec = relayOpenApiSpec as unknown as OpenApiSpec
+const overseasSpec = overseasSeedanceSpec as unknown as OpenApiSpec
 const mobilePathPrefix = '/api/openapi-maas/exp/aicc/v2/'
 const openAiTextPaths = [
   '/v1/chat/completions',
@@ -216,6 +218,13 @@ const DOMESTIC_VIDEO_DOC_SOURCE: DocSource = {
   spec: domesticVideoSpec,
 }
 
+const OVERSEAS_VIDEO_DOC_SOURCE: DocSource = {
+  id: 'seedance-overseas-openai',
+  title: '海外 Seedance（OpenAI 格式）',
+  subtitle: 'Overseas / OpenAI-format Seedance 2.0 endpoints',
+  spec: overseasSpec,
+}
+
 function pickDefaultEndpointId(doc: ReturnType<typeof buildDocModel>): string {
   const endpoints = doc.endpoints
   return (
@@ -243,25 +252,55 @@ export function DocsContent() {
         : ''
     const baseUrl = runtimeOrigin.replace(/\/$/, '')
     const primaryDoc = buildDocModel(DOC_SOURCE, baseUrl)
+    // Re-attach the domestic Seedance video endpoints (excluded from the merged
+    // spec because they share a path with other contracts) inside the existing
+    // "视频生成" group.
     const domesticVideoDoc = buildDocModel(DOMESTIC_VIDEO_DOC_SOURCE, baseUrl)
-    const restoredEndpoints = domesticVideoDoc.endpoints.map((endpoint) => ({
+    const domesticEndpoints = domesticVideoDoc.endpoints.map((endpoint) => ({
       ...endpoint,
       id: `${DOMESTIC_VIDEO_DOC_SOURCE.id}:${endpoint.id}`,
     }))
-    const restoredGroup = domesticVideoDoc.groups[0]
-    if (!restoredGroup || restoredEndpoints.length === 0) return primaryDoc
+    const domesticGroup = domesticVideoDoc.groups[0]
 
-    let restoredExistingGroup = false
-    const groups = primaryDoc.groups.map((group) => {
-      if (group.title !== restoredGroup.title) return group
-      restoredExistingGroup = true
-      return {
-        ...group,
-        endpoints: [...restoredEndpoints, ...group.endpoints],
+    // The overseas / OpenAI-format Seedance contract reuses the same public
+    // paths as the domestic contract but expects a different request body. Keep
+    // it as a dedicated group so callers never mix up the two contracts.
+    const overseasVideoDoc = buildDocModel(OVERSEAS_VIDEO_DOC_SOURCE, baseUrl)
+    const overseasEndpoints = overseasVideoDoc.endpoints.map((endpoint) => ({
+      ...endpoint,
+      id: `${OVERSEAS_VIDEO_DOC_SOURCE.id}:${endpoint.id}`,
+    }))
+    const overseasGroup = overseasVideoDoc.groups[0]
+
+    const groups: typeof primaryDoc.groups = []
+    let domesticAttached = false
+    for (const group of primaryDoc.groups) {
+      if (
+        domesticGroup &&
+        domesticEndpoints.length > 0 &&
+        group.title === domesticGroup.title
+      ) {
+        domesticAttached = true
+        groups.push({
+          ...group,
+          endpoints: [...domesticEndpoints, ...group.endpoints],
+        })
+        if (overseasGroup && overseasEndpoints.length > 0) {
+          groups.push({ ...overseasGroup, endpoints: overseasEndpoints })
+        }
+        continue
       }
-    })
-    if (!restoredExistingGroup) {
-      groups.push({ ...restoredGroup, endpoints: restoredEndpoints })
+      groups.push(group)
+    }
+    if (domesticGroup && domesticEndpoints.length > 0 && !domesticAttached) {
+      groups.push({ ...domesticGroup, endpoints: domesticEndpoints })
+    }
+    if (
+      overseasGroup &&
+      overseasEndpoints.length > 0 &&
+      !groups.some((group) => group.title === overseasGroup.title)
+    ) {
+      groups.push({ ...overseasGroup, endpoints: overseasEndpoints })
     }
 
     const endpoints = groups.flatMap((group) => group.endpoints)

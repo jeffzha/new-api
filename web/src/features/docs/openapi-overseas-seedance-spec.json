@@ -1,0 +1,558 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Nexus Reach 海外 Seedance 2.0 API（OpenAI 格式）",
+    "version": "2026-10-11.1",
+    "description": "本章节描述海外（Global / OpenAI 格式）Seedance 2.0 渠道的对外契约，例如分组 `zenlayer` 使用的上游 Uzoom 网关。调用方统一通过 Nexus Reach API Gateway 访问，并使用 Nexus Reach API Key 鉴权；不要将上游供应商域名作为生产请求地址。"
+  },
+  "servers": [],
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "海外 Seedance（OpenAI 格式）",
+      "description": "在请求头中携带 `Authorization: Bearer sk-your-key`。本契约适用于海外 / OpenAI 格式的 Seedance 2.0 分组（例如 `zenlayer`）。调用顺序为：`POST /v1/video/generations` 创建任务，`GET /v1/video/generations/{task_id}` 轮询状态，任务成功后用 `GET /v1/videos/{task_id}/content` 下载视频。\n\n与「视频生成」（国内 Seedance 客户契约）的区别：\n\n| 项目 | 国内 Seedance 契约 | 海外 / OpenAI 格式契约（本章节） |\n| --- | --- | --- |\n| 提示词 | `metadata.content[]` 媒体数组 | 顶层 `prompt` 字符串（必填） |\n| 时长 / 分辨率 | 顶层 `duration` / `resolution` | 顶层 `duration` / `resolution`，也可放进 `metadata.duration` / `metadata.resolution` |\n| 参考图 | `metadata.content[].image_url.url` | 顶层 `image`（或 `images[0]`） |\n| 画幅 / 声音 | `metadata.ratio` / `metadata.generate_audio` | 同样使用 `metadata.ratio` / `metadata.generate_audio` |\n| 典型上游 | 火山引擎 / 移动素材库 | Uzoom 等 OpenAI 格式网关 |\n\n两组契约共用同一个 `POST /v1/video/generations` 路径，具体采用哪种格式取决于该 API Key 所属分组背后的渠道。海外分组请使用本页（OpenAI 格式），并请勿套用「移动视频素材库」或「素材资产」文档。"
+    }
+  ],
+  "paths": {
+    "/v1/video/generations": {
+      "post": {
+        "tags": ["海外 Seedance（OpenAI 格式）"],
+        "summary": "创建海外 Seedance 2.0 视频任务",
+        "operationId": "createOverseasSeedanceVideo",
+        "description": "请使用 `Content-Type: application/json`。顶层 `prompt` 为必填提示词；`duration` 为输出秒数（4～15 的整数，`-1` 表示由上游决定）；`resolution` 支持 `720p`、`1080p`、`4k`（默认 `720p`）。可选参数放在顶层或 `metadata` 中：`ratio`（例如 `16:9`、`9:16`、`1:1`、`adaptive`，默认 `adaptive`）与 `generate_audio`（布尔值，默认 `true`）。图生视频时把参考图 URL 放在顶层 `image`（或 `images`）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OverseasSeedanceCreateRequest"
+              },
+              "example": {
+                "model": "doubao-seedance-2-0-260128",
+                "prompt": "A calm ocean wave at sunrise with gentle natural motion, cinematic, no text.",
+                "duration": 4,
+                "resolution": "720p",
+                "metadata": {
+                  "ratio": "16:9",
+                  "generate_audio": false
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "任务创建成功。请保存返回的公开任务 ID，用于后续查询。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverseasSeedanceSubmitResponse"
+                },
+                "example": {
+                  "created_at": 1791687349,
+                  "id": "task_7kKjnAKa4frGJaOjeXADa7SK0PtKZCPe",
+                  "model": "doubao-seedance-2-0-260128",
+                  "status": "queued",
+                  "task_id": "task_7kKjnAKa4frGJaOjeXADa7SK0PtKZCPe"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误，例如缺少 `prompt`、`seconds` 不是整数或时长超出范围。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverseasSeedanceErrorResponse"
+                },
+                "example": {
+                  "code": "invalid_request",
+                  "message": "prompt is required",
+                  "data": null
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key 缺失或无效。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverseasSeedanceErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "该 API Key 无权访问当前分组或模型。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverseasSeedanceErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "触发限流，请退避后重试。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverseasSeedanceErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "网关内部错误。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverseasSeedanceErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "上游返回错误或响应无法解析。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverseasSeedanceErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "当前分组没有可用的海外 Seedance 渠道。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverseasSeedanceErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/video/generations/{task_id}": {
+      "get": {
+        "tags": ["海外 Seedance（OpenAI 格式）"],
+        "summary": "查询海外 Seedance 2.0 视频任务",
+        "operationId": "getOverseasSeedanceVideo",
+        "description": "使用创建接口返回的 `task_id` 轮询任务。建议每 5～10 秒查询一次，长时间未完成时逐步退避，不要高频请求。响应为 `{ code, message, data }` 信封：`data.status` 为 `SUCCESS` 表示完成，`FAILURE` 表示失败，`IN_PROGRESS` / `QUEUED` 表示仍在生成或排队。任务成功后 `data.result_url` 会给出上游临时地址，但推荐改用 `GET /v1/videos/{task_id}/content` 下载并立即保存。",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "description": "创建任务时返回的公开任务 ID。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "task_7kKjnAKa4frGJaOjeXADa7SK0PtKZCPe"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "任务状态。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverseasSeedanceTaskFetchResponse"
+                },
+                "example": {
+                  "code": "success",
+                  "message": "",
+                  "data": {
+                    "task_id": "task_7kKjnAKa4frGJaOjeXADa7SK0PtKZCPe",
+                    "status": "SUCCESS",
+                    "fail_reason": "",
+                    "result_url": "https://upstream.example.invalid/seedance/results/video.mp4?signature=example",
+                    "submit_time": 1791687349,
+                    "start_time": 1791687360,
+                    "finish_time": 1791687461,
+                    "progress": "100%",
+                    "quota": 272219
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "任务不存在或不属于当前 API Key 所属账号。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverseasSeedanceErrorResponse"
+                },
+                "example": {
+                  "code": "task_not_exist",
+                  "message": "task_not_exist",
+                  "data": null
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key 缺失或无效。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverseasSeedanceErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "网关内部错误。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverseasSeedanceErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos/{task_id}/content": {
+      "get": {
+        "tags": ["海外 Seedance（OpenAI 格式）"],
+        "summary": "下载海外 Seedance 2.0 视频文件",
+        "operationId": "downloadOverseasSeedanceVideoContent",
+        "description": "由 Nexus Reach 网关代理下载生成结果，并支持标准 HTTP `Range` 请求。请在任务 `data.status` 为 `SUCCESS` 后调用，并立即保存到自己的存储；上游临时资源会过期。该接口需要与创建任务相同的 Nexus Reach API Key。",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "description": "创建任务时返回的公开任务 ID。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "task_7kKjnAKa4frGJaOjeXADa7SK0PtKZCPe"
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "description": "可选，标准 HTTP 分段下载头，例如 `bytes=0-1023`。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "bytes=0-1023"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "完整视频文件。",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "通常为 `video/mp4`。"
+              },
+              "Content-Length": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "文件字节数。"
+              }
+            },
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "分段下载（带 `Range` 请求时返回）。",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "任务不存在或不属于当前 API Key 所属账号。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverseasSeedanceErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "上游视频已过期或被清理，无法再下载。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverseasSeedanceErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "message": "upstream video artifact is gone",
+                    "type": "artifact_gone",
+                    "code": "artifact_gone"
+                  }
+                }
+              }
+            }
+          },
+          "425": {
+            "description": "任务尚未完成，请稍后重试。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverseasSeedanceErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "API Key",
+        "description": "Nexus Reach API Key，放在 `Authorization: Bearer sk-...` 请求头中。"
+      }
+    },
+    "schemas": {
+      "OverseasSeedanceCreateRequest": {
+        "type": "object",
+        "description": "海外 / OpenAI 格式的 Seedance 2.0 创建请求。`prompt` 必填；时长与分辨率既可以放在顶层，也可以放在 `metadata` 中。",
+        "properties": {
+          "model": {
+            "type": "string",
+            "enum": ["doubao-seedance-2-0-260128"],
+            "default": "doubao-seedance-2-0-260128",
+            "description": "模型名称。"
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S",
+            "description": "必填提示词。"
+          },
+          "image": {
+            "type": "string",
+            "description": "单张参考图 URL（图生视频）。"
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "多张参考图 URL；至少填写 `image` 或 `images` 其中之一即可。"
+          },
+          "duration": {
+            "type": "integer",
+            "minimum": -1,
+            "maximum": 15,
+            "default": 5,
+            "description": "输出时长（秒）。取值 4～15，或 -1 表示由上游决定。"
+          },
+          "seconds": {
+            "type": "string",
+            "description": "`duration` 的字符串写法，例如 `\"4\"`，二选一即可。"
+          },
+          "resolution": {
+            "type": "string",
+            "enum": ["720p", "1080p", "4k"],
+            "default": "720p",
+            "description": "输出分辨率。"
+          },
+          "size": {
+            "type": "string",
+            "description": "`分辨率` 的宽高写法，例如 `1280x720`；仅在未提供 `resolution` 时生效。"
+          },
+          "ratio": {
+            "type": "string",
+            "default": "adaptive",
+            "description": "画幅比例，例如 `16:9`、`9:16`、`1:1`、`adaptive`。也可放在 `metadata.ratio`。"
+          },
+          "generate_audio": {
+            "type": "boolean",
+            "description": "是否生成音频，默认开启。也可放在 `metadata.generate_audio`。"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/OverseasSeedanceMetadata"
+          }
+        },
+        "required": ["model", "prompt"]
+      },
+      "OverseasSeedanceMetadata": {
+        "type": "object",
+        "description": "可选参数集合。与顶层同名字段同时出现时，`metadata` 内的值优先。",
+        "properties": {
+          "duration": {
+            "type": "integer",
+            "minimum": -1,
+            "maximum": 15,
+            "description": "输出时长（秒），优先于顶层 `duration`。"
+          },
+          "resolution": {
+            "type": "string",
+            "enum": ["720p", "1080p", "4k"],
+            "description": "输出分辨率，优先于顶层 `resolution`。"
+          },
+          "ratio": {
+            "type": "string",
+            "description": "画幅比例，优先于顶层 `ratio`。"
+          },
+          "generate_audio": {
+            "type": "boolean",
+            "description": "是否生成音频。"
+          },
+          "audio_status": {
+            "type": "integer",
+            "enum": [0, 1],
+            "description": "音频状态：1 表示带音频，0 表示静音。"
+          }
+        }
+      },
+      "OverseasSeedanceSubmitResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "公开任务 ID。"
+          },
+          "task_id": {
+            "type": "string",
+            "description": "兼容任务 ID 字段，与 id 相同。"
+          },
+          "model": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["queued", "in_progress", "completed", "failed"]
+          },
+          "created_at": {
+            "type": "integer",
+            "description": "Unix 时间戳。"
+          }
+        },
+        "required": ["id", "task_id", "model", "status", "created_at"]
+      },
+      "OverseasSeedanceTaskFetchResponse": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": ["success"]
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/OverseasSeedanceTaskData"
+          }
+        },
+        "required": ["code", "data"]
+      },
+      "OverseasSeedanceTaskData": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "NOT_START",
+              "SUBMITTED",
+              "QUEUED",
+              "IN_PROGRESS",
+              "SUCCESS",
+              "FAILURE",
+              "UNKNOWN"
+            ],
+            "description": "任务状态。遇到 UNKNOWN 时建议稍后重试查询。"
+          },
+          "fail_reason": {
+            "type": "string",
+            "description": "失败原因；非失败状态通常为空字符串。"
+          },
+          "result_url": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true,
+            "description": "兼容字段，成功后为上游临时签名地址；推荐改用内容下载接口。"
+          },
+          "submit_time": {
+            "type": "integer",
+            "description": "提交时间，Unix 时间戳。"
+          },
+          "start_time": {
+            "type": "integer",
+            "nullable": true,
+            "description": "开始处理时间，Unix 时间戳。"
+          },
+          "finish_time": {
+            "type": "integer",
+            "nullable": true,
+            "description": "完成时间，Unix 时间戳。"
+          },
+          "progress": {
+            "type": "string",
+            "description": "百分比进度，例如 100%。"
+          },
+          "quota": {
+            "type": "integer",
+            "description": "本次任务实际扣减的额度（quota）。"
+          }
+        },
+        "required": [
+          "task_id",
+          "status",
+          "fail_reason",
+          "result_url",
+          "submit_time",
+          "start_time",
+          "finish_time",
+          "progress"
+        ]
+      },
+      "OverseasSeedanceErrorResponse": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "错误码，例如 `invalid_request`、`model_price_error`、`task_not_exist`。"
+          },
+          "message": {
+            "type": "string",
+            "description": "错误描述。"
+          },
+          "data": {
+            "nullable": true,
+            "description": "附加信息，通常为 null。"
+          }
+        },
+        "required": ["code", "message"]
+      }
+    }
+  }
+}

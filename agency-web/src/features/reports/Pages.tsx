@@ -533,93 +533,18 @@ export function AuditPage({ root }: { root: boolean }) {
   );
 }
 
-const capabilityNames: Record<string, string> = {
-  agency_durable_v1: "Agency data service",
-  billing_component_v2: "Billing component",
-  billing_schemas: "Billing data schema",
-  commission_worker: "Commission processing",
-  exports: "Data exports",
-  fact_projection: "Usage projection",
-  onboarding: "Agency onboarding",
-  outbox_v1: "Message queue",
-  pricing_snapshot_v1: "Pricing snapshot",
-  withdrawals: "Commission withdrawals",
-};
-const queueNames: Record<string, string> = {
-  claimed: "Processing",
-  pending: "Pending",
-  poison: "Failed jobs",
-  retry: "Retrying",
-  open_reconciliation_issues: "Open reconciliation",
-  exports_in_progress: "Exports in progress",
-};
-
 function SyncStatusView() {
   const { t } = useTranslation();
   const query = useQuery<SyncStatus>("/root/sync/status");
-  const enabledCount = query.data
-    ? Object.values(query.data.capabilities).filter(Boolean).length
-    : 0;
-  const capabilityCount = query.data ? Object.keys(query.data.capabilities).length : 0;
-  const capabilityPercent = capabilityCount ? Math.round((enabledCount / capabilityCount) * 100) : 0;
-  const pendingCount = query.data
-    ? Object.values(query.data.backlog.deliveries || {}).reduce(
-        (sum, value) => sum + Number(value || 0),
-        0,
-      )
-    : 0;
   return (
     <section>
-      <PageHeader icon="status" title={t("Service status")} description={t("Live health checks for services, queues and data")} actions={<button type="button" className="secondary button-icon" onClick={query.reload}>
-          <ActionIcon name="refresh" />
-          {t("Refresh")}
-        </button>} />
       <ErrorNotice error={query.error} />
       {query.loading && <Loading />}
       {query.data && (
-        <>
-          <div className="service-health">
-            <div className={query.data.schema.ready ? "health-banner ready" : "health-banner warning"}>
-              <span className="health-dot" aria-hidden="true" />
-              <div>
-                <strong>{t(query.data.schema.ready ? "All systems operational" : "Schema needs attention")}</strong>
-                <p>{t(query.data.schema.ready ? "Database schema is ready." : "Database schema is incomplete.")}</p>
-              </div>
-            </div>
-            <div className="status-kpis">
-              <div className="status-kpi"><span>{t("Enabled capabilities")}</span><strong>{enabledCount}<small> / {capabilityCount}</small></strong><div className="kpi-progress"><span style={{ width: `${capabilityPercent}%` }} /></div></div>
-              <div className="status-kpi"><span>{t("Pending work")}</span><strong>{pendingCount}</strong><small className="kpi-caption">{pendingCount === 0 ? t("All queues are clear") : t("Needs attention")}</small></div>
-              <div className="status-kpi"><span>{t("Open issues")}</span><strong>{query.data.backlog.open_reconciliation_issues || 0}</strong></div>
-            </div>
-          </div>
-          <div className="status-section">
-            <div className="section-heading"><div><PageHeading icon="agency" level={3}>{t("Capability")}</PageHeading><p className="muted">{t("Live availability of agency services")}</p></div></div>
-            <div className="capability-grid">
-              {Object.entries(query.data.capabilities).map(([name, value]) => (
-                <article className={value ? "capability-card enabled" : "capability-card disabled"} key={name}>
-                  <div className="capability-icon" aria-hidden="true">{value ? "✓" : "!"}</div>
-                  <div><strong>{t(capabilityNames[name] || name.replaceAll("_", " ") )}</strong><span>{t(value ? "Enabled" : "Disabled")}</span></div>
-                </article>
-              ))}
-            </div>
-          </div>
-          <div className="status-section">
-            <div className="section-heading"><div><PageHeading icon="sync" level={3}>{t("Pending work")}</PageHeading><p className="muted">{t("Background jobs and synchronization queues")}</p></div></div>
-            <div className="queue-grid">
-              {Object.entries({
-                ...(query.data.backlog.deliveries || {}),
-                open_reconciliation_issues: query.data.backlog.open_reconciliation_issues,
-                exports_in_progress: query.data.backlog.exports_in_progress,
-              }).map(([name, value]) => (
-                <article className={Number(value) > 0 ? "queue-card has-items" : "queue-card"} key={name}>
-                  <span>{t(queueNames[name] || name.replaceAll("_", " ") )}</span>
-                  <strong>{Number(value || 0).toLocaleString()}</strong>
-                  <small>{t(Number(value || 0) > 0 ? "Needs attention" : "Clear")}</small>
-                </article>
-              ))}
-            </div>
-          </div>
-        </>
+        <div className={query.data.schema.ready ? "health-banner ready" : "health-banner warning"}>
+          <span className="health-dot" aria-hidden="true" />
+          <div><strong>{t(query.data.schema.ready ? "All systems operational" : "Schema needs attention")}</strong><p>{t(query.data.schema.ready ? "Database schema is ready." : "Database schema is incomplete.")}</p></div>
+        </div>
       )}
     </section>
   );
@@ -630,7 +555,6 @@ export function SyncPage() {
   const mutation = useMutation();
   const [error, setError] = useState<unknown>(null);
   const [revision, setRevision] = useState(0);
-  const [statusRevision, setStatusRevision] = useState(0);
   async function run() {
     setError(null);
     try {
@@ -650,7 +574,6 @@ export function SyncPage() {
   }
   return (
     <section>
-      <SyncStatusView key={`${revision}:${statusRevision}`} />
       <div className="reconciliation-page-header">
       <PageHeader icon="sync" title={t("Reconciliation")} description={t("Run checks to compare current records and resolve discrepancies.")} actions={<button className="button-icon" type="button" disabled={mutation.pending} onClick={() => void run()}>
           <ActionIcon name="refresh" />
@@ -665,7 +588,7 @@ export function SyncPage() {
       <ErrorNotice error={error} />
       <ReconciliationIssues
         key={revision}
-        onChanged={() => setStatusRevision((value) => value + 1)}
+        onChanged={() => setRevision((value) => value + 1)}
       />
       <ReconciliationRuns key={`runs:${revision}`} />
     </section>

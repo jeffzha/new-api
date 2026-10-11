@@ -381,6 +381,8 @@ function Dashboard({
               key={item}
               type="button"
               aria-current={tab === item ? "page" : undefined}
+              aria-label={item === "pricing" ? t("Pricing") : t(tabLabels[item])}
+              title={item === "pricing" ? t("Pricing") : t(tabLabels[item])}
               onClick={() => {
                 setTab(item);
                 setError(null);

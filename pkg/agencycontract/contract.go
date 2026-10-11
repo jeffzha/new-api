@@ -17,6 +17,12 @@ import (
 const (
 	SchemaVersion          = "agency-billing-v1"
 	ComponentSchemaVersion = "agency-billing-v2"
+	// BillingEventCorrected supersedes the total of an already finalized charge
+	// after an audited operator correction. The corrected total must equal the
+	// funding the customer wallet already paid, so a correction never moves
+	// money: it only realigns the agency usage and commission projection with
+	// the platform consumption log.
+	BillingEventCorrected = "agency.billing_corrected"
 	// Keep the historical value available because old pricing snapshots are
 	// immutable and must continue to settle with their original ordering.
 	FundingRuleVersionV1 = "paid_first_v1"

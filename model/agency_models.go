@@ -971,6 +971,7 @@ func AgencyModels() []any {
 		&AgencyUserBinding{}, &AgencyActiveUserBinding{}, &AgencyCustomerSalesOverride{}, &AgencyPricePolicyVersion{}, &AgencyPricePolicyItem{}, &AgencyPlatformPriceState{}, &AgencyPlatformPriceVersion{}, &AgencyIdempotencyRecord{},
 		&AgencyFundingAccount{}, &AgencyFundingLot{}, &AgencyFundingAllocation{}, &AgencyFundingLedger{}, &AgencyFundingDebt{}, &AgencyDebtRepayment{}, &AgencyFundingReversal{}, &AgencyFundingReversalChargeRecord{}, &AgencyCreditTerms{}, &AgencyCreditInvoice{},
 		&AgencyBillingJournal{}, &AgencyBillingOperation{}, &AgencyBillingOutbox{}, &AgencyEventDelivery{}, &AgencyTaskSubmissionAttempt{},
+		&AgencyBillingCorrection{},
 		&AgencyChargeComponent{}, &AgencyComponentFunding{},
 		&AgencySourceEvent{}, &AgencyUsageFact{}, &AgencyTopupFact{}, &AgencyCommissionJob{}, &AgencyCommissionLedger{}, &AgencyCommissionBalance{},
 		&AgencyWithdrawalAccount{}, &AgencyWithdrawal{}, &AgencyWithdrawalPaymentReference{}, &AgencyWithdrawalTransition{}, &AgencyAuditLog{}, &AgencyDailyStat{},

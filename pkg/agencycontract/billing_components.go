@@ -64,11 +64,15 @@ func ValidateBillingComponents(event BillingEvent) error {
 		return errors.New("invalid billing component schema")
 	}
 	isReversal := event.EventType == "agency.billing_reversed"
-	if event.EventType != "" && event.EventType != "agency.billing_finalized" && !isReversal {
+	isCorrection := event.EventType == BillingEventCorrected
+	if event.EventType != "" && event.EventType != "agency.billing_finalized" && !isReversal && !isCorrection {
 		return errors.New("invalid billing component event type")
 	}
 	if isReversal && (strings.TrimSpace(event.OriginalEventID) == "" || event.OriginalEventID == event.EventID) {
 		return errors.New("billing component reversal requires original event")
+	}
+	if isCorrection && (strings.TrimSpace(event.OriginalEventID) == "" || event.OriginalEventID == event.EventID) {
+		return errors.New("billing component correction requires original event")
 	}
 	seen := make(map[string]bool, len(event.Components))
 	totals := make([]int64, 12)

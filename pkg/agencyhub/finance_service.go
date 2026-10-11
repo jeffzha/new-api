@@ -187,6 +187,10 @@ func validateBillingEvent(event agencycontract.BillingEvent) error {
 	if err := agencycontract.ValidateBillingComponents(event); err != nil {
 		return err
 	}
+	isCorrection := event.EventType == agencycontract.BillingEventCorrected
+	if isCorrection && (strings.TrimSpace(event.OriginalEventID) == "" || event.OriginalEventID == event.EventID) {
+		return errors.New("billing correction requires its original event")
+	}
 	if event.MoneySeq < 0 || event.StandardQuota < 0 || event.ChargedTotalQuota < 0 ||
 		event.InputTokens < 0 || event.OutputTokens < 0 || event.CacheReadTokens < 0 || event.CacheWriteTokens < 0 ||
 		event.CommissionableQuota < 0 || event.NoncommissionableQuota < 0 ||
@@ -200,7 +204,7 @@ func validateBillingEvent(event agencycontract.BillingEvent) error {
 	if event.SchemaVersion == agencycontract.ComponentSchemaVersion &&
 		(strings.TrimSpace(event.FinancialChargeID) == "" || strings.TrimSpace(event.OperationID) == "" ||
 			event.JournalRevision <= 0 || event.MoneySeq <= 0 || event.EventCount != 1 || event.EventIndex != 0 ||
-			(event.EventType != "agency.billing_finalized" && event.EventType != "agency.billing_reversed")) {
+			(event.EventType != "agency.billing_finalized" && event.EventType != "agency.billing_reversed" && !isCorrection)) {
 		return errors.New("invalid component billing event identity")
 	}
 	return nil
@@ -327,6 +331,7 @@ func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEve
 		}
 	}
 	isReversal := event.EventType == "agency.billing_reversed"
+	isCorrection := event.EventType == agencycontract.BillingEventCorrected
 	isFundingReversal := event.EventType == "agency.funding_reversed"
 	// Reservations and funding credits are money-sequence evidence, not model
 	// calls. Their eventual finalization supplies the single usage record.
@@ -336,13 +341,23 @@ func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEve
 	// earns commission. This binds fee/free usage and refund source deltas too.
 	if event.SchemaVersion == agencycontract.ComponentSchemaVersion ||
 		(event.JournalRevision > 0 && strings.TrimSpace(event.FinancialChargeID) != "" &&
-			(event.EventType == "agency.billing_finalized" || isReversal || event.CommissionEligible)) {
+			(event.EventType == "agency.billing_finalized" || isReversal || isCorrection || event.CommissionEligible)) {
 		if err := verifyAuthoritativeBillingEvent(tx, event, payloadHash); err != nil {
 			return err
 		}
 	}
+	if isCorrection && len(event.Components) > 1 {
+		return errors.New("multi component billing corrections are not supported")
+	}
 	amount := int64(0)
 	if !isFundingOnly {
+		baseline := correctionUsageBaseline{}
+		if isCorrection {
+			var err error
+			if baseline, err = a.billingCorrectionBaselineTx(tx, event); err != nil {
+				return err
+			}
+		}
 		if len(event.Components) == 0 {
 			var err error
 			amount, err = a.projectBillingComponentMode(tx, event, "default", now, true, commissionEnabled)
@@ -370,13 +385,21 @@ func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEve
 		}
 		// Component rows share a single request. Count and sum the immutable
 		// envelope once instead of multiplying calls by the component count.
-		if !isReversal || amount != 0 {
+		// A correction restates one existing call, so it must move or adjust the
+		// previous daily bucket instead of counting the request twice.
+		switch {
+		case isCorrection:
+			if err := a.recordCorrectionDailyStat(tx, event, baseline, amount); err != nil {
+				return err
+			}
+		case !isReversal || amount != 0:
 			if err := a.recordDailyStat(tx, event, amount, isReversal); err != nil {
 				return err
 			}
 		}
 	}
-	commissionAmountPending := event.CommissionAmountMicros > 0 || event.ReversedCommissionAmountMicros > 0
+	commissionAmountPending := event.CommissionAmountMicros > 0 || event.ReversedCommissionAmountMicros > 0 ||
+		(isCorrection && event.CommissionEligible)
 	if !commissionEnabled && event.AgencyID != nil && event.CommissionEligible && commissionAmountPending && !isFundingOnly {
 		if err := a.ensureCommissionJobTx(tx, event, payload, payloadHash, now); err != nil {
 			return err
@@ -491,7 +514,8 @@ func verifyAuthoritativeBillingEvent(tx *gorm.DB, event agencycontract.BillingEv
 	if journal.UserID != event.UserID || journal.Revision < event.JournalRevision {
 		return errors.New("authoritative billing journal identity mismatch")
 	}
-	if event.EventType == "agency.billing_finalized" || event.EventType == "agency.billing_reversed" {
+	if event.EventType == "agency.billing_finalized" || event.EventType == "agency.billing_reversed" ||
+		event.EventType == agencycontract.BillingEventCorrected {
 		cancelledReservation := journal.Status == "cancelled" && isReservationCancellation(event)
 		if journal.Status != "finalized" && journal.Status != "settled" && journal.Status != "partially_reversed" && journal.Status != "reversed" && !cancelledReservation {
 			return errors.New("authoritative billing journal is not finalized")
@@ -543,8 +567,13 @@ func (a *App) projectBillingComponent(tx *gorm.DB, event agencycontract.BillingE
 
 func (a *App) projectBillingComponentMode(tx *gorm.DB, event agencycontract.BillingEvent, componentID string, now int64, recordUsage bool, commissionEnabled bool) (int64, error) {
 	isReversal := event.EventType == "agency.billing_reversed"
+	isCorrection := event.EventType == agencycontract.BillingEventCorrected
 	if recordUsage && !isReversal {
-		if err := a.recordUsageFact(tx, event, componentID); err != nil {
+		if isCorrection {
+			if err := a.correctUsageFact(tx, event, componentID); err != nil {
+				return 0, err
+			}
+		} else if err := a.recordUsageFact(tx, event, componentID); err != nil {
 			return 0, err
 		}
 	}
@@ -552,7 +581,16 @@ func (a *App) projectBillingComponentMode(tx *gorm.DB, event agencycontract.Bill
 		if !commissionEnabled {
 			return 0, nil
 		}
+		if isCorrection {
+			return 0, errors.New("tiered commission corrections are not supported")
+		}
 		return a.projectCommissionSplits(tx, event, componentID, now)
+	}
+	if isCorrection {
+		if !commissionEnabled {
+			return 0, nil
+		}
+		return a.projectCommissionCorrection(tx, event, componentID, now)
 	}
 	zeroCommission := (!isReversal && event.CommissionAmountMicros == 0) || (isReversal && event.ReversedCommissionAmountMicros == 0)
 	// Quota and currency micros have independent cumulative rounding. A
@@ -776,6 +814,146 @@ func (a *App) recordUsageFact(tx *gorm.DB, event agencycontract.BillingEvent, co
 	return nil
 }
 
+// correctionUsageSkipReason keeps the fact's explanation identical to the one
+// the original projection would have written for the corrected amounts.
+func correctionUsageSkipReason(event agencycontract.BillingEvent) string {
+	skipReason := event.CommissionSkipReason
+	if skipReason == "" && event.NoncommissionableQuota > 0 {
+		skipReason = "noncommissionable_charge"
+	}
+	if event.CommissionEligible && event.CommissionAmountMicros <= 0 {
+		skipReason = "zero_commission"
+	}
+	return skipReason
+}
+
+// correctUsageFact rewrites the usage row of the original charge in place so
+// the agency record follows the amount the customer wallet actually paid. The
+// original event id keeps the row identity, so the customer keeps one
+// corrected call instead of gaining a duplicate entry.
+func (a *App) correctUsageFact(tx *gorm.DB, event agencycontract.BillingEvent, componentID string) error {
+	if event.AgencyID == nil || strings.TrimSpace(event.OriginalEventID) == "" {
+		return errors.New("billing correction is missing its original event")
+	}
+	var fact model.AgencyUsageFact
+	err := model.AgencyLockForUpdate(tx).
+		Where("event_id = ? AND component_key = ?", event.OriginalEventID, model.AgencyComponentKey(componentID)).
+		First(&fact).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// The original projection never reached this hub, so the corrected call
+		// has to be recorded rather than rewritten.
+		return a.recordUsageFact(tx, event, componentID)
+	}
+	if err != nil {
+		return err
+	}
+	if fact.UserID != event.UserID || valueOrZero(fact.AgencyID) != *event.AgencyID {
+		return errors.New("billing correction does not match the projected usage owner")
+	}
+	businessStatus := event.BusinessStatus
+	if businessStatus == "" {
+		businessStatus = event.BillingStatus
+	}
+	if businessStatus == "" {
+		businessStatus = fact.BusinessStatus
+	}
+	return tx.Model(&model.AgencyUsageFact{}).Where("id = ?", fact.ID).Updates(map[string]any{
+		"charged_quota": event.ChargedTotalQuota, "paid_quota": event.PaidAllocatedQuota,
+		"nonpaid_quota": event.NonpaidAllocatedQuota, "debt_quota": event.DebtAllocatedQuota,
+		"standard_quota": event.StandardQuota, "sales_bps": event.SalesBPS,
+		"business_status": businessStatus, "skip_reason": correctionUsageSkipReason(event),
+		// The correction carries the occurrence of the original call so both
+		// sides list the same timestamp.
+		"occurred_at_ms": event.OccurredAtMS,
+	}).Error
+}
+
+// projectCommissionCorrection applies only the difference between the
+// corrected commission and the amount already recorded for the original call.
+// A negative difference reuses the reversal entry so every report keeps
+// subtracting it, while a positive difference is a plain earning. Pending
+// withdrawals stay untouched: this restates a historical amount instead of
+// creating a refund an operator must approve.
+func (a *App) projectCommissionCorrection(tx *gorm.DB, event agencycontract.BillingEvent, componentID string, now int64) (int64, error) {
+	if event.AgencyID == nil || strings.TrimSpace(event.OriginalEventID) == "" {
+		return 0, errors.New("billing correction is missing its original event")
+	}
+	var original model.AgencyCommissionLedger
+	found := true
+	err := model.AgencyLockForUpdate(tx).
+		Where("event_id = ? AND component_key = ? AND entry_type = ?", event.OriginalEventID, model.AgencyComponentKey(componentID), "earned").
+		First(&original).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		found = false
+	} else if err != nil {
+		return 0, err
+	}
+	var previous, previousQuota int64
+	if found {
+		if original.AgencyID != *event.AgencyID || original.UserID != event.UserID || original.CurrencyCode != event.CurrencyCode {
+			return 0, errors.New("billing correction does not match the projected commission owner")
+		}
+		previous, previousQuota = original.AmountMicros, original.CommissionQuota
+	}
+	corrected, correctedQuota := int64(0), int64(0)
+	if event.CommissionEligible {
+		corrected, correctedQuota = event.CommissionAmountMicros, event.CommissionQuota
+	}
+	delta := corrected - previous
+	if delta == 0 {
+		return 0, nil
+	}
+	entryType := "earned"
+	var originalID *int64
+	if delta < 0 {
+		if !found {
+			return 0, errors.New("billing correction reversal requires the original commission entry")
+		}
+		entryType, originalID = "reversal", &original.ID
+	}
+	entry := &model.AgencyCommissionLedger{EventID: event.EventID, ComponentID: componentID, EntryType: entryType,
+		OriginalEntryID: originalID, AgencyID: *event.AgencyID, BindingID: valueOrZero(event.BindingID), UserID: event.UserID,
+		OriginModelName: event.OriginModelName, StandardQuota: event.StandardQuota,
+		SettlementCostQuota: event.SettlementCostQuota, TheoreticalCommissionQuota: event.TheoreticalCommissionQuota,
+		PaidAllocatedQuota: event.PaidAllocatedQuota, CommissionQuota: correctedQuota - previousQuota, AmountMicros: delta,
+		CurrencyCode: event.CurrencyCode, QuotaPerUnit: event.QuotaPerUnit, ExchangeRate: event.ExchangeRate, OccurredAtMS: now}
+	if err := tx.Create(entry).Error; err != nil {
+		return 0, err
+	}
+	if err := applyCommissionBalanceDelta(tx, *event.AgencyID, event.CurrencyCode, delta, now); err != nil {
+		return 0, err
+	}
+	return delta, nil
+}
+
+func applyCommissionBalanceDelta(tx *gorm.DB, agencyID int64, currencyCode string, delta, now int64) error {
+	var balance model.AgencyCommissionBalance
+	if err := model.AgencyLockForUpdate(tx).Where("agency_id = ? AND currency_code = ?", agencyID, currencyCode).First(&balance).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		balance = model.AgencyCommissionBalance{AgencyID: agencyID, CurrencyCode: currencyCode, Version: 1}
+		if err := tx.Create(&balance).Error; err != nil {
+			return err
+		}
+	}
+	available, err := checkedAdd(balance.AvailableMicros, delta)
+	if err != nil {
+		return err
+	}
+	earned, reversed := balance.EarnedMicros, balance.ReversedMicros
+	if delta > 0 {
+		earned, err = checkedAdd(earned, delta)
+	} else {
+		reversed, err = checkedAdd(reversed, -delta)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Model(&balance).Updates(map[string]any{"available_micros": available, "earned_micros": earned,
+		"reversed_micros": reversed, "version": balance.Version + 1, "updated_at_ms": now}).Error
+}
+
 // holdUnpaidWithdrawals freezes payout attempts after a commission reversal or
 // agency disable changes the payability evidence. Paid/rejected/cancelled
 // withdrawals are immutable; all other outstanding requests require manual
@@ -846,6 +1024,131 @@ func (a *App) recordDailyStat(tx *gorm.DB, event agencycontract.BillingEvent, am
 		return tx.Create(&stat).Error
 	}
 	return tx.Model(&stat).Updates(map[string]any{"calls": stat.Calls, "usage_quota": stat.UsageQuota, "charged_quota": stat.ChargedQuota, "commission_micros": stat.CommissionMicros, "reversal_micros": stat.ReversalMicros, "revision": stat.Revision}).Error
+}
+
+// correctionUsageBaseline is the projection a correction replaces. It is read
+// before the usage row is rewritten so the daily statistics follow the
+// corrected call instead of counting the same request twice.
+type correctionUsageBaseline struct {
+	Found        bool
+	Calls        int64
+	ChargedQuota int64
+	Commission   int64
+	OccurredAtMS int64
+	Source       string
+}
+
+func (a *App) billingCorrectionBaselineTx(tx *gorm.DB, event agencycontract.BillingEvent) (correctionUsageBaseline, error) {
+	var baseline correctionUsageBaseline
+	var usage struct {
+		Calls        int64
+		ChargedQuota int64
+		OccurredAtMS int64
+		PaidQuota    int64
+	}
+	if err := tx.Model(&model.AgencyUsageFact{}).
+		Where("event_id = ?", event.OriginalEventID).
+		Select("COUNT(*) AS calls, COALESCE(SUM(charged_quota),0) AS charged_quota, COALESCE(MIN(occurred_at_ms),0) AS occurred_at_ms, COALESCE(SUM(paid_quota),0) AS paid_quota").
+		Scan(&usage).Error; err != nil {
+		return baseline, err
+	}
+	if usage.Calls == 0 {
+		return baseline, nil
+	}
+	baseline = correctionUsageBaseline{Found: true, Calls: usage.Calls, ChargedQuota: usage.ChargedQuota,
+		OccurredAtMS: usage.OccurredAtMS, Source: "nonpaid"}
+	if usage.PaidQuota > 0 {
+		baseline.Source = "wallet"
+	}
+	var commission int64
+	if err := tx.Model(&model.AgencyCommissionLedger{}).
+		Where("event_id = ? AND entry_type = ?", event.OriginalEventID, "earned").
+		Select("COALESCE(SUM(amount_micros),0)").Scan(&commission).Error; err != nil {
+		return baseline, err
+	}
+	baseline.Commission = commission
+	return baseline, nil
+}
+
+// recordCorrectionDailyStat restates one previously recorded call. The request
+// is counted once: the earlier bucket releases it and the corrected bucket
+// takes it back, or the difference is applied in place when both share one
+// day and funding source.
+func (a *App) recordCorrectionDailyStat(tx *gorm.DB, event agencycontract.BillingEvent, baseline correctionUsageBaseline, commissionDelta int64) error {
+	if event.AgencyID == nil || strings.TrimSpace(event.OriginalEventID) == "" {
+		return nil
+	}
+	modelKey, err := agencycontract.ModelKey(event.OriginModelName)
+	if err != nil {
+		modelKey = "unknown"
+	}
+	source := "nonpaid"
+	if event.PaidAllocatedQuota > 0 {
+		source = "wallet"
+	}
+	statDate := agencyStatDate(event.OccurredAtMS)
+	if baseline.Found {
+		previousDate := agencyStatDate(baseline.OccurredAtMS)
+		if previousDate == statDate && baseline.Source == source {
+			delta := event.ChargedTotalQuota - baseline.ChargedQuota
+			return a.applyDailyStatDelta(tx, *event.AgencyID, statDate, modelKey, event.CurrencyCode, source, 0, delta, delta, commissionDelta)
+		}
+		if err := a.applyDailyStatDelta(tx, *event.AgencyID, previousDate, modelKey, event.CurrencyCode, baseline.Source,
+			-baseline.Calls, -baseline.ChargedQuota, -baseline.ChargedQuota, -baseline.Commission); err != nil {
+			return err
+		}
+		return a.applyDailyStatDelta(tx, *event.AgencyID, statDate, modelKey, event.CurrencyCode, source, baseline.Calls,
+			event.ChargedTotalQuota, event.ChargedTotalQuota, event.CommissionAmountMicros)
+	}
+	return a.applyDailyStatDelta(tx, *event.AgencyID, statDate, modelKey, event.CurrencyCode, source, 1,
+		event.ChargedTotalQuota, event.ChargedTotalQuota, event.CommissionAmountMicros)
+}
+
+func agencyStatDate(ms int64) string {
+	return time.UnixMilli(ms).In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("2006-01-02")
+}
+
+// applyDailyStatDelta keeps the daily aggregates equal to the sum of their
+// calls. A correction moves a call between buckets, so a removal is skipped
+// when the bucket never existed instead of writing negative totals.
+func (a *App) applyDailyStatDelta(tx *gorm.DB, agencyID int64, statDate, modelKey, currencyCode, source string,
+	calls, usageQuota, chargedQuota, commissionMicros int64) error {
+	if calls == 0 && usageQuota == 0 && chargedQuota == 0 && commissionMicros == 0 {
+		return nil
+	}
+	var stat model.AgencyDailyStat
+	err := model.AgencyLockForUpdate(tx).
+		Where("agency_id = ? AND stat_date = ? AND binding_id IS NULL AND user_id IS NULL AND model_key = ? AND currency_code = ? AND billing_source = ?",
+			agencyID, statDate, modelKey, currencyCode, source).First(&stat).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		if calls < 0 || usageQuota < 0 || chargedQuota < 0 || commissionMicros < 0 {
+			return nil
+		}
+		stat = model.AgencyDailyStat{StatDate: statDate, AgencyID: agencyID, ModelKey: modelKey,
+			CurrencyCode: currencyCode, BillingSource: source}
+	} else if err != nil {
+		return err
+	}
+	if stat.Calls, err = checkedAdd(stat.Calls, calls); err != nil {
+		return err
+	}
+	if stat.UsageQuota, err = checkedAdd(stat.UsageQuota, usageQuota); err != nil {
+		return err
+	}
+	if stat.ChargedQuota, err = checkedAdd(stat.ChargedQuota, chargedQuota); err != nil {
+		return err
+	}
+	if stat.CommissionMicros, err = checkedAdd(stat.CommissionMicros, commissionMicros); err != nil {
+		return err
+	}
+	if stat.Revision, err = checkedAdd(stat.Revision, 1); err != nil {
+		return err
+	}
+	if stat.ID == 0 {
+		return tx.Create(&stat).Error
+	}
+	return tx.Model(&stat).Updates(map[string]any{"calls": stat.Calls, "usage_quota": stat.UsageQuota,
+		"charged_quota": stat.ChargedQuota, "commission_micros": stat.CommissionMicros, "revision": stat.Revision}).Error
 }
 func valueOrZero(value *int64) int64 {
 	if value == nil {

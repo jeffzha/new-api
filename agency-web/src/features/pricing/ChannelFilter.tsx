@@ -1,40 +1,46 @@
 import { useTranslation } from "react-i18next";
+import type { ReactNode } from "react";
 
 export type ChannelFilterOption = { id: string; name: string; models: number };
 
-export function ChannelGlyph() {
-  return (
-    <svg
-      width="15"
-      height="15"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="3" y="4" width="18" height="7" rx="2" />
-      <rect x="3" y="13" width="18" height="7" rx="2" />
-      <path d="M7 7.5h.01M7 16.5h.01" />
-    </svg>
-  );
-}
-
-export function ChannelTags(props: { names: { id: string | number; name: string }[] }) {
+/** One physical table row per channel keeps wrapped names aligned with their cost. */
+export function ChannelPricingRows(props: {
+  channels: { id: string | number; name: string; cost: ReactNode }[];
+  leading: ReactNode[];
+  trailing: ReactNode[];
+  emptyCost?: ReactNode;
+  className?: string;
+}) {
   const { t } = useTranslation();
-  if (!props.names.length) return <span className="muted">{t("Channel unavailable")}</span>;
+  const channels = props.channels.length
+    ? props.channels
+    : [
+        {
+          id: "unavailable",
+          name: t("Channel unavailable"),
+          cost: props.emptyCost ?? t("Channel unavailable"),
+        },
+      ];
   return (
-    <div className="channel-tags">
-      {props.names.map((channel) => (
-        <span key={channel.id}>
-          <span className="channel-filter-icon" aria-hidden="true">
-            <ChannelGlyph />
-          </span>
-          {channel.name}
-        </span>
+    <>
+      {channels.map((channel, index) => (
+        <tr key={channel.id} className={props.className}>
+          {index === 0 &&
+            props.leading.map((cell, position) => (
+              <td key={position} rowSpan={channels.length}>
+                {cell}
+              </td>
+            ))}
+          <td className="pricing-channel-cell">{channel.name}</td>
+          <td className="pricing-cost-cell">{channel.cost}</td>
+          {index === 0 &&
+            props.trailing.map((cell, position) => (
+              <td key={position} rowSpan={channels.length}>
+                {cell}
+              </td>
+            ))}
+        </tr>
       ))}
-    </div>
+    </>
   );
 }

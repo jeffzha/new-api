@@ -23,7 +23,7 @@ type childPricingRequest struct {
 }
 
 func (a *App) directChild(identity *Identity, childID int64) (model.Agency, agencycontract.Policy, error) {
-	if identity == nil || identity.ActorType != ActorTypeOperator || identity.AgencyID == nil {
+	if identity == nil || identity.AgencyID == nil || (identity.ActorType != ActorTypeOperator && identity.ActorType != ActorTypeRoot) {
 		return model.Agency{}, agencycontract.Policy{}, errors.New("agency operator required")
 	}
 	var child model.Agency
@@ -125,7 +125,7 @@ func (a *App) publishChildPricing(c *gin.Context) {
 		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
 		return
 	}
-	if err := a.publishPolicy(c, child.ID, request.ExpectedRevision, candidate, request.Reason, ActorTypeOperator, false); err != nil {
+	if err := a.publishPolicy(c, child.ID, request.ExpectedRevision, candidate, request.Reason, identity.ActorType, false); err != nil {
 		return
 	}
 }

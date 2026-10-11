@@ -5,7 +5,12 @@ ARG VITE_AGENCY_CENTER_URL
 ARG VITE_MODEL_MOCK_URL
 ARG BUN_REGISTRY=https://registry.npmjs.org
 ARG BUN_MAX_HTTP_REQUESTS=48
-ENV BUN_CONFIG_REGISTRY=${BUN_REGISTRY} BUN_CONFIG_MAX_HTTP_REQUESTS=${BUN_MAX_HTTP_REQUESTS}
+ARG FRONTEND_BUILD_PARALLELISM=2
+ENV BUN_CONFIG_REGISTRY=${BUN_REGISTRY} \
+    BUN_CONFIG_MAX_HTTP_REQUESTS=${BUN_MAX_HTTP_REQUESTS} \
+    GOMAXPROCS=${FRONTEND_BUILD_PARALLELISM} \
+    RAYON_NUM_THREADS=${FRONTEND_BUILD_PARALLELISM} \
+    UV_THREADPOOL_SIZE=${FRONTEND_BUILD_PARALLELISM}
 
 WORKDIR /build/web
 COPY web/package.json web/bun.lock ./
@@ -18,22 +23,31 @@ RUN version="${BUILD_VERSION:-$(cat /build/VERSION)}" \
         VITE_REACT_APP_VERSION="$version" \
         VITE_AGENCY_CENTER_URL="$VITE_AGENCY_CENTER_URL" \
         VITE_MODEL_MOCK_URL="$VITE_MODEL_MOCK_URL" \
-        bun run build
+        bun run build \
+    && touch /tmp/main-web-build-complete
 
 # Agency's lockfileVersion 2 requires Bun 1.4; keep frozen-lockfile validation.
 FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS agency-web-builder
 ARG BUN_REGISTRY=https://registry.npmjs.org
-ENV BUN_CONFIG_REGISTRY=${BUN_REGISTRY}
+ARG FRONTEND_BUILD_PARALLELISM=2
+ENV BUN_CONFIG_REGISTRY=${BUN_REGISTRY} \
+    GOMAXPROCS=${FRONTEND_BUILD_PARALLELISM} \
+    RAYON_NUM_THREADS=${FRONTEND_BUILD_PARALLELISM} \
+    UV_THREADPOOL_SIZE=${FRONTEND_BUILD_PARALLELISM}
 WORKDIR /build/agency-web
+# Serialize the two CPU-heavy frontend bundles on small production builders.
+COPY --from=builder /tmp/main-web-build-complete /tmp/main-web-build-complete
 COPY agency-web/package.json agency-web/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY agency-web ./
-RUN bun run build
+RUN bun run build && touch /tmp/agency-web-build-complete
 
 FROM golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df AS builder2
 ARG BUILD_VERSION
 ARG GO_PROXY=https://proxy.golang.org,direct
+ARG GO_BUILD_PARALLELISM=2
 ENV GO111MODULE=on CGO_ENABLED=0 GOWORK=off GOPROXY=${GO_PROXY}
+ENV GOMAXPROCS=${GO_BUILD_PARALLELISM} GOFLAGS=-p=${GO_BUILD_PARALLELISM}
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -42,6 +56,8 @@ ENV GOEXPERIMENT=greenteagc
 
 WORKDIR /build
 
+# Wait for both frontend bundles before starting Go module resolution/build.
+COPY --from=agency-web-builder /tmp/agency-web-build-complete /tmp/agency-web-build-complete
 ADD go.mod go.sum ./
 # relaykit is a local submodule referenced via replace; its go.mod must be
 # present for go mod download to resolve the main module graph.

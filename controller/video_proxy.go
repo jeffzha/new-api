@@ -122,15 +122,17 @@ func VideoProxy(c *gin.Context) {
 
 	if descriptor == nil {
 		resultURL := strings.TrimSpace(task.GetResultURL())
-		if isTaskMediaFallbackLoop(resultURL, task.TaskID) || resultURL == "" {
-			if channel.Type == constant.ChannelTypeOpenAISeedance {
-				resolvedURL, resolveErr := resolveOpenAISeedanceTaskResultURL(task, channel, baseURL)
-				if resolveErr == nil {
+		if channel.Type == constant.ChannelTypeOpenAISeedance {
+			// Provider artifact URLs are signed and expire. Refresh immediately
+			// before every download, but keep the stored URL as a fallback when
+			// the upstream status endpoint is temporarily unavailable.
+			if resolvedURL, resolveErr := resolveOpenAISeedanceTaskResultURL(task, channel, baseURL); resolveErr == nil {
+				if resolvedURL != resultURL {
 					snap := task.Snapshot()
 					task.PrivateData.ResultURL = resolvedURL
 					_, _ = task.UpdateWithStatus(snap.Status)
-					resultURL = resolvedURL
 				}
+				resultURL = resolvedURL
 			}
 		}
 		if resultURL == "" || isTaskMediaFallbackLoop(resultURL, task.TaskID) {

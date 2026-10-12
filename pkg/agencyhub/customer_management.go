@@ -19,11 +19,26 @@ func (a *App) customerManagement(c *gin.Context) {
 	username := strings.TrimSpace(c.Query("username"))
 	var err error
 	if username != "" {
-		if len([]rune(username)) > 20 {
+		if len([]rune(username)) > 254 {
 			respondError(c, http.StatusBadRequest, "invalid_username", "请输入有效的客户账号", nil)
 			return
 		}
 		err = a.db.Select("id, username, billing_mode").Where("username = ?", username).First(&user).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) && strings.Contains(username, "@") {
+			var matches []model.User
+			err = a.db.Select("id, username, billing_mode").Where("LOWER(email) = ?", model.NormalizeEmail(username)).Limit(2).Find(&matches).Error
+			if err == nil {
+				switch len(matches) {
+				case 0:
+					err = gorm.ErrRecordNotFound
+				case 1:
+					user = matches[0]
+				default:
+					respondError(c, http.StatusConflict, "ambiguous_email", "请输入有效的客户账号", nil)
+					return
+				}
+			}
+		}
 	} else {
 		id, parseErr := parseID(c.Param("user_id"))
 		if parseErr != nil {

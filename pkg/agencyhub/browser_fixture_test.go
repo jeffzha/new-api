@@ -97,7 +97,7 @@ func TestAgencyBrowserFixture(t *testing.T) {
 	require.NoError(t, db.Create(&legacy).Error)
 	blocker := model.Task{UserId: legacy.Id, TaskID: "BROWSER-BINDING-BLOCKER", Status: model.TaskStatusInProgress, Progress: "25%"}
 	require.NoError(t, db.Create(&blocker).Error)
-	managed := model.User{Username: "browser-managed", AffCode: "browser-managed-aff", BillingMode: model.AgencyDurableBillingMode, AuthVersion: 1}
+	managed := model.User{Username: "browser-managed", Email: "customer.address+overseas@example.com", AffCode: "browser-managed-aff", BillingMode: model.AgencyDurableBillingMode, AuthVersion: 1}
 	require.NoError(t, db.Create(&managed).Error)
 	err = db.Transaction(func(tx *gorm.DB) error {
 		_, bindErr := BindUserByInvite(tx, int64(managed.Id), agency.InviteCode, "invite", 0)

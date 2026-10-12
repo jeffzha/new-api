@@ -588,6 +588,31 @@ test("operator creates a scoped CSV and downloads the generated file without oth
   });
 });
 
+test("root can look up a customer by full email without truncating the account", async ({ page }) => {
+  await rootLogin(page);
+  await page.getByRole("button", { name: "Customers", exact: true }).click();
+  await page.getByRole("button", { name: "Customer assignment", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Customer assignment", exact: true });
+  const account = dialog.getByLabel("Customer account", { exact: true });
+  const email = "customer.address+overseas@example.com";
+  // Typing exercises the browser's length limit; fill() bypasses it.
+  await account.pressSequentially(email);
+  await expect(account).toHaveValue(email);
+  const lookup = page.waitForResponse((response) =>
+    response.url().includes("/root/users/management?") && response.request().method() === "GET",
+  );
+  await dialog.getByRole("button", { name: "Look up customer", exact: true }).click();
+  const response = await lookup;
+  expect(new URL(response.url()).searchParams.get("username")).toBe(email);
+  expect(response.status()).toBe(200);
+  expect((await response.json()).data.username).toBe("browser-managed");
+  await expect(dialog.getByRole("button", { name: "Transfer customer", exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(account).toHaveValue(email);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: test.info().outputPath("customer-email-mobile.png"), fullPage: true });
+});
+
 test("root can inspect and cancel a blocked binding, then transfer a managed customer with the observed revision", async ({
   page,
 }) => {
@@ -611,7 +636,6 @@ test("root can inspect and cancel a blocked binding, then transfer a managed cus
       response.request().method() === "POST" && /\/root\/users\/\d+\/bind$/.test(response.url()),
   );
   await dialog.getByRole("button", { name: "Bind existing customer", exact: true }).click();
-  await confirm(page, rootPassword);
   expect((await bound).status()).toBe(202);
   await expect(dialog.getByText("BROWSER-BINDING-BLOCKER", { exact: true })).toBeVisible();
   await dialog
@@ -623,7 +647,6 @@ test("root can inspect and cancel a blocked binding, then transfer a managed cus
       /\/root\/provisioning\/\d+\/cancel$/.test(response.url()),
   );
   await dialog.getByRole("button", { name: "Cancel binding", exact: true }).click();
-  await confirm(page, rootPassword);
   expect((await cancelled).status()).toBe(200);
   const afterCancel = await (await page.request.get("/__fixture/state")).json();
   expect(afterCancel).toMatchObject({
@@ -645,7 +668,7 @@ test("root can inspect and cancel a blocked binding, then transfer a managed cus
     .fill("browser-target");
   await dialog.getByRole("button", { name: "Check target agency", exact: true }).click();
   await expect(dialog.getByText(/Transfer Target/)).toBeVisible();
-  await dialog.getByLabel("Reason", { exact: true }).fill("Verified customer move");
+  await dialog.getByLabel("Transfer reason (optional)", { exact: true }).fill("Verified customer move");
   await dialog.getByRole("checkbox").check();
   const transferred = page.waitForResponse(
     (response) =>
@@ -653,7 +676,6 @@ test("root can inspect and cancel a blocked binding, then transfer a managed cus
       /\/root\/users\/\d+\/transfer$/.test(response.url()),
   );
   await dialog.getByRole("button", { name: "Transfer customer", exact: true }).click();
-  await confirm(page, rootPassword);
   const transfer = await transferred;
   expect(transfer.status()).toBe(200);
   expect(transfer.request().postDataJSON()).toMatchObject({

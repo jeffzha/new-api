@@ -18,12 +18,32 @@ export const meta = {
     en: "Wangpai AI video generation (MiniMax H3 multimodal reference-to-video)",
     zh: "王牌AI 视频生成（MiniMax H3 多模态参考生视频）",
   },
-  version: "1.0.5",
+  version: "1.0.8",
   author: { name: "NexusReach" },
   baseUrl: "https://wangpaiai.com",
-  models: ["MiniMax-H3", "MiniMax-H3-2K"],
+  models: ["MiniMax-H3", "MiniMax-H3-2K", "MiniMax-H3-Sensitive"],
   fetchMode: "per_task",
   usageSchema: {
+    output_credits: {
+      type: "number",
+      unit: "credit",
+      description: { en: "Video output unit price", zh: "视频输出单价" },
+    },
+    material_credits: {
+      type: "number",
+      unit: "credit",
+      description: { en: "Material unit price", zh: "参考素材单价" },
+    },
+    input_images: {
+      type: "number",
+      unit: "count",
+      description: { en: "Input image unit price", zh: "输入图片单价" },
+    },
+    vendor_credits: {
+      type: "number",
+      unit: "credit",
+      description: { en: "Upstream credit unit price", zh: "上游额度单价" },
+    },
     mode: {
       enum: ["reference", "text"],
       enumLabels: {
@@ -49,19 +69,44 @@ export const meta = {
     },
   },
   usageExamples: [
-    { label: "H3 reference 480P 4s", facts: { mode: "reference", seconds: 4, resolution: "480P" } },
-    { label: "H3 reference 720P 5s", facts: { mode: "reference", seconds: 5, resolution: "720P" } },
-    { label: "H3 reference 1080P 5s", facts: { mode: "reference", seconds: 5, resolution: "1080P" } },
-    { label: "H3 reference 2K 15s", facts: { mode: "reference", seconds: 15, resolution: "2K" } },
-    { label: "H3 prompt only (15s 2K)", facts: { mode: "text", seconds: 15, resolution: "2K" } },
+    {
+      label: "H3 reference 480P 4s",
+      facts: { material_credits: 0, output_credits: 3.2, input_images: 0, vendor_credits: 3.2, mode: "reference", seconds: 4, resolution: "480P" },
+    },
+    {
+      label: "H3 reference 720P 5s",
+      facts: { material_credits: 0, output_credits: 7.5, input_images: 0, vendor_credits: 7.5, mode: "reference", seconds: 5, resolution: "720P" },
+    },
+    {
+      label: "H3 reference 1080P 5s",
+      facts: { material_credits: 0, output_credits: 10, input_images: 0, vendor_credits: 10, mode: "reference", seconds: 5, resolution: "1080P" },
+    },
+    {
+      label: "H3 reference 2K 15s",
+      facts: { material_credits: 0, output_credits: 45, input_images: 0, vendor_credits: 45, mode: "reference", seconds: 15, resolution: "2K" },
+    },
   ],
   protocols: ["openai_video"],
 };
+
+meta.usageProfiles = [
+  {
+    models: ["MiniMax-H3-2K"],
+    schema: meta.usageSchema,
+    examples: [
+      {
+        label: "H3 2K fixed 15s",
+        facts: { material_credits: 0, output_credits: 19, input_images: 0, vendor_credits: 19, mode: "text", seconds: 15, resolution: "2K" },
+      },
+    ],
+  },
+];
 
 // Unified downstream model name -> wangpaiai shelf id. The shelf id is stable
 // on the vendor side; swap the value here when the vendor rotates the shelf.
 const UPSTREAM_MODEL_ID = {
   "MiniMax-H3": "h3-1",
+  "MiniMax-H3-Sensitive": "h3-vip",
   "MiniMax-H3-2K": "wp_a4f5de6f0c3a",
 };
 
@@ -70,10 +115,6 @@ const UPSTREAM_MODEL_ID = {
 // served by the fixed-price 2K H3 shelf, so one downstream model name covers
 // both request shapes.
 const H3_REFERENCE_MODEL_ID = "h3-1";
-// Fallback for hooks whose context omits the channel Base URL (artifact fetch
-// runs from a stored task). Points at the impersonating relay fronting the
-// vendor on this deployment.
-const RELAY_BASE_URL = "http://172.30.250.1:8788";
 const H3_TEXT_MODEL_ID = "wp_a4f5de6f0c3a";
 const H3_TEXT_DURATION = "15";
 const TEXT_MODEL_RATIOS = ["16:9", "9:16", "1:1", "3:4", "4:3"];
@@ -92,6 +133,12 @@ const QUALITY_BY_RESOLUTION = {
   "720P": "Pro 720p",
   "1080P": "Pro 1080p",
   "2K": "Pro 2k",
+};
+const OUTPUT_CREDITS_PER_SECOND = {
+  "480P": 0.8,
+  "720P": 1.5,
+  "1080P": 2,
+  "2K": 3,
 };
 
 function trimmed(value) {
@@ -123,19 +170,11 @@ function isVendorMediaUrl(url) {
   return host === "wangpaiai.com" || host.endsWith(".wangpaiai.com");
 }
 
-let relayBaseUrl = "";
-
-function rememberRelayBase(ctx) {
-  const base = trimmed(ctx && ctx.baseUrl);
-  if (base) relayBaseUrl = base;
-  return base || relayBaseUrl || RELAY_BASE_URL;
-}
-
 function relayedMediaUrl(ctx, url) {
   const value = trimmed(url);
   if (!value || !isVendorMediaUrl(value)) return value;
-  const base = rememberRelayBase(ctx);
-  if (!base) return value;
+  const base = trimmed(ctx && ctx.baseUrl);
+  if (!base || isVendorMediaUrl(base)) return value;
   return base.replace(/\/+$/, "") + "/_fetch?url=" + encodeURIComponent(value);
 }
 
@@ -157,13 +196,14 @@ function normalizeResolution(value) {
 
 function resolutionOf(request) {
   const metadata = metadataOf(request);
-  return (
-    normalizeResolution(request && request.resolution) ||
-    normalizeResolution(request && request.size) ||
-    normalizeResolution(metadata.resolution) ||
-    normalizeResolution(metadata.size) ||
-    "480P"
-  );
+  const values = [request && request.resolution, request && request.size, metadata.resolution, metadata.size];
+  for (let index = 0; index < values.length; index++) {
+    if (!trimmed(values[index])) continue;
+    const normalized = normalizeResolution(values[index]);
+    if (!normalized) throw new Error("unsupported resolution; Wangpai supports 480P, 720P, 1080P and 2K");
+    return normalized;
+  }
+  return "480P";
 }
 
 function secondsOf(request) {
@@ -177,25 +217,29 @@ function secondsOf(request) {
   return seconds;
 }
 
-function ratioOf(request) {
+function ratioOf(request, model) {
   const metadata = metadataOf(request);
   const candidates = [request && request.aspect_ratio, request && request.ratio, metadata.aspect_ratio, metadata.ratio];
   for (let index = 0; index < candidates.length; index++) {
     const value = trimmed(candidates[index]);
-    if (RATIOS.indexOf(value) >= 0) return value;
+    if (!value) continue;
+    const allowed = model === "MiniMax-H3-2K" ? TEXT_MODEL_RATIOS : RATIOS;
+    if (allowed.indexOf(value) < 0) throw new Error("unsupported aspect_ratio for " + model);
+    return value;
   }
   return "16:9";
 }
 
 function collectUrls(values, limit) {
   const urls = [];
-  for (let index = 0; index < values.length && urls.length < limit; index++) {
+  for (let index = 0; index < values.length; index++) {
     let value = values[index];
     if (value && typeof value === "object" && !Array.isArray(value)) {
       value = firstString([value.url, value.image_url, value.video_url, value.audio_url, value.file_url]);
     }
     const url = trimmed(value);
     if (url && urls.indexOf(url) < 0) urls.push(url);
+    if (urls.length > limit) throw new Error("reference count exceeds upstream limit");
   }
   return urls;
 }
@@ -247,17 +291,20 @@ function promptOf(request) {
 
 // Normalizes any accepted client shape into the driver request body the submit
 // hook consumes. Throws when the vendor contract cannot be satisfied.
-function normalizeRequest(request) {
+function normalizeRequest(request, model) {
   if (!request || typeof request !== "object" || Array.isArray(request)) {
     throw new Error("request body must be an object");
   }
   const prompt = promptOf(request);
   if (!prompt) throw new Error("prompt is required");
+  if (!UPSTREAM_MODEL_ID[model]) throw new Error("unsupported Wangpai model");
+  const fixed2K = model === "MiniMax-H3-2K";
+  if (prompt.length > (fixed2K ? 7000 : 30000)) throw new Error("prompt exceeds upstream length limit");
   const normalized = {
     prompt: prompt,
-    seconds: secondsOf(request),
-    resolution: resolutionOf(request),
-    ratio: ratioOf(request),
+    seconds: fixed2K ? 15 : secondsOf(request),
+    resolution: fixed2K ? "2K" : resolutionOf(request),
+    ratio: ratioOf(request, model),
   };
   const images = imagesOf(request);
   const videos = videosOf(request);
@@ -270,7 +317,8 @@ function normalizeRequest(request) {
 
 function upstreamModelId(request, model) {
   const name = trimmed(model);
-  const shelf = UPSTREAM_MODEL_ID[name] || H3_REFERENCE_MODEL_ID;
+  const shelf = UPSTREAM_MODEL_ID[name];
+  if (!shelf) throw new Error("unsupported Wangpai model");
   const images = (request && request.images) || [];
   if (shelf !== H3_TEXT_MODEL_ID && !images.length) {
     throw new Error((name || H3_REFERENCE_MODEL_ID) + " requires at least one reference image; use MiniMax-H3-2K for prompt-only requests");
@@ -279,21 +327,19 @@ function upstreamModelId(request, model) {
 }
 
 function vendorInputs(request, modelId) {
+  const inputs = {};
   if (modelId === H3_TEXT_MODEL_ID) {
     // Fixed-price shelf: 15s 2K, no mode/quality knobs.
-    return {
-      prompt: request.prompt,
-      aspect_ratio: TEXT_MODEL_RATIOS.indexOf(request.ratio) >= 0 ? request.ratio : "16:9",
-      duration: H3_TEXT_DURATION,
-    };
+    inputs.prompt = request.prompt;
+    inputs.aspect_ratio = TEXT_MODEL_RATIOS.indexOf(request.ratio) >= 0 ? request.ratio : "16:9";
+    inputs.duration = H3_TEXT_DURATION;
+  } else {
+    inputs.prompt = request.prompt;
+    inputs.h3_mode = H3_MODE;
+    inputs.duration = String(request.seconds);
+    inputs.quality = QUALITY_BY_RESOLUTION[request.resolution] || QUALITY_BY_RESOLUTION["480P"];
+    inputs.aspect_ratio = request.ratio;
   }
-  const inputs = {
-    prompt: request.prompt,
-    h3_mode: H3_MODE,
-    duration: String(request.seconds),
-    quality: QUALITY_BY_RESOLUTION[request.resolution] || QUALITY_BY_RESOLUTION["480P"],
-    aspect_ratio: request.ratio,
-  };
   const images = request.images || [];
   for (let index = 0; index < images.length; index++) {
     inputs[index === 0 ? "image_url" : "image_url_" + (index + 1)] = images[index];
@@ -310,9 +356,8 @@ function vendorInputs(request, modelId) {
 }
 
 export function buildSubmitRequest(ctx) {
-  const request = normalizeRequest(ctx.requestBody);
-  rememberRelayBase(ctx);
-  const modelId = upstreamModelId(request, ctx.model || ctx.upstreamModel);
+  const request = normalizeRequest(ctx.requestBody, ctx.upstreamModel || ctx.model);
+  const modelId = upstreamModelId(request, ctx.upstreamModel || ctx.model);
   return {
     url: ctx.baseUrl + "/api/v1/generations",
     method: "POST",
@@ -329,7 +374,7 @@ export function buildSubmitRequest(ctx) {
   };
 }
 
-export function parseSubmitResponse(_ctx, resp) {
+export function parseSubmitResponse(ctx, resp) {
   const body = resp && resp.body;
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new Error("wangpaiai returned an invalid submit response");
@@ -337,27 +382,39 @@ export function parseSubmitResponse(_ctx, resp) {
   const generation = body.generation && typeof body.generation === "object" ? body.generation : body;
   const taskId = firstString([generation.id, body.id, body.task_id]);
   if (!taskId) throw new Error("wangpaiai returned no generation id");
-  return { taskId: taskId, taskData: body };
+  const quoted = extractUsage(ctx);
+  return { taskId: taskId, taskData: body, state: { quotedOutputCredits: quoted.output_credits } };
 }
 
-// Billing facts feed the tiered billing expression configured for MiniMax-H3.
-// The price table itself lives on the gateway, never in the plugin.
+// Billing facts feed the provider-scoped tiered expression on the gateway.
 export function extractUsage(ctx) {
   if (ctx && ctx.usagePurpose === "billing_ratios") return null;
-  const request = (ctx && ctx.requestBody) || {};
-  try {
-    return {
-      mode: imagesOf(request).length ? "reference" : "text",
-      seconds: secondsOf(request),
-      resolution: resolutionOf(request),
-    };
-  } catch (e) {
-    return null;
-  }
+  const model = ctx.upstreamModel || ctx.model;
+  const request = normalizeRequest(ctx.requestBody, model);
+  const modelId = upstreamModelId(request, model);
+  const outputCredits = modelId === H3_TEXT_MODEL_ID ? 19 : OUTPUT_CREDITS_PER_SECOND[request.resolution] * request.seconds;
+  return {
+    output_credits: outputCredits,
+    material_credits: 0,
+    input_images: (request.images || []).length,
+    vendor_credits: outputCredits,
+    mode: modelId === H3_TEXT_MODEL_ID ? "text" : "reference",
+    seconds: request.seconds,
+    resolution: request.resolution,
+  };
+}
+
+export function extractUsageOnComplete(ctx, result, body) {
+  if (String(result && result.status).toUpperCase() !== "SUCCESS") return null;
+  const generation = generationOf(body);
+  const cost = generation.cost;
+  if (typeof cost !== "number" || !Number.isFinite(cost) || cost < 0 || cost > 2147483647) return null;
+  const quoted = ctx && ctx.state && ctx.state.quotedOutputCredits;
+  const output = typeof quoted === "number" && Number.isFinite(quoted) && quoted >= 0 ? Math.min(quoted, cost) : cost;
+  return { vendor_credits: cost, output_credits: output, material_credits: cost - output };
 }
 
 export function buildQueryRequest(ctx) {
-  rememberRelayBase(ctx);
   return {
     url: ctx.baseUrl + "/api/v1/generations/" + encodeURIComponent(ctx.taskId),
     method: "GET",
@@ -377,10 +434,11 @@ function generationOf(body) {
 export function parseTaskResult(ctx, body) {
   const generation = generationOf(body);
   const status = trimmed(generation.status).toLowerCase();
-  if (!status) return { status: "IN_PROGRESS" };
+  if (!status) return { status: "UNKNOWN" };
   if (status === "done" || status === "completed" || status === "succeeded") {
     const result = { status: "SUCCESS", progress: "100%" };
     const url = firstString([generation.resultUrl, generation.result_url, generation.url]);
+    if (!url) return { status: "IN_PROGRESS", progress: "99%" };
     // Store the relay-backed URL: the gateway's own /content proxy fetches the
     // stored result server-side and cannot pass the vendor's Cloudflare check.
     // Client facing responses keep the public vendor URL (see render).
@@ -432,7 +490,7 @@ export const protocols = {
       }
       if (ctx.body.kind !== "json") throw new Error("multipart requests are not supported");
       const request = ctx.body.value;
-      const normalized = normalizeRequest(request);
+      const normalized = normalizeRequest(request, ctx.upstreamModel || ctx.model || trimmed(request.model));
       normalized.model = ctx.model || trimmed(request.model);
       return {
         kind: "submit",
@@ -470,6 +528,10 @@ export const protocols = {
       }
       const thumbnail = firstString([generation.thumbUrl, generation.thumb_url]);
       if (thumbnail) output.thumbnail_url = thumbnail;
+      const actualCost = Number(generation.cost);
+      if (Number.isFinite(actualCost) && actualCost >= 0) {
+        output.usage = { vendor_credits: actualCost };
+      }
       if (taskStatus === "FAILURE") {
         output.error = {
           code: firstString([generation.error]) || "generation_failed",

@@ -1,5 +1,8 @@
 {
   "translation": {
+    "360": "360",
+    "1000": "1000",
+    "10000": "10000",
     "Submit and track recharge invoice applications.": "Submit and track recharge invoice applications.",
     "Review applications and register issued invoices.": "Review applications and register issued invoices.",
     "Invoice email sent": "Invoice email sent",
@@ -127,9 +130,6 @@
     "Enter email message": "Saisir le message de l'e-mail",
     "Failed to send email": "Échec de l'envoi de l'e-mail",
     "Email sent successfully": "E-mail envoyé",
-    "360": "360",
-    "1000": "1000",
-    "10000": "10000",
     "_copy": "_copie",
     "，": ", ",
     ", and": ", et",
@@ -2770,7 +2770,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Projets liés",
     "footer.defaultCopyright": "Tous droits réservés.",
-    "footer.new\u0061pi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
+    "footer.newapi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Pour les canaux ajoutés après le 10 mai 2025, pas besoin de supprimer \".\" des noms de modèles lors du déploiement",
     "For example, alipay": "Par exemple, alipay",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Pour les déploiements privés, format : https://fastgpt.run/api/openapi",
@@ -7016,6 +7016,19 @@
     "Play preview": "Play preview",
     "Video unavailable. Showing preview image.": "Video unavailable. Showing preview image.",
     "Turn imagination into motion": "Turn imagination into motion",
-    "Reference previews. Model availability and pricing are listed in the model catalog.": "Reference previews. Model availability and pricing are listed in the model catalog."
+    "Reference previews. Model availability and pricing are listed in the model catalog.": "Reference previews. Model availability and pricing are listed in the model catalog.",
+    "Audio material": "Matériau audio",
+    "Billing rule": "Règle de facturation",
+    "Charged at the upstream credit cost": "Facturé selon la consommation réelle de crédits en amont",
+    "Fixed {{seconds}}s": "Fixe {{seconds}} s",
+    "Image material": "Matériau image",
+    "Material": "Matériau",
+    "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "Les frais de matériaux suivent la facturation du fournisseur ; aucun supplément n'est ajouté lorsqu'il ne facture pas les entrées.",
+    "Model / API": "Modèle / API",
+    "No extra material charge": "Aucun frais de matériau supplémentaire",
+    "Per second": "Par seconde",
+    "Video material": "Matériau vidéo",
+    "Video material pricing": "Tarification des matériaux vidéo",
+    "Video output pricing": "Tarification de la sortie vidéo"
   }
 }

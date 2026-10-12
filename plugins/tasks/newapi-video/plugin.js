@@ -18,11 +18,39 @@ export const meta = {
     en: "Bridge to another new-api gateway that serves the OpenAI video protocol",
     zh: "桥接到提供 OpenAI 视频协议的 new-api 网关",
   },
-  version: "1.0.0",
+  version: "1.1.0",
   author: { name: "NexusReach" },
-  models: ["MiniMax-H3", "MiniMax-H3-2K"],
+  models: ["MiniMax-H3", "MiniMax-H3-2K", "MiniMax-H3-Sensitive"],
   fetchMode: "per_task",
   usageSchema: {
+    output_credits: {
+      type: "number",
+      unit: "credit",
+      description: { en: "Video output unit price", zh: "视频输出单价" },
+    },
+    material_credits: {
+      type: "number",
+      unit: "credit",
+      description: { en: "Material unit price", zh: "参考素材单价" },
+    },
+    input_images: {
+      type: "number",
+      unit: "count",
+      description: { en: "Input image unit price", zh: "输入图片单价" },
+    },
+    vendor_credits: {
+      type: "number",
+      unit: "credit",
+      description: { en: "Upstream credit unit price", zh: "上游额度单价" },
+    },
+    mode: {
+      enum: ["reference", "text"],
+      enumLabels: {
+        reference: { en: "Reference image to video", zh: "参考图生视频" },
+        text: { en: "Prompt only (fixed 15s 2K)", zh: "纯提示词（固定 15 秒 2K）" },
+      },
+      description: { en: "Upstream generation path", zh: "上游生成路径" },
+    },
     seconds: {
       type: "number",
       unit: "second",
@@ -40,18 +68,46 @@ export const meta = {
     },
   },
   usageExamples: [
-    { label: "H3 480P 4s", facts: { seconds: 4, resolution: "480P" } },
-    { label: "H3 720P 5s", facts: { seconds: 5, resolution: "720P" } },
-    { label: "H3 1080P 5s", facts: { seconds: 5, resolution: "1080P" } },
-    { label: "H3 2K 15s", facts: { seconds: 15, resolution: "2K" } },
+    {
+      label: "H3 480P 4s",
+      facts: { material_credits: 0, output_credits: 3.2, input_images: 0, vendor_credits: 3.2, mode: "reference", seconds: 4, resolution: "480P" },
+    },
+    {
+      label: "H3 720P 5s",
+      facts: { material_credits: 0, output_credits: 7.5, input_images: 0, vendor_credits: 7.5, mode: "reference", seconds: 5, resolution: "720P" },
+    },
+    {
+      label: "H3 1080P 5s",
+      facts: { material_credits: 0, output_credits: 10, input_images: 0, vendor_credits: 10, mode: "reference", seconds: 5, resolution: "1080P" },
+    },
+    {
+      label: "H3 2K 15s",
+      facts: { material_credits: 0, output_credits: 45, input_images: 0, vendor_credits: 45, mode: "reference", seconds: 15, resolution: "2K" },
+    },
   ],
   protocols: ["openai_video"],
 };
 
-const MIN_SECONDS = 1;
-const MAX_SECONDS = 3600;
+meta.usageProfiles = [
+  {
+    models: ["MiniMax-H3-2K"],
+    schema: meta.usageSchema,
+    examples: [
+      {
+        label: "H3 2K fixed 15s",
+        facts: { material_credits: 0, output_credits: 19, input_images: 0, vendor_credits: 19, mode: "text", seconds: 15, resolution: "2K" },
+      },
+    ],
+  },
+];
+
+const MIN_SECONDS = 4;
+const MAX_SECONDS = 15;
 const DEFAULT_SECONDS = 5;
 const RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:2", "2:3"];
+const TEXT_MODEL_RATIOS = ["16:9", "9:16", "1:1", "3:4", "4:3"];
+const MODELS = ["MiniMax-H3", "MiniMax-H3-2K", "MiniMax-H3-Sensitive"];
+const OUTPUT_CREDITS_PER_SECOND = { "480P": 0.8, "720P": 1.5, "1080P": 2, "2K": 3 };
 
 function trimmed(value) {
   return value === undefined || value === null ? "" : String(value).trim();
@@ -83,13 +139,14 @@ function normalizeResolution(value) {
 
 function resolutionOf(request) {
   const metadata = metadataOf(request);
-  return (
-    normalizeResolution(request && request.resolution) ||
-    normalizeResolution(request && request.size) ||
-    normalizeResolution(metadata.resolution) ||
-    normalizeResolution(metadata.size) ||
-    "480P"
-  );
+  const values = [request && request.resolution, request && request.size, metadata.resolution, metadata.size];
+  for (let index = 0; index < values.length; index++) {
+    if (!trimmed(values[index])) continue;
+    const normalized = normalizeResolution(values[index]);
+    if (!normalized) throw new Error("unsupported resolution; bridge supports 480P, 720P, 1080P and 2K");
+    return normalized;
+  }
+  return "480P";
 }
 
 function secondsOf(request) {
@@ -103,12 +160,15 @@ function secondsOf(request) {
   return seconds;
 }
 
-function ratioOf(request) {
+function ratioOf(request, model) {
   const metadata = metadataOf(request);
   const candidates = [request && request.aspect_ratio, request && request.ratio, metadata.aspect_ratio, metadata.ratio];
   for (let index = 0; index < candidates.length; index++) {
     const value = trimmed(candidates[index]);
-    if (RATIOS.indexOf(value) >= 0) return value;
+    if (!value) continue;
+    const allowed = model === "MiniMax-H3-2K" ? TEXT_MODEL_RATIOS : RATIOS;
+    if (allowed.indexOf(value) < 0) throw new Error("unsupported aspect_ratio for " + model);
+    return value;
   }
   return "16:9";
 }
@@ -126,29 +186,33 @@ function listOf(value) {
 
 function collectUrls(values, limit) {
   const urls = [];
-  for (let index = 0; index < values.length && urls.length < limit; index++) {
+  for (let index = 0; index < values.length; index++) {
     let value = values[index];
     if (value && typeof value === "object" && !Array.isArray(value)) {
       value = firstString([value.url, value.image_url, value.video_url, value.audio_url, value.file_url]);
     }
     const url = trimmed(value);
     if (url && urls.indexOf(url) < 0) urls.push(url);
+    if (urls.length > limit) throw new Error("reference count exceeds upstream limit");
   }
   return urls;
 }
 
-function normalizeRequest(request) {
+function normalizeRequest(request, model) {
   if (!request || typeof request !== "object" || Array.isArray(request)) {
     throw new Error("request body must be an object");
   }
   const prompt = promptOf(request);
   if (!prompt) throw new Error("prompt is required");
+  if (MODELS.indexOf(model) < 0) throw new Error("unsupported bridge model");
+  const fixed2K = model === "MiniMax-H3-2K";
+  if (prompt.length > (fixed2K ? 7000 : 30000)) throw new Error("prompt exceeds upstream length limit");
   const metadata = metadataOf(request);
   const normalized = {
     prompt: prompt,
-    seconds: secondsOf(request),
-    resolution: resolutionOf(request),
-    ratio: ratioOf(request),
+    seconds: fixed2K ? 15 : secondsOf(request),
+    resolution: fixed2K ? "2K" : resolutionOf(request),
+    ratio: ratioOf(request, model),
   };
   const images = collectUrls(listOf(request.images).concat(listOf(request.image)).concat(listOf(request.input_reference)).concat(listOf(metadata.images)), 9);
   const videos = collectUrls(listOf(request.videos).concat(listOf(request.video)).concat(listOf(metadata.videos)), 3);
@@ -156,13 +220,15 @@ function normalizeRequest(request) {
   if (images.length) normalized.images = images;
   if (videos.length) normalized.videos = videos;
   if (audios.length) normalized.audios = audios;
+  if (!fixed2K && !images.length) throw new Error(model + " requires at least one reference image; use MiniMax-H3-2K for prompt-only requests");
   return normalized;
 }
 
 export function buildSubmitRequest(ctx) {
-  const request = normalizeRequest(ctx.requestBody);
+  const model = ctx.upstreamModel || ctx.model;
+  const request = normalizeRequest(ctx.requestBody, model);
   const body = {
-    model: ctx.model || ctx.upstreamModel,
+    model: model,
     prompt: request.prompt,
     seconds: request.seconds,
     resolution: request.resolution,
@@ -191,21 +257,39 @@ function upstreamTaskId(body) {
   return firstString([body.id, body.task_id, body.taskId, nested.id, nested.task_id, nested.taskId]);
 }
 
-export function parseSubmitResponse(_ctx, resp) {
+export function parseSubmitResponse(ctx, resp) {
   const body = resp && resp.body;
   const taskId = upstreamTaskId(body);
   if (!taskId) throw new Error("bridge gateway returned no task id");
-  return { taskId: taskId, taskData: body };
+  const quoted = extractUsage(ctx);
+  return { taskId: taskId, taskData: body, state: { quotedOutputCredits: quoted.output_credits } };
 }
 
 export function extractUsage(ctx) {
   if (ctx && ctx.usagePurpose === "billing_ratios") return null;
-  const request = (ctx && ctx.requestBody) || {};
-  try {
-    return { seconds: secondsOf(request), resolution: resolutionOf(request) };
-  } catch (e) {
-    return null;
-  }
+  const model = ctx.upstreamModel || ctx.model;
+  const request = normalizeRequest(ctx.requestBody, model);
+  const outputCredits = model === "MiniMax-H3-2K" ? 19 : OUTPUT_CREDITS_PER_SECOND[request.resolution] * request.seconds;
+  return {
+    output_credits: outputCredits,
+    material_credits: 0,
+    input_images: (request.images || []).length,
+    vendor_credits: outputCredits,
+    mode: model === "MiniMax-H3-2K" ? "text" : "reference",
+    seconds: request.seconds,
+    resolution: request.resolution,
+  };
+}
+
+export function extractUsageOnComplete(ctx, result, body) {
+  if (String(result && result.status).toUpperCase() !== "SUCCESS") return null;
+  const usage = body && typeof body.usage === "object" ? body.usage : null;
+  if (!usage) return null;
+  const cost = usage.vendor_credits;
+  if (typeof cost !== "number" || !Number.isFinite(cost) || cost < 0 || cost > 2147483647) return null;
+  const quoted = ctx && ctx.state && ctx.state.quotedOutputCredits;
+  const output = typeof quoted === "number" && Number.isFinite(quoted) && quoted >= 0 ? Math.min(quoted, cost) : cost;
+  return { vendor_credits: cost, output_credits: output, material_credits: cost - output };
 }
 
 export function buildQueryRequest(ctx) {
@@ -231,7 +315,8 @@ export function parseTaskResult(_ctx, body) {
   if (status === "completed" || status === "succeeded" || status === "success" || status === "done") {
     const result = { status: "SUCCESS", progress: "100%" };
     const url = videoUrlOf(body);
-    if (url) result.url = url;
+    if (!url) return { status: "IN_PROGRESS", progress: "99%" };
+    result.url = url;
     return result;
   }
   if (status === "failed" || status === "error" || status === "cancelled" || status === "canceled") {
@@ -266,8 +351,9 @@ export const protocols = {
       }
       if (ctx.body.kind !== "json") throw new Error("multipart requests are not supported");
       const request = ctx.body.value;
-      const normalized = normalizeRequest(request);
-      normalized.model = ctx.model || trimmed(request.model);
+      const model = ctx.upstreamModel || ctx.model || trimmed(request.model);
+      const normalized = normalizeRequest(request, model);
+      normalized.model = model;
       return {
         kind: "submit",
         model: ctx.model || trimmed(request.model),
@@ -300,6 +386,11 @@ export const protocols = {
         output.result_url = url;
         output.url = url;
         output.content = { video_url: url };
+      }
+      const usage = data && typeof data.usage === "object" ? data.usage : null;
+      const actualCost = Number(usage && usage.vendor_credits);
+      if (Number.isFinite(actualCost) && actualCost >= 0) {
+        output.usage = { vendor_credits: actualCost };
       }
       if (taskStatus === "FAILURE") {
         const error = data && data.error && typeof data.error === "object" ? data.error : {};

@@ -1,5 +1,8 @@
 {
   "translation": {
+    "360": "360",
+    "1000": "1000",
+    "10000": "10000",
     "Submit and track recharge invoice applications.": "Submit and track recharge invoice applications.",
     "Review applications and register issued invoices.": "Review applications and register issued invoices.",
     "Invoice email sent": "Invoice email sent",
@@ -127,9 +130,6 @@
     "Enter email message": "Nhập nội dung email",
     "Failed to send email": "Gửi email thất bại",
     "Email sent successfully": "Đã gửi email",
-    "360": "360",
-    "1000": "1000",
-    "10000": "10000",
     "_copy": "_bản sao",
     "，": ", ",
     ", and": ", và",
@@ -2770,7 +2770,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Các Dự Án Liên Quan",
     "footer.defaultCopyright": "Bản quyền được bảo lưu.",
-    "footer.new\u0061pi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
+    "footer.newapi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Đối với các kênh được thêm sau ngày 10 tháng 5 năm 2025, không cần loại bỏ \".\" khỏi tên mô hình trong quá trình triển khai",
     "For example, alipay": "Ví dụ: alipay",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Đối với các triển khai riêng tư, định dạng: https://fastgpt.run/api/openapi",
@@ -7016,6 +7016,19 @@
     "Play preview": "Play preview",
     "Video unavailable. Showing preview image.": "Video unavailable. Showing preview image.",
     "Turn imagination into motion": "Turn imagination into motion",
-    "Reference previews. Model availability and pricing are listed in the model catalog.": "Reference previews. Model availability and pricing are listed in the model catalog."
+    "Reference previews. Model availability and pricing are listed in the model catalog.": "Reference previews. Model availability and pricing are listed in the model catalog.",
+    "Audio material": "Chất liệu âm thanh",
+    "Billing rule": "Quy tắc tính phí",
+    "Charged at the upstream credit cost": "Tính theo mức tiêu thụ tín dụng thực tế của nhà cung cấp",
+    "Fixed {{seconds}}s": "Cố định {{seconds}} giây",
+    "Image material": "Chất liệu hình ảnh",
+    "Material": "Chất liệu",
+    "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "Phí chất liệu theo mức thu thực tế của nhà cung cấp; không thu thêm nếu nhà cung cấp không tính phí đầu vào.",
+    "Model / API": "Mô hình / API",
+    "No extra material charge": "Không thu thêm phí chất liệu",
+    "Per second": "Theo giây",
+    "Video material": "Chất liệu video",
+    "Video material pricing": "Giá chất liệu video",
+    "Video output pricing": "Giá đầu ra video"
   }
 }

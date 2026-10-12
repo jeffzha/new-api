@@ -30,12 +30,16 @@ await i18n.init({
 
 afterEach(cleanup)
 
-function renderCard(walletBalances: UserWalletData['wallet_balances']) {
+function renderCard(
+  walletBalances: UserWalletData['wallet_balances'],
+  credit?: UserWalletData['credit']
+) {
   const user: UserWalletData = {
     id: 1,
     username: 'wallet-user',
     quota: 1000,
     wallet_balances: walletBalances,
+    credit,
     used_quota: 200,
     request_count: 3,
     aff_quota: 0,
@@ -94,4 +98,56 @@ it('uses the same narrow layout while balance data is loading', () => {
   const loadingItems = screen.getAllByLabelText('Loading...')
   expect(loadingItems).toHaveLength(3)
   expect(loadingItems[0]).toHaveClass('col-span-2', 'sm:col-span-1')
+})
+
+it('shows an unconfigured credit account with zero amounts rather than hiding it', () => {
+  renderCard([], {
+    configured: false,
+    status: 'suspended',
+    credit_limit: 0,
+    used_quota: 0,
+    available_quota: 0,
+    repayment_day: 1,
+    payment_term_days: 30,
+    next_statement_at_ms: 0,
+  })
+  const credit = screen.getByLabelText('Credit account')
+  expect(within(credit).getByText('Credit limit')).toBeVisible()
+  expect(within(credit).getByText('Available credit')).toBeVisible()
+  expect(within(credit).getByText('Credit not configured')).toBeVisible()
+})
+
+it('shows approved and used credit separately from wallet money for an active contract', () => {
+  renderCard([{ type: 'recharge', quota: 1000 }], {
+    configured: true,
+    status: 'active',
+    credit_limit: 10000,
+    used_quota: 2000,
+    available_quota: 8000,
+    repayment_day: 1,
+    payment_term_days: 30,
+    next_statement_at_ms: 0,
+  })
+  const credit = screen.getByLabelText('Credit account')
+  expect(within(credit).getByText('Used credit')).toBeVisible()
+  expect(within(credit).getByText('Available credit')).toBeVisible()
+  const breakdown = screen.getByRole('group', { name: 'Balance breakdown' })
+  expect(within(breakdown).queryByText('Credit limit')).not.toBeInTheDocument()
+})
+
+it('keeps the debt visible when a configured credit line is suspended', () => {
+  renderCard([], {
+    configured: true,
+    status: 'suspended',
+    credit_limit: 10000,
+    used_quota: 2000,
+    available_quota: 0,
+    repayment_day: 1,
+    payment_term_days: 30,
+    next_statement_at_ms: 0,
+  })
+  expect(screen.getByText('Credit line suspended')).toBeVisible()
+  expect(
+    within(screen.getByLabelText('Credit account')).getByText('Used credit')
+  ).toBeVisible()
 })

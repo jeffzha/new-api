@@ -33,9 +33,11 @@ export function CoefficientAdjustDialog(props: {
   options: CoefficientAdjustmentOptions;
   onApply: (outcome: AdjustmentOutcome) => void;
   onClose: () => void;
+  className?: string;
 }) {
   const { t } = useTranslation();
-  const [anchor, setAnchor] = useState<"cost" | "current">("cost");
+  const hasCostAnchor = props.options.anchor === "cost" || props.rows.some((row) => row.costBPS != null);
+  const [anchor, setAnchor] = useState<"cost" | "current">(props.options.anchor);
   const [amount, setAmount] = useState("0.1000");
   const [error, setError] = useState<string | null>(null);
   const deltaBPS = useMemo(() => {
@@ -92,19 +94,19 @@ export function CoefficientAdjustDialog(props: {
   }
 
   return (
-    <Dialog title={props.title} onClose={props.onClose}>
+    <Dialog className={props.className} title={props.title} onClose={props.onClose}>
       <p className="muted">{props.description}</p>
       <div className="coefficient-adjust-controls">
         <div className="coefficient-anchor" role="group" aria-label={t("Anchor")}>
           <span className="coefficient-anchor-label">{t("Anchor")}</span>
-          <button
+          {hasCostAnchor && <button
             type="button"
             className={anchor === "cost" ? "" : "secondary"}
             aria-pressed={anchor === "cost"}
             onClick={() => setAnchor("cost")}
           >
             {t("From my cost")}
-          </button>
+          </button>}
           <button
             type="button"
             className={anchor === "current" ? "" : "secondary"}

@@ -32,7 +32,7 @@ import {
   resendInvoiceEmail,
   withdrawInvoiceApplication,
 } from '../api'
-import type { InvoiceApplication } from '../types'
+import type { InvoiceApplication, InvoiceStatus } from '../types'
 import { InvoiceDetailsDialog } from './invoice-details-dialog'
 import { InvoiceDownloadButton } from './invoice-download-button'
 import {
@@ -69,7 +69,7 @@ export function ApplicationHistory(props: {
   )
   const [detailId, setDetailId] = useState<number | null>(null)
   const [page, setPage] = useState(1)
-  const [status, setStatus] = useState('all')
+  const [status, setStatus] = useState<InvoiceStatus | 'all'>('all')
   const applicationsQuery = useQuery({
     queryKey: ['invoices', 'mine', page, status],
     queryFn: async () =>
@@ -146,7 +146,9 @@ export function ApplicationHistory(props: {
           }}
         >
           <SelectTrigger className='mb-3 w-56' aria-label={t('Invoice status')}>
-            <SelectValue />
+            <SelectValue>
+              {status === 'all' ? t('All') : getInvoiceStatusLabel(status, t)}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value='all'>{t('All')}</SelectItem>

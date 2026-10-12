@@ -10,6 +10,7 @@ import { childPricingOverridePayload, type ChildPricingModel } from "./childPric
 import { ChannelPricingRows, type ChannelFilterOption } from "../pricing/ChannelFilter";
 import { ChannelFilterMenu, VendorMark, VendorTabs } from "../pricing/VendorFilter";
 import { activeVendorKey, buildVendorOptions, matchesPricingSearch, vendorKeyOf } from "../pricing/vendorOptions";
+import { CoefficientAdjustDialog, type AdjustmentOutcome } from "../pricing/AdjustDialog";
 
 type Child = { id: number | string; display_name: string; operator_username?: string; status: string; depth: number; price_revision: number };
 type ChildrenResponse = { items: Child[] };
@@ -111,8 +112,11 @@ function ChildPricing(props: { child: Child; onClose: () => void; onSaved: () =>
   const [channels, setChannels] = useState<string[]>([]);
   const [vendorFilter, setVendorFilter] = useState("all");
   const [page, setPage] = useState(0);
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
+  const [adjustTarget, setAdjustTarget] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{ updated: number; failed: number } | null>(null);
   if (query.loading || !query.data) return <Dialog title={t("Manage child pricing")} onClose={props.onClose}><Loading /><ErrorNotice error={query.error} /></Dialog>;
-  return <ChildPricingMatrix child={props.child} onClose={props.onClose} onSaved={props.onSaved} data={query.data} mutation={mutation} cost={cost} setCost={setCost} modelCosts={modelCosts} setModelCosts={setModelCosts} reason={reason} setReason={setReason} error={error} setError={setError} search={search} setSearch={setSearch} channels={channels} setChannels={setChannels} vendorFilter={vendorFilter} setVendorFilter={setVendorFilter} page={page} setPage={setPage} />;
+  return <ChildPricingMatrix child={props.child} onClose={props.onClose} onSaved={props.onSaved} data={query.data} mutation={mutation} cost={cost} setCost={setCost} modelCosts={modelCosts} setModelCosts={setModelCosts} reason={reason} setReason={setReason} error={error} setError={setError} search={search} setSearch={setSearch} channels={channels} setChannels={setChannels} vendorFilter={vendorFilter} setVendorFilter={setVendorFilter} page={page} setPage={setPage} selectedModels={selectedModels} setSelectedModels={setSelectedModels} adjustTarget={adjustTarget} setAdjustTarget={setAdjustTarget} bulkResult={bulkResult} setBulkResult={setBulkResult} />;
 }
 
 function ChildPricingMatrix(props: {
@@ -137,6 +141,12 @@ function ChildPricingMatrix(props: {
   setVendorFilter: (value: string) => void;
   page: number;
   setPage: (value: number | ((current: number) => number)) => void;
+  selectedModels: string[];
+  setSelectedModels: Dispatch<SetStateAction<string[]>>;
+  adjustTarget: boolean;
+  setAdjustTarget: (value: boolean) => void;
+  bulkResult: { updated: number; failed: number } | null;
+  setBulkResult: (value: { updated: number; failed: number } | null) => void;
 }) {
   const { t } = useTranslation();
   const data = props.data;
@@ -161,6 +171,18 @@ function ChildPricingMatrix(props: {
   const pageCount = Math.max(1, Math.ceil(visibleRows.length / pageSize));
   const currentPage = Math.min(props.page, pageCount - 1);
   const pageRows = visibleRows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+  const selectedRows = modelOverrides.filter((row) => props.selectedModels.includes(row.origin_model_name));
+  const allVisibleSelected = pageRows.length > 0 && pageRows.every((row) => props.selectedModels.includes(row.origin_model_name));
+  function toggleVisible() {
+    const models = pageRows.map((row) => row.origin_model_name);
+    props.setSelectedModels((current) => allVisibleSelected ? current.filter((model) => !models.includes(model)) : Array.from(new Set([...current, ...models])));
+  }
+  function applyAdjustment(result: AdjustmentOutcome) {
+    props.setModelCosts((current) => ({ ...current, ...result.values }));
+    props.setBulkResult({ updated: result.updated, failed: Object.keys(result.errors).length });
+    props.setSelectedModels([]);
+    props.setAdjustTarget(false);
+  }
   async function save() {
     try {
       const overrides = childPricingOverridePayload(modelOverrides, props.modelCosts);
@@ -180,13 +202,15 @@ function ChildPricingMatrix(props: {
       <span className="pricing-live-badge">{t("Models")} · {visibleRows.length}</span>
     </div>
     <VendorTabs vendors={vendorOptions} selected={activeVendor} total={channelRows.length} onSelect={(key) => { props.setVendorFilter(key); props.setPage(0); }} />
+    <div className="child-pricing-bulk pricing-bulk-bar"><strong>{t("Batch adjust selected models")}</strong><span>{t("Selected")}: {props.selectedModels.length}</span><button type="button" className="secondary button-icon compact-action" disabled={!props.selectedModels.length} onClick={() => props.setAdjustTarget(true)}><ActionIcon name="edit" />{t("Increase/decrease child cost")}</button>{props.bulkResult && <p className={props.bulkResult.failed ? "customer-pricing-bulk-result warning" : "customer-pricing-bulk-result success"} role="status">{t("Adjusted {{updated}} models. {{failed}} models were not changed.", props.bulkResult)}</p>}</div>
     <div className="table-wrap pricing-matrix-wrap child-pricing-matrix-wrap">
-      <table className="pricing-matrix child-pricing-matrix"><thead><tr><th>{t("Model name")}</th><th>{t("Channels")}</th><th>{t("Child cost coefficient")}</th></tr></thead><tbody>
-        {pageRows.map((row) => <ChannelPricingRows key={row.origin_model_name} showChannelCost={false} leading={[<div key="model" className="model-name-cell"><VendorMark icon={row.vendor_icon} name={row.vendor_name?.trim() || t("Other providers")} /><strong>{row.origin_model_name}</strong></div>]} channels={(row.channels ?? []).map((channel) => ({ id: channel.channel_id, name: channel.channel_name }))} trailing={[<input key="cost" aria-label={`${t("Child cost coefficient")}: ${row.origin_model_name}`} inputMode="decimal" placeholder={formatCoefficient(row.settlement_bps ?? data.default_settlement_bps)} value={props.modelCosts[row.origin_model_name] ?? (row.settlement_bps == null ? "" : formatCoefficient(row.settlement_bps))} onChange={(event) => props.setModelCosts((current) => ({ ...current, [row.origin_model_name]: event.target.value }))} />]} />)}
+      <table className="pricing-matrix child-pricing-matrix"><thead><tr><th><input type="checkbox" aria-label={t("Select visible models")} checked={allVisibleSelected} onChange={toggleVisible} /></th><th>{t("Model name")}</th><th>{t("Channels")}</th><th>{t("Child cost coefficient")}</th></tr></thead><tbody>
+        {pageRows.map((row) => <ChannelPricingRows key={row.origin_model_name} showChannelCost={false} leading={[<input key="selection" type="checkbox" aria-label={t("Select model") + ": " + row.origin_model_name} checked={props.selectedModels.includes(row.origin_model_name)} onChange={() => props.setSelectedModels((current) => current.includes(row.origin_model_name) ? current.filter((model) => model !== row.origin_model_name) : [...current, row.origin_model_name])} />, <div key="model" className="model-name-cell"><VendorMark icon={row.vendor_icon} name={row.vendor_name?.trim() || t("Other providers")} /><strong>{row.origin_model_name}</strong></div>]} channels={(row.channels ?? []).map((channel) => ({ id: channel.channel_id, name: channel.channel_name }))} trailing={[<input key="cost" aria-label={`${t("Child cost coefficient")}: ${row.origin_model_name}`} inputMode="decimal" placeholder={formatCoefficient(row.settlement_bps ?? data.default_settlement_bps)} value={props.modelCosts[row.origin_model_name] ?? (row.settlement_bps == null ? "" : formatCoefficient(row.settlement_bps))} onChange={(event) => props.setModelCosts((current) => ({ ...current, [row.origin_model_name]: event.target.value }))} />]} />)}
       </tbody></table>
     </div>
     {visibleRows.length > pageSize && <Pager nextCursor={currentPage < pageCount - 1 ? String(currentPage + 1) : undefined} hasPrevious={currentPage > 0} onNext={() => props.setPage((value) => Math.min(value + 1, pageCount - 1))} onReset={() => props.setPage(0)} />}
     {visibleRows.length === 0 && <p className="empty">{t("No models match the current filters.")}</p>}
+    {props.adjustTarget && <CoefficientAdjustDialog className="coefficient-adjust-dialog" title={t("Increase/decrease child cost")} description={t("Adjust selected child cost coefficients by a fixed amount. Values cannot be negative.")} rows={selectedRows.map((row) => ({ model: row.origin_model_name, costBPS: null, inheritedBPS: row.settlement_bps ?? data.default_settlement_bps }))} values={Object.fromEntries(selectedRows.map((row) => [row.origin_model_name, props.modelCosts[row.origin_model_name] ?? ""]))} options={{ anchor: "current", capBPS: 100000 }} onApply={applyAdjustment} onClose={() => props.setAdjustTarget(false)} />}
     <Field label={t("Change reason (optional)")}><input maxLength={2000} value={props.reason} onChange={(event) => props.setReason(event.target.value)} /></Field><ErrorNotice error={props.error} /><div className="actions dialog-actions"><button className="secondary" type="button" onClick={props.onClose}>{t("Cancel")}</button><button type="button" disabled={props.mutation.pending} onClick={() => void save()}>{t("Publish child pricing")}</button></div>
   </Dialog>;
 }

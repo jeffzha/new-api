@@ -106,9 +106,19 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
   const balanceBreakdown = props.user?.wallet_balances ?? []
 
   const credit = props.user?.credit
+  let creditStatusText = t('Credit not configured')
+  if (credit?.configured) {
+    creditStatusText =
+      credit.status === 'active'
+        ? t('Credit terms summary', {
+            day: credit.repayment_day,
+            days: credit.payment_term_days,
+          })
+        : t('Credit line suspended')
+  }
   // Credit is a repayable position rather than wallet money, so it renders in
   // its own block beside the balance card instead of inside the balance.
-  const creditSummary = credit?.configured ? (
+  const creditSummary = credit ? (
     <dl
       aria-label={t('Credit account')}
       className='min-w-0 rounded-lg border px-2.5 py-2.5 sm:px-5 sm:py-3'
@@ -129,14 +139,7 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
           </div>
         ))}
       </div>
-      <p className='text-muted-foreground mt-1.5 text-xs'>
-        {credit.status !== 'active'
-          ? t('Credit line suspended')
-          : t('Credit terms summary', {
-              day: credit.repayment_day,
-              days: credit.payment_term_days,
-            })}
-      </p>
+      <p className='text-muted-foreground mt-1.5 text-xs'>{creditStatusText}</p>
     </dl>
   ) : null
 

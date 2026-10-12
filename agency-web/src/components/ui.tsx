@@ -92,6 +92,7 @@ export function Dialog(props: {
   children: ReactNode;
   onClose: () => void;
   busy?: boolean;
+  className?: string;
 }) {
   const { t } = useTranslation();
   const ref = useRef<HTMLDialogElement>(null);
@@ -108,7 +109,7 @@ export function Dialog(props: {
   return (
     <dialog
       ref={ref}
-      className="dialog"
+      className={props.className ? `dialog ${props.className}` : "dialog"}
       aria-label={props.title}
       aria-labelledby={titleId}
       onCancel={(event) => {

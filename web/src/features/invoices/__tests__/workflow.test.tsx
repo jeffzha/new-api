@@ -1,8 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { createInstance } from 'i18next'
+import { I18nextProvider } from 'react-i18next'
 import { afterEach, expect, it, vi } from 'vitest'
 
+import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 
 import { AdminInvoiceReview } from '../components/admin-invoice-review'
@@ -247,4 +250,34 @@ it('blocks issue until an invoice number, date and PDF are supplied', async () =
     new File(['%PDF-1.7 test'], 'invoice.pdf', { type: 'application/pdf' })
   )
   expect(confirm).toBeEnabled()
+})
+
+it('keeps translated all and rejected labels on the Chinese status trigger after the menu closes', async () => {
+  const locale = createInstance()
+  await locale.init({ lng: 'zh', initAsync: false, resources: { zh } })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: { items: [], total: 0 } },
+  })
+  render(
+    <I18nextProvider i18n={locale}>
+      <QueryClientProvider client={client}>
+        <ApplicationHistory />
+      </QueryClientProvider>
+    </I18nextProvider>
+  )
+  const trigger = await screen.findByRole('combobox', {
+    name: locale.t('Invoice status'),
+  })
+  expect(trigger).toHaveTextContent('全部')
+  await userEvent.click(trigger)
+  await userEvent.click(await screen.findByRole('option', { name: '已驳回' }))
+  await waitFor(() => {
+    const selected = screen.getByRole('combobox', { name: locale.t('Invoice status') })
+    expect(selected).toHaveTextContent('已驳回')
+    expect(selected).not.toHaveTextContent('rejected')
+  })
 })

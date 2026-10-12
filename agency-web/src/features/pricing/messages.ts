@@ -1,6 +1,8 @@
 import type { Locale } from "../../lib/i18n-types";
 
 const rows = [
+  ["Increase/decrease child cost", "统一增/减下级成本", "統一增/減下級成本", "Augmenter/réduire le coût enfant", "下級原価を一括増減", "Увеличить/уменьшить дочернюю стоимость", "Tăng/giảm chi phí cấp dưới"],
+  ["Adjust selected child cost coefficients by a fixed amount. Values cannot be negative.", "按固定幅度调整已选模型的下级成本系数，调整后不能为负数，发布时会校验上级成本。", "依固定幅度調整已選模型的下級成本係數，不可為負數，發布時會驗證上級成本。", "Ajuster les coûts sélectionnés. Les valeurs doivent être positives ; le coût parent est vérifié à la publication.", "選択した下級原価係数を調整します。負の値は禁止され、公開時に上級原価が検証されます。", "Изменить выбранные коэффициенты. Отрицательные значения запрещены, стоимость родителя проверяется при публикации.", "Điều chỉnh hệ số chi phí đã chọn. Không được âm; chi phí cấp trên được kiểm tra khi xuất bản."],
   ["Not configured", "未配置", "未設定", "Non configuré", "未設定", "Не настроено", "Chưa cấu hình"],
   ["Pricing is inherited from the parent agency. The parent must configure a child agency cost before creating the next level.", "价格系数继承自上级代理商；创建下一级前，上级必须先配置下一级代理商成本系数。", "價格係數繼承自上級代理商；建立下一級前，上級必須先設定下一級代理商成本係數。", "Les prix sont hérités de l’agence parente. Elle doit configurer un coût enfant avant de créer le niveau suivant.", "価格は親代理店から継承されます。次の階層を作成する前に、親が子代理店原価を設定する必要があります。", "Цены наследуются от родительского агентства. Перед созданием следующего уровня родитель должен настроить стоимость дочернего агентства.", "Giá được kế thừa từ đại lý cấp trên. Cấp trên phải cấu hình chi phí đại lý con trước khi tạo cấp tiếp theo."],
   ["Child agency cost coefficient", "下一级代理商成本系数", "下一级代理商成本係數", "Coefficient de coût de l’agence enfant", "子代理店の原価係数", "Коэффициент стоимости дочернего агентства", "Hệ số chi phí đại lý cấp dưới"],

@@ -39,6 +39,7 @@ import { Route as authUserResetRouteImport } from './routes/(auth)/user/reset'
 import { Route as AuthenticatedAgentStoreIndexRouteImport } from './routes/_authenticated/agent-store/index'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
 import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authenticated/chat/$chatId'
+import { Route as AuthenticatedCreditIndexRouteImport } from './routes/_authenticated/credit/index'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_authenticated/dashboard/$section'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
@@ -230,6 +231,12 @@ const AuthenticatedChatChatIdRoute = AuthenticatedChatChatIdRouteImport.update({
   path: '/chat/$chatId',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedCreditIndexRoute =
+  AuthenticatedCreditIndexRouteImport.update({
+    id: '/credit/',
+    path: '/credit/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedDashboardIndexRoute =
   AuthenticatedDashboardIndexRouteImport.update({
     id: '/dashboard/',
@@ -492,6 +499,7 @@ export interface FileRoutesByFullPath {
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/agent-store/': typeof AuthenticatedAgentStoreIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
+  '/credit/': typeof AuthenticatedCreditIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/invoice-review/': typeof AuthenticatedInvoiceReviewIndexRoute
   '/invoices/': typeof AuthenticatedInvoicesIndexRoute
@@ -559,6 +567,7 @@ export interface FileRoutesByTo {
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/agent-store': typeof AuthenticatedAgentStoreIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
+  '/credit': typeof AuthenticatedCreditIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/invoice-review': typeof AuthenticatedInvoiceReviewIndexRoute
   '/invoices': typeof AuthenticatedInvoicesIndexRoute
@@ -630,6 +639,7 @@ export interface FileRoutesById {
   '/_authenticated/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/_authenticated/agent-store/': typeof AuthenticatedAgentStoreIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
+  '/_authenticated/credit/': typeof AuthenticatedCreditIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/invoice-review/': typeof AuthenticatedInvoiceReviewIndexRoute
   '/_authenticated/invoices/': typeof AuthenticatedInvoicesIndexRoute
@@ -700,6 +710,7 @@ export interface FileRouteTypes {
     | '/usage-logs/audit'
     | '/agent-store/'
     | '/channels/'
+    | '/credit/'
     | '/dashboard/'
     | '/invoice-review/'
     | '/invoices/'
@@ -767,6 +778,7 @@ export interface FileRouteTypes {
     | '/usage-logs/audit'
     | '/agent-store'
     | '/channels'
+    | '/credit'
     | '/dashboard'
     | '/invoice-review'
     | '/invoices'
@@ -837,6 +849,7 @@ export interface FileRouteTypes {
     | '/_authenticated/usage-logs/audit'
     | '/_authenticated/agent-store/'
     | '/_authenticated/channels/'
+    | '/_authenticated/credit/'
     | '/_authenticated/dashboard/'
     | '/_authenticated/invoice-review/'
     | '/_authenticated/invoices/'
@@ -1100,6 +1113,13 @@ declare module '@tanstack/react-router' {
       path: '/chat/$chatId'
       fullPath: '/chat/$chatId'
       preLoaderRoute: typeof AuthenticatedChatChatIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/credit/': {
+      id: '/_authenticated/credit/'
+      path: '/credit'
+      fullPath: '/credit/'
+      preLoaderRoute: typeof AuthenticatedCreditIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/dashboard/': {
@@ -1468,6 +1488,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedUsageLogsAuditRoute: typeof AuthenticatedUsageLogsAuditRoute
   AuthenticatedAgentStoreIndexRoute: typeof AuthenticatedAgentStoreIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
+  AuthenticatedCreditIndexRoute: typeof AuthenticatedCreditIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedInvoiceReviewIndexRoute: typeof AuthenticatedInvoiceReviewIndexRoute
   AuthenticatedInvoicesIndexRoute: typeof AuthenticatedInvoicesIndexRoute
@@ -1500,6 +1521,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedUsageLogsAuditRoute: AuthenticatedUsageLogsAuditRoute,
   AuthenticatedAgentStoreIndexRoute: AuthenticatedAgentStoreIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
+  AuthenticatedCreditIndexRoute: AuthenticatedCreditIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedInvoiceReviewIndexRoute: AuthenticatedInvoiceReviewIndexRoute,
   AuthenticatedInvoicesIndexRoute: AuthenticatedInvoicesIndexRoute,

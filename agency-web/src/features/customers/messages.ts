@@ -1,6 +1,9 @@
 import type { Messages, Locale } from "../../lib/types";
 
 const entries: Record<string, [string, string, string, string, string, string]> = {
+  "Credit limit": ["授信额度", "授信額度", "Plafond de crédit", "与信枠", "Кредитный лимит", "Hạn mức tín dụng"],
+  "Used credit": ["已用授信", "已用授信", "Crédit utilisé", "利用済み与信", "Использованный кредит", "Tín dụng đã dùng"],
+  "Available credit": ["可用授信", "可用授信", "Crédit disponible", "利用可能な与信", "Доступный кредит", "Tín dụng khả dụng"],
   "Customer assignment": [
     "客户归属管理",
     "客戶歸屬管理",

@@ -98,7 +98,7 @@ func TestCreditTermsArePlatformWideAndFixTheRepaymentDay(t *testing.T) {
 	user := creditTestUser(t, app, "credit-terms")
 	root := &Identity{ActorType: ActorTypeRoot, ActorID: 7}
 	params := gin.Params{{Key: "user_id", Value: strconv.Itoa(user.Id)}}
-	ctx, recorder := creditTestRequest(http.MethodPut, "/agency/api/v1/root/users/"+strconv.Itoa(user.Id)+"/credit",
+	ctx, recorder := creditTestRequest(http.MethodPut, "/api/credit/users/"+strconv.Itoa(user.Id),
 		`{"credit_limit":10000,"payment_term_days":30,"repayment_day":15,"status":"active","email_enabled":false}`, root, params)
 	app.putCreditTerms(ctx)
 	require.Equal(t, http.StatusOK, ctx.Writer.Status(), recorder.Body.String())
@@ -119,7 +119,7 @@ func TestCreditTermsArePlatformWideAndFixTheRepaymentDay(t *testing.T) {
 	// that entered an agency still manages every customer, because credit is
 	// deliberately not an agency-scoped capability.
 	otherAgency := int64(4242)
-	ctx, recorder = creditTestRequest(http.MethodPut, "/agency/api/v1/root/users/"+strconv.Itoa(user.Id)+"/credit",
+	ctx, recorder = creditTestRequest(http.MethodPut, "/api/credit/users/"+strconv.Itoa(user.Id),
 		`{"credit_limit":1,"payment_term_days":1,"status":"active"}`, &Identity{ActorType: ActorTypeRoot, ActorID: 7, AgencyID: &otherAgency}, params)
 	app.putCreditTerms(ctx)
 	require.Equal(t, http.StatusOK, ctx.Writer.Status(), recorder.Body.String())
@@ -224,7 +224,7 @@ func TestCreditBadDebtRequiresOverdueAndSuspendsCredit(t *testing.T) {
 
 	root := &Identity{ActorType: ActorTypeRoot, ActorID: 7}
 	params := gin.Params{{Key: "id", Value: strconv.FormatInt(invoice.ID, 10)}}
-	target := "/agency/api/v1/root/credit-invoices/" + strconv.FormatInt(invoice.ID, 10) + "/mark-bad-debt"
+	target := "/api/credit/statements/" + strconv.FormatInt(invoice.ID, 10) + "/mark-bad-debt"
 	ctx, recorder := creditTestRequest(http.MethodPost, target, `{"reason":"客户失联"}`, root, params)
 	app.markCreditInvoiceBadDebt(ctx)
 	require.Equal(t, http.StatusConflict, ctx.Writer.Status(), recorder.Body.String())

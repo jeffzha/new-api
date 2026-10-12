@@ -1035,11 +1035,27 @@ h3 {
 .pricing-matrix-wrap { max-height: min(62vh, 680px); }
 .pricing-matrix { min-width: 860px; }
 .agency-sales-card .pricing-matrix { min-width: 800px; }
+.dialog.child-pricing-dialog { width: min(1320px, calc(100vw - 24px)); }
+.child-pricing-matrix-wrap { max-height: min(52vh, 560px); }
+.child-pricing-matrix { min-width: 980px; }
+.child-pricing-matrix th:first-child,
+.child-pricing-matrix td[rowspan]:first-child { width: 44px; min-width: 44px; text-align: center; }
+.child-pricing-matrix th:nth-child(2),
+.child-pricing-matrix td[rowspan]:nth-child(2) { min-width: 260px; }
+.child-pricing-matrix th:nth-child(3),
+.child-pricing-matrix .pricing-channel-cell { min-width: 300px; text-align: left; }
+.child-pricing-matrix th:nth-child(4),
+.child-pricing-matrix td[rowspan]:last-child { min-width: 240px; text-align: left; }
+.child-pricing-matrix td[rowspan]:last-child input { width: 100%; min-width: 150px; }
+@media (max-width: 760px) {
+  .dialog.child-pricing-dialog { width: calc(100vw - 16px); }
+}
 .pricing-matrix th { white-space: nowrap; }
 .pricing-matrix th,
 .pricing-matrix td { padding: 9px 10px; }
 .pricing-matrix td { vertical-align: middle; }
 .pricing-matrix input { min-width: 96px; width: 100%; }
+.pricing-matrix input[type="checkbox"] { min-width: 18px; width: 18px; }
 .channel-tags { display: flex; flex-wrap: wrap; gap: .35rem; min-width: 170px; }
 .channel-tags span {
   display: inline-flex;

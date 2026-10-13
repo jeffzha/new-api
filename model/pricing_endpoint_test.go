@@ -107,6 +107,19 @@ func TestPricingAdvancedCustomUsesConfiguredEndpointTypes(t *testing.T) {
 	}, byModel["gpt-4o"])
 }
 
+func TestDefaultVendorsUseOfficialModelPublishers(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	resolved, err := ResolveModelVendors(DB, []string{
+		"MiniMax-H3",
+		"MiniMax-H3-261013",
+		"doubao-seedance-2-0-fast-260128",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "MiniMax", resolved["MiniMax-H3"].Name)
+	assert.Equal(t, "MiniMax", resolved["MiniMax-H3-261013"].Name)
+	assert.Equal(t, "字节跳动", resolved["doubao-seedance-2-0-fast-260128"].Name)
+}
+
 func TestPricingModelMetadataEndpointsMergeWithAdvancedCustomInference(t *testing.T) {
 	resetPricingEndpointTestTables(t)
 

@@ -18,9 +18,9 @@ export const meta = {
     en: "Bridge to another new-api gateway that serves the OpenAI video protocol",
     zh: "桥接到提供 OpenAI 视频协议的 new-api 网关",
   },
-  version: "1.1.0",
+  version: "1.2.0",
   author: { name: "NexusReach" },
-  models: ["MiniMax-H3", "MiniMax-H3-2K", "MiniMax-H3-Sensitive"],
+  models: ["MiniMax-H3", "MiniMax-H3-261013", "MiniMax-H3-2K", "MiniMax-H3-Sensitive"],
   fetchMode: "per_task",
   usageSchema: {
     output_credits: {
@@ -70,19 +70,19 @@ export const meta = {
   usageExamples: [
     {
       label: "H3 480P 4s",
-      facts: { material_credits: 0, output_credits: 3.2, input_images: 0, vendor_credits: 3.2, mode: "reference", seconds: 4, resolution: "480P" },
+      facts: { material_credits: 0, output_credits: 3.2, input_images: 0, vendor_credits: 3.2, mode: "text", seconds: 4, resolution: "480P" },
     },
     {
       label: "H3 720P 5s",
-      facts: { material_credits: 0, output_credits: 7.5, input_images: 0, vendor_credits: 7.5, mode: "reference", seconds: 5, resolution: "720P" },
+      facts: { material_credits: 0, output_credits: 7.5, input_images: 0, vendor_credits: 7.5, mode: "text", seconds: 5, resolution: "720P" },
     },
     {
       label: "H3 1080P 5s",
-      facts: { material_credits: 0, output_credits: 10, input_images: 0, vendor_credits: 10, mode: "reference", seconds: 5, resolution: "1080P" },
+      facts: { material_credits: 0, output_credits: 10, input_images: 0, vendor_credits: 10, mode: "text", seconds: 5, resolution: "1080P" },
     },
     {
       label: "H3 2K 15s",
-      facts: { material_credits: 0, output_credits: 45, input_images: 0, vendor_credits: 45, mode: "reference", seconds: 15, resolution: "2K" },
+      facts: { material_credits: 0, output_credits: 45, input_images: 0, vendor_credits: 45, mode: "text", seconds: 15, resolution: "2K" },
     },
   ],
   protocols: ["openai_video"],
@@ -106,7 +106,9 @@ const MAX_SECONDS = 15;
 const DEFAULT_SECONDS = 5;
 const RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:2", "2:3"];
 const TEXT_MODEL_RATIOS = ["16:9", "9:16", "1:1", "3:4", "4:3"];
-const MODELS = ["MiniMax-H3", "MiniMax-H3-2K", "MiniMax-H3-Sensitive"];
+const BRIDGE_H3_MODEL = "MiniMax-H3-261013";
+const UPSTREAM_H3_MODEL = "MiniMax-H3";
+const MODELS = [UPSTREAM_H3_MODEL, BRIDGE_H3_MODEL, "MiniMax-H3-2K", "MiniMax-H3-Sensitive"];
 const OUTPUT_CREDITS_PER_SECOND = { "480P": 0.8, "720P": 1.5, "1080P": 2, "2K": 3 };
 
 function trimmed(value) {
@@ -220,15 +222,18 @@ function normalizeRequest(request, model) {
   if (images.length) normalized.images = images;
   if (videos.length) normalized.videos = videos;
   if (audios.length) normalized.audios = audios;
-  if (!fixed2K && !images.length) throw new Error(model + " requires at least one reference image; use MiniMax-H3-2K for prompt-only requests");
   return normalized;
+}
+
+function upstreamModelOf(model) {
+  return model === BRIDGE_H3_MODEL ? UPSTREAM_H3_MODEL : model;
 }
 
 export function buildSubmitRequest(ctx) {
   const model = ctx.upstreamModel || ctx.model;
   const request = normalizeRequest(ctx.requestBody, model);
   const body = {
-    model: model,
+    model: upstreamModelOf(model),
     prompt: request.prompt,
     seconds: request.seconds,
     resolution: request.resolution,
@@ -275,7 +280,7 @@ export function extractUsage(ctx) {
     material_credits: 0,
     input_images: (request.images || []).length,
     vendor_credits: outputCredits,
-    mode: model === "MiniMax-H3-2K" ? "text" : "reference",
+    mode: request.images && request.images.length ? "reference" : "text",
     seconds: request.seconds,
     resolution: request.resolution,
   };

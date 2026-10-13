@@ -12,6 +12,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	seedancepricing "github.com/QuantumNous/new-api/setting/seedance_video_pricing"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -196,6 +197,42 @@ func TestOpenAISeedanceSingleImageLaomandiKeepsLegacyShape(t *testing.T) {
 	require.NoError(t, common.Unmarshal(encoded, &payload))
 	require.Equal(t, "https://example.com/frame.png", payload["image"])
 	require.Nil(t, payload["content"])
+}
+
+func TestOpenAISeedanceRejectsLaomandiSeedance20Below720p(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"doubao-seedance-2-0-260128","prompt":"A blue bird","seconds":"5","resolution":"480p"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: defaultModel,
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: defaultModel},
+	}
+	result := (&TaskAdaptor{baseURL: "https://vedioapi.laomandi.com"}).ValidateRequestAndSetAction(ctx, info)
+	require.NotNil(t, result)
+	assert.Equal(t, "invalid_request", result.Code)
+	assert.Equal(t, http.StatusBadRequest, result.StatusCode)
+	assert.Contains(t, result.Message, "requires resolution 720p or higher")
+	assert.Contains(t, result.Message, "request was not sent upstream")
+}
+
+func TestOpenAISeedance720pAndOtherUpstreamsRemainAccepted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, test := range []struct {
+		name, baseURL, resolution string
+	}{
+		{name: "laomandi 720p", baseURL: "https://vedioapi.laomandi.com", resolution: "720p"},
+		{name: "other upstream 480p", baseURL: "https://video.example.com", resolution: "480p"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			body := fmt.Sprintf(`{"model":"doubao-seedance-2-0-260128","prompt":"A blue bird","seconds":"5","resolution":%q}`, test.resolution)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			info := &relaycommon.RelayInfo{OriginModelName: defaultModel, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: defaultModel}}
+			require.Nil(t, (&TaskAdaptor{baseURL: test.baseURL}).ValidateRequestAndSetAction(ctx, info))
+		})
+	}
 }
 
 func TestOpenAISeedanceDurationLimitDependsOnModel(t *testing.T) {

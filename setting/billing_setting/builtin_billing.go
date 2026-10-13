@@ -55,6 +55,7 @@ var builtinPluginBillingExpr = map[string]string{
 	"wangpaiai::MiniMax-H3-2K":           wangpaiH3Expression,
 	"wangpaiai::MiniMax-H3-Sensitive":    wangpaiH3Expression,
 	"newapi-video::MiniMax-H3":           wangpaiH3Expression,
+	"newapi-video::MiniMax-H3-261013":    wangpaiH3Expression,
 	"newapi-video::MiniMax-H3-2K":        wangpaiH3Expression,
 	"newapi-video::MiniMax-H3-Sensitive": wangpaiH3Expression,
 }

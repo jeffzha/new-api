@@ -165,6 +165,17 @@ func TestWangpaiMediaProxyAndVideoBridgePreserveReferences(t *testing.T) {
 	body := descriptor["body"].(map[string]any)
 	assert.Equal(t, []any{"https://cdn.example/first.jpg", "https://cdn.example/last.png"}, body["images"])
 	assert.Equal(t, float64(7.5), callTaskPlugin(t, bridge, "extractUsage", ctx)["vendor_credits"])
+
+	aliasCtx := map[string]any{
+		"model": "MiniMax-H3-261013", "upstreamModel": "MiniMax-H3-261013",
+		"baseUrl": "https://llm.example", "apiKey": "test-key",
+		"requestBody": map[string]any{"prompt": "test", "seconds": 5, "resolution": "720P"},
+	}
+	aliasDescriptor := callTaskPlugin(t, bridge, "buildSubmitRequest", aliasCtx)
+	aliasBody := aliasDescriptor["body"].(map[string]any)
+	assert.Contains(t, bridge.Meta.Models, "MiniMax-H3-261013")
+	assert.Equal(t, "MiniMax-H3", aliasBody["model"])
+	assert.Equal(t, "text_to_video", aliasDescriptor["action"])
 }
 
 func TestH3CompletedResponsesExposeActualCreditsToBridge(t *testing.T) {

@@ -115,6 +115,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if resolution == "" {
 		resolution = resolutionFromSize(request.Size)
 	}
+	if isLaomandiGateway(a.baseURL) && isSeedance20Model(request.Model, info) && resolution == "480p" {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("model doubao-seedance-2-0-260128 on this upstream channel requires resolution 720p or higher; received 480p; request was not sent upstream; change metadata.resolution (or resolution/size) to 720p, 1080p, or 4k"),
+			"invalid_request", http.StatusBadRequest,
+		)
+	}
 	// ratio: metadata first, then top-level, then default adaptive.
 	ratio := strings.TrimSpace(metadata.Ratio)
 	if ratio == "" {
@@ -176,6 +182,17 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	normalized.AudioStatus = audioStatus
 	storeTaskRequest(c, normalized)
 	return nil
+}
+
+func isSeedance20Model(requestModel string, info *relaycommon.RelayInfo) bool {
+	if strings.TrimSpace(requestModel) == seedancepricing.StandardSeedanceModel {
+		return true
+	}
+	if info == nil {
+		return false
+	}
+	return strings.TrimSpace(info.OriginModelName) == seedancepricing.StandardSeedanceModel ||
+		strings.TrimSpace(info.UpstreamModelName) == seedancepricing.StandardSeedanceModel
 }
 
 func isSeedance25Model(modelName string) bool {

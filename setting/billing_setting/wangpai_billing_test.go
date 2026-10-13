@@ -32,7 +32,10 @@ func TestWangpaiProviderDefaultsRespectAdministratorPrices(t *testing.T) {
 	}
 	_, ok := ResolveTaskBillingExpr("hailuo", "MiniMax-H3", "")
 	assert.False(t, ok)
-	assert.Len(t, GetPluginBillingExprCopy(), 6)
+	assert.Len(t, GetPluginBillingExprCopy(), 7)
+	expr, ok := ResolveTaskBillingExpr("newapi-video", "MiniMax-H3-261013", "")
+	require.True(t, ok)
+	assert.Equal(t, wangpaiH3Expression, expr)
 	assert.Empty(t, billingSetting.PluginBillingExpr)
 
 	for _, testCase := range []struct {
@@ -54,7 +57,7 @@ func TestWangpaiProviderDefaultsRespectAdministratorPrices(t *testing.T) {
 	reset()
 	billingSetting.BillingMode["MiniMax-H3"] = BillingModeTieredExpr
 	billingSetting.BillingExpr["MiniMax-H3"] = `tier("custom", u("seconds") * 1)`
-	expr, ok := ResolveTaskBillingExpr("wangpaiai", "MiniMax-H3", "")
+	expr, ok = ResolveTaskBillingExpr("wangpaiai", "MiniMax-H3", "")
 	require.True(t, ok)
 	assert.Equal(t, billingSetting.BillingExpr["MiniMax-H3"], expr)
 	billingSetting.PluginBillingExpr["wangpaiai::MiniMax-H3"] = `tier("custom-plugin", u("seconds") * 2)`

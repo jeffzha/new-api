@@ -6,6 +6,7 @@ describe("child pricing editor", () => {
     const rows = [
       {
         origin_model_name: "deepseek-v4-flash",
+        agency_cost_bps: 7500,
         settlement_bps: 7600,
         channels: [
           { channel_id: 11, channel_name: "primary" },
@@ -21,7 +22,7 @@ describe("child pricing editor", () => {
   test("retains an existing value when the editor input is untouched", () => {
     expect(
       childPricingOverridePayload(
-        [{ origin_model_name: "glm-5.3", settlement_bps: 7500 }],
+        [{ origin_model_name: "glm-5.3", agency_cost_bps: 7000, settlement_bps: 7500 }],
         {},
       ),
     ).toEqual([{ origin_model_name: "glm-5.3", settlement_bps: 7500 }]);

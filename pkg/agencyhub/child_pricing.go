@@ -23,27 +23,12 @@ type childPricingRequest struct {
 }
 
 type childPricingModel struct {
-	OriginModelName string                `json:"origin_model_name"`
-	SettlementBPS   *int                  `json:"settlement_bps"`
-	ChildCostBPS    *int                  `json:"child_cost_bps"`
-	VendorName      string                `json:"vendor_name,omitempty"`
-	VendorIcon      string                `json:"vendor_icon,omitempty"`
-	Channels        []childPricingChannel `json:"channels"`
-}
-
-// Child pricing only needs the public channel identity. Keep platform
-// procurement costs out of the agency operator response.
-type childPricingChannel struct {
-	ChannelID   int    `json:"channel_id"`
-	ChannelName string `json:"channel_name"`
-}
-
-func childPricingChannels(channels []PlatformPricingCatalogChannel) []childPricingChannel {
-	result := make([]childPricingChannel, 0, len(channels))
-	for _, channel := range channels {
-		result = append(result, childPricingChannel{ChannelID: channel.ChannelID, ChannelName: channel.ChannelName})
-	}
-	return result
+	OriginModelName string `json:"origin_model_name"`
+	AgencyCostBPS   int    `json:"agency_cost_bps"`
+	SettlementBPS   *int   `json:"settlement_bps"`
+	ChildCostBPS    *int   `json:"child_cost_bps"`
+	VendorName      string `json:"vendor_name,omitempty"`
+	VendorIcon      string `json:"vendor_icon,omitempty"`
 }
 
 func (a *App) directChild(identity *Identity, childID int64) (model.Agency, agencycontract.Policy, error) {
@@ -67,14 +52,25 @@ func (a *App) getChildPricing(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, "invalid_id", "无效的代理商", nil)
 		return
 	}
-	child, policy, err := a.directChild(currentIdentity(c), childID)
+	identity := currentIdentity(c)
+	child, policy, err := a.directChild(identity, childID)
 	if err != nil {
 		respondError(c, http.StatusNotFound, "not_found", "下级代理商或价格策略不存在", nil)
 		return
 	}
 	view := a.policyView(child, policy)
-	// Keep child-cost editing on the same live catalog as platform pricing so
-	// provider tabs, channel filters, and model rows cannot drift apart.
+	parent, parentPolicy, err := a.loadAgencyPolicy(*identity.AgencyID)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取当前代理商价格失败", nil)
+		return
+	}
+	parentEffective, err := a.effectiveAgencyPolicy(parent, parentPolicy)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "invalid_pricing", "当前代理商价格策略无效", nil)
+		return
+	}
+	// Keep child-cost editing on the same live model catalog as platform pricing.
+	// Channel identity is intentionally not exposed to agency operators.
 	catalog, catalogErr := LoadPlatformPricingCatalog(a.db)
 	if catalogErr != nil {
 		respondError(c, http.StatusInternalServerError, "database_error", "读取实时模型与渠道失败", nil)
@@ -82,7 +78,12 @@ func (a *App) getChildPricing(c *gin.Context) {
 	}
 	models := make([]childPricingModel, 0, len(catalog.Items)+len(policy.ModelOverrides))
 	for _, catalogRow := range catalog.Items {
-		modelRow := childPricingModel{OriginModelName: catalogRow.OriginModelName, VendorName: catalogRow.VendorName, VendorIcon: catalogRow.VendorIcon, Channels: childPricingChannels(catalogRow.ChannelCosts)}
+		resolvedParent, resolveErr := agencycontract.Resolve(parentEffective, catalogRow.OriginModelName)
+		if resolveErr != nil {
+			respondError(c, http.StatusInternalServerError, "invalid_pricing", "当前代理商价格策略无效", nil)
+			return
+		}
+		modelRow := childPricingModel{OriginModelName: catalogRow.OriginModelName, AgencyCostBPS: resolvedParent.SettlementBPS, VendorName: catalogRow.VendorName, VendorIcon: catalogRow.VendorIcon}
 		for _, override := range policy.ModelOverrides {
 			if override.OriginModelName == catalogRow.OriginModelName {
 				modelRow.SettlementBPS = override.SettlementBPS

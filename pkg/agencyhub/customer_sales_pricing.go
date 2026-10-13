@@ -40,6 +40,17 @@ type customerSalesPolicyError struct {
 func (e *customerSalesPolicyError) Error() string { return e.Cause.Error() }
 func (e *customerSalesPolicyError) Unwrap() error { return e.Cause }
 
+type customerSalesCoefficientError struct {
+	SalesBPS     int
+	CostBPS      int
+	MinSpreadBPS int
+	MinimumBPS   int
+}
+
+func (e *customerSalesCoefficientError) Error() string {
+	return "customer sales coefficient does not cover the agency cost"
+}
+
 func customerSalesKey(modelName string) (string, string, error) {
 	modelName = strings.TrimSpace(modelName)
 	if modelName == "" {
@@ -92,12 +103,12 @@ func validateCustomerSalesPolicy(effective agencycontract.Policy, modelName stri
 
 func validateCustomerSalesAgainstCost(cost, minSpread, sales int) error {
 	if sales < cost {
-		return errors.New("customer sales coefficient is below agency cost")
+		return &customerSalesCoefficientError{SalesBPS: sales, CostBPS: cost, MinSpreadBPS: minSpread, MinimumBPS: cost}
 	}
 	// Selling at the exact agency cost is an explicit zero-margin exception.
 	// Any price above cost must still preserve the complete minimum spread.
 	if sales != cost && sales < cost+minSpread {
-		return errors.New("customer sales coefficient is above cost but below the minimum spread")
+		return &customerSalesCoefficientError{SalesBPS: sales, CostBPS: cost, MinSpreadBPS: minSpread, MinimumBPS: cost + minSpread}
 	}
 	return nil
 }

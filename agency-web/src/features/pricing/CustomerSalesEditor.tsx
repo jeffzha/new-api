@@ -6,8 +6,8 @@ import { ErrorNotice, Field, Loading, Pager } from "../../components/ui";
 import { useMutation } from "../../lib/mutations";
 import { useQuery } from "../../lib/query";
 import { CoefficientAdjustDialog, type AdjustmentOutcome } from "./AdjustDialog";
-import { ChannelPricingRows, type ChannelFilterOption } from "./ChannelFilter";
-import { ChannelFilterMenu, VendorMark, VendorTabs } from "./VendorFilter";
+import { ChannelPricingRows } from "./ChannelFilter";
+import { VendorMark, VendorTabs } from "./VendorFilter";
 import { activeVendorKey, buildVendorOptions, matchesPricingSearch, vendorKeyOf } from "./vendorOptions";
 import {
   type CoefficientAdjustmentError,
@@ -34,14 +34,12 @@ type ModelCatalogItem = {
   model: string;
   vendor_name?: string;
   vendor_icon?: string;
-  channels?: { channel_id: number; channel_name: string }[];
 };
 type ModelsResponse = { items: string[]; catalog?: ModelCatalogItem[] };
 type CustomerSalesRow = {
   model: string;
   vendorName?: string;
   vendorIcon?: string;
-  channels: { channel_id: number; channel_name: string }[];
   agencyCostBPS: number;
   inheritedSalesBPS: number;
   overrideSalesBPS: number | null;
@@ -63,7 +61,6 @@ export function CustomerSalesEditor(props: { userId: string | number; username: 
       model,
       vendorName: metadata?.vendor_name,
       vendorIcon: metadata?.vendor_icon,
-      channels: metadata?.channels ?? [],
       agencyCostBPS: item?.agency_cost_bps ?? data.default_agency_cost_bps ?? 0,
       inheritedSalesBPS: item?.inherited_sales_bps ?? data.default_sales_bps,
       overrideSalesBPS: item?.override_sales_bps ?? null,
@@ -86,22 +83,10 @@ function CustomerSalesMatrix(props: { userId: string | number; username: string;
   const [error, setError] = useState<unknown>(null);
   const [rowErrors, setRowErrors] = useState<Record<string, CoefficientAdjustmentError>>({});
   const [bulkResult, setBulkResult] = useState<{ updated: number; failed: number } | null>(null);
-  const [channels, setChannels] = useState<string[]>([]);
   const [vendorFilter, setVendorFilter] = useState("all");
-  const channelRows = useMemo(() => channels.length ? props.rows.filter((row) => row.channels.some((channel) => channels.includes(String(channel.channel_id)))) : props.rows, [channels, props.rows]);
-  const channelOptions = useMemo<ChannelFilterOption[]>(() => {
-    const map = new Map<string, ChannelFilterOption>();
-    for (const row of props.rows) for (const channel of row.channels) {
-      const id = String(channel.channel_id);
-      const current = map.get(id) ?? { id, name: channel.channel_name, models: 0 };
-      current.models += 1;
-      map.set(id, current);
-    }
-    return [...map.values()].sort((left, right) => left.name.localeCompare(right.name));
-  }, [props.rows]);
-  const vendorOptions = useMemo(() => buildVendorOptions(channelRows.map((row) => ({ vendor_name: row.vendorName, vendor_icon: row.vendorIcon })), t("Other providers")), [channelRows, t]);
+  const vendorOptions = useMemo(() => buildVendorOptions(props.rows.map((row) => ({ vendor_name: row.vendorName, vendor_icon: row.vendorIcon })), t("Other providers")), [props.rows, t]);
   const activeVendor = activeVendorKey(vendorFilter, vendorOptions);
-  const visibleRows = useMemo(() => channelRows.filter((row) => (activeVendor === "all" || vendorKeyOf({ vendor_name: row.vendorName }) === activeVendor) && matchesPricingSearch(search, { origin_model_name: row.model, vendor_name: row.vendorName, channelNames: row.channels.map((channel) => channel.channel_name) })), [activeVendor, channelRows, search]);
+  const visibleRows = useMemo(() => props.rows.filter((row) => (activeVendor === "all" || vendorKeyOf({ vendor_name: row.vendorName }) === activeVendor) && matchesPricingSearch(search, { origin_model_name: row.model, vendor_name: row.vendorName, channelNames: [] })), [activeVendor, props.rows, search]);
   const pageSize = 20;
   const pageCount = Math.max(1, Math.ceil(visibleRows.length / pageSize));
   const currentPage = Math.min(page, pageCount - 1);
@@ -156,21 +141,21 @@ function CustomerSalesMatrix(props: { userId: string | number; username: string;
   return <section className="customer-pricing-page">
     <PageHeader icon="pricing" title={t("Customer sales pricing") + " · " + props.username} description={t("Set prices for this customer only. A blank model value inherits its current sales price.")} actions={<BackButton onBack={props.onBack} disabled={mutation.pending} />} />
     <div className="customer-pricing-summary"><Field label={t("Universal sales price (coefficient)")} hint={t("Leave blank to inherit each model's current sales price.")}><input inputMode="decimal" placeholder={formatCoefficient(props.agencyDefaultSalesBPS)} value={globalValue} onChange={(event) => setGlobalValue(event.target.value)} /></Field><div className="customer-pricing-summary-actions"><button type="button" className="secondary button-icon" onClick={fillCostPrices}><ActionIcon name="check" />{t("Set all models to cost")}</button><small>{t("Use each model's agency cost as this customer's sales price. Review and save to apply.")}</small></div></div>
-    <div className="pricing-search customer-pricing-search"><label className="search-field"><ActionIcon name="search" /><input aria-label={t("Search models, providers, or channels")} placeholder={t("Search models, providers, or channels")} value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} /></label><ChannelFilterMenu channels={channelOptions} selected={channels} onToggle={(id: string) => { setChannels((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]); setPage(0); }} onClear={() => { setChannels([]); setPage(0); }} /><span className="pricing-live-badge">{t("Models")} · {visibleRows.length}</span></div>
-    <VendorTabs vendors={vendorOptions} selected={activeVendor} total={channelRows.length} onSelect={(key) => { setVendorFilter(key); setPage(0); }} />
+    <div className="pricing-search customer-pricing-search"><label className="search-field"><ActionIcon name="search" /><input aria-label={t("Search models or providers")} placeholder={t("Search models or providers")} value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} /></label><span className="pricing-live-badge">{t("Models")} · {visibleRows.length}</span></div>
+    <VendorTabs vendors={vendorOptions} selected={activeVendor} total={props.rows.length} onSelect={(key) => { setVendorFilter(key); setPage(0); }} />
     <div className="customer-pricing-bulk pricing-bulk-bar"><strong>{t("Batch adjust selected models")}</strong><span>{t("Selected")}: {selected.length}</span><button type="button" className="secondary button-icon compact-action" disabled={!selected.length} onClick={() => setAdjustTarget(true)}><ActionIcon name="edit" />{t("Increase/decrease sales prices")}</button>{bulkResult && <p className={bulkResult.failed ? "customer-pricing-bulk-result warning" : "customer-pricing-bulk-result success"} role="status">{t("Adjusted {{updated}} models. {{failed}} models were not changed.", bulkResult)}</p>}</div>
     <div className="table-wrap pricing-matrix-wrap customer-pricing-matrix-wrap customer-pricing-page-matrix">
       <table className="pricing-matrix customer-pricing-matrix">
-        <thead><tr><th><input type="checkbox" aria-label={t("Select visible models")} checked={allVisibleSelected} onChange={toggleVisible} /></th><th>{t("Model name")}</th><th>{t("Channels")}</th><th>{t("My cost (coefficient)")}</th><th>{t("Sales price (coefficient)")}</th></tr></thead>
+        <thead><tr><th><input type="checkbox" aria-label={t("Select visible models")} checked={allVisibleSelected} onChange={toggleVisible} /></th><th>{t("Model name")}</th><th>{t("My cost (coefficient)")}</th><th>{t("Sales price (coefficient)")}</th></tr></thead>
         <tbody>{pageRows.map((row) => {
           const rowError = rowErrors[row.model];
           const cost = <span className="coefficient-readonly">{formatCoefficient(row.agencyCostBPS)}</span>;
-          return <ChannelPricingRows key={row.model} className={rowError ? "customer-pricing-row-error" : undefined}
+          return <ChannelPricingRows key={row.model} className={rowError ? "customer-pricing-row-error" : undefined} showChannel={false}
             leading={[
               <input key="selection" type="checkbox" aria-label={t("Select model") + ": " + row.model} checked={selected.includes(row.model)} onChange={() => toggle(row.model)} />,
               <div key="model" className="model-name-cell"><VendorMark icon={row.vendorIcon} name={row.vendorName?.trim() || t("Other providers")} /><strong>{row.model}</strong></div>,
             ]}
-            channels={row.channels.map((channel) => ({ id: channel.channel_id, name: channel.channel_name, cost }))}
+            channels={[]}
             emptyCost={cost}
             trailing={[<div key="sales" className="sales-coefficient-field"><input aria-label={t("Sales price (coefficient)") + ": " + row.model} aria-invalid={rowError ? "true" : undefined} inputMode="decimal" placeholder={formatCoefficient(row.inheritedSalesBPS)} value={values[row.model] ?? ""} onChange={(event) => updateValue(row.model, event.target.value)} />{rowError ? <small className="customer-pricing-inline-error">{rowErrorMessage(rowError)}</small> : <small>{values[row.model] ? t("Customer override") : t("Using inherited sales price {{value}}", { value: formatCoefficient(row.inheritedSalesBPS) })}</small>}</div>]} />;
         })}</tbody>

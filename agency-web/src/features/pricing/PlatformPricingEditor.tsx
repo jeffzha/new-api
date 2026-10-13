@@ -16,6 +16,7 @@ import {
 import {
   formatCoefficient,
   parseCoefficient,
+  suggestedPlatformCoefficients,
   type CoefficientAdjustmentError,
   type CoefficientAdjustmentRow,
 } from "./policy";
@@ -64,19 +65,26 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
   const [bulkResult, setBulkResult] = useState<{ updated: number; failed: number } | null>(null);
   const [draft, setDraft] = useState<PlatformDraft>(() =>
     Object.fromEntries(
-      props.data.items.map((row) => [
-        row.origin_model_name,
-        {
-          channelCosts: Object.fromEntries(
-            row.channel_costs.map((channel) => [
-              String(channel.channel_id),
-              coefficientValue(channel.platform_cost_bps ?? row.platform_cost_bps),
-            ]),
-          ),
-          agencyCost: coefficientValue(row.agency_cost_bps),
-          defaultSales: coefficientValue(row.default_sales_bps),
-        },
-      ]),
+      props.data.items.map((row) => {
+        const suggested = suggestedPlatformCoefficients(
+          row.channel_costs.map((channel) => channel.platform_cost_bps),
+          row.agency_cost_bps,
+          row.default_sales_bps,
+        );
+        return [
+          row.origin_model_name,
+          {
+            channelCosts: Object.fromEntries(
+              row.channel_costs.map((channel) => [
+                String(channel.channel_id),
+                coefficientValue(channel.platform_cost_bps ?? row.platform_cost_bps),
+              ]),
+            ),
+            agencyCost: coefficientValue(suggested.agencyCostBPS),
+            defaultSales: coefficientValue(suggested.salesBPS),
+          },
+        ];
+      }),
     ),
   );
   const channelOptions = useMemo<ChannelFilterOption[]>(() => {

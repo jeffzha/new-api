@@ -82,6 +82,7 @@ function AgencySalesForm(props: {
     ),
   );
   const channelOptions = useMemo<ChannelFilterOption[]>(() => {
+    if (!props.root) return [];
     const map = new Map<string, ChannelFilterOption>();
     for (const row of props.data.items) {
       for (const channel of row.channels ?? []) {
@@ -92,13 +93,13 @@ function AgencySalesForm(props: {
       }
     }
     return [...map.values()].sort((left, right) => left.name.localeCompare(right.name));
-  }, [props.data.items]);
+  }, [props.data.items, props.root]);
   const channelRows = useMemo(() => {
-    if (!channels.length) return props.data.items;
+    if (!props.root || !channels.length) return props.data.items;
     return props.data.items.filter((row) =>
       (row.channels ?? []).some((channel) => channels.includes(String(channel.channel_id))),
     );
-  }, [channels, props.data.items]);
+  }, [channels, props.data.items, props.root]);
   const vendorOptions = useMemo(
     () => buildVendorOptions(channelRows, t("Other providers")),
     [channelRows, t],
@@ -111,10 +112,12 @@ function AgencySalesForm(props: {
         matchesPricingSearch(search, {
           origin_model_name: row.origin_model_name,
           vendor_name: row.vendor_name,
-          channelNames: (row.channels ?? []).map((channel) => channel.channel_name),
+          channelNames: props.root
+            ? (row.channels ?? []).map((channel) => channel.channel_name)
+            : [],
         }),
     );
-  }, [activeVendor, channelRows, search]);
+  }, [activeVendor, channelRows, props.root, search]);
   const pageSize = 20;
   const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
   const currentPage = Math.min(page, pageCount - 1);
@@ -280,8 +283,12 @@ function AgencySalesForm(props: {
         <label className="search-field">
           <ActionIcon name="search" />
           <input
-            aria-label={t("Search models, providers, or channels")}
-            placeholder={t("Search models, providers, or channels")}
+            aria-label={
+              t(props.root ? "Search models, providers, or channels" : "Search models or providers")
+            }
+            placeholder={
+              t(props.root ? "Search models, providers, or channels" : "Search models or providers")
+            }
             value={search}
             onChange={(event) => {
               setSearch(event.target.value);
@@ -289,15 +296,17 @@ function AgencySalesForm(props: {
             }}
           />
         </label>
-        <ChannelFilterMenu
-          channels={channelOptions}
-          selected={channels}
-          onToggle={toggleChannel}
-          onClear={() => {
-            setChannels([]);
-            setPage(0);
-          }}
-        />
+        {props.root && (
+          <ChannelFilterMenu
+            channels={channelOptions}
+            selected={channels}
+            onToggle={toggleChannel}
+            onClear={() => {
+              setChannels([]);
+              setPage(0);
+            }}
+          />
+        )}
         <span className="pricing-live-badge">
           {t("Models")} · {visible.length}
         </span>
@@ -360,7 +369,7 @@ function AgencySalesForm(props: {
                 />
               </th>
               <th>{t("Model name")}</th>
-              <th>{t("Channels")}</th>
+              {props.root && <th>{t("Channels")}</th>}
               <th>{t("My cost (coefficient)")}</th>
               <th>{t("My downstream channel price (coefficient)")}</th>
               <th>{t("Sales price (coefficient)")}</th>
@@ -389,6 +398,7 @@ function AgencySalesForm(props: {
                       <strong>{row.origin_model_name}</strong>
                     </div>,
                   ]}
+                  showChannel={props.root}
                   channels={(row.channels ?? []).map((channel) => ({
                     id: channel.channel_id,
                     name: channel.channel_name,

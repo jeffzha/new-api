@@ -10,10 +10,13 @@ export function ChannelPricingRows(props: {
   trailing: ReactNode[];
   emptyCost?: ReactNode;
   className?: string;
+  showChannel?: boolean;
   showChannelCost?: boolean;
 }) {
   const { t } = useTranslation();
-  const channels = props.channels.length
+  const channels = props.showChannel === false
+    ? [{ id: "model", name: "", cost: props.emptyCost }]
+    : props.channels.length
     ? props.channels
     : [
         {
@@ -32,7 +35,9 @@ export function ChannelPricingRows(props: {
                 {cell}
               </td>
             ))}
-          <td className="pricing-channel-cell">{channel.name}</td>
+          {props.showChannel !== false && (
+            <td className="pricing-channel-cell">{channel.name}</td>
+          )}
           {props.showChannelCost !== false && <td className="pricing-cost-cell">{channel.cost}</td>}
           {index === 0 &&
             props.trailing.map((cell, position) => (

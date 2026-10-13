@@ -1,5 +1,6 @@
 export type ModelOverride = {
   origin_model_name: string;
+  agency_cost_bps?: number;
   settlement_bps?: number | null;
   child_cost_bps?: number | null;
   sales_bps?: number | null;

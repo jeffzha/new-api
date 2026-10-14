@@ -34,10 +34,39 @@ $$;
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agency_source_operation_revision
     ON public.agency_hub_source_events (source_operation_id, journal_revision, id);
 
+-- Cover the per-user completed-event count used for money-sequence ordering.
+DO $$
+DECLARE
+    existing_index oid := to_regclass('public.idx_agency_source_user_status_seq');
+BEGIN
+    IF existing_index IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        JOIN pg_am a ON a.oid = c.relam
+        WHERE i.indexrelid = existing_index
+          AND i.indrelid = 'public.agency_hub_source_events'::regclass
+          AND i.indisvalid AND i.indisready AND i.indislive
+          AND NOT i.indisunique AND NOT i.indisprimary
+          AND i.indpred IS NULL AND i.indexprs IS NULL
+          AND a.amname = 'btree' AND i.indnatts = 3
+          AND i.indoption::text = '0 0 0'
+          AND pg_get_indexdef(i.indexrelid, 1, true) = 'user_id'
+          AND pg_get_indexdef(i.indexrelid, 2, true) = 'processing_status'
+          AND pg_get_indexdef(i.indexrelid, 3, true) = 'money_seq'
+    ) THEN
+        RAISE EXCEPTION 'idx_agency_source_user_status_seq is invalid or has an unexpected definition; inspect it before retrying';
+    END IF;
+END
+$$;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agency_source_user_status_seq
+    ON public.agency_hub_source_events (user_id, processing_status, money_seq);
+
 RESET statement_timeout;
 RESET lock_timeout;
 
 -- Record the resulting definition and validity with the release evidence.
 SELECT pg_get_indexdef(i.indexrelid) AS index_definition, i.indisvalid, i.indisready
 FROM pg_index i
-WHERE i.indexrelid = 'public.idx_agency_source_operation_revision'::regclass;
+WHERE i.indexrelid IN ('public.idx_agency_source_operation_revision'::regclass,
+                       'public.idx_agency_source_user_status_seq'::regclass);

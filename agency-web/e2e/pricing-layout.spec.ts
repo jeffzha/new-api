@@ -126,6 +126,35 @@ async function verifyChannelAlignment(table: Locator) {
   }
 }
 
+test("root pricing renders configured models with null channel lists", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await openWorkspace(page, true);
+  await page.route("**/agency/api/v1/root/platform-pricing", (route) =>
+    route.fulfill({ json: { success: true, data: {
+      revision: 1,
+      refreshed_at_ms: 1,
+      items: [{ origin_model_name: "unavailable-model", channel_names: null, channel_costs: null,
+        agency_cost_bps: 7000, default_sales_bps: 9000 }],
+    } } }),
+  );
+  await page.getByRole("button", { name: "Pricing", exact: true }).click();
+  await expect(page.locator(".pricing-matrix").getByText("unavailable-model", { exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("root pricing renders a null model list without crashing", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await openWorkspace(page, true);
+  await page.route("**/agency/api/v1/root/platform-pricing", (route) =>
+    route.fulfill({ json: { success: true, data: { revision: 1, refreshed_at_ms: 1, items: null } } }),
+  );
+  await page.getByRole("button", { name: "Pricing", exact: true }).click();
+  await expect(page.locator(".pricing-matrix")).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 async function verifyAgencyPricingHidesChannels(table: Locator) {
   await expect(table.locator(".model-name-cell .vendor-mark-monogram")).toHaveText("O");
   await expect(table.getByRole("columnheader", { name: "Channels", exact: true })).toHaveCount(0);

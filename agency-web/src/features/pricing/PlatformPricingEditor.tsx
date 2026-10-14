@@ -20,7 +20,11 @@ import {
   type CoefficientAdjustmentError,
   type CoefficientAdjustmentRow,
 } from "./policy";
-import type { PlatformPriceRow, PlatformPricing } from "./types";
+import {
+  normalizePlatformPricing,
+  type PlatformPriceRow,
+  type PlatformPricing,
+} from "./types";
 
 type PlatformDraft = Record<
   string,
@@ -41,10 +45,11 @@ export function PlatformPricingEditor() {
   const pricing = useQuery<PlatformPricing>("/root/platform-pricing");
   if (pricing.loading) return <Loading />;
   if (!pricing.data) return <ErrorNotice error={pricing.error} />;
+  const data = normalizePlatformPricing(pricing.data);
   return (
     <PlatformPricingForm
-      key={`${pricing.data.revision}:${pricing.data.refreshed_at_ms}`}
-      data={pricing.data}
+      key={`${data.revision}:${data.refreshed_at_ms}`}
+      data={data}
       reload={pricing.reload}
     />
   );

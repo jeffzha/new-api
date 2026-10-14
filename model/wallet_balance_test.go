@@ -3,6 +3,7 @@ package model
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -46,6 +47,7 @@ func TestGetWalletBalanceBreakdownClassifiesAvailableFundingAndReconcilesQuota(t
 }
 
 func TestGetWalletBalanceBreakdownUsesOtherForUnattributedLegacyQuota(t *testing.T) {
+	setupPaymentSnapshotDB(t, "legacy")
 	balances, err := GetWalletBalanceBreakdown(7, 123, "legacy")
 	require.NoError(t, err)
 	assert.Equal(t, []WalletBalance{
@@ -53,6 +55,27 @@ func TestGetWalletBalanceBreakdownUsesOtherForUnattributedLegacyQuota(t *testing
 		{Type: WalletBalanceTypeGift, Quota: 0},
 		{Type: WalletBalanceTypeRedemption, Quota: 0},
 		{Type: WalletBalanceTypeOther, Quota: 123},
+	}, balances)
+}
+
+func TestGetWalletBalanceBreakdownRecognizesVerifiedLegacyRecharge(t *testing.T) {
+	user := setupPaymentSnapshotDB(t, "legacy")
+	payment, err := common.Marshal(TopupPaymentSnapshot{ActualMoney: "7.30", CurrencyCode: "CNY", PaymentReference: "legacy-wallet-receipt"})
+	require.NoError(t, err)
+	conversion, err := common.Marshal(TopupQuotaConversion{SchemaVersion: 1, Calculation: "multiply_quota_per_unit", CreditedQuota: "500000"})
+	require.NoError(t, err)
+	require.NoError(t, DB.Create(&TopUp{
+		UserId: user.Id, TradeNo: "legacy-wallet-topup", Status: common.TopUpStatusSuccess,
+		PaymentSnapshot: string(payment), QuotaConversionSnapshot: string(conversion),
+	}).Error)
+
+	balances, err := GetWalletBalanceBreakdown(int64(user.Id), 7212438, "legacy")
+	require.NoError(t, err)
+	assert.Equal(t, []WalletBalance{
+		{Type: WalletBalanceTypeRecharge, Quota: 500000},
+		{Type: WalletBalanceTypeGift, Quota: 0},
+		{Type: WalletBalanceTypeRedemption, Quota: 0},
+		{Type: WalletBalanceTypeOther, Quota: 6712438},
 	}, balances)
 }
 

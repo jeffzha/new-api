@@ -1781,3 +1781,22 @@ func TestPlatformPricingCatalogHidesCostForChannelRemappedToAnotherModel(t *test
 	assert.Equal(t, currentH3.Id, h3.ChannelCosts[0].ChannelID)
 	assert.NotContains(t, h3.ChannelNames, legacyBridge.Name)
 }
+
+func TestPlatformPricingCatalogUsesEmptyArraysForUnavailableModel(t *testing.T) {
+	app := newAgencyTestApp(t)
+	require.NoError(t, app.db.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	policy := agencycontract.PlatformPolicy{Revision: 1, ModelPrices: []agencycontract.PlatformModelPrice{
+		{OriginModelName: "unavailable-model", AgencyCostBPS: 9000, DefaultSalesBPS: 10000},
+	}}
+	encoded, err := common.Marshal(policy)
+	require.NoError(t, err)
+	require.NoError(t, app.db.Create(&model.AgencyPlatformPriceVersion{ID: 1, Revision: 1, PolicyJSON: string(encoded), PolicyHash: "test", CreatedByID: 1, CreatedAtMS: 1}).Error)
+	require.NoError(t, app.db.Create(&model.AgencyPlatformPriceState{ID: 1, Revision: 1, CurrentVersionID: 1, UpdatedAtMS: 1}).Error)
+	catalog, err := LoadPlatformPricingCatalog(app.db)
+	require.NoError(t, err)
+	require.Len(t, catalog.Items, 1)
+	encoded, err = common.Marshal(catalog.Items[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"channel_names":[]`)
+	assert.Contains(t, string(encoded), `"channel_costs":[]`)
+}

@@ -96,3 +96,28 @@ export type ModelSales = {
   default_child_cost_bps?: number;
   items: ModelSaleRow[];
 };
+
+export function normalizePlatformPricing(data: PlatformPricing): PlatformPricing {
+  return {
+    ...data,
+    items: Array.isArray(data.items)
+      ? data.items.map((row) => ({
+          ...row,
+          channel_names: Array.isArray(row.channel_names) ? row.channel_names : [],
+          channel_costs: Array.isArray(row.channel_costs) ? row.channel_costs : [],
+        }))
+      : [],
+  };
+}
+
+export function normalizeModelSales(data: ModelSales): ModelSales {
+  return {
+    ...data,
+    items: Array.isArray(data.items)
+      ? data.items.map((row) => ({
+          ...row,
+          channels: Array.isArray(row.channels) ? row.channels : [],
+        }))
+      : [],
+  };
+}

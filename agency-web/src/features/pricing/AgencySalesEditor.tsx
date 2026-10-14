@@ -19,7 +19,7 @@ import {
   type CoefficientAdjustmentError,
   type CoefficientAdjustmentRow,
 } from "./policy";
-import type { ModelSales } from "./types";
+import { normalizeModelSales, type ModelSales } from "./types";
 
 type AdjustTarget = "childCost" | "sales";
 
@@ -28,12 +28,13 @@ export function AgencySalesEditor(props: { root: boolean; agencyId: string | nul
   const pricing = useQuery<ModelSales>(path + "/model-sales");
   if (pricing.loading) return <Loading />;
   if (!pricing.data) return <ErrorNotice error={pricing.error} />;
+  const data = normalizeModelSales(pricing.data);
   return (
     <AgencySalesForm
-      key={`${pricing.data.agency_id}:${pricing.data.revision}:${pricing.data.platform_revision}`}
+      key={`${data.agency_id}:${data.revision}:${data.platform_revision}`}
       root={props.root}
       path={path}
-      data={pricing.data}
+      data={data}
       reload={pricing.reload}
     />
   );

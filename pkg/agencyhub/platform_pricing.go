@@ -225,7 +225,7 @@ func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
 	for _, item := range live {
 		row := byModel[item.Model]
 		if row == nil {
-			row = &PlatformPricingCatalogRow{OriginModelName: item.Model}
+			row = &PlatformPricingCatalogRow{OriginModelName: item.Model, ChannelNames: []string{}, ChannelCosts: []PlatformPricingCatalogChannel{}}
 			if price, ok := configured[item.Model]; ok {
 				agencyCost, defaultSales := price.AgencyCostBPS, price.DefaultSalesBPS
 				row.AgencyCostBPS, row.DefaultSalesBPS = &agencyCost, &defaultSales
@@ -259,7 +259,7 @@ func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
 		publicCosts := publicChannelCosts(price.ChannelCosts, internalChannels)
 		if row == nil {
 			agencyCost, defaultSales := price.AgencyCostBPS, price.DefaultSalesBPS
-			row = &PlatformPricingCatalogRow{OriginModelName: name, ChannelNames: []string{}, AgencyCostBPS: &agencyCost, DefaultSalesBPS: &defaultSales}
+			row = &PlatformPricingCatalogRow{OriginModelName: name, ChannelNames: []string{}, ChannelCosts: []PlatformPricingCatalogChannel{}, AgencyCostBPS: &agencyCost, DefaultSalesBPS: &defaultSales}
 			if len(price.ChannelCosts) == 0 {
 				legacyCost := price.PlatformCostBPS
 				row.PlatformCostBPS = &legacyCost

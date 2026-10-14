@@ -189,6 +189,144 @@ func invoicePaymentCents(topUp *TopUp) (TopupPaymentSnapshot, int64, bool) {
 	return snapshot, cents, true
 }
 
+type invoiceTopUpCapacity struct {
+	TopUpID   int
+	PaidCents int64
+	PaidQuota int64
+	PaidAt    int64
+}
+
+func invoiceProratedCents(paidCents, consumedQuota, paidQuota int64) (int64, bool) {
+	if paidCents <= 0 || consumedQuota < 0 || paidQuota <= 0 || consumedQuota > paidQuota {
+		return 0, false
+	}
+	value := decimal.NewFromInt(paidCents).
+		Mul(decimal.NewFromInt(consumedQuota)).
+		Div(decimal.NewFromInt(paidQuota)).
+		Floor()
+	if !value.BigInt().IsInt64() {
+		return 0, false
+	}
+	result := value.IntPart()
+	return result, result >= 0 && result <= paidCents
+}
+
+// invoiceEligibleCentsByTopUp returns the paid amount that has actually been
+// consumed. Durable wallets use exact funding-lot consumption; legacy wallets
+// reconstruct the paid remainder from verified top-ups and the current wallet,
+// following the platform's non-paid-before-paid consumption order.
+func invoiceEligibleCentsByTopUp(db *gorm.DB, userID int, topUps []TopUp, lockUser bool) (map[int]int64, error) {
+	var user User
+	query := db.Select("id, quota, used_quota, billing_mode")
+	if lockUser {
+		query = lockForUpdate(query)
+	}
+	if err := query.First(&user, userID).Error; err != nil {
+		return nil, err
+	}
+	if user.BillingMode != AgencyDurableBillingMode {
+		var allTopUps []TopUp
+		if err := db.Where("user_id = ? AND status = ?", userID, common.TopUpStatusSuccess).
+			Order("id asc").
+			Find(&allTopUps).Error; err != nil {
+			return nil, err
+		}
+		topUps = allTopUps
+	}
+
+	capacities := make([]invoiceTopUpCapacity, 0, len(topUps))
+	for i := range topUps {
+		_, paidCents, paymentOK := invoicePaymentCents(&topUps[i])
+		paidQuota, quotaOK := topUps[i].settledQuota()
+		if !paymentOK || !quotaOK {
+			continue
+		}
+		capacities = append(capacities, invoiceTopUpCapacity{
+			TopUpID:   topUps[i].Id,
+			PaidCents: paidCents,
+			PaidQuota: paidQuota,
+			PaidAt:    topUps[i].CompleteTime,
+		})
+	}
+	eligible := make(map[int]int64, len(capacities))
+	if len(capacities) == 0 {
+		return eligible, nil
+	}
+
+	if user.BillingMode == AgencyDurableBillingMode {
+		sourceIDs := make([]string, 0, len(capacities))
+		topUpByID := make(map[int]TopUp, len(topUps))
+		for i := range topUps {
+			topUpByID[topUps[i].Id] = topUps[i]
+		}
+		for _, capacity := range capacities {
+			sourceIDs = append(sourceIDs, topUpByID[capacity.TopUpID].TradeNo)
+		}
+		var totals []struct {
+			SourceID     string
+			PaidInitial  int64
+			PaidConsumed int64
+		}
+		if err := db.Model(&AgencyFundingLot{}).
+			Select("source_id, COALESCE(SUM(paid_initial), 0) AS paid_initial, COALESCE(SUM(paid_consumed), 0) AS paid_consumed").
+			Where("user_id = ? AND source_id IN ? AND source_kind IN ?", userID, sourceIDs, []string{"payment_self", "payment_assisted"}).
+			Group("source_id").
+			Scan(&totals).Error; err != nil {
+			return nil, err
+		}
+		bySource := make(map[string]struct{ initial, consumed int64 }, len(totals))
+		for _, total := range totals {
+			if total.PaidInitial <= 0 || total.PaidConsumed < 0 || total.PaidConsumed > total.PaidInitial {
+				return nil, ErrInvoiceSourceUnavailable
+			}
+			bySource[total.SourceID] = struct{ initial, consumed int64 }{total.PaidInitial, total.PaidConsumed}
+		}
+		for _, capacity := range capacities {
+			total, ok := bySource[topUpByID[capacity.TopUpID].TradeNo]
+			if !ok {
+				continue
+			}
+			cents, ok := invoiceProratedCents(capacity.PaidCents, total.consumed, total.initial)
+			if !ok {
+				return nil, ErrInvoiceAmountInvalid
+			}
+			eligible[capacity.TopUpID] = cents
+		}
+		return eligible, nil
+	}
+
+	slices.SortFunc(capacities, func(left, right invoiceTopUpCapacity) int {
+		if left.PaidAt != right.PaidAt {
+			if left.PaidAt < right.PaidAt {
+				return -1
+			}
+			return 1
+		}
+		return left.TopUpID - right.TopUpID
+	})
+	totalPaidQuota := int64(0)
+	for _, capacity := range capacities {
+		if capacity.PaidQuota > math.MaxInt64-totalPaidQuota {
+			return nil, ErrInvoiceAmountInvalid
+		}
+		totalPaidQuota += capacity.PaidQuota
+	}
+	remainingPaidQuota := min(max(int64(user.Quota), 0), totalPaidQuota)
+	// A balance decrease alone is not proof of usage (manual deductions and
+	// refunds also lower quota). Bound legacy reconstruction by settled usage.
+	consumedPaidQuota := min(totalPaidQuota-remainingPaidQuota, max(int64(user.UsedQuota), 0))
+	for _, capacity := range capacities {
+		consumed := min(capacity.PaidQuota, consumedPaidQuota)
+		cents, ok := invoiceProratedCents(capacity.PaidCents, consumed, capacity.PaidQuota)
+		if !ok {
+			return nil, ErrInvoiceAmountInvalid
+		}
+		eligible[capacity.TopUpID] = cents
+		consumedPaidQuota -= consumed
+	}
+	return eligible, nil
+}
+
 func invoiceApplicationNo() string {
 	return "INV-" + strings.ToUpper(common.GetUUID()[:16])
 }
@@ -277,6 +415,10 @@ func CreateInvoiceApplication(userID int, input InvoiceApplicationInput) (*Invoi
 		if len(topUps) != len(ids) {
 			return ErrInvoiceSourceUnavailable
 		}
+		eligibleByTopUp, err := invoiceEligibleCentsByTopUp(tx, userID, topUps, true)
+		if err != nil {
+			return err
+		}
 		topUpByID := make(map[int]TopUp, len(topUps))
 		for _, topUp := range topUps {
 			topUpByID[topUp.Id] = topUp
@@ -293,7 +435,8 @@ func CreateInvoiceApplication(userID int, input InvoiceApplicationInput) (*Invoi
 			if !ok {
 				return ErrInvoiceSourceUnavailable
 			}
-			availableCents, validCounters := invoiceAvailableCents(paidCents, topUp.InvoiceReservedCents, topUp.InvoiceIssuedCents)
+			eligibleCents := eligibleByTopUp[topUp.Id]
+			availableCents, validCounters := invoiceAvailableCents(eligibleCents, topUp.InvoiceReservedCents, topUp.InvoiceIssuedCents)
 			if !validCounters {
 				return ErrInvoiceSourceUnavailable
 			}
@@ -304,7 +447,7 @@ func CreateInvoiceApplication(userID int, input InvoiceApplicationInput) (*Invoi
 			result := tx.Model(&TopUp{}).
 				Where("id = ? AND user_id = ? AND status = ?", topUp.Id, userID, common.TopUpStatusSuccess).
 				Where("invoice_reserved_cents >= 0 AND invoice_issued_cents >= 0").
-				Where("invoice_reserved_cents <= ? AND invoice_issued_cents <= ? - invoice_reserved_cents", paidCents-inputLine.AllocatedCents, paidCents-inputLine.AllocatedCents).
+				Where("invoice_reserved_cents <= ? AND invoice_issued_cents <= ? - invoice_reserved_cents", eligibleCents-inputLine.AllocatedCents, eligibleCents-inputLine.AllocatedCents).
 				Update("invoice_reserved_cents", gorm.Expr("invoice_reserved_cents + ?", inputLine.AllocatedCents))
 			if result.Error != nil {
 				return result.Error
@@ -366,13 +509,17 @@ func GetInvoiceSources(userID int) ([]InvoiceSource, error) {
 	if err := DB.Where("user_id = ? AND status = ?", userID, common.TopUpStatusSuccess).Order("id desc").Find(&topUps).Error; err != nil {
 		return nil, err
 	}
+	eligibleByTopUp, err := invoiceEligibleCentsByTopUp(DB, userID, topUps, false)
+	if err != nil {
+		return nil, err
+	}
 	sources := make([]InvoiceSource, 0, len(topUps))
 	for i := range topUps {
 		_, paidCents, ok := invoicePaymentCents(&topUps[i])
 		if !ok {
 			continue
 		}
-		available, validCounters := invoiceAvailableCents(paidCents, topUps[i].InvoiceReservedCents, topUps[i].InvoiceIssuedCents)
+		available, validCounters := invoiceAvailableCents(eligibleByTopUp[topUps[i].Id], topUps[i].InvoiceReservedCents, topUps[i].InvoiceIssuedCents)
 		if !validCounters {
 			continue
 		}
@@ -389,22 +536,26 @@ func GetInvoiceSummary(userID int) (*InvoiceSummary, error) {
 	if err := DB.Where("user_id = ? AND status = ?", userID, common.TopUpStatusSuccess).Find(&topUps).Error; err != nil {
 		return nil, err
 	}
+	eligibleByTopUp, err := invoiceEligibleCentsByTopUp(DB, userID, topUps, false)
+	if err != nil {
+		return nil, err
+	}
 	summary := &InvoiceSummary{}
 	for i := range topUps {
-		_, paidCents, valid := invoicePaymentCents(&topUps[i])
+		_, _, valid := invoicePaymentCents(&topUps[i])
 		if !valid {
 			continue
 		}
-		available, validCounters := invoiceAvailableCents(paidCents, topUps[i].InvoiceReservedCents, topUps[i].InvoiceIssuedCents)
-		if !validCounters {
-			continue
-		}
+		available, validCounters := invoiceAvailableCents(eligibleByTopUp[topUps[i].Id], topUps[i].InvoiceReservedCents, topUps[i].InvoiceIssuedCents)
 		var ok bool
 		if summary.ReservedCents, ok = addInvoiceCents(summary.ReservedCents, topUps[i].InvoiceReservedCents); !ok {
 			return nil, ErrInvoiceAmountInvalid
 		}
 		if summary.IssuedCents, ok = addInvoiceCents(summary.IssuedCents, topUps[i].InvoiceIssuedCents); !ok {
 			return nil, ErrInvoiceAmountInvalid
+		}
+		if !validCounters {
+			continue
 		}
 		if summary.AvailableCents, ok = addInvoiceCents(summary.AvailableCents, available); !ok {
 			return nil, ErrInvoiceAmountInvalid
@@ -421,11 +572,11 @@ func maxInvoiceAvailable(paidCents, reservedCents, issuedCents int64) int64 {
 	return available
 }
 
-func invoiceAvailableCents(paidCents, reservedCents, issuedCents int64) (int64, bool) {
-	if paidCents <= 0 || reservedCents < 0 || issuedCents < 0 || reservedCents > paidCents || issuedCents > paidCents-reservedCents {
+func invoiceAvailableCents(eligibleCents, reservedCents, issuedCents int64) (int64, bool) {
+	if eligibleCents < 0 || reservedCents < 0 || issuedCents < 0 || reservedCents > eligibleCents || issuedCents > eligibleCents-reservedCents {
 		return 0, false
 	}
-	return paidCents - reservedCents - issuedCents, true
+	return eligibleCents - reservedCents - issuedCents, true
 }
 
 func addInvoiceCents(total, amount int64) (int64, bool) {

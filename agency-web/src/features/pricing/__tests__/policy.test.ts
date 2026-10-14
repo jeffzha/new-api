@@ -12,8 +12,43 @@ import {
   pricingRequest,
 } from "../policy";
 import type { Policy } from "../types";
+import { normalizeModelSales, normalizePlatformPricing } from "../types";
 
 describe("pricing request contracts", () => {
+  test("pricing responses normalize nullable collections before rendering", () => {
+    const sales = normalizeModelSales({
+      agency_id: 1,
+      agency_name: "Agency",
+      revision: 1,
+      platform_revision: 1,
+      min_spread_bps: 500,
+      default_sales_bps: 9000,
+      items: null,
+    } as unknown as Parameters<typeof normalizeModelSales>[0]);
+    expect(sales.items).toEqual([]);
+    expect(normalizeModelSales({ ...sales, items: [{ origin_model_name: "model-a", channels: null }] } as unknown as Parameters<typeof normalizeModelSales>[0]).items[0].channels).toEqual([]);
+
+    expect(normalizePlatformPricing({ revision: 1, refreshed_at_ms: 1, items: null } as unknown as Parameters<typeof normalizePlatformPricing>[0]).items).toEqual([]);
+
+    const platform = normalizePlatformPricing({
+      revision: 1,
+      refreshed_at_ms: 1,
+      items: [
+        {
+          origin_model_name: "model-a",
+          channel_names: null,
+          channel_costs: null,
+          platform_cost_bps: null,
+          agency_cost_bps: null,
+          child_cost_bps: null,
+          default_sales_bps: null,
+        },
+      ],
+    } as unknown as Parameters<typeof normalizePlatformPricing>[0]);
+    expect(platform.items[0].channel_names).toEqual([]);
+    expect(platform.items[0].channel_costs).toEqual([]);
+  });
+
   test("new agency drafts submit the standard price while existing discounts remain unchanged", () => {
     const newDraft = policyToDraft(initialPolicy);
     expect(newDraft.sales).toBe("0.9000");

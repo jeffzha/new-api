@@ -76,6 +76,7 @@ type Task struct {
 	// with the task so a transient failure creating the reconciliation row can
 	// be recovered by the async task worker.
 	BillingReconciliationPending bool       `json:"-" gorm:"index"`
+	OpsUsagePending              bool       `json:"-" gorm:"index"`
 	Properties                   Properties `json:"properties" gorm:"type:json"`
 	Username                     string     `json:"username,omitempty" gorm:"-"`
 	// 禁止返回给用户，内部可能包含key等隐私信息
@@ -127,9 +128,11 @@ func (m Properties) Value() (driver.Value, error) {
 }
 
 type TaskPrivateData struct {
-	Key            string `json:"key,omitempty"`
-	UpstreamTaskID string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
-	ResultURL      string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
+	// OpsUsage is a credential-free terminal record committed with the task CAS.
+	OpsUsage       json.RawMessage `json:"ops_usage,omitempty"`
+	Key            string          `json:"key,omitempty"`
+	UpstreamTaskID string          `json:"upstream_task_id,omitempty"` // 上游真实 task ID
+	ResultURL      string          `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
 	// Execution records safe, immutable request provenance. It lives next to
 	// other private task state so public task DTOs cannot expose it by accident.
 	Execution *TaskExecutionSnapshot `json:"execution,omitempty"`

@@ -63,20 +63,23 @@ func samePricingPluginVariant(a, b PricingPluginVariant) bool {
 	return a.BillingMode == b.BillingMode &&
 		a.BillingExpr == b.BillingExpr &&
 		reflect.DeepEqual(a.BillingUsageSchema, b.BillingUsageSchema) &&
-		reflect.DeepEqual(a.BillingUsageExamples, b.BillingUsageExamples)
+		reflect.DeepEqual(a.BillingUsageExamples, b.BillingUsageExamples) &&
+		reflect.DeepEqual(a.BillingMaterialPricing, b.BillingMaterialPricing)
 }
 
 type PricingPluginVariant struct {
-	PluginKey            string                               `json:"plugin_key"`
-	PluginName           string                               `json:"plugin_name"`
-	Icon                 string                               `json:"icon,omitempty"`
-	BillingExpr          string                               `json:"billing_expr"`
-	BillingMode          string                               `json:"billing_mode"`
-	BillingUsageSchema   map[string]jsplugin.UsageFieldSchema `json:"billing_usage_schema"`
-	BillingUsageExamples []jsplugin.UsageExample              `json:"billing_usage_examples,omitempty"`
+	BillingMaterialPricing *jsplugin.MaterialPricingCatalog     `json:"billing_material_pricing,omitempty"`
+	PluginKey              string                               `json:"plugin_key"`
+	PluginName             string                               `json:"plugin_name"`
+	Icon                   string                               `json:"icon,omitempty"`
+	BillingExpr            string                               `json:"billing_expr"`
+	BillingMode            string                               `json:"billing_mode"`
+	BillingUsageSchema     map[string]jsplugin.UsageFieldSchema `json:"billing_usage_schema"`
+	BillingUsageExamples   []jsplugin.UsageExample              `json:"billing_usage_examples,omitempty"`
 }
 
 type Pricing struct {
+	BillingMaterialPricing *jsplugin.MaterialPricingCatalog     `json:"billing_material_pricing,omitempty"`
 	BillingPluginVariants  []PricingPluginVariant               `json:"billing_plugin_variants,omitempty"`
 	ModelName              string                               `json:"model_name"`
 	Description            string                               `json:"description,omitempty"`
@@ -449,6 +452,7 @@ func updatePricing() {
 			usageSchema, usageExamples := plugin.Meta.UsageForModel(usageModel)
 			pricing.BillingUsageSchema = jsplugin.CloneUsageSchema(usageSchema)
 			pricing.BillingUsageExamples = jsplugin.CloneUsageExamples(usageExamples)
+			pricing.BillingMaterialPricing = jsplugin.CloneMaterialPricing(plugin.Meta.MaterialPricingForModel(usageModel))
 		}
 		if pricing.BillingUsageSchema == nil {
 			pricing.BillingUsageSchema = nativeTaskUsageSchema(model)
@@ -480,6 +484,7 @@ func updatePricing() {
 					PluginKey: provider.Meta.Key, PluginName: provider.Meta.Name, Icon: provider.Meta.Icon,
 					BillingExpr: expression, BillingMode: mode,
 					BillingUsageSchema: jsplugin.CloneUsageSchema(schema), BillingUsageExamples: jsplugin.CloneUsageExamples(examples),
+					BillingMaterialPricing: jsplugin.CloneMaterialPricing(provider.Meta.MaterialPricingForModel(model)),
 				})
 			}
 			allSame := len(variants) > 0
@@ -494,6 +499,7 @@ func updatePricing() {
 				pricing.BillingExpr = variants[0].BillingExpr
 				pricing.BillingUsageSchema = variants[0].BillingUsageSchema
 				pricing.BillingUsageExamples = variants[0].BillingUsageExamples
+				pricing.BillingMaterialPricing = variants[0].BillingMaterialPricing
 			} else {
 				pricing.BillingPluginVariants = variants
 			}

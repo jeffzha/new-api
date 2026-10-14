@@ -1197,6 +1197,63 @@ usageProfiles: [{models:["image"], schema:{tokens:{type:"number", unit:"token"}}
 	require.ErrorContains(t, ValidateV1Meta(plugin.Meta), "schema must be an object")
 }
 
+func TestRegistryMaterialPricingProfilesAndSnapshotIsolation(t *testing.T) {
+	source := routingTestPluginSource("material-pricing", 0, `["default", "premium"]`, `
+materialPricing: {currency: "CNY", items: [
+  {material: "audio", unit: "free"},
+  {material: "image", unit: "count", freeUnits: 5, rates: [{amount: 0.2}]},
+  {material: "video", unit: "second", rates: [{label: {en: "768P", zh: "768P"}, amount: 0.5}]}
+]},
+usageProfiles: [{models: ["premium"], schema: {}, materialPricing: {currency: "CNY", items: [
+  {material: "video", unit: "second", rates: [{label: {en: "2K"}, amount: 0.8}]}
+]}}],`, "")
+	registry := NewRegistry()
+	plugin, err := registry.Register(source, Options{})
+	require.NoError(t, err)
+
+	base := plugin.Meta.MaterialPricingForModel("default")
+	require.NotNil(t, base)
+	require.Len(t, base.Items, 3)
+	assert.Equal(t, 5.0, base.Items[1].FreeUnits)
+	assert.Equal(t, 0.2, base.Items[1].Rates[0].Amount)
+	premium := plugin.Meta.MaterialPricingForModel("PREMIUM")
+	require.NotNil(t, premium)
+	require.Len(t, premium.Items, 1)
+	assert.Equal(t, "2K", premium.Items[0].Rates[0].Label["en"])
+	assert.Equal(t, 0.8, premium.Items[0].Rates[0].Amount)
+
+	snapshot := registry.Snapshot()
+	snapshot.Override[0].MaterialPricing.Items[1].Rates[0].Amount = 9
+	snapshot.Override[0].UsageProfiles[0].MaterialPricing.Items[0].Rates[0].Label["en"] = "changed"
+	current := registry.Snapshot().Override[0]
+	assert.Equal(t, 0.2, current.MaterialPricing.Items[1].Rates[0].Amount)
+	assert.Equal(t, "2K", current.UsageProfiles[0].MaterialPricing.Items[0].Rates[0].Label["en"])
+}
+
+func TestRegistryRejectsInvalidMaterialPricing(t *testing.T) {
+	for _, tc := range []struct {
+		name, catalogue, errorText string
+	}{
+		{"null", `null`, "must be an object"},
+		{"unknown field", `{currency:"CNY",items:[],extra:true}`, "unknown field"},
+		{"currency", `{currency:"USD",items:[{material:"audio",unit:"free"}]}`, "currency must be CNY"},
+		{"empty items", `{currency:"CNY",items:[]}`, "at least one item"},
+		{"unknown material", `{currency:"CNY",items:[{material:"text",unit:"free"}]}`, "material must be"},
+		{"duplicate material", `{currency:"CNY",items:[{material:"audio",unit:"free"},{material:"audio",unit:"free"}]}`, "must be unique"},
+		{"unknown unit", `{currency:"CNY",items:[{material:"image",unit:"credit",rates:[{amount:1}]}]}`, "unit must be"},
+		{"free with rates", `{currency:"CNY",items:[{material:"audio",unit:"free",rates:[{amount:1}]}]}`, "free items cannot"},
+		{"missing rates", `{currency:"CNY",items:[{material:"image",unit:"count"}]}`, "at least one rate"},
+		{"zero rate", `{currency:"CNY",items:[{material:"image",unit:"count",rates:[{amount:0}]}]}`, "positive number"},
+		{"duplicate labels", `{currency:"CNY",items:[{material:"video",unit:"second",rates:[{label:{en:"2K"},amount:1},{label:{en:"2k"},amount:2}]}]}`, "labels must be unique"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := routingTestPluginSource("invalid-material-pricing", 0, `["model"]`, `materialPricing: `+tc.catalogue+`,`, "")
+			_, err := CompilePlugin(source, Options{})
+			require.ErrorContains(t, err, tc.errorText)
+		})
+	}
+}
+
 func TestSubmitResponseTypesContract(t *testing.T) {
 	for _, tc := range []struct {
 		name, metadata, hook string

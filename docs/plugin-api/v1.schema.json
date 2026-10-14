@@ -20,7 +20,7 @@
     ]}},
     "submitResponseTypes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["json", "sse"]}},
     "requiredCapabilities": {"type": "array", "uniqueItems": true, "items": {"enum": ["json-clone@1", "submit-sse-delta@1"]}},
-    "routes": {"type": "array", "items": {"$ref": "#/$defs/route"}}, "usageSchema": {"type": "object", "additionalProperties": {"$ref": "#/$defs/usageField"}}, "usageExamples": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["label", "facts"], "properties": {"label": {"type": "string"}, "facts": {"type": "object"}}}}, "usageProfiles": {"type": "array", "items": {"$ref": "#/$defs/usageProfile"}}, "auth": {}
+    "routes": {"type": "array", "items": {"$ref": "#/$defs/route"}}, "usageSchema": {"type": "object", "additionalProperties": {"$ref": "#/$defs/usageField"}}, "usageExamples": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["label", "facts"], "properties": {"label": {"type": "string"}, "facts": {"type": "object"}}}}, "usageProfiles": {"type": "array", "items": {"$ref": "#/$defs/usageProfile"}}, "materialPricing": {"$ref": "#/$defs/materialPricing"}, "auth": {}
   },
   "allOf": [{"if": {"required": ["requiredCapabilities"], "properties": {"requiredCapabilities": {"contains": {"const": "submit-sse-delta@1"}}}}, "then": {"required": ["submitResponseTypes"], "properties": {"submitResponseTypes": {"contains": {"const": "sse"}}}}}],
   "$defs": {
@@ -48,9 +48,40 @@
       "properties": {
         "models": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
         "schema": {"type": "object", "additionalProperties": {"$ref": "#/$defs/usageField"}},
-        "examples": {"type": "array", "maxItems": 16, "items": {"$ref": "#/properties/usageExamples/items"}}
+        "examples": {"type": "array", "maxItems": 16, "items": {"$ref": "#/properties/usageExamples/items"}},
+        "materialPricing": {"$ref": "#/$defs/materialPricing"}
       },
       "description": "Complete usage metadata for declared models. The host validates model membership, unique profile ownership and examples, including required token-unit examples."
+    },
+    "materialPricing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "items"],
+      "properties": {
+        "currency": {"const": "CNY"},
+        "items": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/materialPricingItem"}}
+      },
+      "description": "Display-only official input-material pricing. It never participates in billing or settlement."
+    },
+    "materialPricingItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["material", "unit"],
+      "properties": {
+        "material": {"enum": ["audio", "image", "video"]},
+        "unit": {"enum": ["free", "count", "second"]},
+        "freeUnits": {"type": "number", "minimum": 0},
+        "rates": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/materialPricingRate"}}
+      }
+    },
+    "materialPricingRate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount"],
+      "properties": {
+        "label": {"$ref": "#/$defs/usageLabel"},
+        "amount": {"type": "number", "exclusiveMinimum": 0}
+      }
     },
     "usageField": {
       "type": "object",

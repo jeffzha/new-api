@@ -27,6 +27,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/opsbridge"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
@@ -323,6 +324,14 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 4. 价格计算：基础模型价格
 	info.OriginModelName = modelName
+	if err := opsbridge.ReserveTask(c, info.PublicTaskID, modelName, opsbridge.TaskRelayType(c.Request.URL.Path)); err != nil {
+		status := http.StatusServiceUnavailable
+		var remote *opsbridge.HTTPError
+		if errors.As(err, &remote) && (remote.Status == http.StatusConflict || remote.Status == http.StatusTooManyRequests) {
+			status = remote.Status
+		}
+		return nil, service.TaskErrorWrapperLocal(err, "ops_task_unavailable", status)
+	}
 	var providerBilling *model.TaskProviderBillingSnapshot
 	estimator, hasProviderBilling := adaptor.(channel.TaskBillingEstimator)
 	hasProviderBilling = hasProviderBilling && estimator.SupportsTaskBilling(info.ChannelType, modelName)
@@ -525,8 +534,12 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 
 	// 9. 发送请求
+	if err := opsbridge.BeforeTaskDispatch(c); err != nil {
+		return nil, service.TaskErrorWrapperLocal(err, "ops_task_state_unavailable", http.StatusServiceUnavailable)
+	}
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
+		c.Set("ops_task_ambiguous", true)
 		if agencyAttempt {
 			_ = model.ResolveAgencyTaskSubmissionFailure(info.RequestId, false, "transport_error")
 			c.Set("agency_task_reconcile_required", true)
@@ -539,6 +552,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 && !c.GetBool("ops_task_ambiguous") {
+			c.Set("ops_task_rejected", true)
+		} else {
+			c.Set("ops_task_ambiguous", true)
+		}
 		if agencyAttempt && resp.StatusCode >= 400 && resp.StatusCode < 500 {
 			_ = model.ResolveAgencyTaskSubmissionFailure(info.RequestId, true, "upstream_rejected")
 			c.Set("agency_task_rejected", true)
@@ -561,6 +579,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// task ID receipt has been committed.
 	parsed, taskErr := adaptor.ParseResponse(c, resp, info)
 	if taskErr != nil {
+		c.Set("ops_task_ambiguous", true)
 		if agencyAttempt {
 			_ = model.ResolveAgencyTaskSubmissionFailure(info.RequestId, false, "response_parse_error")
 			c.Set("agency_task_reconcile_required", true)

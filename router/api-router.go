@@ -4,6 +4,7 @@ import (
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/service/opsexport"
 
 	// Import oauth package to register providers via init()
 	_ "github.com/QuantumNous/new-api/oauth"
@@ -20,8 +21,11 @@ func SetApiRouter(router *gin.Engine) {
 	apiRouter.Use(middleware.AccessTokenAudit())
 	apiRouter.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
 	apiRouter.Use(middleware.GlobalAPIRateLimit())
+	opsexport.Register(apiRouter.Group("/ops-export/v1", middleware.DisableCache()))
 	anonymousRequestBodyLimit := middleware.AnonymousRequestBodyLimit()
 	registerWorkbenchIdentityRoutes(apiRouter)
+	opsBridgeRoute := apiRouter.Group("/ops-bridge", middleware.RootAuth(), middleware.UserCriticalRateLimit("ops-bridge"), middleware.DisableCache())
+	controller.RegisterOpsBridgeRoutes(opsBridgeRoute)
 	agencyRoute := apiRouter.Group("/agency")
 	agencyRoute.GET("/sso", controller.AgencySSOPage)
 	agencyRoute.POST("/sso-ticket", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-sso"), middleware.DisableCache(), controller.IssueAgencySSOTicket)

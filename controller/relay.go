@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/opsbridge"
 	"github.com/QuantumNous/new-api/service/opsmonitor"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -591,6 +592,7 @@ func RelayTask(c *gin.Context) {
 
 	outcome, taskErr := executeTaskSubmission(c, relayInfo)
 	if taskErr != nil {
+		opsmonitor.ObserveTaskError(c, relayInfo, taskErr)
 		service.NotifyFeishuTaskError(c, relayInfo, taskErr)
 		respondTaskSubmissionError(c, taskErr)
 		return
@@ -619,6 +621,7 @@ func executeTaskSubmissionWith(
 	var result *relay.TaskSubmitResult
 	var taskErr *taskdto.TaskError
 	durable := false
+	defer func() { opsbridge.FinishTaskSubmission(c, durable) }()
 	stage := "start"
 	defer func() {
 		if !durable && taskErr != nil && relayInfo.Billing != nil {
@@ -703,6 +706,11 @@ func executeTaskSubmissionWith(
 		}
 		if taskErr == nil {
 			diagnostics.attemptSucceeded(retryParam.GetRetry()+1, result)
+			break
+		}
+		if c.GetString("ops_task_request") != "" {
+			// Once Ops has admitted this task, every later failure belongs to the
+			// same reservation and must never become a second provider task.
 			break
 		}
 		if reconcile, _ := c.Get("agency_task_reconcile_required"); reconcile == true {
@@ -829,6 +837,7 @@ func executeTaskSubmissionWith(
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		}
 	}
+	service.PrepareOpsTaskTerminal(task, relayInfo.ChannelType, task.Data)
 	diagnostics.insertStart(task)
 	if insertErr := task.InsertWithContext(c.Request.Context()); insertErr != nil {
 		common.SysError("insert task error: " + insertErr.Error())
@@ -837,6 +846,7 @@ func executeTaskSubmissionWith(
 		return nil, taskErr
 	}
 	durable = true
+	service.FinalizeOpsTaskReservation(task)
 	stage = "settle"
 	diagnostics.durable(task)
 	diagnostics.settleStart(task, result.Quota)

@@ -31,6 +31,8 @@ import (
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/service/opsbridge"
+	"github.com/QuantumNous/new-api/service/opsexport"
 	"github.com/QuantumNous/new-api/service/opsmonitor"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
@@ -154,6 +156,17 @@ func main() {
 	}
 	commandWorkerCtx, stopAgencyCommandWorker := context.WithCancel(context.Background())
 	defer stopAgencyCommandWorker()
+	if err := opsexport.StartConfigured(model.DB); err != nil {
+		common.FatalLog("failed to initialize Ops export: " + err.Error())
+		return
+	}
+	if err := opsbridge.StartConfigured(commandWorkerCtx); err != nil {
+		common.FatalLog("failed to initialize Ops bridge: " + err.Error())
+		return
+	}
+	if opsbridge.Default != nil {
+		defer opsbridge.Default.Close()
+	}
 	commandServer, err := service.StartConfiguredAgencyCommandServer()
 	if err != nil {
 		common.FatalLog("failed to start agency command listener: " + err.Error())

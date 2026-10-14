@@ -32,6 +32,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type {
   BillingUsageFieldSchema,
   BillingUsageSchema,
+  MaterialPricingCatalog,
   PricingModel,
 } from '../types'
 import { compileBillingExpression } from './billing-expression/parser'
@@ -65,6 +66,7 @@ export type VideoMaterialFieldRow = {
 }
 
 export type VideoMaterialPricing =
+  | { kind: 'catalog'; catalog: MaterialPricingCatalog }
   /** Materials settle from the upstream invoice; credits carry the USD rate. */
   | { kind: 'upstream_credits'; creditPriceUSD: number }
   /** Materials bill per declared unit from the configured expression. */
@@ -354,6 +356,9 @@ function materialPricingOf(
   fields: { resolution: string; seconds: string },
   schema: BillingUsageSchema
 ): VideoMaterialPricing | null {
+  if (model.billing_material_pricing?.items.length) {
+    return { kind: 'catalog', catalog: model.billing_material_pricing }
+  }
   const rows = materialFieldRows(model, fields, schema)
   const passThrough = rows.find(
     (row) =>

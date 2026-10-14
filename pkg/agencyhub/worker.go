@@ -150,15 +150,11 @@ func agencyDailyReconciliationSchedule(now time.Time, lastDate string) (string, 
 func (a *App) drainConsumerBudget(ctx context.Context) error {
 	const maxBatchesPerTick = 20
 	for i := 0; i < maxBatchesPerTick; i++ {
-		if err := a.RunConsumerOnce(ctx, 500); err != nil {
+		completed, err := a.runConsumerBatch(ctx, 500)
+		if err != nil {
 			return err
 		}
-		var pending int64
-		if err := a.db.WithContext(ctx).Model(&model.AgencyEventDelivery{}).
-			Where("status IN ?", []string{"pending", "retry"}).Count(&pending).Error; err != nil {
-			return err
-		}
-		if pending == 0 {
+		if completed == 0 {
 			return nil
 		}
 	}
@@ -216,55 +212,96 @@ func (a *App) processClaimedCommissionJob(ctx context.Context, id int64) error {
 // delivery row is the progress source; outbox IDs are only ordering hints and
 // can never hide a late low-ID transaction.
 func (a *App) RunConsumerOnce(ctx context.Context, limit int) error {
+	_, err := a.runConsumerBatch(ctx, limit)
+	return err
+}
+
+type billingDeliveryCandidate struct {
+	model.AgencyEventDelivery
+	UserID     int64
+	MoneySeq   int64
+	EventIndex int
+	EventKind  string
+}
+
+func (a *App) runConsumerBatch(ctx context.Context, limit int) (int, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	now := time.Now().Unix()
-	_ = a.db.Model(&model.AgencyEventDelivery{}).Where("status = ? AND lease_until < ?", "claimed", now).Updates(map[string]any{"status": "retry", "next_retry_at": now})
-	var deliveries []model.AgencyEventDelivery
-	if err := a.db.WithContext(ctx).Where("status IN ? AND next_retry_at <= ?", []string{"pending", "retry"}, now).Order("next_retry_at ASC, id ASC").Limit(limit).Find(&deliveries).Error; err != nil {
-		return err
+	if err := a.db.WithContext(ctx).Model(&model.AgencyEventDelivery{}).Where("status = ? AND lease_until < ?", "claimed", now).
+		Updates(map[string]any{"status": "retry", "next_retry_at": now}).Error; err != nil {
+		return 0, err
 	}
-	// A reversal depends on the original earned ledger entry. Delivery IDs
-	// reflect commit timing rather than that dependency, so a reversal can
-	// otherwise consume a retry and leave the batch partially settled. Order
-	// known original events ahead of reversals while retaining stable ordering
-	// within each class.
-	if len(deliveries) > 1 {
-		eventIDs := make([]string, 0, len(deliveries))
-		for _, delivery := range deliveries {
-			eventIDs = append(eventIDs, delivery.EventID)
-		}
-		var outboxes []model.AgencyBillingOutbox
-		if err := a.db.WithContext(ctx).Where("event_id IN ?", eventIDs).Find(&outboxes).Error; err == nil {
-			reversal := make(map[string]bool, len(outboxes))
-			for _, outbox := range outboxes {
-				reversal[outbox.EventID] = outbox.EventKind == "agency.billing_reversed"
-			}
-			sort.SliceStable(deliveries, func(i, j int) bool {
-				if reversal[deliveries[i].EventID] != reversal[deliveries[j].EventID] {
-					return !reversal[deliveries[i].EventID]
-				}
-				if deliveries[i].NextRetryAt != deliveries[j].NextRetryAt {
-					return deliveries[i].NextRetryAt < deliveries[j].NextRetryAt
-				}
-				return deliveries[i].ID < deliveries[j].ID
-			})
-		}
+	// A future retry, live claim or poison is a barrier only for its own user.
+	// Filter successors before LIMIT so a blocked account cannot crowd other
+	// customers out of the batch. Missing delivery/source evidence is still
+	// rejected by the transaction's authoritative money-sequence check.
+	deliveryTable := (model.AgencyEventDelivery{}).TableName()
+	outboxTable := (model.AgencyBillingOutbox{}).TableName()
+	barriers := a.db.WithContext(ctx).Table(deliveryTable+" AS waiting").
+		Select("prior.user_id, MIN(prior.money_seq) AS money_seq").
+		Joins("JOIN "+outboxTable+" AS prior ON prior.event_id = waiting.event_id").
+		Where("prior.money_seq > 0").
+		Where("waiting.status IN ? OR (waiting.status IN ? AND waiting.next_retry_at > ?)",
+			[]string{"claimed", "poison"}, []string{"pending", "retry"}, now).
+		Group("prior.user_id")
+	var deliveries []billingDeliveryCandidate
+	if err := a.db.WithContext(ctx).Table(deliveryTable+" AS delivery").
+		Select("delivery.*, COALESCE(outbox.user_id, 0) AS user_id, COALESCE(outbox.money_seq, 0) AS money_seq, COALESCE(outbox.event_index, 0) AS event_index, COALESCE(outbox.event_kind, '') AS event_kind").
+		Joins("LEFT JOIN "+outboxTable+" AS outbox ON outbox.event_id = delivery.event_id").
+		Joins("LEFT JOIN (?) AS barrier ON barrier.user_id = outbox.user_id", barriers).
+		Where("delivery.status IN ? AND delivery.next_retry_at <= ?", []string{"pending", "retry"}, now).
+		Where("barrier.money_seq IS NULL OR outbox.money_seq = 0 OR outbox.money_seq < barrier.money_seq").
+		Order("COALESCE(outbox.money_seq, 0) ASC, delivery.next_retry_at ASC, delivery.id ASC").
+		Limit(limit).Scan(&deliveries).Error; err != nil {
+		return 0, err
 	}
-	for _, delivery := range deliveries {
+	sort.SliceStable(deliveries, func(i, j int) bool {
+		left, right := deliveries[i], deliveries[j]
+		if left.UserID != right.UserID {
+			return left.UserID < right.UserID
+		}
+		if left.MoneySeq != right.MoneySeq {
+			return left.MoneySeq < right.MoneySeq
+		}
+		if (left.EventKind == "agency.billing_reversed") != (right.EventKind == "agency.billing_reversed") {
+			return left.EventKind != "agency.billing_reversed"
+		}
+		if left.EventIndex != right.EventIndex {
+			return left.EventIndex < right.EventIndex
+		}
+		return left.ID < right.ID
+	})
+	blockedUsers := make(map[int64]bool)
+	completed := 0
+	for _, candidate := range deliveries {
+		if err := ctx.Err(); err != nil {
+			return completed, err
+		}
+		if candidate.MoneySeq > 0 && blockedUsers[candidate.UserID] {
+			continue
+		}
+		delivery := candidate.AgencyEventDelivery
 		claimed, leaseToken, err := a.claimDelivery(delivery)
-		if err != nil || !claimed {
+		if err != nil {
+			return completed, err
+		}
+		if !claimed {
+			blockedUsers[candidate.UserID] = true
 			continue
 		}
 		delivery.Status = "claimed"
 		delivery.LeaseOwner = a.config.InstanceID
 		delivery.LeaseToken = leaseToken
 		if err := a.processDelivery(ctx, delivery); err != nil {
+			blockedUsers[candidate.UserID] = true
 			common.SysError("agency event delivery failed: " + err.Error())
+			continue
 		}
+		completed++
 	}
-	return nil
+	return completed, nil
 }
 
 func (a *App) claimDelivery(delivery model.AgencyEventDelivery) (bool, int64, error) {
@@ -277,6 +314,7 @@ func (a *App) claimDelivery(delivery model.AgencyEventDelivery) (bool, int64, er
 func (a *App) processDelivery(ctx context.Context, delivery model.AgencyEventDelivery) error {
 	var outbox model.AgencyBillingOutbox
 	if err := a.db.WithContext(ctx).Where("event_id = ?", delivery.EventID).First(&outbox).Error; err != nil {
+		_ = a.markDelivery(delivery, "retry", err)
 		return err
 	}
 	var event agencycontract.BillingEvent

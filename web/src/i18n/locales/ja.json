@@ -7023,6 +7023,8 @@
     "Fixed {{seconds}}s": "固定 {{seconds}} 秒",
     "Image material": "画像素材",
     "Material": "素材",
+    "No charge": "無料",
+    "First {{count}} free, then": "最初の{{count}}件は無料、以降は",
     "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "素材費は上流の実際の消費に応じて課金され、上流が入力を課金しない場合は追加されません。",
     "Model / API": "モデル / API",
     "No extra material charge": "素材の追加料金なし",

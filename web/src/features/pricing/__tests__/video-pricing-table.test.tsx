@@ -31,6 +31,7 @@ import type {
   BillingPluginVariant,
   BillingUsageFieldSchema,
   BillingUsageSchema,
+  MaterialPricingCatalog,
   PricingModel,
 } from '../types'
 
@@ -103,6 +104,27 @@ const resolutionMatrix = [
 
 const upstreamCreditsExpr = `tier("upstream", u("output_credits") * ${CREDIT_USD} + u("material_credits") * ${CREDIT_USD})`
 
+const officialMaterialPricing: MaterialPricingCatalog = {
+  currency: 'CNY',
+  items: [
+    { material: 'audio', unit: 'free' },
+    {
+      material: 'image',
+      unit: 'count',
+      freeUnits: 5,
+      rates: [{ amount: 0.2 }],
+    },
+    {
+      material: 'video',
+      unit: 'second',
+      rates: [
+        { label: { en: '768P', zh: '768P' }, amount: 0.5 },
+        { label: { en: '2K', zh: '2K' }, amount: 0.8 },
+      ],
+    },
+  ],
+}
+
 const hailuoExamples = [
   {
     label: 'H3 768P 5s',
@@ -171,6 +193,7 @@ const hailuoVariant: BillingPluginVariant = {
 }
 
 const wangpaiVariant: BillingPluginVariant = {
+  billing_material_pricing: officialMaterialPricing,
   plugin_key: 'wangpaiai',
   plugin_name: 'Wangpai AI',
   billing_mode: 'tiered_expr',
@@ -280,12 +303,12 @@ it('prices each provider variant from its own expression', () => {
     (45 * CREDIT_USD) / 15,
   ])
   expect(wangpaiTable?.materialPricing).toEqual({
-    kind: 'upstream_credits',
-    creditPriceUSD: CREDIT_USD,
+    kind: 'catalog',
+    catalog: officialMaterialPricing,
   })
 })
 
-it('explains aggregate bridge material charges without exposing credits as a customer price', () => {
+it('renders official H3 material prices without exposing upstream credits', () => {
   const table = getVideoPricingTable(withPluginPricing(h3Model, wangpaiVariant))
   expect(table).not.toBeNull()
   if (!table) throw new Error('Expected a video pricing table')
@@ -299,18 +322,27 @@ it('explains aggregate bridge material charges without exposing credits as a cus
     />
   )
 
-  expect(
-    screen.getByText('Reference materials (audio, images and video)')
-  ).toBeInTheDocument()
-  expect(
-    screen.getByText(
-      "Settled according to the supplier's final material charge"
-    )
-  ).toBeInTheDocument()
+  expect(screen.getByText('Audio material')).toBeInTheDocument()
+  expect(screen.getByText('Image material')).toBeInTheDocument()
+  expect(screen.getByText('Video material')).toBeInTheDocument()
+  expect(screen.getByText('No charge')).toBeInTheDocument()
+  expect(screen.getByText('First 5 free, then ¥0.20/image')).toBeInTheDocument()
+  expect(screen.getByText('768P ¥0.50/s · 2K ¥0.80/s')).toBeInTheDocument()
   expect(screen.queryByText(/credit/i)).not.toBeInTheDocument()
-  expect(screen.queryByText('Audio material')).not.toBeInTheDocument()
-  expect(screen.queryByText('Image material')).not.toBeInTheDocument()
-  expect(screen.queryByText('Video material')).not.toBeInTheDocument()
+})
+
+it('keeps the combined supplier-charge fallback when no official catalogue exists', () => {
+  const fallbackVariant = {
+    ...wangpaiVariant,
+    billing_material_pricing: undefined,
+  }
+  const table = getVideoPricingTable(
+    withPluginPricing(h3Model, fallbackVariant)
+  )
+  expect(table?.materialPricing).toEqual({
+    kind: 'upstream_credits',
+    creditPriceUSD: CREDIT_USD,
+  })
 })
 
 it('returns no video price list when the model does not price a resolution catalogue', () => {

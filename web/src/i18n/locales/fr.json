@@ -7023,6 +7023,8 @@
     "Fixed {{seconds}}s": "Fixe {{seconds}} s",
     "Image material": "Matériau image",
     "Material": "Matériau",
+    "No charge": "Gratuit",
+    "First {{count}} free, then": "Les {{count}} premiers sont gratuits, puis",
     "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "Les frais de matériaux suivent la facturation du fournisseur ; aucun supplément n'est ajouté lorsqu'il ne facture pas les entrées.",
     "Model / API": "Modèle / API",
     "No extra material charge": "Aucun frais de matériau supplémentaire",

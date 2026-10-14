@@ -7172,6 +7172,8 @@
     "Fixed {{seconds}}s": "Fixed {{seconds}}s",
     "Image material": "Image material",
     "Material": "Material",
+    "No charge": "No charge",
+    "First {{count}} free, then": "First {{count}} free, then",
     "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.",
     "Model / API": "Model / API",
     "No extra material charge": "No extra material charge",

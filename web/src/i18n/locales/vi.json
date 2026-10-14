@@ -7023,6 +7023,8 @@
     "Fixed {{seconds}}s": "Cố định {{seconds}} giây",
     "Image material": "Chất liệu hình ảnh",
     "Material": "Chất liệu",
+    "No charge": "Miễn phí",
+    "First {{count}} free, then": "Miễn phí {{count}} mục đầu, sau đó",
     "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "Phí chất liệu theo mức thu thực tế của nhà cung cấp; không thu thêm nếu nhà cung cấp không tính phí đầu vào.",
     "Model / API": "Mô hình / API",
     "No extra material charge": "Không thu thêm phí chất liệu",

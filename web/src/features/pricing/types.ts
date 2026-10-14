@@ -45,7 +45,20 @@ export type BillingUsageExample = {
   facts: Record<string, string | number>
 }
 
+export type MaterialPricingItem = {
+  material: 'audio' | 'image' | 'video'
+  unit: 'free' | 'count' | 'second'
+  freeUnits?: number
+  rates?: { label?: string | Record<string, string>; amount: number }[]
+}
+
+export type MaterialPricingCatalog = {
+  currency: 'CNY'
+  items: MaterialPricingItem[]
+}
+
 export type BillingPluginVariant = {
+  billing_material_pricing?: MaterialPricingCatalog
   plugin_key: string
   plugin_name: string
   icon?: string
@@ -69,6 +82,7 @@ export type VideoTokenMatrixPricing = {
 }
 
 export type PricingModel = {
+  billing_material_pricing?: MaterialPricingCatalog
   billing_plugin_variants?: BillingPluginVariant[]
   id: number
   model_name: string

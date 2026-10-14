@@ -7023,6 +7023,8 @@
     "Fixed {{seconds}}s": "Фиксированные {{seconds}} с",
     "Image material": "Материал: изображение",
     "Material": "Материал",
+    "No charge": "Бесплатно",
+    "First {{count}} free, then": "Первые {{count}} бесплатно, затем",
     "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "Плата за материалы соответствует списанию поставщика; если поставщик не тарифицирует входные данные, доплата не взимается.",
     "Model / API": "Модель / API",
     "No extra material charge": "Без доплаты за материалы",

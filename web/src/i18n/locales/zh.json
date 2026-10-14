@@ -7172,6 +7172,8 @@
     "Fixed {{seconds}}s": "固定 {{seconds}} 秒",
     "Image material": "图片素材",
     "Material": "素材",
+    "No charge": "免费",
+    "First {{count}} free, then": "{{count}} 张以内免费，超出部分",
     "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "素材费用按上游实际扣费，上游未对输入计费时不额外收取。",
     "Model / API": "模型 / API",
     "No extra material charge": "不额外收取素材费用",

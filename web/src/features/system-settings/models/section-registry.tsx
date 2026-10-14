@@ -1,3 +1,5 @@
+import { OpsBridgeSection } from '@/features/ops-bridge'
+
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -39,6 +41,11 @@ function formatJsonForEditor(value: string, fallback: string) {
 }
 
 const MODELS_SECTIONS = [
+  {
+    id: 'tokenops',
+    titleKey: 'TokenOps connection',
+    build: () => <OpsBridgeSection />,
+  },
   {
     id: 'global',
     titleKey: 'Global Model Configuration',

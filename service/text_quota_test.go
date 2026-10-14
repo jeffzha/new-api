@@ -29,6 +29,41 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestOpsNativeUsageRequiresOfficialEvidence(t *testing.T) {
+	for _, usage := range []*dto.Usage{nil, {}, {BillingUsage: &dto.BillingUsage{Estimated: true, OpenAIUsage: &dto.Usage{PromptTokens: 10}}}} {
+		_, _, err := opsNativeUsage(usage)
+		require.Error(t, err)
+	}
+	openai := &dto.Usage{InputTokens: 100, OutputTokens: 20,
+		InputTokensDetails:  &dto.InputTokenDetails{CachedTokens: 30, AudioTokens: 40},
+		OutputTokensDetails: &dto.OutputTokenDetails{ReasoningTokens: 5}}
+	provider, native, err := opsNativeUsage(&dto.Usage{PromptTokens: 999, BillingUsage: &dto.BillingUsage{OpenAIUsage: openai}})
+	require.NoError(t, err)
+	assert.Equal(t, "openai", provider)
+	assert.Equal(t, float64(100), native["prompt_tokens"], "normalized display usage must not replace official usage")
+	assert.Equal(t, float64(20), native["completion_tokens"])
+	assert.Equal(t, float64(30), native["prompt_tokens_details"].(map[string]any)["cached_tokens"])
+	assert.Equal(t, float64(5), native["completion_tokens_details"].(map[string]any)["reasoning_tokens"])
+	openai.InputTokensDetails.CacheWriteTokens = 1
+	_, _, err = opsNativeUsage(&dto.Usage{BillingUsage: &dto.BillingUsage{OpenAIUsage: openai}})
+	require.Error(t, err, "unsupported cache-write semantics must retain a usage gap")
+	for _, tc := range []struct {
+		provider string
+		envelope *dto.BillingUsage
+		field    string
+	}{
+		{"anthropic", &dto.BillingUsage{ClaudeUsage: &dto.ClaudeUsage{InputTokens: 10, CacheReadInputTokens: 20}}, "cache_read_input_tokens"},
+		{"google", &dto.BillingUsage{GeminiUsageMetadata: &dto.GeminiUsageMetadata{PromptTokenCount: 10, ThoughtsTokenCount: 20}}, "thoughtsTokenCount"},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			provider, native, err := opsNativeUsage(&dto.Usage{BillingUsage: tc.envelope})
+			require.NoError(t, err)
+			assert.Equal(t, tc.provider, provider)
+			assert.Equal(t, float64(20), native[tc.field])
+		})
+	}
+}
+
 // The configured DSNs must point at isolated test databases. Each dialect runs
 // the real reservation, settlement and log paths with the same billing cases.
 func TestFixedPriceBillingDatabaseMatrix(t *testing.T) {

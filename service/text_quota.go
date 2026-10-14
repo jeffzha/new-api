@@ -528,6 +528,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		"tiered_billing_applied": tieredBillingApplied,
 		"admin_reject_reason":    adminRejectReason,
 	})
+	captureOpsUsage(ctx, relayInfo, originUsage)
 
 	logModel := summary.ModelName
 	if strings.HasPrefix(logModel, "gpt-4-gizmo") {

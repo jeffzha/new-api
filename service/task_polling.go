@@ -163,6 +163,8 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	drainOpsTaskUsage(ctx)
+	defer drainOpsTaskUsage(ctx)
 
 	common.SysLog("任务进度轮询开始")
 	sweepTimedOutTasks(ctx)
@@ -386,6 +388,12 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 
 		isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
 		terminalTransition := isDone && snap.Status != task.Status
+		if terminalTransition {
+			if task.FinishTime == 0 {
+				task.FinishTime = time.Now().Unix()
+			}
+			prepareOpsTaskUsage(task, ch.Type, task.Data)
+		}
 		won, updateErr := task.UpdateWithStatus(snap.Status)
 		if updateErr != nil {
 			common.SysLog("UpdateSunoTask task error: " + updateErr.Error())
@@ -396,6 +404,7 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 			continue
 		}
 		if terminalTransition {
+			finalizeOpsTaskReservation(task)
 			billingSettled := settleTaskBillingOnComplete(ctx, adaptor, task, &responseItem.TaskInfo)
 			if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
 				RefundTaskQuota(ctx, task, task.FailReason)
@@ -601,6 +610,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return recordPollFailure(ctx, adaptor, task, snap.Status, pollClassUnrecognized, resp.StatusCode, unrecognizedPollDetail(taskResult.Reason, responseBody))
 	}
 
+	opsResponseBody := responseBody
 	if sanitizer, ok := adaptor.(TaskPollingSanitizer); ok {
 		if sanitized, sanitizeErr := sanitizer.SanitizeTaskData(task, responseBody); sanitizeErr != nil {
 			return recordPollFailure(ctx, adaptor, task, snap.Status, pollClassHookError, resp.StatusCode, sanitizeErr.Error())
@@ -664,6 +674,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
 	if isDone && snap.Status != task.Status {
+		prepareOpsTaskUsage(task, ch.Type, opsResponseBody)
 		won, err := task.UpdateWithStatus(snap.Status)
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("UpdateWithStatus failed for task %s: %s", task.TaskID, err.Error()))
@@ -671,6 +682,8 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		} else if !won {
 			logger.LogWarn(ctx, fmt.Sprintf("Task %s CAS lost or no-op update, skip billing", task.TaskID))
 			shouldFinalizeBilling = false
+		} else {
+			finalizeOpsTaskReservation(task)
 		}
 	} else if !snap.Equal(task.Snapshot()) {
 		if _, err := task.UpdateWithStatus(snap.Status); err != nil {

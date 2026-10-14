@@ -521,6 +521,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		"relay_mode":             "audio",
 		"tiered_billing_applied": tieredOk,
 	})
+	captureOpsUsage(ctx, relayInfo, usage)
 
 	logModel := billingModelName
 	if extraContent != "" {

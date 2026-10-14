@@ -7,19 +7,55 @@ import {
   parseCoefficient,
   parseSignedCoefficient,
   stepSignedCoefficient,
+  suggestedPlatformCoefficients,
   policyToDraft,
   pricingRequest,
 } from "../policy";
 import type { Policy } from "../types";
+import { normalizeModelSales, normalizePlatformPricing } from "../types";
 
 describe("pricing request contracts", () => {
+  test("pricing responses normalize nullable collections before rendering", () => {
+    const sales = normalizeModelSales({
+      agency_id: 1,
+      agency_name: "Agency",
+      revision: 1,
+      platform_revision: 1,
+      min_spread_bps: 500,
+      default_sales_bps: 9000,
+      items: null,
+    } as unknown as Parameters<typeof normalizeModelSales>[0]);
+    expect(sales.items).toEqual([]);
+    expect(normalizeModelSales({ ...sales, items: [{ origin_model_name: "model-a", channels: null }] } as unknown as Parameters<typeof normalizeModelSales>[0]).items[0].channels).toEqual([]);
+
+    expect(normalizePlatformPricing({ revision: 1, refreshed_at_ms: 1, items: null } as unknown as Parameters<typeof normalizePlatformPricing>[0]).items).toEqual([]);
+
+    const platform = normalizePlatformPricing({
+      revision: 1,
+      refreshed_at_ms: 1,
+      items: [
+        {
+          origin_model_name: "model-a",
+          channel_names: null,
+          channel_costs: null,
+          platform_cost_bps: null,
+          agency_cost_bps: null,
+          child_cost_bps: null,
+          default_sales_bps: null,
+        },
+      ],
+    } as unknown as Parameters<typeof normalizePlatformPricing>[0]);
+    expect(platform.items[0].channel_names).toEqual([]);
+    expect(platform.items[0].channel_costs).toEqual([]);
+  });
+
   test("new agency drafts submit the standard price while existing discounts remain unchanged", () => {
     const newDraft = policyToDraft(initialPolicy);
-    expect(newDraft.sales).toBe("1.0000");
+    expect(newDraft.sales).toBe("0.9000");
     expect(
       pricingRequest(draftToPolicy(newDraft, initialPolicy, true), true, "Create agency")
         .default_sales_bps,
-    ).toBe(10000);
+    ).toBe(9000);
 
     const existing: Policy = { ...initialPolicy, revision: 7, default_sales_bps: 9000 };
     const existingDraft = policyToDraft(existing);
@@ -27,6 +63,21 @@ describe("pricing request contracts", () => {
     expect(pricingRequest(draftToPolicy(existingDraft, existing, true), true, "")).toMatchObject({
       expected_revision: 7,
       default_sales_bps: 9000,
+    });
+  });
+
+  test("new platform rows suggest cost plus 0.05 and a 0.9 sales coefficient", () => {
+    expect(suggestedPlatformCoefficients([5000, 5500], null, null)).toEqual({
+      agencyCostBPS: 6000,
+      salesBPS: 9000,
+    });
+    expect(suggestedPlatformCoefficients([9200], null, null)).toEqual({
+      agencyCostBPS: 9700,
+      salesBPS: 9700,
+    });
+    expect(suggestedPlatformCoefficients([5000], 6200, 8800)).toEqual({
+      agencyCostBPS: 6200,
+      salesBPS: 8800,
     });
   });
 

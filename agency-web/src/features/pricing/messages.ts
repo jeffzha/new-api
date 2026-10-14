@@ -588,6 +588,8 @@ const rows = [
   ["Other providers", "其他发行商", "其他發行商", "Autres fournisseurs", "その他のプロバイダー", "Другие поставщики", "Nhà cung cấp khác"],
   ["All channels", "全部渠道", "全部渠道", "Tous les canaux", "すべてのチャネル", "Все каналы", "Tất cả kênh"],
   ["Search models, providers, or channels", "搜索模型、发行商或渠道", "搜尋模型、發行商或渠道", "Rechercher un modèle, un fournisseur ou un canal", "モデル・プロバイダー・チャネルを検索", "Поиск модели, поставщика или канала", "Tìm mô hình, nhà cung cấp hoặc kênh"],
+  ["Search models or providers", "搜索模型或发行商", "搜尋模型或發行商", "Rechercher un modèle ou un fournisseur", "モデルまたはプロバイダーを検索", "Поиск модели или поставщика", "Tìm mô hình hoặc nhà cung cấp"],
+  ["Adjust selected child cost coefficients from my cost. Values cannot be below my cost.", "基于我的成本统一调整已选模型的下级成本，调整后不能低于我的成本。", "基於我的成本統一調整已選模型的下級成本，調整後不能低於我的成本。", "Ajuster les coûts enfants sélectionnés à partir de mon coût, sans passer sous celui-ci.", "選択した子価格を自社原価から調整し、原価未満にはしません。", "Изменить цены дочерних агентств от моей себестоимости, не опускаясь ниже неё.", "Điều chỉnh chi phí cấp dưới từ chi phí của tôi và không được thấp hơn chi phí này."],
 ] as const;
 
 const locales: Locale[] = ["en", "zh", "zh-TW", "fr", "ja", "ru", "vi"];

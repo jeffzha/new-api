@@ -613,7 +613,7 @@ function SyncStatusView() {
       )
     : 0;
   return (
-    <section>
+    <section className="overview-service-status">
       <PageHeader icon="status" title={t("Service status")} description={t("Live health checks for services, queues and data")} actions={<button type="button" className="secondary button-icon" onClick={query.reload}>
           <ActionIcon name="refresh" />
           {t("Refresh")}

@@ -7,6 +7,7 @@ const deepSeekPeakCondition = `!is_holiday("Asia/Shanghai") && weekday("Asia/Sha
 const deepSeekFlashExpression = deepSeekPeakCondition + ` ? tier("peak", p * 0.273972602739726 + cr * 0.00547945205479452 + c * 1.095890410958904) : tier("off_peak", p * 0.136986301369863 + cr * 0.00273972602739726 + c * 0.547945205479452)`
 const deepSeekProExpression = deepSeekPeakCondition + ` ? tier("peak", p * 1.232876712328767 + cr * 0.0410958904109589 + c * 3.698630136986301) : tier("off_peak", p * 0.6164383561643836 + cr * 0.02054794520547945 + c * 1.849315068493151)`
 const happyHorseExpression = `u("kind") == "edit" && u("resolution") == "720P" ? tier("720P-edit", u("seconds") * 0.1232876712328767) : u("kind") == "edit" && u("resolution") == "1080P" ? tier("1080P-edit", u("seconds") * 0.2191780821917808) : u("resolution") == "480P" ? tier("480P", u("seconds") * 0.06164383561643836) : u("resolution") == "1080P" ? tier("1080P", u("seconds") * 0.1643835616438356) : tier("720P", u("seconds") * 0.1232876712328767)`
+const wangpaiH3Expression = `tier("upstream", u("output_credits") * 0.0136986301369863 + u("material_credits") * 0.0136986301369863)`
 
 // Built-in token prices use actual USD per million tokens. Keep new model
 // defaults here instead of splitting them across the legacy ratio tables.
@@ -43,4 +44,18 @@ var builtinBillingExpr = map[string]string{
 	// two leaves. The whole request cost is folded into one tier and scaled by
 	// 1_000_000 to recover the per-1M-unit v1 encoding used by equity conversion.
 	"qwen-image-3.0": `tier("image", (0.0246575342465753 * image_count + 0.0027397260273972603 * reference_image_count) * 1000000)`,
+}
+
+// Provider defaults stay scoped to the task plugin because MiniMax-H3 can
+// also be served by the official Hailuo adapter with a different contract.
+// Wangpai settles in vendor credits: 1 credit = CNY 0.1. Expressions use USD
+// internally; 0.1 / 7.3 preserves domestic RMB display and billing.
+var builtinPluginBillingExpr = map[string]string{
+	"wangpaiai::MiniMax-H3":              wangpaiH3Expression,
+	"wangpaiai::MiniMax-H3-2K":           wangpaiH3Expression,
+	"wangpaiai::MiniMax-H3-Sensitive":    wangpaiH3Expression,
+	"newapi-video::MiniMax-H3":           wangpaiH3Expression,
+	"newapi-video::MiniMax-H3-261013":    wangpaiH3Expression,
+	"newapi-video::MiniMax-H3-2K":        wangpaiH3Expression,
+	"newapi-video::MiniMax-H3-Sensitive": wangpaiH3Expression,
 }

@@ -1,6 +1,11 @@
 package model
 
-import "strings"
+import (
+	"math"
+	"strings"
+
+	"github.com/QuantumNous/new-api/common"
+)
 
 const (
 	WalletBalanceTypeRecharge   = "recharge"
@@ -22,7 +27,25 @@ type WalletBalance struct {
 // so the breakdown always reconciles to the user's authoritative quota.
 func GetWalletBalanceBreakdown(userID int64, totalQuota int64, billingMode string) ([]WalletBalance, error) {
 	if billingMode != AgencyDurableBillingMode {
-		return walletBalancesFromAmounts(0, 0, 0, totalQuota), nil
+		var topUps []TopUp
+		if err := DB.Select("id, status, payment_snapshot, quota_conversion_snapshot, credited_quota").
+			Where("user_id = ? AND status = ?", userID, common.TopUpStatusSuccess).
+			Find(&topUps).Error; err != nil {
+			return nil, err
+		}
+		verifiedRechargeQuota := int64(0)
+		for i := range topUps {
+			if _, _, ok := invoicePaymentCents(&topUps[i]); !ok {
+				continue
+			}
+			creditedQuota, ok := topUps[i].settledQuota()
+			if !ok || creditedQuota > math.MaxInt64-verifiedRechargeQuota {
+				continue
+			}
+			verifiedRechargeQuota += creditedQuota
+		}
+		recharge := min(max(totalQuota, 0), verifiedRechargeQuota)
+		return walletBalancesFromAmounts(recharge, 0, 0, totalQuota-recharge), nil
 	}
 
 	var lots []AgencyFundingLot

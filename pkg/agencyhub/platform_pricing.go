@@ -212,8 +212,10 @@ func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
 	internalChannels := internalChannelIDs(rows)
 	configured := make(map[string]agencycontract.PlatformModelPrice, len(policy.ModelPrices))
 	publicModels := make(map[string]struct{}, len(live))
+	publicChannels := make(map[int]struct{}, len(live))
 	for _, item := range live {
 		publicModels[item.Model] = struct{}{}
+		publicChannels[item.ChannelID] = struct{}{}
 	}
 	for _, price := range policy.ModelPrices {
 		configured[price.OriginModelName] = price
@@ -223,7 +225,7 @@ func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
 	for _, item := range live {
 		row := byModel[item.Model]
 		if row == nil {
-			row = &PlatformPricingCatalogRow{OriginModelName: item.Model}
+			row = &PlatformPricingCatalogRow{OriginModelName: item.Model, ChannelNames: []string{}, ChannelCosts: []PlatformPricingCatalogChannel{}}
 			if price, ok := configured[item.Model]; ok {
 				agencyCost, defaultSales := price.AgencyCostBPS, price.DefaultSalesBPS
 				row.AgencyCostBPS, row.DefaultSalesBPS = &agencyCost, &defaultSales
@@ -257,7 +259,7 @@ func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
 		publicCosts := publicChannelCosts(price.ChannelCosts, internalChannels)
 		if row == nil {
 			agencyCost, defaultSales := price.AgencyCostBPS, price.DefaultSalesBPS
-			row = &PlatformPricingCatalogRow{OriginModelName: name, ChannelNames: []string{}, AgencyCostBPS: &agencyCost, DefaultSalesBPS: &defaultSales}
+			row = &PlatformPricingCatalogRow{OriginModelName: name, ChannelNames: []string{}, ChannelCosts: []PlatformPricingCatalogChannel{}, AgencyCostBPS: &agencyCost, DefaultSalesBPS: &defaultSales}
 			if len(price.ChannelCosts) == 0 {
 				legacyCost := price.PlatformCostBPS
 				row.PlatformCostBPS = &legacyCost
@@ -267,6 +269,12 @@ func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
 		}
 		for _, cost := range publicCosts {
 			if containsCatalogChannel(row.ChannelCosts, cost.ChannelID) {
+				continue
+			}
+			// The channel is still public but now serves another model. Keeping
+			// its old association would show a fake unavailable channel after a
+			// model rename or route migration.
+			if _, remapped := publicChannels[cost.ChannelID]; remapped {
 				continue
 			}
 			costBPS := cost.PlatformCostBPS

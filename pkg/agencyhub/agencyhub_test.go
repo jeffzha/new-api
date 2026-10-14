@@ -65,6 +65,7 @@ func TestCreateAgencyAndInvitePreview(t *testing.T) {
 
 func TestRootActingAgencyCanReadDirectChildPricing(t *testing.T) {
 	app := newAgencyTestApp(t)
+	require.NoError(t, app.db.AutoMigrate(&model.Channel{}, &model.Ability{}))
 	policy := agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultChildCostBPS: 8000, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
 	parent, _, err := app.CreateAgency(1, "代管父代理商", "acting-parent", policy)
 	require.NoError(t, err)
@@ -79,6 +80,20 @@ func TestRootActingAgencyCanReadDirectChildPricing(t *testing.T) {
 	require.Equal(t, policy.DefaultSalesBPS, loadedPolicy.DefaultSalesBPS)
 	_, _, err = app.directChild(identity, parent.ID)
 	require.Error(t, err)
+
+	channel := model.Channel{Name: "private-upstream-name", Type: 1, Key: "unused", Status: common.ChannelStatusEnabled}
+	require.NoError(t, app.db.Create(&channel).Error)
+	require.NoError(t, app.db.Create(&model.Ability{Group: "default", Model: "glm-5.3", ChannelId: channel.Id, Enabled: true}).Error)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/agency/api/v1/children/"+strconv.FormatInt(child.ID, 10)+"/pricing", nil)
+	context.Params = gin.Params{{Key: "id", Value: strconv.FormatInt(child.ID, 10)}}
+	context.Set("agency_identity", identity)
+	app.getChildPricing(context)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Contains(t, recorder.Body.String(), `"agency_cost_bps":7500`)
+	require.NotContains(t, recorder.Body.String(), `"channels"`)
+	require.NotContains(t, recorder.Body.String(), "private-upstream-name")
 }
 
 func TestRootActingAuditIsScopedToAgency(t *testing.T) {
@@ -410,6 +425,10 @@ func TestPlatformPricingPublishesLiveModelChannelMatrixAndRejectsAgencyConflict(
 	require.Contains(t, staleOverrideResponse.Body.String(), "Negotiated price agency")
 	require.Contains(t, staleOverrideResponse.Body.String(), "客户 175")
 	require.Contains(t, staleOverrideResponse.Body.String(), "glm-5.3")
+	require.Contains(t, staleOverrideResponse.Body.String(), "客户销售系数当前为 0.6000")
+	require.Contains(t, staleOverrideResponse.Body.String(), "调整后该代理商成本为 0.5600")
+	require.Contains(t, staleOverrideResponse.Body.String(), "最低允许值为 0.6100")
+	require.Contains(t, staleOverrideResponse.Body.String(), "客户管理 → 客户销售系数")
 	require.NoError(t, client.app.db.Where("agency_id = ? AND user_id = ?", negotiatedAgency.ID, 175).Delete(&model.AgencyCustomerSalesOverride{}).Error)
 
 	lowSales := 6100
@@ -1668,20 +1687,15 @@ func TestInternalMockChannelsStayHiddenFromAgencyCatalogs(t *testing.T) {
 	require.Equal(t, http.StatusOK, modelsRecorder.Code, modelsRecorder.Body.String())
 	var modelsResponse struct {
 		Data struct {
-			Items   []string `json:"items"`
-			Catalog []struct {
-				Model    string `json:"model"`
-				Channels []struct {
-					ChannelID   int    `json:"channel_id"`
-					ChannelName string `json:"channel_name"`
-				} `json:"channels"`
-			} `json:"catalog"`
+			Items   []string         `json:"items"`
+			Catalog []map[string]any `json:"catalog"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(modelsRecorder.Body.Bytes(), &modelsResponse))
 	assert.Equal(t, []string{"deepseek-v4-flash", "glm-5.3"}, modelsResponse.Data.Items)
 	assert.Len(t, modelsResponse.Data.Catalog, 2)
-	assert.Equal(t, "public-deepseek", modelsResponse.Data.Catalog[0].Channels[0].ChannelName)
+	assert.NotContains(t, modelsRecorder.Body.String(), "public-deepseek")
+	assert.NotContains(t, modelsRecorder.Body.String(), `"channels"`)
 
 	parentAgencyID := int64(1)
 	agency := model.Agency{ID: 99, DisplayName: "internal-mock-test", ParentAgencyID: &parentAgencyID}
@@ -1689,7 +1703,7 @@ func TestInternalMockChannelsStayHiddenFromAgencyCatalogs(t *testing.T) {
 	salesRecorder := httptest.NewRecorder()
 	salesContext, _ := gin.CreateTestContext(salesRecorder)
 	salesContext.Request = httptest.NewRequest(http.MethodGet, "/agency/api/v1/pricing/model-sales", nil)
-	app.respondModelSales(salesContext, agency, agencyPolicy)
+	app.respondModelSales(salesContext, agency, agencyPolicy, false)
 	require.Equal(t, http.StatusOK, salesRecorder.Code, salesRecorder.Body.String())
 	var salesResponse struct {
 		Data struct {
@@ -1704,20 +1718,85 @@ func TestInternalMockChannelsStayHiddenFromAgencyCatalogs(t *testing.T) {
 	}
 	require.NoError(t, common.Unmarshal(salesRecorder.Body.Bytes(), &salesResponse))
 	salesModels := make([]string, 0, len(salesResponse.Data.Items))
-	salesChannels := make(map[string][]string, len(salesResponse.Data.Items))
 	for _, item := range salesResponse.Data.Items {
 		salesModels = append(salesModels, item.OriginModelName)
-		names := make([]string, 0, len(item.Channels))
-		for _, channel := range item.Channels {
-			names = append(names, channel.ChannelName)
-		}
-		salesChannels[item.OriginModelName] = names
+		assert.Empty(t, item.Channels)
 	}
 	assert.ElementsMatch(t, []string{"deepseek-v4-flash", "glm-5.3"}, salesModels)
-	// The agency pricing table filters by channel, so it needs the live public
-	// channel names while internal mock channels stay hidden.
-	assert.Equal(t, []string{"public-deepseek"}, salesChannels["glm-5.3"])
-	assert.Equal(t, []string{"public-deepseek"}, salesChannels["deepseek-v4-flash"])
+	assert.NotContains(t, salesRecorder.Body.String(), `"channels"`)
+	assert.NotContains(t, salesRecorder.Body.String(), "public-deepseek")
 	assert.NotContains(t, salesRecorder.Body.String(), "model-mock")
 	assert.NotContains(t, salesRecorder.Body.String(), "doubao-seedance-2-0-fast-260128")
+
+	rootRecorder := httptest.NewRecorder()
+	rootContext, _ := gin.CreateTestContext(rootRecorder)
+	rootContext.Request = httptest.NewRequest(http.MethodGet, "/agency/api/v1/root/agencies/99/pricing/model-sales", nil)
+	app.respondModelSales(rootContext, agency, agencyPolicy, true)
+	require.Equal(t, http.StatusOK, rootRecorder.Code, rootRecorder.Body.String())
+	assert.Contains(t, rootRecorder.Body.String(), `"channels"`)
+	assert.Contains(t, rootRecorder.Body.String(), "public-deepseek")
+	assert.NotContains(t, rootRecorder.Body.String(), "model-mock")
+}
+
+func TestPlatformPricingCatalogHidesCostForChannelRemappedToAnotherModel(t *testing.T) {
+	app := newAgencyTestApp(t)
+	require.NoError(t, app.db.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	legacyBridge := model.Channel{Name: "legacy-bridge", Type: 1, Key: "unused", Status: common.ChannelStatusEnabled}
+	currentH3 := model.Channel{Name: "current-h3", Type: 1, Key: "unused", Status: common.ChannelStatusEnabled}
+	require.NoError(t, app.db.Create(&legacyBridge).Error)
+	require.NoError(t, app.db.Create(&currentH3).Error)
+	require.NoError(t, app.db.Create(&model.Ability{Group: "default", Model: "MiniMax-H3-261013", ChannelId: legacyBridge.Id, Enabled: true}).Error)
+	require.NoError(t, app.db.Create(&model.Ability{Group: "default", Model: "MiniMax-H3", ChannelId: currentH3.Id, Enabled: true}).Error)
+
+	policy := agencycontract.PlatformPolicy{
+		Revision: 1,
+		ModelPrices: []agencycontract.PlatformModelPrice{
+			{
+				OriginModelName: "MiniMax-H3",
+				ChannelCosts: []agencycontract.PlatformChannelCost{
+					{ChannelID: legacyBridge.Id, PlatformCostBPS: 10000},
+					{ChannelID: currentH3.Id, PlatformCostBPS: 10000},
+				},
+				AgencyCostBPS:   10000,
+				DefaultSalesBPS: 10000,
+			},
+		},
+	}
+	encoded, err := common.Marshal(policy)
+	require.NoError(t, err)
+	require.NoError(t, app.db.Create(&model.AgencyPlatformPriceVersion{ID: 1, Revision: 1, PolicyJSON: string(encoded), PolicyHash: "test", CreatedByID: 1, CreatedAtMS: 1}).Error)
+	require.NoError(t, app.db.Create(&model.AgencyPlatformPriceState{ID: 1, Revision: 1, CurrentVersionID: 1, UpdatedAtMS: 1}).Error)
+
+	catalog, err := LoadPlatformPricingCatalog(app.db)
+	require.NoError(t, err)
+	var h3 *PlatformPricingCatalogRow
+	for index := range catalog.Items {
+		if catalog.Items[index].OriginModelName == "MiniMax-H3" {
+			h3 = &catalog.Items[index]
+			break
+		}
+	}
+	require.NotNil(t, h3)
+	require.Len(t, h3.ChannelCosts, 1)
+	assert.Equal(t, currentH3.Id, h3.ChannelCosts[0].ChannelID)
+	assert.NotContains(t, h3.ChannelNames, legacyBridge.Name)
+}
+
+func TestPlatformPricingCatalogUsesEmptyArraysForUnavailableModel(t *testing.T) {
+	app := newAgencyTestApp(t)
+	require.NoError(t, app.db.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	policy := agencycontract.PlatformPolicy{Revision: 1, ModelPrices: []agencycontract.PlatformModelPrice{
+		{OriginModelName: "unavailable-model", AgencyCostBPS: 9000, DefaultSalesBPS: 10000},
+	}}
+	encoded, err := common.Marshal(policy)
+	require.NoError(t, err)
+	require.NoError(t, app.db.Create(&model.AgencyPlatformPriceVersion{ID: 1, Revision: 1, PolicyJSON: string(encoded), PolicyHash: "test", CreatedByID: 1, CreatedAtMS: 1}).Error)
+	require.NoError(t, app.db.Create(&model.AgencyPlatformPriceState{ID: 1, Revision: 1, CurrentVersionID: 1, UpdatedAtMS: 1}).Error)
+	catalog, err := LoadPlatformPricingCatalog(app.db)
+	require.NoError(t, err)
+	require.Len(t, catalog.Items, 1)
+	encoded, err = common.Marshal(catalog.Items[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"channel_names":[]`)
+	assert.Contains(t, string(encoded), `"channel_costs":[]`)
 }

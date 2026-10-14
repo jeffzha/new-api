@@ -1,5 +1,8 @@
 {
   "translation": {
+    "360": "360",
+    "1000": "1000",
+    "10000": "10000",
     "Submit and track recharge invoice applications.": "Submit and track recharge invoice applications.",
     "Review applications and register issued invoices.": "Review applications and register issued invoices.",
     "Invoice email sent": "Invoice email sent",
@@ -127,9 +130,6 @@
     "Enter email message": "本文を入力",
     "Failed to send email": "メールを送信できませんでした",
     "Email sent successfully": "メールを送信しました",
-    "360": "360",
-    "1000": "1000",
-    "10000": "10000",
     "_copy": "_copy",
     "，": "、",
     ", and": "、および",
@@ -2770,7 +2770,7 @@
     "footer.columns.related.links.oneApi": "1つのAPI",
     "footer.columns.related.title": "関連プロジェクト",
     "footer.defaultCopyright": "すべての権利を留保します。",
-    "footer.new\u0061pi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
+    "footer.newapi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "2025 年 5 月 10 日以降に追加されたチャネルの場合、デプロイ時にモデル名から「.」を削除する必要はありません",
     "For example, alipay": "例: alipay",
     "For private deployments, format: https://fastgpt.run/api/openapi": "プライベートデプロイメントの場合、形式: https://fastgpt.run/api/openapi",
@@ -7016,6 +7016,19 @@
     "Play preview": "Play preview",
     "Video unavailable. Showing preview image.": "Video unavailable. Showing preview image.",
     "Turn imagination into motion": "Turn imagination into motion",
-    "Reference previews. Model availability and pricing are listed in the model catalog.": "Reference previews. Model availability and pricing are listed in the model catalog."
+    "Reference previews. Model availability and pricing are listed in the model catalog.": "Reference previews. Model availability and pricing are listed in the model catalog.",
+    "Audio material": "音声素材",
+    "Billing rule": "課金ルール",
+    "Charged at the upstream credit cost": "上流のクレジット消費に応じて課金",
+    "Fixed {{seconds}}s": "固定 {{seconds}} 秒",
+    "Image material": "画像素材",
+    "Material": "素材",
+    "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "素材費は上流の実際の消費に応じて課金され、上流が入力を課金しない場合は追加されません。",
+    "Model / API": "モデル / API",
+    "No extra material charge": "素材の追加料金なし",
+    "Per second": "秒単位",
+    "Video material": "動画素材",
+    "Video material pricing": "動画素材の料金",
+    "Video output pricing": "動画出力の料金"
   }
 }

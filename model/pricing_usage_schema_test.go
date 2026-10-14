@@ -290,10 +290,60 @@ func TestPricingSharedPluginVariantsUseEachSchemaAndExpression(t *testing.T) {
 	require.NoError(t, jsplugin.DefaultRegistry.Unregister("pricing-alpha"))
 	InvalidatePricingCache()
 	single := pricingByModel(GetPricing())["pricing-usage-model"]
-	require.Len(t, single.BillingPluginVariants, 1)
-	assert.Equal(t, "pricing-beta", single.BillingPluginVariants[0].PluginKey)
-	assert.Equal(t, `tier("beta", u("credits") * 2)`, single.BillingPluginVariants[0].BillingExpr)
+	assert.Empty(t, single.BillingPluginVariants)
+	assert.Equal(t, billing_setting.BillingModeTieredExpr, single.BillingMode)
+	assert.Equal(t, `tier("beta", u("credits") * 2)`, single.BillingExpr)
+	assert.Equal(t, "credit", single.BillingUsageSchema["credits"].Unit)
 	encoded, err := common.Marshal(single)
 	require.NoError(t, err)
-	assert.Contains(t, string(encoded), "billing_plugin_variants")
+	assert.NotContains(t, string(encoded), "billing_plugin_variants")
+}
+
+func TestPricingUsesOnlyActiveTaskPluginProviders(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	saved := config.GlobalConfig.ExportAllConfigs()
+	t.Cleanup(func() { require.NoError(t, config.GlobalConfig.LoadFromDB(saved)) })
+	for _, spec := range []struct{ key, field, unit string }{{"pricing-active", "seconds", "second"}, {"pricing-unused", "credits", "credit"}} {
+		source := strings.ReplaceAll(pricingUsagePluginSource("1.0.0", `{`+spec.field+`:{type:"number",unit:"`+spec.unit+`"}}`), "pricing-usage-probe", spec.key)
+		_, err := jsplugin.DefaultRegistry.Register(source, jsplugin.Options{})
+		require.NoError(t, err)
+		t.Cleanup(func() { jsplugin.DefaultRegistry.Unregister(spec.key) })
+	}
+	channel := &Channel{Id: 940, Type: constant.ChannelTypeTaskPlugin, Key: "key-940", Status: common.ChannelStatusEnabled, Name: "active-provider", Models: "pricing-usage-model"}
+	channel.SetSetting(dto.ChannelSettings{TaskPluginKey: "pricing-active"})
+	require.NoError(t, DB.Create(channel).Error)
+	insertPricingEndpointAbility(t, 940, "pricing-usage-model")
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		billing_setting.PluginBillingExprOption: `{"pricing-active::pricing-usage-model":"tier(\"active\", u(\"seconds\") * 1)","pricing-unused::pricing-usage-model":"tier(\"unused\", u(\"credits\") * 2)"}`,
+	}))
+	InvalidatePricingCache()
+	pricing := pricingByModel(GetPricing())["pricing-usage-model"]
+	assert.Empty(t, pricing.BillingPluginVariants)
+	assert.Equal(t, `tier("active", u("seconds") * 1)`, pricing.BillingExpr)
+	assert.Equal(t, "second", pricing.BillingUsageSchema["seconds"].Unit)
+}
+
+func TestPricingCollapsesIdenticalActiveProviderPrices(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	saved := config.GlobalConfig.ExportAllConfigs()
+	t.Cleanup(func() { require.NoError(t, config.GlobalConfig.LoadFromDB(saved)) })
+	for index, key := range []string{"pricing-identical-a", "pricing-identical-b"} {
+		source := strings.ReplaceAll(pricingUsagePluginSource("1.0.0", `{seconds:{type:"number",unit:"second"}}`), "pricing-usage-probe", key)
+		_, err := jsplugin.DefaultRegistry.Register(source, jsplugin.Options{})
+		require.NoError(t, err)
+		t.Cleanup(func() { jsplugin.DefaultRegistry.Unregister(key) })
+		channel := &Channel{Id: 950 + index, Type: constant.ChannelTypeTaskPlugin, Key: fmt.Sprintf("key-%d", 950+index), Status: common.ChannelStatusEnabled, Name: key, Models: "pricing-usage-model"}
+		channel.SetSetting(dto.ChannelSettings{TaskPluginKey: key})
+		require.NoError(t, DB.Create(channel).Error)
+		insertPricingEndpointAbility(t, channel.Id, "pricing-usage-model")
+	}
+	const expression = `tier("same", u("seconds") * 1)`
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		billing_setting.PluginBillingExprOption: `{"pricing-identical-a::pricing-usage-model":"tier(\"same\", u(\"seconds\") * 1)","pricing-identical-b::pricing-usage-model":"tier(\"same\", u(\"seconds\") * 1)"}`,
+	}))
+	InvalidatePricingCache()
+	pricing := pricingByModel(GetPricing())["pricing-usage-model"]
+	assert.Empty(t, pricing.BillingPluginVariants)
+	assert.Equal(t, billing_setting.BillingModeTieredExpr, pricing.BillingMode)
+	assert.Equal(t, expression, pricing.BillingExpr)
 }

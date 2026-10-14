@@ -1,5 +1,8 @@
 {
   "translation": {
+    "360": "360",
+    "1000": "1000",
+    "10000": "10000",
     "Submit and track recharge invoice applications.": "Submit and track recharge invoice applications.",
     "Review applications and register issued invoices.": "Review applications and register issued invoices.",
     "Invoice email sent": "Invoice email sent",
@@ -127,9 +130,6 @@
     "Enter email message": "Введите текст письма",
     "Failed to send email": "Не удалось отправить письмо",
     "Email sent successfully": "Письмо отправлено",
-    "360": "360",
-    "1000": "1000",
-    "10000": "10000",
     "_copy": "_копировать",
     "，": ", ",
     ", and": ", и",
@@ -2770,7 +2770,7 @@
     "footer.columns.related.links.oneApi": "Один API",
     "footer.columns.related.title": "Связанные проекты",
     "footer.defaultCopyright": "Все права защищены.",
-    "footer.new\u0061pi.projectAttributionSuffix": "Все права защищены. Разработано участниками проекта.",
+    "footer.newapi.projectAttributionSuffix": "Все права защищены. Разработано участниками проекта.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Для каналов, добавленных после 10 мая 2025 г., не нужно удалять \".\" из имён моделей при развёртывании",
     "For example, alipay": "Например, alipay",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Для частных развертываний, формат: https://fastgpt.run/api/openapi",
@@ -7016,6 +7016,19 @@
     "Play preview": "Play preview",
     "Video unavailable. Showing preview image.": "Video unavailable. Showing preview image.",
     "Turn imagination into motion": "Turn imagination into motion",
-    "Reference previews. Model availability and pricing are listed in the model catalog.": "Reference previews. Model availability and pricing are listed in the model catalog."
+    "Reference previews. Model availability and pricing are listed in the model catalog.": "Reference previews. Model availability and pricing are listed in the model catalog.",
+    "Audio material": "Материал: аудио",
+    "Billing rule": "Правило тарификации",
+    "Charged at the upstream credit cost": "Списание по фактическому расходу кредитов у поставщика",
+    "Fixed {{seconds}}s": "Фиксированные {{seconds}} с",
+    "Image material": "Материал: изображение",
+    "Material": "Материал",
+    "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "Плата за материалы соответствует списанию поставщика; если поставщик не тарифицирует входные данные, доплата не взимается.",
+    "Model / API": "Модель / API",
+    "No extra material charge": "Без доплаты за материалы",
+    "Per second": "За секунду",
+    "Video material": "Материал: видео",
+    "Video material pricing": "Цены на материалы для видео",
+    "Video output pricing": "Цены на вывод видео"
   }
 }

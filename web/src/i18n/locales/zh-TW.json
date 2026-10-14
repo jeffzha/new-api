@@ -1,5 +1,8 @@
 {
   "translation": {
+    "360": "360",
+    "1000": "1000",
+    "10000": "10000",
     "Submit and track recharge invoice applications.": "提交并跟踪充值发票申请。",
     "Review applications and register issued invoices.": "审核申请并登记已开具发票。",
     "Invoice email sent": "发票邮件已发送",
@@ -127,9 +130,6 @@
     "Enter email message": "輸入電郵內容",
     "Failed to send email": "電郵發送失敗",
     "Email sent successfully": "電郵發送成功",
-    "360": "360",
-    "1000": "1000",
-    "10000": "10000",
     "_copy": "_複製",
     "，": "，",
     ", and": "，和",
@@ -2770,7 +2770,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相關項目",
     "footer.defaultCopyright": "版權所有。",
-    "footer.new\u0061pi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
+    "footer.newapi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "對於 2025 年 5 月 10 日之後新增的渠道，在部署時無需從模型名稱中移除 \".\"",
     "For example, alipay": "例如 alipay",
     "For private deployments, format: https://fastgpt.run/api/openapi": "對於私有部署，格式為：https://fastgpt.run/api/openapi",
@@ -7017,6 +7017,19 @@
     "Play preview": "Play preview",
     "Video unavailable. Showing preview image.": "Video unavailable. Showing preview image.",
     "Turn imagination into motion": "Turn imagination into motion",
-    "Reference previews. Model availability and pricing are listed in the model catalog.": "Reference previews. Model availability and pricing are listed in the model catalog."
+    "Reference previews. Model availability and pricing are listed in the model catalog.": "Reference previews. Model availability and pricing are listed in the model catalog.",
+    "Audio material": "音訊素材",
+    "Billing rule": "計費規則",
+    "Charged at the upstream credit cost": "依上游額度實際扣費",
+    "Fixed {{seconds}}s": "固定 {{seconds}} 秒",
+    "Image material": "圖片素材",
+    "Material": "素材",
+    "Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.": "素材費用依上游實際扣費，上游未對輸入計費時不額外收取。",
+    "Model / API": "模型 / API",
+    "No extra material charge": "不額外收取素材費用",
+    "Per second": "依秒計費",
+    "Video material": "影片素材",
+    "Video material pricing": "影片素材定價",
+    "Video output pricing": "影片輸出定價"
   }
 }

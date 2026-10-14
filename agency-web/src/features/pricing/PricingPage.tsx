@@ -45,7 +45,7 @@ export function PricingPage(props: {
           title={t("Agency sales coefficients")}
           description={t("Review your platform cost and set customer sales coefficients by model.")}
         />
-        <AgencySalesEditor key={props.actingAgencyId} root agencyId={props.actingAgencyId} />
+        <AgencySalesEditor key={props.actingAgencyId} root={false} agencyId={null} />
       </>
     );
   }

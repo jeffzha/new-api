@@ -17,6 +17,9 @@ const (
 	overloadReasonCPU    = "cpu"
 	overloadReasonMemory = "memory"
 	overloadReasonDisk   = "disk"
+
+	cpuBreachSamples    = 2
+	cpuEmergencyPercent = 98.0
 )
 
 // Overload rejection error codes recorded in the operational request store.
@@ -96,6 +99,22 @@ func evaluateOverload(status common.SystemStatus, config common.PerformanceMonit
 	return nil
 }
 
+// actionableBreach keeps host CPU as the protection signal while filtering a
+// single transient sample. Memory and disk remain immediate because delaying
+// either can make the process or filesystem unavailable. Near-total CPU is an
+// emergency and still sheds immediately.
+func (guard *overloadGuard) actionableBreach(status common.SystemStatus, config common.PerformanceMonitorConfig) *overloadBreach {
+	if metricBreached(status, config, overloadReasonCPU) {
+		guard.mu.Lock()
+		cpuSamples := guard.consecutive[overloadReasonCPU]
+		guard.mu.Unlock()
+		if status.CPUUsage < cpuEmergencyPercent && cpuSamples < cpuBreachSamples {
+			status.CPUUsage = 0
+		}
+	}
+	return evaluateOverload(status, config)
+}
+
 // observeSample refreshes the consecutive breach counters and closes an open
 // episode once the host metrics fall back below their thresholds.
 func (guard *overloadGuard) observeSample(status common.SystemStatus, config common.PerformanceMonitorConfig) {
@@ -151,9 +170,9 @@ func (guard *overloadGuard) recordRejection(breach *overloadBreach, status commo
 	}
 	container := opsmonitor.GetContainerResourceSnapshot()
 	logger.LogWarn(context.Background(),
-		"[overload] triggered reason=%s code=%s rejected=1 %s %s %s %s path=%s request_id=%s",
+		"[overload] triggered reason=%s code=%s rejected=1 %s %s %s %s %s path=%s request_id=%s",
 		breach.reason, breach.code, formatHostStatus(status), formatContainerStatus(container),
-		formatThresholds(config), consecutive, path, requestID)
+		formatThresholds(config), formatActivationPolicy(), consecutive, path, requestID)
 }
 
 // closeEpisode writes the recovery log when an episode is still open.
@@ -168,10 +187,10 @@ func (guard *overloadGuard) closeEpisode(status common.SystemStatus, config comm
 	}
 	container := opsmonitor.GetContainerResourceSnapshot()
 	logger.LogInfo(context.Background(),
-		fmt.Sprintf("[overload] recovered reason=%s duration=%.1fs rejected=%d %s %s %s %s %s %s %s",
+		fmt.Sprintf("[overload] recovered reason=%s duration=%.1fs rejected=%d %s %s %s %s %s %s %s %s",
 			reason, time.Since(episode.startedAt).Seconds(), episode.rejected,
 			formatReasons(episode), formatPeakHostStatus(episode.peakHost), formatHostStatus(status),
-			formatContainerStatus(container), formatThresholds(config), formatPeakConsecutive(episode), consecutive))
+			formatContainerStatus(container), formatThresholds(config), formatActivationPolicy(), formatPeakConsecutive(episode), consecutive))
 }
 
 func (guard *overloadGuard) formatConsecutiveLocked() string {
@@ -226,6 +245,11 @@ func formatContainerStatus(snapshot opsmonitor.ContainerResourceSnapshot) string
 func formatThresholds(config common.PerformanceMonitorConfig) string {
 	return fmt.Sprintf("thresholds{cpu=%d%%,memory=%d%%,disk=%d%%}",
 		config.CPUThreshold, config.MemoryThreshold, config.DiskThreshold)
+}
+
+func formatActivationPolicy() string {
+	return fmt.Sprintf("activation{cpu_consecutive=%d,cpu_emergency=%.0f%%}",
+		cpuBreachSamples, cpuEmergencyPercent)
 }
 
 func formatReasons(episode *overloadEpisode) string {

@@ -4,11 +4,28 @@ export const initialPolicy: Policy = {
   revision: 1,
   default_settlement_bps: 7500,
   default_child_cost_bps: 0,
-  default_sales_bps: 10000,
+  default_sales_bps: 9000,
   min_spread_bps: 500,
   sales_cap_bps: 30000,
   model_overrides: [],
 };
+
+export function suggestedPlatformCoefficients(
+  channelCosts: Array<number | null>,
+  agencyCostBPS: number | null,
+  salesBPS: number | null,
+): { agencyCostBPS: number | null; salesBPS: number } {
+  const configuredCosts = channelCosts.filter((value): value is number => value != null);
+  const maximumCost = configuredCosts.length ? Math.max(...configuredCosts) : null;
+  const suggestedAgencyCost =
+    agencyCostBPS ?? (maximumCost == null ? null : Math.min(100000, maximumCost + 500));
+  return {
+    agencyCostBPS: suggestedAgencyCost,
+    salesBPS:
+      salesBPS ??
+      (suggestedAgencyCost == null ? 9000 : Math.max(9000, suggestedAgencyCost)),
+  };
+}
 
 export function formatCoefficient(bps: number): string {
   return (bps / 10000).toFixed(4);

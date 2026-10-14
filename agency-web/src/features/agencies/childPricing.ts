@@ -2,6 +2,7 @@ import { formatCoefficient, parseCoefficient } from "../pricing/policy";
 
 export type ChildPricingModel = {
   origin_model_name: string;
+  agency_cost_bps: number;
   settlement_bps?: number | null;
   child_cost_bps?: number | null;
   vendor_name?: string;

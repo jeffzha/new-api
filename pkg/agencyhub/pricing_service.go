@@ -45,6 +45,14 @@ type salesPricingRequest struct {
 func pricingErrorMessage(err error) string {
 	var customerErr *customerSalesPolicyError
 	if errors.As(err, &customerErr) {
+		var coefficientErr *customerSalesCoefficientError
+		if errors.As(customerErr.Cause, &coefficientErr) {
+			modelName := customerErr.ModelName
+			if modelName == "" {
+				modelName = "全局默认价格"
+			}
+			return fmt.Sprintf("客户 %d，模型 %s：客户销售系数当前为 %.4f；平台调整后该代理商成本为 %.4f，最低允许值为 %.4f。请到“客户管理 → 客户销售系数”将该模型调整至至少 %.4f，或先降低本次平台代理商成本。", customerErr.UserID, modelName, float64(coefficientErr.SalesBPS)/10000, float64(coefficientErr.CostBPS)/10000, float64(coefficientErr.MinimumBPS)/10000, float64(coefficientErr.MinimumBPS)/10000)
+		}
 		return fmt.Sprintf("客户 %d（模型 %s）：%s", customerErr.UserID, customerErr.ModelName, pricingErrorMessage(customerErr.Cause))
 	}
 	var coefficientErr *agencycontract.PolicyCoefficientError
@@ -167,7 +175,7 @@ func (a *App) getRootPricing(c *gin.Context) {
 func (a *App) getOwnModelSales(c *gin.Context) {
 	agency, policy, ok := a.ownAgency(c)
 	if ok {
-		a.respondModelSales(c, agency, policy)
+		a.respondModelSales(c, agency, policy, false)
 	}
 }
 
@@ -182,10 +190,10 @@ func (a *App) getRootModelSales(c *gin.Context) {
 		respondError(c, http.StatusNotFound, "not_found", "代理商或价格策略不存在", nil)
 		return
 	}
-	a.respondModelSales(c, agency, policy)
+	a.respondModelSales(c, agency, policy, true)
 }
 
-func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agencycontract.Policy) {
+func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agencycontract.Policy, includeChannels bool) {
 	platform, err := model.LoadAgencyPlatformPolicy(a.db)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "database_error", "读取平台价格策略失败", nil)
@@ -230,9 +238,12 @@ func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agen
 		common.SysLog("agency hub model sales: resolve model vendors failed: " + vendorErr.Error())
 		modelVendors = nil
 	}
-	// The agency sees the same live channel set the platform catalog lists, so
-	// its pricing table can be filtered by channel as well as by model.
-	modelChannels := liveModelChannelSummary(rows)
+	// Channel identity is platform-only. Ordinary agencies price public models
+	// without seeing which physical upstream routes currently serve them.
+	var modelChannels map[string][]gin.H
+	if includeChannels {
+		modelChannels = liveModelChannelSummary(rows)
+	}
 	for _, price := range platform.ModelPrices {
 		_, hasPublicAbility := publicModels[price.OriginModelName]
 		if !priceVisibleToAgencies(price, hasPublicAbility, internalChannels) {
@@ -252,13 +263,8 @@ func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agen
 		// children. A blank value is intentional and requires the agency to set
 		// its child cost before creating a new level.
 		childCost := resolvedChildCost(effective, price.OriginModelName, 0)
-		channels := modelChannels[price.OriginModelName]
-		if channels == nil {
-			channels = []gin.H{}
-		}
 		item := gin.H{
 			"origin_model_name":          price.OriginModelName,
-			"channels":                   channels,
 			"agency_cost_bps":            resolved.SettlementBPS,
 			"child_cost_bps":             childCost,
 			"platform_default_sales_bps": price.DefaultSalesBPS,
@@ -266,6 +272,13 @@ func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agen
 			"override_sales_bps":         override,
 			"override_child_cost_bps":    childOverrides[price.OriginModelName],
 			"default_child_cost_bps":     effective.DefaultChildCostBPS,
+		}
+		if includeChannels {
+			channels := modelChannels[price.OriginModelName]
+			if channels == nil {
+				channels = []gin.H{}
+			}
+			item["channels"] = channels
 		}
 		if vendor, ok := modelVendors[price.OriginModelName]; ok {
 			item["vendor_name"] = vendor.Name
@@ -348,12 +361,10 @@ func (a *App) listPublicModels(c *gin.Context) {
 	}
 	seen := make(map[string]struct{}, len(rows))
 	models := make([]string, 0, len(rows))
-	modelChannels := make(map[string][]gin.H)
 	for _, row := range publicLiveModelChannels(rows) {
 		if query != "" && !strings.Contains(strings.ToLower(row.Model), query) {
 			continue
 		}
-		modelChannels[row.Model] = append(modelChannels[row.Model], gin.H{"channel_id": row.ChannelID, "channel_name": row.ChannelName})
 		if _, exists := seen[row.Model]; exists {
 			continue
 		}
@@ -371,7 +382,7 @@ func (a *App) listPublicModels(c *gin.Context) {
 	}
 	catalog := make([]gin.H, 0, len(models))
 	for _, name := range models {
-		item := gin.H{"model": name, "channels": modelChannels[name]}
+		item := gin.H{"model": name}
 		if vendor, ok := vendors[name]; ok {
 			item["vendor_name"] = vendor.Name
 			item["vendor_icon"] = vendor.Icon

@@ -442,9 +442,9 @@ type AgencySourceEvent struct {
 	JournalRevision   int64  `gorm:"index:idx_agency_source_operation_revision,priority:2"`
 	SchemaVersion     string `gorm:"size:64;not null"`
 	PayloadHash       string `gorm:"size:128;not null"`
-	UserID            int64  `gorm:"not null;index:idx_agency_source_user"`
-	MoneySeq          int64  `gorm:"not null"`
-	ProcessingStatus  string `gorm:"size:32;not null;index:idx_agency_source_status"`
+	UserID            int64  `gorm:"not null;index:idx_agency_source_user;index:idx_agency_source_user_status_seq,priority:1"`
+	MoneySeq          int64  `gorm:"not null;index:idx_agency_source_user_status_seq,priority:3"`
+	ProcessingStatus  string `gorm:"size:32;not null;index:idx_agency_source_status;index:idx_agency_source_user_status_seq,priority:2"`
 	SkipReason        string `gorm:"type:text"`
 	Payload           string `gorm:"type:text;not null"`
 	CreatedAtMS       int64  `gorm:"not null"`

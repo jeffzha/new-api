@@ -113,20 +113,23 @@ func TestAgencySourceEventIndexMigrationAcrossDialects(t *testing.T) {
 			require.NoError(t, MigrateAgency(db))
 			require.NoError(t, MigrateAgency(db))
 			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_operation_revision"))
+			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_user_status_seq"))
 			for _, name := range []string{"uidx_agency_source_event", "idx_agency_source_user", "idx_agency_source_status"} {
 				require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, name), "existing index %s must be preserved", name)
 			}
 
-			// The released table has the same columns but lacks this index.
+			// The released table has the same columns but lacks these indexes.
 			require.NoError(t, db.Migrator().DropIndex(&AgencySourceEvent{}, "idx_agency_source_operation_revision"))
+			require.NoError(t, db.Migrator().DropIndex(&AgencySourceEvent{}, "idx_agency_source_user_status_seq"))
 			history := []AgencySourceEvent{
-				{EventID: "index-original", SourceOperationID: "index-operation", JournalRevision: 1, SchemaVersion: "1", PayloadHash: "original-hash", UserID: 7, ProcessingStatus: "done", Payload: `{"event":"original"}`, CreatedAtMS: 1000},
-				{EventID: "index-reversal", SourceOperationID: "index-operation", JournalRevision: 1, SchemaVersion: "1", PayloadHash: "reversal-hash", UserID: 7, ProcessingStatus: "done", Payload: `{"event":"reversal"}`, CreatedAtMS: 2000},
+				{EventID: "index-original", SourceOperationID: "index-operation", JournalRevision: 1, SchemaVersion: "1", PayloadHash: "original-hash", UserID: 7, MoneySeq: 1, ProcessingStatus: "done", Payload: `{"event":"original"}`, CreatedAtMS: 1000},
+				{EventID: "index-reversal", SourceOperationID: "index-operation", JournalRevision: 1, SchemaVersion: "1", PayloadHash: "reversal-hash", UserID: 7, MoneySeq: 1, ProcessingStatus: "skipped", Payload: `{"event":"reversal"}`, CreatedAtMS: 2000},
 			}
 			require.NoError(t, db.Create(&history).Error)
 			require.NoError(t, MigrateAgency(db))
 			require.NoError(t, MigrateAgency(db), "upgrading twice must preserve existing financial evidence")
 			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_operation_revision"))
+			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_user_status_seq"))
 			var preserved []AgencySourceEvent
 			require.NoError(t, db.Order("id ASC").Find(&preserved).Error)
 			assert.Equal(t, history, preserved)
@@ -134,6 +137,9 @@ func TestAgencySourceEventIndexMigrationAcrossDialects(t *testing.T) {
 			var original AgencySourceEvent
 			require.NoError(t, db.Where("source_operation_id = ? AND journal_revision = ? AND event_id <> ?", "index-operation", 1, "index-reversal").First(&original).Error)
 			assert.Equal(t, history[0], original)
+			var completed int64
+			require.NoError(t, db.Model(&AgencySourceEvent{}).Where("user_id = ? AND money_seq > ? AND money_seq < ? AND processing_status IN ?", 7, 0, 2, []string{"done", "skipped"}).Count(&completed).Error)
+			assert.Equal(t, int64(2), completed, "sequence dependency counts must preserve both source events")
 			// Reversals can share the original operation and revision.
 			next := AgencySourceEvent{EventID: "index-next-reversal", SourceOperationID: "index-operation", JournalRevision: 1, PayloadHash: "next-hash", UserID: 7, ProcessingStatus: "done", Payload: "{}", CreatedAtMS: 3000}
 			require.NoError(t, db.Create(&next).Error, "the new index must not impose uniqueness on reversals")

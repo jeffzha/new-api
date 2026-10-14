@@ -303,6 +303,9 @@ th {
   gap: 16px;
   margin: 8px 0 28px;
 }
+.overview-service-status {
+  margin-top: 28px;
+}
 .health-banner {
   display: flex;
   align-items: flex-start;

@@ -1737,3 +1737,47 @@ func TestInternalMockChannelsStayHiddenFromAgencyCatalogs(t *testing.T) {
 	assert.Contains(t, rootRecorder.Body.String(), "public-deepseek")
 	assert.NotContains(t, rootRecorder.Body.String(), "model-mock")
 }
+
+func TestPlatformPricingCatalogHidesCostForChannelRemappedToAnotherModel(t *testing.T) {
+	app := newAgencyTestApp(t)
+	require.NoError(t, app.db.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	legacyBridge := model.Channel{Name: "legacy-bridge", Type: 1, Key: "unused", Status: common.ChannelStatusEnabled}
+	currentH3 := model.Channel{Name: "current-h3", Type: 1, Key: "unused", Status: common.ChannelStatusEnabled}
+	require.NoError(t, app.db.Create(&legacyBridge).Error)
+	require.NoError(t, app.db.Create(&currentH3).Error)
+	require.NoError(t, app.db.Create(&model.Ability{Group: "default", Model: "MiniMax-H3-261013", ChannelId: legacyBridge.Id, Enabled: true}).Error)
+	require.NoError(t, app.db.Create(&model.Ability{Group: "default", Model: "MiniMax-H3", ChannelId: currentH3.Id, Enabled: true}).Error)
+
+	policy := agencycontract.PlatformPolicy{
+		Revision: 1,
+		ModelPrices: []agencycontract.PlatformModelPrice{
+			{
+				OriginModelName: "MiniMax-H3",
+				ChannelCosts: []agencycontract.PlatformChannelCost{
+					{ChannelID: legacyBridge.Id, PlatformCostBPS: 10000},
+					{ChannelID: currentH3.Id, PlatformCostBPS: 10000},
+				},
+				AgencyCostBPS:   10000,
+				DefaultSalesBPS: 10000,
+			},
+		},
+	}
+	encoded, err := common.Marshal(policy)
+	require.NoError(t, err)
+	require.NoError(t, app.db.Create(&model.AgencyPlatformPriceVersion{ID: 1, Revision: 1, PolicyJSON: string(encoded), PolicyHash: "test", CreatedByID: 1, CreatedAtMS: 1}).Error)
+	require.NoError(t, app.db.Create(&model.AgencyPlatformPriceState{ID: 1, Revision: 1, CurrentVersionID: 1, UpdatedAtMS: 1}).Error)
+
+	catalog, err := LoadPlatformPricingCatalog(app.db)
+	require.NoError(t, err)
+	var h3 *PlatformPricingCatalogRow
+	for index := range catalog.Items {
+		if catalog.Items[index].OriginModelName == "MiniMax-H3" {
+			h3 = &catalog.Items[index]
+			break
+		}
+	}
+	require.NotNil(t, h3)
+	require.Len(t, h3.ChannelCosts, 1)
+	assert.Equal(t, currentH3.Id, h3.ChannelCosts[0].ChannelID)
+	assert.NotContains(t, h3.ChannelNames, legacyBridge.Name)
+}

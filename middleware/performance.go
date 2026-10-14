@@ -49,9 +49,12 @@ func checkSystemPerformance(c *gin.Context) *types.NewAPIError {
 // metric tripped, so the rejection is traceable in the gateway log and in the
 // operational request store.
 func evaluateSystemOverload(c *gin.Context, status common.SystemStatus, config common.PerformanceMonitorConfig) *types.NewAPIError {
-	breach := evaluateOverload(status, config)
-	if breach == nil {
+	if evaluateOverload(status, config) == nil {
 		systemOverloadGuard.closeEpisode(status, config, "recovered")
+		return nil
+	}
+	breach := systemOverloadGuard.actionableBreach(status, config)
+	if breach == nil {
 		return nil
 	}
 

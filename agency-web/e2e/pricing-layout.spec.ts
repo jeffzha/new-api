@@ -8,7 +8,7 @@ const channels = [
   { channel_id: 2, channel_name: "Second channel" },
 ];
 
-async function openWorkspace(page: Page, root: boolean) {
+async function openWorkspace(page: Page, root: boolean, acting = false) {
   await page.route("**/agency/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace("/agency/api/v1", "");
     let data: unknown = { items: [], total: 0 };
@@ -16,7 +16,10 @@ async function openWorkspace(page: Page, root: boolean) {
       data = {
         actor_type: root ? "root" : "agency_operator",
         actor_id: 1,
-        agency_id: root ? undefined : 7,
+        agency_id: root && !acting ? undefined : 7,
+        acting_agency: acting
+          ? { display_name: "Managed agency", operator_username: "managed-operator" }
+          : undefined,
         username: "layout-operator",
         must_change_password: false,
       };
@@ -79,7 +82,7 @@ async function openWorkspace(page: Page, root: boolean) {
     if (path === "/hierarchy")
       data = { current: { id: 1, display_name: "Root agency", status: "active", depth: 0, price_revision: 1 }, parents: [], children: [] };
     if (path === "/children/9/pricing")
-      data = { revision: 3, default_settlement_bps: 7000, model_overrides: [{ origin_model_name: "unlisted-model", settlement_bps: 7000, channels }, { origin_model_name: "second-model", settlement_bps: 7500, channels: [channels[1]] }] };
+      data = { revision: 3, default_settlement_bps: 7000, model_overrides: [{ origin_model_name: "unlisted-model", agency_cost_bps: 7000, settlement_bps: 7000, channels }, { origin_model_name: "second-model", agency_cost_bps: 7200, settlement_bps: 7500, channels: [channels[1]] }] };
     await route.fulfill({ json: { success: true, data } });
   });
   await page.goto("/agency/");
@@ -123,6 +126,14 @@ async function verifyChannelAlignment(table: Locator) {
   }
 }
 
+async function verifyAgencyPricingHidesChannels(table: Locator) {
+  await expect(table.locator(".model-name-cell .vendor-mark-monogram")).toHaveText("O");
+  await expect(table.getByRole("columnheader", { name: "Channels", exact: true })).toHaveCount(0);
+  await expect(table.locator(".pricing-channel-cell")).toHaveCount(0);
+  await expect(table.getByText(channels[0].channel_name, { exact: true })).toHaveCount(0);
+  await expect(table.getByText(channels[1].channel_name, { exact: true })).toHaveCount(0);
+}
+
 for (const width of [1440, 390]) {
   test(`platform pricing aligns wrapped channels with costs and contains scrolling at width ${width}`, async ({
     page,
@@ -142,17 +153,17 @@ for (const width of [1440, 390]) {
     });
   });
 
-  test(`agency and customer pricing share plain channel rows and fallback logos at width ${width}`, async ({
+  test(`agency and customer pricing hide upstream channels at width ${width}`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 900 });
     await openWorkspace(page, false);
     await page.getByRole("button", { name: "Pricing", exact: true }).click();
-    await verifyChannelAlignment(page.locator(".pricing-matrix"));
+    await verifyAgencyPricingHidesChannels(page.locator(".pricing-matrix"));
     await page.screenshot({ path: test.info().outputPath(`agency-${width}.png`), fullPage: true });
     await page.getByRole("button", { name: "Customers", exact: true }).click();
     await page.getByRole("button", { name: "Customer pricing", exact: true }).click();
-    await verifyChannelAlignment(page.locator(".customer-pricing-matrix"));
+    await verifyAgencyPricingHidesChannels(page.locator(".customer-pricing-matrix"));
     await page.getByLabel("Select model: unlisted-model", { exact: true }).check();
     await page.getByRole("button", { name: "Increase/decrease sales prices", exact: true }).click();
     const dialog = page.getByRole("dialog");
@@ -185,10 +196,10 @@ test("child pricing uses the shared search and provider tabs without dropping un
   await page.getByRole("button", { name: "Agencies", exact: true }).click();
   await page.getByRole("button", { name: "Manage child pricing", exact: true }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByPlaceholder("Search models, providers, or channels", { exact: true })).toBeVisible();
+  await expect(dialog.getByPlaceholder("Search models or providers", { exact: true })).toBeVisible();
   const input = dialog.getByLabel("Child cost coefficient: unlisted-model", { exact: true });
   await input.fill("0.7300");
-  await dialog.getByPlaceholder("Search models, providers, or channels", { exact: true }).fill("unlisted");
+  await dialog.getByPlaceholder("Search models or providers", { exact: true }).fill("unlisted");
   await expect(input).toHaveValue("0.7300");
   const published = page.waitForRequest((request) => request.method() === "POST" && request.url().endsWith("/children/9/pricing/publish"));
   await dialog.getByRole("button", { name: "Publish child pricing", exact: true }).click();
@@ -202,6 +213,22 @@ test("root overview restores totals, capabilities and unfinished queue counts", 
   await expect(page.locator(".commission-metrics article").filter({ hasText: "Agencies" }).locator("strong")).toHaveText("7");
   await expect(page.locator(".commission-metrics article").filter({ hasText: "Customers" }).locator("strong")).toHaveText("42");
   await expect(page.locator(".status-kpi").filter({ hasText: "Pending work" }).locator("strong")).toHaveText("3");
+  const totals = await page.locator(".commission-metrics").boundingBox();
+  const serviceStatus = await page.getByRole("heading", { name: "Service status", exact: true }).boundingBox();
+  expect(serviceStatus!.y - (totals!.y + totals!.height)).toBeGreaterThanOrEqual(16);
+});
+
+test("root acting as an agency gets the ordinary agency pricing experience", async ({ page }) => {
+  await openWorkspace(page, true, true);
+  const pricingRequest = page.waitForRequest((request) =>
+    request.url().endsWith("/agency/api/v1/pricing/model-sales"),
+  );
+  await page.getByRole("button", { name: "Pricing", exact: true }).click();
+  await pricingRequest;
+  await expect(page.getByPlaceholder("Search models or providers", { exact: true })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Channels", exact: true })).toHaveCount(0);
+  await expect(page.locator(".pricing-channel-cell")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /All channels/ })).toHaveCount(0);
 });
 
 for (const width of [1440, 390]) {
@@ -221,7 +248,7 @@ for (const width of [1440, 390]) {
     await dialog.getByLabel("Select model: unlisted-model", { exact: true }).check();
     await dialog.getByRole("button", { name: "Increase/decrease child cost", exact: true }).click();
     const adjust = page.locator(".coefficient-adjust-dialog");
-    await expect(adjust.getByRole("button", { name: "From my cost", exact: true })).toHaveCount(0);
+    await expect(adjust.getByRole("button", { name: "From my cost", exact: true })).toHaveAttribute("aria-pressed", "true");
     await expect(adjust.locator(".coefficient-adjust-next")).toHaveText("0.8000");
     await adjust.getByRole("button", { name: "+0.1", exact: true }).click();
     await expect(adjust.locator(".coefficient-adjust-next")).toHaveText("0.9000");

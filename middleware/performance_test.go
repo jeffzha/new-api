@@ -101,6 +101,55 @@ func TestEvaluateSystemOverloadRejectsWithOverloadCode(t *testing.T) {
 	assert.Contains(t, recorder.Body.String(), "system disk overloaded")
 }
 
+func TestOverloadGuardRequiresSustainedCPUOrEmergencyLevel(t *testing.T) {
+	guard := newOverloadGuard()
+	config := overloadTestConfig()
+	transient := common.SystemStatus{CPUUsage: 91.6, MemoryUsage: 20, DiskUsage: 20}
+
+	guard.observeSample(transient, config)
+	assert.Nil(t, guard.actionableBreach(transient, config), "one elevated host CPU sample must not reject all requests")
+
+	guard.observeSample(transient, config)
+	breach := guard.actionableBreach(transient, config)
+	require.NotNil(t, breach)
+	assert.Equal(t, ErrorCodeSystemOverloadCPUShed, breach.code)
+
+	emergencyGuard := newOverloadGuard()
+	emergency := common.SystemStatus{CPUUsage: 98.2, MemoryUsage: 20, DiskUsage: 20}
+	emergencyGuard.observeSample(emergency, config)
+	emergencyBreach := emergencyGuard.actionableBreach(emergency, config)
+	require.NotNil(t, emergencyBreach)
+	assert.Equal(t, ErrorCodeSystemOverloadCPUShed, emergencyBreach.code)
+}
+
+func TestOverloadGuardKeepsMemoryAndDiskProtectionImmediate(t *testing.T) {
+	config := overloadTestConfig()
+	for _, test := range []struct {
+		name   string
+		status common.SystemStatus
+		code   types.ErrorCode
+	}{
+		{
+			name:   "memory",
+			status: common.SystemStatus{CPUUsage: 91.6, MemoryUsage: 92, DiskUsage: 20},
+			code:   ErrorCodeSystemOverloadMemory,
+		},
+		{
+			name:   "disk",
+			status: common.SystemStatus{CPUUsage: 91.6, MemoryUsage: 20, DiskUsage: 96},
+			code:   ErrorCodeSystemOverloadDisk,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			guard := newOverloadGuard()
+			guard.observeSample(test.status, config)
+			breach := guard.actionableBreach(test.status, config)
+			require.NotNil(t, breach)
+			assert.Equal(t, test.code, breach.code)
+		})
+	}
+}
+
 func TestOverloadGuardCountsRejectedRequestsUntilRecovery(t *testing.T) {
 	guard := newOverloadGuard()
 	config := overloadTestConfig()

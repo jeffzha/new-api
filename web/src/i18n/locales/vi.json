@@ -7027,6 +7027,9 @@
     "Model / API": "Mô hình / API",
     "No extra material charge": "Không thu thêm phí chất liệu",
     "Per second": "Theo giây",
+    "Reference materials (audio, images and video)": "Tư liệu tham chiếu (âm thanh, hình ảnh và video)",
+    "Settled according to the supplier's final material charge": "Quyết toán theo tổng phí tư liệu cuối cùng của nhà cung cấp",
+    "The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.": "Nhà cung cấp chỉ trả về tổng phí tư liệu, không có đơn giá riêng theo ảnh hoặc theo giây. Nền tảng không thu thêm phí tư liệu khi nhà cung cấp không tính phí.",
     "Video material": "Chất liệu video",
     "Video material pricing": "Giá chất liệu video",
     "Video output pricing": "Giá đầu ra video"

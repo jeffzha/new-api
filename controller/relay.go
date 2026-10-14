@@ -592,6 +592,7 @@ func RelayTask(c *gin.Context) {
 
 	outcome, taskErr := executeTaskSubmission(c, relayInfo)
 	if taskErr != nil {
+		opsmonitor.ObserveTaskError(c, relayInfo, taskErr)
 		service.NotifyFeishuTaskError(c, relayInfo, taskErr)
 		respondTaskSubmissionError(c, taskErr)
 		return

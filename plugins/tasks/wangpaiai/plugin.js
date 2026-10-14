@@ -12,7 +12,7 @@
 export const meta = {
   apiVersion: 1,
   key: "wangpaiai",
-  name: "Wangpai AI",
+  name: "MiniMax",
   icon: "text:王牌",
   description: {
     en: "Wangpai AI video generation (MiniMax H3 multimodal reference-to-video)",

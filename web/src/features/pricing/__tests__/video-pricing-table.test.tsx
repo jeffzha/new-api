@@ -24,6 +24,7 @@ import { expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 
 import { ModelDetailsContent } from '../components/model-details'
+import { VideoPricingTables } from '../components/video-pricing-tables'
 import { withPluginPricing } from '../lib/plugin-pricing'
 import { getVideoPricingTable } from '../lib/video-pricing-table'
 import type {
@@ -282,6 +283,34 @@ it('prices each provider variant from its own expression', () => {
     kind: 'upstream_credits',
     creditPriceUSD: CREDIT_USD,
   })
+})
+
+it('explains aggregate bridge material charges without exposing credits as a customer price', () => {
+  const table = getVideoPricingTable(withPluginPricing(h3Model, wangpaiVariant))
+  expect(table).not.toBeNull()
+  if (!table) throw new Error('Expected a video pricing table')
+
+  render(
+    <VideoPricingTables
+      table={table}
+      tokenUnit='M'
+      priceRate={1}
+      usdExchangeRate={7.3}
+    />
+  )
+
+  expect(
+    screen.getByText('Reference materials (audio, images and video)')
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText(
+      "Settled according to the supplier's final material charge"
+    )
+  ).toBeInTheDocument()
+  expect(screen.queryByText(/credit/i)).not.toBeInTheDocument()
+  expect(screen.queryByText('Audio material')).not.toBeInTheDocument()
+  expect(screen.queryByText('Image material')).not.toBeInTheDocument()
+  expect(screen.queryByText('Video material')).not.toBeInTheDocument()
 })
 
 it('returns no video price list when the model does not price a resolution catalogue', () => {

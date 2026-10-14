@@ -44,16 +44,9 @@ type VideoPricingTablesProps = {
   className?: string
 }
 
-const MATERIAL_LABEL_KEYS = [
-  'Audio material',
-  'Image material',
-  'Video material',
-]
-
 type MaterialTableRow = {
   pricing: VideoMaterialPricing
   row?: VideoMaterialFieldRow
-  labelKey?: string
 }
 
 function materialUnitLabel(
@@ -86,10 +79,7 @@ export function VideoPricingTables(props: VideoPricingTablesProps) {
         row,
       }))
     }
-    return MATERIAL_LABEL_KEYS.map((key) => ({
-      pricing: materialPricing,
-      labelKey: key,
-    }))
+    return [{ pricing: materialPricing }]
   }, [materialPricing])
 
   const thClass =
@@ -98,11 +88,7 @@ export function VideoPricingTables(props: VideoPricingTablesProps) {
 
   const materialRuleOf = (row: MaterialTableRow): string => {
     if (row.pricing.kind === 'upstream_credits') {
-      const rate = formatTaskUsageUnitPrice(
-        row.pricing.creditPriceUSD,
-        priceOptions
-      )
-      return `${t('Charged at the upstream credit cost')} · ${rate} / ${t('credit')}`
+      return t("Settled according to the supplier's final material charge")
     }
     if (row.row) {
       const rate = formatTaskUsageUnitPrice(row.row.amountUSD, priceOptions)
@@ -178,7 +164,7 @@ export function VideoPricingTables(props: VideoPricingTablesProps) {
             tableClassName='text-sm'
             headerRowClassName='hover:bg-transparent'
             data={materialRows}
-            getRowKey={(row) => row.row?.field ?? row.labelKey ?? ''}
+            getRowKey={(row) => row.row?.field ?? 'combined-materials'}
             columns={[
               {
                 id: 'model',
@@ -199,7 +185,7 @@ export function VideoPricingTables(props: VideoPricingTablesProps) {
                         row.row.field,
                         i18n.language
                       )
-                    : t(row.labelKey ?? ''),
+                    : t('Reference materials (audio, images and video)'),
               },
               {
                 id: 'rule',
@@ -213,7 +199,7 @@ export function VideoPricingTables(props: VideoPricingTablesProps) {
           {materialPricing.kind === 'upstream_credits' && (
             <p className='text-muted-foreground/50 text-[10px]'>
               {t(
-                'Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.'
+                'The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.'
               )}
             </p>
           )}

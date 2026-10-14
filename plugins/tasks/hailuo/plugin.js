@@ -1,7 +1,7 @@
 export const meta = {
   apiVersion: 1,
   key: "hailuo",
-  name: "Hailuo Video",
+  name: "MiniMax",
   icon: "Hailuo.Color",
   description: {
     en: "MiniMax Hailuo video generation (text-to-video, image-to-video, and MiniMax-H3 multimodal reference)",

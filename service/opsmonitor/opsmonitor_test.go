@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/ops_monitor_setting"
@@ -38,6 +39,34 @@ func TestObserveGatewayRejectionAddsOverloadDetailsToEvent(t *testing.T) {
 	assert.Equal(t, "openai_error", event.ErrorType)
 	assert.Equal(t, "system_overload_disk", event.ErrorCode)
 	assert.Equal(t, "system disk overloaded", event.ErrorSummary)
+}
+
+func TestObserveTaskErrorAttributesUpstreamSubmissionFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	observation := &requestObservation{
+		requestID: "task-submit-request",
+		startedAt: time.Now(),
+		method:    http.MethodPost,
+		path:      "/v1/videos",
+	}
+	c.Set(observationContextKey, observation)
+
+	ObserveTaskError(c, nil, &taskdto.TaskError{
+		Code:       "fail_to_fetch_task",
+		Message:    `{"code":"invalid_response","message":"task_id is empty","data":null}`,
+		StatusCode: http.StatusInternalServerError,
+		LocalError: false,
+	})
+	event := observation.event(http.StatusInternalServerError, time.Now())
+
+	assert.False(t, event.Success)
+	assert.Equal(t, "provider", event.ErrorOwner)
+	assert.False(t, event.BusinessLimited)
+	assert.Equal(t, http.StatusInternalServerError, event.UpstreamStatusCode)
+	assert.Equal(t, "task_error", event.ErrorType)
+	assert.Equal(t, "fail_to_fetch_task", event.ErrorCode)
+	assert.Contains(t, event.ErrorSummary, "task_id is empty")
 }
 
 func TestClassifyEndpointSeparatesVideoLifecycleAndMobileAssets(t *testing.T) {

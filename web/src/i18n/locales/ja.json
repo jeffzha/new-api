@@ -7027,6 +7027,9 @@
     "Model / API": "モデル / API",
     "No extra material charge": "素材の追加料金なし",
     "Per second": "秒単位",
+    "Reference materials (audio, images and video)": "参照素材（音声・画像・動画）",
+    "Settled according to the supplier's final material charge": "供給元の最終素材料金に基づいて一括精算",
+    "The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.": "この経路では素材料金の合計のみが返され、画像1枚ごとや動画1秒ごとの内訳単価は提供されません。供給元が素材料金を請求しない場合、プラットフォームも追加請求しません。",
     "Video material": "動画素材",
     "Video material pricing": "動画素材の料金",
     "Video output pricing": "動画出力の料金"

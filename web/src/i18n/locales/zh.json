@@ -7176,6 +7176,9 @@
     "Model / API": "模型 / API",
     "No extra material charge": "不额外收取素材费用",
     "Per second": "按秒计费",
+    "Reference materials (audio, images and video)": "参考素材（音频、图片、视频）",
+    "Settled according to the supplier's final material charge": "按供应商最终素材账单合并结算",
+    "The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.": "该渠道仅返回素材总费用，不提供图片按张或视频按秒的分项单价；供应商未收取素材费时，平台不额外收费。",
     "Video material": "视频素材",
     "Video material pricing": "视频素材定价",
     "Video output pricing": "视频输出定价"

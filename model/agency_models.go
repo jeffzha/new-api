@@ -436,10 +436,10 @@ type AgencyEventDelivery struct {
 func (AgencyEventDelivery) TableName() string { return AgencyTablePrefix + "event_deliveries" }
 
 type AgencySourceEvent struct {
-	ID                int64  `gorm:"primaryKey"`
+	ID                int64  `gorm:"primaryKey;index:idx_agency_source_operation_revision,priority:3"`
 	EventID           string `gorm:"size:128;not null;uniqueIndex:uidx_agency_source_event"`
-	SourceOperationID string `gorm:"size:128;not null"`
-	JournalRevision   int64
+	SourceOperationID string `gorm:"size:128;not null;index:idx_agency_source_operation_revision,priority:1"`
+	JournalRevision   int64  `gorm:"index:idx_agency_source_operation_revision,priority:2"`
 	SchemaVersion     string `gorm:"size:64;not null"`
 	PayloadHash       string `gorm:"size:128;not null"`
 	UserID            int64  `gorm:"not null;index:idx_agency_source_user"`

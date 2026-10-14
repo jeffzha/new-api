@@ -91,3 +91,55 @@ func TestMigrateAgencyPreservesCancelledHistoryAndAllowsAnotherCancelledAttempt(
 	assert.Equal(t, "first attempt", rows[0].Reason)
 	assert.Equal(t, "second attempt", rows[1].Reason)
 }
+
+func TestAgencySourceEventIndexMigrationAcrossDialects(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := agencyDialectDB(t, dialect)
+			if db == nil {
+				t.Skip("isolated external test database is not configured")
+			}
+			pool, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, pool.Close()) })
+			var version string
+			versionQuery := "SELECT version()"
+			if dialect == "sqlite" {
+				versionQuery = "SELECT sqlite_version()"
+			}
+			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
+			t.Logf("database version: %s", version)
+			require.NoError(t, db.Migrator().DropTable(&AgencySourceEvent{}))
+			require.NoError(t, MigrateAgency(db))
+			require.NoError(t, MigrateAgency(db))
+			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_operation_revision"))
+			for _, name := range []string{"uidx_agency_source_event", "idx_agency_source_user", "idx_agency_source_status"} {
+				require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, name), "existing index %s must be preserved", name)
+			}
+
+			// The released table has the same columns but lacks this index.
+			require.NoError(t, db.Migrator().DropIndex(&AgencySourceEvent{}, "idx_agency_source_operation_revision"))
+			history := []AgencySourceEvent{
+				{EventID: "index-original", SourceOperationID: "index-operation", JournalRevision: 1, SchemaVersion: "1", PayloadHash: "original-hash", UserID: 7, ProcessingStatus: "done", Payload: `{"event":"original"}`, CreatedAtMS: 1000},
+				{EventID: "index-reversal", SourceOperationID: "index-operation", JournalRevision: 1, SchemaVersion: "1", PayloadHash: "reversal-hash", UserID: 7, ProcessingStatus: "done", Payload: `{"event":"reversal"}`, CreatedAtMS: 2000},
+			}
+			require.NoError(t, db.Create(&history).Error)
+			require.NoError(t, MigrateAgency(db))
+			require.NoError(t, MigrateAgency(db), "upgrading twice must preserve existing financial evidence")
+			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_operation_revision"))
+			var preserved []AgencySourceEvent
+			require.NoError(t, db.Order("id ASC").Find(&preserved).Error)
+			assert.Equal(t, history, preserved)
+
+			var original AgencySourceEvent
+			require.NoError(t, db.Where("source_operation_id = ? AND journal_revision = ? AND event_id <> ?", "index-operation", 1, "index-reversal").First(&original).Error)
+			assert.Equal(t, history[0], original)
+			// Reversals can share the original operation and revision.
+			next := AgencySourceEvent{EventID: "index-next-reversal", SourceOperationID: "index-operation", JournalRevision: 1, PayloadHash: "next-hash", UserID: 7, ProcessingStatus: "done", Payload: "{}", CreatedAtMS: 3000}
+			require.NoError(t, db.Create(&next).Error, "the new index must not impose uniqueness on reversals")
+			duplicate := next
+			duplicate.ID = 0
+			require.Error(t, db.Create(&duplicate).Error, "event IDs must remain unique")
+		})
+	}
+}

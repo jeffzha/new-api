@@ -73,6 +73,11 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 	}
 	deps := []CNDependency{}
 	scans := []cnProofScan{}
+	direct, err := cnDirectWalletProof(tx, stream, receipts)
+	if err != nil {
+		return nil, err
+	}
+	scans = append(scans, direct)
 	wallet := cnProofScan{dependency: CNDependency{SourceID: "ordinary_wallet_durable_session", Version: "durable-session-v1", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{"billing-session/reserve/finalize/cancel", "image-reserve-rollback", "trusted-zero-preconsume"}, ExcludedPaths: []string{"pre-epoch", "redis", "batch", "legacy-direct-wallet-mutations"}}}
 	if !CNDurableWalletAvailable() {
 		wallet.coverageGap = true

@@ -20,11 +20,7 @@ import {
   type CoefficientAdjustmentError,
   type CoefficientAdjustmentRow,
 } from "./policy";
-import {
-  normalizePlatformPricing,
-  type PlatformPriceRow,
-  type PlatformPricing,
-} from "./types";
+import { normalizePlatformPricing, type PlatformPriceRow, type PlatformPricing } from "./types";
 
 type PlatformDraft = Record<
   string,
@@ -82,7 +78,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
             channelCosts: Object.fromEntries(
               row.channel_costs.map((channel) => [
                 String(channel.channel_id),
-                coefficientValue(channel.platform_cost_bps ?? row.platform_cost_bps),
+                coefficientValue(channel.platform_cost_bps ?? 10000),
               ]),
             ),
             agencyCost: coefficientValue(suggested.agencyCostBPS),
@@ -225,7 +221,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
           const value = draft[row.origin_model_name];
           if (row.channel_costs.length === 0) {
             const values = [
-              coefficientValue(row.platform_cost_bps),
+              coefficientValue(row.platform_cost_bps ?? 10000),
               value.agencyCost,
               value.defaultSales,
             ];
@@ -237,7 +233,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
                 ),
               );
             }
-            const platformCost = parseCoefficient(coefficientValue(row.platform_cost_bps));
+            const platformCost = parseCoefficient(coefficientValue(row.platform_cost_bps ?? 10000));
             const agencyCost = parseCoefficient(value.agencyCost);
             const defaultSales = parseCoefficient(value.defaultSales);
             if (defaultSales < agencyCost) {
@@ -527,7 +523,7 @@ function PlatformPricingRow(props: {
           <input
             aria-label={`${t("My cost (coefficient)")}: ${props.row.origin_model_name} / ${channel.channel_name}`}
             inputMode="decimal"
-            placeholder="0.5000"
+            placeholder="1.0000"
             value={value.channelCosts[String(channel.channel_id)] ?? ""}
             onChange={(event) =>
               props.updateChannelCost(
@@ -545,7 +541,7 @@ function PlatformPricingRow(props: {
           label={t("My downstream channel price (coefficient)")}
           model={props.row.origin_model_name}
           value={value.agencyCost}
-          placeholder="0.5500"
+          placeholder="1.0000"
           onChange={(value) => props.update(props.row.origin_model_name, "agencyCost", value)}
         />,
         <CoefficientInput
@@ -553,7 +549,7 @@ function PlatformPricingRow(props: {
           label={t("Sales price (coefficient)")}
           model={props.row.origin_model_name}
           value={value.defaultSales}
-          placeholder="0.6000"
+          placeholder="1.0000"
           onChange={(value) => props.update(props.row.origin_model_name, "defaultSales", value)}
         />,
       ]}

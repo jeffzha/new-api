@@ -18,25 +18,10 @@ export const meta = {
     en: "Bridge to another new-api gateway that serves the OpenAI video protocol",
     zh: "桥接到提供 OpenAI 视频协议的 new-api 网关",
   },
-  version: "1.2.1",
+  version: "1.2.2",
   author: { name: "NexusReach" },
-  models: ["MiniMax-H3", "MiniMax-H3-261013", "MiniMax-H3-2K", "MiniMax-H3-Sensitive"],
+  models: ["MiniMax-H3-261013", "MiniMax-H3-2K", "MiniMax-H3-Sensitive"],
   fetchMode: "per_task",
-  materialPricing: {
-    currency: "CNY",
-    items: [
-      { material: "audio", unit: "free" },
-      { material: "image", unit: "count", freeUnits: 5, rates: [{ amount: 0.2 }] },
-      {
-        material: "video",
-        unit: "second",
-        rates: [
-          { label: { en: "768P", zh: "768P" }, amount: 0.5 },
-          { label: { en: "2K", zh: "2K" }, amount: 0.8 },
-        ],
-      },
-    ],
-  },
   usageSchema: {
     output_credits: {
       type: "number",

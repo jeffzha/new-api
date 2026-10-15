@@ -34,12 +34,14 @@ import {
   getCardExamplePrice,
   getSpecialExpressionPriceNote,
   isUnconfiguredTaskUsageModel,
+  formatTaskUsageUnitPrice,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
 import { getDisplayGroupRatio, isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import { getVideoTokenMatrixPricing } from '../lib/provider-pricing'
 import { taskUsageUnitLabel } from '../lib/task-price-display'
+import { getVideoPricingTable } from '../lib/video-pricing-table'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
@@ -72,6 +74,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 28) : null
   const initial = props.model.model_name?.charAt(0).toUpperCase() || '?'
   const providerPricing = getVideoTokenMatrixPricing(props.model)
+  const videoPricingTable = getVideoPricingTable(props.model)
   const hasCachedPrice = isTokenBased && props.model.cache_ratio != null
   const priceOptions = {
     tokenUnit,
@@ -100,6 +103,25 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         groupRatio={getDisplayGroupRatio(props.model, props.selectedGroup)}
         maxTiers={1}
       />
+    )
+  } else if (videoPricingTable) {
+    priceSummary = (
+      <>
+        {videoPricingTable.outputRows.slice(0, 4).map((row) => (
+          <span
+            key={row.key}
+            className='text-muted-foreground whitespace-nowrap'
+          >
+            <span>{row.resolution}</span>{' '}
+            <span className='text-foreground font-mono font-semibold'>
+              {formatTaskUsageUnitPrice(row.amountUSD, priceOptions)}
+            </span>{' '}
+            <span className='text-xs'>
+              / {row.rule === 'second' ? t('s') : t('request')}
+            </span>
+          </span>
+        ))}
+      </>
     )
   } else if (dynamicSummary) {
     if (dynamicSummary.isSpecialExpression) {

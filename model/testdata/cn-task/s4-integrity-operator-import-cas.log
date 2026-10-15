@@ -1,0 +1,13 @@
+=== RUN   TestCNIntegrityRealApprovedExportAcrossDialects
+=== RUN   TestCNIntegrityRealApprovedExportAcrossDialects/sqlite
+    cn_integrity_real_export_test.go:89: 3.50.4
+=== RUN   TestCNIntegrityRealApprovedExportAcrossDialects/mysql
+    cn_integrity_real_export_test.go:89: 8.0.39
+=== RUN   TestCNIntegrityRealApprovedExportAcrossDialects/postgres
+    cn_integrity_real_export_test.go:89: PostgreSQL 17.6 on x86_64-windows, compiled by msvc-19.44.35213, 64-bit
+--- PASS: TestCNIntegrityRealApprovedExportAcrossDialects (13.90s)
+    --- PASS: TestCNIntegrityRealApprovedExportAcrossDialects/sqlite (1.18s)
+    --- PASS: TestCNIntegrityRealApprovedExportAcrossDialects/mysql (6.65s)
+    --- PASS: TestCNIntegrityRealApprovedExportAcrossDialects/postgres (6.07s)
+PASS
+ok  	github.com/QuantumNous/new-api/model	14.253s

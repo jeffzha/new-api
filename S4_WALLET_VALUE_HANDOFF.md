@@ -114,6 +114,115 @@ known corrections keep their original owner. External SQL, unguarded handles,
 old binaries and Redis/batch require the explicit operator fence. Minimum server
 versions and production rollout are not claimed by these qualification results.
 
+## Local Operator Commands (I13)
+
+Build the local command with `go build -o .testtmp/cn-integrity-operator.exe
+./cmd/cn-integrity-operator`, then run `.testtmp/cn-integrity-operator.exe help`.
+Run it on the Gateway host with database credentials supplied through SQL_DSN.
+It uses the existing SQLite/MySQL/PostgreSQL selection logic with SQL logging
+disabled. It never calls startup migration, creates a database, initializes
+Redis, starts workers or opens an HTTP listener. The Gateway must already have
+the additive migrations. Missing explicit database selection fails closed.
+SQLite additionally requires SQLITE_PATH to name an existing absolute file,
+without URI/query options. MySQL uses the existing native DSN; PostgreSQL uses
+the existing postgres:// or postgresql:// URI convention. Credentials are never
+command arguments or JSON output.
+
+The following PowerShell commands are a runnable sequence against an explicitly
+selected, already migrated deployment. Private JSON inputs and journals belong
+in a directory restricted to the local operator account. The gateway ID, user
+and evidence IDs must come from the actual reviewed operation.
+
+```powershell
+$operator = '.testtmp/cn-integrity-operator.exe'
+$gateway = 'your-existing-gateway-id'
+# Supply SQL_DSN securely in this process; for SQLite also set absolute SQLITE_PATH.
+$prepared = & $operator prepare --gateway $gateway --evidence 'prepare-review-id'
+$epoch = ($prepared | ConvertFrom-Json).epochId
+& $operator status --gateway $gateway --epoch $epoch
+
+# Ops freezes and independently reviews an inventory bound to this exact epoch.
+$approved = 'C:\private\ops-approved-eligibility.json'
+$inventory = (Get-Content -Raw $approved | ConvertFrom-Json).opsInventoryId
+& $operator import --gateway $gateway --epoch $epoch --expected-generation 1 --evidence 'local-import-review-id' --input $approved
+& $operator admit --gateway $gateway --epoch $epoch --expected-generation 1 --evidence 'local-admission-review-id' --user 1001 --inventory $inventory
+& $operator start --gateway $gateway --epoch $epoch --expected-generation 1 --evidence 'start-attestation-review-id' --input 'C:\private\writer-start.json'
+```
+
+`writer-start.json` has two top-level keys, writers and attestation. A writer
+contains writerId, buildId, leaseUntil (future six-fraction UTC timestamp),
+protocolVersion=`native-mutation-receipt-v2` and capabilityPaths equal to the
+sorted eight-path list in the contract. Attestation contains inventoryId,
+inventoryHash, operatorEvidenceId and the five true declarations
+oldWritersDrained, redisDisabled, batchDisabled, externalSqlExcluded,
+unguardedHandlesExcluded. The evidence ID must equal the start command argument.
+Use the actual inventory ID/hash and deployed writer IDs/builds, not sample
+qualification values. The operator records the declared evidence; it cannot
+discover unguarded processes or replace the external operational review.
+
+Start additionally requires explicitly enabled OPS_CN_FINANCE_V2_ENABLED,
+OPS_CN_DURABLE_WALLET_ENABLED, OPS_CN_DURABLE_TASK_ENABLED,
+OPS_CN_WALLET_VALUE_ENABLED and OPS_CN_INTEGRITY_CAPTURE_ENABLED in its inherited
+deployment configuration. REDIS_CONN_STRING must be absent and
+BATCH_UPDATE_ENABLED must not be true. The command does not enable these flags.
+Native Gateway writers need their attested OPS_CN_INTEGRITY_WRITER_ID and
+OPS_CN_INTEGRITY_WRITER_BUILD before traffic resumes.
+
+For a single freeze, choose fixed reviewed bounds. The first batch omits
+expected-parent; every later new request supplies the exact proof ID. Re-running
+the same command and state file returns the same proof.
+
+```powershell
+$from = '2026-10-15T00:00:00.000000Z'
+$to = '2026-10-15T01:00:00.000000Z'
+$sealed = & $operator freeze --gateway $gateway --epoch $epoch --expected-generation 2 --evidence 'freeze-review-id' --from $from --to $to --state-file 'C:\private\first-freeze.json'
+$parent = ($sealed | ConvertFrom-Json).proofId
+
+# Explicit periodic operation; it is never enabled by Gateway startup or GET.
+& $operator freeze-loop --gateway $gateway --epoch $epoch --expected-generation 2 --evidence 'periodic-freeze-review-id' --from $from --expected-parent $parent --interval 1m --state-file 'C:\private\epoch-generation-2-loop.json'
+```
+
+Run one scheduled/service instance per journal and disable overlapping executions
+in the scheduler. The loop fixes coverageFrom, chooses coverageTo at each tick,
+and persists the exact pending request before attempting the native transaction.
+After success it records the returned parent cursor. Ctrl+C stops it. On process
+or database failure, restart with the same arguments and journal: a committed
+matching child is recovered by epoch/batch/parent/generation/range and manifest
+hash, rather than sealed again. Failed transactions leave no new discovery
+entry. Output failure after commit also leaves a recoverable pending request.
+The command emits only proof/control identifiers and operator evidence IDs;
+redirect its JSON lines to the private job log for the local action audit.
+
+The loop exits on generation or parent conflict. It does not adopt another
+operator's head or clear a broken epoch. Inspect status and review the changed
+control before creating a new journal with the new explicit generation/parent.
+Stop a loop before an intentional pause:
+
+```powershell
+& $operator stop --gateway $gateway --epoch $epoch --expected-generation 2 --state paused --evidence 'pause-review-id'
+& $operator status --gateway $gateway --epoch $epoch
+```
+
+Operator qualification uses real SQLite/MySQL/PostgreSQL and covers no automatic
+schema creation, missing explicit database rejection, failed-output recovery,
+idempotent single freeze, loop restart, durable parent advancement and rejection
+of a changed control generation. It passed in 10.017s on SQLite 3.50.4,
+MySQL 8.0.39 and PostgreSQL 17.6. Evidence: `s4-integrity-operator.log`.
+The exact Ops import generation-CAS regression passed on the same three engines
+in 14.253s; see `s4-integrity-operator-import-cas.log`. No minimum-version or
+production rollout qualification is claimed. Reproduce from the Gateway root
+with explicit owned test-database DSNs:
+
+```powershell
+$env:AGENCY_HUB_RUN_EXTERNAL_DB_TESTS='1'
+# Set AGENCY_HUB_TEST_MYSQL_DSN and AGENCY_HUB_TEST_OPERATOR_POSTGRES_DSN.
+../../.tools/go/bin/go.exe test ./cmd/cn-integrity-operator -count=1 -v -timeout=240s
+$env:CN_INTEGRITY_OPS_APPROVED_FIXTURE_DIR='D:/JiuLu/TokenOps/.testtmp/integrity-integration-inventories-20261015'
+$env:CN_INTEGRITY_PRESERVE_RAW_SAMPLES='1'
+# Also set AGENCY_HUB_TEST_POSTGRES_DSN for the model test fixture.
+../../.tools/go/bin/go.exe test ./model -run '^TestCNIntegrityRealApprovedExportAcrossDialects$' -count=1 -v -timeout=240s
+```
+
 ## Q71 Current-Read Follow-Up
 
 The follow-up is a separate commit after `fa99045`, never a rewrite of that

@@ -29,7 +29,9 @@ func TestCNIntegrityRealApprovedExportAcrossDialects(t *testing.T) {
 	require.NoError(t, err)
 	evidenceDir := filepath.Join("testdata", "cn-task", "integrity-v2-real")
 	require.NoError(t, os.MkdirAll(evidenceDir, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(evidenceDir, "ops-fixture-provenance.json"), provenance, 0600))
+	if os.Getenv("CN_INTEGRITY_PRESERVE_RAW_SAMPLES") != "1" {
+		require.NoError(t, os.WriteFile(filepath.Join(evidenceDir, "ops-fixture-provenance.json"), provenance, 0600))
+	}
 	for _, key := range []string{"OPS_CN_FINANCE_V2_ENABLED", "OPS_CN_DURABLE_WALLET_ENABLED", "OPS_CN_DURABLE_TASK_ENABLED", "OPS_CN_WALLET_VALUE_ENABLED", "OPS_CN_INTEGRITY_CAPTURE_ENABLED"} {
 		t.Setenv(key, "true")
 	}
@@ -106,7 +108,8 @@ func TestCNIntegrityRealApprovedExportAcrossDialects(t *testing.T) {
 				}
 				return tx.Model(&CNIntegrityControlReceipt{}).Where("epoch_id = ?", epoch.EpochID).Update("epoch_id", epochID).Error
 			}))
-			require.NoError(t, ImportCNIntegrityEligibilitySnapshot(db, raw, "explicit-local-operator-import:"+approval.OpsInventoryID))
+			require.ErrorIs(t, ImportCNIntegrityEligibilitySnapshot(db, raw, "explicit-local-operator-import:"+approval.OpsInventoryID, 2), ErrCNConflict)
+			require.NoError(t, ImportCNIntegrityEligibilitySnapshot(db, raw, "explicit-local-operator-import:"+approval.OpsInventoryID, 1))
 			for _, user := range []int{1001, 1002} {
 				_, err := AdmitCNIntegrityUser(db, epochID, user, 1, approval.OpsInventoryID)
 				require.NoError(t, err)
@@ -208,14 +211,22 @@ func cnAssertIntegrityPublicationTransition(t *testing.T, db *gorm.DB, request C
 
 func cnWriteIntegrityRawSample(t *testing.T, db *gorm.DB, sealed *CNIntegritySnapshot, dialect, dbVersion string, approval []byte) {
 	t.Helper()
+	if os.Getenv("CN_INTEGRITY_PRESERVE_RAW_SAMPLES") == "1" {
+		return
+	}
 	dir := filepath.Join("testdata", "cn-task", "integrity-v2-real", dialect, "batch-"+strconv.FormatInt(sealed.BatchSequence, 10))
+	cnWriteIntegrityRawSampleAt(t, db, sealed, dir, dbVersion, approval, 2)
+}
+
+func cnWriteIntegrityRawSampleAt(t *testing.T, db *gorm.DB, sealed *CNIntegritySnapshot, dir, dbVersion string, approval []byte, pageLimit int) {
+	t.Helper()
 	require.NoError(t, os.MkdirAll(dir, 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(sealed.Manifest), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "ops-approved-eligibility.json"), approval, 0600))
 	for _, name := range cnIntegrityCollections {
 		ordinal := int64(0)
 		for {
-			page, err := ReadCNIntegrityPage(context.Background(), db, sealed.ProofID, name, ordinal, 2)
+			page, err := ReadCNIntegrityPage(context.Background(), db, sealed.ProofID, name, ordinal, pageLimit)
 			require.NoError(t, err)
 			raw, err := CNIntegrityExportJSON(page)
 			require.NoError(t, err)

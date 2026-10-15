@@ -112,7 +112,10 @@ func DecodeCNIntegrityEligibilitySnapshot(raw []byte) (*CNIntegrityEligibilityEx
 // This local operator API records who imported the exact Ops export bytes.
 // A matching hash is not issuer authentication; Ops checks its own approved
 // snapshot store before granting authority. Do not expose this as a public API.
-func ImportCNIntegrityEligibilitySnapshot(db *gorm.DB, raw []byte, operatorEvidenceID string) error {
+func ImportCNIntegrityEligibilitySnapshot(db *gorm.DB, raw []byte, operatorEvidenceID string, expectedGeneration ...int64) error {
+	if len(expectedGeneration) > 1 || len(expectedGeneration) == 1 && expectedGeneration[0] <= 0 {
+		return ErrCNConflict
+	}
 	if operatorEvidenceID == "" || len(operatorEvidenceID) > 191 {
 		return errors.New("exact Ops snapshot import requires local operator evidence")
 	}
@@ -124,6 +127,9 @@ func ImportCNIntegrityEligibilitySnapshot(db *gorm.DB, raw []byte, operatorEvide
 		var epoch CNIntegrityEpoch
 		if err := lockForUpdate(tx).Where("epoch_id = ?", snapshot.Body.IntegrityEpoch).First(&epoch).Error; err != nil {
 			return err
+		}
+		if len(expectedGeneration) == 1 && epoch.Generation != expectedGeneration[0] {
+			return ErrCNConflict
 		}
 		if epoch.GatewayID != snapshot.Body.GatewayID || epoch.StreamEpoch != snapshot.Body.StreamEpoch || (epoch.State != "prepared" && epoch.State != "active") {
 			return ErrCNConflict

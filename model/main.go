@@ -137,35 +137,52 @@ func normalizeClickHouseDSN(dsn string) string {
 	return parsed.String()
 }
 
-func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error) {
+func chooseDB(envName string, isLog bool, configs ...*gorm.Config) (*gorm.DB, common.DatabaseType, error) {
+	var config *gorm.Config
+	quiet := len(configs) > 0
+	if quiet {
+		config = configs[0]
+	} else {
+		config = newGormConfig(true)
+	}
 	dsn := os.Getenv(envName)
 	if dsn != "" {
 		if isClickHouseDSN(dsn) {
 			if !isLog {
 				return nil, "", fmt.Errorf("%s does not support ClickHouse; use SQLite, MySQL, or PostgreSQL for the primary database and LOG_SQL_DSN for ClickHouse logs", envName)
 			}
-			common.SysLog("using ClickHouse as log database")
-			db, err := gorm.Open(clickhouse.Open(normalizeClickHouseDSN(dsn)), newGormConfig(false))
+			if !quiet {
+				common.SysLog("using ClickHouse as log database")
+				config.PrepareStmt = false
+			}
+			db, err := gorm.Open(clickhouse.Open(normalizeClickHouseDSN(dsn)), config)
 			return db, common.DatabaseTypeClickHouse, err
 		}
 		if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
 			// Use PostgreSQL
-			common.SysLog("using PostgreSQL as database")
+			if !quiet {
+				common.SysLog("using PostgreSQL as database")
+				config.PrepareStmt = false
+			}
 			// 同时关闭 pgx 隐式与 GORM 显式预处理语句:命名 prepared statement 与
 			// 事务池代理(PgBouncer/Neon/Supabase)不兼容,会触发 FATAL 08P01/42P05。
 			db, err := gorm.Open(postgresMigrationDialector{postgres.Dialector{Config: &postgres.Config{
 				DSN:                  dsn,
 				PreferSimpleProtocol: true,
-			}}}, newGormConfig(false))
+			}}}, config)
 			return db, common.DatabaseTypePostgreSQL, err
 		}
 		if strings.HasPrefix(dsn, "local") {
-			common.SysLog("SQL_DSN not set, using SQLite as database")
-			db, err := gorm.Open(sqlite.Open(common.SQLitePath), newGormConfig(true))
+			if !quiet {
+				common.SysLog("SQL_DSN not set, using SQLite as database")
+			}
+			db, err := gorm.Open(sqlite.Open(common.SQLitePath), config)
 			return db, common.DatabaseTypeSQLite, err
 		}
 		// Use MySQL
-		common.SysLog("using MySQL as database")
+		if !quiet {
+			common.SysLog("using MySQL as database")
+		}
 		// check parseTime
 		if !strings.Contains(dsn, "parseTime") {
 			if strings.Contains(dsn, "?") {
@@ -174,12 +191,14 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error)
 				dsn += "?parseTime=true"
 			}
 		}
-		db, err := gorm.Open(mysqlMigrationDialector{mysql.Dialector{Config: &mysql.Config{DSN: dsn}}}, newGormConfig(true))
+		db, err := gorm.Open(mysqlMigrationDialector{mysql.Dialector{Config: &mysql.Config{DSN: dsn}}}, config)
 		return db, common.DatabaseTypeMySQL, err
 	}
 	// Use SQLite
-	common.SysLog("SQL_DSN not set, using SQLite as database")
-	db, err := gorm.Open(sqlite.Open(common.SQLitePath), newGormConfig(true))
+	if !quiet {
+		common.SysLog("SQL_DSN not set, using SQLite as database")
+	}
+	db, err := gorm.Open(sqlite.Open(common.SQLitePath), config)
 	return db, common.DatabaseTypeSQLite, err
 }
 

@@ -9,7 +9,151 @@ import (
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+// Receipt time belongs to the CN stream; legacy event time retains its usage
+// semantics. The receipt commits and rolls back with the financial mutation.
+type CNFinanceReceipt struct {
+	EventID    string `gorm:"size:191;primaryKey"`
+	OccurredAt string `gorm:"size:40;not null"`
+}
+
+type CNFundingValueLot struct {
+	LotID          string `gorm:"size:64;primaryKey"`
+	InitialQuota   int64  `gorm:"not null"`
+	RemainingQuota int64  `gorm:"not null"`
+	RemainingValue string `gorm:"size:128;not null"`
+	PaidValue      string `gorm:"size:128;not null"`
+	HeldQuota      int64  `gorm:"not null"`
+	HeldValue      string `gorm:"size:128;not null"`
+	RetiredQuota   int64  `gorm:"not null"`
+	RetiredValue   string `gorm:"size:128;not null"`
+}
+
+type CNFundingValueAllocation struct {
+	AllocationID string `gorm:"size:64;primaryKey"`
+	LotID        string `gorm:"size:64;not null;index"`
+	Quota        int64  `gorm:"not null"`
+	Value        string `gorm:"size:128;not null"`
+}
+
+// Seed from immutable heads when upgrading an existing stream. Published
+// allocations keep their exact value and never receive a new residual share.
+func cnFundingValueLotTx(tx *gorm.DB, lotID string, initial int64, amount decimal.Decimal) (*CNFundingValueLot, error) {
+	if initial <= 0 || amount.IsNegative() {
+		return nil, ErrCNConflict
+	}
+	var balance CNFundingValueLot
+	err := lockForUpdate(tx).Where("lot_id = ?", lotID).First(&balance).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		balance = CNFundingValueLot{LotID: lotID, InitialQuota: initial, RemainingQuota: initial, RemainingValue: amount.String(), PaidValue: amount.String(), HeldValue: "0", RetiredValue: "0"}
+		var history []CNFinanceOutbox
+		if err = tx.Order("revision DESC").Find(&history).Error; err != nil {
+			return nil, err
+		}
+		seen := map[string]bool{}
+		remaining := amount
+		for _, row := range history {
+			var fact CNFact
+			if err = common.UnmarshalJsonStr(row.Payload, &fact); err != nil {
+				return nil, err
+			}
+			if fact.Kind != "funding_allocation" {
+				continue
+			}
+			id, _ := fact.Funding["allocationId"].(string)
+			if fact.Funding["lotId"] != lotID || seen[id] {
+				continue
+			}
+			seen[id] = true
+			if fact.Cumulative.Quota == nil || fact.Cumulative.Money == nil {
+				return nil, ErrCNConflict
+			}
+			q, e := strconv.ParseInt(*fact.Cumulative.Quota, 10, 64)
+			if e != nil {
+				return nil, e
+			}
+			value, e := cnDecimal(fact.Cumulative.Money.Gross)
+			if e != nil {
+				return nil, e
+			}
+			balance.RemainingQuota -= q
+			remaining = remaining.Sub(value)
+			if err = tx.Create(&CNFundingValueAllocation{AllocationID: id, LotID: lotID, Quota: q, Value: value.String()}).Error; err != nil {
+				return nil, err
+			}
+		}
+		if balance.RemainingQuota < 0 || remaining.IsNegative() {
+			return nil, ErrCNConflict
+		}
+		balance.RemainingValue = remaining.String()
+		if err = tx.Create(&balance).Error; err != nil {
+			return nil, err
+		}
+	} else if err != nil {
+		return nil, err
+	}
+	if balance.PaidValue != amount.String() || balance.InitialQuota != initial {
+		return nil, ErrCNConflict
+	}
+	return &balance, nil
+}
+
+func cnFundingValueTx(tx *gorm.DB, lotID, allocationID string, initial, target int64, amount decimal.Decimal) (decimal.Decimal, error) {
+	if target < 0 {
+		return decimal.Zero, ErrCNConflict
+	}
+	balance, err := cnFundingValueLotTx(tx, lotID, initial, amount)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	remaining, err := cnDecimal(balance.RemainingValue)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	var allocation CNFundingValueAllocation
+	err = tx.Where("allocation_id = ?", allocationID).First(&allocation).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		allocation = CNFundingValueAllocation{AllocationID: allocationID, LotID: lotID, Value: "0"}
+		if err = tx.Create(&allocation).Error; err != nil {
+			return decimal.Zero, err
+		}
+	} else if err != nil {
+		return decimal.Zero, err
+	}
+	prior, err := cnDecimal(allocation.Value)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	delta := target - allocation.Quota
+	value := prior
+	if delta > 0 {
+		if delta > balance.RemainingQuota {
+			return decimal.Zero, ErrCNConflict
+		}
+		share := cnDivideHalfEven(amount.Mul(decimal.NewFromInt(delta)), decimal.NewFromInt(initial))
+		if delta == balance.RemainingQuota || share.GreaterThan(remaining) {
+			share = remaining
+		}
+		value = prior.Add(share)
+	} else if delta < 0 {
+		// Refund the frozen allocation value, including its residual, exactly.
+		if target < 0 || allocation.Quota <= 0 {
+			return decimal.Zero, ErrCNConflict
+		}
+		value = cnDivideHalfEven(prior.Mul(decimal.NewFromInt(target)), decimal.NewFromInt(allocation.Quota))
+	}
+	remaining = remaining.Sub(value.Sub(prior))
+	if remaining.IsNegative() || remaining.GreaterThan(amount) {
+		return decimal.Zero, ErrCNConflict
+	}
+	if err = tx.Model(&CNFundingValueLot{}).Where("lot_id = ?", lotID).Updates(map[string]any{"remaining_quota": balance.RemainingQuota - delta, "remaining_value": remaining.String()}).Error; err != nil {
+		return decimal.Zero, err
+	}
+	err = tx.Model(&CNFundingValueAllocation{}).Where("allocation_id = ?", allocationID).Updates(map[string]any{"quota": target, "value": value.String()}).Error
+	return value, err
+}
 
 // CaptureCNAgencyFundingTx freezes forward native allocations at the financial
 // journal commit. Mutable current allocations are never used to fabricate past
@@ -21,6 +165,17 @@ func CaptureCNAgencyFundingTx(tx *gorm.DB, event agencycontract.BillingEvent) er
 	if event.EventType != "agency.billing_finalized" && event.EventType != "agency.billing_corrected" && event.EventType != "agency.billing_reversed" {
 		return nil
 	}
+	receipt := CNFinanceReceipt{EventID: event.EventID, OccurredAt: time.Now().UTC().Format(CNTimeLayout)}
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&receipt).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("event_id = ?", event.EventID).First(&receipt).Error; err != nil {
+		return err
+	}
+	occurred, err := time.Parse(CNTimeLayout, receipt.OccurredAt)
+	if err != nil {
+		return err
+	}
 	var allocations []AgencyFundingAllocation
 	if err := tx.Where("charge_id = ? AND user_id = ?", event.FinancialChargeID, event.UserID).Order("id").Find(&allocations).Error; err != nil {
 		return err
@@ -30,7 +185,7 @@ func CaptureCNAgencyFundingTx(tx *gorm.DB, event agencycontract.BillingEvent) er
 			continue
 		} // Opening/debt without a purchase remains unknown.
 		var lot AgencyFundingLot
-		if err := tx.First(&lot, allocation.LotID).Error; err != nil {
+		if err := lockForUpdate(tx).First(&lot, allocation.LotID).Error; err != nil {
 			return err
 		}
 		var purchase AgencyTopupFact
@@ -40,6 +195,9 @@ func CaptureCNAgencyFundingTx(tx *gorm.DB, event agencycontract.BillingEvent) er
 		}
 		if err != nil {
 			return err
+		}
+		if purchase.PaymentStatus != "success" {
+			continue
 		}
 		if err = cnCaptureAgencyPurchase(tx, lot, purchase); err != nil {
 			return err
@@ -54,7 +212,9 @@ func CaptureCNAgencyFundingTx(tx *gorm.DB, event agencycontract.BillingEvent) er
 		lotID := CNIdentity("agency-lot", lot.SourceKind, lot.SourceID, "paid")
 		allocationID := CNIdentity("agency-allocation", allocation.ChargeID, strconv.Itoa(allocation.SegmentNo), allocation.ComponentID, lotID)
 		evidence := CNEvidence{System: "gateway-cn", RecordType: "agency_native_allocation_at_journal", RecordID: allocationID, EvidenceID: event.EventID}
-		f := cnBaseFact("funding_allocation", allocationID, "0", event.OperationID, "agency_wallet", lot.UserID, time.Now().UTC(), evidence)
+		f := cnBaseFact("funding_allocation", allocationID, "0", event.OperationID, "agency_wallet", lot.UserID, occurred, evidence)
+		f.EffectiveAt = time.UnixMilli(event.OccurredAtMS).UTC().Format(CNTimeLayout)
+		f.SourcePeriod = f.EffectiveAt[:7]
 		f.FactID = CNIdentity(allocationID, event.EventID)
 		f.Revision = event.JournalRevision
 		quota := strconv.FormatInt(paid, 10)
@@ -70,6 +230,9 @@ func CaptureCNAgencyFundingTx(tx *gorm.DB, event agencycontract.BillingEvent) er
 			}
 			if p.Revision == f.Revision {
 				continue
+			}
+			if p.Revision > f.Revision {
+				return ErrCNConflict
 			}
 			f.PreviousFactID = &previous.FactID
 			f.EffectiveAt = p.EffectiveAt
@@ -91,7 +254,10 @@ func CaptureCNAgencyFundingTx(tx *gorm.DB, event agencycontract.BillingEvent) er
 			if err != nil {
 				return err
 			}
-			value := cnDivideHalfEven(amount.Mul(decimal.NewFromInt(paid)), decimal.NewFromInt(lot.PaidInitial))
+			value, err := cnFundingValueTx(tx, lotID, allocationID, lot.PaidInitial, paid, amount)
+			if err != nil {
+				return err
+			}
 			prior := decimal.Zero
 			if previousMoney != nil {
 				prior, err = cnDecimal(previousMoney.Gross)
@@ -108,7 +274,7 @@ func CaptureCNAgencyFundingTx(tx *gorm.DB, event agencycontract.BillingEvent) er
 		if paid < previousQuota {
 			restores = f.PreviousFactID
 		}
-		f.Funding = map[string]any{"allocationId": allocationID, "lotId": lotID, "chargeEconomicId": event.FinancialChargeID, "chargeSegmentId": strconv.Itoa(event.SegmentNo), "allocatedQuota": quota, "recognizedValue": f.Cumulative.Money, "policyVersion": "agency-native-purchase-proportion-v1", "authority": "native", "previousAllocationFactId": f.PreviousFactID, "restoresAllocationFactId": restores, "evidence": f.SourceEvidence}
+		f.Funding = map[string]any{"allocationId": allocationID, "lotId": lotID, "chargeEconomicId": event.FinancialChargeID, "chargeSegmentId": strconv.Itoa(event.SegmentNo), "allocatedQuota": quota, "recognizedValue": f.Cumulative.Money, "policyVersion": "agency-native-purchase-residual-v2", "authority": "native", "previousAllocationFactId": f.PreviousFactID, "restoresAllocationFactId": restores, "evidence": f.SourceEvidence}
 		f.Links["paymentIds"] = []string{paymentID}
 		f.Links["fundingLotIds"] = []string{lotID}
 		f.Links["allocationIds"] = []string{allocationID}

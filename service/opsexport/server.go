@@ -62,6 +62,7 @@ func Register(group *gin.RouterGroup) {
 	group.GET("/facts", func(c *gin.Context) { Default.Facts(c) })
 	group.GET("/daily", func(c *gin.Context) { Default.Daily(c) })
 	group.GET("/catalog", func(c *gin.Context) { Default.Catalog(c) })
+	group.GET("/inventory", func(c *gin.Context) { Default.Inventory(c) })
 }
 
 func useExportAuth(group *gin.RouterGroup, structured bool) {

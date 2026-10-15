@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -48,6 +51,21 @@ func TestOpsExportCredentialAndCursorBoundary(t *testing.T) {
 	require.Error(t, StartConfigured(db))
 	t.Setenv("UPSTREAM_EVENT_GATEWAY_ID", "g1")
 	require.NoError(t, StartConfigured(db))
+	require.NoError(t, db.AutoMigrate(&model.Model{}, &model.Vendor{}, &model.Channel{}, &model.Ability{}, &model.Option{}, &model.User{}, &model.Token{}))
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "inventory", DisplayName: "Inventory user", Password: "s4-password-never-export", Email: "s4-email-never-export@example.test"}).Error)
+	require.NoError(t, db.Create(&model.Token{Id: 1, UserId: 1, Key: "s4-token-secret-never-export", Name: "Inventory token"}).Error)
+	require.NoError(t, db.Create(&model.Model{ModelName: "s4-hidden", Endpoints: `["openai"]`}).Error)
+	require.NoError(t, db.Model(&model.Model{}).Where("model_name = ?", "s4-hidden").Update("status", 0).Error)
+	require.NoError(t, db.Create(&model.Channel{Id: 1, Models: "s4-disabled", Status: 2, Key: "s4-channel-secret-never-export"}).Error)
+	var fixture struct {
+		Items []model.CNFact `json:"items"`
+	}
+	fixtureJSON, err := os.ReadFile(filepath.Join("..", "..", "model", "testdata", "cn-contract", "finance-v2-facts.json"))
+	require.NoError(t, err)
+	require.NoError(t, common.Unmarshal(fixtureJSON, &fixture))
+	for _, fact := range fixture.Items {
+		require.NoError(t, model.StageCNFactTx(db, fact))
+	}
 	for _, tc := range []struct {
 		path, credential string
 		status           int
@@ -58,6 +76,9 @@ func TestOpsExportCredentialAndCursorBoundary(t *testing.T) {
 		{"/facts?limit=1&limit=2", "Bearer " + token, 400}, {"/facts?after=bad", "Bearer " + token, 400},
 		{"/facts?after=djI6LTE", "Bearer " + token, 400}, {"/daily?date=2026-02-30", "Bearer " + token, 400},
 		{"/daily?date=2026-10-14", "Bearer " + token, 200},
+		{"/catalog", "Bearer " + token, 200},
+		{"/inventory", "", 401}, {"/inventory", "Bearer management-token", 401},
+		{"/inventory", "Bearer " + token, 200}, {"/inventory?limit=1", "Bearer " + token, 400},
 	} {
 		request := httptest.NewRequest(http.MethodGet, "/api/ops-export/v1"+tc.path, nil)
 		request.Header.Set("Authorization", tc.credential)
@@ -66,6 +87,14 @@ func TestOpsExportCredentialAndCursorBoundary(t *testing.T) {
 		assert.Equal(t, tc.status, w.Code, tc.path)
 		assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
 		assert.NotContains(t, w.Body.String(), token)
+		assert.NotContains(t, w.Body.String(), "s4-channel-secret-never-export")
+		assert.NotContains(t, w.Body.String(), "s4-password-never-export")
+		assert.NotContains(t, w.Body.String(), "s4-email-never-export")
+		assert.NotContains(t, w.Body.String(), "s4-token-secret-never-export")
+		if directory := os.Getenv("S4_TEST_ARTIFACT_DIR"); directory != "" && (tc.path == "/catalog" || tc.path == "/inventory") && tc.status == 200 {
+			require.NoError(t, os.MkdirAll(directory, 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(directory, strings.TrimPrefix(tc.path, "/")+".json"), w.Body.Bytes(), 0600))
+		}
 		if tc.path == "/facts" && tc.status == 200 {
 			var result map[string]any
 			require.NoError(t, common.Unmarshal(w.Body.Bytes(), &result))
@@ -89,6 +118,7 @@ func TestOpsExportCredentialAndCursorBoundary(t *testing.T) {
 		{"/daily?date=2026-02-30", "Bearer " + token, "invalid_payload", 400},
 		{"/facts", "Bearer " + token, "", 200},
 		{"/refund-capabilities", "Bearer " + token, "", 200},
+		{"/daily?date=2026-10-14", "Bearer " + token, "", 200},
 	} {
 		request := httptest.NewRequest(http.MethodGet, "/api/ops-export/v2"+tc.path, nil)
 		request.Header.Set("Authorization", tc.credential)
@@ -110,6 +140,25 @@ func TestOpsExportCredentialAndCursorBoundary(t *testing.T) {
 			assert.Equal(t, false, body["manualVoucherEvidenceAvailable"])
 		} else {
 			assert.Equal(t, model.CNFinanceSource, body["sourceSystem"])
+			if dependencies, ok := body["dependencies"].([]any); ok {
+				for _, value := range dependencies {
+					dependency := value.(map[string]any)
+					from, to := dependency["coverageFrom"].(string), dependency["coverageTo"].(string)
+					for _, timestamp := range []string{from, to} {
+						parsed, err := time.Parse(model.CNTimeLayout, timestamp)
+						require.NoError(t, err)
+						assert.Equal(t, timestamp, parsed.UTC().Format(model.CNTimeLayout))
+					}
+					if from == to {
+						assert.NotEqual(t, "complete", dependency["status"])
+					}
+				}
+			}
+		}
+		if directory := os.Getenv("S4_TEST_ARTIFACT_DIR"); directory != "" && tc.status == 200 {
+			require.NoError(t, os.MkdirAll(directory, 0700))
+			name := strings.Split(strings.TrimPrefix(tc.path, "/"), "?")[0]
+			require.NoError(t, os.WriteFile(filepath.Join(directory, name+".json"), w.Body.Bytes(), 0600))
 		}
 	}
 }

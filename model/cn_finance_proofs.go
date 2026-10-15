@@ -25,7 +25,8 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 	if cutoff.Before(started) {
 		cutoff = started
 	}
-	cutoffText := cutoff.Format(time.RFC3339Nano)
+	cutoffText := cutoff.Format(CNTimeLayout)
+	coverageFrom := started.UTC().Format(CNTimeLayout)
 	var outbox []CNFinanceOutbox
 	if err = tx.Order("id").Find(&outbox).Error; err != nil {
 		return nil, err
@@ -93,6 +94,19 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 		}
 	}
 	scans = append(scans, wallet)
+	var cancellations []CNWalletCancellation
+	if err = tx.Order("request_id").Find(&cancellations).Error; err != nil {
+		return nil, err
+	}
+	for _, intent := range cancellations {
+		scans[len(scans)-1].records = append(scans[len(scans)-1].records, []any{intent.RequestID, intent.State, intent.Attempts, intent.LastErrorCode})
+		if intent.State != "complete" {
+			scans[len(scans)-1].dependency.PendingCount++
+		}
+		if intent.LastErrorCode != "" {
+			scans[len(scans)-1].dependency.UnknownCount++
+		}
+	}
 	agency := cnProofScan{dependency: CNDependency{SourceID: "agency_wallet", Version: "native-final-journal-v1", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{"agency-durable-final-journal"}, ExcludedPaths: []string{"pre-epoch", "non-journal-agency"}}}
 	if tx.Migrator().HasTable(&AgencyBillingOutbox{}) {
 		var rows []AgencyBillingOutbox
@@ -200,6 +214,7 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 	localComplete := true
 	for _, scan := range scans {
 		d := scan.dependency
+		d.CoverageFrom = coverageFrom
 		d.CoverageTo = &cutoffText
 		encoded, err := common.Marshal(scan.records)
 		if err != nil {
@@ -214,6 +229,10 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 		}
 		if d.PendingCount > 0 {
 			d.Status = "pending"
+		}
+		if !cutoff.After(started) {
+			d.Status = "gap"
+			d.ExcludedPaths = append(d.ExcludedPaths, "coverage_window_not_advanced")
 		}
 		if d.Status == "complete" {
 			d.CapturedThrough = &proof
@@ -247,7 +266,7 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 	}
 	for _, gap := range gaps {
 		proof := CNIdentity(gap.id, strconv.FormatInt(gap.pending, 10), strconv.FormatInt(gap.unknown, 10))
-		d := CNDependency{SourceID: gap.id, Version: "scope-gap-v1", Required: true, CoverageFrom: stream.StartedAt, CoverageTo: &cutoffText, SourceCutoff: &proof, ProofID: &proof, PendingCount: gap.pending, UnknownCount: gap.unknown, SupportedPaths: []string{}, ExcludedPaths: gap.paths, Status: "gap"}
+		d := CNDependency{SourceID: gap.id, Version: "scope-gap-v1", Required: true, CoverageFrom: coverageFrom, CoverageTo: &cutoffText, SourceCutoff: &proof, ProofID: &proof, PendingCount: gap.pending, UnknownCount: gap.unknown, SupportedPaths: []string{}, ExcludedPaths: gap.paths, Status: "gap"}
 		if gap.pending > 0 {
 			d.Status = "pending"
 		}

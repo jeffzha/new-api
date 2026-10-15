@@ -38,7 +38,7 @@ func BindCNChargeRequest(charge, request string, user int) error {
 
 func cnBaseFact(kind, economic, segment, operation, source string, user int64, at time.Time, evidence CNEvidence) CNFact {
 	customer := strconv.FormatInt(user, 10)
-	timestamp := at.UTC().Format(time.RFC3339Nano)
+	timestamp := at.UTC().Format(CNTimeLayout)
 	return CNFact{FactID: CNIdentity(kind, evidence.RecordType, evidence.RecordID), EconomicID: economic, SegmentID: segment, Kind: kind, OperationID: operation, PostingRole: kind, Revision: 1, Basis: "gateway_actual", BillingSource: source, CustomerKey: &customer, OccurredAt: timestamp, EffectiveAt: timestamp, SourcePeriod: timestamp[:7], Status: "confirmed", Quality: "legacy_unknown", SourceEvidence: []CNEvidence{evidence}, Links: CNLinks()}
 }
 
@@ -263,8 +263,35 @@ func cnCaptureAgencyCharge(tx *gorm.DB, source AgencyBillingOutbox) error {
 	if err = common.UnmarshalJsonStr(source.Payload, &event); err != nil {
 		return err
 	}
+	occurred := time.UnixMilli(event.OccurredAtMS)
+	var receipt CNFinanceReceipt
+	err = tx.Where("event_id = ?", event.EventID).First(&receipt).Error
+	if err == nil {
+		occurred, err = time.Parse(CNTimeLayout, receipt.OccurredAt)
+		if err != nil {
+			return err
+		}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	} else if event.EventType == "agency.billing_corrected" || event.EventType == "agency.billing_reversed" {
+		// Legacy reversals reuse usage time. Without a committed CN receipt,
+		// their event day is unknown and must remain a visible capture gap.
+		var correction AgencyBillingCorrection
+		if !tx.Migrator().HasTable(&AgencyBillingCorrection{}) {
+			return errors.New("financial_commit_receipt_missing")
+		}
+		if err = tx.Where("event_id = ?", event.EventID).First(&correction).Error; err != nil {
+			return errors.New("financial_commit_receipt_missing")
+		}
+		if correction.CreatedAtMS <= 0 {
+			return errors.New("financial_commit_receipt_missing")
+		}
+		occurred = time.UnixMilli(correction.CreatedAtMS)
+	}
 	evidence := CNEvidence{System: "gateway-cn", RecordType: "agency_billing_outbox", RecordID: source.EventID, EvidenceID: source.PayloadHash}
-	f := cnBaseFact("charge", event.FinancialChargeID, strconv.Itoa(event.SegmentNo), event.OperationID, "agency_wallet", event.UserID, time.UnixMilli(event.OccurredAtMS), evidence)
+	f := cnBaseFact("charge", event.FinancialChargeID, strconv.Itoa(event.SegmentNo), event.OperationID, "agency_wallet", event.UserID, occurred, evidence)
+	f.EffectiveAt = time.UnixMilli(event.OccurredAtMS).UTC().Format(CNTimeLayout)
+	f.SourcePeriod = f.EffectiveAt[:7]
 	f.FactID = CNIdentity("charge", "agency_billing_outbox", source.EventID)
 	f.Revision = event.JournalRevision
 	f.Status = "settled"
@@ -295,8 +322,8 @@ func cnCaptureAgencyCharge(tx *gorm.DB, source AgencyBillingOutbox) error {
 		}
 		prev := CNIdentity("charge", "agency_billing_outbox", receipt.EventID)
 		f.PreviousFactID = &prev
-		if f.EffectiveAt == f.OccurredAt {
-			f.EffectiveAt = time.UnixMilli(receipt.OccurredAtMS).UTC().Format(time.RFC3339Nano)
+		if op.Revision == operations[0].Revision {
+			f.EffectiveAt = time.UnixMilli(receipt.OccurredAtMS).UTC().Format(CNTimeLayout)
 			f.SourcePeriod = f.EffectiveAt[:7]
 		}
 	}

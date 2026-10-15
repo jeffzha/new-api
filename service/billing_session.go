@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -49,6 +50,9 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	defer s.mu.Unlock()
 	if s.settled {
 		return nil
+	}
+	if s.refunded {
+		return model.ErrCNConflict
 	}
 	// The legacy wallet can acknowledge buffered writes. Keep a durable intent
 	// before that boundary and never publish buffered acknowledgments as cash.
@@ -167,6 +171,26 @@ func (s *BillingSession) Refund(c *gin.Context) {
 	s.mu.Lock()
 	if s.settled || s.refunded || !s.needsRefundLocked() {
 		s.mu.Unlock()
+		return
+	}
+	if wallet, ok := s.funding.(*WalletFunding); ok && wallet.durable {
+		quota := s.tokenConsumed
+		if s.relayInfo.IsPlayground {
+			quota = 0
+		}
+		if err := model.RequestCNWalletCancellation(model.DB, wallet.requestId, wallet.userId, s.relayInfo.TokenId, quota); err != nil {
+			s.mu.Unlock()
+			common.SysError("CN wallet cancellation intent unavailable; retry required")
+			return
+		}
+		s.refunded = true
+		s.mu.Unlock()
+		request, db := wallet.requestId, model.DB
+		gopool.Go(func() {
+			if err := model.CompleteCNWalletCancellation(context.Background(), db, request); err != nil {
+				common.SysError("CN wallet cancellation pending durable recovery")
+			}
+		})
 		return
 	}
 	s.refunded = true

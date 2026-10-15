@@ -20,6 +20,7 @@ import (
 )
 
 const CNFinanceSource = "gateway-cn-finance-v2"
+const CNTimeLayout = "2006-01-02T15:04:05.000000Z"
 
 // CN_EXPORT_0001 is additive. It never changes the v1 exporter or source receipts.
 type CNFinanceStream struct {
@@ -143,10 +144,10 @@ func MigrateCNFinance(db *gorm.DB, gatewayID string) error {
 	if gatewayID == "" || len(gatewayID) > 191 {
 		return errors.New("invalid finance gateway identity")
 	}
-	if err := db.AutoMigrate(&CNFinanceStream{}, &CNFinanceOutbox{}, &CNFinancePublication{}, &CNFinanceIntent{}, &CNFinanceAssociation{}, &CNFinanceGap{}, &CNWalletLifecycle{}); err != nil {
+	if err := db.AutoMigrate(&CNFinanceStream{}, &CNFinanceOutbox{}, &CNFinancePublication{}, &CNFinanceIntent{}, &CNFinanceAssociation{}, &CNFinanceGap{}, &CNWalletLifecycle{}, &CNWalletCancellation{}, &CNFinanceReceipt{}, &CNFundingValueLot{}, &CNFundingValueAllocation{}); err != nil {
 		return err
 	}
-	row := CNFinanceStream{ID: 1, GatewayID: gatewayID, Epoch: uuid.NewString(), StartedAt: time.Now().UTC().Format(time.RFC3339Nano), Migration: "CN_EXPORT_0001"}
+	row := CNFinanceStream{ID: 1, GatewayID: gatewayID, Epoch: uuid.NewString(), StartedAt: time.Now().UTC().Format(CNTimeLayout), Migration: "CN_EXPORT_0001"}
 	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 		return err
 	}
@@ -359,9 +360,19 @@ func StageCNFactTx(tx *gorm.DB, fact CNFact) error {
 	if err != nil || !strings.HasSuffix(fact.EffectiveAt, "Z") || fact.SourcePeriod != effective.Format("2006-01") {
 		return errors.New("invalid effectiveAt")
 	}
+	fact.OccurredAt = at.UTC().Format(CNTimeLayout)
+	fact.EffectiveAt = effective.UTC().Format(CNTimeLayout)
 	if fact.Kind == "funding_lot" || fact.Kind == "funding_allocation" {
 		if fact.Funding == nil {
 			return errors.New("funding evidence missing")
+		}
+		if fact.Kind == "funding_lot" {
+			purchased, ok := fact.Funding["purchasedAt"].(string)
+			timestamp, err := time.Parse(time.RFC3339Nano, purchased)
+			if !ok || err != nil || !strings.HasSuffix(purchased, "Z") {
+				return errors.New("invalid purchasedAt")
+			}
+			fact.Funding["purchasedAt"] = timestamp.UTC().Format(CNTimeLayout)
 		}
 	}
 	fact.PublicationSequence = ""

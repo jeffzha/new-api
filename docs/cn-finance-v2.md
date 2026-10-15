@@ -14,6 +14,12 @@ bound to persistent `OPS_GATEWAY_ID`, with `Cache-Control: no-store`.
   channel/price-only models, disabled/hidden models, vendors and separate pricing.
   Catalog hash is independent from pricing values. Over 10,000 entries or 8 MiB
   fails with 413; no silent truncation. No channel secrets are selected.
+- GET `/api/ops-export/v1/inventory`: repeatable identity snapshot shared with
+  Bridge `objects/sync`, flat user/api_key/channel objects. Only ID/name/type/status
+  columns are selected; soft-deleted users/keys and keys of deleted users are
+  excluded. Envelope: gatewayId, sourceSystem=`gateway-cn`, schemaVersion=1,
+  content-derived snapshotId, snapshotTypes, objects. More than 10,000 total
+  objects or 8 MiB returns 413; unsupported query parameters return 400.
 - GET `/api/ops-export/v2/facts?after=...&limit=...`: new source
   `gateway-cn-finance-v2`, schema `2`, persistent epoch, serialized sequence.
   Cursors are unpadded base64url `cnf2:<epoch>:<sequence>`. The old v1 endpoint's
@@ -30,6 +36,14 @@ bound to persistent `OPS_GATEWAY_ID`, with `Cache-Control: no-store`.
 completeness: inspect `publicationPendingCount` and daily dependencies. Checkpoint
 rows can advance the cursor without an item. Waiting predecessors remain pending;
 quarantined payloads and missing source evidence remain visible blockers.
+
+New wire timestamps use UTC with exactly six fractional digits,
+`YYYY-MM-DDTHH:MM:SS.ffffffZ`. The canonicalization does not change economic
+identities or sourcePeriod. Already published historical payloads are immutable.
+Dependency `coverageFrom == coverageTo` is legal for gap/pending with no covered
+interval; `complete` requires strictly increasing bounds. During the first
+five-minute cutoff window a source reports `coverage_window_not_advanced` rather
+than claiming a complete empty interval.
 
 ## Local capture configuration
 
@@ -83,11 +97,45 @@ net operating benefit.
 
 ## Validation
 
+Durable cancellation first commits `CNWalletCancellation` before the session
+acknowledges refund. A startup/5-second worker drains explicit pending intents,
+including after capture flags are disabled while the exporter remains configured.
+Wallet balance, token quota, cancelled lifecycle, zero-charge fact and completion
+marker commit together. Failures retain attempts/retry time/sanitized error code
+and remain pending in dependency proofs. Intent persistence failure leaves the
+session retryable. Active reservations without a terminal intent are never
+automatically cancelled. Normal settlement still retains the baseline separate
+token transaction; unrelated legacy paths have no new recovery guarantee.
+
+`CNFinanceReceipt` freezes the financial transaction receipt time separately
+from legacy usage event time. Corrections/releases use that receipt for occurredAt
+and UTC daily deltas; effectiveAt/sourcePeriod retain original business time.
+Older audited corrections can use `AgencyBillingCorrection.CreatedAtMS`; a
+legacy reversal without a committed receipt stays an explicit gap.
+
+`CNFundingValueLot` and `CNFundingValueAllocation` conserve exact paid value at
+lot scope. Each new allocation uses HALF_EVEN_18; the final remaining quota
+receives the exact residual. Partial release uses the allocation's frozen actual
+value and full release restores it exactly. Upgrades seed immutable allocation
+heads without repricing published history; inconsistent prior over-allocation
+fails closed. Refund hold/release/retire hooks are a separate follow-up; this
+commit does not enable cash refunds. Held/retired pool fields reserve their
+accounting buckets for that integration.
+
 `model/cn_finance_v2_test.go` consolidates fixture/revision/cursor/daily, durable
 wallet, publisher starvation/poison and catalog regressions. Existing
 `service/opsexport/server_test.go` covers v1 compatibility and v2 auth/error
 contracts. The nine files in `model/testdata/cn-contract` are unchanged approved
 synthetic fixtures, not production evidence.
+
+Native integration tests enter `RecordAgencyTopup`, reserve/finalize the accepted
+agency journal and release the original component allocation. They distinguish
+payment 80 CNY, nominal charge 42 CNY and purchased value 48 CNY, then verify a
+20-quota release reduces purchased value by 16 CNY without fabricating cash
+refund evidence. An aborted final transaction leaves no staged financial facts.
+`S4_TEST_ARTIFACT_DIR` optionally writes actual Gin response bodies from the HTTP
+test using an isolated SQLite database and synthetic inputs. It creates no live
+payment executor and leaves no persistent HTTP server.
 
 Run focused tests with Go 1.25.1+:
 

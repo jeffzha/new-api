@@ -46,6 +46,25 @@ func (s *Server) Catalog(c *gin.Context) {
 	c.Data(200, "application/json; charset=utf-8", payload)
 }
 
+func (s *Server) Inventory(c *gin.Context) {
+	if len(c.Request.URL.Query()) != 0 {
+		cnError(c, 400, "invalid_payload")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	payload, err := model.ReadOpsInventory(ctx, s.DB, s.GatewayID)
+	if errors.Is(err, model.ErrOpsInventoryTooLarge) {
+		cnError(c, 413, "inventory_snapshot_too_large")
+		return
+	}
+	if err != nil {
+		cnError(c, 503, "source_unavailable")
+		return
+	}
+	c.Data(200, "application/json; charset=utf-8", payload)
+}
+
 func (s *Server) FactsV2(c *gin.Context) {
 	limit := 500
 	for key, values := range c.Request.URL.Query() {

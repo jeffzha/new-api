@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -236,6 +237,11 @@ func TestCNRefundAtomicWorkflowAcrossDialects(t *testing.T) {
 			assert.Equal(t, "60", fact.Cumulative.Money.Gross)
 			assert.Nil(t, fact.Recognition)
 			assert.Nil(t, fact.Cumulative.Quota)
+			assert.Nil(t, fact.Conversion)
+			require.Len(t, fact.SourceEvidence, 1)
+			assert.Equal(t, "gateway-cn", fact.SourceEvidence[0].System)
+			assert.Equal(t, "cn_refund_provider_receipt", fact.SourceEvidence[0].RecordType)
+			assert.Equal(t, reserve.ReservationID, fact.SourceEvidence[0].RecordID)
 			var count int64
 			require.NoError(t, s.DB.Model(&CNFinanceOutbox{}).Where("fact_id = ?", paid.CanonicalFactID).Count(&count).Error)
 			assert.EqualValues(t, 1, count)
@@ -259,6 +265,12 @@ func TestCNRefundAtomicWorkflowAcrossDialects(t *testing.T) {
 						exported++
 						assert.Equal(t, "payment_refund", item.PostingRole)
 						assert.Equal(t, r.OperationID, item.OperationID)
+						if dir := os.Getenv("S4R_TEST_ARTIFACT_DIR"); dir != "" {
+							require.NoError(t, os.MkdirAll(dir, 0700))
+							payload, err := common.Marshal(item)
+							require.NoError(t, err)
+							require.NoError(t, os.WriteFile(filepath.Join(dir, "refund-canonical-"+dialect+".json"), payload, 0600))
+						}
 					}
 				}
 				cursor = page["nextCursor"].(string)

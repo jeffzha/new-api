@@ -214,7 +214,7 @@ func cnRefundStageCashTx(tx *gorm.DB, row CNRefundReservation, outcome CNRefundP
 	if err := common.UnmarshalJsonStr(row.RequestJSON, &r); err != nil {
 		return "", err
 	}
-	evidence := CNEvidence{System: row.ProviderName, RecordType: "cn_refund_provider_receipt", RecordID: outcome.ReceiptID, EvidenceID: CNIdentity(outcome.Evidence)}
+	evidence := CNEvidence{System: "gateway-cn", RecordType: "cn_refund_provider_receipt", RecordID: row.Key, EvidenceID: CNIdentity(row.ProviderName, outcome.ReceiptID, outcome.Evidence)}
 	f := cnBaseFact("payment_refund", row.Key, "0", r.OperationID, "agency_wallet", row.UserID, outcome.ConfirmedAt, evidence)
 	f.FactID = CNIdentity("cn-refund-cash", row.Key)
 	f.Quality = "verified_payment"
@@ -228,7 +228,7 @@ func cnRefundStageCashTx(tx *gorm.DB, row CNRefundReservation, outcome CNRefundP
 		return "", err
 	}
 	f.Links["fundingLotIds"] = []string{CNIdentity("agency-lot", lot.SourceKind, lot.SourceID, "paid")}
-	f.Conversion = map[string]any{"sourceUnit": "currency", "quotaPerUnit": nil, "originalCurrency": r.Currency, "settlementCurrency": r.Currency, "exchangeRate": "1", "fxVersion": "identity-1", "rounding": "EXACT_REFUND_QUOTA_V1"}
+	f.Conversion = nil // Original-currency cash fact, with no quota or FX conversion.
 	if err := StageCNFactTx(tx, f); err != nil {
 		return "", err
 	}

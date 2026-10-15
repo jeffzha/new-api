@@ -586,6 +586,7 @@ const rows = [
   ["Providers", "发行商", "發行商", "Fournisseurs", "プロバイダー", "Поставщики", "Nhà cung cấp"],
   ["All", "全部", "全部", "Tout", "すべて", "Все", "Tất cả"],
   ["Other providers", "其他发行商", "其他發行商", "Autres fournisseurs", "その他のプロバイダー", "Другие поставщики", "Nhà cung cấp khác"],
+  ["Pending confirmation", "待确认", "待確認", "En attente de confirmation", "確認待ち", "Ожидает подтверждения", "Chờ xác nhận"],
   ["All channels", "全部渠道", "全部渠道", "Tous les canaux", "すべてのチャネル", "Все каналы", "Tất cả kênh"],
   ["Search models, providers, or channels", "搜索模型、发行商或渠道", "搜尋模型、發行商或渠道", "Rechercher un modèle, un fournisseur ou un canal", "モデル・プロバイダー・チャネルを検索", "Поиск модели, поставщика или канала", "Tìm mô hình, nhà cung cấp hoặc kênh"],
   ["Search models or providers", "搜索模型或发行商", "搜尋模型或發行商", "Rechercher un modèle ou un fournisseur", "モデルまたはプロバイダーを検索", "Поиск модели или поставщика", "Tìm mô hình hoặc nhà cung cấp"],

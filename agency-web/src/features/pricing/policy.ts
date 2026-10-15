@@ -16,7 +16,9 @@ export function suggestedPlatformCoefficients(
   salesBPS: number | null,
 ): { agencyCostBPS: number | null; salesBPS: number } {
   return {
-    agencyCostBPS: agencyCostBPS ?? 10000,
+    // A missing cost is a real pending state. Showing 1.0000 made an
+    // unconfirmed model look configured and could lead to accidental pricing.
+    agencyCostBPS,
     salesBPS: salesBPS ?? 10000,
   };
 }

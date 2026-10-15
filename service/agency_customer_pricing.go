@@ -53,18 +53,19 @@ func AgencyCustomerSales(userID int, modelNames []string) (map[string]int, error
 	if err := common.Unmarshal([]byte(row.PolicyJSON), &policy); err != nil {
 		return nil, err
 	}
-	if err := agencycontract.ValidatePolicy(policy); err != nil {
-		return nil, err
-	}
 	platform, err := model.LoadAgencyPlatformPolicy(model.DB)
 	if err != nil {
 		return nil, err
 	}
+	policy = agencycontract.ConfirmedModelPolicy(policy, platform)
 	if agency.ParentAgencyID == nil {
 		policy, err = agencycontract.ApplyPlatformPolicy(policy, platform)
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err := agencycontract.ValidatePolicy(policy); err != nil {
+		return nil, err
 	}
 	var customerOverrides []model.AgencyCustomerSalesOverride
 	if err := model.DB.Where("agency_id = ? AND user_id = ?", agency.ID, userID).Find(&customerOverrides).Error; err != nil {
@@ -86,6 +87,10 @@ func AgencyCustomerSales(userID int, modelNames []string) (map[string]int, error
 	for _, name := range modelNames {
 		if _, err := agencycontract.ModelKey(name); err != nil {
 			return nil, err
+		}
+		if !agencycontract.ModelPricingConfirmed(platform, name) {
+			sales[name] = 10000
+			continue
 		}
 		coefficient, ok := overrides[name]
 		if !ok {

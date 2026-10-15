@@ -45,6 +45,17 @@ func newAgencyTestApp(t *testing.T) *App {
 	return New(db, db, Config{BasePath: "/agency", PublicBaseURL: "https://gateway.example", SessionIdle: 30 * time.Minute, SessionAbsolute: time.Hour, MaxLoginAttempts: 5, SalesCapBPS: 30000, MinSpreadBPS: 500, WithdrawalsEnabled: true})
 }
 
+func seedConfirmedPlatformPricing(t *testing.T, app *App, prices ...agencycontract.PlatformModelPrice) {
+	t.Helper()
+	policy := agencycontract.PlatformPolicy{Revision: 1, ModelPrices: prices}
+	require.NoError(t, agencycontract.ValidatePlatformPolicy(policy))
+	encoded, err := common.Marshal(policy)
+	require.NoError(t, err)
+	version := model.AgencyPlatformPriceVersion{Revision: 1, PolicyJSON: string(encoded), PolicyHash: "test-confirmed-pricing", CreatedByID: 1, CreatedAtMS: 1}
+	require.NoError(t, app.db.Create(&version).Error)
+	require.NoError(t, app.db.Create(&model.AgencyPlatformPriceState{ID: 1, Revision: 1, CurrentVersionID: version.ID, UpdatedAtMS: 1}).Error)
+}
+
 func TestCreateAgencyAndInvitePreview(t *testing.T) {
 	app := newAgencyTestApp(t)
 	require.NoError(t, app.db.AutoMigrate(&model.User{}, &model.Task{}))
@@ -84,6 +95,7 @@ func TestRootActingAgencyCanReadDirectChildPricing(t *testing.T) {
 	channel := model.Channel{Name: "private-upstream-name", Type: 1, Key: "unused", Status: common.ChannelStatusEnabled}
 	require.NoError(t, app.db.Create(&channel).Error)
 	require.NoError(t, app.db.Create(&model.Ability{Group: "default", Model: "glm-5.3", ChannelId: channel.Id, Enabled: true}).Error)
+	seedConfirmedPlatformPricing(t, app, agencycontract.PlatformModelPrice{OriginModelName: "glm-5.3", ChannelCosts: []agencycontract.PlatformChannelCost{{ChannelID: channel.Id, PlatformCostBPS: 7000}}, AgencyCostBPS: 7500, DefaultSalesBPS: 9000})
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)
 	context.Request = httptest.NewRequest(http.MethodGet, "/agency/api/v1/children/"+strconv.FormatInt(child.ID, 10)+"/pricing", nil)
@@ -312,12 +324,15 @@ func TestSalesPolicyPublishPreservesRootSettlementOverrides(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, agencycontract.ValidatePolicy(candidate))
-	require.Len(t, candidate.ModelOverrides, 1)
+	require.Len(t, candidate.ModelOverrides, 2)
 	require.Equal(t, "settlement-only-model", candidate.ModelOverrides[0].OriginModelName)
 	require.NotNil(t, candidate.ModelOverrides[0].SettlementBPS)
 	require.Equal(t, settlement, *candidate.ModelOverrides[0].SettlementBPS)
 	require.NotNil(t, candidate.ModelOverrides[0].SalesBPS)
 	require.Equal(t, newSales, *candidate.ModelOverrides[0].SalesBPS)
+	require.Equal(t, "sales-only-model", candidate.ModelOverrides[1].OriginModelName)
+	require.NotNil(t, candidate.ModelOverrides[1].SalesBPS)
+	require.Equal(t, oldSales, *candidate.ModelOverrides[1].SalesBPS)
 }
 
 func TestPricingErrorsAreSafeChineseMessages(t *testing.T) {
@@ -505,8 +520,8 @@ func TestPlatformPricingPreservesChildCostsAcrossDialects(t *testing.T) {
 				name         string
 				cost, status int
 			}{
-				{"initial publication", 10000, http.StatusOK},
-				{"republish unchanged costs", 10000, http.StatusOK},
+				{"initial publication", 6500, http.StatusOK},
+				{"republish unchanged costs", 6500, http.StatusOK},
 				{"root below new cost", 11000, http.StatusConflict},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
@@ -534,7 +549,15 @@ func TestPlatformPricingPreservesChildCostsAcrossDialects(t *testing.T) {
 			}
 			_, savedChild, err := app.loadAgencyPolicy(child.ID)
 			require.NoError(t, err)
-			assert.Equal(t, childPolicy, savedChild, "platform publication must not rewrite a child policy")
+			assert.Equal(t, int64(2), savedChild.Revision)
+			qwenPrice, err := agencycontract.Resolve(savedChild, "qwen-image-2.0")
+			require.NoError(t, err)
+			assert.Equal(t, childCost, qwenPrice.SettlementBPS, "an existing manual child cost must be preserved")
+			assert.Equal(t, childSales, qwenPrice.SalesBPS, "an existing manual sale must be preserved")
+			newModelPrice, err := agencycontract.Resolve(savedChild, "new-model")
+			require.NoError(t, err)
+			assert.Equal(t, 6000, newModelPrice.SettlementBPS, "a newly confirmed model inherits its parent boundary")
+			assert.Equal(t, 7000, newModelPrice.SalesBPS)
 			for _, tc := range []struct {
 				name                string
 				cost, sales, status int
@@ -569,6 +592,7 @@ func TestPlatformPricingPreservesChildCostsAcrossDialects(t *testing.T) {
 			_, invalidChild, err := app.loadAgencyPolicy(child.ID)
 			require.NoError(t, err)
 			invalidChild.DefaultChildCostBPS = 7000
+			invalidChild.ChildCostSource = agencycontract.PriceSourceManual
 			encoded, err := common.Marshal(invalidChild)
 			require.NoError(t, err)
 			require.NoError(t, db.Model(&model.AgencyPricePolicyVersion{}).Where("agency_id = ? AND revision = ?", child.ID, invalidChild.Revision).Update("policy_json", string(encoded)).Error)

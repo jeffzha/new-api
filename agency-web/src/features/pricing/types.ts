@@ -63,6 +63,9 @@ export type PlatformPriceRow = {
   agency_cost_bps: number | null;
   child_cost_bps: number | null;
   default_sales_bps: number | null;
+  /** Explicit false means the administrator has not confirmed the cost chain. */
+  pricing_confirmed?: boolean;
+  agency_cost_confirmed?: boolean;
 };
 
 export type PlatformPricing = {

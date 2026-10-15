@@ -61,6 +61,15 @@ func customerSalesKey(modelName string) (string, string, error) {
 }
 
 func (a *App) validateCustomerSales(agencyID int64, modelName string, sales int) error {
+	if modelName != "" {
+		platform, err := model.LoadAgencyPlatformPolicy(a.db)
+		if err != nil {
+			return err
+		}
+		if !agencycontract.ModelPricingConfirmed(platform, modelName) {
+			return errors.New("model pricing is pending platform confirmation")
+		}
+	}
 	agency, policy, err := a.loadAgencyPolicy(agencyID)
 	if err != nil {
 		return err
@@ -115,11 +124,23 @@ func validateCustomerSalesAgainstCost(cost, minSpread, sales int) error {
 
 // validateCustomerSalesPolicyTx protects negotiated prices when agency costs change.
 func validateCustomerSalesPolicyTx(tx *gorm.DB, agencyID int64, policy agencycontract.Policy) error {
+	platform, err := model.LoadAgencyPlatformPolicy(tx)
+	if err != nil {
+		return err
+	}
+	return validateCustomerSalesForPlatformTx(tx, agencyID, policy, platform)
+}
+
+func validateCustomerSalesForPlatformTx(tx *gorm.DB, agencyID int64, policy agencycontract.Policy, platform agencycontract.PlatformPolicy) error {
+	policy = agencycontract.ConfirmedModelPolicy(policy, platform)
 	var overrides []model.AgencyCustomerSalesOverride
 	if err := tx.Where("agency_id = ?", agencyID).Find(&overrides).Error; err != nil {
 		return err
 	}
 	for _, override := range overrides {
+		if override.OriginModelName != "" && !agencycontract.ModelPricingConfirmed(platform, override.OriginModelName) {
+			continue
+		}
 		if err := validateCustomerSalesPolicy(policy, override.OriginModelName, override.SalesBPS); err != nil {
 			return &customerSalesPolicyError{UserID: override.UserID, ModelName: override.OriginModelName, Cause: err}
 		}

@@ -43,6 +43,9 @@ type salesPricingRequest struct {
 }
 
 func pricingErrorMessage(err error) string {
+	if propagation, ok := err.(*childPricingPropagationError); ok {
+		return propagation.Error() + " 修改位置：对应代理商 → 价格策略，客户单独定价请到客户管理 → 客户销售系数。"
+	}
 	var customerErr *customerSalesPolicyError
 	if errors.As(err, &customerErr) {
 		var coefficientErr *customerSalesCoefficientError
@@ -246,7 +249,7 @@ func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agen
 	}
 	for _, price := range platform.ModelPrices {
 		_, hasPublicAbility := publicModels[price.OriginModelName]
-		if !priceVisibleToAgencies(price, hasPublicAbility, internalChannels) {
+		if !price.IsPricingConfirmed() || !priceVisibleToAgencies(price, hasPublicAbility, internalChannels) {
 			continue
 		}
 		resolved, resolveErr := agencycontract.Resolve(effective, price.OriginModelName)
@@ -359,9 +362,17 @@ func (a *App) listPublicModels(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "database_error", "读取模型列表失败", nil)
 		return
 	}
+	platform, err := model.LoadAgencyPlatformPolicy(a.db)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取平台价格策略失败", nil)
+		return
+	}
 	seen := make(map[string]struct{}, len(rows))
 	models := make([]string, 0, len(rows))
 	for _, row := range publicLiveModelChannels(rows) {
+		if !agencycontract.ModelPricingConfirmed(platform, row.Model) {
+			continue
+		}
 		if query != "" && !strings.Contains(strings.ToLower(row.Model), query) {
 			continue
 		}
@@ -590,6 +601,11 @@ func (a *App) effectivePolicy(policy agencycontract.Policy) (agencycontract.Poli
 // own revision and must never be overwritten by the platform boundary.
 func (a *App) effectiveAgencyPolicy(agency model.Agency, policy agencycontract.Policy) (agencycontract.Policy, error) {
 	if agency.ParentAgencyID != nil {
+		platform, err := model.LoadAgencyPlatformPolicy(a.db)
+		if err != nil {
+			return agencycontract.Policy{}, err
+		}
+		policy = agencycontract.ConfirmedModelPolicy(policy, platform)
 		if err := agencycontract.ValidatePolicy(policy); err != nil {
 			return agencycontract.Policy{}, err
 		}
@@ -609,6 +625,9 @@ func (a *App) mergePublishedSalesPolicy(base agencycontract.Policy, request sale
 
 	platformModels := make(map[string]struct{}, len(platform.ModelPrices))
 	for _, price := range platform.ModelPrices {
+		if !price.IsPricingConfirmed() {
+			continue
+		}
 		key, keyErr := agencycontract.ModelKey(price.OriginModelName)
 		if keyErr != nil {
 			return agencycontract.Policy{}, keyErr
@@ -629,9 +648,6 @@ func (a *App) mergePublishedSalesPolicy(base agencycontract.Policy, request sale
 			return agencycontract.Policy{}, keyErr
 		}
 		copy := override
-		if _, managed := platformModels[key]; managed {
-			copy.SalesBPS = nil
-		}
 		if copy.SettlementBPS == nil && copy.ChildCostBPS == nil && copy.SalesBPS == nil {
 			continue
 		}
@@ -648,11 +664,12 @@ func (a *App) mergePublishedSalesPolicy(base agencycontract.Policy, request sale
 		}
 		if position, exists := positions[key]; exists {
 			candidate.ModelOverrides[position].SalesBPS = override.SalesBPS
+			candidate.ModelOverrides[position].SalesSource = agencycontract.PriceSourceManual
 			continue
 		}
 		if override.SalesBPS != nil {
 			positions[key] = len(candidate.ModelOverrides)
-			candidate.ModelOverrides = append(candidate.ModelOverrides, agencycontract.ModelOverride{OriginModelName: override.OriginModelName, SalesBPS: override.SalesBPS})
+			candidate.ModelOverrides = append(candidate.ModelOverrides, agencycontract.ModelOverride{OriginModelName: override.OriginModelName, SalesBPS: override.SalesBPS, SalesSource: agencycontract.PriceSourceManual})
 		}
 	}
 	for _, override := range request.ModelChildCostOverrides {
@@ -660,11 +677,15 @@ func (a *App) mergePublishedSalesPolicy(base agencycontract.Policy, request sale
 		if keyErr != nil {
 			return agencycontract.Policy{}, keyErr
 		}
+		if _, managed := platformModels[key]; !managed {
+			return agencycontract.Policy{}, errors.New("sales coefficient model is not managed by platform pricing")
+		}
 		if position, exists := positions[key]; exists {
 			candidate.ModelOverrides[position].ChildCostBPS = override.ChildCostBPS
+			candidate.ModelOverrides[position].ChildCostSource = agencycontract.PriceSourceManual
 		} else if override.ChildCostBPS != nil {
 			positions[key] = len(candidate.ModelOverrides)
-			candidate.ModelOverrides = append(candidate.ModelOverrides, agencycontract.ModelOverride{OriginModelName: override.OriginModelName, ChildCostBPS: override.ChildCostBPS})
+			candidate.ModelOverrides = append(candidate.ModelOverrides, agencycontract.ModelOverride{OriginModelName: override.OriginModelName, ChildCostBPS: override.ChildCostBPS, ChildCostSource: agencycontract.PriceSourceManual})
 		}
 	}
 	return candidate, nil
@@ -689,7 +710,7 @@ func mergeSalesPolicy(base agencycontract.Policy, request salesPricingRequest) (
 			return agencycontract.Policy{}, err
 		}
 		remember(key)
-		byKey[key] = agencycontract.ModelOverride{OriginModelName: override.OriginModelName, SettlementBPS: override.SettlementBPS, ChildCostBPS: override.ChildCostBPS}
+		byKey[key] = override
 	}
 	for _, override := range request.ModelSalesOverrides {
 		key, err := agencycontract.ModelKey(override.OriginModelName)
@@ -702,6 +723,7 @@ func mergeSalesPolicy(base agencycontract.Policy, request salesPricingRequest) (
 			current.OriginModelName = override.OriginModelName
 		}
 		current.SalesBPS = override.SalesBPS
+		current.SalesSource = agencycontract.PriceSourceManual
 		byKey[key] = current
 	}
 	for _, override := range request.ModelChildCostOverrides {
@@ -715,6 +737,7 @@ func mergeSalesPolicy(base agencycontract.Policy, request salesPricingRequest) (
 			current.OriginModelName = override.OriginModelName
 		}
 		current.ChildCostBPS = override.ChildCostBPS
+		current.ChildCostSource = agencycontract.PriceSourceManual
 		byKey[key] = current
 	}
 	candidate.ModelOverrides = make([]agencycontract.ModelOverride, 0, len(byKey))
@@ -786,9 +809,9 @@ func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, po
 			return err
 		}
 		if err := validateCustomerSalesPolicyTx(tx, agency.ID, policy); err != nil {
-			return &childPricingPropagationError{ChildName: agency.DisplayName, Cause: err}
+			return &childPricingPropagationError{AgencyPath: agency.DisplayName, Cause: err}
 		}
-		if syncChildren {
+		{
 			if err := a.syncDirectChildPoliciesTx(tx, c, identity, agency, policy, reason, actorType); err != nil {
 				return err
 			}

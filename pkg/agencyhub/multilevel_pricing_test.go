@@ -46,6 +46,7 @@ func TestCustomerSalesOverridePersistsModelSpecificValue(t *testing.T) {
 func TestCustomerSalesPricingSeparatesInheritedAndCustomerOverride(t *testing.T) {
 	app := newAgencyTestApp(t)
 	modelName := "model-a"
+	seedConfirmedPlatformPricing(t, app, agencycontract.PlatformModelPrice{OriginModelName: modelName, PlatformCostBPS: 6500, AgencyCostBPS: 7000, DefaultSalesBPS: 9000})
 	agencySales := 9200
 	policy := agencycontract.Policy{
 		DefaultSettlementBPS: 7000,
@@ -94,6 +95,10 @@ func TestCustomerSalesPricingSeparatesInheritedAndCustomerOverride(t *testing.T)
 func TestCustomerSalesPricingBatchPublishesAtomically(t *testing.T) {
 	app := newAgencyTestApp(t)
 	modelA, modelB := "model-a", "model-b"
+	seedConfirmedPlatformPricing(t, app,
+		agencycontract.PlatformModelPrice{OriginModelName: modelA, PlatformCostBPS: 6500, AgencyCostBPS: 7000, DefaultSalesBPS: 9000},
+		agencycontract.PlatformModelPrice{OriginModelName: modelB, PlatformCostBPS: 6500, AgencyCostBPS: 7000, DefaultSalesBPS: 9000},
+	)
 	policy := agencycontract.Policy{
 		DefaultSettlementBPS: 7000,
 		DefaultSalesBPS:      9000,
@@ -205,12 +210,13 @@ func TestCustomerSalesPricingBatchPublishesAtomically(t *testing.T) {
 func TestCreateChildAgencyReturnsCredentialsAndHierarchy(t *testing.T) {
 	t.Setenv("AGENCY_HUB_DELIVERY_KEY", "01234567890123456789012345678901")
 	app := newAgencyTestApp(t)
+	seedConfirmedPlatformPricing(t, app, agencycontract.PlatformModelPrice{OriginModelName: "model-a", PlatformCostBPS: 7000, AgencyCostBPS: 7500, DefaultSalesBPS: 9000})
 	parentPolicy := agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultChildCostBPS: 8000, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
 	parent, _, err := app.CreateAgency(1, "Parent agency", "parent-operator", parentPolicy)
 	require.NoError(t, err)
 	var account model.AgencyOperatorAccount
 	require.NoError(t, app.db.Where("agency_id = ?", parent.ID).First(&account).Error)
-	body := []byte(`{"display_name":"Child agency","operator_username":"child-operator","pricing":{"default_settlement_bps":8000,"default_sales_bps":9000,"min_spread_bps":500,"sales_cap_bps":30000,"model_overrides":[]}}`)
+	body := []byte(`{"display_name":"Child agency","operator_username":"child-operator"}`)
 
 	created := httptest.NewRecorder()
 	createContext, _ := gin.CreateTestContext(created)
@@ -292,7 +298,7 @@ func TestCreateChildAgencyReturnsCredentialsAndHierarchy(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, unscoped.Code, unscoped.Body.String())
 }
 
-func TestCreateChildAgencyRequiresParentChildCost(t *testing.T) {
+func TestCreateChildAgencyWhilePlatformPricingIsPending(t *testing.T) {
 	t.Setenv("AGENCY_HUB_DELIVERY_KEY", "01234567890123456789012345678901")
 	app := newAgencyTestApp(t)
 	parentPolicy := agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
@@ -310,18 +316,27 @@ func TestCreateChildAgencyRequiresParentChildCost(t *testing.T) {
 	context.Set("agency_identity", &Identity{ActorType: ActorTypeOperator, ActorID: account.ID, AgencyID: &parent.ID})
 	app.createChildAgencyHTTP(context)
 
-	require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
-	var response map[string]any
+	require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			AgencyID int64 `json:"agency_id"`
+		} `json:"data"`
+	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
-	require.Equal(t, false, response["success"])
-	errorData, ok := response["error"].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "parent_unavailable", errorData["code"])
-	require.Contains(t, errorData["message"], "先在价格策略中设置下一级代理商成本系数")
+	require.True(t, response.Success)
+	_, childPolicy, err := app.loadAgencyPolicy(response.Data.AgencyID)
+	require.NoError(t, err)
+	require.Zero(t, childPolicy.DefaultSettlementBPS)
+	require.Zero(t, childPolicy.DefaultChildCostBPS)
+	require.Equal(t, 10000, childPolicy.DefaultSalesBPS)
+	require.Empty(t, childPolicy.ModelOverrides)
 }
 
 func TestChildAgencySalesInheritanceCoversInheritedCost(t *testing.T) {
 	app := newAgencyTestApp(t)
+	seedConfirmedPlatformPricing(t, app, agencycontract.PlatformModelPrice{OriginModelName: "model-a", PlatformCostBPS: 6500, AgencyCostBPS: 7000, DefaultSalesBPS: 8000})
+	modelChildCost := 7800
 	parentPolicy := agencycontract.Policy{
 		DefaultSettlementBPS: 7000,
 		DefaultChildCostBPS:  7800,
@@ -330,16 +345,18 @@ func TestChildAgencySalesInheritanceCoversInheritedCost(t *testing.T) {
 		SalesCapBPS:          30000,
 		ModelOverrides: []agencycontract.ModelOverride{{
 			OriginModelName: "model-a",
+			ChildCostBPS:    &modelChildCost,
 			SalesBPS:        func() *int { value := 8000; return &value }(),
+			ChildCostSource: agencycontract.PriceSourceManual,
+			SalesSource:     agencycontract.PriceSourceManual,
 		}},
 	}
 	parent, _, err := app.CreateAgency(1, "Parent sales inheritance", "parent-sales-inheritance", parentPolicy)
 	require.NoError(t, err)
 
 	childPolicy, err := inheritChildCostPolicy(app.db, parent.ID, agencycontract.Policy{
-		DefaultSalesBPS: 10000,
-		MinSpreadBPS:    500,
-		SalesCapBPS:     30000,
+		MinSpreadBPS: 500,
+		SalesCapBPS:  30000,
 	})
 	require.NoError(t, err)
 	require.Equal(t, 7800, childPolicy.DefaultSettlementBPS)

@@ -83,6 +83,75 @@ func TestCNTaskAcrossDialects(t *testing.T) {
 			var count int64
 			require.NoError(t, db.Model(&CNTaskBilling{}).Count(&count).Error)
 			assert.Zero(t, count)
+			t.Run("upgrade_existing_receipts_exclude_other_lanes", func(t *testing.T) {
+				for i, oldLane := range []string{"wallet", "subscription"} {
+					t.Run(oldLane, func(t *testing.T) {
+						userID := 2000 + i
+						request := "upgrade-" + oldLane
+						require.NoError(t, db.Create(&User{Id: userID, Username: request, AffCode: request, Quota: 10000}).Error)
+						require.NoError(t, db.Create(&Token{Id: userID, UserId: userID, Key: request, RemainQuota: 10000}).Error)
+						require.NoError(t, db.Create(&SubscriptionPlan{Id: userID, Title: request, TotalAmount: 10000, QuotaResetPeriod: SubscriptionResetNever}).Error)
+						require.NoError(t, db.Create(&UserSubscription{Id: userID, UserId: userID, PlanId: userID, AmountTotal: 10000, Status: "active", StartTime: time.Now().Unix() - 1, EndTime: time.Now().Add(time.Hour).Unix()}).Error)
+						require.NoError(t, db.Migrator().DropTable(&CNTaskRequestOwner{}))
+						if oldLane == "wallet" {
+							ok, err := ReserveCNWallet(request, userID, 100, true)
+							require.NoError(t, err)
+							require.True(t, ok)
+						} else {
+							_, err := PreConsumeCNSubscription(request, userID, 100, userID, false, false)
+							require.NoError(t, err)
+						}
+						var historical any = &CNWalletLifecycle{}
+						if oldLane == "subscription" {
+							historical = &CNSubscriptionLifecycle{}
+						}
+						require.NoError(t, db.Where("request_id = ?", request).First(historical).Error)
+						originalReceipt, err := common.Marshal(historical)
+						require.NoError(t, err)
+						for range 2 {
+							require.NoError(t, MigrateCNFinance(db, "test-cn"))
+						}
+						if oldLane == "wallet" {
+							_, err := PreConsumeCNSubscription(request, userID, 100, userID, false, false)
+							require.ErrorIs(t, err, ErrCNConflict)
+						} else {
+							_, err := ReserveCNWallet(request, userID, 100, true)
+							require.ErrorIs(t, err, ErrCNConflict)
+						}
+						_, err = PrepareCNTask(&Task{TaskID: request, UserId: userID, ChannelId: userID, Platform: constant.TaskPlatform("alibaba")}, request, TaskBillingSourceWallet, 100, userID, false, false)
+						require.ErrorIs(t, err, ErrCNConflict)
+						require.NoError(t, db.Where("request_id = ?", request).First(historical).Error)
+						preservedReceipt, err := common.Marshal(historical)
+						require.NoError(t, err)
+						require.Equal(t, originalReceipt, preservedReceipt)
+						var owners, receipts int64
+						require.NoError(t, db.Model(&CNTaskRequestOwner{}).Where("request_id = ?", request).Count(&owners).Error)
+						require.Zero(t, owners, "incompatible historical receipt must roll back the new claim")
+						for _, receipt := range []any{&CNTaskBilling{}, &CNWalletLifecycle{}, &CNSubscriptionLifecycle{}} {
+							var n int64
+							require.NoError(t, db.Model(receipt).Where("request_id = ?", request).Count(&n).Error)
+							receipts += n
+						}
+						require.EqualValues(t, 1, receipts)
+						var user User
+						var sub UserSubscription
+						require.NoError(t, db.First(&user, userID).Error)
+						require.NoError(t, db.First(&sub, userID).Error)
+						require.EqualValues(t, 100, int64(10000-user.Quota)+sub.AmountUsed)
+						if oldLane == "wallet" {
+							_, err := ReserveCNWallet(request, userID, 100, true)
+							require.NoError(t, err, "original lane remains resumable")
+						} else {
+							_, err := PreConsumeCNSubscription(request, userID, 100, userID, false, false)
+							require.NoError(t, err, "original lane remains resumable")
+						}
+						var owner CNTaskRequestOwner
+						require.NoError(t, db.Where("request_id = ?", request).First(&owner).Error)
+						require.Equal(t, oldLane, owner.Lane)
+						require.Equal(t, userID, owner.UserID)
+					})
+				}
+			})
 			t.Run("concurrent_first_prepare_cross_lane", func(t *testing.T) {
 				for scenario := range 8 {
 					request := fmt.Sprintf("race-request-%d", scenario)

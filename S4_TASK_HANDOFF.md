@@ -1,5 +1,23 @@
 # S4 Ordinary Task Single Settler
 
+## Q59 Follow-Up: Pre-Claim Receipt Upgrade
+
+Confirmed before the fix on SQLite: an existing wallet receipt admitted a new
+subscription reserve after migration, and an existing subscription receipt
+admitted a new wallet reserve. Both tests called real prepare entrances with
+the claim table absent, then migrated twice before invoking the other lane.
+Evidence: `model/testdata/cn-task/q59-before.log`.
+
+Request claim now checks existing wallet, subscription and Task receipt owner
+and lane inside the same transaction, under the unique claim row lock. Conflicts
+roll back the new claim; historical receipts are never rewritten or deleted.
+The original lane can still resume and claim its original identity.
+`go test ./model -run 'CNTaskAcrossDialects|CNWallet|CNSubscription' -count=1 -v`
+PASS (35.833s) on SQLite 3.50.4, MySQL 8.0.39 and PostgreSQL 17.6. Tests verify
+exact original receipt bytes, only one combined reserve, no conflicting owner,
+and original-lane resumption; the fresh cross-user three-lane race remains PASS.
+Evidence: `model/testdata/cn-task/q59-matrix.log`.
+
 ## Q58 Follow-Up: Stale Reconciliation Worker
 
 The existing Attempts counter now fences worker claims and retry/finish writes.

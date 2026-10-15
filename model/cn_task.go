@@ -100,6 +100,24 @@ func cnClaimTaskRequestTx(tx *gorm.DB, request string, user int, lane string) er
 	if owner.UserID != user || owner.Lane != lane {
 		return ErrCNConflict
 	}
+	// Requests reserved before the claim table existed still own their lane.
+	// Check under the unique claim lock before adopting a historical request.
+	for _, historical := range []struct {
+		model any
+		lane  string
+	}{{&CNWalletLifecycle{}, "wallet"}, {&CNSubscriptionLifecycle{}, "subscription"}, {&CNTaskBilling{}, "task"}} {
+		var receipt struct{ UserID int }
+		err := lockForUpdate(tx).Model(historical.model).Select("user_id").Where("request_id = ?", request).Take(&receipt).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if historical.lane != lane || receipt.UserID != user {
+			return ErrCNConflict
+		}
+	}
 	return nil
 }
 

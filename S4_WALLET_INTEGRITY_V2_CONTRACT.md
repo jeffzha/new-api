@@ -228,9 +228,14 @@ Legacy required gaps and their unknown counts are never rewritten or suppressed.
 All objects below are strict: reject unknown/missing keys, duplicate JSON keys,
 invalid enum values and noncanonical encodings. Nullable fields are present as
 null. IDs are nonempty UTF-8 strings; array ordering is specified below. Sequence,
-ordinal, revision, quota and count fields are decimal strings, regex
-`0|[1-9][0-9]*`, bounded to signed int64; signed quota delta permits `-` only for
-nonzero values. Values are canonical exact decimal strings, never JSON floats.
+ordinal, revision, count and nonnegative quota fields are decimal strings, regex
+`0|[1-9][0-9]*`, bounded to signed int64. The signed int64 exceptions are admission
+`openingBalance,openingUnknownQuota`, originalBody `balanceBefore,balanceAfter`,
+and delta fields `quotaDelta,heldDelta`; these use `0|-?[1-9][0-9]*` with no `-0`.
+All other quota fields, including held/actual before/after, cumulativeActual,
+knownQuota and unknownQuota, are nonnegative. Preserve negative historical debt
+and signed unknown balance exactly; never clamp them to zero on admission or
+export. Values are canonical exact decimal strings, never JSON floats.
 Times use existing CN UTC microsecond precision (`2006-01-02T15:04:05.000000Z`). Hashes use lowercase
 `sha256:` plus 64 hex digits. Hash input is UTF-8 RFC 8785 JCS with no BOM/newline.
 Both producers and consumers must use mature RFC 8785 implementations and the
@@ -247,12 +252,13 @@ snapshot. GET never scans mutable native/capture tables. The manifest has exactl
 | --- | --- |
 | schema | literal `cn-funding-integrity-manifest-v2` |
 | sourceId, version, path | exact tagged values above |
-| sourceSystem, gatewayId, streamEpoch | existing immutable fact stream identity |
+| sourceSystem, gatewayId, streamEpoch | sourceSystem literal `gateway-cn-finance-v2`; gatewayId and streamEpoch are the existing immutable fact stream identity |
 | integrityEpoch | independent UUID; never replaces streamEpoch |
 | policyVersion, writerProtocolVersion | `ordinary-unknown-first-paid-fifo-v1`, `native-mutation-receipt-v2` |
 | batchSequence, parentProofId | positive decimal string; first batch `1`/null, otherwise previous source-frozen proof hash in this integrity epoch |
 | controlGeneration, writerSetHash, fenceHash | durable generation and frozen control/fence digests |
 | membershipThrough, mutationThrough, publicationThrough | committed membership/mutation counter and original stream publication sequence |
+| coverageFrom, coverageTo | UTC microsecond strings; exact declared half-open reporting range, coverageFrom < coverageTo |
 | capturedAt, sourceCutoff, capturedThrough | UTC times; informational, not membership predicates |
 | publishedThrough | decimal publication sequence, equal to publicationThrough and base dependency publishedThrough |
 | authorityKinds | sorted array `charge,funding_allocation,funding_lot,payment,recognized_revenue` |
@@ -319,7 +325,8 @@ known-value ownership. `nativeKind` identifies the original source boundary
 balanceAfter,heldBefore,heldAfter,actualBefore,actualAfter,billingModeBefore,
 billingModeAfter,nativeStatus,paymentSnapshot,quotaConversionSnapshot,effectiveAt,
 occurredAt`. Schema is `cn-original-mutation-v2`. IDs/status/modes are strings;
-amounts use signed quota strings, nativeRevision is positive. The two snapshot
+balances use signed int64 quota strings; held/actual fields are nonnegative
+int64 quota strings, and nativeRevision is positive. The two snapshot
 fields are null except for topup_credit, where each is either null (unknown value)
 or the unchanged committed snapshot object from TopUp; their existing exact
 schemas stay unchanged. Every field is present for every nativeKind: held and
@@ -430,7 +437,16 @@ The claimed owner is fixed on the first accepted grant and shared by every
 revision; authority ID, integrityEpoch and batch are attributes, not key material.
 Opening unknown/external chains cannot later acquire a native known owner.
 
-Each new frozen batch is cumulative and extends the prior accepted batch:
+Maintain three separate durable heads per source/stream/integrity epoch:
+`sourceFrozenHead` is Gateway's last sealed batch; `importedHead` is Ops' last
+verified batch imported in parent order, including pending/gap batches;
+`authorizedHead` is Ops' last complete eligible batch authorized for new grants.
+An imported pending/gap batch cannot advance authorizedHead or grant new facts,
+but MUST advance importedHead after successful structural/hash/parent verification
+so its resolving child can later pass parent CAS. Malformed or unverifiable
+payloads do not advance importedHead. Retain every batch's status independently.
+
+Each new frozen batch is cumulative and extends sourceFrozenHead:
 
 1. Freeze against one committed counter/snapshot. batchSequence increments by one,
    parentProofId is the exact previous source-frozen proof (Gateway cannot know
@@ -448,20 +464,25 @@ Each new frozen batch is cumulative and extends the prior accepted batch:
    and row hashes across batches, not page ordinal prefixes. Late
    revisions have new mutation/publication sequences but original chain owner,
    even when effectiveAt predates admission. They cannot be dropped by time.
-4. In one Ops transaction, CAS the accepted head from
+4. In one Ops transaction, CAS importedHead from
    `(source,streamEpoch,integrityEpoch,parentProofId,batchSequence-1)` to this
    verified imported proof head. Ops fetches missing source-frozen parents and
    imports every parent in order. A complete eligible batch atomically claims
-   new chains/facts and advances ingest authorization; pending/gap batches are
-   durably imported without new grants and retain their findings/control fence.
+   new chains/facts and advances authorizedHead; pending/gap batches are
+   durably imported, advance importedHead without new grants, and retain their
+   findings/control fence. A complete child may advance authorizedHead after
+   verifying the full cumulative graph and all retained/resolved findings,
+   even when its immediate parent was pending/gap; its parent CAS uses importedHead.
    Same proof retry is idempotent. Different child of an already advanced head
    conflicts; do not partially install either child. Source freeze itself uses
    a durable parent-head CAS, so source siblings cannot be sealed normally.
-5. Ingestion may post only exact granted membership from verified accepted
+5. Ingestion may post only exact granted membership from verified authorized
    batches, and borrowed facts use their existing unique owner. Arrival ahead of
    a verified batch waits. New batches permit continuous sync; accepting the first
    batch is not permanent permission for future arbitrary facts. Publication lag
-   or broken capture stops head advancement and preserves prior owner/corrections.
+   or broken capture stops new grants and authorizedHead advancement, while
+   verified pending/gap batches continue to advance importedHead in parent order.
+   Prior owners and their already authorized corrections remain preserved.
 
 The fixed nullable `resolvesFindingId` references an earlier finding, and counts consider only
 unresolved heads. A resolution has the same category/entity and reason evidence,
@@ -611,7 +632,9 @@ version; index compaction/epoch reset requires a separate reviewed protocol.
 
 Ops checkpoints discovery by freezeSequence only, after the entry and complete
 immutable payload are durably stored (verification/grant work may remain pending).
-It persists each manifest's separate verified/imported/authorized state. A list
+It persists each manifest's separate verified/imported/authorized state and the
+distinct importedHead/authorizedHead defined above. Pending/gap imports advance
+importedHead, never authorizedHead or new grants. A list
 poll after hasMore=false resumes at nextCursor and finds later freezes, including
 equal-publication and broken-capture batches. Duplicate entry/proof retries are
 idempotent only with identical fields. Fetch any missing parent by proofId and
@@ -629,3 +652,19 @@ already frozen `cn_daily(day,seq)` row. The exact existing CNDependency shape ab
 is the tagged dependency representation for an immutable proof; consumers derive
 it from that exact frozen manifest/proofId when storing the v2 snapshot register.
 Changing sidecars do not make old global payment/charge/historical proofs complete.
+
+The manifest itself MUST include `coverageFrom` and `coverageTo`, both nonnull UTC
+microsecond strings (`CNTimeLayout`) with coverageFrom < coverageTo. Derivation of
+the immutable tagged dependency copies both fields exactly, and its sourceCutoff,
+capturedThrough and publishedThrough copy the corresponding manifest fields.
+An authority's declared coverage range must equal the manifest and dependency
+range byte-for-byte; reject range substitution or partial matching. These fields
+are protected by proofId because they are inside the hashed manifest. They serve
+declaration/reporting only: grant matching remains exact membership, and an owned
+late correction is included by original chain/receipt regardless of older
+effectiveAt. A wider time range cannot add grants; a narrower range cannot drop
+old-effectiveAt corrections. Index item source identity must exactly match its
+manifest: manifest and item sourceSystem are the literal `gateway-cn-finance-v2`.
+The discovery index envelope sourceSystem is separately the literal `gateway-cn`.
+Native chain identity's JCS tuple independently retains the literal `gateway-cn`
+defined above; never substitute the manifest transport tag into that tuple.

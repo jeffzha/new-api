@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cn-funding-integrity-v2-snapshots",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["paymentSnapshot", "quotaConversionSnapshot"],
+  "properties": {
+    "paymentSnapshot": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/paymentSnapshot"}]},
+    "quotaConversionSnapshot": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/quotaConversionSnapshot"}]}
+  },
+  "$defs": {
+    "unsignedDecimal": {"type": "string", "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$", "maxLength": 128},
+    "paymentSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actual_money", "currency_code", "payment_reference"],
+      "properties": {
+        "actual_money": {"anyOf": [{"const": ""}, {"$ref": "#/$defs/unsignedDecimal"}], "maxLength": 64},
+        "currency_code": {"type": "string", "pattern": "^([A-Z]{3})?$"},
+        "payment_reference": {"type": "string", "minLength": 1, "maxLength": 191}
+      },
+      "allOf": [{"if": {"properties": {"actual_money": {"not": {"const": ""}}}}, "then": {"properties": {"currency_code": {"pattern": "^[A-Z]{3}$"}}}}]
+    },
+    "quotaConversionSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "basis_field", "basis_value", "calculation", "credited_quota"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "basis_field": {"enum": ["topup.amount", "topup.money", "topup.money_decimal"]},
+        "basis_value": {"$ref": "#/$defs/unsignedDecimal"},
+        "calculation": {"enum": ["multiply_quota_per_unit", "identity", "assisted_exact_quote"]},
+        "quota_per_unit": {"$ref": "#/$defs/unsignedDecimal"},
+        "credited_quota": {"type": "string", "pattern": "^[1-9][0-9]*$", "maxLength": 19}
+      },
+      "allOf": [{"if": {"properties": {"calculation": {"const": "multiply_quota_per_unit"}}}, "then": {"required": ["quota_per_unit"], "properties": {"quota_per_unit": {"not": {"const": "0"}}}}}]
+    }
+  }
+}

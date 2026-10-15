@@ -491,3 +491,67 @@ independently enumerates original business receipts forward and reverse against
 the graph, and seals only immutable rows. A scanner that sees only successful
 disposition rows or uses ExpectedQuota equality as writer coverage is insufficient.
 There is no automatic startup migration that opens/fences/activates an epoch.
+
+## Consumer Files And Native Identity
+
+Machine-readable snapshot definitions are in
+`model/testdata/cn-task/integrity-v2-snapshots.schema.json`. Both snapshot keys in
+originalBody are always present; each is null or the decoded committed object,
+never a JSON string containing JSON. Their nested field names are snake_case.
+`paymentSnapshot` has exactly `actual_money,currency_code,payment_reference`.
+Empty actual_money is intentional unknown; nonempty actual_money requires a
+three-uppercase-letter currency and canonical nonnegative decimal, max 64 UTF-8
+bytes. payment_reference is trimmed, nonempty and max 191 UTF-8 bytes; schema
+maxLength alone does not replace that byte bound. Preserve verified zero exactly
+as `0`. Never normalize or enrich a legacy stored snapshot on import.
+
+`quotaConversionSnapshot` has required `schema_version` (integer 1), `basis_field`,
+`basis_value`, `calculation`, `credited_quota`, and optional `quota_per_unit` (omit
+when absent, do not encode null/empty). Basis fields are `topup.amount`,
+`topup.money`, `topup.money_decimal`; calculations are `multiply_quota_per_unit`,
+`identity`, `assisted_exact_quote`. basis_value/quota_per_unit are canonical
+nonnegative decimal strings, max 128 bytes. Multiplication requires a strictly
+positive quota_per_unit. credited_quota is positive decimal int64 and must equal
+the original actually credited mutation; int64/schema/decimal bounds are checked
+in addition to the structural JSON schema. Calculation values describe the saved
+provider conversion, never a new currency conversion or inferred payment amount.
+
+`CNIntegrityNativeIdentity` in `model/cn_integrity_wire.go` is the shared Go
+identity definition. Customer is the existing positive User ID decimal string.
+For every original/opening row map nativeKind to the stable entity/key below:
+
+| nativeKind | entity | nativeKey |
+| --- | --- | --- |
+| topup_credit | topup | original TopUp.TradeNo |
+| wallet_reserve, wallet_release, wallet_final | wallet | original CNWalletLifecycle.RequestID |
+| task_reserve, task_revision | task | original CNTaskBilling.Key (not public/provider TaskID) |
+| quota_mutation, source_switch | user | original User.ID decimal string; not grantable economics |
+
+Exact nativeChainKey is lowercase raw SHA256 hex of RFC8785 JCS encoding of
+`["cn-native-chain-v2","gateway-cn",gatewayId,customerKey,entity,nativeKey]`.
+Exact nativeLineageId is lowercase raw SHA256 hex of JCS encoding of
+`["cn-native-lineage-v2",nativeChainKey]`. These ID values are raw 64-hex strings;
+hash-typed fields still use `sha256:`. No concatenation, separator escaping,
+numeric ID coercion, Unicode normalization or epoch/auth suffix is allowed.
+These new identities do not use the legacy CNIdentity JSON codec/digest. The Go
+helper first marshals the string array then invokes the mature JCS implementation;
+the marshal engine's intermediate escaping cannot change canonical bytes.
+Payment/lot share a purchase owner; charge/allocation/revenue share their original
+charge owner, with graph edges retaining each purchase dependency's separate owner.
+
+`model/testdata/cn-task/integrity-v2-jcs-vectors.json` contains input bytes,
+canonical bytes (both base64) and expected SHA256 for numeric, Unicode, escaping,
+snapshot, large string-sequence and native chain cases. Go uses pinned
+`github.com/cyberphone/json-canonicalization v0.0.0-20261011152517-32a48195b9b2`;
+Python uses `rfc8785==0.1.4`. Run `go test ./model -run TestCNIntegrityWireVectors`
+and `python model/testdata/cn-task/verify_integrity_jcs.py`. The adjacent generator
+prints the same deterministic fixture using the Python implementation. Both
+implementations must pass exact bytes/hash equality before accepting a proof.
+This does not change or reinterpret existing `v2.digest` facts.
+
+The unchanged S5 `sample/cn-integrity-v2/jcs-vectors.json` corpus is also included
+as `model/testdata/cn-task/integrity-v2-shared-jcs-vectors.json` and tested by both
+Go and Python. These are the same four numeric/binary64/UTF16/non-normalization
+vectors; the eight bytes/hash vectors above supplement them with identities and
+snapshot examples. Validation passed with both pinned implementations; raw log:
+`model/testdata/cn-task/s4-integrity-wire-jcs.log`.

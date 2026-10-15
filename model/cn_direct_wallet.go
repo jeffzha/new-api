@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -27,6 +28,7 @@ type CNDirectWallet struct {
 	TokenBindingVersion   int    `gorm:"not null;default:0"`
 	TokenAdjustmentStatus string `gorm:"size:40"`
 	TokenDisposedQuota    int64  `gorm:"not null;default:0"`
+	UsageContract         string `gorm:"size:64"`
 	Kind                  string `gorm:"size:32;not null"`
 	ChannelID             int    `gorm:"not null"`
 	InitialReserve        int64  `gorm:"not null"`
@@ -46,14 +48,15 @@ type CNDirectWallet struct {
 }
 
 type CNDirectWalletSegment struct {
-	Key       string `gorm:"size:64;primaryKey"`
-	RequestID string `gorm:"size:191;not null;index"`
-	SegmentID string `gorm:"size:64;not null"`
-	UsageJSON string `gorm:"type:text;not null"`
-	Quota     int64  `gorm:"not null"`
-	Target    int64  `gorm:"not null"`
-	Version   int64  `gorm:"not null"`
-	CreatedAt string `gorm:"size:40;not null"`
+	ResponseID string `gorm:"size:191"`
+	Key        string `gorm:"size:64;primaryKey"`
+	RequestID  string `gorm:"size:191;not null;index"`
+	SegmentID  string `gorm:"size:64;not null"`
+	UsageJSON  string `gorm:"type:text;not null"`
+	Quota      int64  `gorm:"not null"`
+	Target     int64  `gorm:"not null"`
+	Version    int64  `gorm:"not null"`
+	CreatedAt  string `gorm:"size:40;not null"`
 }
 
 func cnDirectRowTx(tx *gorm.DB, request string, user int) (*CNDirectWallet, error) {
@@ -90,7 +93,7 @@ func beginCNDirectWallet(request string, user, token, channel, initial int, kind
 		var row CNDirectWallet
 		err := tx.Where("request_id = ?", request).First(&row).Error
 		if err == nil {
-			if row.UserID != user || row.TokenID != token || row.ChannelID != channel || row.Kind != kind || row.InitialReserve != int64(initial) || row.State != "reserved" || row.TokenBindingVersion != 1 {
+			if row.UserID != user || row.TokenID != token || row.ChannelID != channel || row.Kind != kind || row.InitialReserve != int64(initial) || row.State != "reserved" || row.TokenBindingVersion != 1 || (kind == "realtime" && row.UsageContract != "openai-response-done-v1") {
 				return ErrCNConflict
 			}
 			return nil
@@ -128,6 +131,9 @@ func beginCNDirectWallet(request string, user, token, channel, initial int, kind
 			frozen = string(raw)
 		}
 		row = CNDirectWallet{RequestID: request, UserID: user, TokenID: token, TokenUnlimited: credential.UnlimitedQuota, TokenBindingVersion: 1, ChannelID: channel, Kind: kind, InitialReserve: int64(initial), Reserved: int64(initial), State: "reserved", Version: 1, ConversionJSON: frozen, CreatedAt: time.Now().UTC().Format(CNTimeLayout)}
+		if kind == "realtime" {
+			row.UsageContract = "openai-response-done-v1"
+		}
 		if err = cnDirectQuotaTx(tx, &row, int64(initial), true); err != nil {
 			return err
 		}
@@ -203,9 +209,9 @@ func ReadCNDirectWallet(request string, user int) (*CNDirectWallet, error) {
 	return &row, err
 }
 
-func ReadCNDirectWalletSegment(request, usage string) (*CNDirectWalletSegment, error) {
+func ReadCNDirectWalletResponse(request, response string) (*CNDirectWalletSegment, error) {
 	var receipt CNDirectWalletSegment
-	err := DB.Where(map[string]any{"key": CNIdentity(request, CNIdentity("realtime-cumulative-v1", usage))}).First(&receipt).Error
+	err := DB.Where(map[string]any{"key": CNIdentity(request, CNIdentity("openai-response-done-v1", response))}).First(&receipt).Error
 	return &receipt, err
 }
 
@@ -215,11 +221,11 @@ func MarkCNDirectWalletUsageGap(request string, user int) error {
 
 // The caller calculates only a new live segment. A replay returns its original
 // absolute target even if the process, pricing configuration or head changed.
-func ApplyCNDirectWalletSegment(request string, user int, expected int64, usage string, quota int) (*CNDirectWalletSegment, error) {
-	if !CNDirectWalletAvailable() || usage == "" || quota < 0 || quota > common.MaxQuota {
+func ApplyCNDirectWalletResponse(request string, user int, expected int64, response, usage, total string, quota int) (*CNDirectWalletSegment, error) {
+	if !CNDirectWalletAvailable() || strings.TrimSpace(response) == "" || len(response) > 191 || usage == "" || total == "" || quota < 0 || quota > common.MaxQuota {
 		return nil, ErrCNConflict
 	}
-	segmentID := CNIdentity("realtime-cumulative-v1", usage)
+	segmentID := CNIdentity("openai-response-done-v1", response)
 	key := CNIdentity(request, segmentID)
 	var receipt CNDirectWalletSegment
 	err := DB.Transaction(func(tx *gorm.DB) error {
@@ -229,7 +235,7 @@ func ApplyCNDirectWalletSegment(request string, user int, expected int64, usage 
 		}
 		err = tx.Where(map[string]any{"key": key}).First(&receipt).Error
 		if err == nil {
-			if receipt.UsageJSON != usage || receipt.Quota != int64(quota) {
+			if receipt.ResponseID != response || receipt.UsageJSON != usage || receipt.Quota != int64(quota) {
 				return ErrCNConflict
 			}
 			return nil
@@ -237,17 +243,20 @@ func ApplyCNDirectWalletSegment(request string, user int, expected int64, usage 
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
+		if row.UsageContract != "openai-response-done-v1" {
+			return ErrCNWalletBindingRequired
+		}
 		if row.Kind != "realtime" || row.State != "reserved" || row.Version != expected || row.Reserved > int64(common.MaxQuota-quota) {
 			return ErrCNConflict
 		}
 		if err = cnDirectQuotaTx(tx, row, int64(quota), true); err != nil {
 			return err
 		}
-		receipt = CNDirectWalletSegment{Key: key, RequestID: request, SegmentID: segmentID, UsageJSON: usage, Quota: int64(quota), Target: row.Reserved + int64(quota), Version: row.Version + 1, CreatedAt: time.Now().UTC().Format(CNTimeLayout)}
+		receipt = CNDirectWalletSegment{Key: key, RequestID: request, ResponseID: response, SegmentID: segmentID, UsageJSON: usage, Quota: int64(quota), Target: row.Reserved + int64(quota), Version: row.Version + 1, CreatedAt: time.Now().UTC().Format(CNTimeLayout)}
 		if err = tx.Create(&receipt).Error; err != nil {
 			return err
 		}
-		return tx.Model(&CNDirectWallet{}).Where("request_id = ?", request).Updates(map[string]any{"reserved": receipt.Target, "segment_quota": row.SegmentQuota + int64(quota), "usage_json": usage, "version": receipt.Version}).Error
+		return tx.Model(&CNDirectWallet{}).Where("request_id = ?", request).Updates(map[string]any{"reserved": receipt.Target, "segment_quota": row.SegmentQuota + int64(quota), "usage_json": total, "version": receipt.Version}).Error
 	})
 	return &receipt, err
 }
@@ -260,6 +269,9 @@ func FinalizeCNDirectWallet(request string, user, actual int) error {
 		row, err := cnDirectRowTx(tx, request, user)
 		if err != nil {
 			return err
+		}
+		if row.Kind == "realtime" && row.SegmentQuota != int64(actual) {
+			return ErrCNConflict
 		}
 		return finalizeCNDirectWalletTx(tx, row, int64(actual), false, actual > 0)
 	})

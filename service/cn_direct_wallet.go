@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -147,9 +148,9 @@ func cnDirectRealtimeAPIError(err error) *types.NewAPIError {
 	return types.NewErrorWithStatusCode(err, types.ErrorCodeQueryDataError, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
 }
 
-// This is the same cumulative usage admission policy as the existing OpenAI
-// handler, with its baseline loaded from the durable receipt after a restart.
-func cnDirectRealtimeDelta(current, previous *dto.RealtimeUsage) (*dto.RealtimeUsage, error) {
+// response.done is a terminal absolute snapshot for one response, not a session
+// counter. Different response IDs contribute independently in arrival order.
+func cnDirectRealtimeSum(current, previous *dto.RealtimeUsage) (*dto.RealtimeUsage, error) {
 	counts := func(u *dto.RealtimeUsage) []int {
 		return []int{u.TotalTokens, u.InputTokens, u.OutputTokens, u.InputTokenDetails.CachedTokens, u.InputTokenDetails.CacheWriteTokens, u.InputTokenDetails.CachedCreationTokens, u.InputTokenDetails.TextTokens, u.InputTokenDetails.AudioTokens, u.InputTokenDetails.ImageTokens, u.OutputTokenDetails.TextTokens, u.OutputTokenDetails.AudioTokens, u.OutputTokenDetails.ImageTokens, u.OutputTokenDetails.ReasoningTokens}
 	}
@@ -161,19 +162,40 @@ func cnDirectRealtimeDelta(current, previous *dto.RealtimeUsage) (*dto.RealtimeU
 	}
 	before := counts(previous)
 	for i, n := range counts(current) {
-		if n < 0 || n > common.MaxQuota || n < before[i] {
+		if n < 0 || n > common.MaxQuota || before[i] < 0 || before[i] > common.MaxQuota-n {
 			return nil, model.ErrCNConflict
 		}
 	}
-	return &dto.RealtimeUsage{TotalTokens: current.TotalTokens - previous.TotalTokens, InputTokens: current.InputTokens - previous.InputTokens, OutputTokens: current.OutputTokens - previous.OutputTokens, InputTokenDetails: dto.InputTokenDetails{CachedTokens: current.InputTokenDetails.CachedTokens - previous.InputTokenDetails.CachedTokens, CacheWriteTokens: current.InputTokenDetails.CacheWriteTokens - previous.InputTokenDetails.CacheWriteTokens, CachedCreationTokens: current.InputTokenDetails.CachedCreationTokens - previous.InputTokenDetails.CachedCreationTokens, TextTokens: current.InputTokenDetails.TextTokens - previous.InputTokenDetails.TextTokens, AudioTokens: current.InputTokenDetails.AudioTokens - previous.InputTokenDetails.AudioTokens, ImageTokens: current.InputTokenDetails.ImageTokens - previous.InputTokenDetails.ImageTokens}, OutputTokenDetails: dto.OutputTokenDetails{TextTokens: current.OutputTokenDetails.TextTokens - previous.OutputTokenDetails.TextTokens, AudioTokens: current.OutputTokenDetails.AudioTokens - previous.OutputTokenDetails.AudioTokens, ImageTokens: current.OutputTokenDetails.ImageTokens - previous.OutputTokenDetails.ImageTokens, ReasoningTokens: current.OutputTokenDetails.ReasoningTokens - previous.OutputTokenDetails.ReasoningTokens}}, nil
+	return &dto.RealtimeUsage{TotalTokens: current.TotalTokens + previous.TotalTokens, InputTokens: current.InputTokens + previous.InputTokens, OutputTokens: current.OutputTokens + previous.OutputTokens, InputTokenDetails: dto.InputTokenDetails{CachedTokens: current.InputTokenDetails.CachedTokens + previous.InputTokenDetails.CachedTokens, CacheWriteTokens: current.InputTokenDetails.CacheWriteTokens + previous.InputTokenDetails.CacheWriteTokens, CachedCreationTokens: current.InputTokenDetails.CachedCreationTokens + previous.InputTokenDetails.CachedCreationTokens, TextTokens: current.InputTokenDetails.TextTokens + previous.InputTokenDetails.TextTokens, AudioTokens: current.InputTokenDetails.AudioTokens + previous.InputTokenDetails.AudioTokens, ImageTokens: current.InputTokenDetails.ImageTokens + previous.InputTokenDetails.ImageTokens}, OutputTokenDetails: dto.OutputTokenDetails{TextTokens: current.OutputTokenDetails.TextTokens + previous.OutputTokenDetails.TextTokens, AudioTokens: current.OutputTokenDetails.AudioTokens + previous.OutputTokenDetails.AudioTokens, ImageTokens: current.OutputTokenDetails.ImageTokens + previous.OutputTokenDetails.ImageTokens, ReasoningTokens: current.OutputTokenDetails.ReasoningTokens + previous.OutputTokenDetails.ReasoningTokens}}, nil
 }
 
-func PreConsumeCNRealtimeCumulative(ctx *gin.Context, info *relaycommon.RelayInfo, current *dto.RealtimeUsage) (*dto.RealtimeUsage, error) {
+func LoadCNRealtimeUsage(info *relaycommon.RelayInfo) (*dto.RealtimeUsage, error) {
+	if err := cnDirectRealtimeIdentity(info); err != nil {
+		return nil, err
+	}
+	row, err := model.ReadCNDirectWallet(info.RequestId, info.UserId)
+	if err != nil {
+		return nil, err
+	}
+	if row.TokenID != info.TokenId || row.ChannelID != info.ChannelId || row.UsageContract != "openai-response-done-v1" {
+		return nil, model.ErrCNConflict
+	}
+	var usage dto.RealtimeUsage
+	if row.UsageJSON != "" {
+		if err = common.UnmarshalJsonStr(row.UsageJSON, &usage); err != nil {
+			return nil, err
+		}
+	}
+	info.RealtimePreConsumedQuota = int(row.SegmentQuota)
+	return &usage, nil
+}
+
+func PreConsumeCNRealtimeResponse(ctx *gin.Context, info *relaycommon.RelayInfo, response string, current *dto.RealtimeUsage) (*dto.RealtimeUsage, error) {
 	if err := cnDirectRealtimeIdentity(info); err != nil {
 		return nil, err
 	}
 	raw, err := common.Marshal(current)
-	if err != nil || current == nil {
+	if err != nil || current == nil || strings.TrimSpace(response) == "" || len(response) > 191 {
 		return nil, model.ErrCNConflict
 	}
 	for range 3 {
@@ -181,16 +203,16 @@ func PreConsumeCNRealtimeCumulative(ctx *gin.Context, info *relaycommon.RelayInf
 		if err != nil {
 			return nil, err
 		}
-		if row.TokenID != info.TokenId || row.ChannelID != info.ChannelId {
+		if row.TokenID != info.TokenId || row.ChannelID != info.ChannelId || row.UsageContract != "openai-response-done-v1" {
 			return nil, model.ErrCNConflict
 		}
-		if _, err := model.ReadCNDirectWalletSegment(info.RequestId, string(raw)); err == nil {
-			var accepted dto.RealtimeUsage
-			if err = common.UnmarshalJsonStr(row.UsageJSON, &accepted); err != nil {
-				return nil, err
+		if receipt, err := model.ReadCNDirectWalletResponse(info.RequestId, response); err == nil {
+			// OpenAI provides no ordered revision number for terminal usage.
+			// Conflicting terminal snapshots require reconciliation, never guessing.
+			if receipt.ResponseID != response || receipt.UsageJSON != string(raw) {
+				return nil, model.ErrCNConflict
 			}
-			info.RealtimePreConsumedQuota = int(row.SegmentQuota)
-			return &accepted, nil
+			return LoadCNRealtimeUsage(info)
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
@@ -203,7 +225,7 @@ func PreConsumeCNRealtimeCumulative(ctx *gin.Context, info *relaycommon.RelayInf
 				return nil, err
 			}
 		}
-		delta, err := cnDirectRealtimeDelta(current, &previous)
+		total, err := cnDirectRealtimeSum(current, &previous)
 		if err != nil {
 			return nil, err
 		}
@@ -219,26 +241,25 @@ func PreConsumeCNRealtimeCumulative(ctx *gin.Context, info *relaycommon.RelayInf
 			groupRatio = special
 		}
 		modelRatio, _, _ := ratio_setting.GetModelRatio(info.OriginModelName)
-		quota, clamp := calculateAudioQuota(QuotaInfo{InputDetails: TokenDetails{TextTokens: delta.InputTokenDetails.TextTokens, AudioTokens: delta.InputTokenDetails.AudioTokens}, OutputDetails: TokenDetails{TextTokens: delta.OutputTokenDetails.TextTokens, AudioTokens: delta.OutputTokenDetails.AudioTokens}, ModelName: info.OriginModelName, ModelRatio: modelRatio, GroupRatio: groupRatio})
+		quota, clamp := calculateAudioQuota(QuotaInfo{InputDetails: TokenDetails{TextTokens: current.InputTokenDetails.TextTokens, AudioTokens: current.InputTokenDetails.AudioTokens}, OutputDetails: TokenDetails{TextTokens: current.OutputTokenDetails.TextTokens, AudioTokens: current.OutputTokenDetails.AudioTokens}, ModelName: info.OriginModelName, ModelRatio: modelRatio, GroupRatio: groupRatio})
 		if clamp != nil {
 			return nil, clamp
 		}
-		if delta.TotalTokens == 0 {
+		if current.TotalTokens == 0 {
 			quota = 0
 		}
-		_, err = model.ApplyCNDirectWalletSegment(info.RequestId, info.UserId, row.Version, string(raw), quota)
+		totalRaw, err := common.Marshal(total)
+		if err != nil {
+			return nil, err
+		}
+		_, err = model.ApplyCNDirectWalletResponse(info.RequestId, info.UserId, row.Version, response, string(raw), string(totalRaw), quota)
 		if errors.Is(err, model.ErrCNConflict) {
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
-		updated, err := model.ReadCNDirectWallet(info.RequestId, info.UserId)
-		if err != nil {
-			return nil, err
-		}
-		info.RealtimePreConsumedQuota = int(updated.SegmentQuota)
-		return current, nil
+		return LoadCNRealtimeUsage(info)
 	}
 	return nil, model.ErrCNConflict
 }
@@ -251,11 +272,8 @@ func FinalizeCNDirectRealtime(info *relaycommon.RelayInfo, usage *dto.RealtimeUs
 	if err != nil {
 		return err
 	}
-	if row.TokenID != info.TokenId || row.ChannelID != info.ChannelId {
+	if row.TokenID != info.TokenId || row.ChannelID != info.ChannelId || row.UsageContract != "openai-response-done-v1" {
 		return model.ErrCNConflict
-	}
-	if row.State == "settled" {
-		return nil
 	}
 	raw, err := common.Marshal(usage)
 	if err != nil || usage == nil {
@@ -264,12 +282,10 @@ func FinalizeCNDirectRealtime(info *relaycommon.RelayInfo, usage *dto.RealtimeUs
 	if row.UsageJSON != "" && row.UsageJSON != string(raw) {
 		return model.ErrCNConflict
 	}
-	quota, clamp := calculateAudioQuota(QuotaInfo{InputDetails: TokenDetails{TextTokens: usage.InputTokenDetails.TextTokens, AudioTokens: usage.InputTokenDetails.AudioTokens}, OutputDetails: TokenDetails{TextTokens: usage.OutputTokenDetails.TextTokens, AudioTokens: usage.OutputTokenDetails.AudioTokens}, ModelName: info.UpstreamModelName, ModelRatio: info.PriceData.ModelRatio, GroupRatio: info.PriceData.GroupRatioInfo.GroupRatio})
-	if clamp != nil {
-		return clamp
+	if row.UsageJSON == "" && *usage != (dto.RealtimeUsage{}) {
+		return model.ErrCNConflict
 	}
-	if usage.TotalTokens == 0 {
-		quota = 0
-	}
-	return model.FinalizeCNDirectWallet(info.RequestId, info.UserId, quota)
+	// Each accepted response froze its live quota. Never reprice those receipts
+	// using today's model settings or round the sum a second time.
+	return model.FinalizeCNDirectWallet(info.RequestId, info.UserId, int(row.SegmentQuota))
 }

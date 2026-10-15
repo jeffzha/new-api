@@ -91,14 +91,14 @@ func TestCNDirectWalletAtomicAcrossDialects(t *testing.T) {
 			require.Error(t, BeginCNDirectWallet("", u.Id, token.Id, channel.Id, 10))
 			oldRequest := id + "old-direct"
 			require.NoError(t, BeginCNDirectWallet(oldRequest, u.Id, token.Id, channel.Id, 30))
-			for _, column := range []string{"token_unlimited", "token_binding_version", "token_adjustment_status", "token_disposed_quota"} {
+			for _, column := range []string{"token_unlimited", "token_binding_version", "token_adjustment_status", "token_disposed_quota", "usage_contract"} {
 				require.NoError(t, db.Migrator().DropColumn(&CNDirectWallet{}, column))
 			}
 			for range 2 {
 				require.NoError(t, MigrateCNFinance(db, "test-cn"))
 			}
 			require.ErrorIs(t, BeginCNDirectWallet(oldRequest, u.Id, token.Id, channel.Id, 30), ErrCNConflict)
-			_, err = ApplyCNDirectWalletSegment(oldRequest, u.Id, 1, `{"total_tokens":1}`, 1)
+			_, err = ApplyCNDirectWalletResponse(oldRequest, u.Id, 1, "resp_old", `{"total_tokens":1}`, `{"total_tokens":1}`, 1)
 			require.ErrorIs(t, err, ErrCNWalletBindingRequired)
 			oldDirect, err := ReadCNDirectWallet(oldRequest, u.Id)
 			require.NoError(t, err)
@@ -118,16 +118,16 @@ func TestCNDirectWalletAtomicAcrossDialects(t *testing.T) {
 			require.NoError(t, BeginCNDirectWallet(id, u.Id, token.Id, channel.Id, 10))
 			check(10, 10, 0, 0)
 			require.ErrorIs(t, BeginCNDirectWallet(id, u.Id, token.Id, channel.Id, 11), ErrCNConflict)
-			first, err := ApplyCNDirectWalletSegment(id, u.Id, 1, `{"total_tokens":20}`, 20)
+			first, err := ApplyCNDirectWalletResponse(id, u.Id, 1, "resp_a", `{"total_tokens":20}`, `{"total_tokens":20}`, 20)
 			require.NoError(t, err)
 			require.EqualValues(t, 30, first.Target)
 			common.QuotaPerUnit = 9999 // Existing conversion must remain the original 100.
-			replay, err := ApplyCNDirectWalletSegment(id, u.Id, 1, first.UsageJSON, 20)
+			replay, err := ApplyCNDirectWalletResponse(id, u.Id, 1, "resp_a", first.UsageJSON, `{"total_tokens":20}`, 20)
 			require.NoError(t, err)
 			require.Equal(t, first, replay)
-			_, err = ApplyCNDirectWalletSegment(id, u.Id, 1, first.UsageJSON, 21)
+			_, err = ApplyCNDirectWalletResponse(id, u.Id, 1, "resp_a", first.UsageJSON, `{"total_tokens":20}`, 21)
 			require.ErrorIs(t, err, ErrCNConflict)
-			_, err = ApplyCNDirectWalletSegment(id, u.Id, 1, `{"total_tokens":25}`, 5)
+			_, err = ApplyCNDirectWalletResponse(id, u.Id, 1, "resp_a", `{"total_tokens":25}`, `{"total_tokens":25}`, 5)
 			require.ErrorIs(t, err, ErrCNConflict)
 			check(30, 30, 0, 0)
 			require.NoError(t, db.Callback().Create().Before("gorm:create").Register("direct-segment-fail", func(tx *gorm.DB) {
@@ -135,13 +135,13 @@ func TestCNDirectWalletAtomicAcrossDialects(t *testing.T) {
 					tx.AddError(errors.New("injected segment receipt failure"))
 				}
 			}))
-			_, err = ApplyCNDirectWalletSegment(id, u.Id, 2, `{"total_tokens":25}`, 5)
+			_, err = ApplyCNDirectWalletResponse(id, u.Id, 2, "resp_b", `{"total_tokens":5}`, `{"total_tokens":25}`, 5)
 			require.Error(t, err)
 			check(30, 30, 0, 0)
 			require.NoError(t, db.Callback().Create().Remove("direct-segment-fail"))
 			// A reconstructed DB handle has no in-memory quota baseline.
 			DB = db.Session(&gorm.Session{NewDB: true})
-			second, err := ApplyCNDirectWalletSegment(id, u.Id, 2, `{"total_tokens":25}`, 5)
+			second, err := ApplyCNDirectWalletResponse(id, u.Id, 2, "resp_b", `{"total_tokens":5}`, `{"total_tokens":25}`, 5)
 			require.NoError(t, err)
 			require.EqualValues(t, 35, second.Target)
 			require.NoError(t, db.Callback().Create().Before("gorm:create").Register("direct-final-fail", func(tx *gorm.DB) {
@@ -191,7 +191,7 @@ func TestCNDirectWalletAtomicAcrossDialects(t *testing.T) {
 			results := make(chan error, 2)
 			for range 2 {
 				wg.Go(func() {
-					_, err := ApplyCNDirectWalletSegment(parallel, u.Id, 1, `{"total_tokens":10}`, 10)
+					_, err := ApplyCNDirectWalletResponse(parallel, u.Id, 1, "resp_parallel", `{"total_tokens":10}`, `{"total_tokens":10}`, 10)
 					results <- err
 				})
 			}
@@ -204,7 +204,7 @@ func TestCNDirectWalletAtomicAcrossDialects(t *testing.T) {
 				}
 			}
 			require.Positive(t, successes)
-			_, err = ApplyCNDirectWalletSegment(parallel, u.Id, 1, `{"total_tokens":10}`, 10)
+			_, err = ApplyCNDirectWalletResponse(parallel, u.Id, 1, "resp_parallel", `{"total_tokens":10}`, `{"total_tokens":10}`, 10)
 			require.NoError(t, err)
 			require.NoError(t, RequestCNDirectWalletCancellation(parallel, u.Id))
 			require.NoError(t, RecoverCNDirectWalletCancellations(context.Background(), db, 100))
@@ -213,7 +213,7 @@ func TestCNDirectWalletAtomicAcrossDialects(t *testing.T) {
 			// segments remain charged while only the initial reservation is released.
 			cancel := id + "cancel"
 			require.NoError(t, BeginCNDirectWallet(cancel, u.Id, token.Id, channel.Id, 40))
-			_, err = ApplyCNDirectWalletSegment(cancel, u.Id, 1, `{"total_tokens":7}`, 7)
+			_, err = ApplyCNDirectWalletResponse(cancel, u.Id, 1, "resp_cancel", `{"total_tokens":7}`, `{"total_tokens":7}`, 7)
 			require.NoError(t, err)
 			require.NoError(t, MarkCNDirectWalletUsageGap(cancel, u.Id))
 			require.NoError(t, RequestCNDirectWalletCancellation(cancel, u.Id))
@@ -257,7 +257,7 @@ func TestCNDirectWalletAtomicAcrossDialects(t *testing.T) {
 				credential := Token{UserId: account.Id, Key: request, Status: common.TokenStatusEnabled, RemainQuota: 1000}
 				require.NoError(t, db.Create(&credential).Error)
 				require.NoError(t, BeginCNDirectWallet(request, account.Id, credential.Id, channel.Id, 40))
-				_, err = ApplyCNDirectWalletSegment(request, account.Id, 1, `{"total_tokens":7}`, 7)
+				_, err = ApplyCNDirectWalletResponse(request, account.Id, 1, "resp_a", `{"total_tokens":7}`, `{"total_tokens":7}`, 7)
 				require.NoError(t, err)
 				query := db
 				status := "deleted_token_not_recredited"
@@ -266,7 +266,7 @@ func TestCNDirectWalletAtomicAcrossDialects(t *testing.T) {
 					status = "missing_token_not_recredited"
 				}
 				require.NoError(t, query.Delete(&Token{}, credential.Id).Error)
-				_, err = ApplyCNDirectWalletSegment(request, account.Id, 2, `{"total_tokens":8}`, 1)
+				_, err = ApplyCNDirectWalletResponse(request, account.Id, 2, "resp_b", `{"total_tokens":1}`, `{"total_tokens":8}`, 1)
 				require.Error(t, err)
 				require.NoError(t, RequestCNDirectWalletCancellation(request, account.Id))
 				require.NoError(t, db.Callback().Create().Before("gorm:create").Register("direct-deleted-outbox-fail", func(tx *gorm.DB) {
@@ -318,10 +318,10 @@ func TestCNDirectWalletAtomicAcrossDialects(t *testing.T) {
 			request := id + "unlimited"
 			require.NoError(t, BeginCNDirectWallet(request, u.Id, unlimited.Id, channel.Id, 10))
 			require.NoError(t, db.Model(&Token{}).Where("id = ?", unlimited.Id).Update("unlimited_quota", false).Error)
-			_, err = ApplyCNDirectWalletSegment(request, u.Id, 1, `{"total_tokens":1}`, 1)
+			_, err = ApplyCNDirectWalletResponse(request, u.Id, 1, "resp_a", `{"total_tokens":1}`, `{"total_tokens":1}`, 1)
 			require.ErrorIs(t, err, ErrCNConflict)
 			require.NoError(t, db.Model(&Token{}).Where("id = ?", unlimited.Id).Update("unlimited_quota", true).Error)
-			_, err = ApplyCNDirectWalletSegment(request, u.Id, 1, `{"total_tokens":1}`, 1)
+			_, err = ApplyCNDirectWalletResponse(request, u.Id, 1, "resp_a", `{"total_tokens":1}`, `{"total_tokens":1}`, 1)
 			require.NoError(t, err)
 			require.NoError(t, FinalizeCNDirectWallet(request, u.Id, 1))
 			require.NoError(t, db.First(&unlimited, unlimited.Id).Error)

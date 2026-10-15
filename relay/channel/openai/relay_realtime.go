@@ -35,9 +35,14 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	usage := &dto.RealtimeUsage{}
 	localUsage := &dto.RealtimeUsage{}
 	sumUsage := &dto.RealtimeUsage{}
-	// OpenAI Realtime response.done usage is cumulative for the session. Keep
-	// the last accepted frame so repeated cumulative frames become a no-op and
-	// only the positive component delta is reserved.
+	if service.CNDirectRealtimeRequested(info) {
+		accepted, err := service.LoadCNRealtimeUsage(info)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeQueryDataError), nil
+		}
+		sumUsage = accepted
+	}
+	// Retain the legacy baseline only for lanes outside the durable contract.
 	var lastUpstreamUsage *dto.RealtimeUsage
 
 	gopool.Go(func() {
@@ -128,8 +133,20 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 				}
 
 				if realtimeEvent.Type == dto.RealtimeEventTypeResponseDone {
+					if realtimeEvent.Response == nil {
+						errChan <- fmt.Errorf("response.done missing response")
+						return
+					}
 					realtimeUsage := realtimeEvent.Response.Usage
-					if realtimeUsage != nil {
+					if service.CNDirectRealtimeRequested(info) {
+						accepted, err := service.PreConsumeCNRealtimeResponse(c, info, realtimeEvent.Response.ID, realtimeUsage)
+						if err != nil {
+							errChan <- fmt.Errorf("error consume response usage: %v", err)
+							return
+						}
+						*sumUsage = *accepted
+						usage, localUsage = &dto.RealtimeUsage{}, &dto.RealtimeUsage{}
+					} else if realtimeUsage != nil {
 						current := *realtimeUsage
 						// A provider retry may resend the exact same cumulative frame.
 						// Forward it to the client but do not reserve or journal it.
@@ -318,15 +335,7 @@ func preConsumeUsageWithCumulative(ctx *gin.Context, info *relaycommon.RelayInfo
 		return fmt.Errorf("invalid usage pointer")
 	}
 	if service.CNDirectRealtimeRequested(info) {
-		if cumulative == nil {
-			return fmt.Errorf("durable realtime requires identified cumulative upstream usage")
-		}
-		accepted, err := service.PreConsumeCNRealtimeCumulative(ctx, info, cumulative)
-		if err != nil {
-			return err
-		}
-		*totalUsage = *accepted
-		return nil
+		return fmt.Errorf("durable realtime requires response.done with response.id")
 	}
 
 	// Build the candidate cumulative frame before reserving. This lets the

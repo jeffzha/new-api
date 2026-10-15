@@ -97,7 +97,7 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 // existing error-only API.
 func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) (int, int64, error) {
 	if CNDirectRealtimeRequested(relayInfo) {
-		// Delta-only callers have no durable cumulative segment identity.
+		// Delta-only callers have no durable response identity.
 		return 0, 0, model.ErrCNConflict
 	}
 	if relayInfo.UsePrice {

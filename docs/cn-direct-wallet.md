@@ -18,18 +18,27 @@ An enabled direct flag never authorizes a fallback to buffered wallet writes.
   ratio pricing, no tiered expression or playground. `PreConsumeBilling` installs
   a dedicated settler; `WssHelper` validates it before upstream I/O, including the
   zero-preconsume path. Initial wallet and token reserve commit together.
-- The actual `OpenaiRealtimeHandler` forwards cumulative upstream usage through
-  `preConsumeUsageWithCumulative` to the durable admission API. This preserves the
-  existing handler's cumulative/monotonic usage policy. It does not certify
-  providers that use per-response counters or reset counters during a session.
-  Delta-only `PreWssConsumeQuotaWithResult` and locally estimated trailing usage
-  cannot invent a segment identity in this mode.
+- The actual `OpenaiRealtimeHandler` reads standard OpenAI `response.done` with
+  `response.id` and per-response absolute `response.usage`. It calls
+  `PreConsumeCNRealtimeResponse`; different response IDs contribute independently,
+  including identical usage values. Missing identity/usage fails closed.
+  Delta-only/cumulative helper calls and locally estimated trailing usage cannot
+  invent a response identity in this mode.
 
-The permanent segment key hashes request plus canonical cumulative usage; the
-receipt stores the exact live quota and resulting absolute reserved target.
+The permanent segment key hashes request, contract and actual response ID; the
+receipt stores that response's absolute usage, exact live quota and resulting
+absolute reserved target. Session usage is the sum of accepted responses.
+The official [OpenAI Realtime cost guide](https://developers.openai.com/api/docs/guides/voice-latency-cost?voice-api=realtime)
+describes per-Response token costs and response.done usage; the former session
+cumulative interpretation was incorrect.
 Replays return the original receipt without consulting current model prices.
-A reconstructed process loads the latest accepted cumulative usage from the DB.
-Fresh segments use the existing live calculator, not a new pricing policy.
+A reconstructed handler loads aggregate usage and quota from the DB before
+reading new frames. Out-of-order response IDs do not replace a session baseline.
+Same ID/same usage is a no-op; same ID/different terminal usage conflicts and
+marks a gap. OpenAI terminal response.done has no ordered correction revision;
+this implementation never guesses which conflicting terminal snapshot is newer.
+Each new response uses the existing live calculator. Finalization sums stored
+quota receipts without repricing the aggregate or rounding it a second time.
 
 Each segment atomically changes wallet/token and records its receipt. Those
 segments are reservations pending a terminal request decision, not additional
@@ -53,7 +62,7 @@ recognized revenue, paid value or a reconstructed payment.
 
 Source proof dependency `ordinary_wallet_direct_realtime` measures rows, segment
 sums, terminal receipts, publication, pending cancellations, conversion unknowns
-and usage gaps. Version `direct-realtime-bound-token-v2` also measures frozen
+and usage gaps. Version `direct-realtime-response-id-v3` also measures frozen
 unlimited flags and deleted-token dispositions. New direct receipts bind the
 actual token's unlimited flag before upstream I/O. Migration leaves old receipts
 at token binding version zero; they cannot be rebound or accept a new debit,
@@ -64,9 +73,14 @@ quota; the final fact adds `cn_direct_wallet_token_disposition` evidence. Such
 disposition remains unknown coverage. Positive debits reject missing/deleted,
 disabled/expired tokens and changed unlimited flags. Supported paths:
 `ordinary-relay/forward-free-quote-final-v1` and
-`ordinary-realtime/cumulative-absolute-target-v1`. S5 must register those paths
+`ordinary-realtime/response-id-absolute-usage-v1`. S5 must register those paths
 for `wallet` / `cn_direct_wallet_final`, only `charge`, namespace `gateway-cn`.
 This implementation does not modify the S5 checkout or adopt an authority.
+The usage contract is frozen before I/O. Existing cumulative receipts retain
+an empty usage contract after migration; they cannot be rebound or accept new
+response debits. Their known successful segments/reservation can be cancelled,
+and coverage remains unknown. Legacy lanes outside these opt-in flags retain
+their existing behavior and are not certified by this delivery.
 
 The broader legacy/direct/history, Redis/batch, missing receipt, violation fee,
 subscription, playground, channel-switch retry, realtime local estimates,
@@ -127,11 +141,9 @@ Real engines: SQLite 3.50.4, MySQL 8.0.39, PostgreSQL 17.6. Isolated databases:
   text settle entry, token/usage legs, zero/free request count, identity rejection,
   model-price changes on replay, Redis/batch guards, default legacy behavior.
   Three engines pass.
-- `go test ./relay/channel/openai -run '^TestCNDirect' -v -count=1 -timeout=180s`:
-  `s4r-direct-entry-three-db.log`. Actual websocket handler with local upstream
-  cumulative frames 20, duplicate 20, 25, normal close, real finalizer and replay:
-  one final debit 25, one request count, two retained segment receipts, identical
-  token/user/channel usage. Three engines pass.
+- `s4r-direct-entry-three-db.log` is superseded as a protocol correctness proof:
+  its original fixture incorrectly modelled response.done as session cumulative.
+  The response-ID handler evidence below replaces that acceptance claim.
 - Actual published `s4r-http-artifacts/direct-wallet-canonical-{sqlite,mysql,
   postgres}.json` each passes S5 `validate_fact` (read-only import). See
   `s4r-direct-s5-wire-validation.log`. Authority adoption remains an integration gate.
@@ -140,6 +152,22 @@ Real engines: SQLite 3.50.4, MySQL 8.0.39, PostgreSQL 17.6. Isolated databases:
   old-receipt new-debit rejection, soft/hard-deleted token cancellation,
   failed outbox rollback, recovered/replayed disposition with no restoration,
   successful segment retained and unlimited flag mismatch rejection.
+- Current response-ID tests: `s4r-response-id-model-three-db.log`,
+  `s4r-response-id-service-three-db.log`, `s4r-response-id-handler-three-db.log`.
+  All three engines pass. Actual standard response.done JSON proves different
+  IDs 20+20=40 and 20+25=45, same-ID duplicates, out-of-order arrival across
+  reconstructed handlers, one final request count, persistent response receipts,
+  missing ID and conflicting same-ID terminal usage gaps. Service checks also
+  prove mixed live prices preserve the sum of frozen per-response quotas.
+  Published handler samples: `response-id-canonical-{dialect}-{40,45}.json`.
+  All six pass S5 `validate_fact`: `s4r-response-id-s5-wire-validation.log`.
+  The new response-ID authority path is not registered in the read-only S5
+  checkout at verification time; adoption remains an explicit integration gate.
+- Final focused regression (model/service/relay/controller/opsexport/OpenAI
+  handler, `TestCN|TestOpsExport|TestTryTieredSettle|TestRealtimeUsage`) passes:
+  `s4r-wallet-final-regression.log`. `cd relaykit; GOWORK=off go build
+  -mod=readonly ./...` also passes; dependencies were downloaded into the owning
+  worktree's `data/go-standalone-cache`, without writing shared source/cache.
 
 S4 prerequisite `b15ffcc24c4267e52d383521b3e7d70414478e5c` is present as local
 cherry-pick `7ccad9c`. There were no production actions, pushes or deployments.

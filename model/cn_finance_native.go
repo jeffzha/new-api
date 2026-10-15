@@ -113,7 +113,7 @@ func cnFundingValueTx(tx *gorm.DB, lotID, allocationID string, initial, target i
 		return decimal.Zero, err
 	}
 	var allocation CNFundingValueAllocation
-	err = tx.Where("allocation_id = ?", allocationID).First(&allocation).Error
+	err = lockForUpdate(tx).Where("allocation_id = ?", allocationID).First(&allocation).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		allocation = CNFundingValueAllocation{AllocationID: allocationID, LotID: lotID, Value: "0"}
 		if err = tx.Create(&allocation).Error; err != nil {

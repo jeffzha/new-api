@@ -213,7 +213,7 @@ func cnValidateFundingValueTx(tx *gorm.DB, balance *CNFundingValueLot) error {
 		value = value.Add(amount)
 	}
 	var allocations []CNFundingValueAllocation
-	if err := tx.Where("lot_id = ?", balance.LotID).Find(&allocations).Error; err != nil {
+	if err := lockForUpdate(tx).Where("lot_id = ?", balance.LotID).Find(&allocations).Error; err != nil {
 		return err
 	}
 	for _, allocation := range allocations {

@@ -4,6 +4,51 @@ Baseline: integrated Gateway `6325660`.
 Branch: `codex/s4-paid-lot-attribution`.
 This delivery is v1 only. It does not implement the proposed integrity-v2 proof.
 
+## Q71 Current-Read Follow-Up
+
+The follow-up is a separate commit after `fa99045`, never a rewrite of that
+reviewed package. On MySQL 8.0.39 REPEATABLE READ, an outer native transaction
+first reads the value account, another transaction credits 9 and consumes 6,
+then the original transaction performs covered reserve/final/topup. Before the
+fix all three incorrectly permanently suspend the owner (GapCount 1). Topup
+unknown becomes 12 instead of 3. If the intervening credit and debit are both 6,
+the account matches by accident but final allocation misses the new paid lot.
+Raw failing production-baseline evidence: `s4-wallet-value-rr-before.log`.
+
+The fix locks User before reading the current value account, agency ownership,
+opening wallet/Task holds, source-switch reload, live lots, allocations, slices
+and revision heads. Shared funding allocation/validation and covered Task User
+reads use current reads too. Admission first inserts an uncommitted draft with
+ON CONFLICT DO NOTHING, then initializes its immutable opening snapshot from
+current holds before commit; existing committed openings are never overwritten.
+This preserves independent first-owner insertion without absent-account gap locks.
+The draft is rolled back with the native transaction on any failure.
+
+Regression cases cover net-zero and net-increase concurrent payment/consumption,
+all three covered entrances, newly committed wallet plus Task holds, agency
+bootstrap then switch-back outside the old snapshot, and the independent-user
+barrier. External old-read-snapshot upgrades are inapplicable on SQLite; its
+serialized write path remains covered. Publication/proof scans retain their
+consistent read snapshot because they do not mutate live attribution.
+
+Coordinator separately ran the prior wallet/F12 matrix with Go 1.25.1 against
+three exclusive databases (`coordinator_wallet_20261015`), PASS 43.376s, log
+`D:/JiuLu/TokenOps/.testtmp/coordinator-wallet-f12-three-db.log`. That result covers
+the original package, not Q71.
+
+Q71 related matrix passed on Go 1.27.2, SQLite 3.50.4, MySQL 8.0.39
+REPEATABLE READ and PostgreSQL 17.6 in 248.847s. The wallet-value matrix itself
+passed in 36.88s; all new MySQL/PostgreSQL snapshot regressions passed. Evidence:
+`model/testdata/cn-task/s4-wallet-value-rr-matrix.log`. The before-fix log is
+`model/testdata/cn-task/s4-wallet-value-rr-before.log`.
+
+```powershell
+$env:AGENCY_HUB_RUN_EXTERNAL_DB_TESTS='1'
+$env:AGENCY_HUB_TEST_MYSQL_DSN='root@tcp(127.0.0.1:33174)/s4_cn_finance?charset=utf8mb4&parseTime=True&loc=UTC'
+$env:AGENCY_HUB_TEST_POSTGRES_DSN='host=127.0.0.1 port=55474 user=s4test dbname=s4_cn_finance sslmode=disable'
+../../.tools/go/bin/go.exe test ./model -run 'CN|Topup|TopUp|PaymentSnapshot|AgencyFunding' -count=1 -v -timeout=300s
+```
+
 ## Native Scope
 
 Admission requires `OPS_CN_WALLET_VALUE_ENABLED=true`, CN finance capture,

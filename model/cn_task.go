@@ -254,7 +254,7 @@ func PrepareCNTask(seed *Task, request, source string, quota, token int, unlimit
 			prepared.SubscriptionID, prepared.UsageGeneration, prepared.PeriodBound = sub.Id, sub.UsageGeneration, true
 		} else {
 			var account User
-			if err := tx.First(&account, seed.UserId).Error; err != nil {
+			if err := lockForUpdate(tx).First(&account, seed.UserId).Error; err != nil {
 				return err
 			}
 			if account.Quota < quota {
@@ -322,7 +322,7 @@ func cnTaskFundingTx(tx *gorm.DB, row *CNTaskBilling, delta int, available bool)
 			return err
 		}
 		var account User
-		if err := tx.First(&account, row.UserID).Error; err != nil {
+		if err := lockForUpdate(tx).First(&account, row.UserID).Error; err != nil {
 			return err
 		}
 		balance := int64(account.Quota) - int64(delta)
@@ -410,7 +410,7 @@ func cnTaskStageTx(tx *gorm.DB, task *Task, row *CNTaskBilling, target int, term
 	}
 	delta := target - row.Actual
 	var account User
-	if err := tx.First(&account, row.UserID).Error; err != nil {
+	if err := lockForUpdate(tx).First(&account, row.UserID).Error; err != nil {
 		return err
 	}
 	used := int64(account.UsedQuota) + int64(delta)

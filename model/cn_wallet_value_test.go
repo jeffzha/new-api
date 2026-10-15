@@ -464,6 +464,115 @@ func TestCNWalletValueAcrossDialects(t *testing.T) {
 					}
 				}
 			})
+			t.Run("covered_writers_use_current_owner_after_old_snapshot", func(t *testing.T) {
+				if dialect == "sqlite" {
+					t.Skip("SQLite cannot upgrade this old read snapshot to a concurrent writer")
+				}
+				for _, added := range []int{6, 9} {
+					for _, operation := range []string{"reserve", "final", "topup"} {
+						t.Run(fmt.Sprintf("%s_%d", operation, added), func(t *testing.T) {
+							user := newUser(0)
+							prefix := fmt.Sprintf("value-covered-snapshot-%s-%d", operation, added)
+							require.NoError(t, credit(user, 6, "1", "USD", prefix+"-initial"))
+							if operation == "final" {
+								ok, err := ReserveCNWallet(prefix+"-owned", user, 2, true)
+								require.NoError(t, err)
+								require.True(t, ok)
+							}
+							tx := db.Begin()
+							require.NoError(t, tx.Error)
+							defer tx.Rollback()
+							var before CNWalletValueAccount
+							require.NoError(t, tx.First(&before, user).Error)
+							require.NoError(t, credit(user, added, "3", "CNY", prefix+"-concurrent"))
+							wallet(user, 6, 6, prefix+"-concurrent-charge")
+							if operation == "topup" {
+								require.NoError(t, creditTopUpQuotaWithFunding(tx, user, 3, nil, "", ""))
+							} else {
+								func() {
+									DB = tx
+									defer func() { DB = db }()
+									if operation == "reserve" {
+										ok, err := ReserveCNWallet(prefix+"-owned", user, 2, true)
+										require.NoError(t, err)
+										require.True(t, ok)
+									}
+									require.NoError(t, FinalizeCNWallet(prefix+"-owned", user, 2, false))
+								}()
+							}
+							require.NoError(t, tx.Commit().Error)
+							var account CNWalletValueAccount
+							require.NoError(t, db.First(&account, user).Error)
+							assert.False(t, account.Suspended, "covered native changes cannot permanently invalidate the owner")
+							assert.Zero(t, account.GapCount)
+							unknown := int64(0)
+							if operation == "topup" {
+								unknown = 3
+								assert.EqualValues(t, added+3, account.ExpectedQuota)
+							} else {
+								var charge CNWalletValueCharge
+								require.NoError(t, db.Where("charge_key = ?", CNIdentity("request:"+prefix+"-owned", "0")).First(&charge).Error)
+								assert.Zero(t, charge.UnknownQuota, "the newly committed paid lot must remain visible to final allocation")
+							}
+							assert.Equal(t, unknown, account.UnknownQuota)
+							var native User
+							require.NoError(t, db.First(&native, user).Error)
+							assert.EqualValues(t, native.Quota, account.ExpectedQuota)
+						})
+					}
+				}
+			})
+			t.Run("old_snapshot_admission_counts_current_holds_and_agency_owner", func(t *testing.T) {
+				if dialect == "sqlite" {
+					t.Skip("SQLite cannot upgrade this old read snapshot to a concurrent writer")
+				}
+				require.NoError(t, MigrateAgency(db))
+				for _, switched := range []bool{false, true} {
+					user := newUser(10)
+					tx := db.Begin()
+					require.NoError(t, tx.Error)
+					defer tx.Rollback()
+					var before int64
+					require.NoError(t, tx.Model(&CNWalletValueAccount{}).Where("user_id = ?", user).Count(&before).Error)
+					var openingTask *CNTaskBilling
+					if switched {
+						require.NoError(t, db.Transaction(func(other *gorm.DB) error {
+							if err := other.Model(&User{Id: user}).Update("billing_mode", AgencyDurableBillingMode).Error; err != nil {
+								return err
+							}
+							if err := EnsureAgencyFundingAccount(other, int64(user)); err != nil {
+								return err
+							}
+							return other.Model(&User{Id: user}).Update("billing_mode", "legacy").Error
+						}))
+					} else {
+						t.Setenv("OPS_CN_WALLET_VALUE_ENABLED", "false")
+						_, err := PreConsumeCNBoundWallet("value-current-opening-wallet", user, 3, user, false, false)
+						require.NoError(t, err)
+						seed := &Task{TaskID: "value-current-opening-task", UserId: user, ChannelId: user, Platform: constant.TaskPlatform("alibaba"), Status: TaskStatusSubmitted}
+						openingTask, err = PrepareCNTask(seed, "value-current-opening-task-request", TaskBillingSourceWallet, 2, user, false, false)
+						require.NoError(t, err)
+						t.Setenv("OPS_CN_WALLET_VALUE_ENABLED", "true")
+					}
+					account, err := cnWalletValueAccountTx(tx, user, true)
+					require.NoError(t, err)
+					if switched {
+						assert.Nil(t, account, "a committed agency owner cannot be adopted through an old snapshot")
+					} else {
+						require.NotNil(t, account)
+						assert.EqualValues(t, 5, account.OpeningBalance)
+						assert.EqualValues(t, 10, account.OpeningQuota)
+						assert.EqualValues(t, 10, account.UnknownQuota)
+						assert.False(t, account.Suspended)
+					}
+					require.NoError(t, tx.Commit().Error)
+					if openingTask != nil {
+						require.NoError(t, FinalizeCNBoundWallet("value-current-opening-wallet", user, 0))
+						require.NoError(t, RequestCNTaskCancellation(openingTask.Key))
+						require.NoError(t, CompleteCNTaskIntent(context.Background(), db, openingTask.Key))
+					}
+				}
+			})
 			t.Run("uncovered_writers_commit_and_permanently_suspend", func(t *testing.T) {
 				user := newUser(0)
 				require.NoError(t, credit(user, 6, "1", "USD", "value-invalidated"))

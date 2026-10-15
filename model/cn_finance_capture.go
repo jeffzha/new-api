@@ -109,7 +109,7 @@ func FinishCNLegacyIntent(key string, committed bool) error {
 func cnStageChargeSnapshot(tx *gorm.DB, f *CNFact, quota int64) error {
 	chain := CNIdentity(f.Kind, f.EconomicID, f.SegmentID)
 	var previous CNFinanceOutbox
-	err := tx.Where("chain_key = ?", chain).Order("revision DESC").First(&previous).Error
+	err := lockForUpdate(tx).Where("chain_key = ?", chain).Order("revision DESC").First(&previous).Error
 	prior := int64(0)
 	var priorMoney *CNMoney
 	if err == nil {

@@ -214,61 +214,69 @@ func cnWalletValueAccountTx(tx *gorm.DB, user int, admit bool) (*CNWalletValueAc
 	if !tx.Migrator().HasTable(&CNWalletValueAccount{}) {
 		return nil, nil
 	}
-	var account CNWalletValueAccount
-	err := tx.Where("user_id = ?", user).First(&account).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) && (!admit || !cnWalletValueAvailable()) {
-		return nil, nil
-	}
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
 	var native User
 	if e := lockForUpdate(tx).Select("id", "quota", "billing_mode").First(&native, user).Error; e != nil {
 		return nil, e
 	}
 	sourceSwitched := native.BillingMode == AgencyDurableBillingMode || native.BillingMode == AgencyProvisioningBillingMode || common.RedisEnabled || common.BatchUpdateEnabled
 	if tx.Migrator().HasTable(&AgencyFundingAccount{}) {
-		var count int64
-		if e := tx.Model(&AgencyFundingAccount{}).Where("user_id = ?", user).Count(&count).Error; e != nil {
+		var owners []AgencyFundingAccount
+		if e := lockForUpdate(tx).Select("user_id").Where("user_id = ?", user).Find(&owners).Error; e != nil {
 			return nil, e
 		}
-		sourceSwitched = sourceSwitched || count != 0
+		sourceSwitched = sourceSwitched || len(owners) != 0
 	}
-	if sourceSwitched {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		if err := cnSuspendWalletValueTx(tx, user); err != nil {
-			return nil, err
-		}
-		if err := tx.Where("user_id = ?", user).First(&account).Error; err != nil {
+	if admit && cnWalletValueAvailable() && !sourceSwitched {
+		// This uncommitted draft claims admission before current range reads.
+		// It avoids both missing-account gap locks and hold-scan locks before
+		// independent owners have inserted their admission rows.
+		draft := CNWalletValueAccount{UserID: user}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&draft).Error; err != nil {
 			return nil, err
 		}
 	}
+	var account CNWalletValueAccount
+	err := lockForUpdate(tx).Where("user_id = ?", user).First(&account).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if account.CreatedAt == "" {
 		unknown := int64(native.Quota)
 		var wallets []CNWalletLifecycle
-		if err := tx.Where("user_id = ? AND state = ?", user, "reserved").Find(&wallets).Error; err != nil {
+		if err := lockForUpdate(tx).Where("user_id = ? AND state = ?", user, "reserved").Find(&wallets).Error; err != nil {
 			return nil, err
 		}
 		for _, row := range wallets {
 			unknown += row.Reserved
 		}
 		var tasks []CNTaskBilling
-		if err := tx.Where("user_id = ? AND source = ?", user, TaskBillingSourceWallet).Find(&tasks).Error; err != nil {
+		if err := lockForUpdate(tx).Where("user_id = ? AND source = ?", user, TaskBillingSourceWallet).Find(&tasks).Error; err != nil {
 			return nil, err
 		}
 		for _, row := range tasks {
 			unknown += int64(row.HeldQuota - row.Actual)
 		}
 		account = CNWalletValueAccount{UserID: user, ExpectedQuota: int64(native.Quota), UnknownQuota: unknown, OpeningQuota: unknown, OpeningBalance: int64(native.Quota), CreatedAt: time.Now().UTC().Format(CNTimeLayout)}
-		return &account, tx.Create(&account).Error
+		if err := tx.Save(&account).Error; err != nil {
+			return nil, err
+		}
+	}
+	if sourceSwitched {
+		if err := cnSuspendWalletValueTx(tx, user); err != nil {
+			return nil, err
+		}
+		if err := lockForUpdate(tx).Where("user_id = ?", user).First(&account).Error; err != nil {
+			return nil, err
+		}
 	}
 	if account.ExpectedQuota != int64(native.Quota) {
 		// External SQL cannot be fenced by GORM. Preserve cash records and
 		// original receipts, but remove all remaining lots from attribution.
 		var lots []CNWalletValueLot
-		if err := tx.Where("user_id = ? AND isolated = ?", user, false).Order("created_at").Order("lot_id").Find(&lots).Error; err != nil {
+		if err := lockForUpdate(tx).Where("user_id = ? AND isolated = ?", user, false).Order("created_at").Order("lot_id").Find(&lots).Error; err != nil {
 			return nil, err
 		}
 		for _, lot := range lots {
@@ -328,7 +336,7 @@ func cnWalletValueTopupTx(tx *gorm.DB, user int, quota int64, source string, sna
 				return tx.Save(account).Error
 			}
 			var topup TopUp
-			err = tx.Where("trade_no = ? AND user_id = ?", source, user).First(&topup).Error
+			err = lockForUpdate(tx).Where("trade_no = ? AND user_id = ?", source, user).First(&topup).Error
 			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 				return err
 			}
@@ -346,12 +354,15 @@ func cnWalletValueTopupTx(tx *gorm.DB, user int, quota int64, source string, sna
 				account.ExpectedQuota += quota
 				return tx.Save(account).Error
 			}
-			var priorFacts int64
-			err = tx.Model(&CNFinanceOutbox{}).Where("fact_id IN ?", []string{CNIdentity("payment", "topup", source), CNIdentity("funding_lot", "topup", source)}).Count(&priorFacts).Error
+			if _, err := cnLockPublisher(tx); err != nil {
+				return err
+			}
+			var priorFacts []CNFinanceOutbox
+			err = lockForUpdate(tx).Select("fact_id").Where("fact_id IN ?", []string{CNIdentity("payment", "topup", source), CNIdentity("funding_lot", "topup", source)}).Find(&priorFacts).Error
 			if err != nil {
 				return err
 			}
-			if priorFacts != 0 {
+			if len(priorFacts) != 0 {
 				// Reader or older-writer facts are immutable and cannot be
 				// enriched with native authority after their publication.
 				account.UnknownQuota += quota
@@ -362,11 +373,11 @@ func cnWalletValueTopupTx(tx *gorm.DB, user int, quota int64, source string, sna
 			if err := cnCaptureTopup(tx, topup, CNEvidence{System: "gateway-cn", RecordType: "cn_wallet_value_lot", RecordID: lot.LotID, EvidenceID: lot.Evidence}); err != nil {
 				return err
 			}
-			var paymentFact int64
-			if err := tx.Model(&CNFinanceOutbox{}).Where("fact_id = ?", CNIdentity("payment", "topup", source)).Count(&paymentFact).Error; err != nil {
+			var paymentFacts []CNFinanceOutbox
+			if err := lockForUpdate(tx).Select("fact_id").Where("fact_id = ?", CNIdentity("payment", "topup", source)).Find(&paymentFacts).Error; err != nil {
 				return err
 			}
-			if paymentFact == 0 {
+			if len(paymentFacts) == 0 {
 				account.UnknownQuota += quota
 				account.ExpectedQuota += quota
 				return tx.Save(account).Error
@@ -413,7 +424,7 @@ func cnWalletValueChargeTx(tx *gorm.DB, f *CNFact, quota, prior int64) error {
 	}
 	key := CNIdentity(f.EconomicID, f.SegmentID)
 	var charge CNWalletValueCharge
-	err = tx.Where("charge_key = ?", key).First(&charge).Error
+	err = lockForUpdate(tx).Where("charge_key = ?", key).First(&charge).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		charge = CNWalletValueCharge{ChargeKey: key, UserID: user, EconomicID: f.EconomicID, SegmentID: f.SegmentID, Actual: prior, UnknownQuota: prior}
 		if err = tx.Create(&charge).Error; err != nil {
@@ -431,7 +442,7 @@ func cnWalletValueChargeTx(tx *gorm.DB, f *CNFact, quota, prior int64) error {
 		return ErrCNConflict
 	}
 	var parts []CNWalletValuePart
-	if err := tx.Where("charge_key = ?", key).Order("id").Find(&parts).Error; err != nil {
+	if err := lockForUpdate(tx).Where("charge_key = ?", key).Order("id").Find(&parts).Error; err != nil {
 		return err
 	}
 	delta := quota - prior
@@ -454,7 +465,7 @@ func cnWalletValueChargeTx(tx *gorm.DB, f *CNFact, quota, prior int64) error {
 			}
 		}
 		var lots []CNWalletValueLot
-		if err := tx.Where("user_id = ? AND isolated = ?", user, false).Order("created_at").Order("lot_id").Find(&lots).Error; err != nil {
+		if err := lockForUpdate(tx).Where("user_id = ? AND isolated = ?", user, false).Order("created_at").Order("lot_id").Find(&lots).Error; err != nil {
 			return err
 		}
 		for _, lot := range lots {
@@ -471,7 +482,7 @@ func cnWalletValueChargeTx(tx *gorm.DB, f *CNFact, quota, prior int64) error {
 			}
 			part := CNWalletValuePart{ChargeKey: key, LotID: lot.LotID, AllocationID: CNIdentity("ordinary-wallet-allocation", key, lot.LotID)}
 			var allocation CNFundingValueAllocation
-			err := tx.Where("allocation_id = ?", part.AllocationID).First(&allocation).Error
+			err := lockForUpdate(tx).Where("allocation_id = ?", part.AllocationID).First(&allocation).Error
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				if err := tx.Create(&part).Error; err != nil {
 					return err
@@ -511,7 +522,7 @@ func cnWalletValueChargeTx(tx *gorm.DB, f *CNFact, quota, prior int64) error {
 	} else if delta < 0 {
 		remaining := -delta
 		var slices []CNWalletValueSlice
-		if err := tx.Where("charge_key = ? AND quota > 0", key).Order("id DESC").Find(&slices).Error; err != nil {
+		if err := lockForUpdate(tx).Where("charge_key = ? AND quota > 0", key).Order("id DESC").Find(&slices).Error; err != nil {
 			return err
 		}
 		for _, slice := range slices {
@@ -533,11 +544,11 @@ func cnWalletValueChargeTx(tx *gorm.DB, f *CNFact, quota, prior int64) error {
 				continue
 			}
 			var allocation CNFundingValueAllocation
-			if err := tx.Where("allocation_id = ?", slice.AllocationID).First(&allocation).Error; err != nil {
+			if err := lockForUpdate(tx).Where("allocation_id = ?", slice.AllocationID).First(&allocation).Error; err != nil {
 				return err
 			}
 			var lot CNWalletValueLot
-			if err := tx.Where("lot_id = ?", allocation.LotID).First(&lot).Error; err != nil {
+			if err := lockForUpdate(tx).Where("lot_id = ?", allocation.LotID).First(&lot).Error; err != nil {
 				return err
 			}
 			frozen, err := cnDecimal(slice.Value)
@@ -606,18 +617,18 @@ func cnWalletValueChargeTx(tx *gorm.DB, f *CNFact, quota, prior int64) error {
 
 func cnWalletValueAllocationFactTx(tx *gorm.DB, charge *CNFact, part CNWalletValuePart) error {
 	var allocation CNFundingValueAllocation
-	if err := tx.Where("allocation_id = ?", part.AllocationID).First(&allocation).Error; err != nil {
+	if err := lockForUpdate(tx).Where("allocation_id = ?", part.AllocationID).First(&allocation).Error; err != nil {
 		return err
 	}
 	var lot CNWalletValueLot
-	if err := tx.Where("lot_id = ?", part.LotID).First(&lot).Error; err != nil {
+	if err := lockForUpdate(tx).Where("lot_id = ?", part.LotID).First(&lot).Error; err != nil {
 		return err
 	}
 	evidence := CNEvidence{System: "gateway-cn", RecordType: "cn_wallet_value_allocation", RecordID: part.AllocationID, EvidenceID: CNIdentity(part.AllocationID, charge.FactID, lot.Evidence, allocation.Value, strconv.FormatInt(allocation.Quota, 10))}
 	f := cnBaseFact("funding_allocation", part.AllocationID, "0", charge.OperationID, "wallet", int64(lot.UserID), time.Now().UTC(), evidence)
 	f.RequestID, f.TaskID = charge.RequestID, charge.TaskID
 	var account CNWalletValueAccount
-	if err := tx.Where("user_id = ?", lot.UserID).First(&account).Error; err != nil {
+	if err := lockForUpdate(tx).Where("user_id = ?", lot.UserID).First(&account).Error; err != nil {
 		return err
 	}
 	f.SourceEvidence = append(f.SourceEvidence, CNEvidence{System: "gateway-cn", RecordType: "cn_wallet_value_account", RecordID: strconv.Itoa(lot.UserID), EvidenceID: CNIdentity(cnWalletValuePolicy, strconv.Itoa(lot.UserID), account.CreatedAt, strconv.FormatInt(account.OpeningQuota, 10), strconv.FormatInt(account.OpeningBalance, 10))})
@@ -625,7 +636,7 @@ func cnWalletValueAllocationFactTx(tx *gorm.DB, charge *CNFact, part CNWalletVal
 	f.Quality = "verified_payment"
 	f.Conversion = map[string]any{"sourceUnit": "currency", "quotaPerUnit": nil, "originalCurrency": lot.Currency, "settlementCurrency": lot.Currency, "exchangeRate": "1", "fxVersion": "identity-1", "rounding": "HALF_EVEN_18"}
 	var previous CNFinanceOutbox
-	err := tx.Where("chain_key = ?", CNIdentity(f.Kind, f.EconomicID, f.SegmentID)).Order("revision DESC").First(&previous).Error
+	err := lockForUpdate(tx).Where("chain_key = ?", CNIdentity(f.Kind, f.EconomicID, f.SegmentID)).Order("revision DESC").First(&previous).Error
 	priorQuota, priorValue := int64(0), decimal.Zero
 	if err == nil {
 		var p CNFact

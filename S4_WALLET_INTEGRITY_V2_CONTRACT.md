@@ -317,6 +317,9 @@ tuple using UTF-8 bytes, with sequence/revision compared numerically.
 
 `nativeUserId` is a positive decimal string. `decision` is `eligible`/`excluded`;
 eligible requires opsFifoHistoryCount `0` and no intersectingAuthorityIds.
+`opsInventoryId,opsInventoryHash` MUST reference the pre-approved immutable Ops
+eligibility snapshot defined below; producer-supplied inventory claims alone
+cannot establish eligibility.
 `ownerMode` is `unknown` or `external_existing`; inherited holds never get new
 known-value ownership. `nativeKind` identifies the original source boundary
 (`topup_credit`, `wallet_reserve`, `wallet_release`, `wallet_final`, `task_reserve`,
@@ -492,6 +495,58 @@ unresolved heads. A resolution has the same category/entity and reason evidence,
 and never deletes the original. This field is part of the exact findings schema.
 New epochs require separately reviewed opening/fence and retain the stable chain
 claims; they cannot reclaim old facts or reset old gaps.
+
+## Ops Eligibility Snapshot
+
+Ops creates and approves the immutable eligibility snapshot before Gateway admits
+the cohort. This is a concrete required input, not an indefinitely pending proof.
+Gateway may consume an authenticated Ops export or an operator-configured file of
+that exact export; it never invents an inventory ID or independently reconstructs
+Ops inventory/review hashes. Absent/invalid input rejects admission/start with an
+actionable missing-snapshot error. Once a real approved snapshot is supplied, the
+normal prepare/admit/fence/start sequence can proceed.
+
+The export has exactly `opsInventoryId,opsInventoryHash,body`. The body has exactly
+`schema,snapshotId,sourceSystem,gatewayId,streamEpoch,integrityEpoch,approvedAt,
+reviewSchema,reviewHash,customers`. `schema` is
+`ops-native-integrity-eligibility-v2`; snapshotId is an Ops-generated UUID and
+opsInventoryId equals it. sourceSystem is `gateway-cn-finance-v2`; Gateway/stream/
+integrity epoch must match the prepared cohort exactly. approvedAt uses CNTimeLayout.
+`reviewSchema` is `ops-native-integrity-review-v2`. customers is sorted by numeric
+customerKey, unique, and each row has exactly
+`customerKey,decision,opsFifoHistoryCount,intersectingAuthorityIds`. Counts are
+nonnegative decimal int64 strings; authority IDs are sorted unique strings.
+The snapshot explicitly enumerates every admitted customer; omission is excluded,
+never implied eligible. Eligible requires count `0` and empty authority IDs.
+
+`opsInventoryHash` is lowercase `sha256:` plus SHA256 of RFC8785 JCS of the exact
+body, including snapshotId, reviewHash and all customer decisions. The body has no
+opsInventoryHash field, so there is no hash cycle. Gateway verifies this hash,
+scope and decision, then copies the exact snapshot ID/hash and that customer's
+decision/count/authority IDs into its eligibility row. The sidecar row's own
+eligibilityId is a separate producer row identity, not the Ops snapshot ID.
+
+`reviewHash` is the immutable Ops-generated evidence digest for its versioned
+review, covering all FIFO history, allocation policies in submitted and approved
+states, all relevant authority predicates/sourceEvidence, and canonical postings
+for the source/customer scope. Ops persists the exact review evidence and digest
+with the snapshot. Its database-specific evidence projection and review algorithm
+are owned by Ops under reviewSchema; they are not a second Gateway algorithm.
+Gateway copies reviewHash inside the Ops body and does not attempt to recreate it.
+The cross-system hash algorithm is the exact body JCS hash above, which both
+sides verify. An unapproved or producer-invented ID/hash is invalid, not trusted
+because its bytes are self-consistent.
+
+On proof import/authorization, Ops resolves the supplied snapshot ID in its own
+immutable approved snapshot store, verifies exact body/hash/scope/customer and
+decision equality, and independently scans current FIFO history, submitted and
+approved allocation policies, authority predicates/evidence and postings. It
+atomically rejects new grants that conflict with current ownership even when the
+old snapshot was eligible. Retried prior native grants retain their same owner;
+this review must not mistake those idempotent same-owner claims for legacy FIFO.
+A changed/conflicting review cannot rewrite a prior snapshot or silently broaden
+the admitted cohort. The qualification snapshot is evidence of approval, never a
+substitute for current unique chain/fact claims and grant-time conflict checks.
 
 ## Durable Start And Mutation Fence
 

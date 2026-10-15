@@ -11,6 +11,8 @@ import (
 )
 
 func RegisterV2(group *gin.RouterGroup) {
+	registerRefundRoutes(group)
+	group = group.Group("")
 	useExportAuth(group, true)
 	group.GET("/facts", func(c *gin.Context) { Default.FactsV2(c) })
 	group.GET("/daily", func(c *gin.Context) { Default.DailyV2(c) })
@@ -19,7 +21,7 @@ func RegisterV2(group *gin.RouterGroup) {
 			cnError(c, 400, "invalid_payload")
 			return
 		}
-		c.JSON(200, model.CNRefundCapabilities(Default.GatewayID))
+		c.JSON(200, Default.refundCapabilities())
 	})
 }
 

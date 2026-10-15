@@ -250,6 +250,11 @@ func applyAgencyQuotaDeltaTx(tx *gorm.DB, userID, delta int64, sourceKind, sourc
 		return err
 	}
 	paidDelta, nonpaidDelta, debtDelta := int64(0), int64(0), int64(0)
+	if delta < 0 {
+		if err := cnRefundCheckSpendTx(tx, userID, -delta, int64(user.Quota)); err != nil {
+			return err
+		}
+	}
 	if delta > 0 {
 		next := account.NonpaidAvailable + delta
 		if next < account.NonpaidAvailable || next < 0 {
@@ -1320,6 +1325,9 @@ func ReverseAgencyTopupTx(tx *gorm.DB, input AgencyFundingReversalInput) ([]Agen
 	if user.BillingMode != AgencyDurableBillingMode {
 		return nil, false, errors.New("funding reversal requires a durable user")
 	}
+	if err := cnRefundCheckNativeReversalTx(tx, input.UserID, input.SourceOperationID); err != nil {
+		return nil, false, err
+	}
 	if int64(user.Quota)-input.Quota < -int64(common.MaxQuota)-1 {
 		return nil, false, errors.New("funding reversal wallet quota underflow")
 	}
@@ -1950,6 +1958,9 @@ func reserveAgencyFundingTxWithRule(tx *gorm.DB, userID int64, chargeID string, 
 			return nil
 		}
 		amount -= allocated
+		if err := cnRefundCheckSpendTx(tx, userID, amount, account.PaidAvailable+account.NonpaidAvailable); err != nil {
+			return err
+		}
 		remaining := amount
 		var lots []AgencyFundingLot
 		if err := AgencyLockForUpdate(tx).Where("user_id = ? AND (paid_available > 0 OR bonus_available > 0)", userID).Find(&lots).Error; err != nil {

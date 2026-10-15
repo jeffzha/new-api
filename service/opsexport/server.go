@@ -21,9 +21,11 @@ import (
 )
 
 type Server struct {
-	DB        *gorm.DB
-	GatewayID string
-	TokenHash [32]byte
+	DB              *gorm.DB
+	GatewayID       string
+	TokenHash       [32]byte
+	RefundTokenHash [32]byte
+	Refund          *model.CNRefundService
 }
 
 var Default *Server
@@ -53,6 +55,9 @@ func StartConfigured(db *gorm.DB) error {
 	}
 	server := &Server{DB: db, GatewayID: gateway}
 	copy(server.TokenHash[:], decoded)
+	if err := server.configureRefund(); err != nil {
+		return err
+	}
 	Default = server
 	return nil
 }

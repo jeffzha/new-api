@@ -84,6 +84,11 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 		return nil, err
 	}
 	scans = append(scans, midjourney...)
+	taskProofs, err := cnTaskProofs(tx, stream, published)
+	if err != nil {
+		return nil, err
+	}
+	scans = append(scans, taskProofs...)
 	wallet := cnProofScan{dependency: CNDependency{SourceID: "ordinary_wallet_durable_session", Version: "durable-bound-session-v2", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{"billing-session/reserve/finalize/cancel", "image-reserve-rollback", "trusted-zero-preconsume"}, ExcludedPaths: []string{"pre-epoch", "redis", "batch", "legacy-direct-wallet-mutations", "unbound-wallet-receipts"}}}
 	if !CNDurableWalletAvailable() {
 		wallet.coverageGap = true
@@ -198,10 +203,10 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 		agency.dependency.ExcludedPaths = append(agency.dependency.ExcludedPaths, "agency_source_table_unavailable")
 	}
 	scans = append(scans, agency)
-	tasks := cnProofScan{dependency: CNDependency{SourceID: "image_video_tasks", Version: "task-funding-cas-v1", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{"ApplyTaskQuotaAdjustment", "SettleTaskBillingReconciliation", "durable-session-task-request-link"}, ExcludedPaths: []string{"pre-epoch", "legacy-direct-task-writes", "midjourney-legacy"}}}
+	tasks := cnProofScan{coverageGap: true, unsupportedScope: true, dependency: CNDependency{SourceID: "image_video_tasks", Version: "task-funding-cas-v1", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{}, ExcludedPaths: []string{"pre-epoch", "legacy-direct-task-writes", "midjourney-legacy", "writer_coverage_unproven", "ordinary_task_single_settler_has_separate_proofs"}}}
 	if tx.Migrator().HasTable(&Task{}) {
 		var rows []Task
-		if err = tx.Select("id", "task_id", "status", "quota", "private_data", "created_at").Where("created_at >= ?", started.Unix()).Order("id").Find(&rows).Error; err != nil {
+		if err = tx.Select("id", "task_id", "status", "quota", "private_data", "created_at").Where("created_at >= ?", started.Unix()).Where("cn_billing_key = ? OR cn_billing_key IS NULL", "").Order("id").Find(&rows).Error; err != nil {
 			return nil, err
 		}
 		for _, r := range rows {

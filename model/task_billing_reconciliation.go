@@ -189,18 +189,37 @@ func UpdateTaskBillingReconciliation(id int64, updates map[string]any) error {
 // row. A retry can therefore observe either the complete settlement or none of
 // it, never a partially applied balance adjustment.
 func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliationSettlement) (*TaskBillingReconciliationSettlementResult, error) {
+	var identity TaskBillingReconciliation
+	var identityTask Task
+	if id > 0 {
+		if err := DB.First(&identity, id).Error; err != nil {
+			return nil, err
+		}
+		if err := DB.First(&identityTask, identity.TaskID).Error; err != nil {
+			return nil, err
+		}
+		if identityTask.CNBillingKey != "" {
+			return settleCNTaskReconciliation(&identityTask, id, settlement)
+		}
+	}
 	if id <= 0 || settlement.ActualQuota < 0 || int64(settlement.ActualQuota) > int64(common.MaxQuota) || settlement.TotalTokens <= 0 {
 		return nil, fmt.Errorf("invalid task billing settlement")
 	}
 	result := &TaskBillingReconciliationSettlementResult{}
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockTaskBillingUserTx(tx, identityTask.UserId); err != nil {
+			return err
+		}
+		var task Task
+		if err := lockForUpdate(tx).Where("id = ?", identity.TaskID).First(&task).Error; err != nil {
+			return err
+		}
 		var record TaskBillingReconciliation
 		if err := lockForUpdate(tx).Where("id = ?", id).First(&record).Error; err != nil {
 			return err
 		}
-		var task Task
-		if err := lockForUpdate(tx).Where("id = ?", record.TaskID).First(&task).Error; err != nil {
-			return err
+		if record.TaskID != task.ID || task.UserId != identityTask.UserId || task.CNBillingKey != "" {
+			return ErrCNConflict
 		}
 		var firstCharge agencycontract.BillingEvent
 		var firstJournal AgencyBillingJournal

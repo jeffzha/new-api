@@ -125,6 +125,9 @@ func cnSubscriptionRowTx(tx *gorm.DB, request string, user int) (*CNSubscription
 	if err := cnLockSubscriptionUserTx(tx, request, user); err != nil {
 		return nil, err
 	}
+	if err := cnRejectTaskRequestTx(tx, request); err != nil {
+		return nil, err
+	}
 	var row CNSubscriptionLifecycle
 	if err := lockForUpdate(tx).Where("request_id = ?", request).First(&row).Error; err != nil {
 		return nil, err
@@ -185,6 +188,12 @@ func PreConsumeCNSubscription(request string, user, amount, token int, unlimited
 	now := GetDBTimestamp()
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := cnLockSubscriptionUserTx(tx, request, user); err != nil {
+			return err
+		}
+		if err := cnClaimTaskRequestTx(tx, request, user, "subscription"); err != nil {
+			return err
+		}
+		if err := cnRejectTaskRequestTx(tx, request); err != nil {
 			return err
 		}
 		var row CNSubscriptionLifecycle

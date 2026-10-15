@@ -179,6 +179,9 @@ func cnStageChargeSnapshot(tx *gorm.DB, f *CNFact, quota int64) error {
 // CaptureCNTaskChargeTx shares the task/funding transaction, including zero-delta
 // settlement. Agency charges are exported from their native immutable journals.
 func CaptureCNTaskChargeTx(tx *gorm.DB, task *Task, target int) error {
+	if task != nil && task.CNBillingKey != "" {
+		return ErrCNConflict
+	}
 	if !CNFinanceCaptureEnabled() || task == nil || task.ID <= 0 {
 		return nil
 	}

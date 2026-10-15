@@ -158,6 +158,9 @@ func MigrateCNFinance(db *gorm.DB, gatewayID string) error {
 	if err := cnMigrateMidjourney(db); err != nil {
 		return err
 	}
+	if err := MigrateCNTask(db); err != nil {
+		return err
+	}
 	row := CNFinanceStream{ID: 1, GatewayID: gatewayID, Epoch: uuid.NewString(), StartedAt: time.Now().UTC().Format(CNTimeLayout), Migration: "CN_EXPORT_0001"}
 	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 		return err

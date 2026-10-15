@@ -119,6 +119,13 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 		if task.PrivateData.Key != "" {
 			key = task.PrivateData.Key
 		}
+		if task.CNBillingKey != "" {
+			if err := model.ValidateCNTaskCredential(ctx, task.CNBillingKey, channel.Id, key); err != nil {
+				retryTaskBillingReconciliation(record, err)
+				summary.Retried++
+				continue
+			}
+		}
 		baseURL := channel.GetBaseURL()
 		if endpoint := task.PrivateData.Endpoint; endpoint != nil && endpoint.BaseURL != "" {
 			baseURL = endpoint.BaseURL
@@ -139,8 +146,8 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 		}
 
 		resolution, resolveErr := reconciler.ResolveTaskBilling(ctx, &task)
-		if resolveErr != nil || resolution == nil || resolution.TotalTokens <= 0 || resolution.ActualQuota < 0 ||
-			(resolution.ActualQuota == 0 && !model.IsAgencyDurableUser(task.UserId)) {
+		if resolveErr != nil || resolution == nil || resolution.TotalTokens < 0 || (resolution.TotalTokens == 0 && task.CNBillingKey == "") || resolution.ActualQuota < 0 ||
+			(resolution.ActualQuota == 0 && task.CNBillingKey == "" && !model.IsAgencyDurableUser(task.UserId)) {
 			// Some async video upstreams (e.g. openai_seedance via laomandi)
 			// never report a billable token usage, so this reconciliation can
 			// never settle. For agency-durable users, finalize the successful
@@ -184,6 +191,10 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 			continue
 		}
 		if settlement.Applied {
+			if settlement.Task.CNBillingKey != "" {
+				summary.Settled++
+				continue
+			}
 			if cacheErr := model.SyncTaskBillingReconciliationCaches(
 				settlement.Task.UserId,
 				settlement.Task.PrivateData.TokenId,

@@ -52,6 +52,14 @@ func cnWalletRowTx(tx *gorm.DB, request string, user int, create bool) (*CNWalle
 	if account.BillingMode == AgencyDurableBillingMode || account.BillingMode == AgencyProvisioningBillingMode {
 		return nil, ErrAgencyFundingUnavailable
 	}
+	if create {
+		if err := cnClaimTaskRequestTx(tx, request, user, "wallet"); err != nil {
+			return nil, err
+		}
+	}
+	if err := cnRejectTaskRequestTx(tx, request); err != nil {
+		return nil, err
+	}
 	unit := strconv.FormatFloat(common.QuotaPerUnit, 'f', -1, 64)
 	currency := operation_setting.GetQuotaDisplayType()
 	if currency != "USD" && currency != "CNY" {
@@ -331,6 +339,9 @@ func RunCNWalletCancellationRecovery(ctx context.Context, db *gorm.DB) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
+		if err := errors.Join(RecoverCNTaskBilling(ctx, db, 100), DeliverCNTaskEffects(ctx, db, LOG_DB, 100)); err != nil {
+			common.SysError("CN task recovery requires repair")
+		}
 		if err := errors.Join(RecoverCNMidjourney(ctx, db, 100), DeliverCNMidjourneyEffects(ctx, db, LOG_DB, 100)); err != nil {
 			common.SysError("CN Midjourney recovery requires repair")
 		}

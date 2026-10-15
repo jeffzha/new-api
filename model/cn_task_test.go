@@ -208,6 +208,53 @@ func TestCNTaskAcrossDialects(t *testing.T) {
 					require.EqualValues(t, 100, 3000-walletBalance+subscriptionUsed)
 				}
 			})
+			t.Run("independent_requests_prepare_concurrently", func(t *testing.T) {
+				for lane := range 3 {
+					id := 3000 + lane
+					name := fmt.Sprintf("independent-%d", lane)
+					require.NoError(t, db.Create(&User{Id: id, Username: name, AffCode: name, Quota: 1000}).Error)
+					require.NoError(t, db.Create(&Token{Id: id, UserId: id, Key: name, RemainQuota: 1000}).Error)
+					require.NoError(t, db.Create(&SubscriptionPlan{Id: id, Title: name, TotalAmount: 1000, QuotaResetPeriod: SubscriptionResetNever}).Error)
+					require.NoError(t, db.Create(&UserSubscription{Id: id, UserId: id, PlanId: id, AmountTotal: 1000, Status: "active", StartTime: time.Now().Unix() - 1, EndTime: time.Now().Add(time.Hour).Unix()}).Error)
+				}
+				arrived, release := make(chan struct{}, 3), make(chan struct{})
+				if dialect != "sqlite" {
+					require.NoError(t, db.Callback().Create().Before("gorm:create").Register("q59-independent-prepare", func(tx *gorm.DB) {
+						if tx.Statement.Schema != nil && (tx.Statement.Schema.Name == "CNTaskBilling" || tx.Statement.Schema.Name == "CNWalletLifecycle" || tx.Statement.Schema.Name == "CNSubscriptionLifecycle") {
+							arrived <- struct{}{}
+							<-release
+						}
+					}))
+				}
+				results := make(chan error, 3)
+				for lane := range 3 {
+					go func() {
+						id, request := 3000+lane, fmt.Sprintf("independent-request-%d", lane)
+						var err error
+						switch lane {
+						case 0:
+							_, err = PrepareCNTask(&Task{TaskID: request, UserId: id, ChannelId: id, Platform: constant.TaskPlatform("alibaba")}, request, TaskBillingSourceWallet, 100, id, false, false)
+						case 1:
+							_, err = ReserveCNWallet(request, id, 100, true)
+						case 2:
+							_, err = PreConsumeCNSubscription(request, id, 100, id, false, false)
+						}
+						results <- err
+					}()
+				}
+				if dialect != "sqlite" {
+					for range 3 {
+						<-arrived
+					}
+					close(release)
+				}
+				for range 3 {
+					assert.NoError(t, <-results)
+				}
+				if dialect != "sqlite" {
+					require.NoError(t, db.Callback().Create().Remove("q59-independent-prepare"))
+				}
+			})
 			t.Run("token_owner_mismatch_rolls_back_prepare", func(t *testing.T) {
 				var before, after User
 				require.NoError(t, db.First(&before, 800).Error)

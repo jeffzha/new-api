@@ -1,5 +1,33 @@
 # S4 Ordinary Task Single Settler
 
+## Q61 Follow-Up: Independent Request Gap Locks
+
+The Q59 historical compatibility check no longer uses FOR UPDATE. Its receipt
+lane/user identity is immutable; the unique request claim still serializes
+competing first preparations for the same request. Locking an absent historical
+receipt instead introduced MySQL gap locks across unrelated request IDs.
+
+Actual pre-fix MySQL 8.0.39 regression: three users and three different requests
+enter Task/wallet/subscription lanes, synchronize before receipt creation, then
+release together. MySQL reports 1213 deadlock. After the one-query change all
+three preparations succeed. SQLite/PostgreSQL also pass, and same-request
+arbitration plus both historical receipt upgrade directions remain passing.
+`go test ./model -run '^TestCNTaskAcrossDialects$' -count=1 -v` PASS on all three
+engines (23.303s). Evidence: `q59-independent-before.log` and
+`q59-independent-matrix.log` in `model/testdata/cn-task/`.
+
+RR visibility: all three production prepare entrances start their transaction
+with a User update and locking User read. Before the claim, the helper performs
+only table-presence metadata inspection. Its unique insert and locked current
+owner read precede the first ordinary receipt read, so no earlier ordinary data
+query establishes a stale RR snapshot. Same-user contenders also wait on User
+before reading. Existing pre-upgrade receipts were committed before preparation;
+new concurrent different-lane receipts are excluded by the current locked owner
+identity regardless of historical-read snapshot visibility. This relies on the
+participating writers acquiring the permanent claim, not deleting/reassigning
+it or changing historical receipt identity. The MySQL fixture reports
+REPEATABLE-READ; the before/after interleaving ran under its default isolation.
+
 ## Q60 Follow-Up: Complete Recovered Task Results
 
 Probe now reconstructs the known accepted Task as SUBMITTED, commits its

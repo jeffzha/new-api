@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var (
@@ -55,6 +56,12 @@ type CNRefundMutation struct {
 	ReservationKey string `gorm:"size:64;not null;index"`
 	RequestHash    string `gorm:"size:64;not null"`
 	ResponseJSON   string `gorm:"type:text;not null"`
+}
+
+// A confirmed provider transaction can settle only one native reservation.
+type CNRefundProviderTransaction struct {
+	TransactionID  string `gorm:"size:64;primaryKey"`
+	ReservationKey string `gorm:"size:64;not null;index"`
 }
 
 type CNRefundReserveRequest struct {
@@ -150,7 +157,24 @@ type CNRefundService struct {
 }
 
 func MigrateCNRefund(db *gorm.DB) error {
-	return db.AutoMigrate(&CNRefundReservation{}, &CNRefundMutation{})
+	if err := db.AutoMigrate(&CNRefundReservation{}, &CNRefundMutation{}, &CNRefundProviderTransaction{}); err != nil {
+		return err
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		var rows []CNRefundReservation
+		if err := tx.Where("status = ? AND provider_name <> ? AND provider_receipt_id <> ?", "succeeded", "", "").Order(clause.OrderByColumn{Column: clause.Column{Name: "key"}}).Find(&rows).Error; err != nil {
+			return err
+		}
+		// Existing duplicates retain their immutable receipts for reconciliation;
+		// the first owner prevents any further use of that provider transaction.
+		for _, row := range rows {
+			claim := CNRefundProviderTransaction{TransactionID: CNIdentity(row.ProviderName, row.ProviderReceiptID), ReservationKey: row.Key}
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&claim).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *CNRefundService) scope(tenant, gateway, operation string) error {

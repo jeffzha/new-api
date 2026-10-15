@@ -42,7 +42,7 @@ func cnWalletRowTx(tx *gorm.DB, request string, user int, create bool) (*CNWalle
 	}
 	// Acquire the writer lock before the read snapshot on SQLite, and the same
 	// user lock used by atomic task settlement on MySQL/PostgreSQL.
-	if err := tx.Model(&User{}).Where("id = ?", user).Update("quota", gorm.Expr("quota + 0")).Error; err != nil {
+	if err := cnWalletValueWrite(tx).Model(&User{}).Where("id = ?", user).Update("quota", gorm.Expr("quota + 0")).Error; err != nil {
 		return nil, err
 	}
 	var account User
@@ -72,7 +72,9 @@ func cnWalletRowTx(tx *gorm.DB, request string, user int, create bool) (*CNWalle
 			return nil, err
 		}
 	}
-	if err := lockForUpdate(tx).Where("request_id = ?", request).First(&row).Error; err != nil {
+	// User serializes existing receipts; the unique claim arbitrates creation
+	// across users. An absent first lookup must not lock unrelated MySQL gaps.
+	if err := tx.Where("request_id = ?", request).First(&row).Error; err != nil {
 		return nil, err
 	}
 	if row.UserID != user {
@@ -105,8 +107,11 @@ func ReserveCNWallet(request string, user, target int, requireAvailable bool) (b
 			return ErrCNConflict
 		}
 		delta := int64(target) - row.Reserved
+		if err := cnWalletValueDebitTx(tx, user, delta, true); err != nil {
+			return err
+		}
 		if delta != 0 {
-			query := tx.Model(&User{}).Where("id = ?", user)
+			query := cnWalletValueWrite(tx).Model(&User{}).Where("id = ?", user)
 			if delta > 0 && requireAvailable {
 				query = query.Where("quota >= ?", delta)
 			}
@@ -170,8 +175,11 @@ func finalizeCNWalletTx(tx *gorm.DB, row *CNWalletLifecycle, actual int, cancell
 		return ErrCNConflict
 	}
 	delta := int64(actual) - row.Reserved
+	if err := cnWalletValueDebitTx(tx, user, delta, false); err != nil {
+		return err
+	}
 	if delta != 0 {
-		query := tx.Model(&User{}).Where("id = ?", user)
+		query := cnWalletValueWrite(tx).Model(&User{}).Where("id = ?", user)
 		if delta < 0 {
 			query = query.Where("quota <= ?", common.MaxWalletQuota+delta)
 		}

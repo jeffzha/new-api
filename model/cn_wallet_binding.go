@@ -202,13 +202,16 @@ func PreConsumeCNBoundWallet(request string, user, initial, token int, unlimited
 
 func reserveCNBoundWalletTx(tx *gorm.DB, row *CNWalletLifecycle, binding *CNWalletBinding, target int64, requireAvailable bool) error {
 	delta := target - row.Reserved
+	if err := cnWalletValueDebitTx(tx, row.UserID, delta, true); err != nil {
+		return err
+	}
 	if err := cnWalletBindingTokenTx(tx, binding, target, delta > 0 || requireAvailable); err != nil {
 		return err
 	}
 	if delta == 0 {
 		return nil
 	}
-	query := tx.Model(&User{}).Where("id = ?", row.UserID)
+	query := cnWalletValueWrite(tx).Model(&User{}).Where("id = ?", row.UserID)
 	if delta > 0 && requireAvailable {
 		query = query.Where("quota >= ?", delta)
 	}

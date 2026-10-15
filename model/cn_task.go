@@ -260,7 +260,10 @@ func PrepareCNTask(seed *Task, request, source string, quota, token int, unlimit
 			if account.Quota < quota {
 				return ErrInsufficientAgencyWalletQuota
 			}
-			if err := tx.Model(&account).Update("quota", gorm.Expr("quota - ?", quota)).Error; err != nil {
+			if err := cnWalletValueDebitTx(tx, seed.UserId, int64(quota), true); err != nil {
+				return err
+			}
+			if err := cnWalletValueWrite(tx).Model(&account).Update("quota", gorm.Expr("quota - ?", quota)).Error; err != nil {
 				return err
 			}
 		}
@@ -315,6 +318,9 @@ func cnTaskFundingTx(tx *gorm.DB, row *CNTaskBilling, delta int, available bool)
 			return err
 		}
 	} else if row.Source == TaskBillingSourceWallet {
+		if err := cnWalletValueDebitTx(tx, row.UserID, int64(delta), false); err != nil {
+			return err
+		}
 		var account User
 		if err := tx.First(&account, row.UserID).Error; err != nil {
 			return err
@@ -326,7 +332,7 @@ func cnTaskFundingTx(tx *gorm.DB, row *CNTaskBilling, delta int, available bool)
 			}
 			return ErrWalletQuotaLimitExceeded
 		}
-		if err := tx.Model(&account).Update("quota", balance).Error; err != nil {
+		if err := cnWalletValueWrite(tx).Model(&account).Update("quota", balance).Error; err != nil {
 			return err
 		}
 	} else {

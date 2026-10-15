@@ -1081,8 +1081,13 @@ func EnsureAgencyFundingAccount(tx *gorm.DB, userID int64) error {
 		return ErrAgencyFundingUnavailable
 	}
 	var user User
-	if err := tx.Select("id, quota, billing_mode").First(&user, userID).Error; err != nil {
+	if err := lockForUpdate(tx).Select("id, quota, billing_mode").First(&user, userID).Error; err != nil {
 		return err
+	}
+	if user.BillingMode == AgencyDurableBillingMode && tx.Migrator().HasTable(&CNWalletValueAccount{}) {
+		if err := cnSuspendWalletValueTx(tx, int(userID)); err != nil {
+			return err
+		}
 	}
 	if user.BillingMode != AgencyDurableBillingMode {
 		return nil

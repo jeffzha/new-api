@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func (s *CNRefundService) Execute(ctx context.Context, c CNRefundCommand, reconcile bool) (CNRefundReceipt, error) {
@@ -34,6 +35,11 @@ func (s *CNRefundService) Execute(ctx context.Context, c CNRefundCommand, reconc
 			row, _, _, _, err := cnRefundLockReservation(tx, key)
 			if err != nil {
 				return err
+			}
+			if row.Status == "succeeded" {
+				if _, err := cnRefundClaimProviderTx(tx, row, row.ProviderReceiptID); err != nil {
+					return err
+				}
 			}
 			var command CNRefundMutation
 			err = lockForUpdate(tx).Where(map[string]any{"key": commandKey}).First(&command).Error
@@ -130,6 +136,11 @@ func (s *CNRefundService) Execute(ctx context.Context, c CNRefundCommand, reconc
 			if err != nil {
 				return err
 			}
+			if row.Status == "succeeded" {
+				if _, err := cnRefundClaimProviderTx(tx, row, row.ProviderReceiptID); err != nil {
+					return err
+				}
+			}
 			var command CNRefundMutation
 			if err = lockForUpdate(tx).Where(map[string]any{"key": commandKey}).First(&command).Error; err != nil {
 				return err
@@ -209,13 +220,39 @@ func cnRefundLockReservation(tx *gorm.DB, key string) (CNRefundReservation, User
 	return row, u, a, l, err
 }
 
+func cnRefundClaimProviderTx(tx *gorm.DB, row CNRefundReservation, receiptID string) (string, error) {
+	if row.ProviderName == "" || receiptID == "" || len(receiptID) > 191 {
+		return "", ErrCNRefundConflict
+	}
+	claim := CNRefundProviderTransaction{TransactionID: CNIdentity(row.ProviderName, receiptID), ReservationKey: row.Key}
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&claim).Error; err != nil {
+		return "", err
+	}
+	var owner CNRefundProviderTransaction
+	if err := lockForUpdate(tx).Where("transaction_id = ?", claim.TransactionID).First(&owner).Error; err != nil {
+		return "", err
+	}
+	if owner.ReservationKey != row.Key {
+		return "", ErrCNRefundConflict
+	}
+	return claim.TransactionID, nil
+}
+
 func cnRefundStageCashTx(tx *gorm.DB, row CNRefundReservation, outcome CNRefundProviderResult) (string, error) {
+	if outcome.Status != "succeeded" || outcome.ReceiptID == "" || len(outcome.ReceiptID) > 191 || outcome.Evidence == "" || outcome.ConfirmedAt.IsZero() {
+		return "", ErrCNRefundInvalid
+	}
+	transactionID, err := cnRefundClaimProviderTx(tx, row, outcome.ReceiptID)
+	if err != nil {
+		return "", err
+	}
 	var r CNRefundReserveRequest
 	if err := common.UnmarshalJsonStr(row.RequestJSON, &r); err != nil {
 		return "", err
 	}
 	evidence := CNEvidence{System: "gateway-cn", RecordType: "cn_refund_provider_receipt", RecordID: row.Key, EvidenceID: CNIdentity(row.ProviderName, outcome.ReceiptID, outcome.Evidence)}
 	f := cnBaseFact("payment_refund", row.Key, "0", r.OperationID, "agency_wallet", row.UserID, outcome.ConfirmedAt, evidence)
+	f.SourceEvidence = append(f.SourceEvidence, CNEvidence{System: "gateway-cn", RecordType: "cn_refund_provider_transaction", RecordID: transactionID, EvidenceID: evidence.EvidenceID})
 	f.FactID = CNIdentity("cn-refund-cash", row.Key)
 	f.Quality = "verified_payment"
 	f.Cumulative.Money = cnUnknownTaxMoney(r.Amount, r.Currency)

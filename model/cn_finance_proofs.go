@@ -15,6 +15,8 @@ type cnProofScan struct {
 	unsupportedScope bool
 }
 
+var cnSourceProofNow = time.Now
+
 // Proofs certify a named forward path and fixed source snapshot, not unseen
 // historical writes or externally owned finance documents. Every gap stays in
 // the manifest so Ops can combine its own authoritative dependency proofs.
@@ -23,7 +25,7 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	cutoff := time.Now().UTC().Truncate(5 * time.Minute)
+	cutoff := cnSourceProofNow().UTC().Truncate(5 * time.Minute)
 	if cutoff.Before(started) {
 		cutoff = started
 	}
@@ -89,6 +91,11 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 		return nil, err
 	}
 	scans = append(scans, taskProofs...)
+	walletFunding, err := cnWalletValueProof(tx, stream, outbox, published)
+	if err != nil {
+		return nil, err
+	}
+	scans = append(scans, walletFunding)
 	wallet := cnProofScan{dependency: CNDependency{SourceID: "ordinary_wallet_durable_session", Version: "durable-bound-session-v2", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{"billing-session/reserve/finalize/cancel", "image-reserve-rollback", "trusted-zero-preconsume"}, ExcludedPaths: []string{"pre-epoch", "redis", "batch", "legacy-direct-wallet-mutations", "unbound-wallet-receipts"}}}
 	if !CNDurableWalletAvailable() {
 		wallet.coverageGap = true
@@ -351,7 +358,7 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 		{"ordinary_wallet_legacy_batch", legacyPending, legacyUnknown, []string{"writer_coverage_unproven", "legacy-direct-wallet", "redis", "batch-and-inflight"}},
 		{"subscriptions_and_credit_schedules", 0, subscriptionUnknown, []string{"writer_coverage_unproven", "direct-subscription-delta", "agency-subscription", "approved-recognition-schedules", "credit-sale"}},
 		{"payments_refunds_compensations", refundPending, 0, []string{"writer_coverage_unproven", "cash-refund-provider-receipts", "consumed-compensations", "safe-reservations"}},
-		{"funding_lots_allocations", 0, 0, []string{"writer_coverage_unproven", "pre-epoch-native-allocation-history", "unattributed-bonus-and-debt", "ordinary-native-allocation-not-present"}},
+		{"funding_lots_allocations", 0, 0, []string{"writer_coverage_unproven", "pre-epoch-native-allocation-history", "unattributed-bonus-and-debt", "ordinary-native-paid-lots-have-separate-proof"}},
 		{"confirmed_supplier_bills_allocations", 0, 0, []string{"external_authority_proof_required", "ops-owned-confirmed-supplier-bills"}},
 		{"payment_fees", 0, 0, []string{"external_authority_proof_required", "ops-owned-approved-provider-fees"}},
 		{"business_taxes_other_expenses", 0, 0, []string{"external_authority_proof_required", "ops-owned-paid-tax-and-expense-documents"}},

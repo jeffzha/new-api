@@ -173,6 +173,16 @@ func cnStageChargeSnapshot(tx *gorm.DB, f *CNFact, quota int64) error {
 		f.Delta.Money.OriginalAmount = original.Sub(priorOriginal).String()
 	}
 	f.FactID = CNIdentity(f.FactID, strconv.FormatInt(f.Revision, 10))
+	if f.BillingSource == "wallet" {
+		for _, evidence := range f.SourceEvidence {
+			if evidence.RecordType == "cn_wallet_lifecycle_final" || evidence.RecordType == "cn_task_financial_receipt" {
+				if err := cnWalletValueChargeTx(tx, f, quota, prior); err != nil {
+					return err
+				}
+				break
+			}
+		}
+	}
 	return StageCNFactTx(tx, *f)
 }
 
@@ -369,7 +379,7 @@ func cnCaptureAgencyCharge(tx *gorm.DB, source AgencyBillingOutbox) error {
 	return tx.Model(&CNFinanceGap{}).Where("id = ?", f.FactID).Update("resolved", true).Error
 }
 
-func cnCaptureTopup(tx *gorm.DB, topup TopUp) error {
+func cnCaptureTopup(tx *gorm.DB, topup TopUp, nativeLotEvidence ...CNEvidence) error {
 	if topup.TradeNo == "" {
 		return errors.New("topup business identity missing")
 	}
@@ -437,7 +447,13 @@ func cnCaptureTopup(tx *gorm.DB, topup TopUp) error {
 	lot.Funding = map[string]any{"lotId": lot.EconomicID, "paymentId": paymentID, "lotKind": kind, "purchasedQuota": q, "paidValue": f.Cumulative.Money, "purchasedAt": lot.EffectiveAt, "policyVersion": "gateway-topup-evidence-v1", "evidence": lot.SourceEvidence}
 	lot.Links["paymentIds"] = []string{f.EconomicID}
 	lot.Links["fundingLotIds"] = []string{lot.EconomicID}
-	// This is a purchase record only. No wallet-native allocation is fabricated.
+	if len(nativeLotEvidence) > 0 {
+		lot.SourceEvidence = append(lot.SourceEvidence, nativeLotEvidence...)
+		lot.Funding["evidence"] = lot.SourceEvidence
+		lot.Funding["policyVersion"] = cnWalletValuePolicy
+	}
+	// Purchase alone never recognizes income. Native future lots carry an
+	// additional receipt; reader/backfill purchases cannot acquire it.
 	return StageCNFactTx(tx, lot)
 }
 

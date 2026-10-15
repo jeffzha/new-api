@@ -33,6 +33,7 @@ type cnSimulatedPayment struct {
 type cnSimulatedProvider struct {
 	db           *gorm.DB
 	status       string
+	receiptID    *string
 	beforeSubmit func(CNRefundIntent)
 	afterSubmit  func(CNRefundIntent)
 }
@@ -47,6 +48,9 @@ func (p *cnSimulatedProvider) Submit(ctx context.Context, i CNRefundIntent) (CNR
 		return CNRefundProviderResult{}, err
 	}
 	result := CNRefundProviderResult{Intent: i, Status: p.status, ReceiptID: CNIdentity("simulated", i.Identity), Evidence: "simulated signed receipt for " + i.Identity, ConfirmedAt: time.Date(2026, 10, 15, 8, 0, 0, 0, time.UTC)}
+	if p.receiptID != nil {
+		result.ReceiptID = *p.receiptID
+	}
 	response, err := common.Marshal(result)
 	if err != nil {
 		return result, err
@@ -100,6 +104,8 @@ func cnRefundCustomFixture(t *testing.T, dialect, paid string, initial, consumed
 		_ = pool.Close()
 	})
 	t.Setenv("OPS_CN_FINANCE_V2_ENABLED", "true")
+	cnReset(t, db)
+	require.NoError(t, db.Migrator().DropTable(&CNRefundProviderTransaction{}, &CNRefundMutation{}, &CNRefundReservation{}))
 	require.NoError(t, db.AutoMigrate(&User{}, &Token{}))
 	require.NoError(t, MigrateAgency(db))
 	require.NoError(t, MigrateCNFinance(db, "test-cn"))
@@ -238,10 +244,11 @@ func TestCNRefundAtomicWorkflowAcrossDialects(t *testing.T) {
 			assert.Nil(t, fact.Recognition)
 			assert.Nil(t, fact.Cumulative.Quota)
 			assert.Nil(t, fact.Conversion)
-			require.Len(t, fact.SourceEvidence, 1)
+			require.Len(t, fact.SourceEvidence, 2)
 			assert.Equal(t, "gateway-cn", fact.SourceEvidence[0].System)
 			assert.Equal(t, "cn_refund_provider_receipt", fact.SourceEvidence[0].RecordType)
 			assert.Equal(t, reserve.ReservationID, fact.SourceEvidence[0].RecordID)
+			assert.Equal(t, CNEvidence{System: "gateway-cn", RecordType: "cn_refund_provider_transaction", RecordID: CNIdentity(provider.Name(), final.ReceiptID), EvidenceID: CNIdentity(provider.Name(), final.ReceiptID, final.Evidence)}, fact.SourceEvidence[1])
 			var count int64
 			require.NoError(t, s.DB.Model(&CNFinanceOutbox{}).Where("fact_id = ?", paid.CanonicalFactID).Count(&count).Error)
 			assert.EqualValues(t, 1, count)
@@ -559,6 +566,144 @@ func TestCNRefundRestartBeforeProviderIOAndDuplicateSubmit(t *testing.T) {
 			assert.EqualValues(t, 1, count)
 			require.NoError(t, s.DB.Model(&CNFinanceOutbox{}).Where("fact_id = ?", results[0].CanonicalFactID).Count(&count).Error)
 			assert.EqualValues(t, 1, count)
+		})
+	}
+}
+
+func TestCNRefundProviderTransactionOwnershipAcrossDialects(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			s, first := cnRefundFixture(t, dialect)
+			ctx := context.Background()
+			first.Amount = "24"
+			second := first
+			second.OperationID += "-other"
+			second.ApprovalID += "-other"
+			name := second.OperationID
+			u := User{Username: name, AffCode: name, BillingMode: AgencyDurableBillingMode, Status: common.UserStatusEnabled}
+			require.NoError(t, s.DB.Create(&u).Error)
+			require.NoError(t, s.DB.Transaction(func(tx *gorm.DB) error {
+				return creditTopUpQuotaWithFunding(tx, u.Id, 100, nil, "payment", name, &TopupFundingSnapshot{Payment: &TopupPaymentSnapshot{ActualMoney: "80", CurrencyCode: "CNY", PaymentReference: "provider-payment-" + name}})
+			}))
+			var account AgencyFundingAccount
+			var lot AgencyFundingLot
+			require.NoError(t, s.DB.Where("user_id = ?", u.Id).First(&account).Error)
+			require.NoError(t, s.DB.Where("user_id = ? AND source_id = ?", u.Id, name).First(&lot).Error)
+			second.UserID, second.LotID = int64(u.Id), lot.ID
+			second.OriginalPaymentID = CNIdentity("agency-payment", name)
+			second.ExpectedFundingVersion, second.ExpectedLotVersion = account.Version, lot.Version
+			requests := []CNRefundReserveRequest{first, second}
+			commands := make([]CNRefundCommand, 2)
+			holds := make([]CNRefundReceipt, 2)
+			for i, r := range requests {
+				var err error
+				holds[i], err = s.Reserve(ctx, r)
+				require.NoError(t, err)
+				commands[i] = CNRefundCommand{AttemptID: "shared-provider-submit", TenantID: r.TenantID, GatewayID: r.GatewayID, OperationID: r.OperationID, ApprovalID: r.ApprovalID, ApprovalHash: r.ApprovalHash, ExpectedVersion: holds[i].Version}
+			}
+			provider := cnRefundProviderFixture(t)
+			shared := "shared-" + first.OperationID
+			provider.receiptID = &shared
+			s.Provider = provider
+			arrived, release := make(chan struct{}, 2), make(chan struct{})
+			provider.afterSubmit = func(CNRefundIntent) { arrived <- struct{}{}; <-release }
+			var results [2]CNRefundReceipt
+			var failures [2]error
+			var wg sync.WaitGroup
+			for i := range 2 {
+				wg.Add(1)
+				go func() { defer wg.Done(); results[i], failures[i] = s.Execute(ctx, commands[i], false) }()
+			}
+			for range 2 {
+				select {
+				case <-arrived:
+				case <-time.After(10 * time.Second):
+					close(release)
+					wg.Wait()
+					t.Fatal("provider calls did not reach the independent-reservation barrier")
+				}
+			}
+			close(release)
+			wg.Wait()
+			provider.afterSubmit = nil
+			winner, loser := 0, 1
+			if failures[0] != nil {
+				winner, loser = 1, 0
+			}
+			require.NoError(t, failures[winner])
+			require.ErrorIs(t, failures[loser], ErrCNRefundConflict)
+			assert.Equal(t, "succeeded", results[winner].Status)
+			latest, err := s.Get(ctx, requests[loser].TenantID, requests[loser].GatewayID, requests[loser].OperationID)
+			require.NoError(t, err)
+			assert.Equal(t, "executing", latest.Status)
+			assert.EqualValues(t, 30, latest.HeldQuota)
+			assert.Empty(t, latest.CanonicalFactID)
+			var count int64
+			factIDs := []string{CNIdentity("cn-refund-cash", holds[0].ReservationID), CNIdentity("cn-refund-cash", holds[1].ReservationID)}
+			require.NoError(t, s.DB.Model(&CNFinanceOutbox{}).Where("fact_id IN ?", factIDs).Count(&count).Error)
+			assert.EqualValues(t, 1, count)
+			var claim CNRefundProviderTransaction
+			require.NoError(t, s.DB.First(&claim, "transaction_id = ?", CNIdentity(provider.Name(), shared)).Error)
+			assert.Equal(t, holds[winner].ReservationID, claim.ReservationKey)
+			var cash CNFinanceOutbox
+			require.NoError(t, s.DB.Where("fact_id = ?", results[winner].CanonicalFactID).First(&cash).Error)
+			var fact CNFact
+			require.NoError(t, common.UnmarshalJsonStr(cash.Payload, &fact))
+			assert.Contains(t, fact.SourceEvidence, CNEvidence{System: "gateway-cn", RecordType: "cn_refund_provider_transaction", RecordID: claim.TransactionID, EvidenceID: CNIdentity(provider.Name(), shared, "simulated signed receipt for "+results[winner].ProviderIdentity)})
+			// A pre-claim database upgrades without rewriting its original cash fact.
+			require.NoError(t, s.DB.Migrator().DropTable(&CNRefundProviderTransaction{}))
+			for range 2 {
+				require.NoError(t, MigrateCNRefund(s.DB))
+			}
+			replay, err := s.Execute(ctx, commands[winner], false)
+			require.NoError(t, err)
+			assert.Equal(t, results[winner], replay)
+			_, err = s.Execute(ctx, commands[loser], false)
+			require.ErrorIs(t, err, ErrCNRefundConflict)
+			var preserved CNFinanceOutbox
+			require.NoError(t, s.DB.Where("fact_id = ?", cash.FactID).First(&preserved).Error)
+			assert.Equal(t, cash, preserved)
+			require.NoError(t, s.DB.Model(&CNFinanceOutbox{}).Where("fact_id IN ?", factIDs).Count(&count).Error)
+			assert.EqualValues(t, 1, count)
+			empty := first
+			empty.OperationID += "-empty"
+			empty.ApprovalID += "-empty"
+			empty.Amount = "8"
+			balance, err := s.Balance(ctx, empty.TenantID, empty.GatewayID, empty.LotID)
+			require.NoError(t, err)
+			empty.ExpectedFundingVersion, empty.ExpectedLotVersion = balance.FundingVersion, balance.LotVersion
+			hold, err := s.Reserve(ctx, empty)
+			require.NoError(t, err)
+			blank := ""
+			provider.receiptID = &blank
+			command := CNRefundCommand{AttemptID: "empty-receipt", TenantID: empty.TenantID, GatewayID: empty.GatewayID, OperationID: empty.OperationID, ApprovalID: empty.ApprovalID, ApprovalHash: empty.ApprovalHash, ExpectedVersion: hold.Version}
+			unknown, err := s.Execute(ctx, command, false)
+			require.NoError(t, err)
+			assert.Equal(t, "unknown_reconcile", unknown.Status)
+			assert.EqualValues(t, 10, unknown.HeldQuota)
+			assert.Empty(t, unknown.CanonicalFactID)
+			require.NoError(t, s.DB.Model(&CNRefundProviderTransaction{}).Where("reservation_key = ?", hold.ReservationID).Count(&count).Error)
+			assert.Zero(t, count)
+
+			var legacy CNRefundReservation
+			require.NoError(t, s.DB.Where(map[string]any{"key": holds[winner].ReservationID}).First(&legacy).Error)
+			oldDuplicate := requests[winner]
+			oldDuplicate.OperationID += "-legacy-copy"
+			legacy.Key = s.key(oldDuplicate.OperationID)
+			raw, err := common.Marshal(oldDuplicate)
+			require.NoError(t, err)
+			legacy.RequestJSON = string(raw)
+			require.NoError(t, s.DB.Create(&legacy).Error)
+			for range 2 {
+				require.NoError(t, MigrateCNRefund(s.DB))
+			}
+			oldCommand := commands[winner]
+			oldCommand.OperationID, oldCommand.ExpectedVersion = oldDuplicate.OperationID, legacy.Version
+			_, err = s.Execute(ctx, oldCommand, false)
+			require.ErrorIs(t, err, ErrCNRefundConflict, "old duplicate success cannot recover as a fresh confirmation")
+			var preservedLegacy CNRefundReservation
+			require.NoError(t, s.DB.Where(map[string]any{"key": legacy.Key}).First(&preservedLegacy).Error)
+			assert.Equal(t, legacy, preservedLegacy)
 		})
 	}
 }

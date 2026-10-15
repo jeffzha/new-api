@@ -150,6 +150,12 @@ func MigrateCNFinance(db *gorm.DB, gatewayID string) error {
 	if err := db.AutoMigrate(&CNSubscriptionPeriod{}); err != nil {
 		return err
 	}
+	if err := db.AutoMigrate(&CNWalletValueAccount{}, &CNWalletValueLot{}, &CNWalletValueCharge{}, &CNWalletValuePart{}, &CNWalletValueSlice{}); err != nil {
+		return err
+	}
+	if err := cnInstallWalletValueGuard(db); err != nil {
+		return err
+	}
 	if db.Migrator().HasTable(&UserSubscription{}) {
 		if err := db.AutoMigrate(&UserSubscription{}); err != nil {
 			return err

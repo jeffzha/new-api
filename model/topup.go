@@ -179,12 +179,17 @@ func creditTopUpQuotaWithFunding(tx *gorm.DB, userId int, creditedQuota int, upd
 			return err
 		}
 	}
+	if billingMode != AgencyDurableBillingMode {
+		if err := cnWalletValueTopupTx(tx, userId, int64(creditedQuota), sourceID, snapshots); err != nil {
+			return err
+		}
+	}
 
 	updateFields := make(map[string]any, len(updates)+1)
 	maps.Copy(updateFields, updates)
 	updateFields["quota"] = gorm.Expr("quota + ?", creditedQuota)
 
-	result := tx.Model(&User{}).
+	result := cnWalletValueWrite(tx).Model(&User{}).
 		Where("id = ? AND quota <= ?", userId, maxCurrentQuota).
 		Updates(updateFields)
 	if result.Error != nil {

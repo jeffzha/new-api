@@ -231,7 +231,9 @@ null. IDs are nonempty UTF-8 strings; array ordering is specified below. Sequenc
 ordinal, revision, count and nonnegative quota fields are decimal strings, regex
 `0|[1-9][0-9]*`, bounded to signed int64. The signed int64 exceptions are admission
 `openingBalance,openingUnknownQuota`, originalBody `balanceBefore,balanceAfter`,
-and delta fields `quotaDelta,heldDelta`; these use `0|-?[1-9][0-9]*` with no `-0`.
+delta fields `quotaDelta,heldDelta`, account state `balance`, and valueAccount
+`expectedQuota,unknownQuota,openingQuota,openingBalance`; these use
+`0|-?[1-9][0-9]*` with no `-0`.
 All other quota fields, including held/actual before/after, cumulativeActual,
 knownQuota and unknownQuota, are nonnegative. Preserve negative historical debt
 and signed unknown balance exactly; never clamp them to zero on admission or
@@ -411,11 +413,15 @@ The opening unknown amount before a value account exists is exactly admission
 openingBalance plus its frozen wallet/Task holds, including negative debt.
 
 Lot entityId is its actual CNWalletValueLot.LotID. Its object has exactly
-`sourceId,paymentId,currency,purchasedQuota,purchasedValue,isolated,remainingQuota,
+`nativeLotKind,nativeLotId,sourceId,paymentId,currency,purchasedQuota,purchasedValue,isolated,remainingQuota,
 remainingValue,heldQuota,heldValue,retiredQuota,retiredValue`. sourceId is the
 original TopUp.TradeNo; paymentId is the unchanged canonical payment economicId.
 Purchased quota/value are CNWalletValueLot.Quota/Amount and must equal
 CNFundingValueLot.InitialQuota/PaidValue and the original verified purchase.
+nativeLotKind is the literal `ordinary_wallet`; nativeLotId is the positive
+decimal CNWalletValueLot.ID from the same native row as entityId/LotID and
+customerKey/UserID. This identity and sourceId/TradeNo are captured directly,
+never obtained by interpreting an AgencyFundingLot.ID in the ordinary namespace.
 Remaining/held/retired fields copy the corresponding CNFundingValueLot fields;
 isolated copies CNWalletValueLot.Isolated. Quotas and values are nonnegative,
 currency is the original immutable uppercase currency, and no current price/FX
@@ -425,7 +431,12 @@ Refund hold entityId is actual CNFundingValueHold.OperationID. Its object has
 exactly `operationId,nativeLotId,lotId,quota,value,state`. nativeLotId is the
 original positive native lot ID, and native ownership must resolve to the same
 admitted customer/lot; copying an unrelated agency hold into an ordinary pool is
-invalid. state is `held`, `released` or `retired`. Quota/value/lot identity freeze
+invalid. A hold must resolve nativeLotId to the exact same frozen ordinary lot
+row; numeric equality to an unrelated AgencyFundingLot.ID is insufficient.
+The current native refund API resolves IDs through AgencyFundingLot, so its
+holds are excluded from the ordinary cohort; if attached to an ordinary LotID,
+they are ownership mismatch findings, never ordinary refund evidence.
+state is `held`, `released` or `retired`. Quota/value/lot identity freeze
 on first hold. State may advance only held->released or held->retired; replay
 does not reserve/debit again. These state receipts confer no additional monetary
 authority and never invent a refund cash fact. Existing refund cash coverage and
@@ -463,7 +474,13 @@ Ops verifies at every captured boundary and cutoff:
    remaining quota is excluded from known spendable value.
 4. A known topup against signed unknown debt U<0 retires R=min(creditedQuota,-U).
    Retired quota increases R, unknown increases R, and retired value is the saved
-   half-even share of original paid value; remaining gets the exact residual.
+   half-even share of original paid value. Specifically cnDivideHalfEven uses
+   18 fractional decimal places and round-half-to-even for P*R/Q; cap the share
+   at P, and when R=Q use P exactly, including any precision beyond 18 places.
+   Remaining value is exact P minus retired value, with no further rounding.
+   Later allocation of the entire remaining quota receives that exact residual;
+   partial allocations use the same 18-place half-even share, capped at the saved
+   remaining value. Canonical decimal encoding removes insignificant zeros.
    No allocation/revenue is created for debt retirement. The original purchase
    fact remains purchased quota/value, not spendable remaining quota/value.
 5. On isolation false->true, transfer that lot's current remaining quota to

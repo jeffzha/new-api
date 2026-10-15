@@ -333,6 +333,11 @@ balanceAfter,heldBefore,heldAfter,actualBefore,actualAfter,billingModeBefore,
 billingModeAfter,nativeStatus,paymentSnapshot,quotaConversionSnapshot,effectiveAt,
 occurredAt`. Schema is `cn-original-mutation-v2`. IDs/status/modes are strings;
 balances use signed int64 quota strings; held/actual fields are nonnegative
+int64 quota strings. Ordinary User.BillingMode may be the native empty string;
+preserve it exactly in admission/account/original mode fields instead of inventing
+a mode label. Modes must be strings but are not nonempty identity fields. Agency
+durable/provisioning modes and Agency owners remain excluded at admission.
+The other held/actual fields are nonnegative
 int64 quota strings, and nativeRevision is positive. The two snapshot
 fields are null except for topup_credit, where each is either null (unknown value)
 or the unchanged committed snapshot object from TopUp; their existing exact
@@ -457,6 +462,16 @@ unexplained differences are gap. Prior cutoff rows remain immutable in later
 cumulative batches; GET never rescans these native tables.
 
 Ops verifies at every captured boundary and cutoff:
+
+A source_switch must isolate every previously nonisolated ordinary lot of that
+admitted account, transfer each saved pool RemainingQuota to signed unknownQuota,
+and permanently suspend the value account, exactly as cnSuspendWalletValueTx.
+The existing remaining pools and allocation owners stay intact. Switching back
+to the ordinary mode cannot clear suspension, un-isolate old lots, or restore
+known attribution; new credits remain unknown. This is a mandatory transition,
+not an optional representation chosen merely because the spendable equation
+holds. Any external native balance difference remains separately evidenced as a
+capture gap and is never hidden by this isolation transfer.
 
 1. Per lot, purchasedQuota = remainingQuota + heldQuota + retiredQuota + sum of
    latest native allocation quota; purchasedValue obeys the identical exact

@@ -26,9 +26,20 @@ describe("pricing request contracts", () => {
       items: null,
     } as unknown as Parameters<typeof normalizeModelSales>[0]);
     expect(sales.items).toEqual([]);
-    expect(normalizeModelSales({ ...sales, items: [{ origin_model_name: "model-a", channels: null }] } as unknown as Parameters<typeof normalizeModelSales>[0]).items[0].channels).toEqual([]);
+    expect(
+      normalizeModelSales({
+        ...sales,
+        items: [{ origin_model_name: "model-a", channels: null }],
+      } as unknown as Parameters<typeof normalizeModelSales>[0]).items[0].channels,
+    ).toEqual([]);
 
-    expect(normalizePlatformPricing({ revision: 1, refreshed_at_ms: 1, items: null } as unknown as Parameters<typeof normalizePlatformPricing>[0]).items).toEqual([]);
+    expect(
+      normalizePlatformPricing({
+        revision: 1,
+        refreshed_at_ms: 1,
+        items: null,
+      } as unknown as Parameters<typeof normalizePlatformPricing>[0]).items,
+    ).toEqual([]);
 
     const platform = normalizePlatformPricing({
       revision: 1,
@@ -51,11 +62,11 @@ describe("pricing request contracts", () => {
 
   test("new agency drafts submit the standard price while existing discounts remain unchanged", () => {
     const newDraft = policyToDraft(initialPolicy);
-    expect(newDraft.sales).toBe("0.9000");
+    expect(newDraft.sales).toBe("1.0000");
     expect(
       pricingRequest(draftToPolicy(newDraft, initialPolicy, true), true, "Create agency")
         .default_sales_bps,
-    ).toBe(9000);
+    ).toBe(10000);
 
     const existing: Policy = { ...initialPolicy, revision: 7, default_sales_bps: 9000 };
     const existingDraft = policyToDraft(existing);
@@ -66,14 +77,14 @@ describe("pricing request contracts", () => {
     });
   });
 
-  test("new platform rows suggest cost plus 0.05 and a 0.9 sales coefficient", () => {
+  test("new platform rows default missing coefficients to 1 while preserving explicit values", () => {
     expect(suggestedPlatformCoefficients([5000, 5500], null, null)).toEqual({
-      agencyCostBPS: 6000,
-      salesBPS: 9000,
+      agencyCostBPS: 10000,
+      salesBPS: 10000,
     });
     expect(suggestedPlatformCoefficients([9200], null, null)).toEqual({
-      agencyCostBPS: 9700,
-      salesBPS: 9700,
+      agencyCostBPS: 10000,
+      salesBPS: 10000,
     });
     expect(suggestedPlatformCoefficients([5000], 6200, 8800)).toEqual({
       agencyCostBPS: 6200,
@@ -211,7 +222,12 @@ describe("pricing request contracts", () => {
   });
 
   test("batch customer adjustment keeps valid changes and reports invalid rows", () => {
-    const values = { valid: "0.9000", belowCost: "0.8000", aboveCap: "1.1900", untouched: "0.9500" };
+    const values = {
+      valid: "0.9000",
+      belowCost: "0.8000",
+      aboveCap: "1.1900",
+      untouched: "0.9500",
+    };
     const result = adjustCustomerSalesValues(
       [
         { model: "valid", agencyCostBPS: 7000, inheritedSalesBPS: 9000 },

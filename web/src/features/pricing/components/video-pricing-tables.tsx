@@ -149,11 +149,18 @@ export function VideoPricingTables(props: VideoPricingTablesProps) {
       return rateText
     }
     if (row.pricing.kind === 'upstream_credits') {
-      return t("Settled according to the supplier's final material charge")
+      return t(
+        "Settled according to the supplier's final material charge; the supplier does not publish fixed per-image or input-video prices"
+      )
     }
     if (row.row) {
-      const rate = formatTaskUsageUnitPrice(row.row.amountUSD, priceOptions)
-      return `${rate} / ${materialUnitLabel(row.row.definition, i18n.language, t)}`
+      const unit = materialUnitLabel(row.row.definition, i18n.language, t)
+      return row.row.rates
+        .map((entry) => {
+          const rate = formatTaskUsageUnitPrice(entry.amountUSD, priceOptions)
+          return [entry.label, `${rate} / ${unit}`].filter(Boolean).join(' ')
+        })
+        .join(' · ')
     }
     return t('No extra material charge')
   }

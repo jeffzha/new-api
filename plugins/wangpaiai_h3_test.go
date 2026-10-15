@@ -106,6 +106,18 @@ func TestWangpaiH3CatalogHasAll97PriceTiers(t *testing.T) {
 	assert.Equal(t, 97, checked)
 }
 
+func TestWangpaiAndBridgeDoNotPublishLocopalMaterialPricing(t *testing.T) {
+	for _, key := range []string{"wangpaiai", "newapi-video"} {
+		t.Run(key, func(t *testing.T) {
+			plugin := loadTaskPlugin(t, key)
+			assert.Nil(t, plugin.Meta.MaterialPricing)
+			for _, model := range []string{"MiniMax-H3-261013", "MiniMax-H3-2K", "MiniMax-H3-Sensitive"} {
+				assert.Nil(t, plugin.Meta.MaterialPricingForModel(model))
+			}
+		})
+	}
+}
+
 func TestWangpaiH3RejectsUnsupportedInputsAndSettlesActualCost(t *testing.T) {
 	plugin := loadTaskPlugin(t, "wangpaiai")
 	valid := func() map[string]any {
@@ -174,6 +186,7 @@ func TestWangpaiMediaProxyAndVideoBridgePreserveReferences(t *testing.T) {
 	aliasDescriptor := callTaskPlugin(t, bridge, "buildSubmitRequest", aliasCtx)
 	aliasBody := aliasDescriptor["body"].(map[string]any)
 	assert.Contains(t, bridge.Meta.Models, "MiniMax-H3-261013")
+	assert.NotContains(t, bridge.Meta.Models, "MiniMax-H3")
 	assert.Equal(t, "MiniMax-H3", aliasBody["model"])
 	assert.Equal(t, "text_to_video", aliasDescriptor["action"])
 }

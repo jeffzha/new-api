@@ -61,8 +61,8 @@ export type VideoOutputPriceRow = {
 export type VideoMaterialFieldRow = {
   field: string
   definition: BillingUsageFieldSchema
-  /** USD per declared unit of the material field. */
-  amountUSD: number
+  /** USD rates by output tier; a tier-independent price has no label. */
+  rates: Array<{ label?: string; amountUSD: number }>
 }
 
 export type VideoMaterialPricing =
@@ -343,12 +343,42 @@ function materialFieldRows(
         if (!isPricedNumberField(definition)) continue
         const amountUSD = Number(rawPrice)
         if (!Number.isFinite(amountUSD) || amountUSD <= 0) continue
-        if (rows.some((row) => row.field === field)) continue
-        rows.push({ field, definition, amountUSD })
+        const tierLabel = tier.conditions.find(
+          (condition) => condition.field === fields.resolution
+        )?.value
+        const existing = rows.find((row) => row.field === field)
+        if (!existing) {
+          rows.push({
+            field,
+            definition,
+            rates: [{ ...(tierLabel ? { label: tierLabel } : {}), amountUSD }],
+          })
+          continue
+        }
+        if (
+          existing.rates.some(
+            (rate) => rate.label === tierLabel && rate.amountUSD === amountUSD
+          )
+        ) {
+          continue
+        }
+        existing.rates.push({
+          ...(tierLabel ? { label: tierLabel } : {}),
+          amountUSD,
+        })
       }
     }
   }
-  return rows
+  return rows.map((row) => {
+    const first = row.rates[0]
+    if (
+      first &&
+      row.rates.every((rate) => rate.amountUSD === first.amountUSD)
+    ) {
+      return { ...row, rates: [{ amountUSD: first.amountUSD }] }
+    }
+    return row
+  })
 }
 
 function materialPricingOf(
@@ -364,8 +394,12 @@ function materialPricingOf(
     (row) =>
       row.definition.unit === 'credit' && MATERIAL_CREDIT_FIELD.test(row.field)
   )
-  if (passThrough) {
-    return { kind: 'upstream_credits', creditPriceUSD: passThrough.amountUSD }
+  const passThroughRate = passThrough?.rates[0]
+  if (passThroughRate) {
+    return {
+      kind: 'upstream_credits',
+      creditPriceUSD: passThroughRate.amountUSD,
+    }
   }
   return rows.length > 0 ? { kind: 'usage_fields', rows } : null
 }

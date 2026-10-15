@@ -18,26 +18,11 @@ export const meta = {
     en: "Wangpai AI video generation (MiniMax H3 multimodal reference-to-video)",
     zh: "王牌AI 视频生成（MiniMax H3 多模态参考生视频）",
   },
-  version: "1.0.9",
+  version: "1.0.10",
   author: { name: "NexusReach" },
   baseUrl: "https://wangpaiai.com",
   models: ["MiniMax-H3", "MiniMax-H3-2K", "MiniMax-H3-Sensitive"],
   fetchMode: "per_task",
-  materialPricing: {
-    currency: "CNY",
-    items: [
-      { material: "audio", unit: "free" },
-      { material: "image", unit: "count", freeUnits: 5, rates: [{ amount: 0.2 }] },
-      {
-        material: "video",
-        unit: "second",
-        rates: [
-          { label: { en: "768P", zh: "768P" }, amount: 0.5 },
-          { label: { en: "2K", zh: "2K" }, amount: 0.8 },
-        ],
-      },
-    ],
-  },
   usageSchema: {
     output_credits: {
       type: "number",

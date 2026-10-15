@@ -530,7 +530,7 @@ func TestCNWalletBillingSessionFinalizesZeroAndTrustedReserve(t *testing.T) {
 		pre, actual int
 	}{{"service-zero-delta", 100, 100}, {"service-trusted-zero", 0, 60}} {
 		wallet := &WalletFunding{userId: userID, requestId: tc.request}
-		require.NoError(t, wallet.PreConsume(tc.pre))
+		require.NoError(t, wallet.preConsumeDurable(tc.pre, 0, false, true))
 		require.True(t, wallet.durable)
 		session := &BillingSession{relayInfo: &relaycommon.RelayInfo{UserId: userID, RequestId: tc.request, IsPlayground: true}, funding: wallet, preConsumedQuota: tc.pre}
 		assert.True(t, session.NeedsRefund(), "zero reservation still needs a durable terminal state")
@@ -555,7 +555,7 @@ func TestCNWalletBillingSessionCancellationCanRetryIntentFailure(t *testing.T) {
 	const userID = 704
 	seedUser(t, userID, 1000)
 	wallet := &WalletFunding{userId: userID, requestId: "service-cancel-retry"}
-	require.NoError(t, wallet.PreConsume(100))
+	require.NoError(t, wallet.preConsumeDurable(100, 0, false, true))
 	session := &BillingSession{relayInfo: &relaycommon.RelayInfo{UserId: userID, RequestId: wallet.requestId, IsPlayground: true}, funding: wallet, preConsumedQuota: 100}
 	require.NoError(t, model.DB.Callback().Create().Before("gorm:create").Register("s4-intent-failure", func(tx *gorm.DB) {
 		if tx.Statement.Table == "cn_wallet_cancellations" {

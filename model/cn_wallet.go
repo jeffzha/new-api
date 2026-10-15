@@ -20,6 +20,8 @@ func CNDurableWalletAvailable() bool {
 	return CNFinanceCaptureEnabled() && os.Getenv("OPS_CN_DURABLE_WALLET_ENABLED") == "true" && !common.BatchUpdateEnabled && !common.RedisEnabled
 }
 
+func CNDurableWalletRequested() bool { return os.Getenv("OPS_CN_DURABLE_WALLET_ENABLED") == "true" }
+
 type CNWalletLifecycle struct {
 	RequestID         string `gorm:"size:191;primaryKey"`
 	UserID            int    `gorm:"not null;index"`
@@ -84,6 +86,9 @@ func ReserveCNWallet(request string, user, target int, requireAvailable bool) (b
 		if row.State != "reserved" {
 			return ErrCNConflict
 		}
+		if err := cnRejectWalletOnlyMutationTx(tx, request); err != nil {
+			return err
+		}
 		var intentCount int64
 		if err = tx.Model(&CNWalletCancellation{}).Where("request_id = ?", request).Count(&intentCount).Error; err != nil {
 			return err
@@ -130,6 +135,9 @@ func FinalizeCNWallet(request string, user, actual int, cancelled bool) error {
 		if err != nil {
 			return err
 		}
+		if err := cnRejectWalletOnlyMutationTx(tx, request); err != nil {
+			return err
+		}
 		if err = tx.Model(&CNWalletCancellation{}).Where("request_id = ?", request).Count(&intentCount).Error; err != nil {
 			return err
 		}
@@ -174,6 +182,9 @@ func finalizeCNWalletTx(tx *gorm.DB, row *CNWalletLifecycle, actual int, cancell
 	f.Quality = "settled_quota"
 	f.EffectiveAt = row.CreatedAt
 	f.SourcePeriod = row.CreatedAt[:7]
+	if err = cnWalletTokenEvidenceTx(tx, row, &f); err != nil {
+		return err
+	}
 	if _, err = cnLockPublisher(tx); err != nil {
 		return err
 	}
@@ -221,6 +232,9 @@ func RequestCNWalletCancellation(db *gorm.DB, request string, user, token, quota
 		if err != nil {
 			return err
 		}
+		if err := cnRejectWalletOnlyMutationTx(tx, request); err != nil {
+			return err
+		}
 		var prior CNWalletCancellation
 		err = tx.Where("request_id = ?", request).First(&prior).Error
 		if err == nil {
@@ -260,8 +274,20 @@ func CompleteCNWalletCancellation(ctx context.Context, db *gorm.DB, request stri
 		if err != nil {
 			return err
 		}
-		// Lock token before the publisher, in the same order on every retry.
-		if intent.TokenQuota > 0 {
+		// Bound requests derive the refundable token amount from the financial
+		// transaction. Legacy intents retain their explicit pre-upgrade evidence.
+		binding, bindingErr := cnWalletBindingTx(tx, row)
+		if bindingErr == nil {
+			if intent.TokenID != binding.TokenID || intent.TokenQuota != binding.TokenQuota {
+				return ErrCNConflict
+			}
+			if err = cnWalletBindingTokenTx(tx, binding, 0, false); err != nil {
+				return err
+			}
+		} else if !errors.Is(bindingErr, ErrCNWalletBindingRequired) {
+			return bindingErr
+		}
+		if errors.Is(bindingErr, ErrCNWalletBindingRequired) && intent.TokenQuota > 0 {
 			var token Token
 			if err = lockForUpdate(tx).Where("id = ? AND user_id = ?", intent.TokenID, intent.UserID).First(&token).Error; err != nil {
 				return err

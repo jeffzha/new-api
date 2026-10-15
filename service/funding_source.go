@@ -43,17 +43,8 @@ type WalletFunding struct {
 func (w *WalletFunding) Source() string { return BillingSourceWallet }
 
 func (w *WalletFunding) PreConsume(amount int) error {
-	if w.requestId != "" && model.CNDurableWalletAvailable() {
-		reserved, err := model.ReserveCNWallet(w.requestId, w.userId, amount, true)
-		if err != nil {
-			return err
-		}
-		if !reserved {
-			return ErrInsufficientWalletQuota
-		}
-		w.durable = true
-		w.consumed = amount
-		return nil
+	if model.CNDurableWalletRequested() {
+		return model.ErrCNWalletBindingRequired
 	}
 	if amount <= 0 {
 		return nil
@@ -69,9 +60,19 @@ func (w *WalletFunding) PreConsume(amount int) error {
 	return nil
 }
 
+func (w *WalletFunding) preConsumeDurable(amount, token int, unlimited, playground bool) error {
+	reserved, err := model.PreConsumeCNBoundWallet(w.requestId, w.userId, amount, token, unlimited, playground)
+	if err != nil {
+		return err
+	}
+	w.durable = true
+	w.consumed = reserved
+	return nil
+}
+
 func (w *WalletFunding) Settle(delta int) error {
 	if w.durable {
-		return model.FinalizeCNWallet(w.requestId, w.userId, w.consumed+delta, false)
+		return model.FinalizeCNBoundWallet(w.requestId, w.userId, w.consumed+delta)
 	}
 	if delta == 0 {
 		return nil
@@ -84,7 +85,10 @@ func (w *WalletFunding) Settle(delta int) error {
 
 func (w *WalletFunding) Refund() error {
 	if w.durable {
-		return model.FinalizeCNWallet(w.requestId, w.userId, 0, true)
+		if err := model.RequestCNBoundWalletCancellation(model.DB, w.requestId, w.userId); err != nil {
+			return err
+		}
+		return model.CompleteCNWalletCancellation(context.Background(), model.DB, w.requestId)
 	}
 	if w.consumed <= 0 {
 		return nil

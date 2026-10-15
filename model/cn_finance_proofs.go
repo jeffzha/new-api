@@ -84,7 +84,7 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 		return nil, err
 	}
 	scans = append(scans, midjourney...)
-	wallet := cnProofScan{dependency: CNDependency{SourceID: "ordinary_wallet_durable_session", Version: "durable-session-v1", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{"billing-session/reserve/finalize/cancel", "image-reserve-rollback", "trusted-zero-preconsume"}, ExcludedPaths: []string{"pre-epoch", "redis", "batch", "legacy-direct-wallet-mutations"}}}
+	wallet := cnProofScan{dependency: CNDependency{SourceID: "ordinary_wallet_durable_session", Version: "durable-bound-session-v2", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{"billing-session/reserve/finalize/cancel", "image-reserve-rollback", "trusted-zero-preconsume"}, ExcludedPaths: []string{"pre-epoch", "redis", "batch", "legacy-direct-wallet-mutations", "unbound-wallet-receipts"}}}
 	if !CNDurableWalletAvailable() {
 		wallet.coverageGap = true
 		wallet.dependency.ExcludedPaths = append(wallet.dependency.ExcludedPaths, "durable_wallet_lane_unavailable")
@@ -95,6 +95,19 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 	}
 	for _, row := range wallets {
 		wallet.records = append(wallet.records, []any{row.RequestID, row.State, strconv.FormatInt(row.Version, 10), strconv.FormatInt(row.Reserved, 10), strconv.FormatInt(row.Actual, 10), row.Currency, row.QuotaPerUnit, row.ExchangeRate, row.ConversionVersion})
+		binding, unknown, err := cnWalletBindingProofTx(tx, row)
+		if err != nil {
+			return nil, err
+		}
+		if unknown {
+			wallet.dependency.UnknownCount++
+		}
+		if binding != nil {
+			wallet.records = append(wallet.records, []any{binding.RequestID, binding.TokenID, binding.TokenUnlimited, binding.Playground, binding.InitialReserve, binding.TokenQuota, binding.TokenAdjustmentStatus, binding.TokenDisposedQuota})
+			if binding.TokenDisposedQuota > 0 {
+				wallet.dependency.UnknownCount++
+			}
+		}
 		if cnQuotaMoney(row.Actual, map[string]any{"quotaPerUnit": row.QuotaPerUnit, "exchangeRate": row.ExchangeRate, "settlementCurrency": row.Currency, "originalCurrency": "USD"}) == nil {
 			wallet.dependency.UnknownCount++
 		}

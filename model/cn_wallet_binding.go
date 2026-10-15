@@ -232,7 +232,7 @@ func reserveCNBoundWalletTx(tx *gorm.DB, row *CNWalletLifecycle, binding *CNWall
 	if result.RowsAffected != 1 {
 		return ErrCNConflict
 	}
-	return nil
+	return cnFinishIntegrityCaptureTx(tx, row.UserID, "wallet", row.RequestID)
 }
 
 func ReserveCNBoundWallet(request string, user, target int, requireAvailable bool) error {

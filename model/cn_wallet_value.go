@@ -85,7 +85,7 @@ func cnInstallWalletValueGuard(db *gorm.DB) error {
 	if db.Callback().Update().Get("cn:wallet_value_guard") != nil {
 		return nil
 	}
-	return db.Callback().Update().Before("gorm:update").Register("cn:wallet_value_guard", func(tx *gorm.DB) {
+	err := db.Callback().Update().Before("gorm:update").Register("cn:wallet_value_guard", func(tx *gorm.DB) {
 		if tx.Error != nil || tx.Statement.Schema == nil || tx.Statement.Table != "users" {
 			return
 		}
@@ -170,8 +170,35 @@ func cnInstallWalletValueGuard(db *gorm.DB) error {
 			tx.AddError(err)
 			return
 		}
+		var scopes []*cnIntegrityCaptureScope
 		for _, user := range users {
+			tx.Statement.Settings.Delete(cnIntegrityCaptureScopeKey)
+			if err := cnInvalidateIntegrityUserTx(tx.Session(&gorm.Session{NewDB: true}), user.Id); err != nil {
+				tx.AddError(err)
+				return
+			}
+			if value, exists := tx.Statement.Settings.Load(cnIntegrityCaptureScopeKey); exists {
+				scopes = append(scopes, value.(*cnIntegrityCaptureScope))
+			}
 			if err := cnSuspendWalletValueTx(tx.Session(&gorm.Session{NewDB: true}), user.Id); err != nil {
+				tx.AddError(err)
+				return
+			}
+		}
+		tx.Statement.Settings.Delete(cnIntegrityCaptureScopeKey)
+		tx.Statement.Settings.Store("cn:integrity-uncovered-scopes", scopes)
+	})
+	if err != nil {
+		return err
+	}
+	return db.Callback().Update().After("gorm:update").Before("gorm:commit_or_rollback_transaction").Register("cn:integrity_uncovered_state", func(tx *gorm.DB) {
+		value, exists := tx.Statement.Settings.LoadAndDelete("cn:integrity-uncovered-scopes")
+		if !exists || tx.Error != nil || tx.RowsAffected == 0 {
+			return
+		}
+		for _, scope := range value.([]*cnIntegrityCaptureScope) {
+			clean := tx.Session(&gorm.Session{NewDB: true})
+			if err := cnRecordIntegrityValueStatesTx(clean, scope.Epoch.EpochID, scope.Admission, "control", strconv.FormatInt(scope.Epoch.Generation, 10), scope.Epoch.Generation, scope.Epoch.MutationSequence, nil, nil); err != nil {
 				tx.AddError(err)
 				return
 			}
@@ -319,7 +346,7 @@ func cnWalletValueTopupTx(tx *gorm.DB, user int, quota int64, source string, sna
 	if len(snapshots) == 1 {
 		snapshot = snapshots[0]
 	}
-	if !cnWalletValueAvailable() || account.Suspended || snapshot == nil || snapshot.Payment == nil || snapshot.Conversion == nil || snapshot.Conversion.CreditedQuota != strconv.FormatInt(quota, 10) || source == "" {
+	if !cnWalletValueAvailable() || !cnIntegrityAllocationAllowed(tx) || account.Suspended || snapshot == nil || snapshot.Payment == nil || snapshot.Conversion == nil || snapshot.Conversion.CreditedQuota != strconv.FormatInt(quota, 10) || source == "" {
 		account.UnknownQuota += quota
 	} else {
 		payment, err := snapshot.Payment.normalized()
@@ -392,8 +419,14 @@ func cnWalletValueTopupTx(tx *gorm.DB, user int, quota int64, source string, sna
 			// A payment that covers pre-existing debt cannot become new income
 			// attributed retrospectively to an already completed charge.
 			if account.UnknownQuota < 0 {
-				retired := min(quota, -account.UnknownQuota)
+				retired := quota
+				if account.UnknownQuota > -quota {
+					retired = -account.UnknownQuota
+				}
 				value := cnDivideHalfEven(amount.Mul(decimal.NewFromInt(retired)), decimal.NewFromInt(quota))
+				if retired == quota || value.GreaterThan(amount) {
+					value = amount
+				}
 				pool.RemainingQuota, pool.RetiredQuota = quota-retired, retired
 				pool.RemainingValue, pool.RetiredValue = amount.Sub(value).String(), value.String()
 				if err := tx.Save(pool).Error; err != nil {
@@ -447,7 +480,7 @@ func cnWalletValueChargeTx(tx *gorm.DB, f *CNFact, quota, prior int64) error {
 	}
 	delta := quota - prior
 	if delta > 0 {
-		if account.Suspended {
+		if account.Suspended || !cnIntegrityAllocationAllowed(tx) || cnIntegrityOpeningCharge(tx, f.EconomicID) {
 			charge.UnknownQuota += delta
 			account.UnknownQuota -= delta
 			if err := tx.Create(&CNWalletValueSlice{ChargeKey: key, Quota: delta, Value: "0"}).Error; err != nil {

@@ -29,8 +29,10 @@ func cnFixture(t *testing.T, name string) []byte {
 }
 
 func cnReset(t *testing.T, db *gorm.DB) {
+	require.NoError(t, db.Migrator().DropTable(&CNIntegritySnapshotCollection{}, &CNIntegritySnapshot{}, &CNIntegrityFreezeHead{}))
 	t.Helper()
 	db.Logger = db.Logger.LogMode(logger.Silent)
+	require.NoError(t, db.Migrator().DropTable(&CNIntegrityValueState{}, &CNIntegrityEligibilityApproval{}, &CNIntegritySliceDelta{}, &CNIntegrityFence{}, &CNIntegrityWriter{}, &CNIntegrityGate{}, &CNIntegrityControlReceipt{}, &CNIntegrityDisposition{}, &CNIntegrityOriginal{}, &CNIntegrityAdmission{}, &CNIntegrityEpoch{}))
 	require.NoError(t, db.Migrator().DropTable(&CNWalletValueSlice{}, &CNWalletValuePart{}, &CNWalletValueCharge{}, &CNWalletValueLot{}, &CNWalletValueAccount{}))
 	require.NoError(t, db.Migrator().DropTable(AgencyModels()...))
 	models := []any{&CNFinancePublication{}, &CNFinanceOutbox{}, &CNFinanceIntent{}, &CNFinanceAssociation{}, &CNFinanceGap{}, &CNFinanceStream{}, &CNWalletLifecycle{}, &OpsExportFact{}, &OpsExportPublisher{}, &AgencyBillingOutbox{}, &AgencyBillingOperation{}, &AgencyBillingJournal{}, &AgencyCommissionLedger{}, &AgencyFundingAllocation{}, &AgencyFundingLot{}, &AgencyTopupFact{}, &TopUp{}, &Task{}, &TaskBillingReconciliation{}, &User{}, &Token{}, &UserSubscription{}, &Model{}, &Vendor{}, &Channel{}, &Ability{}, &Option{}}

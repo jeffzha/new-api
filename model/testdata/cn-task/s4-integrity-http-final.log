@@ -1,0 +1,79 @@
+=== RUN   TestIntegrityImmutableReadonlyHTTP
+=== RUN   TestIntegrityImmutableReadonlyHTTP/nested_raw_messages_are_canonical_on_the_wire
+    integrity_test.go:84: reconstructed regression: old nested CNFact/RawMessage bytes differ from canonical HTTP bytes; original failed pages were not retained
+--- PASS: TestIntegrityImmutableReadonlyHTTP (0.02s)
+    --- PASS: TestIntegrityImmutableReadonlyHTTP/nested_raw_messages_are_canonical_on_the_wire (0.00s)
+=== RUN   TestOpsExportRefundCredentialScopeAndReservation
+--- PASS: TestOpsExportRefundCredentialScopeAndReservation (0.08s)
+=== RUN   TestOpsExportCredentialAndCursorBoundary
+
+2026/10/15 23:49:38 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_integrity_export.go:324 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cn_integrity_snapshots` WHERE epoch_id IN (SELECT `epoch_id` FROM `cn_integrity_epoches` WHERE gateway_id = "g1" AND stream_epoch = "7e258269-e71f-4070-bd4f-321bebe3f775") ORDER BY freeze_sequence DESC,`cn_integrity_snapshots`.`proof_id` LIMIT 1
+
+2026/10/15 23:49:38 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_controls.go:36 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cn_finance_publications` WHERE fact_id IS NULL ORDER BY sequence DESC,`cn_finance_publications`.`sequence` LIMIT 1
+
+2026/10/15 23:49:38 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_integrity_export.go:324 [35;1mrecord not found
+[0m[33m[0.609ms] [34;1m[rows:0][0m SELECT * FROM `cn_integrity_snapshots` WHERE epoch_id IN (SELECT `epoch_id` FROM `cn_integrity_epoches` WHERE gateway_id = "g1" AND stream_epoch = "7e258269-e71f-4070-bd4f-321bebe3f775") ORDER BY freeze_sequence DESC,`cn_integrity_snapshots`.`proof_id` LIMIT 1
+--- PASS: TestOpsExportCredentialAndCursorBoundary (0.12s)
+=== RUN   TestOpsExportSubscriptionActualHTTP
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:111 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `user_id` FROM `cn_wallet_lifecycles` WHERE request_id = "subscription-final-100" LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:111 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `user_id` FROM `cn_subscription_lifecycles` WHERE request_id = "subscription-final-100" LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:111 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `user_id` FROM `cn_task_billings` WHERE request_id = "subscription-final-100" LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_subscription.go:200 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cn_subscription_lifecycles` WHERE request_id = "subscription-final-100" ORDER BY `cn_subscription_lifecycles`.`request_id` LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cn_finance_outboxes` WHERE chain_key = "81c8f3690686e6b60d9a7554aa1516fcd5d2302c00c4a58c69052dcf8e6a13ff" ORDER BY revision DESC,`cn_finance_outboxes`.`id` LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:111 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `user_id` FROM `cn_wallet_lifecycles` WHERE request_id = "subscription-actual-zero" LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:111 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `user_id` FROM `cn_subscription_lifecycles` WHERE request_id = "subscription-actual-zero" LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:111 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `user_id` FROM `cn_task_billings` WHERE request_id = "subscription-actual-zero" LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_subscription.go:200 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cn_subscription_lifecycles` WHERE request_id = "subscription-actual-zero" ORDER BY `cn_subscription_lifecycles`.`request_id` LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cn_finance_outboxes` WHERE chain_key = "72cca9a00f4fdc74c2a13a8222f74e68365f8b7bb875ad0209e1e8639a6791b3" ORDER BY revision DESC,`cn_finance_outboxes`.`id` LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:111 [35;1mrecord not found
+[0m[33m[0.509ms] [34;1m[rows:0][0m SELECT `user_id` FROM `cn_wallet_lifecycles` WHERE request_id = "subscription-cancelled" LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:111 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `user_id` FROM `cn_subscription_lifecycles` WHERE request_id = "subscription-cancelled" LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:111 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `user_id` FROM `cn_task_billings` WHERE request_id = "subscription-cancelled" LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_subscription.go:200 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cn_subscription_lifecycles` WHERE request_id = "subscription-cancelled" ORDER BY `cn_subscription_lifecycles`.`request_id` LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_subscription.go:373 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cn_subscription_cancellations` WHERE request_id = "subscription-cancelled" ORDER BY `cn_subscription_cancellations`.`request_id` LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cn_finance_outboxes` WHERE chain_key = "b15fcfe9b6ca14ef4e4bde3069c03b051b9e2ccfe488eebe0d7df5732146fb9d" ORDER BY revision DESC,`cn_finance_outboxes`.`id` LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_integrity_export.go:324 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cn_integrity_snapshots` WHERE epoch_id IN (SELECT `epoch_id` FROM `cn_integrity_epoches` WHERE gateway_id = "g1-subscription" AND stream_epoch = "e28bf765-ae30-4155-a570-d846c6f69b88") ORDER BY freeze_sequence DESC,`cn_integrity_snapshots`.`proof_id` LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_controls.go:36 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cn_finance_publications` WHERE fact_id IS NULL ORDER BY sequence DESC,`cn_finance_publications`.`sequence` LIMIT 1
+
+2026/10/15 23:49:39 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_integrity_export.go:324 [35;1mrecord not found
+[0m[33m[1.000ms] [34;1m[rows:0][0m SELECT * FROM `cn_integrity_snapshots` WHERE epoch_id IN (SELECT `epoch_id` FROM `cn_integrity_epoches` WHERE gateway_id = "g1-subscription" AND stream_epoch = "e28bf765-ae30-4155-a570-d846c6f69b88") ORDER BY freeze_sequence DESC,`cn_integrity_snapshots`.`proof_id` LIMIT 1
+--- PASS: TestOpsExportSubscriptionActualHTTP (0.46s)
+PASS
+ok  	github.com/QuantumNous/new-api/service/opsexport	0.905s

@@ -337,8 +337,7 @@ int64 quota strings. Ordinary User.BillingMode may be the native empty string;
 preserve it exactly in admission/account/original mode fields instead of inventing
 a mode label. Modes must be strings but are not nonempty identity fields. Agency
 durable/provisioning modes and Agency owners remain excluded at admission.
-The other held/actual fields are nonnegative
-int64 quota strings, and nativeRevision is positive. The two snapshot
+nativeRevision is positive. The two snapshot
 fields are null except for topup_credit, where each is either null (unknown value)
 or the unchanged committed snapshot object from TopUp; their existing exact
 schemas stay unchanged. Every field is present for every nativeKind: held and

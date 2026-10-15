@@ -144,12 +144,21 @@ func cnTaskTransaction(ctx context.Context, db *gorm.DB, key string, apply func(
 		if err != nil {
 			return err
 		}
-		return apply(tx, task, row)
+		if err := apply(tx, task, row); err != nil {
+			return err
+		}
+		if row.Source == TaskBillingSourceWallet {
+			return cnFinishIntegrityCaptureTx(tx, row.UserID, "task", row.Key)
+		}
+		return nil
 	})
 }
 
 func cnTaskRowsTx(tx *gorm.DB, key string, user int) (*Task, *CNTaskBilling, error) {
 	if err := cnLockSubscriptionUserTx(tx, key, user); err != nil {
+		return nil, nil, err
+	}
+	if err := cnBeginIntegrityCaptureTx(tx, user); err != nil {
 		return nil, nil, err
 	}
 	var identity CNTaskBilling
@@ -197,6 +206,11 @@ func PrepareCNTask(seed *Task, request, source string, quota, token int, unlimit
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := cnLockSubscriptionUserTx(tx, key, seed.UserId); err != nil {
 			return err
+		}
+		if source == TaskBillingSourceWallet {
+			if err := cnBeginIntegrityCaptureTx(tx, seed.UserId); err != nil {
+				return err
+			}
 		}
 		if err := cnClaimTaskRequestTx(tx, request, seed.UserId, "task"); err != nil {
 			return err
@@ -288,7 +302,13 @@ func PrepareCNTask(seed *Task, request, source string, quota, token int, unlimit
 		}
 		prepared.Seed = string(payload)
 		prepared.SeedPrivate = string(private)
-		return tx.Save(&prepared).Error
+		if err := tx.Save(&prepared).Error; err != nil {
+			return err
+		}
+		if source == TaskBillingSourceWallet {
+			return cnFinishIntegrityCaptureTx(tx, seed.UserId, "task", prepared.Key)
+		}
+		return nil
 	})
 	return &prepared, err
 }

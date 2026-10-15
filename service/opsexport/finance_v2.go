@@ -16,6 +16,9 @@ func RegisterV2(group *gin.RouterGroup) {
 	useExportAuth(group, true)
 	group.GET("/facts", func(c *gin.Context) { Default.FactsV2(c) })
 	group.GET("/daily", func(c *gin.Context) { Default.DailyV2(c) })
+	group.GET("/funding-integrity/snapshots", func(c *gin.Context) { Default.IntegrityIndex(c) })
+	group.GET("/funding-integrity/snapshots/:proofId", func(c *gin.Context) { Default.IntegrityManifest(c) })
+	group.GET("/funding-integrity/snapshots/:proofId/:collection", func(c *gin.Context) { Default.IntegrityPage(c) })
 	group.GET("/refund-capabilities", func(c *gin.Context) {
 		if len(c.Request.URL.Query()) != 0 {
 			cnError(c, 400, "invalid_payload")

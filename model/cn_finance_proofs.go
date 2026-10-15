@@ -371,6 +371,13 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 		}
 		deps = append(deps, d)
 	}
+	integrity, err := cnFrozenIntegrityDependencyTx(tx, stream)
+	if err != nil {
+		return nil, err
+	}
+	if integrity != nil {
+		deps = append(deps, *integrity)
+	}
 	allComplete := true
 	for _, d := range deps {
 		if d.Required && d.Status != "complete" && d.Status != "not_applicable" {

@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +20,227 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestCNIntegrityFoundationAcrossDialects(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := agencyDialectDB(t, dialect)
+			if db == nil {
+				t.Skip("disposable external database not configured")
+			}
+			pool, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = pool.Close() })
+			oldType := common.MainDatabaseType()
+			switch dialect {
+			case "mysql":
+				common.SetMainDatabaseType(common.DatabaseTypeMySQL)
+			case "postgres":
+				common.SetMainDatabaseType(common.DatabaseTypePostgreSQL)
+			default:
+				common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+			}
+			t.Cleanup(func() { common.SetMainDatabaseType(oldType) })
+			cnReset(t, db)
+			require.NoError(t, db.AutoMigrate(&User{}, &TopUp{}))
+			require.NoError(t, MigrateCNFinance(db, "test-cn"))
+			var count int64
+			require.NoError(t, db.Model(&CNIntegrityEpoch{}).Count(&count).Error)
+			assert.Zero(t, count, "migration never starts an epoch")
+			_, err = cnPrepareIntegrityEpochTx(db, "operator-evidence")
+			require.Error(t, err, "standalone writes cannot journal a native transaction")
+			require.NoError(t, db.Create(&User{Id: 1, Username: "integrity", AffCode: "integrity", Quota: 5}).Error)
+			wallet := CNWalletLifecycle{RequestID: "opening-wallet", UserID: 1, Reserved: 3, State: "reserved", Version: 1}
+			task := CNTaskBilling{Key: "opening-task", RequestID: "opening-task-request", PublicTaskID: "opening-task-public", UserID: 1, Source: TaskBillingSourceWallet, HeldQuota: 2, State: "prepared", Version: 1}
+			require.NoError(t, db.Create(&wallet).Error)
+			require.NoError(t, db.Create(&task).Error)
+			var epoch *CNIntegrityEpoch
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+				var err error
+				epoch, err = cnPrepareIntegrityEpochTx(tx, "operator-prepare-evidence")
+				return err
+			}))
+			var admission *CNIntegrityAdmission
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+				var err error
+				admission, err = cnAdmitIntegrityUserTx(tx, epoch.EpochID, 1, 1)
+				return err
+			}))
+			assert.EqualValues(t, 5, admission.OpeningBalance)
+			assert.EqualValues(t, 5, admission.OpeningHeld)
+			t.Run("negative_opening_debt_is_preserved", func(t *testing.T) {
+				rollback := errors.New("rollback debt fixture")
+				err := db.Transaction(func(tx *gorm.DB) error {
+					require.NoError(t, tx.Create(&User{Id: 2, Username: "integrity-debt", AffCode: "integrity-debt", Quota: -3}).Error)
+					debt, err := cnAdmitIntegrityUserTx(tx, epoch.EpochID, 2, 1)
+					require.NoError(t, err)
+					assert.EqualValues(t, -3, debt.OpeningBalance)
+					return rollback
+				})
+				require.ErrorIs(t, err, rollback)
+			})
+			var topupReceipt *CNIntegrityOriginal
+			writeTopup := func(tx *gorm.DB, trade string, before int64, quota int) (*CNIntegrityOriginal, error) {
+				order := TopUp{UserId: 1, TradeNo: trade, CreditedQuota: int64(quota), Status: common.TopUpStatusSuccess, CompleteTime: 1, PaymentSnapshot: `{"actual_money":"1","currency_code":"USD","payment_reference":"test"}`}
+				if err := tx.Create(&order).Error; err != nil {
+					return nil, err
+				}
+				if err := cnWalletValueWrite(tx).Model(&User{}).Where("id = ?", 1).Update("quota", before+int64(quota)).Error; err != nil {
+					return nil, err
+				}
+				return cnJournalIntegrityOriginalTx(tx, epoch.EpochID, 1, 1, "topup", trade, before)
+			}
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+				var err error
+				topupReceipt, err = writeTopup(tx, "new-topup", 5, 4)
+				if err != nil {
+					return err
+				}
+				return cnAppendIntegrityDispositionTx(tx, topupReceipt, 4, "allocation_disabled")
+			}))
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+				replayed, err := cnJournalIntegrityOriginalTx(tx, epoch.EpochID, 1, 1, "topup", "new-topup", 5)
+				require.NoError(t, err)
+				assert.Equal(t, topupReceipt, replayed)
+				return cnAppendIntegrityDispositionTx(tx, replayed, 4, "allocation_disabled")
+			}))
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Model(&wallet).Updates(map[string]any{"version": 2, "actual": 3, "state": "finalized"}).Error; err != nil {
+					return err
+				}
+				receipt, err := cnJournalIntegrityOriginalTx(tx, epoch.EpochID, 1, 1, "wallet", wallet.RequestID, 9)
+				if err != nil {
+					return err
+				}
+				return cnAppendIntegrityDispositionTx(tx, receipt, 3, "opening_hold")
+			}))
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Model(&task).Updates(map[string]any{"version": 2, "held_quota": 1, "actual": 1, "state": "finalized"}).Error; err != nil {
+					return err
+				}
+				if err := cnWalletValueWrite(tx).Model(&User{}).Where("id = ?", 1).Update("quota", 10).Error; err != nil {
+					return err
+				}
+				receipt, err := cnJournalIntegrityOriginalTx(tx, epoch.EpochID, 1, 1, "task", task.Key, 9)
+				if err != nil {
+					return err
+				}
+				return cnAppendIntegrityDispositionTx(tx, receipt, 1, "opening_hold")
+			}))
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+				replayed, err := cnAdmitIntegrityUserTx(tx, epoch.EpochID, 1, 1)
+				require.NoError(t, err)
+				assert.Equal(t, admission, replayed, "opening unknown owner never changes after mutations")
+				return nil
+			}))
+			scan, err := cnScanIntegrityFoundation(db, epoch.EpochID)
+			require.NoError(t, err)
+			assert.Zero(t, scan.MissingOriginalCount)
+			assert.Zero(t, scan.MissingDispositionCount)
+			assert.Zero(t, scan.MismatchCount, scan.ActivationBlockers)
+			assert.Zero(t, scan.OrphanCount)
+			assert.EqualValues(t, 3, scan.MutationThrough)
+			assert.EqualValues(t, 3, scan.IntentionalUnknownCount)
+			assert.NotEmpty(t, scan.ActivationBlockers, "a clean shadow graph is never an activation proof")
+			t.Run("stream_reset_cannot_reclaim_native_receipt", func(t *testing.T) {
+				require.NoError(t, db.Model(&CNFinanceStream{}).Where("id = ?", 1).Update("epoch", "rebuilt-stream").Error)
+				var other *CNIntegrityEpoch
+				require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+					var err error
+					other, err = cnPrepareIntegrityEpochTx(tx, "new-stream-prepare")
+					if err != nil {
+						return err
+					}
+					_, err = cnAdmitIntegrityUserTx(tx, other.EpochID, 1, 1)
+					return err
+				}))
+				assert.NotEqual(t, epoch.StreamEpoch, other.StreamEpoch)
+				require.ErrorIs(t, db.Transaction(func(tx *gorm.DB) error {
+					_, err := cnJournalIntegrityOriginalTx(tx, other.EpochID, 1, 1, "topup", "new-topup", 5)
+					return err
+				}), ErrCNConflict)
+				require.ErrorIs(t, db.Transaction(func(tx *gorm.DB) error {
+					if err := tx.Model(&CNWalletLifecycle{}).Where("request_id = ?", wallet.RequestID).Update("version", 3).Error; err != nil {
+						return err
+					}
+					_, err := cnJournalIntegrityOriginalTx(tx, other.EpochID, 1, 1, "wallet", wallet.RequestID, 10)
+					return err
+				}), ErrCNConflict, "a later revision retains its original admission owner")
+			})
+			t.Run("skipped_native_revision_rolls_back", func(t *testing.T) {
+				require.ErrorIs(t, db.Transaction(func(tx *gorm.DB) error {
+					if err := tx.Model(&CNWalletLifecycle{}).Where("request_id = ?", wallet.RequestID).Update("version", 4).Error; err != nil {
+						return err
+					}
+					_, err := cnJournalIntegrityOriginalTx(tx, epoch.EpochID, 1, 1, "wallet", wallet.RequestID, 10)
+					return err
+				}), ErrCNConflict)
+			})
+			rollback := errors.New("rollback native receipt and disposition")
+			require.ErrorIs(t, db.Transaction(func(tx *gorm.DB) error {
+				receipt, err := writeTopup(tx, "rolled-back", 10, 1)
+				if err != nil {
+					return err
+				}
+				if err := cnAppendIntegrityDispositionTx(tx, receipt, 1, "allocation_disabled"); err != nil {
+					return err
+				}
+				return rollback
+			}), rollback)
+			require.NoError(t, db.Model(&TopUp{}).Where("trade_no = ?", "rolled-back").Count(&count).Error)
+			assert.Zero(t, count)
+			require.NoError(t, db.Model(&CNIntegrityOriginal{}).Count(&count).Error)
+			assert.EqualValues(t, 3, count)
+			t.Run("independent_native_scan_detects_missing_capture", func(t *testing.T) {
+				order := TopUp{UserId: 1, TradeNo: "uncaptured", CreditedQuota: 2, Status: common.TopUpStatusSuccess}
+				require.NoError(t, db.Create(&order).Error)
+				scan, err := cnScanIntegrityFoundation(db, epoch.EpochID)
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, scan.MissingOriginalCount)
+				require.NoError(t, db.Delete(&order).Error)
+			})
+			t.Run("missing_disposition_and_orphan_are_distinct", func(t *testing.T) {
+				var disposition CNIntegrityDisposition
+				require.NoError(t, db.Where("receipt_id = ?", topupReceipt.ReceiptID).First(&disposition).Error)
+				require.NoError(t, db.Delete(&disposition).Error)
+				orphan := CNIntegrityDisposition{ReceiptID: "orphan", EpochID: epoch.EpochID, Reason: "allocation_disabled"}
+				require.NoError(t, db.Create(&orphan).Error)
+				scan, err := cnScanIntegrityFoundation(db, epoch.EpochID)
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, scan.MissingDispositionCount)
+				assert.EqualValues(t, 1, scan.OrphanCount)
+				require.NoError(t, db.Delete(&orphan).Error)
+				require.NoError(t, db.Create(&disposition).Error)
+			})
+			t.Run("hidden_payment_snapshot_tampering_is_visible", func(t *testing.T) {
+				require.NoError(t, db.Model(&TopUp{}).Where("trade_no = ?", "new-topup").Update("payment_snapshot", "tampered").Error)
+				scan, err := cnScanIntegrityFoundation(db, epoch.EpochID)
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, scan.MissingOriginalCount)
+				var source cnIntegrityNativeRow
+				require.NoError(t, common.Unmarshal([]byte(topupReceipt.NativePayload), &source))
+				require.NoError(t, db.Model(&TopUp{}).Where("trade_no = ?", "new-topup").Update("payment_snapshot", source.PaymentSnapshot).Error)
+			})
+			t.Run("original_receipt_tampering_is_visible", func(t *testing.T) {
+				require.NoError(t, db.Model(&CNIntegrityOriginal{}).Where("receipt_id = ?", topupReceipt.ReceiptID).Update("before_quota", 6).Error)
+				scan, err := cnScanIntegrityFoundation(db, epoch.EpochID)
+				require.NoError(t, err)
+				assert.Positive(t, scan.MismatchCount)
+				require.NoError(t, db.Model(&CNIntegrityOriginal{}).Where("receipt_id = ?", topupReceipt.ReceiptID).Update("before_quota", topupReceipt.BeforeQuota).Error)
+			})
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+				return cnStopIntegrityEpochTx(tx, epoch.EpochID, 1, "broken", "capture-disabled-evidence")
+			}))
+			require.ErrorIs(t, db.Transaction(func(tx *gorm.DB) error {
+				return cnStopIntegrityEpochTx(tx, epoch.EpochID, 1, "paused", "stale-generation")
+			}), ErrCNConflict)
+			require.ErrorIs(t, db.Transaction(func(tx *gorm.DB) error {
+				_, err := cnAdmitIntegrityUserTx(tx, epoch.EpochID, 1, 2)
+				return err
+			}), ErrCNConflict)
+		})
+	}
+}
 
 func TestCNWalletValueAcrossDialects(t *testing.T) {
 	t.Setenv("OPS_CN_FINANCE_V2_ENABLED", "true")
@@ -125,6 +348,35 @@ func TestCNWalletValueAcrossDialects(t *testing.T) {
 				require.NoError(t, ReserveCNBoundWallet(request, user, reserve, true))
 				require.NoError(t, FinalizeCNBoundWallet(request, user, actual))
 			}
+			t.Run("minimum_signed_debt_retires_small_native_topup_without_overflow", func(t *testing.T) {
+				originalDB := db
+				originalNextID := nextID
+				tx := db.Begin()
+				require.NoError(t, tx.Error)
+				db, DB = tx, tx
+				defer func() { _ = tx.Rollback().Error; db, DB = originalDB, originalDB; nextID = originalNextID }()
+				user := newUser(math.MinInt64)
+				require.NoError(t, credit(user, 3, "1", "USD", "value-min-int64-debt"))
+				var native User
+				require.NoError(t, db.First(&native, user).Error)
+				assert.Equal(t, int(math.MinInt64+3), native.Quota)
+				var account CNWalletValueAccount
+				require.NoError(t, db.First(&account, user).Error)
+				assert.EqualValues(t, math.MinInt64+3, account.UnknownQuota)
+				assert.EqualValues(t, math.MinInt64, account.OpeningQuota)
+				var lot CNWalletValueLot
+				require.NoError(t, db.Where("user_id = ?", user).First(&lot).Error)
+				var pool CNFundingValueLot
+				require.NoError(t, db.Where("lot_id = ?", lot.LotID).First(&pool).Error)
+				assert.EqualValues(t, 3, pool.RetiredQuota)
+				assert.Equal(t, "1", pool.RetiredValue)
+				assert.Zero(t, pool.RemainingQuota)
+				assert.Equal(t, "0", pool.RemainingValue)
+				require.NoError(t, cnValidateFundingValueTx(db, &pool))
+				var allocations int64
+				require.NoError(t, db.Model(&CNFundingValueAllocation{}).Where("lot_id = ?", lot.LotID).Count(&allocations).Error)
+				assert.Zero(t, allocations, "debt retirement grants no recognized income")
+			})
 			t.Run("unknown_first_currency_residual_and_task_reversal", func(t *testing.T) {
 				user := newUser(3)
 				require.NoError(t, credit(user, 6, "1", "USD", "value-usd"))
@@ -919,6 +1171,265 @@ func TestCNWalletValueAcrossDialects(t *testing.T) {
 					require.NoError(t, err)
 					require.NoError(t, os.WriteFile(filepath.Join("testdata", "cn-task", "s4-wallet-value-clean-"+dialect+".jsonl"), append(encoded, '\n'), 0600))
 				}
+			})
+			t.Run("integrity_actual_writers_capture_and_keep_opening_owner", func(t *testing.T) {
+				user := newUser(10)
+				parallelUser := newUser(0)
+				laterUser := newUser(4)
+				_, err := PreConsumeCNBoundWallet("v2-later-opening", laterUser, 1, laterUser, false, false)
+				require.NoError(t, err)
+				legacyPaid := newUser(0)
+				require.NoError(t, credit(legacyPaid, 3, "1", "USD", "v2-excluded-legacy-paid"))
+				_, err = PreConsumeCNBoundWallet("v2-opening-wallet", user, 3, user, false, false)
+				require.NoError(t, err)
+				oldSeed := &Task{TaskID: "v2-opening-task", UserId: user, ChannelId: user, Platform: constant.TaskPlatform("alibaba"), Status: TaskStatusSubmitted}
+				oldTask, err := PrepareCNTask(oldSeed, "v2-opening-task-request", TaskBillingSourceWallet, 2, user, false, false)
+				require.NoError(t, err)
+				var epoch *CNIntegrityEpoch
+				inventoryID := "be49e63f-8bf0-4acb-b23e-f0a6ce3f45e6"
+				require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+					var err error
+					epoch, err = cnPrepareIntegrityEpochTx(tx, "native-writer-test-prepare")
+					if err != nil {
+						return err
+					}
+					if _, err = cnAdmitIntegrityUserTx(tx, epoch.EpochID, legacyPaid, 1); err == nil {
+						return errors.New("legacy paid lot admitted without ownership transition")
+					}
+					if _, err = cnAdmitIntegrityUserTx(tx, epoch.EpochID, user, 1, ""); err == nil {
+						return errors.New("customer admitted without an Ops approval snapshot")
+					}
+					snapshot := CNIntegrityEligibilityExport{OpsInventoryID: inventoryID, Body: CNIntegrityEligibilityBody{Schema: "ops-native-integrity-eligibility-v2", SnapshotID: inventoryID, SourceSystem: CNFinanceSource, GatewayID: epoch.GatewayID, StreamEpoch: epoch.StreamEpoch, IntegrityEpoch: epoch.EpochID, ApprovedAt: time.Now().UTC().Format(CNTimeLayout), ReviewSchema: "ops-native-integrity-review-v2", ReviewHash: "sha256:" + strings.Repeat("b", 64), Customers: []CNIntegrityEligibilityCustomer{{CustomerKey: strconv.Itoa(user), Decision: "eligible", OpsFIFOHistoryCount: "0", IntersectingAuthorityIDs: []string{}}, {CustomerKey: strconv.Itoa(parallelUser), Decision: "eligible", OpsFIFOHistoryCount: "0", IntersectingAuthorityIDs: []string{}}}}}
+					snapshot.Body.Customers = append(snapshot.Body.Customers, CNIntegrityEligibilityCustomer{CustomerKey: strconv.Itoa(laterUser), Decision: "eligible", OpsFIFOHistoryCount: "0", IntersectingAuthorityIDs: []string{}})
+					body, err := common.Marshal(snapshot.Body)
+					if err != nil {
+						return err
+					}
+					snapshot.OpsInventoryHash, err = CNIntegrityBodyHash(body)
+					if err != nil {
+						return err
+					}
+					payload, err := common.Marshal(snapshot)
+					if err != nil {
+						return err
+					}
+					require.Error(t, ImportCNIntegrityEligibilitySnapshot(tx, payload, ""))
+					require.NoError(t, ImportCNIntegrityEligibilitySnapshot(tx, payload, "fixture-only-local-operator-import"))
+					require.NoError(t, ImportCNIntegrityEligibilitySnapshot(tx, payload, "fixture-only-local-operator-import"))
+					badSnapshot := snapshot
+					badSnapshot.Body.ReviewHash = "sha256:" + strings.Repeat("c", 64)
+					badPayload, err := common.Marshal(badSnapshot)
+					require.NoError(t, err)
+					require.Error(t, ImportCNIntegrityEligibilitySnapshot(tx, badPayload, "fixture-only-local-operator-import"), "changed body cannot reuse an approved snapshot hash")
+					if _, err = cnAdmitIntegrityUserTx(tx, epoch.EpochID, user, 1, inventoryID); err != nil {
+						return err
+					}
+					_, err = cnAdmitIntegrityUserTx(tx, epoch.EpochID, parallelUser, 1, inventoryID)
+					return err
+				}))
+				t.Setenv("OPS_CN_INTEGRITY_CAPTURE_ENABLED", "true")
+				t.Setenv("OPS_CN_INTEGRITY_WRITER_ID", "fixture-writer")
+				t.Setenv("OPS_CN_INTEGRITY_WRITER_BUILD", "fixture-build")
+				attestation := CNIntegrityDrainAttestation{InventoryID: "fixture-only-inventory", InventoryHash: "sha256:" + strings.Repeat("a", 64), OperatorEvidenceID: "fixture-only-drain", OldWritersDrained: true, RedisDisabled: true, BatchDisabled: true, ExternalSQLExcluded: true, UnguardedHandlesExcluded: true}
+				writers := []CNIntegrityWriterDeclaration{{WriterID: "fixture-writer", BuildID: "fixture-build", LeaseUntil: time.Now().UTC().Add(time.Hour).Format(CNTimeLayout), ProtocolVersion: cnIntegrityWriterProtocol, CapabilityPaths: []string{"quota_mutation", "source_switch", "task_reserve", "task_revision", "topup_credit", "wallet_final", "wallet_release", "wallet_reserve"}}}
+				badAttestation := attestation
+				badAttestation.InventoryHash = "sha256:" + strings.Repeat("z", 64)
+				require.Error(t, StartCNIntegrityCapture(db, epoch.EpochID, 1, writers, badAttestation))
+				badWriter := writers[0]
+				badWriter.ProtocolVersion = "legacy"
+				require.Error(t, StartCNIntegrityCapture(db, epoch.EpochID, 1, []CNIntegrityWriterDeclaration{badWriter}, attestation))
+				badWriter = writers[0]
+				badWriter.CapabilityPaths = []string{"topup_credit"}
+				require.Error(t, StartCNIntegrityCapture(db, epoch.EpochID, 1, []CNIntegrityWriterDeclaration{badWriter}, attestation))
+				require.NoError(t, StartCNIntegrityCapture(db, epoch.EpochID, 1, writers, attestation))
+				_, err = AdmitCNIntegrityUser(db, epoch.EpochID, laterUser, 1, inventoryID)
+				require.ErrorIs(t, err, ErrCNConflict, "later admission rejects stale control generation")
+				_, err = AdmitCNIntegrityUser(db, epoch.EpochID, laterUser, 2, "")
+				require.Error(t, err, "active admission requires approved snapshot")
+				laterAdmission, err := AdmitCNIntegrityUser(db, epoch.EpochID, laterUser, 2, inventoryID)
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, laterAdmission.OpeningHeld)
+				require.NoError(t, credit(laterUser, 3, "1", "USD", "v2-later-credit"))
+				require.NoError(t, FinalizeCNBoundWallet("v2-later-opening", laterUser, 5))
+				var inheritedLater CNWalletValueCharge
+				require.NoError(t, db.Where("charge_key = ?", CNIdentity("request:v2-later-opening", "0")).First(&inheritedLater).Error)
+				assert.EqualValues(t, 5, inheritedLater.UnknownQuota, "later admission keeps pre-admission obligations unknown")
+				for _, scenario := range []string{"capture_disabled", "unregistered_writer", "expired_writer", "tampered_membership", "durable_pause", "durable_close", "source_switch", "unidentified_credit", "atomic_receipt_failure"} {
+					t.Run(scenario, func(t *testing.T) {
+						rollback := errors.New("rollback isolated integrity scenario")
+						err := db.Transaction(func(tx *gorm.DB) error {
+							originalDB := db
+							db, DB = tx, tx
+							defer func() { db, DB = originalDB, originalDB }()
+							var before User
+							require.NoError(t, tx.First(&before, user).Error)
+							switch scenario {
+							case "capture_disabled":
+								t.Setenv("OPS_CN_INTEGRITY_CAPTURE_ENABLED", "false")
+							case "unregistered_writer":
+								t.Setenv("OPS_CN_INTEGRITY_WRITER_ID", "absent-writer")
+							case "expired_writer":
+								require.NoError(t, tx.Model(&CNIntegrityWriter{}).Where("epoch_id = ?", epoch.EpochID).Update("lease_until", "2000-01-01T00:00:00.000000Z").Error)
+							case "tampered_membership":
+								t.Setenv("OPS_CN_INTEGRITY_WRITER_BUILD", "unfenced-build")
+								require.NoError(t, tx.Model(&CNIntegrityWriter{}).Where("epoch_id = ?", epoch.EpochID).Update("build_id", "unfenced-build").Error)
+							case "durable_pause":
+								require.NoError(t, cnStopIntegrityEpochTx(tx, epoch.EpochID, 2, "paused", "fixture-pause"))
+							case "durable_close":
+								require.NoError(t, cnStopIntegrityEpochTx(tx, epoch.EpochID, 2, "closed", "fixture-close"))
+							case "source_switch":
+								require.NoError(t, tx.Model(&User{}).Where("id = ?", user).Update("billing_mode", "legacy-switched").Error)
+							case "atomic_receipt_failure":
+								require.NoError(t, tx.Callback().Create().Before("gorm:create").Register("test:integrity-receipt-failure", func(create *gorm.DB) {
+									if create.Statement.Table == "cn_integrity_originals" {
+										create.AddError(errors.New("fixture capture write failed"))
+									}
+								}))
+								defer tx.Callback().Create().Remove("test:integrity-receipt-failure")
+							}
+							if scenario == "unidentified_credit" {
+								require.NoError(t, creditTopUpQuota(tx, user, 1, nil))
+							} else if scenario == "atomic_receipt_failure" {
+								require.Error(t, credit(user, 1, "1", "USD", "v2-"+scenario))
+							} else {
+								require.NoError(t, credit(user, 1, "1", "USD", "v2-"+scenario))
+							}
+							var after User
+							require.NoError(t, tx.First(&after, user).Error)
+							if scenario == "atomic_receipt_failure" {
+								assert.Equal(t, before.Quota, after.Quota)
+								var native TopUp
+								require.NoError(t, tx.Where("trade_no = ?", "v2-"+scenario).First(&native).Error)
+								assert.Equal(t, common.TopUpStatusPending, native.Status)
+								return rollback
+							}
+							assert.Equal(t, before.Quota+1, after.Quota)
+							var control CNIntegrityEpoch
+							require.NoError(t, tx.Where("epoch_id = ?", epoch.EpochID).First(&control).Error)
+							if scenario == "durable_pause" {
+								assert.Equal(t, "paused", control.State)
+							} else if scenario == "durable_close" {
+								assert.Equal(t, "closed", control.State)
+							} else {
+								assert.Equal(t, "broken", control.State)
+							}
+							if scenario != "unidentified_credit" {
+								var scenarioOriginal CNIntegrityOriginal
+								require.NoError(t, tx.Where("epoch_id = ? AND native_key = ?", epoch.EpochID, "v2-"+scenario).First(&scenarioOriginal).Error)
+								var disposition CNIntegrityDisposition
+								require.NoError(t, tx.Where("receipt_id = ?", scenarioOriginal.ReceiptID).First(&disposition).Error)
+								assert.Zero(t, disposition.KnownQuota)
+								assert.EqualValues(t, 1, disposition.UnknownQuota)
+							}
+							return rollback
+						})
+						require.ErrorIs(t, err, rollback)
+					})
+				}
+				require.NoError(t, credit(user, 6, "3", "USD", "v2-native-topup"))
+				require.NoError(t, FinalizeCNBoundWallet("v2-opening-wallet", user, 12))
+				var oldCharge CNWalletValueCharge
+				require.NoError(t, db.Where("charge_key = ?", CNIdentity("request:v2-opening-wallet", "0")).First(&oldCharge).Error)
+				assert.EqualValues(t, 12, oldCharge.UnknownQuota, "inherited obligations never acquire a new paid lot")
+				wallet(user, 2, 2, "v2-new-wallet")
+				require.NoError(t, RequestCNTaskCancellation(oldTask.Key))
+				require.NoError(t, CompleteCNTaskIntent(context.Background(), db, oldTask.Key))
+				seed := &Task{TaskID: "v2-new-task", UserId: user, ChannelId: user, Platform: constant.TaskPlatform("alibaba"), Status: TaskStatusSubmitted, CreatedAt: time.Now().Unix()}
+				row, err := PrepareCNTask(seed, "v2-new-task-request", TaskBillingSourceWallet, 1, user, false, false)
+				require.NoError(t, err)
+				seed.CNBillingKey, seed.Quota = row.Key, 1
+				seed.PrivateData.TokenId, seed.PrivateData.BillingSource = user, TaskBillingSourceWallet
+				seed.PrivateData.Execution = &TaskExecutionSnapshot{RequestID: row.RequestID}
+				require.NoError(t, BeginCNTaskDispatch(row.Key, strings.Repeat("b", 64), user, "alibaba"))
+				seed.PrivateData.UpstreamTaskID = "v2-provider-task"
+				require.NoError(t, RecordCNTaskUpstream(row.Key, seed.PrivateData.UpstreamTaskID))
+				require.NoError(t, seed.Insert())
+				for _, target := range []int{0, 1, 0} {
+					require.NoError(t, RequestCNTaskAdjustment(seed, target, false))
+					require.NoError(t, CompleteCNTaskIntent(context.Background(), db, row.Key))
+					require.NoError(t, db.First(seed, seed.ID).Error)
+				}
+				concurrentErrors := make(chan error, 2)
+				var concurrent sync.WaitGroup
+				for _, customer := range []int{user, parallelUser} {
+					concurrent.Go(func() {
+						concurrentErrors <- credit(customer, 3, "1", "USD", fmt.Sprintf("v2-concurrent-%d", customer))
+					})
+				}
+				concurrent.Wait()
+				close(concurrentErrors)
+				for err := range concurrentErrors {
+					require.NoError(t, err)
+				}
+				if dialect != "sqlite" {
+					tx := db.Begin()
+					require.NoError(t, tx.Error)
+					defer tx.Rollback()
+					var snapshotCount int64
+					require.NoError(t, tx.Model(&CNIntegrityOriginal{}).Where("user_id = ?", user).Count(&snapshotCount).Error)
+					require.NoError(t, credit(user, 3, "1", "USD", "v2-after-old-snapshot"))
+					func() {
+						DB = tx
+						defer func() { DB = db }()
+						ok, err := ReserveCNWallet("v2-old-snapshot-charge", user, 1, true)
+						require.NoError(t, err)
+						require.True(t, ok)
+						require.NoError(t, FinalizeCNWallet("v2-old-snapshot-charge", user, 1, false))
+					}()
+					require.NoError(t, tx.Commit().Error)
+				}
+				scan, err := cnScanIntegrityFoundation(db, epoch.EpochID)
+				require.NoError(t, err)
+				assert.Zero(t, scan.MissingOriginalCount)
+				assert.Zero(t, scan.MissingDispositionCount)
+				assert.Zero(t, scan.MismatchCount, scan.ActivationBlockers)
+				assert.Zero(t, scan.OrphanCount)
+				assert.NotContains(t, scan.ActivationBlockers, "writer_inventory_fence_missing")
+				var sliceDeltas []CNIntegritySliceDelta
+				require.NoError(t, db.Where("epoch_id = ?", epoch.EpochID).Find(&sliceDeltas).Error)
+				require.NotEmpty(t, sliceDeltas)
+				var increased, reversed bool
+				for _, delta := range sliceDeltas {
+					increased = increased || delta.QuotaDelta > 0
+					reversed = reversed || delta.QuotaDelta < 0
+				}
+				assert.True(t, increased)
+				assert.True(t, reversed, "Task reversal appends an immutable negative slice delta")
+				t.Run("independent_scan_rejects_slice_tampering", func(t *testing.T) {
+					rollback := errors.New("rollback tampered slice")
+					err := db.Transaction(func(tx *gorm.DB) error {
+						require.NoError(t, tx.Model(&sliceDeltas[0]).Update("value_delta", "999").Error)
+						tampered, err := cnScanIntegrityFoundation(tx, epoch.EpochID)
+						require.NoError(t, err)
+						assert.Positive(t, tampered.MismatchCount)
+						return rollback
+					})
+					require.ErrorIs(t, err, rollback)
+				})
+				var dispositions []CNIntegrityDisposition
+				require.NoError(t, db.Where("epoch_id = ?", epoch.EpochID).Find(&dispositions).Error)
+				known := int64(0)
+				for _, disposition := range dispositions {
+					known += disposition.KnownQuota
+				}
+				assert.Positive(t, known, "actual native writer receipts record verified known allocations")
+				cnAssertIntegrityFrozenGraph(t, db, epoch.EpochID, dialect)
+				t.Setenv("OPS_CN_WALLET_VALUE_ENABLED", "false")
+				require.NoError(t, credit(user, 3, "2", "USD", "v2-flags-off-topup"))
+				var original CNIntegrityOriginal
+				require.NoError(t, db.Where("epoch_id = ? AND native_key = ?", epoch.EpochID, "v2-flags-off-topup").First(&original).Error)
+				var disposition CNIntegrityDisposition
+				require.NoError(t, db.Where("receipt_id = ?", original.ReceiptID).First(&disposition).Error)
+				assert.EqualValues(t, 3, disposition.UnknownQuota)
+				assert.Equal(t, "allocation_disabled", disposition.Reason)
+				require.NoError(t, increaseUserQuota(user, 1))
+				var broken CNIntegrityEpoch
+				require.NoError(t, db.Where("epoch_id = ?", epoch.EpochID).First(&broken).Error)
+				assert.Equal(t, "broken", broken.State, "uncovered original mutation persists and permanently breaks capture integrity")
+				require.NoError(t, credit(user, 1, "1", "USD", "v2-after-uncovered-writer"))
+				scan, err = cnScanIntegrityFoundation(db, epoch.EpochID)
+				require.NoError(t, err)
+				assert.Positive(t, scan.MismatchCount, "continued capture cannot erase the broken native balance history")
 			})
 		})
 	}

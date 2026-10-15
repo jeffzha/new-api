@@ -2,7 +2,117 @@
 
 Baseline: integrated Gateway `6325660`.
 Branch: `codex/s4-paid-lot-attribution`.
-This delivery is v1 only. It does not implement the proposed integrity-v2 proof.
+Native funding integrity v2 now hooks the actual native writers and seals
+cumulative 14-collection snapshots with authenticated read-only discovery/export.
+This package does not activate an Ops authority or any production source.
+
+## Integrity V2 Delivery
+
+Contract lineage includes `67b3f3e` (ordinary native lot identity and exact debt
+retirement) and `1914f4b` (irreversible source-switch isolation B). The stable
+reviewed package `fa99045c7c61f0d915783fce56631d26877af371` is not rewritten.
+
+The local Go operations are PrepareCNIntegrityCapture,
+ImportCNIntegrityEligibilitySnapshot, AdmitCNIntegrityUser,
+StartCNIntegrityCapture, StopCNIntegrityCapture and FreezeCNIntegrity.
+Prepared and active admissions require the expected control generation and an
+explicitly imported Ops-approved inventory. Active admission supports new users
+without reopening the epoch. Import requires local operator evidence; matching
+a body hash is not issuer authentication. Ops must resolve the same immutable
+inventory in its independent reviewed store before granting authority.
+
+Freeze locks the epoch, global discovery counter and publication stream in one
+repeatable-read transaction. It records native account/lot cutoffs, scans native
+receipts and outbox ownership in both directions, retains findings with explicit
+resolution rows, and verifies exact parent row inclusion for every collection.
+Fact IDs and valueByCurrency come from committed staged evidence and do not
+change when publication catches up. A later known revision cannot retroactively
+adopt an earlier unknown receipt. Existing five-kind fact wire stays unchanged.
+
+All nested trees are serialized as JCS, including typed CNFact bodies and
+RawMessage payloads. Manifest bytes are stored and returned unchanged. Pages
+are derived only from sealed rows and prefix hashes; later live mutations do
+not alter them. MySQL collection payloads use LONGTEXT to avoid the 64 KiB limit.
+Frozen snapshots are also advertised through the existing exact 14-field
+CNDependency tuple. Its reader selects the latest sealed proof and never freezes.
+
+The existing export-token/no-store boundary protects:
+
+- GET `/api/ops-export/v2/funding-integrity/snapshots?after=0&limit=500`
+- GET `/api/ops-export/v2/funding-integrity/snapshots/:proofId`
+- GET `/api/ops-export/v2/funding-integrity/snapshots/:proofId/:collection?ordinal=0&limit=500`
+
+No GET starts capture, creates a freeze, imports approval or grants authority.
+Malformed queries return 400, missing proof 404 and ahead discovery cursor 409.
+
+`model/testdata/cn-task/integrity-v2-real/{sqlite,mysql,postgres}/batch-{1..7}`
+contains exact manifests, all 14 paginated collections (limit 2), discovery index,
+the exact Ops inventory export and source test/database metadata. The flow is
+initial pending -> debt-retiring native topup -> Task charge revisions 1/0/1 ->
+active admission of customer 1003 plus inherited unknown hold finalization ->
+durable pause with an unknown native topup. An additional rollback-isolated
+native test seals pending-publication and complete children, proving unchanged
+dispositions across publication without altering the seven-batch samples.
+
+Eligibility fixtures were created by actual Ops freeze/review/export services
+with separate synthetic actors. They are synthetic integration qualification:
+productionEligibility=false, financialGrants=0. Their provenance manifest is
+copied into the sample root. They are not approval for the existing 196-user
+source. The independent verifier re-exports the review stores read-only and
+compares exact bytes and SHA-256 to the supplied Ops provenance.
+
+The initial independent raw-page replay rejected noncanonical facts/originals
+pages with integrity_json_not_canonical. Original failed pages were overwritten
+before a separate copy was made; they are not retained evidence. The initial
+failure is recorded in the coordination transcript. The explicitly reconstructed
+CNFact/RawMessage regression and its fixed output live under
+`integrity-v2-noncanonical-regression`; the HTTP test generates them and records
+this evidence limit. New samples must pass the strict consumer without
+normalizing any inbound bytes.
+
+Verification uses Go 1.27.2, SQLite 3.50.4, MySQL 8.0.39 REPEATABLE READ and
+PostgreSQL 17.6, on owned ports 33174/55474. The shared 53394/55494 services were
+not stopped. Focused capture/value/export tests passed in 70.487s, including
+fresh/repeated/representative-upgrade migrations, native MinInt64 recharge,
+omitted factIds detection, changed-parent rejection, and failed-freeze rollback
+of snapshots, discovery sequence and value cutoffs. HTTP package passed in
+0.905s. The final related three-engine selection passed in 314.321s, recorded in
+`s4-integrity-related-final.log`; backend package compile checks also passed in
+`s4-integrity-compile-final.log`. Strict independent replay of all 21 real native
+snapshots passed; `s4-integrity-independent-replay-results.json` records each raw
+file's SHA-256 and verification scope. I12 source-switch evidence is additional
+rollback-isolated synthetic output: zero quota delta still appends account and
+lot-isolation control states, breaks the epoch and exports current cutoffs at
+the exact manifest mutation prefix. Broken epoch authorization must be rejected.
+The separate S5 value validator currently rejects those broken control-trigger
+samples with integrity_value_native_account_mismatch; this consumer diagnostic
+is recorded in `s4-integrity-source-switch-consumer.log` and reported to the
+coordinator. It is not counted as a successful 21-snapshot replay. Run the
+verifier with `--source-switch` to reproduce that additional diagnostic.
+
+```powershell
+$env:CN_INTEGRITY_OPS_APPROVED_FIXTURE_DIR='D:/JiuLu/TokenOps/.testtmp/integrity-integration-inventories-20261015'
+$env:CN_INTEGRITY_WRITE_EVIDENCE='1'
+../../.tools/go/bin/go.exe test ./model -run 'CN|Topup|TopUp|PaymentSnapshot|AgencyFunding' -count=1 -v -timeout=600s
+../../.tools/go/bin/go.exe test ./service/opsexport -count=1 -v -timeout=120s
+```
+
+For independent replay, add the S5 checkout and `.tools/python-packages` to
+PYTHONPATH, then run `model/testdata/cn-task/verify_integrity_exports.py --approvals`
+with the Ops fixture directory. It runs strict raw-byte manifest/pages, roots,
+row identity/order, parent inclusion, current S5 graph/native financial/slices,
+value states and control checks. Graph validation is not financial authorization;
+all qualification artifacts still have financialGrants=0.
+
+Operational limits remain explicit. Generic quota/source-switch guards retain
+control/value evidence and permanently break capture, but do not emit a full
+typed original for every unsupported mutation. Ordinary refund writer support
+is not introduced: current refund holds belong to AgencyFundingLot and cannot
+borrow numeric CNWalletValueLot IDs. Closed/broken epochs cannot be restarted;
+reviewed replacement/ownership transfer is not provided by this package. Old
+known corrections keep their original owner. External SQL, unguarded handles,
+old binaries and Redis/batch require the explicit operator fence. Minimum server
+versions and production rollout are not claimed by these qualification results.
 
 ## Q71 Current-Read Follow-Up
 
@@ -47,6 +157,74 @@ $env:AGENCY_HUB_RUN_EXTERNAL_DB_TESTS='1'
 $env:AGENCY_HUB_TEST_MYSQL_DSN='root@tcp(127.0.0.1:33174)/s4_cn_finance?charset=utf8mb4&parseTime=True&loc=UTC'
 $env:AGENCY_HUB_TEST_POSTGRES_DSN='host=127.0.0.1 port=55474 user=s4test dbname=s4_cn_finance sslmode=disable'
 ../../.tools/go/bin/go.exe test ./model -run 'CN|Topup|TopUp|PaymentSnapshot|AgencyFunding' -count=1 -v -timeout=300s
+```
+
+Coordinator subsequently reports the integrated Q71 package `bb01e24` passed its
+exclusive three-DB wallet/provider-receipt matrix on Go 1.25.1 in 72.836s,
+including covered-writer old-snapshot, current opening admission and independent
+first-owner cases. This is additional coordinator evidence, not a locally rerun log.
+
+## Integrity Native Capture Boundary
+
+The wire proposal includes the final range/head/source/debt correction
+`d441e69a93d546e3beb840da791f9de4f9ad33bc` and exact native owner helper/example
+`f18bd9febcd9b148c0ac884e3bd456510bfd17c3`. Dependency/fact fields stay unchanged;
+five-kind authority is exact frozen manifest membership, with grant/borrowed
+exclusion and cumulative batch CAS. publishedThrough is a decimal publication
+sequence. Economic lineage excludes both streamEpoch and integrityEpoch.
+
+`model/cn_integrity_foundation.go` and `model/cn_integrity_capture.go` add epoch,
+admission, original mutation, disposition, writer/fence, control and immutable
+slice-delta persistence plus an independent diagnostic scanner. Migration creates
+tables and one empty gate, never an epoch. Explicit local APIs prepare, admit,
+start and stop capture with generation CAS. Start requires nonempty writer IDs,
+builds, full protocol/capability declarations, unexpired leases, inventory hash,
+operator evidence and explicit drain attestations; flags alone cannot start it.
+The persisted fence binds the exact writer set and attestation. Native writes
+validate current writer/build/membership/fence/control under User then epoch locks.
+The gate uses shared reads before epoch access so an inactive gate does not
+serialize independent first-user admissions or create Q71 gap-lock deadlocks.
+
+Actual ordinary TopUp, unbound/bound wallet reserve/final/cancel and wallet Task
+reserve/revision paths now capture within their native transaction. OriginalBody
+uses the exact typed schema and JCS body hash. NativeRevision is the capture
+journal counter, independent of the old source row Version stored separately.
+Committed TopUp snapshots are decoded unchanged; private Task credentials never
+enter the economic projection. Known/unknown/no-effect dispositions and staged
+fact IDs commit with the original mutation. Each known slice increase/reversal
+also appends an immutable delta; later v1 slice edits cannot erase that history.
+
+Opening native rows/holds remain unknown, and legacy paid-lot owners require a
+reviewed transition before admission. Negative opening balances remain signed.
+Opening charges cannot consume newly admitted paid lots. Durable pause keeps
+capture and unknown allocation; capture disable, invalid writer, source switch
+or uncovered quota writer permanently breaks the epoch. Original business writes
+continue after a break, with the discontinuity retained for independent scanning.
+No re-enable clears the gap. Receipt failure rolls back the native mutation.
+
+The scanner uses one repeatable-read snapshot and enumerates successful native
+TopUps, ordinary wallet rows and ordinary Task rows independently of capture rows.
+It checks both directions, native snapshots (including fields omitted by public
+TopUp JSON), opening/sequence/previous-receipt/balance continuity, disposition
+coverage, orphans, control generations, immutable writer/fence metadata and leases.
+Slice deltas reconcile in both directions to current native slices/allocations
+and each receipt's cumulative known quota. Native payload/opening local checksums
+remain distinct from JCS originalBody hashes and unchanged v2.digest facts.
+
+The native scanner is paired with the frozen fact graph and value-state replay.
+Missing fences, broken control state, source mutation discontinuities and absent
+or mismatched publication create retained findings. Internal writer/fence storage
+is projected into the exact sidecar schema; it is not itself the wire payload.
+
+The native capture matrix runs on real SQLite 3.50.4, MySQL 8.0.39 REPEATABLE
+READ and PostgreSQL 17.6. It covers actual TopUp/wallet/Task capture and reversals,
+opening ownership, concurrent admitted users, old read snapshots, invalid writer
+membership/capability/lease, durable pause, source switch, flags off, unidentified
+credit, receipt-failure rollback and continued capture after a permanent break.
+Raw evidence: `model/testdata/cn-task/s4-integrity-native-writers.log`.
+
+```powershell
+../../.tools/go/bin/go.exe test ./model -run '^TestCN(IntegrityFoundation|WalletValue|FinanceContract)AcrossDialects$' -count=1 -v -timeout=180s
 ```
 
 ## Native Scope
@@ -237,13 +415,12 @@ recovery blocked, empty receipts, and all prior refund workflow regressions.
 
 ## Contract Review Follow-Up
 
-`S4_WALLET_INTEGRITY_V2_CONTRACT.md` is the executable proposed contract for the
-existing mixed source. It requires coordinator review/freeze before development;
-this stable package does not implement v2 or activate a live source.
+`S4_WALLET_INTEGRITY_V2_CONTRACT.md` defines the reviewed wire implemented by this
+additive package. Neither the contract nor test exports activate a live source.
 
-## Existing 196-User Source: Proposed Integrity V2
+## Existing 196-User Source: Activation Boundary
 
-This is a design for contract review, not implemented behavior. V1 still scans
+The historical design rationale below describes the activation boundary. V1 still scans
 all unknown historical charges. Such a live source cannot activate v1 merely
 because it later exhausts unknown quota. Historical gaps cannot be cleared by
 changing an authority row or starting an arbitrary report time window.
@@ -257,7 +434,7 @@ This separation is feasible, but requires a versioned CONTRACT_V2 amendment and
 consumer activation/reporting changes. No HTTP v3 or new financial fact shape
 is inherently necessary.
 
-Minimum implementation after contract freeze:
+The implementation and independent Ops activation must preserve these rules:
 
 1. Persist immutable admission and per-source disposition receipts in the native
    credit/final-debit transaction: known, unknown, disabled, pre-existing fact,

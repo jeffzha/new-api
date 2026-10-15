@@ -153,6 +153,18 @@ func MigrateCNFinance(db *gorm.DB, gatewayID string) error {
 	if err := db.AutoMigrate(&CNWalletValueAccount{}, &CNWalletValueLot{}, &CNWalletValueCharge{}, &CNWalletValuePart{}, &CNWalletValueSlice{}); err != nil {
 		return err
 	}
+	if err := db.AutoMigrate(&CNIntegrityEpoch{}, &CNIntegrityAdmission{}, &CNIntegrityOriginal{}, &CNIntegrityDisposition{}, &CNIntegrityControlReceipt{}, &CNIntegrityGate{}, &CNIntegrityWriter{}, &CNIntegrityFence{}, &CNIntegritySliceDelta{}, &CNIntegrityEligibilityApproval{}, &CNIntegrityValueState{}); err != nil {
+		return err
+	}
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&CNIntegrityGate{ID: 1}).Error; err != nil {
+		return err
+	}
+	if err := db.AutoMigrate(&CNIntegrityFreezeHead{}, &CNIntegritySnapshot{}, &CNIntegritySnapshotCollection{}); err != nil {
+		return err
+	}
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&CNIntegrityFreezeHead{ID: 1}).Error; err != nil {
+		return err
+	}
 	if err := cnInstallWalletValueGuard(db); err != nil {
 		return err
 	}

@@ -52,6 +52,9 @@ func cnWalletRowTx(tx *gorm.DB, request string, user int, create bool) (*CNWalle
 	if account.BillingMode == AgencyDurableBillingMode || account.BillingMode == AgencyProvisioningBillingMode {
 		return nil, ErrAgencyFundingUnavailable
 	}
+	if err := cnBeginIntegrityCaptureTx(tx, user); err != nil {
+		return nil, err
+	}
 	if create {
 		if err := cnClaimTaskRequestTx(tx, request, user, "wallet"); err != nil {
 			return nil, err
@@ -130,7 +133,7 @@ func ReserveCNWallet(request string, user, target int, requireAvailable bool) (b
 			}
 		}
 		reserved = true
-		return nil
+		return cnFinishIntegrityCaptureTx(tx, user, "wallet", request)
 	})
 	if errors.Is(err, ErrInsufficientAgencyWalletQuota) {
 		return false, nil
@@ -221,7 +224,7 @@ func finalizeCNWalletTx(tx *gorm.DB, row *CNWalletLifecycle, actual int, cancell
 	if result.RowsAffected != 1 {
 		return ErrCNConflict
 	}
-	return nil
+	return cnFinishIntegrityCaptureTx(tx, user, "wallet", request)
 }
 
 // Only an explicit terminal decision authorizes recovery. Active reservations

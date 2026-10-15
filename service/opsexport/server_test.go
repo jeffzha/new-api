@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -298,6 +299,84 @@ func TestOpsExportCredentialAndCursorBoundary(t *testing.T) {
 			require.NoError(t, os.MkdirAll(directory, 0700))
 			name := strings.Split(strings.TrimPrefix(tc.path, "/"), "?")[0]
 			require.NoError(t, os.WriteFile(filepath.Join(directory, name+".json"), w.Body.Bytes(), 0600))
+		}
+	}
+}
+
+func TestOpsExportSubscriptionActualHTTP(t *testing.T) {
+	t.Setenv("OPS_CN_FINANCE_V2_ENABLED", "true")
+	t.Setenv("OPS_CN_DURABLE_SUBSCRIPTION_ENABLED", "true")
+	previousDB, previousServer := model.DB, Default
+	oldBatch, oldRedis, oldUnit, oldRate := common.BatchUpdateEnabled, common.RedisEnabled, common.QuotaPerUnit, operation_setting.USDExchangeRate
+	oldDisplay := operation_setting.GetGeneralSetting().QuotaDisplayType
+	t.Cleanup(func() {
+		model.DB, Default = previousDB, previousServer
+		common.BatchUpdateEnabled, common.RedisEnabled, common.QuotaPerUnit, operation_setting.USDExchangeRate = oldBatch, oldRedis, oldUnit, oldRate
+		operation_setting.GetGeneralSetting().QuotaDisplayType = oldDisplay
+	})
+	common.BatchUpdateEnabled, common.RedisEnabled = false, false
+	common.QuotaPerUnit, operation_setting.USDExchangeRate = 10, 7
+	operation_setting.GetGeneralSetting().QuotaDisplayType = "CNY"
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "subscription-http.db")), &gorm.Config{})
+	require.NoError(t, err)
+	pool, err := db.DB()
+	require.NoError(t, err)
+	pool.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = pool.Close() })
+	model.DB = db
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}))
+	require.NoError(t, model.MigrateCNFinance(db, "g1-subscription"))
+	credential := strings.Repeat("subscription-fixture-", 3)
+	Default = &Server{DB: db, GatewayID: "g1-subscription", TokenHash: sha256.Sum256([]byte(credential))}
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "subscription-http", Quota: 1000}).Error)
+	require.NoError(t, db.Create(&model.Token{Id: 1, UserId: 1, Key: "subscription-secret-never-export", RemainQuota: 1000}).Error)
+	require.NoError(t, db.Create(&model.SubscriptionPlan{Id: 1, Title: "subscription-http", TotalAmount: 1000, QuotaResetPeriod: model.SubscriptionResetNever}).Error)
+	require.NoError(t, db.Create(&model.UserSubscription{Id: 1, UserId: 1, PlanId: 1, AmountTotal: 1000, Status: "active", StartTime: time.Now().Unix(), EndTime: time.Now().Add(24 * time.Hour).Unix()}).Error)
+	for _, tc := range []struct {
+		request string
+		actual  int
+		cancel  bool
+	}{{"subscription-final-100", 100, false}, {"subscription-actual-zero", 0, false}, {"subscription-cancelled", 0, true}} {
+		_, err = model.PreConsumeCNSubscription(tc.request, 1, 100, 1, false, false)
+		require.NoError(t, err)
+		if tc.cancel {
+			require.NoError(t, model.RequestCNSubscriptionCancellation(db, tc.request, 1))
+			require.NoError(t, model.CompleteCNSubscriptionCancellation(context.Background(), db, tc.request))
+		} else {
+			require.NoError(t, model.FinalizeCNSubscription(tc.request, 1, tc.actual))
+		}
+	}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	RegisterV2(router.Group("/api/ops-export/v2"))
+	for _, name := range []string{"facts", "daily"} {
+		path := "/api/ops-export/v2/" + name
+		if name == "daily" {
+			path += "?date=" + time.Now().UTC().Format("2006-01-02")
+		}
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer "+credential)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		assert.NotContains(t, response.Body.String(), "subscription-secret-never-export")
+		assert.NotContains(t, response.Body.String(), credential)
+		if name == "facts" {
+			var facts struct {
+				Items []model.CNFact `json:"items"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &facts))
+			require.Len(t, facts.Items, 3)
+			for _, fact := range facts.Items {
+				assert.Equal(t, "subscription", fact.BillingSource)
+				require.NotNil(t, fact.Cumulative.Money)
+				assert.Equal(t, "7", fact.Conversion["exchangeRate"])
+				assert.Equal(t, "cn_subscription_lifecycle_final", fact.SourceEvidence[0].RecordType)
+			}
+		}
+		if directory := os.Getenv("S4_TEST_ARTIFACT_DIR"); directory != "" {
+			require.NoError(t, os.MkdirAll(directory, 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(directory, "subscription-"+name+".json"), response.Body.Bytes(), 0600))
 		}
 	}
 }

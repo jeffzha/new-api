@@ -18,8 +18,10 @@ import (
 
 type unavailableOutput struct{}
 
+var errOutputUnavailable = errors.New("injected output unavailable")
+
 func (unavailableOutput) Write([]byte) (int, error) {
-	return 0, errors.New("injected output unavailable")
+	return 0, errOutputUnavailable
 }
 
 type cancelAfterOutput struct {
@@ -81,7 +83,7 @@ func TestOperatorFreezeRecoveryAcrossDialects(t *testing.T) {
 			from, to := time.Now().UTC().Add(-time.Hour).Format(model.CNTimeLayout), time.Now().UTC().Format(model.CNTimeLayout)
 			state := filepath.Join(t.TempDir(), "private-freeze.json")
 			args := []string{"freeze", "--gateway", "test-cn", "--epoch", epoch, "--expected-generation", "1", "--evidence", "synthetic-freeze-review", "--from", from, "--to", to, "--state-file", state}
-			require.Error(t, run(ctx, args, unavailableOutput{}), "commit followed by output failure must leave recoverable pending request")
+			require.ErrorIs(t, run(ctx, args, unavailableOutput{}), errOutputUnavailable, "freeze must commit before the injected output failure")
 			var count int64
 			require.NoError(t, db.Model(&model.CNIntegritySnapshot{}).Where("epoch_id = ?", epoch).Count(&count).Error)
 			require.EqualValues(t, 1, count)

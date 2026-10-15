@@ -196,6 +196,14 @@ redirect its JSON lines to the private job log for the local action audit.
 The loop exits on generation or parent conflict. It does not adopt another
 operator's head or clear a broken epoch. Inspect status and review the changed
 control before creating a new journal with the new explicit generation/parent.
+The tested recovery scope is process/output failure after a committed freeze.
+Same-directory rename is atomic on Linux, but the journal does not fsync its
+parent directory; system-crash or power-loss durability has not been qualified.
+Go does not guarantee atomic rename on Windows. Windows restricted temporary
+directories can reject replacement with Access denied before freeze begins;
+the command fails without committing a snapshot. See
+`model/testdata/cn-task/s4-integrity-operator-environment.md` for the retained
+restricted-versus-normal reproduction and the precise verification limits.
 Stop a loop before an intentional pause:
 
 ```powershell

@@ -231,6 +231,15 @@ $env:CN_INTEGRITY_PRESERVE_RAW_SAMPLES='1'
 ../../.tools/go/bin/go.exe test ./model -run '^TestCNIntegrityRealApprovedExportAcrossDialects$' -count=1 -v -timeout=240s
 ```
 
+Full executable CLI acceptance is documented in
+`model/testdata/cn-task/OPERATOR_CLI_ACCEPTANCE.md`. It uses real independently
+approved Ops inventory bound to the CLI-created random epoch, actual CLI
+import/admit/start and periodic freeze/stop, native synthetic topup/charge, and
+15 rejection checks with full-content fingerprints on each of three engines.
+SQLite/MySQL/PostgreSQL passed in 6.303s/7.760s/13.569s; all six complete raw
+snapshots passed current Ops full wire/graph/value/control verification.
+No product control logic was changed to meet this qualification.
+
 ## Thousand-Pair Native Qualification
 
 The opt-in `TestCNIntegrityThousandNativeExports` accepts

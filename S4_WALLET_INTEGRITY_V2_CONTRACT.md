@@ -200,7 +200,7 @@ The following new tagged tuple alone selects sidecar semantics:
   "coverageTo": "2026-10-15T01:00:00Z",
   "sourceCutoff": "2026-10-15T01:00:00Z",
   "capturedThrough": "2026-10-15T01:00:00Z",
-  "publishedThrough": "2026-10-15T01:00:00Z",
+  "publishedThrough": "42",
   "pendingCount": 0,
   "unknownCount": 0,
   "supportedPaths": ["ordinary-wallet/native-funding-integrity-v2"],
@@ -231,10 +231,14 @@ null. IDs are nonempty UTF-8 strings; array ordering is specified below. Sequenc
 ordinal, revision, quota and count fields are decimal strings, regex
 `0|[1-9][0-9]*`, bounded to signed int64; signed quota delta permits `-` only for
 nonzero values. Values are canonical exact decimal strings, never JSON floats.
-Times use existing CN UTC second precision. Hashes use lowercase
+Times use existing CN UTC microsecond precision (`2006-01-02T15:04:05.000000Z`). Hashes use lowercase
 `sha256:` plus 64 hex digits. Hash input is UTF-8 RFC 8785 JCS with no BOM/newline.
-Implementations must use the same JCS conformance vectors; Go struct field order
-or Python default JSON serialization is not canonicalization.
+Both producers and consumers must use mature RFC 8785 implementations and the
+same shared conformance vectors, including numeric and Unicode edge cases.
+Do not write a custom number/Unicode canonicalizer. Go struct field order or
+Python default JSON serialization is not canonicalization. Sidecar JCS bodyHash
+is distinct from the existing CONTRACT_V2 digest algorithm (`v2.digest`); never
+compare or substitute these hashes. Validate each using its declared algorithm.
 
 An explicitly requested local `freeze` materializes rows from one consistent DB
 snapshot. GET never scans mutable native/capture tables. The manifest has exactly:
@@ -249,7 +253,8 @@ snapshot. GET never scans mutable native/capture tables. The manifest has exactl
 | batchSequence, parentProofId | positive decimal string; first batch `1`/null, otherwise prior accepted proof hash |
 | controlGeneration, writerSetHash, fenceHash | durable generation and frozen control/fence digests |
 | membershipThrough, mutationThrough, publicationThrough | committed membership/mutation counter and original stream publication sequence |
-| capturedAt, sourceCutoff, capturedThrough, publishedThrough | UTC times; informational, not membership predicates |
+| capturedAt, sourceCutoff, capturedThrough | UTC times; informational, not membership predicates |
+| publishedThrough | decimal publication sequence, equal to publicationThrough and base dependency publishedThrough |
 | authorityKinds | sorted array `charge,funding_allocation,funding_lot,payment,recognized_revenue` |
 | supportedPaths, excludedPaths, companionSourceIds | sorted unique string arrays; include existing required legacy dependencies |
 | status | `complete`, `pending` or `gap` |
@@ -300,7 +305,7 @@ tuple using UTF-8 bytes, with sequence/revision compared numerically.
 | facts / factId | factId, bodyHash, body |
 | edges / fromId,relation,toId | fromId, relation, toId, targetBodyHash |
 | controls / generation | generation, previousGeneration, state, admissionEnabled, allocationEnabled, captureEnabled, writerSetHash, fenceHash, mutationThrough, operatorEvidenceId, changedAt |
-| writers / writerId | writerId, buildId, protocolVersion, capabilityPaths, leaseGeneration, leaseExpiresAt, drainAcknowledgedThrough, membershipBodyHash |
+| writers / leaseGeneration,writerId | writerId, buildId, protocolVersion, capabilityPaths, leaseGeneration, leaseExpiresAt, drainAcknowledgedThrough, membershipBodyHash |
 | fence / fenceId | fenceId, generation, writerSetHash, writerIds, inventoryEvidenceId, inventoryEvidenceHash, oldWritersDrained, redisDisabled, batchDisabled, externalSqlExcluded, unguardedHandlesExcluded, operatorAttestationId, attestedAt, fenceBodyHash |
 | findings / findingId | findingId, category, entityType, entityId, reason, pending, relatedIds, resolvesFindingId |
 
@@ -342,12 +347,15 @@ Hashes must bind independent data without recursion: originalBodyHash hashes
 only originalBody; native receipt identities/hashes exclude disposition/fact
 hashes. Fact bodyHash hashes JCS of the actual unchanged CNFact body. Sidecar
 memberships/edges bind those hashes after staging. nativeLineageId is stable from
-original Gateway identity and native purchase/charge key; it MUST NOT contain
-integrityEpoch, batchSequence, proofId or authority ID. New epoch/auth cannot
+original stable source/Gateway identity, customer and native purchase/charge key;
+it MUST NOT contain streamEpoch, integrityEpoch, batchSequence, proofId or
+authority ID. New stream/epoch/auth cannot
 manufacture a new economic owner. SourceEvidence arrays are part of bodyHash;
 legacy facts cannot be enriched to acquire membership.
 membershipBodyHash hashes the writer row with only membershipBodyHash omitted;
-writerSetHash hashes the sorted array of those membership digests. fenceBodyHash
+writerSetHash hashes the sorted array of membership digests at the referenced
+control generation. Lease renewal appends a new writer membership version and
+control/fence; it never overwrites an earlier exported row. fenceBodyHash
 hashes the fence row with only fenceBodyHash omitted and fenceHash equals that
 digest. openingReceiptHash hashes the ordered opening rows of that admission.
 paymentSnapshotHash is null or hashes the committed payment snapshot alone.
@@ -410,9 +418,13 @@ one exact manifest authority grants the closed five-kind graph. Existing unknown
 history does not block this finite known subset and never becomes grant membership.
 
 Persist an immutable economic owner key from
-`(sourceSystem,gatewayId,streamEpoch,customerKey,kind,economicId,segmentId,
+`(sourceSystem,gatewayId,customerKey,kind,economicId,segmentId,
 nativeLineageId)`. Use the existing canonical kind-chain identity to detect
-equivalent aliases; source reset/renaming cannot evade an existing owner. Atomic
+equivalent aliases. Independently enforce uniqueness of stable
+`(sourceSystem,gatewayId,customerKey,nativeChainKey)` so changed financial chain
+aliases cannot evade the original native owner; nativeChainKey is the original
+native purchase or charge identity. streamEpoch and integrityEpoch are attributes
+only. Source/stream reset or renaming cannot evade an existing owner. Atomic
 claim uniqueness is both per stable chain and per canonical factId/bodyHash.
 The claimed owner is fixed on the first accepted grant and shared by every
 revision; authority ID, integrityEpoch and batch are attributes, not key material.
@@ -428,7 +440,9 @@ Each new frozen batch is cumulative and extends the prior accepted batch:
    revisions, controls, findings/resolutions and publication memberships only.
    A finding resolution is a new finding event referencing the earlier ID; the
    earlier evidence remains. Snapshot counters summarize unresolved heads.
-3. Verify all new rows, parent prefix consistency and the full graph. Late
+3. Verify all new rows, parent immutable row-set inclusion and the full graph.
+   Re-sorting a larger cumulative set can change ordinals; compare stable row IDs
+   and row hashes across batches, not page ordinal prefixes. Late
    revisions have new mutation/publication sequences but original chain owner,
    even when effectiveAt predates admission. They cannot be dropped by time.
 4. In one Ops transaction, CAS the accepted head from

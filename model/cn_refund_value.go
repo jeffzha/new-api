@@ -7,40 +7,17 @@ import (
 	"gorm.io/gorm"
 )
 
-// Depends on S4's CNFundingValueLot residual allocator. Refund holds are value
-// allocations with a separate identity and no recognized_revenue posting. They
-// leave the same pool that consumption uses, including throughout unknown I/O.
+// Caller holds the native user/account/lot locks. S4 owns pool conservation
+// and immutable held -> released/retired transitions within this transaction.
 func cnRefundReserveValueTx(tx *gorm.DB, l AgencyFundingLot, paid, amount decimal.Decimal, quota int64, key string) error {
-	lotID := CNIdentity("agency-lot", l.SourceKind, l.SourceID, "paid")
-	value, err := cnFundingValueTx(tx, lotID, CNIdentity("cn-refund-value", key), l.PaidInitial, quota, paid)
+	quoted, err := QuoteCNFundingValueTx(tx, l.ID, quota)
 	if err != nil {
 		return err
 	}
-	if !value.Equal(amount) {
+	if quoted != amount.String() {
 		return ErrCNRefundNonintegral
 	}
-	return nil
-}
-
-func cnRefundReleaseValueTx(tx *gorm.DB, l AgencyFundingLot, row CNRefundReservation) error {
-	lotID := CNIdentity("agency-lot", l.SourceKind, l.SourceID, "paid")
-	var pool CNFundingValueLot
-	if err := lockForUpdate(tx).Where("lot_id = ?", lotID).First(&pool).Error; err != nil {
-		return err
-	}
-	paid, err := cnDecimal(pool.PaidValue)
-	if err != nil {
-		return err
-	}
-	var allocation CNFundingValueAllocation
-	if err := tx.Where("allocation_id = ?", CNIdentity("cn-refund-value", row.Key)).First(&allocation).Error; err != nil {
-		return err
-	}
-	if allocation.Quota != row.HeldQuota || allocation.LotID != lotID {
-		return ErrCNRefundConflict
-	}
-	_, err = cnFundingValueTx(tx, lotID, allocation.AllocationID, l.PaidInitial, 0, paid)
-	return err
+	return ReserveCNFundingValueTx(tx, l.ID, key, quota, amount.String())
 }
 
 func cnRefundCheckValuePoolTx(tx *gorm.DB, l AgencyFundingLot, cash decimal.Decimal, hasRefunds bool) error {

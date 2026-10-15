@@ -171,7 +171,7 @@ func refundResponse(c *gin.Context, result any, err error) {
 
 func (s *Server) refundCapabilities() map[string]any {
 	result := model.CNRefundCapabilities(s.GatewayID)
-	if s.Refund == nil || common.RedisEnabled || common.BatchUpdateEnabled {
+	if s.Refund == nil || !model.CNFinanceCaptureEnabled() || common.RedisEnabled || common.BatchUpdateEnabled {
 		return result
 	}
 	result["reservationAvailable"] = true

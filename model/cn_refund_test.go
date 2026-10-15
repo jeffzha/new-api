@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/glebarez/sqlite"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -29,13 +30,17 @@ type cnSimulatedPayment struct {
 }
 
 type cnSimulatedProvider struct {
-	db          *gorm.DB
-	status      string
-	afterSubmit func(CNRefundIntent)
+	db           *gorm.DB
+	status       string
+	beforeSubmit func(CNRefundIntent)
+	afterSubmit  func(CNRefundIntent)
 }
 
 func (p *cnSimulatedProvider) Name() string { return "simulated-cn-refund-v1" }
 func (p *cnSimulatedProvider) Submit(ctx context.Context, i CNRefundIntent) (CNRefundProviderResult, error) {
+	if p.beforeSubmit != nil {
+		p.beforeSubmit(i)
+	}
 	raw, err := common.Marshal(i)
 	if err != nil {
 		return CNRefundProviderResult{}, err
@@ -69,6 +74,10 @@ func (p *cnSimulatedProvider) Query(ctx context.Context, i CNRefundIntent) (CNRe
 }
 
 func cnRefundFixture(t *testing.T, dialect string) (*CNRefundService, CNRefundReserveRequest) {
+	return cnRefundCustomFixture(t, dialect, "80", 100, 25)
+}
+
+func cnRefundCustomFixture(t *testing.T, dialect, paid string, initial, consumed int) (*CNRefundService, CNRefundReserveRequest) {
 	t.Helper()
 	db := agencyDialectDB(t, dialect)
 	if db == nil {
@@ -92,16 +101,16 @@ func cnRefundFixture(t *testing.T, dialect string) (*CNRefundService, CNRefundRe
 	t.Setenv("OPS_CN_FINANCE_V2_ENABLED", "true")
 	require.NoError(t, db.AutoMigrate(&User{}, &Token{}))
 	require.NoError(t, MigrateAgency(db))
-	require.NoError(t, MigrateCNFinance(db, "refund-gateway"))
+	require.NoError(t, MigrateCNFinance(db, "test-cn"))
 	require.NoError(t, MigrateCNRefund(db))
 	require.NoError(t, MigrateCNRefund(db)) // repeat additive migration
 	id := "r" + common.GetUUID()[:15]
 	u := User{Username: id, AffCode: id, BillingMode: AgencyDurableBillingMode, FundingVersion: 1, Status: common.UserStatusEnabled}
 	require.NoError(t, db.Create(&u).Error)
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return creditTopUpQuotaWithFunding(tx, u.Id, 100, nil, "payment", id, &TopupFundingSnapshot{Payment: &TopupPaymentSnapshot{ActualMoney: "80", CurrencyCode: "CNY", PaymentReference: "provider-payment-" + id}})
+		return creditTopUpQuotaWithFunding(tx, u.Id, initial, nil, "payment", id, &TopupFundingSnapshot{Payment: &TopupPaymentSnapshot{ActualMoney: paid, CurrencyCode: "CNY", PaymentReference: "provider-payment-" + id}})
 	}))
-	_, err = TryReserveUserQuotaAndAgency(u.Id, 25, id+"-charge", 25)
+	_, err = TryReserveUserQuotaAndAgency(u.Id, consumed, id+"-charge", int64(consumed))
 	require.NoError(t, err)
 	event := agencycontract.BillingEvent{EventID: id + "-final", EventType: "agency.billing_finalized", FinancialChargeID: id + "-charge", UserID: int64(u.Id), JournalRevision: 1, OperationID: id + "-final"}
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return CaptureCNAgencyFundingTx(tx, event) }))
@@ -109,7 +118,7 @@ func cnRefundFixture(t *testing.T, dialect string) (*CNRefundService, CNRefundRe
 	var l AgencyFundingLot
 	require.NoError(t, db.Where("user_id = ?", u.Id).First(&a).Error)
 	require.NoError(t, db.Where("user_id = ? AND source_id = ?", u.Id, id).First(&l).Error)
-	s := &CNRefundService{DB: db, TenantID: "refund-tenant", GatewayID: "refund-gateway"}
+	s := &CNRefundService{DB: db, TenantID: "refund-tenant", GatewayID: "test-cn"}
 	r := CNRefundReserveRequest{TenantID: s.TenantID, GatewayID: s.GatewayID, OperationID: id, ApprovalID: "approval-" + id, ApprovalHash: strings.Repeat("a", 64), OriginalPaymentID: CNIdentity("agency-payment", id), LotID: l.ID, UserID: int64(u.Id), Amount: "60", Currency: "CNY", ExpectedFundingVersion: a.Version, ExpectedLotVersion: l.Version}
 	return s, r
 }
@@ -156,6 +165,10 @@ func TestCNRefundAtomicWorkflowAcrossDialects(t *testing.T) {
 			bad.Amount = "61"
 			_, err = s.Reserve(ctx, bad)
 			assert.ErrorIs(t, err, ErrCNRefundInsufficient)
+			bad = r
+			bad.Amount = "0.01"
+			_, err = s.Reserve(ctx, bad)
+			assert.ErrorIs(t, err, ErrCNRefundNonintegral)
 			reserve, err := s.Reserve(ctx, r)
 			require.NoError(t, err)
 			assert.EqualValues(t, 75, reserve.HeldQuota)
@@ -295,6 +308,222 @@ func TestCNRefundFailureRollbackAndConcurrentSpend(t *testing.T) {
 			var lot AgencyFundingLot
 			require.NoError(t, s.DB.First(&lot, r.LotID).Error)
 			assert.EqualValues(t, 100, lot.PaidAvailable+lot.PaidReserved+lot.PaidConsumed+lot.PaidRevoked)
+		})
+	}
+}
+
+func TestCNRefundPartialUnknownPollAndRecoveryAcrossDialects(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			s, r := cnRefundFixture(t, dialect)
+			ctx := context.Background()
+			provider := cnRefundProviderFixture(t)
+			s.Provider = provider
+			r.Amount = "20"
+			first, err := s.Reserve(ctx, r)
+			require.NoError(t, err)
+			provider.status = "unknown_reconcile"
+			c := CNRefundCommand{AttemptID: "submit-1", TenantID: r.TenantID, GatewayID: r.GatewayID, OperationID: r.OperationID, ApprovalID: r.ApprovalID, ApprovalHash: r.ApprovalHash, ExpectedVersion: first.Version}
+			first, err = s.Execute(ctx, c, false)
+			require.NoError(t, err)
+			assert.EqualValues(t, 25, first.HeldQuota)
+			balance, err := s.BalanceByPayment(ctx, r.TenantID, r.GatewayID, r.OriginalPaymentID)
+			require.NoError(t, err)
+			assert.Equal(t, "40", balance.AvailableRefundable)
+			secondRequest := r
+			secondRequest.Amount = "40"
+			secondRequest.OperationID += "-partial2"
+			secondRequest.ExpectedFundingVersion, secondRequest.ExpectedLotVersion = balance.FundingVersion, balance.LotVersion
+			second, err := s.Reserve(ctx, secondRequest)
+			require.NoError(t, err)
+			provider.status = "succeeded"
+			secondCommand := c
+			secondCommand.OperationID = secondRequest.OperationID
+			secondCommand.ExpectedVersion = second.Version
+			second, err = s.Execute(ctx, secondCommand, false)
+			require.NoError(t, err)
+			assert.Equal(t, "succeeded", second.Status)
+			balance, err = s.Balance(ctx, r.TenantID, r.GatewayID, r.LotID)
+			require.NoError(t, err)
+			assert.Equal(t, "0", balance.AvailableRefundable)
+			thirdRequest := r
+			thirdRequest.OperationID += "-partial3"
+			thirdRequest.Amount = "0.8"
+			thirdRequest.ExpectedFundingVersion, thirdRequest.ExpectedLotVersion = balance.FundingVersion, balance.LotVersion
+			_, err = s.Reserve(ctx, thirdRequest)
+			assert.ErrorIs(t, err, ErrCNRefundInsufficient, "new operation cannot bypass unknown hold")
+			c.AttemptID, c.ExpectedVersion = "poll-unknown", first.Version
+			polled, err := s.Execute(ctx, c, true)
+			require.NoError(t, err)
+			assert.Equal(t, "unknown_reconcile", polled.Status)
+			// Repeated unknown attempt is immutable; the next poll has a NEW attempt.
+			replayed, err := s.Execute(ctx, c, true)
+			require.NoError(t, err)
+			assert.Equal(t, polled, replayed)
+			final := CNRefundProviderResult{Intent: CNRefundIntent{Identity: first.ProviderIdentity, OriginalPaymentID: r.OriginalPaymentID, PaymentReference: "provider-payment-" + r.OperationID, Amount: r.Amount, Currency: r.Currency}, Status: "definitive_failed", ReceiptID: "failed-final", Evidence: "simulated final failure", ConfirmedAt: time.Now().UTC()}
+			raw, err := common.Marshal(final)
+			require.NoError(t, err)
+			require.NoError(t, provider.db.Model(&cnSimulatedPayment{}).Where("identity = ?", first.ProviderIdentity).Update("result_json", string(raw)).Error)
+			// Even after provider progress, the old attempt returns its old receipt.
+			replayed, err = s.Execute(ctx, c, true)
+			require.NoError(t, err)
+			assert.Equal(t, polled, replayed)
+			c.AttemptID, c.ExpectedVersion = "poll-final", polled.Version
+			released, err := s.Execute(ctx, c, true)
+			require.NoError(t, err)
+			assert.Equal(t, "failed_released", released.Status)
+			balance, err = s.Balance(ctx, r.TenantID, r.GatewayID, r.LotID)
+			require.NoError(t, err)
+			assert.Equal(t, "20", balance.AvailableRefundable)
+			thirdRequest.Amount = "20"
+			thirdRequest.ExpectedFundingVersion, thirdRequest.ExpectedLotVersion = balance.FundingVersion, balance.LotVersion
+			third, err := s.Reserve(ctx, thirdRequest)
+			require.NoError(t, err)
+			thirdCommand := secondCommand
+			thirdCommand.OperationID = thirdRequest.OperationID
+			thirdCommand.ExpectedVersion = third.Version
+			// Provider succeeds, but cash/outbox DB failure must leave native hold.
+			callback := "cn-refund-finalize-fault"
+			require.NoError(t, s.DB.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
+				if tx.Statement.Table == "cn_finance_outboxes" {
+					tx.AddError(errors.New("injected cash fact failure"))
+				}
+			}))
+			_, err = s.Execute(ctx, thirdCommand, false)
+			require.Error(t, err)
+			require.NoError(t, s.DB.Callback().Create().Remove(callback))
+			latest, err := s.Get(ctx, r.TenantID, r.GatewayID, thirdRequest.OperationID)
+			require.NoError(t, err)
+			assert.Equal(t, "executing", latest.Status)
+			assert.EqualValues(t, 25, latest.HeldQuota)
+			// Recovery queries the same provider identity; original pending submit
+			// can then return the final receipt without another provider I/O.
+			recoverCommand := thirdCommand
+			recoverCommand.AttemptID = "recover-after-db-fault"
+			recoverCommand.ExpectedVersion = latest.Version
+			third, err = s.Execute(ctx, recoverCommand, true)
+			require.NoError(t, err)
+			assert.Equal(t, "succeeded", third.Status)
+			s.Provider = nil
+			replayed, err = s.Execute(ctx, thirdCommand, false)
+			require.NoError(t, err)
+			assert.Equal(t, third, replayed)
+			balance, err = s.Balance(ctx, r.TenantID, r.GatewayID, r.LotID)
+			require.NoError(t, err)
+			assert.Equal(t, "0", balance.AvailableRefundable)
+			var facts []CNFinanceOutbox
+			require.NoError(t, s.DB.Find(&facts).Error)
+			cash := decimal.Zero
+			for _, row := range facts {
+				var f CNFact
+				require.NoError(t, common.UnmarshalJsonStr(row.Payload, &f))
+				if f.Kind == "payment_refund" && f.CustomerKey != nil && *f.CustomerKey == fmt.Sprint(r.UserID) {
+					v, err := cnDecimal(f.Cumulative.Money.Gross)
+					require.NoError(t, err)
+					cash = cash.Add(v)
+				}
+			}
+			assert.Equal(t, "60", cash.String())
+		})
+	}
+}
+
+func TestCNRefundResidualPoolAfterRefundAndRelease(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		for _, result := range []string{"succeeded", "definitive_failed"} {
+			t.Run(dialect+"/"+result, func(t *testing.T) {
+				s, r := cnRefundCustomFixture(t, dialect, "1", 6, 1)
+				ctx := context.Background()
+				r.Amount = "0.5"
+				hold, err := s.Reserve(ctx, r)
+				require.NoError(t, err)
+				assert.EqualValues(t, 3, hold.HeldQuota)
+				provider := cnRefundProviderFixture(t)
+				provider.status = result
+				s.Provider = provider
+				c := CNRefundCommand{AttemptID: "refund-three", TenantID: r.TenantID, GatewayID: r.GatewayID, OperationID: r.OperationID, ApprovalID: r.ApprovalID, ApprovalHash: r.ApprovalHash, ExpectedVersion: hold.Version}
+				refund, err := s.Execute(ctx, c, false)
+				require.NoError(t, err)
+				if result == "succeeded" {
+					assert.Equal(t, "succeeded", refund.Status)
+				} else {
+					assert.Equal(t, "failed_released", refund.Status)
+				}
+				remaining := 2
+				if result == "definitive_failed" {
+					remaining = 5
+				}
+				for i := range remaining {
+					charge := fmt.Sprintf("residual-%d-%d", r.UserID, i)
+					_, err := TryReserveUserQuotaAndAgency(int(r.UserID), 1, charge, 1)
+					require.NoError(t, err)
+					require.NoError(t, s.DB.Transaction(func(tx *gorm.DB) error {
+						return CaptureCNAgencyFundingTx(tx, agencycontract.BillingEvent{EventID: charge + "-final", EventType: "agency.billing_finalized", FinancialChargeID: charge, UserID: r.UserID, JournalRevision: 1, OperationID: charge})
+					}))
+				}
+				var lot AgencyFundingLot
+				require.NoError(t, s.DB.First(&lot, r.LotID).Error)
+				var pool CNFundingValueLot
+				require.NoError(t, s.DB.Where("lot_id = ?", CNIdentity("agency-lot", lot.SourceKind, lot.SourceID, "paid")).First(&pool).Error)
+				assert.Zero(t, pool.RemainingQuota)
+				assert.Equal(t, "0", pool.RemainingValue)
+				var allocations []CNFundingValueAllocation
+				require.NoError(t, s.DB.Where("lot_id = ?", pool.LotID).Find(&allocations).Error)
+				recognized := decimal.Zero
+				for _, a := range allocations {
+					v, err := cnDecimal(a.Value)
+					require.NoError(t, err)
+					recognized = recognized.Add(v)
+				}
+				expected := "0.5"
+				if result == "definitive_failed" {
+					expected = "1"
+				}
+				assert.Equal(t, expected, recognized.String(), "remaining consumption gets the residual after exact cash retirement/release")
+			})
+		}
+	}
+}
+
+func TestCNRefundRestartBeforeProviderIOAndDuplicateSubmit(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			s, r := cnRefundFixture(t, dialect)
+			ctx := context.Background()
+			hold, err := s.Reserve(ctx, r)
+			require.NoError(t, err)
+			provider := cnRefundProviderFixture(t)
+			s.Provider = provider
+			provider.beforeSubmit = func(CNRefundIntent) { panic("simulated process stop before provider I/O") }
+			c := CNRefundCommand{AttemptID: "submit-before-crash", TenantID: r.TenantID, GatewayID: r.GatewayID, OperationID: r.OperationID, ApprovalID: r.ApprovalID, ApprovalHash: r.ApprovalHash, ExpectedVersion: hold.Version}
+			require.Panics(t, func() { _, _ = s.Execute(ctx, c, false) })
+			latest, err := s.Get(ctx, r.TenantID, r.GatewayID, r.OperationID)
+			require.NoError(t, err)
+			assert.Equal(t, "executing", latest.Status)
+			assert.NotEmpty(t, latest.ProviderIdentity)
+			provider.beforeSubmit = nil
+			s = &CNRefundService{DB: s.DB, TenantID: r.TenantID, GatewayID: r.GatewayID, Provider: provider}
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			var results [2]CNRefundReceipt
+			var failures [2]error
+			for i := range 2 {
+				wg.Add(1)
+				go func() { defer wg.Done(); <-start; results[i], failures[i] = s.Execute(ctx, c, false) }()
+			}
+			close(start)
+			wg.Wait()
+			for i := range 2 {
+				require.NoError(t, failures[i])
+				assert.Equal(t, "succeeded", results[i].Status)
+				assert.Equal(t, latest.ProviderIdentity, results[i].ProviderIdentity)
+			}
+			assert.Equal(t, results[0], results[1])
+			var count int64
+			require.NoError(t, provider.db.Model(&cnSimulatedPayment{}).Count(&count).Error)
+			assert.EqualValues(t, 1, count)
+			require.NoError(t, s.DB.Model(&CNFinanceOutbox{}).Where("fact_id = ?", results[0].CanonicalFactID).Count(&count).Error)
+			assert.EqualValues(t, 1, count)
 		})
 	}
 }

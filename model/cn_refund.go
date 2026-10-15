@@ -305,7 +305,7 @@ func (s *CNRefundService) Balance(ctx context.Context, tenant, gateway string, l
 	if err := s.scope(tenant, gateway, "balance"); err != nil {
 		return result, err
 	}
-	if lotID <= 0 || common.RedisEnabled || common.BatchUpdateEnabled {
+	if lotID <= 0 || !CNFinanceCaptureEnabled() || common.RedisEnabled || common.BatchUpdateEnabled {
 		return result, ErrCNRefundUnsupported
 	}
 	err := retryAgencyTransaction(func() error {
@@ -345,7 +345,7 @@ func (s *CNRefundService) Reserve(ctx context.Context, r CNRefundReserveRequest)
 		r.ExpectedFundingVersion <= 0 || r.ExpectedLotVersion <= 0 || !cnRefundID.MatchString(r.ApprovalID) || !cnRefundHash.MatchString(r.ApprovalHash) || !cnRefundHash.MatchString(r.OriginalPaymentID) {
 		return result, ErrCNRefundInvalid
 	}
-	if common.RedisEnabled || common.BatchUpdateEnabled {
+	if !CNFinanceCaptureEnabled() || common.RedisEnabled || common.BatchUpdateEnabled {
 		return result, ErrCNRefundUnsupported
 	}
 	raw, err := common.Marshal(r)

@@ -55,22 +55,26 @@ func (s *CNRefundService) Execute(ctx context.Context, c CNRefundCommand, reconc
 			if r.ApprovalID != c.ApprovalID || r.ApprovalHash != c.ApprovalHash {
 				return ErrCNRefundConflict
 			}
+			missingCommand := errors.Is(err, gorm.ErrRecordNotFound)
+			if missingCommand && row.Version != c.ExpectedVersion {
+				return ErrCNRefundStale
+			}
+			if row.Status == "succeeded" || row.Status == "failed_released" {
+				result, err = cnRefundReceipt(row)
+				if err != nil {
+					return err
+				}
+				response, err := common.Marshal(result)
+				if err != nil {
+					return err
+				}
+				completed = true
+				if !missingCommand {
+					return tx.Model(&command).Update("response_json", string(response)).Error
+				}
+				return tx.Create(&CNRefundMutation{Key: commandKey, ReservationKey: key, RequestHash: hash, ResponseJSON: string(response)}).Error
+			}
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				if row.Version != c.ExpectedVersion {
-					return ErrCNRefundStale
-				}
-				if row.Status == "succeeded" || row.Status == "failed_released" {
-					result, err = cnRefundReceipt(row)
-					if err != nil {
-						return err
-					}
-					response, err := common.Marshal(result)
-					if err != nil {
-						return err
-					}
-					completed = true
-					return tx.Create(&CNRefundMutation{Key: commandKey, ReservationKey: key, RequestHash: hash, ResponseJSON: string(response)}).Error
-				}
 				if reconcile && row.ProviderIdentity == "" {
 					return ErrCNRefundConflict
 				}
@@ -142,6 +146,9 @@ func (s *CNRefundService) Execute(ctx context.Context, c CNRefundCommand, reconc
 			if row.Status != "succeeded" && row.Status != "failed_released" {
 				switch outcome.Status {
 				case "succeeded":
+					if err = RetireCNFundingValueTx(tx, row.Key); err != nil {
+						return err
+					}
 					if err = cnRefundMoveHoldTx(tx, &u, &a, &l, row.HeldQuota, "settle", c.OperationID); err != nil {
 						return err
 					}
@@ -152,7 +159,7 @@ func (s *CNRefundService) Execute(ctx context.Context, c CNRefundCommand, reconc
 					}
 					row.HeldQuota = 0
 				case "definitive_failed":
-					if err = cnRefundReleaseValueTx(tx, l, row); err != nil {
+					if err = ReleaseCNFundingValueTx(tx, row.Key); err != nil {
 						return err
 					}
 					if err = cnRefundMoveHoldTx(tx, &u, &a, &l, row.HeldQuota, "release", c.OperationID); err != nil {

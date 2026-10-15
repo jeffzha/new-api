@@ -189,6 +189,9 @@ func TestCNDirectRealtimeActualHandlerAcrossDialects(t *testing.T) {
 				}
 				require.NotEmpty(t, published.FactID)
 				require.Equal(t, fmt.Sprint(expected), *published.Cumulative.Quota)
+				require.Equal(t, "charge", published.Kind)
+				require.Equal(t, "wallet", published.BillingSource)
+				require.Equal(t, "cn_realtime_response_final", published.SourceEvidence[0].RecordType)
 				if dir := os.Getenv("S4R_TEST_ARTIFACT_DIR"); dir != "" {
 					raw, err := common.Marshal(published)
 					require.NoError(t, err)

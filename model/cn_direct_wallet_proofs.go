@@ -18,9 +18,13 @@ func cnDirectWalletProof(tx *gorm.DB, stream *CNFinanceStream, receipts map[stri
 	}
 	for _, row := range rows {
 		scan.records = append(scan.records, []any{row.RequestID, row.UserID, row.TokenID, row.TokenUnlimited, row.TokenBindingVersion, row.TokenAdjustmentStatus, row.TokenDisposedQuota, row.UsageContract, row.ChannelID, row.State, row.Version, row.Reserved, row.SegmentQuota, row.Actual, row.FinalHash, row.ConversionJSON, row.CoverageGap, row.LastErrorCode})
+		recordType := "cn_direct_wallet_final"
+		if row.Kind == "realtime" && row.UsageContract == "openai-response-done-v1" {
+			recordType = "cn_realtime_response_final"
+		}
 		if row.State != "settled" && row.State != "cancelled" {
 			scan.dependency.PendingCount++
-		} else if !receipts["cn_direct_wallet_final:"+row.RequestID] {
+		} else if !receipts[recordType+":"+row.RequestID] {
 			scan.dependency.PendingCount++
 		}
 		if row.ConversionJSON == "" || row.CoverageGap != "" || row.LastErrorCode != "" || row.TokenBindingVersion != 1 || row.TokenDisposedQuota > 0 || (row.Kind == "realtime" && row.UsageContract != "openai-response-done-v1") {

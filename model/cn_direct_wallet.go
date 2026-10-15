@@ -340,7 +340,11 @@ func finalizeCNDirectWalletTx(tx *gorm.DB, row *CNDirectWallet, actual int64, ca
 		}
 	}
 	now := time.Now().UTC()
-	evidence := CNEvidence{System: "gateway-cn", RecordType: "cn_direct_wallet_final", RecordID: row.RequestID, EvidenceID: hash}
+	recordType := "cn_direct_wallet_final"
+	if row.Kind == "realtime" && row.UsageContract == "openai-response-done-v1" {
+		recordType = "cn_realtime_response_final"
+	}
+	evidence := CNEvidence{System: "gateway-cn", RecordType: recordType, RecordID: row.RequestID, EvidenceID: hash}
 	fact := cnBaseFact("charge", "request:"+row.RequestID, "0", hash, "wallet", int64(row.UserID), now, evidence)
 	fact.RequestID = &row.RequestID
 	fact.Status = "settled"

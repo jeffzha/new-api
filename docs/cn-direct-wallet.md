@@ -54,8 +54,10 @@ usage from today's settings. Request and segment receipts have no cleanup path.
 
 ## Evidence And Coverage
 
-Wire evidence: `gateway-cn` / `cn_direct_wallet_final` / request ID, with immutable
-final-decision hash. Kind `charge`, billing source `wallet`, request economic ID.
+Wire primary evidence: `gateway-cn` / `cn_realtime_response_final` / request ID
+for response-ID realtime; `gateway-cn` / `cn_direct_wallet_final` / request ID
+for direct ordinary relay. Evidence ID is the immutable final-decision hash.
+Kind `charge`, billing source `wallet`, request economic ID.
 Conversion is frozen before I/O. Missing conversion stays null with unknown money,
 even if valid currency settings return later. Nominal converted quota is not
 recognized revenue, paid value or a reconstructed payment.
@@ -73,8 +75,12 @@ quota; the final fact adds `cn_direct_wallet_token_disposition` evidence. Such
 disposition remains unknown coverage. Positive debits reject missing/deleted,
 disabled/expired tokens and changed unlimited flags. Supported paths:
 `ordinary-relay/forward-free-quote-final-v1` and
-`ordinary-realtime/response-id-absolute-usage-v1`. S5 must register those paths
-for `wallet` / `cn_direct_wallet_final`, only `charge`, namespace `gateway-cn`.
+`ordinary-realtime/response-id-absolute-usage-v1`. S5 must register the relay path
+only for `wallet` / `cn_direct_wallet_final`, and the response-ID path only for
+`wallet` / `cn_realtime_response_final`; both only `charge`, namespace `gateway-cn`.
+The old cumulative path and `cn_direct_wallet_final` must never authorize the
+new realtime path. Pre-fix cumulative facts keep their old evidence and gap;
+they are not rewritten or promoted during migration.
 This implementation does not modify the S5 checkout or adopt an authority.
 The usage contract is frozen before I/O. Existing cumulative receipts retain
 an empty usage contract after migration; they cannot be rebound or accept new

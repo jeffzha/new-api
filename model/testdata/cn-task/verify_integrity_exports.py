@@ -16,6 +16,32 @@ from cn_integrity_import import _identity, _sort_key
 from cn_integrity_inventory import export_inventory
 
 
+def read_frozen(directory, gateway):
+    raw = (directory / "manifest.json").read_bytes()
+    proof = codec.digest(codec.load(raw))
+    manifest = wire.manifest(raw, proof, gateway)
+    collections, identities, page_count = {}, {}, 0
+    for name in wire.COLLECTIONS:
+        descriptor = manifest["collections"][name]
+        fold = codec.FrozenRows(name, descriptor["count"], descriptor["root"])
+        rows, previous = [], None
+        for path in sorted(directory.glob(name + "-*.json"), key=lambda path: int(path.stem.rsplit("-", 1)[1])):
+            ordinal = path.stem.rsplit("-", 1)[1]
+            page = wire.page(path.read_bytes(), manifest, proof, name, ordinal)
+            page_count += 1
+            fold.consume(ordinal=page["ordinal"], rows=page["rows"], prefix_hash=page["prefixHash"], suffix_hash=page["suffixHash"], next_ordinal=page["nextOrdinal"])
+            for row in page["rows"]:
+                order = _sort_key(name, row)
+                assert previous is None or order > previous, (directory, name, "row order")
+                previous = order
+                rows.append(row)
+        fold.require_complete()
+        current = {_identity(name, row): codec.digest(row) for row in rows}
+        assert len(current) == len(rows), (directory, name, "duplicate")
+        identities[name], collections[name] = current, rows
+    return proof, manifest, collections, identities, page_count
+
+
 def verify(root, approvals, include_source_switch=False):
     regression = root.with_name("integrity-v2-noncanonical-regression")
     try:
@@ -40,36 +66,15 @@ def verify(root, approvals, include_source_switch=False):
             assert codec.canonical(exported) == approval
         parent, parent_rows = None, {}
         for batch in sorted((root / dialect).glob("batch-*"), key=lambda path: int(path.name.split("-")[1])):
-            raw = (batch / "manifest.json").read_bytes()
-            proof = codec.digest(codec.load(raw))
-            manifest = wire.manifest(raw, proof, engine["gatewayId"])
+            proof, manifest, collections, identities, page_count = read_frozen(batch, engine["gatewayId"])
             assert manifest["parentProofId"] == parent
             assert manifest["streamEpoch"] == engine["streamEpoch"]
             assert manifest["integrityEpoch"] == engine["integrityEpoch"]
             assert (batch / "ops-approved-eligibility.json").read_bytes() == approval
-            collections = {}
-            page_count = 0
             for name in wire.COLLECTIONS:
-                descriptor = manifest["collections"][name]
-                fold = codec.FrozenRows(name, descriptor["count"], descriptor["root"])
-                rows, previous = [], None
-                for path in sorted(batch.glob(name + "-*.json"), key=lambda path: int(path.stem.rsplit("-", 1)[1])):
-                    ordinal = path.stem.rsplit("-", 1)[1]
-                    page = wire.page(path.read_bytes(), manifest, proof, name, ordinal)
-                    page_count += 1
-                    fold.consume(ordinal=page["ordinal"], rows=page["rows"], prefix_hash=page["prefixHash"], suffix_hash=page["suffixHash"], next_ordinal=page["nextOrdinal"])
-                    for row in page["rows"]:
-                        order = _sort_key(name, row)
-                        assert previous is None or order > previous, (batch, name, "row order")
-                        previous = order
-                        rows.append(row)
-                fold.require_complete()
-                current = {_identity(name, row): codec.digest(row) for row in rows}
-                assert len(current) == len(rows), (batch, name, "duplicate")
                 for identity, hashed in parent_rows.get(name, {}).items():
-                    assert current.get(identity) == hashed, (batch, name, "parent row changed", identity)
-                parent_rows[name] = current
-                collections[name] = rows
+                    assert identities[name].get(identity) == hashed, (batch, name, "parent row changed", identity)
+            parent_rows = identities
             graph.validate_core(manifest, collections)
             values.validate(manifest, collections)
             controls.validate(manifest, collections, authorizable=manifest["status"] == "complete")

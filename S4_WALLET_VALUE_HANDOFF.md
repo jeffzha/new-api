@@ -223,6 +223,36 @@ $env:CN_INTEGRITY_PRESERVE_RAW_SAMPLES='1'
 ../../.tools/go/bin/go.exe test ./model -run '^TestCNIntegrityRealApprovedExportAcrossDialects$' -count=1 -v -timeout=240s
 ```
 
+## Thousand-Pair Native Qualification
+
+The opt-in `TestCNIntegrityThousandNativeExports` accepts
+CN_INTEGRITY_1000_FIXTURE_DIR, pointing to an independently Ops-reviewed
+1000-customer fixture directory. It runs actual RechargeCreem and unbound
+ReserveCNWallet/FinalizeCNWallet operations against isolated on-disk SQLite.
+The two complete samples live under `integrity-v2-thousand`:
+
+- `distinct-1000-pairs`: 1000 admitted users, paid lots, payments and charges.
+- `shared-1000-charges`: one admitted user and paid lot, with 1000 actual charges.
+
+Each contains every original JCS page for all 14 collections (limit 500), exact
+manifest/index bytes, the approved inventory export and its Ops provenance.
+These are two alternative isolated fixtures with the same approved epoch scope;
+load each into a separate consumer test database, not as siblings of one source.
+They are synthetic integration data, productionEligibility=false and
+financialGrants=0. The original three-engine seven-batch directory is unchanged.
+Native generation passed in 409.249s (264.09s distinct, 144.72s shared), recorded
+in `s4-integrity-thousand-native.log`. Independent raw-wire, graph/financial,
+value and control verification passed in 55.854s distinct and 22.941s shared;
+see `s4-integrity-thousand-independent-results.json` for per-stage timings and
+SHA256s of every raw file. The verifier re-exports the actual Ops review store
+read-only and checks the approved inventory bytes. Service authorization and
+performance qualification are owned by S5.
+
+```powershell
+$env:CN_INTEGRITY_1000_FIXTURE_DIR='D:/JiuLu/TokenOps/.testtmp/integrity-integration-inventories-1000-20261015'
+../../.tools/go/bin/go.exe test ./model -run '^TestCNIntegrityThousandNativeExports$' -count=1 -v -timeout=1200s
+```
+
 ## Q71 Current-Read Follow-Up
 
 The follow-up is a separate commit after `fa99045`, never a rewrite of that

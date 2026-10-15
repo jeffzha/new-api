@@ -30,8 +30,29 @@ func TestMigrateAgencySQLiteIsIdempotentAndIndexesReportingFacts(t *testing.T) {
 
 	require.True(t, db.Migrator().HasIndex(&AgencyTopupFact{}, "idx_agency_topup_agency_time"))
 	require.True(t, db.Migrator().HasIndex(&AgencyTopupFact{}, "idx_agency_topup_user_time"))
+	require.True(t, db.Migrator().HasIndex(&AgencyOperatorIdentityBinding{}, "uidx_agency_operator_identity_operator"))
+	require.True(t, db.Migrator().HasIndex(&AgencyOperatorIdentityBinding{}, "uidx_agency_operator_identity_user"))
 	require.True(t, db.Migrator().HasTable(&AgencyReconciliationRun{}))
 	require.True(t, db.Migrator().HasTable(&AgencyArchiveManifest{}))
+}
+
+func TestMigrateAgencyAddsOperatorIdentityBindingsToReleasedSchema(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:agency-identity-upgrade?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, MigrateAgency(db))
+	require.NoError(t, db.Migrator().DropTable(&AgencyOperatorIdentityBinding{}))
+	require.False(t, db.Migrator().HasTable(&AgencyOperatorIdentityBinding{}))
+
+	require.NoError(t, MigrateAgency(db))
+	require.NoError(t, MigrateAgency(db))
+	require.True(t, db.Migrator().HasTable(&AgencyOperatorIdentityBinding{}))
+	require.True(t, db.Migrator().HasIndex(&AgencyOperatorIdentityBinding{}, "uidx_agency_operator_identity_operator"))
+	require.True(t, db.Migrator().HasIndex(&AgencyOperatorIdentityBinding{}, "uidx_agency_operator_identity_user"))
+
+	first := AgencyOperatorIdentityBinding{OperatorAccountID: 1, AgencyID: 1, PlatformUserID: 10, CreatedAt: 1, UpdatedAt: 1}
+	require.NoError(t, db.Create(&first).Error)
+	require.Error(t, db.Create(&AgencyOperatorIdentityBinding{OperatorAccountID: 1, AgencyID: 2, PlatformUserID: 11, CreatedAt: 1, UpdatedAt: 1}).Error)
+	require.Error(t, db.Create(&AgencyOperatorIdentityBinding{OperatorAccountID: 2, AgencyID: 2, PlatformUserID: 10, CreatedAt: 1, UpdatedAt: 1}).Error)
 }
 
 func TestMigrateAgencyExternalDatabaseCompatibility(t *testing.T) {
@@ -70,6 +91,8 @@ func TestMigrateAgencyExternalDatabaseCompatibility(t *testing.T) {
 			require.True(t, db.Migrator().HasTable(&Agency{}))
 			require.True(t, db.Migrator().HasIndex(&AgencyTopupFact{}, "idx_agency_topup_agency_time"))
 			require.True(t, db.Migrator().HasIndex(&AgencyTopupFact{}, "idx_agency_topup_user_time"))
+			require.True(t, db.Migrator().HasIndex(&AgencyOperatorIdentityBinding{}, "uidx_agency_operator_identity_operator"))
+			require.True(t, db.Migrator().HasIndex(&AgencyOperatorIdentityBinding{}, "uidx_agency_operator_identity_user"))
 		})
 	}
 }

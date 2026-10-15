@@ -25,7 +25,7 @@ const agencySSOPageTemplate = `<!doctype html>
 <script>
 const PAYLOAD = __PAYLOAD__;
 const origin = PAYLOAD.origin;
-function done(message){parent.postMessage(Object.assign({source:PAYLOAD.mode==='verify'?'new-api-agency-verification':'new-api-agency-sso'},message),origin);}
+function done(message){const source=PAYLOAD.mode==='verify'?'new-api-agency-verification':PAYLOAD.mode==='link'?'new-api-agency-link':'new-api-agency-sso';parent.postMessage(Object.assign({source},message),origin);}
 async function request(path,body){
   async function refresh(){
     const response=await fetch('/api/user/auth/refresh',{method:'POST',credentials:'include',cache:'no-store'});
@@ -39,13 +39,14 @@ async function request(path,body){
   if(!response.ok||!data.success)throw Error(data.message||'Verification failed.');
   return data.data;
 }
-if(PAYLOAD.mode==='verify'){
+if(PAYLOAD.mode==='verify'||PAYLOAD.mode==='link'){
   let used=false;
   window.addEventListener('message',async function(event){
-    if(used||event.source!==parent||event.origin!==origin||event.data?.source!=='agency-hub-verification')return;
+    const expected=PAYLOAD.mode==='verify'?'agency-hub-verification':'agency-hub-account-link';
+    if(used||event.source!==parent||event.origin!==origin||event.data?.source!==expected)return;
     used=true;
     const input=event.data;
-    try{const data=await request('/api/agency/verify',input.payload);done({ok:true,request_id:input.request_id,proof:data.proof});}
+    try{const path=PAYLOAD.mode==='verify'?'/api/agency/verify':'/api/agency/link-proof';const body=PAYLOAD.mode==='verify'?input.payload:{request_id:input.request_id};const data=await request(path,body);done({ok:true,request_id:input.request_id,proof:data.proof});}
     catch(error){done({ok:false,request_id:input.request_id,error:error.message});}
   });
   done({ready:true});
@@ -93,11 +94,11 @@ func AgencySSOPage(c *gin.Context) {
 	}
 	stateHash := strings.TrimSpace(c.Query("state_hash"))
 	mode := c.Query("mode")
-	if mode != "" && mode != "verify" {
+	if mode != "" && mode != "verify" && mode != "link" {
 		respondAgencySSOPageError(c, http.StatusBadRequest, "无效的桥接模式")
 		return
 	}
-	if stateHash == "" && mode != "verify" {
+	if stateHash == "" && mode != "verify" && mode != "link" {
 		respondAgencySSOPageError(c, http.StatusBadRequest, "缺少 state_hash 参数")
 		return
 	}

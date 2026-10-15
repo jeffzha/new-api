@@ -68,3 +68,22 @@ func TestAgencyVerificationBridgeRequiresAllowedParent(t *testing.T) {
 		}
 	}
 }
+
+func TestAgencyLinkBridgeRequiresAllowedParentAndUsesDedicatedProofEndpoint(t *testing.T) {
+	t.Setenv("AGENCY_SSO_ALLOWED_ORIGIN", "https://hub.example")
+	router := gin.New()
+	router.GET("/api/agency/sso", AgencySSOPage)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/agency/sso?mode=link&origin=https://hub.example", nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"mode":"link"`)
+	require.Contains(t, recorder.Body.String(), "/api/agency/link-proof")
+	require.Contains(t, recorder.Body.String(), "agency-hub-account-link")
+	require.Contains(t, recorder.Body.String(), "new-api-agency-link")
+	require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+
+	blocked := httptest.NewRecorder()
+	router.ServeHTTP(blocked, httptest.NewRequest(http.MethodGet, "/api/agency/sso?mode=link&origin=https://evil.example", nil))
+	require.Equal(t, http.StatusForbidden, blocked.Code)
+}

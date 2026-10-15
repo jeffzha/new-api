@@ -26,7 +26,6 @@ import {
   shouldAutoEnterAgencyCenter,
 } from '@/lib/agency-center'
 import { resolveAuthentication } from '@/lib/auth-session'
-import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 const searchSchema = z.object({
@@ -45,13 +44,12 @@ export const Route = createFileRoute('/(auth)/sign-in')({
 
     const { auth } = useAuthStore.getState()
 
-    // 代理商运营账号使用独立会话。只有主站超级管理员可以直接 SSO，
-    // 其他已登录主站用户以及刚主动退出代理商中心的管理员，仍停留在
-    // 统一页面输入代理商账号，避免退出后被主站会话立即自动登录回来。
+    // 已登录主站用户统一尝试代理商 SSO。代理商中心后端只允许 Root
+    // 或已关联代理商账号的用户通过；未关联用户仍可返回输入代理商账号。
     if (auth.user && search?.mode === 'agency') {
       if (
         shouldAutoEnterAgencyCenter(
-          auth.user.role === ROLE.SUPER_ADMIN,
+          true,
           search.mode,
           search.agency_signed_out
         )

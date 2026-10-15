@@ -11,12 +11,22 @@ interface BridgeMessage {
   error?: string;
 }
 
+function responseSource(mode: "sso" | "verify" | "link"): string {
+  if (mode === "sso") return "new-api-agency-sso";
+  if (mode === "verify") return "new-api-agency-verification";
+  return "new-api-agency-link";
+}
+
+function requestSource(mode: "verify" | "link"): string {
+  return mode === "verify" ? "agency-hub-verification" : "agency-hub-account-link";
+}
+
 function platformBridge(
-  mode: "sso" | "verify",
+  mode: "sso" | "verify" | "link",
   stateHash?: string,
   payload?: VerificationPayload,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<{ value: string; requestId: string }> {
   return new Promise((resolve, reject) => {
     const platform = new URL(hubConfig().platform_base_url || location.origin);
     if (
@@ -33,7 +43,7 @@ function platformBridge(
     const requestId = crypto.randomUUID();
     const url = new URL("/api/agency/sso", platform);
     url.searchParams.set("origin", location.origin);
-    if (mode === "verify") url.searchParams.set("mode", "verify");
+    if (mode !== "sso") url.searchParams.set("mode", mode);
     if (stateHash) url.searchParams.set("state_hash", stateHash);
     iframe.src = url.href;
     let sent = false;
@@ -47,7 +57,7 @@ function platformBridge(
       signal?.removeEventListener("abort", abort);
       iframe.remove();
       if (error) reject(error);
-      else resolve(value || "");
+      else resolve({ value: value || "", requestId });
     }
     function abort() {
       finish(undefined, new Error("Operation cancelled."));
@@ -55,20 +65,20 @@ function platformBridge(
     function receive(event: MessageEvent<BridgeMessage>) {
       if (event.origin !== platform.origin || event.source !== iframe.contentWindow) return;
       const data = event.data;
-      if (
-        !data ||
-        data.source !== (mode === "sso" ? "new-api-agency-sso" : "new-api-agency-verification")
-      )
-        return;
-      if (mode === "verify" && data.ready && !sent) {
+      if (!data || data.source !== responseSource(mode)) return;
+      if (mode !== "sso" && data.ready && !sent) {
         sent = true;
         iframe.contentWindow?.postMessage(
-          { source: "agency-hub-verification", request_id: requestId, payload },
+          {
+            source: requestSource(mode),
+            request_id: requestId,
+            payload,
+          },
           platform.origin,
         );
         return;
       }
-      if (mode === "verify" && data.request_id !== requestId) return;
+      if (mode !== "sso" && data.request_id !== requestId) return;
       if (!data.ok) {
         finish(undefined, new Error(data.error || "Platform authentication failed."));
         return;
@@ -92,7 +102,16 @@ export function requestRootProof(
   payload: VerificationPayload,
   signal?: AbortSignal,
 ): Promise<string> {
-  return platformBridge("verify", undefined, payload, signal);
+  return platformBridge("verify", undefined, payload, signal).then((result) => result.value);
+}
+
+export function requestPlatformLinkProof(
+  signal?: AbortSignal,
+): Promise<{ proof: string; requestId: string }> {
+  return platformBridge("link", undefined, undefined, signal).then((result) => ({
+    proof: result.value,
+    requestId: result.requestId,
+  }));
 }
 
 export async function startPlatformSSO(signal?: AbortSignal): Promise<void> {
@@ -105,7 +124,7 @@ export async function startPlatformSSO(signal?: AbortSignal): Promise<void> {
   const start = await startResponse.json();
   if (!startResponse.ok || !start.success || !start.data?.state_hash)
     throw new Error(start.error?.message || "Platform authentication failed.");
-  const ticket = await platformBridge("sso", start.data.state_hash, undefined, signal);
+  const ticket = (await platformBridge("sso", start.data.state_hash, undefined, signal)).value;
   const response = await fetch(base + "/sso/callback", {
     method: "POST",
     credentials: "include",

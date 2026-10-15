@@ -68,10 +68,14 @@ func TestAgencyBrowserFixture(t *testing.T) {
 	pub, private, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	app.ssoPublicKey = pub
-	root := model.User{Username: "browser-root", Password: "unused", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+	root := model.User{Username: "browser-root", Password: "unused", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1, AffCode: "browser-root-aff"}
 	require.NoError(t, db.Create(&root).Error)
 	source := model.UserSession{SID: "browser-root-session", UserID: root.Id, Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive, RefreshHash: "browser-refresh", LoginMethod: "password", LastActiveAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Hour).Unix()}
 	require.NoError(t, db.Create(&source).Error)
+	platformUser := model.User{Username: "browser-platform-operator", Password: "unused", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1, AffCode: "browser-platform-aff"}
+	require.NoError(t, db.Create(&platformUser).Error)
+	platformSource := model.UserSession{SID: "browser-platform-session", UserID: platformUser.Id, Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive, RefreshHash: "browser-platform-refresh", LoginMethod: "password", LastActiveAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	require.NoError(t, db.Create(&platformSource).Error)
 	policy := agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
 	channel := model.Channel{Name: "Browser model channel", Type: 1, Key: "browser-only", Status: common.ChannelStatusEnabled}
 	require.NoError(t, db.Create(&channel).Error)
@@ -216,13 +220,52 @@ func TestAgencyBrowserFixture(t *testing.T) {
 		}
 		c.JSON(http.StatusOK, gin.H{"proof": proof})
 	})
+	router.POST("/__fixture/platform-link-proof", func(c *gin.Context) {
+		var input struct {
+			RequestID string `json:"request_id"`
+		}
+		if err := c.ShouldBindJSON(&input); err != nil || strings.TrimSpace(input.RequestID) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid platform link request"})
+			return
+		}
+		proof, signErr := SignSSOTicket(private, SSOTicketClaims{Issuer: "new-api", Audience: "agency-hub-account-link", Subject: int64(platformUser.Id), SourceSID: platformSource.SID, UserAuthVersion: platformUser.AuthVersion, SessionVersion: platformSource.Version, JTI: fmt.Sprintf("browser-link-proof-%d", proofSequence.Add(1)), KeyID: "browser-only", ActorType: ActorTypePlatformUser, ObjectID: input.RequestID})
+		if signErr != nil {
+			c.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"proof": proof})
+	})
 	router.GET("/api/agency/sso", func(c *gin.Context) {
-		if c.Query("origin") != origin || c.Query("mode") != "verify" {
+		if c.Query("origin") != origin {
 			c.AbortWithStatus(http.StatusForbidden)
 			return
 		}
 		c.Header("Cache-Control", "no-store")
-		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(browserVerificationBridge))
+		switch c.Query("mode") {
+		case "verify":
+			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(browserVerificationBridge))
+		case "link":
+			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(browserAccountLinkBridge))
+		case "":
+			stateHash := strings.TrimSpace(c.Query("state_hash"))
+			var binding model.AgencyOperatorIdentityBinding
+			if len(stateHash) != 64 || db.Where("platform_user_id = ?", platformUser.Id).First(&binding).Error != nil {
+				message, marshalErr := common.Marshal(gin.H{"source": "new-api-agency-sso", "ok": false, "error": "Platform account is not linked."})
+				require.NoError(t, marshalErr)
+				c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(browserSSOBridge(message)))
+				return
+			}
+			ticket, signErr := SignSSOTicket(private, SSOTicketClaims{Issuer: "new-api", Audience: "agency-hub", Subject: int64(platformUser.Id), SourceSID: platformSource.SID, UserAuthVersion: platformUser.AuthVersion, SessionVersion: platformSource.Version, StateHash: stateHash, JTI: fmt.Sprintf("browser-sso-%d", proofSequence.Add(1)), KeyID: "browser-only", ActorType: ActorTypeOperator, ActorID: binding.OperatorAccountID, AgencyID: binding.AgencyID})
+			if signErr != nil {
+				c.AbortWithStatus(http.StatusInternalServerError)
+				return
+			}
+			message, marshalErr := common.Marshal(gin.H{"source": "new-api-agency-sso", "ok": true, "ticket": ticket})
+			require.NoError(t, marshalErr)
+			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(browserSSOBridge(message)))
+		default:
+			c.AbortWithStatus(http.StatusForbidden)
+		}
 	})
 	router.GET("/__fixture/state", func(c *gin.Context) {
 		var agencies []model.Agency
@@ -292,3 +335,17 @@ addEventListener('message', async event => {
 });
 parent.postMessage({source:'new-api-agency-verification',ready:true},location.origin);
 </script>`
+
+const browserAccountLinkBridge = `<!doctype html><meta charset="utf-8"><script>
+addEventListener('message', async event => {
+  if (event.source !== parent || event.origin !== location.origin || event.data?.source !== 'agency-hub-account-link') return;
+  const result = await fetch('/__fixture/platform-link-proof', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request_id:event.data.request_id})});
+  const data = await result.json();
+  parent.postMessage({source:'new-api-agency-link',request_id:event.data.request_id,ok:result.ok,proof:data.proof,error:data.error},location.origin);
+});
+parent.postMessage({source:'new-api-agency-link',ready:true},location.origin);
+</script>`
+
+func browserSSOBridge(message []byte) string {
+	return `<!doctype html><meta charset="utf-8"><script>parent.postMessage(` + string(message) + `,location.origin);</script>`
+}

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, hubConfig } from "../lib/api";
-import { startPlatformSSO } from "../lib/platform";
+import { requestPlatformLinkProof, startPlatformSSO } from "../lib/platform";
+import type { Identity } from "../lib/types";
 import { ActionIcon } from "./Heading";
 import { PageHeader } from "./PageHeader";
 import { ErrorNotice, Field } from "./ui";
@@ -91,10 +92,12 @@ export function PasswordChange({
   done,
   required = false,
   onSignOut,
+  identity,
 }: {
   done: () => Promise<void>;
   required?: boolean;
   onSignOut?: () => Promise<void>;
+  identity?: Identity;
 }) {
   const { t } = useTranslation();
   const [current, setCurrent] = useState("");
@@ -219,6 +222,80 @@ export function PasswordChange({
           </button>
         </div>
       </form>
+      {!required && identity?.actor_type === "agency_operator" && (
+        <PlatformAccountLink identity={identity} done={done} />
+      )}
+    </section>
+  );
+}
+
+function PlatformAccountLink(props: { identity: Identity; done: () => Promise<void> }) {
+  const { t } = useTranslation();
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  const linked = props.identity.platform_account;
+
+  async function submit() {
+    if (busy || !password) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (linked) {
+        await api("/auth/platform-link/remove", {
+          method: "POST",
+          body: JSON.stringify({ password }),
+        });
+      } else {
+        const result = await requestPlatformLinkProof();
+        await api("/auth/platform-link", {
+          method: "POST",
+          body: JSON.stringify({
+            password,
+            proof: result.proof,
+            request_id: result.requestId,
+          }),
+        });
+      }
+      setPassword("");
+      await props.done();
+    } catch (cause) {
+      setError(cause);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="platform-account-link" aria-labelledby="platform-account-link-title">
+      <div>
+        <h3 id="platform-account-link-title">{t("Platform account")}</h3>
+        <p className="muted">
+          {linked
+            ? t("Linked platform account: {{username}}", { username: linked.username })
+            : t("Link your own platform account for passwordless Agency Center sign-in.")}
+        </p>
+      </div>
+      <Field label={t("Current agency password")}>
+        <input
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          disabled={busy}
+          required
+        />
+      </Field>
+      <ErrorNotice error={error} />
+      <button
+        className={linked ? "secondary button-icon" : "button-icon"}
+        type="button"
+        disabled={busy || !password}
+        onClick={() => void submit()}
+      >
+        <ActionIcon name={linked ? "close" : "user"} />
+        {t(linked ? "Unlink platform account" : "Link platform account")}
+      </button>
     </section>
   );
 }

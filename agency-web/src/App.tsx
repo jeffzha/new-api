@@ -320,7 +320,7 @@ function Dashboard({
       content = <AuditPage root={root} />;
       break;
     case "security":
-      content = <PasswordChange done={refresh} />;
+      content = <PasswordChange done={refresh} identity={identity} />;
       break;
     default:
       content = <OverviewPage identity={identity} />;

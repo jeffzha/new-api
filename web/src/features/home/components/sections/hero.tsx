@@ -23,7 +23,6 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getAgencyCenterUrl } from '@/lib/agency-center'
-import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { HeroStarfield } from '../hero-starfield'
@@ -37,10 +36,7 @@ export function Hero(props: HeroProps) {
   const { t } = useTranslation()
   const { systemName } = useSystemConfig()
   const user = useAuthStore((state) => state.auth.user)
-  const agencyUrl =
-    user?.role === ROLE.SUPER_ADMIN
-      ? getAgencyCenterUrl(true)
-      : '/sign-in?mode=agency'
+  const agencyUrl = user ? getAgencyCenterUrl(true) : '/sign-in?mode=agency'
 
   return (
     <section className='gateway-hero' aria-labelledby='gateway-title'>

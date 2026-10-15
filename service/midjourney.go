@@ -38,6 +38,7 @@ func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.
 	task.Quota = 0
 	task.TokenId = 0
 	task.BillingChannelId = 0
+	task.CNBillingKey = ""
 	if !shouldBill {
 		return false, nil
 	}
@@ -62,6 +63,14 @@ func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.
 	if relayInfo.ChannelMeta != nil && relayInfo.ChannelId > 0 {
 		task.BillingChannelId = relayInfo.ChannelId
 	}
+	if model.CNMidjourneyRequested() {
+		if relayInfo.AgencyPricing != nil || model.IsAgencyDurableUser(relayInfo.UserId) {
+			return false, model.ErrAgencyFundingUnavailable
+		}
+		if err := model.PrepareCNMidjourney(task, relayInfo.TokenId, relayInfo.TokenUnlimited, relayInfo.IsPlayground); err != nil {
+			return false, err
+		}
+	}
 	return true, nil
 }
 
@@ -75,6 +84,15 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 	}
 	if task == nil || task.Id == 0 {
 		return false, errors.New("Midjourney task must be persisted before billing")
+	}
+	if task.CNBillingKey != "" {
+		if relayInfo.UserId != task.UserId || relayInfo.AgencyPricing != nil || relayInfo.BillingSource == BillingSourceSubscription {
+			return false, model.ErrCNConflict
+		}
+		if err := model.SettleCNMidjourney(context.Background(), model.DB, task.Id, task.UserId, task.MjId); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 
 	var result postConsumeQuotaResult
@@ -142,6 +160,21 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 
 // RefundMidjourneyQuota reverses every accounting element recorded for a billed legacy task.
 func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason string) bool {
+	if task == nil {
+		return false
+	}
+	if task.CNBillingKey != "" {
+		if err := model.RequestCNMidjourneyRefund(ctx, model.DB, task.Id, task.UserId, task.MjId, reason); err != nil {
+			logger.LogWarn(ctx, "CN Midjourney refund intent persistence failed")
+			return false
+		}
+		if err := model.CompleteCNMidjourneyRefund(ctx, model.DB, task.CNBillingKey); err != nil {
+			logger.LogWarn(ctx, "CN Midjourney refund pending durable recovery")
+			return false
+		}
+		task.Quota = 0
+		return true
+	}
 	quota := task.Quota
 	if quota == 0 {
 		return true

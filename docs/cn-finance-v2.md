@@ -85,6 +85,7 @@ streams require explicit Ops authority registration and comparison.
 | Payments | Verified top-up snapshot and native agency purchase evidence; missing amount remains unknown; matching native payment references suppress generic duplicates. |
 | Commission | Committed `AgencyCommissionLedger.AmountMicros`; no coefficient-derived supplier cost or estimated tax. |
 | Ordinary subscription session | Opt-in permanent request receipt, absolute reserve and final actual including zero delta/actual zero; subscription, token and immutable CN final charge commit together. Explicit cancellation intent and atomic recovery survive legacy record cleanup. |
+| Ordinary Midjourney | Opt-in persisted MjId/user task and permanent operation receipt; ordinary wallet/token/usage/task quota/final fact/log outbox share a transaction. Failure intents, deleted-token dispositions and recovery are durable. Legacy/agency tasks are excluded. |
 | Legacy wallet/batch/subscription | Durable intent where instrumented, `acknowledged_unverified`; other direct writers remain uncovered. Never a settled debit fact from an acknowledgment outside the money transaction. |
 
 Per-source dependency proofs scan actual durable rows and published receipts.
@@ -125,6 +126,54 @@ Daily adds `ordinary_subscription_durable_session` with version
 `writer_coverage_unproven`, `historical_coverage_not_certified` or
 `external_authority_proof_required` keeps status incomplete. Unsupported scopes
 have null proofId/sourceCutoff. Empty scans never certify uninstrumented writers.
+
+## Ordinary Midjourney
+
+`OPS_CN_DURABLE_MIDJOURNEY_ENABLED=true` admits only newly prepared ordinary
+wallet MJ tasks while CN capture is enabled and Redis/batch are disabled.
+Agency pricing/users and subscription funding are fenced; existing legacy tasks
+are never adopted or enriched from current prices. Default legacy paths remain
+unchanged. Deployments must drain prior buffered/in-flight writers before enabling.
+The caller must persist the task and `CNMidjourneyBilling` preparation together
+before settlement. Stable identity is MjId plus user; duplicate public identity
+cannot create another billable task. No token key is persisted in the receipt.
+
+Wallet, token, user/channel usage, task quota and permanent terminal receipt,
+immutable CN outbox and log-effect outbox commit together. Lock order is user,
+task, receipt, token, channel, publisher. Prepared is not a debit. Charged zero
+is a successful zero debit; cancelled is failure before debit; refunded is a
+reversal of a committed debit. Internal states use distinct `cn_midjourney_charged`,
+`cn_midjourney_cancelled`, `cn_midjourney_refunded` source evidence. Wire status
+stays `settled` or `reversed`; even a zero debit followed by failure has a distinct
+zero-delta reversal revision. Quota refunds are charge reversals, not cash refunds.
+Original prepared conversion is retained; occurredAt is actual financial commit
+time, effectiveAt/sourcePeriod retain original preparation business time.
+
+Poll CAS, notify and bulk task failure updates persist refund intent in their
+status transaction. Stale task writers cannot restore financial fields. The
+startup/5-second worker retries prepared debits and explicit refund intents,
+including after capture flags are turned off. Failure metadata remains durable.
+Deleted or missing tokens do not hold user funds indefinitely: negative refunds
+verify retained token owner, skip recreating/recrediting the removed token and
+record exact `TokenDisposedQuota` plus disposition. Owner mismatch, invalid/missing
+user/channel, mode transition to agency or malformed receipts remain explicit
+repair states. A new positive debit requires its original active token.
+
+Consume/refund logs use `CNMidjourneyEffect` in the primary transaction. Delivery
+uses a `CNMidjourneyLogReceipt` and log row in the same transactional log database
+transaction; acknowledgement loss and concurrent workers cannot duplicate logs.
+SQLite/MySQL/PostgreSQL log databases are supported. ClickHouse or unavailable
+log databases retain pending effects and prevent named-path completion. Email,
+telemetry and quota-data analytics exports are outside this batch; no durable
+delivery claim is made for them. Retain billing/effect/log-receipt history.
+
+Daily adds `ordinary_midjourney_durable` / `midjourney-terminal-v1`, with actual
+prepared/refund/publication/effect pending counts and unknown conversion/error
+counts. `midjourney_legacy` / `measured-midjourney-gap-v1` counts actual unmarked
+task quota, retains writer_coverage_unproven and null proofId/sourceCutoff. Zero
+legacy rows cannot make this unsupported writer complete or not_applicable.
+Permanent receipt retention is independent of task retention; deleting a live
+task or its channel before finality is unsupported and requires explicit repair.
 
 ## Validation
 

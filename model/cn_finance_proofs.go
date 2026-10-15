@@ -9,9 +9,10 @@ import (
 )
 
 type cnProofScan struct {
-	dependency  CNDependency
-	records     []any
-	coverageGap bool
+	dependency       CNDependency
+	records          []any
+	coverageGap      bool
+	unsupportedScope bool
 }
 
 // Proofs certify a named forward path and fixed source snapshot, not unseen
@@ -78,6 +79,11 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 		return nil, err
 	}
 	scans = append(scans, direct)
+	midjourney, err := cnMidjourneyProofs(tx, stream, published)
+	if err != nil {
+		return nil, err
+	}
+	scans = append(scans, midjourney...)
 	wallet := cnProofScan{dependency: CNDependency{SourceID: "ordinary_wallet_durable_session", Version: "durable-session-v1", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{"billing-session/reserve/finalize/cancel", "image-reserve-rollback", "trusted-zero-preconsume"}, ExcludedPaths: []string{"pre-epoch", "redis", "batch", "legacy-direct-wallet-mutations"}}}
 	if !CNDurableWalletAvailable() {
 		wallet.coverageGap = true
@@ -277,6 +283,9 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 		proof := CNIdentity(d.SourceID, d.Version, stream.Epoch, stream.StartedAt, cutoffText, string(encoded))
 		d.SourceCutoff = &proof
 		d.ProofID = &proof
+		if scan.unsupportedScope {
+			d.SourceCutoff, d.ProofID = nil, nil
+		}
 		d.Status = "complete"
 		if d.UnknownCount > 0 || scan.coverageGap {
 			d.Status = "gap"
@@ -292,7 +301,7 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 			d.CapturedThrough = &proof
 			sequence := strconv.FormatInt(lastFactSequence, 10)
 			d.PublishedThrough = &sequence
-		} else {
+		} else if !scan.unsupportedScope {
 			localComplete = false
 		}
 		deps = append(deps, d)

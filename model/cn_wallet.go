@@ -305,6 +305,9 @@ func RunCNWalletCancellationRecovery(ctx context.Context, db *gorm.DB) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
+		if err := errors.Join(RecoverCNMidjourney(ctx, db, 100), DeliverCNMidjourneyEffects(ctx, db, LOG_DB, 100)); err != nil {
+			common.SysError("CN Midjourney recovery requires repair")
+		}
 		if err := RecoverCNWalletCancellations(ctx, db, 100); err != nil {
 			common.SysError("CN wallet cancellation recovery requires repair")
 		}

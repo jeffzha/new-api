@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/opsbridge"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -228,6 +229,13 @@ func TestCNTaskControllerEntrances(t *testing.T) {
 			assert.Equal(t, int32(1), posts.Load())
 			var row model.CNTaskBilling
 			require.NoError(t, db.Where("request_id = ?", info.RequestId).First(&row).Error)
+			var frozenSeed model.Task
+			require.NoError(t, common.UnmarshalJsonStr(row.Seed, &frozenSeed))
+			if strings.HasPrefix(name, "responses-") {
+				assert.Equal(t, "text_to_image", frozenSeed.Action)
+			} else {
+				assert.Equal(t, info.Action, frozenSeed.Action, "recovery retains the action known before dispatch")
+			}
 			var wallet model.CNWalletLifecycle
 			require.ErrorIs(t, db.Where("request_id = ?", info.RequestId).First(&wallet).Error, gorm.ErrRecordNotFound)
 			unknown := name == "unknown" || name == "submit-timeout" || name == "submit-conflict"
@@ -249,6 +257,16 @@ func TestCNTaskControllerEntrances(t *testing.T) {
 				assert.False(t, row.Pending)
 				require.NotEmpty(t, row.UpstreamID)
 				require.NoError(t, db.Callback().Update().Remove("cn-payload-fail"))
+				originalPlatform := row.Platform
+				require.NoError(t, db.Model(&row).Update("platform", "jimeng").Error)
+				require.ErrorContains(t, service.ProbeCNTaskSubmission(context.Background(), row.Key), "query_identity_requires_repair")
+				assert.Zero(t, gets.Load(), "response-dependent provider identity must not be guessed")
+				require.NoError(t, db.Model(&row).Update("platform", originalPlatform).Error)
+				bridge, err := opsbridge.Open(opsbridge.Config{URL: upstream.URL, GatewayID: "q60-test", Key: "q60-fixture-key", StateDir: t.TempDir()})
+				require.NoError(t, err)
+				previousBridge := opsbridge.Default
+				opsbridge.Default = bridge
+				t.Cleanup(func() { require.NoError(t, bridge.Close()); opsbridge.Default = previousBridge })
 				if name == "native-payload-failed" {
 					require.NoError(t, db.Model(&channel).Update("key", "rotated-fixture-key").Error)
 					require.NoError(t, db.Model(&row).Update("next_attempt_at", 0).Error)
@@ -260,6 +278,27 @@ func TestCNTaskControllerEntrances(t *testing.T) {
 				require.True(t, model.HasDueCNTaskSubmissions())
 				require.NoError(t, service.RunCNTaskSubmissionProbes(context.Background(), 10))
 				assert.Equal(t, int32(1), gets.Load())
+				fetched, found, err := model.GetByTaskId(id, row.PublicTaskID)
+				require.NoError(t, err)
+				require.True(t, found)
+				require.EqualValues(t, model.TaskStatusSuccess, fetched.Status)
+				require.Positive(t, fetched.FinishTime)
+				if name == "native-payload-failed" {
+					assert.Equal(t, "https://cdn.example/native.mp4", fetched.GetResultURL())
+					var usage struct {
+						Provider string `json:"provider"`
+						Usage    struct {
+							TotalTokens int64 `json:"total_tokens"`
+						} `json:"usage"`
+					}
+					require.NoError(t, common.Unmarshal(fetched.PrivateData.OpsUsage, &usage))
+					assert.Equal(t, "seedance_video", usage.Provider)
+					assert.EqualValues(t, 100000, usage.Usage.TotalTokens)
+				} else {
+					assert.Equal(t, "https://cdn.example/video.mp4", fetched.GetResultURL())
+				}
+				require.True(t, fetched.OpsUsagePending)
+				require.NotEmpty(t, fetched.PrivateData.OpsUsage)
 			} else {
 				require.Nil(t, taskErr)
 				require.NotNil(t, outcome)

@@ -1,5 +1,37 @@
 # S4 Ordinary Task Single Settler
 
+## Q60 Follow-Up: Complete Recovered Task Results
+
+Probe now reconstructs the known accepted Task as SUBMITTED, commits its
+initial charge once, and invokes the existing updateVideoSingleTask pipeline.
+It therefore uses normal result URL/proxy selection, finish/start times,
+plugin state, sanitization, terminal status CAS, Ops usage intent/reservation
+transition and financial completion, rather than a partial terminal writer.
+Transient query failure leaves a persisted nonterminal Task for normal polling.
+The pre-dispatch seed also freezes the known Action.
+
+Lost-acceptance-payload automatic query is restricted to the actually verified
+Alibaba/OpenAISeedance paths. Other providers return an explicit
+provider_submission_query_identity_requires_repair without querying or submitting;
+response-only PluginState/Endpoint.FetchPath identity is never guessed. Jimeng's
+query req_key/action dependency remains a manual-repair gap. This does not add
+supplier acceptance coverage beyond the original two providers.
+
+The actual controller/relay entrance matrix passes all 14 cases on SQLite
+3.50.4 (0.784s), MySQL 8.0.39 (2.596s), PostgreSQL 17.6 (2.088s).
+Lost-payload cases run real probe recovery then the user-scoped Task lookup:
+correct video URL, positive FinishTime, durable OpsUsagePending and usage bytes.
+With an actual configured local bridge, native usage contains seedance_video
+and total_tokens=100000. Query count remains one and submit count remains one;
+funding/usage/provider finalization assertions still pass. Tests also require
+zero queries for an identity-dependent provider and original Action snapshots.
+Logs: `model/testdata/cn-task/q60-controller-{sqlite,mysql,postgres}.log`.
+
+Related `go test ./service ./relay ./controller ./router -p 1 -run 'Task|CN|Responses' -skip '^TestUpdateOptionRejectsIncompleteSeedanceVideoCNYPrices$' -count=1`
+PASS (2.834s/1.238s/2.718s/1.735s), including Q58 three-engine regression.
+The excluded baseline assertion remains documented separately; no full-suite
+claim is made. Evidence: `model/testdata/cn-task/q60-regression.log`.
+
 ## Q59 Follow-Up: Pre-Claim Receipt Upgrade
 
 Confirmed before the fix on SQLite: an existing wallet receipt admitted a new

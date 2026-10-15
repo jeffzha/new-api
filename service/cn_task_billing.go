@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -39,6 +38,9 @@ func PreConsumeCNTaskBilling(info *relaycommon.RelayInfo, platform constant.Task
 		return types.NewErrorWithStatusCode(model.ErrCNConflict, types.ErrorCodeQueryDataError, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
 	}
 	seed := model.InitTask(platform, info)
+	if info.TaskRelayInfo != nil {
+		seed.Action = info.Action
+	}
 	seed.PrivateData.Key = info.ApiKey
 	seed.PrivateData.Endpoint = &model.TaskEndpointSnapshot{BaseURL: info.ChannelBaseUrl}
 	seed.PrivateData.BillingContext = &model.TaskBillingContext{ModelPrice: info.PriceData.ModelPrice, GroupRatio: info.PriceData.GroupRatioInfo.GroupRatio, ModelRatio: info.PriceData.ModelRatio, OtherRatios: info.PriceData.OtherRatios(), OriginModelName: info.OriginModelName, PerCallBilling: common.StringsContains(constant.TaskPricePatches, info.OriginModelName) || info.PriceData.UsePrice, TieredSnapshot: info.TieredBillingSnapshot, ProviderBilling: provider}
@@ -235,6 +237,10 @@ func ProbeCNTaskSubmission(ctx context.Context, key string) error {
 	if row.UpstreamID == "" {
 		return fmt.Errorf("provider_lookup_requires_upstream_identity")
 	}
+	provider := model.CNTaskProvider(row.Platform)
+	if provider != "alibaba" && provider != "openai_seedance" {
+		return fmt.Errorf("provider_submission_query_identity_requires_repair")
+	}
 	if GetTaskAdaptorFunc == nil {
 		return fmt.Errorf("task adaptor unavailable")
 	}
@@ -263,38 +269,13 @@ func ProbeCNTaskSubmission(ctx context.Context, key string) error {
 		return err
 	}
 	adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id, ChannelType: channel.Type, ChannelBaseUrl: baseURL, ApiKey: channel.Key}})
-	resp, err := adaptor.FetchTask(baseURL, channel.Key, &task, channel.GetSetting().Proxy)
-	if err != nil {
-		return err
-	}
-	if resp == nil {
-		return fmt.Errorf("provider query returned no response")
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("provider lookup status %d requires repair", resp.StatusCode)
-	}
-	result, err := adaptor.ParseTaskResult(&task, resp, body)
-	if err != nil || result == nil || !knownPollStatus(model.TaskStatus(result.Status)) {
-		return fmt.Errorf("provider lookup result requires repair")
-	}
-	// Reconstitute the accepted task at the actual held amount. Completion is
-	// priced next against the frozen request basis, never today's configuration.
+	// The persisted upstream ID proves acceptance. Rebuild its initial charge,
+	// then use normal polling for result/state/usage and terminal settlement.
 	task.Status, task.Progress = model.TaskStatusSubmitted, "0%"
-	task.Data = redactVideoResponseBody(body)
 	if err := task.InsertWithContext(context.WithoutCancel(ctx)); err != nil {
 		return err
 	}
-	task.Status, task.Progress, task.FailReason = model.TaskStatus(result.Status), result.Progress, result.Reason
-	PrepareCNTaskTerminal(adaptor, &task, result)
-	if _, err := task.UpdateWithStatus(model.TaskStatusSubmitted); err != nil {
-		return err
-	}
-	return model.CompleteCNTaskIntent(context.WithoutCancel(ctx), model.DB, key)
+	return updateVideoSingleTask(context.WithoutCancel(ctx), adaptor, channel, row.UpstreamID, map[string]*model.Task{row.UpstreamID: &task})
 }
 
 func RunCNTaskSubmissionProbes(ctx context.Context, limit int) error {

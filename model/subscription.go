@@ -256,8 +256,9 @@ type UserSubscription struct {
 	UserId int `json:"user_id" gorm:"index;index:idx_user_sub_active,priority:1"`
 	PlanId int `json:"plan_id" gorm:"index"`
 
-	AmountTotal int64 `json:"amount_total" gorm:"type:bigint;not null;default:0"`
-	AmountUsed  int64 `json:"amount_used" gorm:"type:bigint;not null;default:0"`
+	AmountTotal     int64 `json:"amount_total" gorm:"type:bigint;not null;default:0"`
+	AmountUsed      int64 `json:"amount_used" gorm:"type:bigint;not null;default:0"`
+	UsageGeneration int64 `json:"-" gorm:"type:bigint;not null;default:0"`
 
 	StartTime int64  `json:"start_time" gorm:"bigint"`
 	EndTime   int64  `json:"end_time" gorm:"bigint;index;index:idx_user_sub_active,priority:3"`
@@ -1020,6 +1021,10 @@ func resetUserSubscriptionTx(tx *gorm.DB, sub *UserSubscription, plan *Subscript
 	if tx == nil || sub == nil || plan == nil {
 		return errors.New("invalid reset args")
 	}
+	if err := cnFreezeSubscriptionPeriodTx(tx, sub); err != nil {
+		return err
+	}
+	sub.UsageGeneration++
 	sub.AmountUsed = 0
 	if advanceResetTime {
 		nextReset := calcNextResetTime(time.Unix(now, 0), plan, sub.EndTime)
@@ -1058,6 +1063,9 @@ func adminResetUserSubscriptionsByPlanTx(tx *gorm.DB, userId int, plan *Subscrip
 	if tx == nil || plan == nil {
 		return nil, errors.New("invalid reset args")
 	}
+	if err := cnLockSubscriptionUsersTx(tx, []int{userId}); err != nil {
+		return nil, err
+	}
 	var subs []UserSubscription
 	if err := lockForUpdate(tx).
 		Where("user_id = ? AND plan_id = ? AND status = ? AND end_time > ?", userId, plan.Id, "active", now).
@@ -1079,6 +1087,13 @@ func adminResetUserSubscriptionsByPlanTx(tx *gorm.DB, userId int, plan *Subscrip
 func adminResetPlanSubscriptionsTx(tx *gorm.DB, plan *SubscriptionPlan, now int64, advanceResetTime bool) (*SubscriptionResetResult, error) {
 	if tx == nil || plan == nil {
 		return nil, errors.New("invalid reset args")
+	}
+	var users []int
+	if err := tx.Model(&UserSubscription{}).Where("plan_id = ?", plan.Id).Pluck("user_id", &users).Error; err != nil {
+		return nil, err
+	}
+	if err := cnLockSubscriptionUsersTx(tx, users); err != nil {
+		return nil, err
 	}
 	var subs []UserSubscription
 	if err := lockForUpdate(tx).
@@ -1295,6 +1310,10 @@ func maybeResetUserSubscriptionWithPlanTx(tx *gorm.DB, sub *UserSubscription, pl
 		}
 		return nil
 	}
+	if err := cnFreezeSubscriptionPeriodTx(tx, sub); err != nil {
+		return err
+	}
+	sub.UsageGeneration++
 	sub.AmountUsed = 0
 	sub.LastResetTime = base.Unix()
 	sub.NextResetTime = next
@@ -1324,6 +1343,9 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 	now := GetDBTimestamp()
 	var result *SubscriptionPreConsumeResult
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := cnLockSubscriptionUsersTx(tx, []int{userId}); err != nil {
+			return err
+		}
 		var err error
 		result, err = preConsumeUserSubscriptionTx(tx, requestId, userId, amount, now)
 		return err
@@ -1486,6 +1508,9 @@ func ResetDueSubscriptions(limit int) (int, error) {
 			continue
 		}
 		err = DB.Transaction(func(tx *gorm.DB) error {
+			if err := cnLockSubscriptionUsersTx(tx, []int{subCopy.UserId}); err != nil {
+				return err
+			}
 			var locked UserSubscription
 			if err := lockForUpdate(tx).
 				Where("id = ? AND next_reset_time > 0 AND next_reset_time <= ?", subCopy.Id, now).

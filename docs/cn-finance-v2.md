@@ -106,6 +106,19 @@ wallet intents. Active requests without such intent are never auto-cancelled.
 Legacy subscription refunds now mutate quota and their marker in one transaction;
 that repair alone does not turn legacy requests into final CN financial receipts.
 
+Subscription requests freeze `UsageGeneration` with explicit `PeriodBound=true`.
+Automatic and both admin reset entrances (including no clock advancement) archive
+the old total/used projection in `CNSubscriptionPeriod` and increment generation
+in the same transaction. Late requests adjust only their frozen period and retain
+its total limit. Reset/reserve/cancel lock user before subscription. Upgrade-era
+receipts without period identity remain explicit `subscription_period_identity_missing`
+gaps, never guessed to be current generation. Retain period archives permanently.
+For negative token adjustments, a missing/deleted token is not recreated: frozen
+owner is verified when the row remains, subscription quota is released, and the
+permanent receipt records disposition plus exact `TokenDisposedQuota`. Positive
+debits and owner mismatch fail closed. Raw/direct subscription writes remain
+outside this generation-aware request coverage.
+
 Daily adds `ordinary_subscription_durable_session` with version
 `durable-subscription-session-v1`. Generic incomplete scopes use
 `measured-scope-gap-v2`: observed pending/missing counts may be zero while explicit

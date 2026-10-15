@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strconv"
 	"time"
 
@@ -20,26 +21,88 @@ func CNDurableSubscriptionAvailable() bool {
 // cleanup. Reserved is an absolute target; Actual only becomes final in the
 // same transaction as subscription/token quota and the immutable CN outbox.
 type CNSubscriptionLifecycle struct {
-	RequestID         string `gorm:"size:64;primaryKey"`
-	UserID            int    `gorm:"not null;index"`
-	SubscriptionID    int    `gorm:"not null;index"`
-	InitialReserve    int64  `gorm:"not null"`
-	Reserved          int64  `gorm:"not null"`
-	Actual            int64  `gorm:"not null"`
-	TokenID           int    `gorm:"not null"`
-	TokenUnlimited    bool   `gorm:"not null"`
-	Playground        bool   `gorm:"not null"`
-	State             string `gorm:"size:32;not null;index"`
-	Version           int64  `gorm:"not null"`
-	Currency          string `gorm:"size:3"`
-	QuotaPerUnit      string `gorm:"size:128"`
-	ExchangeRate      string `gorm:"size:128"`
-	ConversionVersion string `gorm:"size:191"`
-	CreatedAt         string `gorm:"size:40;not null"`
-	FinalizedAt       string `gorm:"size:40"`
+	RequestID             string `gorm:"size:64;primaryKey"`
+	UserID                int    `gorm:"not null;index"`
+	SubscriptionID        int    `gorm:"not null;index"`
+	UsageGeneration       int64  `gorm:"not null;default:0"`
+	PeriodBound           bool   `gorm:"not null;default:false"`
+	TokenAdjustmentStatus string `gorm:"size:40"`
+	TokenDisposedQuota    int64  `gorm:"not null;default:0"`
+	InitialReserve        int64  `gorm:"not null"`
+	Reserved              int64  `gorm:"not null"`
+	Actual                int64  `gorm:"not null"`
+	TokenID               int    `gorm:"not null"`
+	TokenUnlimited        bool   `gorm:"not null"`
+	Playground            bool   `gorm:"not null"`
+	State                 string `gorm:"size:32;not null;index"`
+	Version               int64  `gorm:"not null"`
+	Currency              string `gorm:"size:3"`
+	QuotaPerUnit          string `gorm:"size:128"`
+	ExchangeRate          string `gorm:"size:128"`
+	ConversionVersion     string `gorm:"size:191"`
+	CreatedAt             string `gorm:"size:40;not null"`
+	FinalizedAt           string `gorm:"size:40"`
 }
 
 type CNSubscriptionCancellation CNWalletCancellation
+
+type CNSubscriptionPeriod struct {
+	SubscriptionID int   `gorm:"primaryKey;autoIncrement:false"`
+	Generation     int64 `gorm:"primaryKey;autoIncrement:false"`
+	AmountUsed     int64 `gorm:"not null"`
+	AmountTotal    int64 `gorm:"not null"`
+}
+
+var ErrCNSubscriptionPeriodMissing = errors.New("subscription_period_identity_missing")
+
+func cnLockSubscriptionUsersTx(tx *gorm.DB, users []int) error {
+	if !tx.Migrator().HasTable(&CNSubscriptionPeriod{}) {
+		return nil
+	}
+	slices.Sort(users)
+	for _, user := range slices.Compact(users) {
+		if err := tx.Model(&User{}).Where("id = ?", user).Update("quota", gorm.Expr("quota + 0")).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func cnFreezeSubscriptionPeriodTx(tx *gorm.DB, sub *UserSubscription) error {
+	if !tx.Migrator().HasTable(&CNSubscriptionPeriod{}) {
+		return nil
+	}
+	return tx.Create(&CNSubscriptionPeriod{SubscriptionID: sub.Id, Generation: sub.UsageGeneration, AmountUsed: sub.AmountUsed, AmountTotal: sub.AmountTotal}).Error
+}
+
+func cnSubscriptionDeltaTx(tx *gorm.DB, row *CNSubscriptionLifecycle, delta int64) error {
+	if !row.PeriodBound {
+		return ErrCNSubscriptionPeriodMissing
+	}
+	var sub UserSubscription
+	if err := lockForUpdate(tx).First(&sub, row.SubscriptionID).Error; err != nil {
+		return err
+	}
+	if sub.UserId != row.UserID {
+		return ErrCNConflict
+	}
+	if sub.UsageGeneration == row.UsageGeneration {
+		used := sub.AmountUsed + delta
+		if used < 0 || used > int64(common.MaxWalletQuota) || (sub.AmountTotal > 0 && used > sub.AmountTotal) {
+			return ErrWalletQuotaLimitExceeded
+		}
+		return tx.Model(&sub).Update("amount_used", used).Error
+	}
+	var period CNSubscriptionPeriod
+	if err := lockForUpdate(tx).Where("subscription_id = ? AND generation = ?", row.SubscriptionID, row.UsageGeneration).First(&period).Error; err != nil {
+		return errors.Join(ErrCNSubscriptionPeriodMissing, err)
+	}
+	used := period.AmountUsed + delta
+	if used < 0 || used > int64(common.MaxWalletQuota) || (period.AmountTotal > 0 && used > period.AmountTotal) {
+		return ErrWalletQuotaLimitExceeded
+	}
+	return tx.Model(&period).Update("amount_used", used).Error
+}
 
 func cnLockSubscriptionUserTx(tx *gorm.DB, request string, user int) error {
 	if request == "" || len(request) > 64 || user <= 0 {
@@ -77,8 +140,25 @@ func cnSubscriptionTokenTx(tx *gorm.DB, row *CNSubscriptionLifecycle, delta int6
 		return nil
 	}
 	var token Token
-	if err := lockForUpdate(tx).Where("id = ? AND user_id = ?", row.TokenID, row.UserID).First(&token).Error; err != nil {
+	err := lockForUpdate(tx.Unscoped()).Where("id = ?", row.TokenID).First(&token).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) && delta < 0 {
+		row.TokenAdjustmentStatus = "missing_token_not_recredited"
+		row.TokenDisposedQuota += -delta
+		return nil
+	}
+	if err != nil {
 		return err
+	}
+	if token.UserId != row.UserID {
+		return ErrCNConflict
+	}
+	if token.DeletedAt.Valid {
+		if delta < 0 {
+			row.TokenAdjustmentStatus = "deleted_token_not_recredited"
+			row.TokenDisposedQuota += -delta
+			return nil
+		}
+		return ErrCNConflict
 	}
 	remain, used := int64(token.RemainQuota)-delta, int64(token.UsedQuota)+delta
 	if requireAvailable && !row.TokenUnlimited && remain < 0 {
@@ -141,6 +221,10 @@ func PreConsumeCNSubscription(request string, user, amount, token int, unlimited
 		if err != nil {
 			return err
 		}
+		var sub UserSubscription
+		if err = lockForUpdate(tx).First(&sub, result.UserSubscriptionId).Error; err != nil {
+			return err
+		}
 		unit := strconv.FormatFloat(common.QuotaPerUnit, 'f', -1, 64)
 		currency := operation_setting.GetQuotaDisplayType()
 		if currency != "USD" && currency != "CNY" {
@@ -148,6 +232,7 @@ func PreConsumeCNSubscription(request string, user, amount, token int, unlimited
 		}
 		rate := strconv.FormatFloat(operation_setting.GetUsdToCurrencyRate(operation_setting.USDExchangeRate), 'f', -1, 64)
 		row = CNSubscriptionLifecycle{RequestID: request, UserID: user, SubscriptionID: result.UserSubscriptionId, InitialReserve: int64(amount), Reserved: int64(amount), TokenID: token, TokenUnlimited: unlimited, Playground: playground, State: "reserved", Version: 1, Currency: currency, QuotaPerUnit: unit, ExchangeRate: rate, ConversionVersion: CNIdentity("gateway-operation-settings-v1", unit, currency, rate), CreatedAt: time.Now().UTC().Format(CNTimeLayout)}
+		row.UsageGeneration, row.PeriodBound = sub.UsageGeneration, true
 		if err = cnSubscriptionTokenTx(tx, &row, int64(amount), true); err != nil {
 			return err
 		}
@@ -179,13 +264,13 @@ func ReserveCNSubscription(request string, user, target int) error {
 		if delta == 0 {
 			return nil
 		}
-		if err = postConsumeUserSubscriptionDeltaTx(tx, row.SubscriptionID, delta); err != nil {
+		if err = cnSubscriptionDeltaTx(tx, row, delta); err != nil {
 			return err
 		}
 		if err = cnSubscriptionTokenTx(tx, row, delta, delta > 0); err != nil {
 			return err
 		}
-		result := tx.Model(&CNSubscriptionLifecycle{}).Where("request_id = ? AND version = ?", request, row.Version).Updates(map[string]any{"reserved": target, "version": row.Version + 1})
+		result := tx.Model(&CNSubscriptionLifecycle{}).Where("request_id = ? AND version = ?", request, row.Version).Updates(map[string]any{"reserved": target, "version": row.Version + 1, "token_adjustment_status": row.TokenAdjustmentStatus, "token_disposed_quota": row.TokenDisposedQuota})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -208,7 +293,7 @@ func finalizeCNSubscriptionTx(tx *gorm.DB, row *CNSubscriptionLifecycle, actual 
 		return ErrCNConflict
 	}
 	delta := int64(actual) - row.Reserved
-	if err := postConsumeUserSubscriptionDeltaTx(tx, row.SubscriptionID, delta); err != nil {
+	if err := cnSubscriptionDeltaTx(tx, row, delta); err != nil {
 		return err
 	}
 	if err := cnSubscriptionTokenTx(tx, row, delta, false); err != nil {
@@ -239,7 +324,7 @@ func finalizeCNSubscriptionTx(tx *gorm.DB, row *CNSubscriptionLifecycle, actual 
 			return err
 		}
 	}
-	result := tx.Model(&CNSubscriptionLifecycle{}).Where("request_id = ? AND version = ?", row.RequestID, row.Version).Updates(map[string]any{"state": state, "actual": actual, "version": row.Version + 1, "finalized_at": occurred.UTC().Format(CNTimeLayout)})
+	result := tx.Model(&CNSubscriptionLifecycle{}).Where("request_id = ? AND version = ?", row.RequestID, row.Version).Updates(map[string]any{"state": state, "actual": actual, "version": row.Version + 1, "finalized_at": occurred.UTC().Format(CNTimeLayout), "token_adjustment_status": row.TokenAdjustmentStatus, "token_disposed_quota": row.TokenDisposedQuota})
 	if result.Error != nil {
 		return result.Error
 	}

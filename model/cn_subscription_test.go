@@ -285,6 +285,140 @@ func TestCNSubscriptionLifecycleAcrossDialects(t *testing.T) {
 					assert.Positive(t, dependency.PendingCount)
 				}
 			}
+			// Real public entrances: manual reset without advancing the clock
+			// must not let an old cancellation erase the new period's 50 units.
+			require.NoError(t, db.Create(&User{Id: 71, Username: "period-user", AffCode: "period-user", Quota: 1000}).Error)
+			require.NoError(t, db.Create(&Token{Id: 71, UserId: 71, Key: "period-token", RemainQuota: 1000}).Error)
+			require.NoError(t, db.Create(&SubscriptionPlan{Id: 71, Title: "period", TotalAmount: 100, QuotaResetPeriod: SubscriptionResetNever}).Error)
+			require.NoError(t, db.Create(&UserSubscription{Id: 71, UserId: 71, PlanId: 71, AmountTotal: 100, Status: "active", StartTime: time.Now().Unix(), EndTime: time.Now().Add(72 * time.Hour).Unix()}).Error)
+			_, err = PreConsumeCNSubscription("period-old", 71, 80, 71, false, false)
+			require.NoError(t, err)
+			require.NoError(t, db.Callback().Create().Before("gorm:create").Register("period-archive-failure", func(tx *gorm.DB) {
+				if tx.Statement.Table == "cn_subscription_periods" {
+					tx.AddError(errors.New("injected period archive failure"))
+				}
+			}))
+			_, err = AdminResetUserSubscriptionsByPlan(71, 71, false)
+			require.Error(t, err)
+			require.NoError(t, db.Callback().Create().Remove("period-archive-failure"))
+			var failedReset UserSubscription
+			require.NoError(t, db.First(&failedReset, 71).Error)
+			assert.EqualValues(t, 80, failedReset.AmountUsed)
+			assert.Zero(t, failedReset.UsageGeneration)
+			_, err = AdminResetUserSubscriptionsByPlan(71, 71, false)
+			require.NoError(t, err)
+			_, err = PreConsumeCNSubscription("period-new", 71, 50, 71, false, false)
+			require.NoError(t, err)
+			require.NoError(t, FinalizeCNSubscription("period-new", 71, 50))
+			require.NoError(t, RequestCNSubscriptionCancellation(db, "period-old", 71))
+			require.NoError(t, CompleteCNSubscriptionCancellation(context.Background(), db, "period-old"))
+			var current UserSubscription
+			var periodToken Token
+			require.NoError(t, db.First(&current, 71).Error)
+			require.NoError(t, db.First(&periodToken, 71).Error)
+			assert.EqualValues(t, 50, current.AmountUsed)
+			assert.EqualValues(t, 50, periodToken.UsedQuota)
+			assert.EqualValues(t, 1, current.UsageGeneration)
+			// Late final and supplement remain in the old generation and retain
+			// that generation's total limit.
+			_, err = PreConsumeCNSubscription("period-late", 71, 40, 71, false, false)
+			require.NoError(t, err)
+			_, err = AdminResetPlanSubscriptions(71, false)
+			require.NoError(t, err)
+			_, err = PreConsumeCNSubscription("period-third", 71, 30, 71, false, false)
+			require.NoError(t, err)
+			require.Error(t, ReserveCNSubscription("period-late", 71, 51))
+			require.NoError(t, ReserveCNSubscription("period-late", 71, 50))
+			require.NoError(t, FinalizeCNSubscription("period-late", 71, 20))
+			require.NoError(t, db.First(&current, 71).Error)
+			assert.EqualValues(t, 30, current.AmountUsed)
+			var oldPeriod CNSubscriptionPeriod
+			require.NoError(t, db.Where("subscription_id = ? AND generation = ?", 71, 1).First(&oldPeriod).Error)
+			assert.EqualValues(t, 70, oldPeriod.AmountUsed)
+			// Automatic reset uses the same persisted generation boundary.
+			require.NoError(t, db.Model(&SubscriptionPlan{}).Where("id = ?", 71).Updates(map[string]any{"quota_reset_period": SubscriptionResetDaily}).Error)
+			InvalidateSubscriptionPlanCache(71)
+			require.NoError(t, db.Model(&UserSubscription{}).Where("id = ?", 71).Updates(map[string]any{"start_time": time.Now().Add(-48 * time.Hour).Unix(), "last_reset_time": time.Now().Add(-48 * time.Hour).Unix(), "next_reset_time": time.Now().Unix() - 1}).Error)
+			_, err = ResetDueSubscriptions(100)
+			require.NoError(t, err)
+			require.NoError(t, db.First(&current, 71).Error)
+			assert.EqualValues(t, 3, current.UsageGeneration)
+			require.NoError(t, RequestCNSubscriptionCancellation(db, "period-third", 71))
+			require.NoError(t, CompleteCNSubscriptionCancellation(context.Background(), db, "period-third"))
+			require.NoError(t, db.First(&current, 71).Error)
+			assert.Zero(t, current.AmountUsed)
+			// Reset, reserve and cancellation serialize on user before subscription.
+			_, err = PreConsumeCNSubscription("period-race-old", 71, 10, 71, false, false)
+			require.NoError(t, err)
+			parallel := make(chan error, 3)
+			wg.Go(func() { _, err := AdminResetUserSubscriptionsByPlan(71, 71, false); parallel <- err })
+			wg.Go(func() {
+				_, err := PreConsumeCNSubscription("period-race-new", 71, 10, 71, false, false)
+				parallel <- err
+			})
+			wg.Go(func() {
+				err := RequestCNSubscriptionCancellation(db, "period-race-old", 71)
+				if err == nil {
+					err = CompleteCNSubscriptionCancellation(context.Background(), db, "period-race-old")
+				}
+				parallel <- err
+			})
+			wg.Wait()
+			close(parallel)
+			for err := range parallel {
+				require.NoError(t, err)
+			}
+			require.NoError(t, db.First(&current, 71).Error)
+			var newRace CNSubscriptionLifecycle
+			require.NoError(t, db.Where("request_id = ?", "period-race-new").First(&newRace).Error)
+			if newRace.UsageGeneration == current.UsageGeneration {
+				assert.EqualValues(t, 10, current.AmountUsed)
+			} else {
+				assert.Zero(t, current.AmountUsed)
+			}
+			for _, hard := range []bool{false, true} {
+				id := 72
+				if hard {
+					id = 73
+				}
+				require.NoError(t, db.Create(&Token{Id: id, UserId: 71, Key: fmt.Sprintf("deleted-%d", id), RemainQuota: 1000}).Error)
+				request := fmt.Sprintf("deleted-%d", id)
+				_, err = PreConsumeCNSubscription(request, 71, 10, id, false, false)
+				require.NoError(t, err)
+				if hard {
+					require.NoError(t, db.Unscoped().Delete(&Token{}, id).Error)
+				} else {
+					require.NoError(t, db.Delete(&Token{}, id).Error)
+				}
+				require.Error(t, FinalizeCNSubscription(request, 71, 11))
+				if !hard {
+					require.NoError(t, db.Unscoped().Model(&Token{}).Where("id = ?", id).Update("user_id", 999).Error)
+					require.NoError(t, RequestCNSubscriptionCancellation(db, request, 71))
+					require.ErrorIs(t, CompleteCNSubscriptionCancellation(context.Background(), db, request), ErrCNConflict)
+					require.NoError(t, db.Unscoped().Model(&Token{}).Where("id = ?", id).Update("user_id", 71).Error)
+				}
+				require.NoError(t, RequestCNSubscriptionCancellation(db, request, 71))
+				require.NoError(t, CompleteCNSubscriptionCancellation(context.Background(), db, request))
+				var disposed CNSubscriptionLifecycle
+				require.NoError(t, db.Where("request_id = ?", request).First(&disposed).Error)
+				assert.Equal(t, "cancelled", disposed.State)
+				assert.EqualValues(t, 10, disposed.TokenDisposedQuota)
+				assert.Contains(t, disposed.TokenAdjustmentStatus, "token_not_recredited")
+			}
+			// Upgrade-era receipts without a frozen period never guess genesis.
+			_, err = PreConsumeCNSubscription("unknown-period", 71, 5, 71, false, false)
+			require.NoError(t, err)
+			var beforeUpgrade CNSubscriptionLifecycle
+			require.NoError(t, db.Where("request_id = ?", "unknown-period").First(&beforeUpgrade).Error)
+			require.NoError(t, db.Migrator().DropColumn(&CNSubscriptionLifecycle{}, "PeriodBound"))
+			for range 2 {
+				require.NoError(t, MigrateCNFinance(db, "test-cn"))
+			}
+			var afterUpgrade CNSubscriptionLifecycle
+			require.NoError(t, db.Where("request_id = ?", "unknown-period").First(&afterUpgrade).Error)
+			beforeUpgrade.PeriodBound = false
+			assert.Equal(t, beforeUpgrade, afterUpgrade)
+			require.ErrorIs(t, FinalizeCNSubscription("unknown-period", 71, 0), ErrCNSubscriptionPeriodMissing)
 		})
 	}
 }

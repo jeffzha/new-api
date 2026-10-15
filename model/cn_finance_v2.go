@@ -147,6 +147,14 @@ func MigrateCNFinance(db *gorm.DB, gatewayID string) error {
 	if err := db.AutoMigrate(&CNFinanceStream{}, &CNFinanceOutbox{}, &CNFinancePublication{}, &CNFinanceIntent{}, &CNFinanceAssociation{}, &CNFinanceGap{}, &CNWalletLifecycle{}, &CNWalletCancellation{}, &CNFinanceReceipt{}, &CNFundingValueLot{}, &CNFundingValueAllocation{}, &CNFundingValueHold{}, &CNSubscriptionLifecycle{}, &CNSubscriptionCancellation{}); err != nil {
 		return err
 	}
+	if err := db.AutoMigrate(&CNSubscriptionPeriod{}); err != nil {
+		return err
+	}
+	if db.Migrator().HasTable(&UserSubscription{}) {
+		if err := db.AutoMigrate(&UserSubscription{}); err != nil {
+			return err
+		}
+	}
 	row := CNFinanceStream{ID: 1, GatewayID: gatewayID, Epoch: uuid.NewString(), StartedAt: time.Now().UTC().Format(CNTimeLayout), Migration: "CN_EXPORT_0001"}
 	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 		return err

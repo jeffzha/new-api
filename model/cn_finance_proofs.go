@@ -119,7 +119,11 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 		return nil, err
 	}
 	for _, row := range subscriptions {
-		subscription.records = append(subscription.records, []any{row.RequestID, row.SubscriptionID, row.State, row.Version, row.Reserved, row.Actual, row.FinalizedAt})
+		subscription.records = append(subscription.records, []any{row.RequestID, row.SubscriptionID, row.State, row.Version, row.Reserved, row.Actual, row.FinalizedAt, row.UsageGeneration, row.PeriodBound, row.TokenAdjustmentStatus, row.TokenDisposedQuota})
+		if !row.PeriodBound {
+			subscription.dependency.UnknownCount++
+			subscription.dependency.ExcludedPaths = append(subscription.dependency.ExcludedPaths, "subscription_period_identity_missing")
+		}
 		if row.State == "reserved" || !receipts["cn_subscription_lifecycle_final:"+row.RequestID] {
 			subscription.dependency.PendingCount++
 		}
@@ -128,6 +132,13 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 		}
 	}
 	var subscriptionCancellations []CNSubscriptionCancellation
+	var subscriptionPeriods []CNSubscriptionPeriod
+	if err = tx.Order("subscription_id, generation").Find(&subscriptionPeriods).Error; err != nil {
+		return nil, err
+	}
+	for _, period := range subscriptionPeriods {
+		subscription.records = append(subscription.records, period)
+	}
 	if err = tx.Order("request_id").Find(&subscriptionCancellations).Error; err != nil {
 		return nil, err
 	}

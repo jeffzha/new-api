@@ -9,8 +9,9 @@ import (
 )
 
 type cnProofScan struct {
-	dependency CNDependency
-	records    []any
+	dependency  CNDependency
+	records     []any
+	coverageGap bool
 }
 
 // Proofs certify a named forward path and fixed source snapshot, not unseen
@@ -74,7 +75,8 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 	scans := []cnProofScan{}
 	wallet := cnProofScan{dependency: CNDependency{SourceID: "ordinary_wallet_durable_session", Version: "durable-session-v1", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{"billing-session/reserve/finalize/cancel", "image-reserve-rollback", "trusted-zero-preconsume"}, ExcludedPaths: []string{"pre-epoch", "redis", "batch", "legacy-direct-wallet-mutations"}}}
 	if !CNDurableWalletAvailable() {
-		wallet.dependency.UnknownCount++
+		wallet.coverageGap = true
+		wallet.dependency.ExcludedPaths = append(wallet.dependency.ExcludedPaths, "durable_wallet_lane_unavailable")
 	}
 	var wallets []CNWalletLifecycle
 	if err = tx.Where("created_at >= ?", stream.StartedAt).Order("request_id").Find(&wallets).Error; err != nil {
@@ -107,6 +109,38 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 			scans[len(scans)-1].dependency.UnknownCount++
 		}
 	}
+	subscription := cnProofScan{dependency: CNDependency{SourceID: "ordinary_subscription_durable_session", Version: "durable-subscription-session-v1", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{"subscription-session/absolute-reserve/finalize/cancel", "subscription-zero-delta", "subscription-cancellation-recovery"}, ExcludedPaths: []string{"pre-epoch", "direct-subscription-delta", "legacy-subscription-refund", "recognition-schedules"}}}
+	if !CNDurableSubscriptionAvailable() {
+		subscription.coverageGap = true
+		subscription.dependency.ExcludedPaths = append(subscription.dependency.ExcludedPaths, "durable_subscription_lane_unavailable")
+	}
+	var subscriptions []CNSubscriptionLifecycle
+	if err = tx.Where("created_at >= ?", stream.StartedAt).Order("request_id").Find(&subscriptions).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range subscriptions {
+		subscription.records = append(subscription.records, []any{row.RequestID, row.SubscriptionID, row.State, row.Version, row.Reserved, row.Actual, row.FinalizedAt})
+		if row.State == "reserved" || !receipts["cn_subscription_lifecycle_final:"+row.RequestID] {
+			subscription.dependency.PendingCount++
+		}
+		if row.State != "reserved" && cnQuotaMoney(row.Actual, map[string]any{"quotaPerUnit": row.QuotaPerUnit, "exchangeRate": row.ExchangeRate, "settlementCurrency": row.Currency, "originalCurrency": "USD"}) == nil {
+			subscription.dependency.UnknownCount++
+		}
+	}
+	var subscriptionCancellations []CNSubscriptionCancellation
+	if err = tx.Order("request_id").Find(&subscriptionCancellations).Error; err != nil {
+		return nil, err
+	}
+	for _, intent := range subscriptionCancellations {
+		subscription.records = append(subscription.records, []any{intent.RequestID, intent.State, intent.Attempts, intent.LastErrorCode})
+		if intent.State != "complete" {
+			subscription.dependency.PendingCount++
+		}
+		if intent.LastErrorCode != "" {
+			subscription.dependency.UnknownCount++
+		}
+	}
+	scans = append(scans, subscription)
 	agency := cnProofScan{dependency: CNDependency{SourceID: "agency_wallet", Version: "native-final-journal-v1", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{"agency-durable-final-journal"}, ExcludedPaths: []string{"pre-epoch", "non-journal-agency"}}}
 	if tx.Migrator().HasTable(&AgencyBillingOutbox{}) {
 		var rows []AgencyBillingOutbox
@@ -125,7 +159,8 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 			}
 		}
 	} else {
-		agency.dependency.UnknownCount++
+		agency.coverageGap = true
+		agency.dependency.ExcludedPaths = append(agency.dependency.ExcludedPaths, "agency_source_table_unavailable")
 	}
 	scans = append(scans, agency)
 	tasks := cnProofScan{dependency: CNDependency{SourceID: "image_video_tasks", Version: "task-funding-cas-v1", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{"ApplyTaskQuotaAdjustment", "SettleTaskBillingReconciliation", "durable-session-task-request-link"}, ExcludedPaths: []string{"pre-epoch", "legacy-direct-task-writes", "midjourney-legacy"}}}
@@ -154,7 +189,8 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 			}
 		}
 	} else {
-		tasks.dependency.UnknownCount++
+		tasks.coverageGap = true
+		tasks.dependency.ExcludedPaths = append(tasks.dependency.ExcludedPaths, "task_source_table_unavailable")
 	}
 	scans = append(scans, tasks)
 	payments := cnProofScan{dependency: CNDependency{SourceID: "payments_topups", Version: "verified-snapshot-v1", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{"topup.PaymentSnapshot", "AgencyTopupFact.ActualMoney"}, ExcludedPaths: []string{"pre-epoch", "manual-order-without-provider-receipt"}}}
@@ -177,7 +213,8 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 			}
 		}
 	} else {
-		payments.dependency.UnknownCount++
+		payments.coverageGap = true
+		payments.dependency.ExcludedPaths = append(payments.dependency.ExcludedPaths, "topup_source_table_unavailable")
 	}
 	if tx.Migrator().HasTable(&AgencyTopupFact{}) {
 		var rows []AgencyTopupFact
@@ -208,7 +245,8 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 			}
 		}
 	} else {
-		commission.dependency.UnknownCount++
+		commission.coverageGap = true
+		commission.dependency.ExcludedPaths = append(commission.dependency.ExcludedPaths, "commission_source_table_unavailable")
 	}
 	scans = append(scans, commission)
 	localComplete := true
@@ -224,7 +262,7 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 		d.SourceCutoff = &proof
 		d.ProofID = &proof
 		d.Status = "complete"
-		if d.UnknownCount > 0 {
+		if d.UnknownCount > 0 || scan.coverageGap {
 			d.Status = "gap"
 		}
 		if d.PendingCount > 0 {
@@ -243,8 +281,20 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 		}
 		deps = append(deps, d)
 	}
-	var legacy, sourceGaps int64
-	if err = tx.Model(&CNFinanceIntent{}).Where("state <> ?", "captured").Count(&legacy).Error; err != nil {
+	var legacyPending, legacyUnknown, subscriptionUnknown, refundPending, sourceGaps int64
+	if err = tx.Model(&CNFinanceIntent{}).Where("state = ?", "pending_mutation").Count(&legacyPending).Error; err != nil {
+		return nil, err
+	}
+	if err = tx.Model(&CNFinanceIntent{}).Where("state IN ?", []string{"acknowledged_unverified", "mutation_failed"}).Count(&legacyUnknown).Error; err != nil {
+		return nil, err
+	}
+	if tx.Migrator().HasTable(&SubscriptionPreConsumeRecord{}) {
+		covered := tx.Model(&CNSubscriptionLifecycle{}).Select("request_id")
+		if err = tx.Model(&SubscriptionPreConsumeRecord{}).Where("created_at >= ? AND request_id NOT IN (?)", started.Unix(), covered).Count(&subscriptionUnknown).Error; err != nil {
+			return nil, err
+		}
+	}
+	if err = tx.Model(&CNFundingValueHold{}).Where("state = ?", "held").Count(&refundPending).Error; err != nil {
 		return nil, err
 	}
 	if err = tx.Model(&CNFinanceGap{}).Where("resolved = ?", false).Count(&sourceGaps).Error; err != nil {
@@ -255,18 +305,17 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 		pending, unknown int64
 		paths            []string
 	}{
-		{"ordinary_wallet_legacy_batch", legacy, 1, []string{"legacy-direct-wallet", "redis", "batch-and-inflight"}},
-		{"subscriptions_and_credit_schedules", 0, 1, []string{"ordinary-subscription", "agency-subscription", "approved-recognition-schedules", "credit-sale"}},
-		{"payments_refunds_compensations", 0, 1, []string{"cash-refund-provider-receipts", "consumed-compensations", "safe-reservations"}},
-		{"funding_lots_allocations", 0, 1, []string{"pre-epoch-native-allocation-history", "unattributed-bonus-and-debt", "ordinary-native-allocation-not-present"}},
-		{"confirmed_supplier_bills_allocations", 0, 1, []string{"ops-owned-confirmed-supplier-bills"}},
-		{"payment_fees", 0, 1, []string{"ops-owned-approved-provider-fees"}},
-		{"business_taxes_other_expenses", 0, 1, []string{"ops-owned-paid-tax-and-expense-documents"}},
-		{"historical_and_uninstrumented_paths", pending, sourceGaps + quarantined, []string{"before-stream-coverage", "unsupported-direct-mutations"}},
+		{"ordinary_wallet_legacy_batch", legacyPending, legacyUnknown, []string{"writer_coverage_unproven", "legacy-direct-wallet", "redis", "batch-and-inflight"}},
+		{"subscriptions_and_credit_schedules", 0, subscriptionUnknown, []string{"writer_coverage_unproven", "direct-subscription-delta", "agency-subscription", "approved-recognition-schedules", "credit-sale"}},
+		{"payments_refunds_compensations", refundPending, 0, []string{"writer_coverage_unproven", "cash-refund-provider-receipts", "consumed-compensations", "safe-reservations"}},
+		{"funding_lots_allocations", 0, 0, []string{"writer_coverage_unproven", "pre-epoch-native-allocation-history", "unattributed-bonus-and-debt", "ordinary-native-allocation-not-present"}},
+		{"confirmed_supplier_bills_allocations", 0, 0, []string{"external_authority_proof_required", "ops-owned-confirmed-supplier-bills"}},
+		{"payment_fees", 0, 0, []string{"external_authority_proof_required", "ops-owned-approved-provider-fees"}},
+		{"business_taxes_other_expenses", 0, 0, []string{"external_authority_proof_required", "ops-owned-paid-tax-and-expense-documents"}},
+		{"historical_and_uninstrumented_paths", pending, sourceGaps + quarantined, []string{"historical_coverage_not_certified", "before-stream-coverage", "unsupported-direct-mutations"}},
 	}
 	for _, gap := range gaps {
-		proof := CNIdentity(gap.id, strconv.FormatInt(gap.pending, 10), strconv.FormatInt(gap.unknown, 10))
-		d := CNDependency{SourceID: gap.id, Version: "scope-gap-v1", Required: true, CoverageFrom: coverageFrom, CoverageTo: &cutoffText, SourceCutoff: &proof, ProofID: &proof, PendingCount: gap.pending, UnknownCount: gap.unknown, SupportedPaths: []string{}, ExcludedPaths: gap.paths, Status: "gap"}
+		d := CNDependency{SourceID: gap.id, Version: "measured-scope-gap-v2", Required: true, CoverageFrom: coverageFrom, CoverageTo: &cutoffText, PendingCount: gap.pending, UnknownCount: gap.unknown, SupportedPaths: []string{}, ExcludedPaths: gap.paths, Status: "gap"}
 		if gap.pending > 0 {
 			d.Status = "pending"
 		}

@@ -84,16 +84,34 @@ streams require explicit Ops authority registration and comparison.
 | Agency funding | Forward native paid allocations frozen at financial journal commit; purchase value from `AgencyTopupFact`, never non-accounting `SourceSnapshotJSON`. |
 | Payments | Verified top-up snapshot and native agency purchase evidence; missing amount remains unknown; matching native payment references suppress generic duplicates. |
 | Commission | Committed `AgencyCommissionLedger.AmountMicros`; no coefficient-derived supplier cost or estimated tax. |
-| Legacy wallet/batch/subscription | Durable intent only, `acknowledged_unverified`; never a settled debit fact from an acknowledgment outside the money transaction. |
+| Ordinary subscription session | Opt-in permanent request receipt, absolute reserve and final actual including zero delta/actual zero; subscription, token and immutable CN final charge commit together. Explicit cancellation intent and atomic recovery survive legacy record cleanup. |
+| Legacy wallet/batch/subscription | Durable intent where instrumented, `acknowledged_unverified`; other direct writers remain uncovered. Never a settled debit fact from an acknowledgment outside the money transaction. |
 
 Per-source dependency proofs scan actual durable rows and published receipts.
 They cover named forward paths only. Historical/uninstrumented wallet writes,
-ordinary/agency subscriptions and approved schedules, bonus/debt allocation
+direct/agency subscriptions and approved schedules, bonus/debt allocation
 history, cash refunds and safe holds remain explicit gaps. Supplier bills,
 provider fees and paid tax/expense evidence are Ops-owned dependencies that S5
 must combine by registered authority. Zero rows do not remove required sources.
 This slice cannot claim globally complete coverage, close readiness or verified
 net operating benefit.
+
+`OPS_CN_DURABLE_SUBSCRIPTION_ENABLED=true` selects the ordinary subscription
+BillingSession lane when CN capture is enabled and Redis/batch are disabled.
+`CNSubscriptionLifecycle` and `CNSubscriptionCancellation` are permanent financial
+receipts, independent of legacy preconsume cleanup. Reservation retries freeze
+identity and use absolute targets; final retries require the same actual amount.
+The recovery worker drains explicit subscription cancellation intents as well as
+wallet intents. Active requests without such intent are never auto-cancelled.
+Legacy subscription refunds now mutate quota and their marker in one transaction;
+that repair alone does not turn legacy requests into final CN financial receipts.
+
+Daily adds `ordinary_subscription_durable_session` with version
+`durable-subscription-session-v1`. Generic incomplete scopes use
+`measured-scope-gap-v2`: observed pending/missing counts may be zero while explicit
+`writer_coverage_unproven`, `historical_coverage_not_certified` or
+`external_authority_proof_required` keeps status incomplete. Unsupported scopes
+have null proofId/sourceCutoff. Empty scans never certify uninstrumented writers.
 
 ## Validation
 

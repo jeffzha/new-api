@@ -54,6 +54,14 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	if s.refunded {
 		return model.ErrCNConflict
 	}
+	if sub, ok := s.funding.(*SubscriptionFunding); ok && sub.durable {
+		if err := model.FinalizeCNSubscription(sub.requestId, sub.userId, actualQuota); err != nil {
+			return err
+		}
+		s.relayInfo.SubscriptionPostDelta += int64(actualQuota - s.preConsumedQuota)
+		s.fundingSettled, s.settled = true, true
+		return nil
+	}
 	// The legacy wallet can acknowledge buffered writes. Keep a durable intent
 	// before that boundary and never publish buffered acknowledgments as cash.
 	wallet, durableWallet := s.funding.(*WalletFunding)
@@ -171,6 +179,22 @@ func (s *BillingSession) Refund(c *gin.Context) {
 	s.mu.Lock()
 	if s.settled || s.refunded || !s.needsRefundLocked() {
 		s.mu.Unlock()
+		return
+	}
+	if sub, ok := s.funding.(*SubscriptionFunding); ok && sub.durable {
+		if err := model.RequestCNSubscriptionCancellation(model.DB, sub.requestId, sub.userId); err != nil {
+			s.mu.Unlock()
+			common.SysError("CN subscription cancellation intent unavailable; retry required")
+			return
+		}
+		s.refunded = true
+		s.mu.Unlock()
+		request, db := sub.requestId, model.DB
+		gopool.Go(func() {
+			if err := model.CompleteCNSubscriptionCancellation(context.Background(), db, request); err != nil {
+				common.SysError("CN subscription cancellation pending durable recovery")
+			}
+		})
 		return
 	}
 	if wallet, ok := s.funding.(*WalletFunding); ok && wallet.durable {
@@ -294,6 +318,18 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 	if delta <= 0 {
 		return nil
 	}
+	if sub, ok := s.funding.(*SubscriptionFunding); ok && sub.durable {
+		if err := model.ReserveCNSubscription(sub.requestId, sub.userId, targetQuota); err != nil {
+			return err
+		}
+		s.preConsumedQuota = targetQuota
+		if !s.relayInfo.IsPlayground {
+			s.tokenConsumed += delta
+		}
+		s.extraReserved += delta
+		s.syncRelayInfo()
+		return nil
+	}
 
 	if err := s.reserveFunding(delta, imageRequest); err != nil {
 		return err
@@ -368,7 +404,15 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 	// fails between the two legacy operations.
 	var fundingErr error
 	agencyAtomicInitial := false
-	if s.relayInfo.AgencyPricing != nil && s.funding.Source() == BillingSourceWallet && effectiveQuota > 0 && s.relayInfo.RequestId != "" {
+	if sub, ok := s.funding.(*SubscriptionFunding); ok && model.CNDurableSubscriptionAvailable() && !model.IsAgencyDurableUser(s.relayInfo.UserId) {
+		fundingErr = sub.preConsumeDurable(s.relayInfo.TokenId, s.relayInfo.TokenUnlimited, s.relayInfo.IsPlayground)
+		if fundingErr == nil {
+			effectiveQuota = int(sub.preConsumed)
+			if !s.relayInfo.IsPlayground {
+				s.tokenConsumed = effectiveQuota
+			}
+		}
+	} else if s.relayInfo.AgencyPricing != nil && s.funding.Source() == BillingSourceWallet && effectiveQuota > 0 && s.relayInfo.RequestId != "" {
 		s.agencyChargeID = s.relayInfo.RequestId
 		wallet, ok := s.funding.(*WalletFunding)
 		if ok {

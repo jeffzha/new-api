@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -98,6 +99,7 @@ func (w *WalletFunding) Refund() error {
 // ---------------------------------------------------------------------------
 
 type SubscriptionFunding struct {
+	durable        bool
 	requestId      string
 	userId         int
 	modelName      string
@@ -119,6 +121,21 @@ func (s *SubscriptionFunding) PreConsume(_ int) error {
 	if err != nil {
 		return err
 	}
+	s.applyPreConsumeResult(res)
+	return nil
+}
+
+func (s *SubscriptionFunding) preConsumeDurable(token int, unlimited, playground bool) error {
+	res, err := model.PreConsumeCNSubscription(s.requestId, s.userId, int(s.amount), token, unlimited, playground)
+	if err != nil {
+		return err
+	}
+	s.durable = true
+	s.applyPreConsumeResult(res)
+	return nil
+}
+
+func (s *SubscriptionFunding) applyPreConsumeResult(res *model.SubscriptionPreConsumeResult) {
 	s.subscriptionId = res.UserSubscriptionId
 	s.preConsumed = res.PreConsumed
 	s.AmountTotal = res.AmountTotal
@@ -128,10 +145,12 @@ func (s *SubscriptionFunding) PreConsume(_ int) error {
 		s.PlanId = planInfo.PlanId
 		s.PlanTitle = planInfo.PlanTitle
 	}
-	return nil
 }
 
 func (s *SubscriptionFunding) Settle(delta int) error {
+	if s.durable {
+		return model.FinalizeCNSubscription(s.requestId, s.userId, int(s.preConsumed)+delta)
+	}
 	if delta == 0 {
 		return nil
 	}
@@ -139,6 +158,12 @@ func (s *SubscriptionFunding) Settle(delta int) error {
 }
 
 func (s *SubscriptionFunding) Refund() error {
+	if s.durable {
+		if err := model.RequestCNSubscriptionCancellation(model.DB, s.requestId, s.userId); err != nil {
+			return err
+		}
+		return model.CompleteCNSubscriptionCancellation(context.Background(), model.DB, s.requestId)
+	}
 	if s.preConsumed <= 0 {
 		return nil
 	}

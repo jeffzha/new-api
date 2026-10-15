@@ -34,7 +34,7 @@ func cnReset(t *testing.T, db *gorm.DB) {
 	require.NoError(t, db.Migrator().DropTable(AgencyModels()...))
 	models := []any{&CNFinancePublication{}, &CNFinanceOutbox{}, &CNFinanceIntent{}, &CNFinanceAssociation{}, &CNFinanceGap{}, &CNFinanceStream{}, &CNWalletLifecycle{}, &OpsExportFact{}, &OpsExportPublisher{}, &AgencyBillingOutbox{}, &AgencyBillingOperation{}, &AgencyBillingJournal{}, &AgencyCommissionLedger{}, &AgencyFundingAllocation{}, &AgencyFundingLot{}, &AgencyTopupFact{}, &TopUp{}, &Task{}, &TaskBillingReconciliation{}, &User{}, &Token{}, &UserSubscription{}, &Model{}, &Vendor{}, &Channel{}, &Ability{}, &Option{}}
 	require.NoError(t, db.Migrator().DropTable(models...))
-	require.NoError(t, db.Migrator().DropTable(&CNWalletCancellation{}, &CNFinanceReceipt{}, &CNFundingValueAllocation{}, &CNFundingValueLot{}, &CNFundingValueHold{}))
+	require.NoError(t, db.Migrator().DropTable(&CNWalletCancellation{}, &CNFinanceReceipt{}, &CNFundingValueAllocation{}, &CNFundingValueLot{}, &CNFundingValueHold{}, &CNSubscriptionLifecycle{}, &CNSubscriptionCancellation{}, &SubscriptionPreConsumeRecord{}, &SubscriptionPlan{}))
 	require.NoError(t, MigrateCNFinance(db, "test-cn"))
 }
 

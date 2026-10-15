@@ -308,6 +308,9 @@ func RunCNWalletCancellationRecovery(ctx context.Context, db *gorm.DB) {
 		if err := RecoverCNWalletCancellations(ctx, db, 100); err != nil {
 			common.SysError("CN wallet cancellation recovery requires repair")
 		}
+		if err := RecoverCNSubscriptionCancellations(ctx, db, 100); err != nil {
+			common.SysError("CN subscription cancellation recovery requires repair")
+		}
 		select {
 		case <-ctx.Done():
 			return

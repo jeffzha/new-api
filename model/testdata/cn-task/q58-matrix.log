@@ -1,0 +1,94 @@
+=== RUN   TestCNTaskReconciliationRecoveryFencesStaleWorkers
+=== RUN   TestCNTaskReconciliationRecoveryFencesStaleWorkers/sqlite
+
+2026/10/15 18:41:12 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `q58_1792060872823033400_cn_task_billings` WHERE request_id = "q58-request" ORDER BY `q58_1792060872823033400_cn_task_billings`.`key` LIMIT 1
+
+2026/10/15 18:41:12 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `q58_1792060872823033400_cn_finance_outboxes` WHERE chain_key = "38b14c9478ed57f0412ad839c2c069c4a8ba63ea1df70e1cbd38391faec4c2d4" ORDER BY revision DESC,`q58_1792060872823033400_cn_finance_outboxes`.`id` LIMIT 1
+
+2026/10/15 18:41:12 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:146 [35;1mSQL logic error: no such table: agency_hub_billing_operations (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `charge_id` FROM `agency_hub_billing_operations` WHERE operation = "finalize" AND money_seq = 0 AND (operation_id IS NULL OR operation_id = "") ORDER BY id LIMIT 10
+[ERR] 2026/10/15 - 18:41:12 | SYSTEM | load non-canonical agency task finalizations failed: SQL logic error: no such table: agency_hub_billing_operations (1) 
+
+2026/10/15 18:41:12 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:167 [35;1mSQL logic error: no such table: agency_hub_billing_journals (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `charge_id` FROM `agency_hub_billing_journals` WHERE status = "reconcile_required" AND last_error = "final_usage_pending" ORDER BY id LIMIT 10
+[ERR] 2026/10/15 - 18:41:12 | SYSTEM | load agency task charges pending final usage failed: SQL logic error: no such table: agency_hub_billing_journals (1) 
+
+2026/10/15 18:41:12 [34;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/task_billing_reconciliation_test.go:112
+[0m[35m[warn] [0mremoving callback `q58-final-failure` from C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/task_billing_reconciliation_test.go:112
+
+2026/10/15 18:41:12 [34;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/task_billing_reconciliation_test.go:113
+[0m[35m[warn] [0mremoving callback `q58-recover-before-retry` from C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/task_billing_reconciliation_test.go:113
+
+2026/10/15 18:41:12 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:146 [35;1mSQL logic error: no such table: agency_hub_billing_operations (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `charge_id` FROM `agency_hub_billing_operations` WHERE operation = "finalize" AND money_seq = 0 AND (operation_id IS NULL OR operation_id = "") ORDER BY id LIMIT 10
+[ERR] 2026/10/15 - 18:41:12 | SYSTEM | load non-canonical agency task finalizations failed: SQL logic error: no such table: agency_hub_billing_operations (1) 
+
+2026/10/15 18:41:12 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:167 [35;1mSQL logic error: no such table: agency_hub_billing_journals (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `charge_id` FROM `agency_hub_billing_journals` WHERE status = "reconcile_required" AND last_error = "final_usage_pending" ORDER BY id LIMIT 10
+[ERR] 2026/10/15 - 18:41:12 | SYSTEM | load agency task charges pending final usage failed: SQL logic error: no such table: agency_hub_billing_journals (1) 
+=== RUN   TestCNTaskReconciliationRecoveryFencesStaleWorkers/mysql
+
+2026/10/15 18:41:15 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[2.096ms] [34;1m[rows:0][0m SELECT * FROM `q58_1792060872871430100_cn_task_billings` WHERE request_id = 'q58-request' ORDER BY `q58_1792060872871430100_cn_task_billings`.`key` LIMIT 1 FOR UPDATE
+
+2026/10/15 18:41:15 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `q58_1792060872871430100_cn_finance_outboxes` WHERE chain_key = '38b14c9478ed57f0412ad839c2c069c4a8ba63ea1df70e1cbd38391faec4c2d4' ORDER BY revision DESC,`q58_1792060872871430100_cn_finance_outboxes`.`id` LIMIT 1
+
+2026/10/15 18:41:15 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:146 [35;1mError 1146 (42S02): Table 's4_cn_finance.agency_hub_billing_operations' doesn't exist
+[0m[33m[0.635ms] [34;1m[rows:0][0m SELECT `charge_id` FROM `agency_hub_billing_operations` WHERE operation = 'finalize' AND money_seq = 0 AND (operation_id IS NULL OR operation_id = '') ORDER BY id LIMIT 10
+[ERR] 2026/10/15 - 18:41:15 | SYSTEM | load non-canonical agency task finalizations failed: Error 1146 (42S02): Table 's4_cn_finance.agency_hub_billing_operations' doesn't exist 
+
+2026/10/15 18:41:15 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:167 [35;1mError 1146 (42S02): Table 's4_cn_finance.agency_hub_billing_journals' doesn't exist
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `charge_id` FROM `agency_hub_billing_journals` WHERE status = 'reconcile_required' AND last_error = 'final_usage_pending' ORDER BY id LIMIT 10
+[ERR] 2026/10/15 - 18:41:15 | SYSTEM | load agency task charges pending final usage failed: Error 1146 (42S02): Table 's4_cn_finance.agency_hub_billing_journals' doesn't exist 
+
+2026/10/15 18:41:15 [34;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/task_billing_reconciliation_test.go:112
+[0m[35m[warn] [0mremoving callback `q58-final-failure` from C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/task_billing_reconciliation_test.go:112
+
+2026/10/15 18:41:15 [34;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/task_billing_reconciliation_test.go:113
+[0m[35m[warn] [0mremoving callback `q58-recover-before-retry` from C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/task_billing_reconciliation_test.go:113
+
+2026/10/15 18:41:15 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:146 [35;1mError 1146 (42S02): Table 's4_cn_finance.agency_hub_billing_operations' doesn't exist
+[0m[33m[0.553ms] [34;1m[rows:0][0m SELECT `charge_id` FROM `agency_hub_billing_operations` WHERE operation = 'finalize' AND money_seq = 0 AND (operation_id IS NULL OR operation_id = '') ORDER BY id LIMIT 10
+[ERR] 2026/10/15 - 18:41:15 | SYSTEM | load non-canonical agency task finalizations failed: Error 1146 (42S02): Table 's4_cn_finance.agency_hub_billing_operations' doesn't exist 
+
+2026/10/15 18:41:15 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:167 [35;1mError 1146 (42S02): Table 's4_cn_finance.agency_hub_billing_journals' doesn't exist
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `charge_id` FROM `agency_hub_billing_journals` WHERE status = 'reconcile_required' AND last_error = 'final_usage_pending' ORDER BY id LIMIT 10
+[ERR] 2026/10/15 - 18:41:15 | SYSTEM | load agency task charges pending final usage failed: Error 1146 (42S02): Table 's4_cn_finance.agency_hub_billing_journals' doesn't exist 
+=== RUN   TestCNTaskReconciliationRecoveryFencesStaleWorkers/postgres
+
+2026/10/15 18:41:16 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[4.514ms] [34;1m[rows:0][0m SELECT * FROM "q58_1792060876102360500_cn_task_billings" WHERE request_id = 'q58-request' ORDER BY "q58_1792060876102360500_cn_task_billings"."key" LIMIT 1 FOR UPDATE
+
+2026/10/15 18:41:16 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM "q58_1792060876102360500_cn_finance_outboxes" WHERE chain_key = '38b14c9478ed57f0412ad839c2c069c4a8ba63ea1df70e1cbd38391faec4c2d4' ORDER BY revision DESC,"q58_1792060876102360500_cn_finance_outboxes"."id" LIMIT 1
+
+2026/10/15 18:41:16 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:146 [35;1mERROR: relation "agency_hub_billing_operations" does not exist (SQLSTATE 42P01)
+[0m[33m[0.305ms] [34;1m[rows:0][0m SELECT "charge_id" FROM "agency_hub_billing_operations" WHERE operation = 'finalize' AND money_seq = 0 AND (operation_id IS NULL OR operation_id = '') ORDER BY id LIMIT 10
+[ERR] 2026/10/15 - 18:41:16 | SYSTEM | load non-canonical agency task finalizations failed: ERROR: relation "agency_hub_billing_operations" does not exist (SQLSTATE 42P01) 
+
+2026/10/15 18:41:16 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:167 [35;1mERROR: relation "agency_hub_billing_journals" does not exist (SQLSTATE 42P01)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT "charge_id" FROM "agency_hub_billing_journals" WHERE status = 'reconcile_required' AND last_error = 'final_usage_pending' ORDER BY id LIMIT 10
+[ERR] 2026/10/15 - 18:41:16 | SYSTEM | load agency task charges pending final usage failed: ERROR: relation "agency_hub_billing_journals" does not exist (SQLSTATE 42P01) 
+
+2026/10/15 18:41:16 [34;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/task_billing_reconciliation_test.go:112
+[0m[35m[warn] [0mremoving callback `q58-final-failure` from C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/task_billing_reconciliation_test.go:112
+
+2026/10/15 18:41:16 [34;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/task_billing_reconciliation_test.go:113
+[0m[35m[warn] [0mremoving callback `q58-recover-before-retry` from C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/task_billing_reconciliation_test.go:113
+
+2026/10/15 18:41:16 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:146 [35;1mERROR: relation "agency_hub_billing_operations" does not exist (SQLSTATE 42P01)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT "charge_id" FROM "agency_hub_billing_operations" WHERE operation = 'finalize' AND money_seq = 0 AND (operation_id IS NULL OR operation_id = '') ORDER BY id LIMIT 10
+[ERR] 2026/10/15 - 18:41:16 | SYSTEM | load non-canonical agency task finalizations failed: ERROR: relation "agency_hub_billing_operations" does not exist (SQLSTATE 42P01) 
+
+2026/10/15 18:41:16 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:167 [35;1mERROR: relation "agency_hub_billing_journals" does not exist (SQLSTATE 42P01)
+[0m[33m[0.994ms] [34;1m[rows:0][0m SELECT "charge_id" FROM "agency_hub_billing_journals" WHERE status = 'reconcile_required' AND last_error = 'final_usage_pending' ORDER BY id LIMIT 10
+[ERR] 2026/10/15 - 18:41:16 | SYSTEM | load agency task charges pending final usage failed: ERROR: relation "agency_hub_billing_journals" does not exist (SQLSTATE 42P01) 
+--- PASS: TestCNTaskReconciliationRecoveryFencesStaleWorkers (4.21s)
+    --- PASS: TestCNTaskReconciliationRecoveryFencesStaleWorkers/sqlite (0.05s)
+    --- PASS: TestCNTaskReconciliationRecoveryFencesStaleWorkers/mysql (3.23s)
+    --- PASS: TestCNTaskReconciliationRecoveryFencesStaleWorkers/postgres (0.93s)
+PASS
+ok  	github.com/QuantumNous/new-api/service	4.599s

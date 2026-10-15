@@ -42,7 +42,7 @@ func TestAgencyProviderReconciliationRefundKeepsUsageProjectionAndFinancialRecei
 	assert.Equal(t, -40, record.QuotaDelta)
 	// Another worker can recheck the same provider bill without changing
 	// balances, duplicating the commission event, or subtracting usage again.
-	require.NoError(t, model.UpdateTaskBillingReconciliation(record.ID, map[string]any{"status": model.TaskBillingReconciliationPending, "next_retry_at": 0}))
+	require.NoError(t, db.Model(&record).Updates(map[string]any{"status": model.TaskBillingReconciliationPending, "next_retry_at": 0}).Error)
 	summary = RunTaskBillingReconciliationOnce(context.Background(), 10)
 	assert.Equal(t, 1, summary.Settled)
 	require.NoError(t, db.First(&wallet, user.Id).Error)

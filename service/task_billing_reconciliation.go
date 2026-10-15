@@ -73,7 +73,7 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 		if ctx.Err() != nil {
 			break
 		}
-		claimed, claimErr := model.ClaimTaskBillingReconciliation(record.ID)
+		claimed, claimErr := record.Claim()
 		if claimErr != nil {
 			logger.LogError(ctx, fmt.Sprintf("claim task billing reconciliation %d failed: %s", record.ID, claimErr.Error()))
 			continue
@@ -84,12 +84,12 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 
 		var task model.Task
 		if findErr := model.DB.First(&task, record.TaskID).Error; findErr != nil {
-			_ = finishTaskBillingReconciliation(record.ID, model.TaskBillingReconciliationNotNeeded, "task no longer exists")
+			_ = finishTaskBillingReconciliation(record, model.TaskBillingReconciliationNotNeeded, "task no longer exists")
 			summary.Skipped++
 			continue
 		}
 		if task.Status == model.TaskStatusFailure {
-			_ = finishTaskBillingReconciliation(record.ID, model.TaskBillingReconciliationNotNeeded, "task failed and was refunded")
+			_ = finishTaskBillingReconciliation(record, model.TaskBillingReconciliationNotNeeded, "task failed and was refunded")
 			summary.Skipped++
 			continue
 		}
@@ -140,7 +140,7 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 		}})
 		reconciler, ok := adaptor.(TaskBillingReconciler)
 		if !ok {
-			_ = finishTaskBillingReconciliation(record.ID, model.TaskBillingReconciliationNotNeeded, "task adaptor does not support billing reconciliation")
+			_ = finishTaskBillingReconciliation(record, model.TaskBillingReconciliationNotNeeded, "task adaptor does not support billing reconciliation")
 			summary.Skipped++
 			continue
 		}
@@ -159,7 +159,7 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 				if finErr := ensureAgencyTaskFinalUsage(&task, int64(task.Quota)); finErr != nil {
 					logger.LogError(ctx, fmt.Sprintf("agency task %s provider-bill fallback finalize failed: %s", task.TaskID, finErr.Error()))
 				} else {
-					_ = finishTaskBillingReconciliation(record.ID, model.TaskBillingReconciliationNotNeeded, "provider bill unavailable; finalized at charged quota")
+					_ = finishTaskBillingReconciliation(record, model.TaskBillingReconciliationNotNeeded, "provider bill unavailable; finalized at charged quota")
 					summary.Settled++
 					continue
 				}
@@ -231,7 +231,7 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 }
 
 func retryTaskBillingReconciliation(record *model.TaskBillingReconciliation, reconcileErr error) {
-	attempts := record.Attempts + 1
+	attempts := record.Attempts
 	delay := 15 * time.Second
 	for i := 1; i < attempts && delay < time.Hour; i++ {
 		delay *= 2
@@ -243,20 +243,20 @@ func retryTaskBillingReconciliation(record *model.TaskBillingReconciliation, rec
 	if reconcileErr != nil {
 		message = reconcileErr.Error()
 	}
-	_ = model.UpdateTaskBillingReconciliation(record.ID, map[string]any{
+	_ = record.UpdateClaim(map[string]any{
 		"status":        model.TaskBillingReconciliationPending,
 		"next_retry_at": time.Now().Add(delay).Unix(),
 		"last_error":    message,
 	})
 }
 
-func finishTaskBillingReconciliation(id int64, status string, message string) error {
+func finishTaskBillingReconciliation(record *model.TaskBillingReconciliation, status string, message string) error {
 	updates := map[string]any{
 		"status":        status,
 		"next_retry_at": 0,
 		"last_error":    message,
 	}
-	return model.UpdateTaskBillingReconciliation(id, updates)
+	return record.UpdateClaim(updates)
 }
 
 // repairedTaskSettlements bounds the legacy repair to one attempt per charge

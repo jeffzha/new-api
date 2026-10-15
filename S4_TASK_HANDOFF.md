@@ -1,5 +1,24 @@
 # S4 Ordinary Task Single Settler
 
+## Q58 Follow-Up: Stale Reconciliation Worker
+
+The existing Attempts counter now fences worker claims and retry/finish writes.
+Claim compares the due-list attempt and increments it atomically; bookkeeping
+writes require processing status and the same attempt. General reconciliation
+updates cannot reopen settled/not_needed records. No schema or price change.
+Legacy replay tests explicitly seed reopened records through their fixture DB,
+so their original settlement-idempotency coverage remains.
+
+`go test ./service -run '^TestCNTaskReconciliationRecoveryFencesStaleWorkers$' -count=1 -v`
+PASS on SQLite 3.50.4, MySQL 8.0.39 and PostgreSQL 17.6. A real RunOnce final
+transaction fails at its outbox insert, leaving ProviderBill/Pending. The test
+executes actual recovery before the worker retry starts; receipt and provider
+record remain final/settled after the old retry, late finish and generic update.
+Balances/fact count remain exactly 50/2 and another worker pass has no pending
+record. It also verifies newer claims reject obsolete due snapshots and old
+retry/finish, and that not_needed is terminal.
+Evidence: `model/testdata/cn-task/q58-matrix.log` and `q58-regression.log`.
+
 2026-10-15. Independent batch based on `fad2f16cde270e0854eeefb39fb0cf87c7061c68`.
 This batch owns opt-in ordinary image/video Task reservation, accepted initial
 charge, completion, provider-bill finalization, and failure reversal. It does

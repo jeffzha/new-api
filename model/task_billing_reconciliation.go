@@ -162,10 +162,20 @@ func GetDueTaskBillingReconciliations(limit int) ([]*TaskBillingReconciliation, 
 }
 
 func ClaimTaskBillingReconciliation(id int64) (bool, error) {
+	var record TaskBillingReconciliation
+	if err := DB.First(&record, id).Error; err != nil {
+		return false, err
+	}
+	return record.Claim()
+}
+
+// Claim advances the observed attempt atomically, so a delayed due-list entry
+// cannot acquire a newer lease and retain an obsolete attempt identity.
+func (record *TaskBillingReconciliation) Claim() (bool, error) {
 	now := time.Now().Unix()
 	result := DB.Model(&TaskBillingReconciliation{}).
-		Where("id = ? AND ((status = ? AND next_retry_at <= ?) OR (status = ? AND updated_at <= ?))",
-			id,
+		Where("id = ? AND attempts = ? AND ((status = ? AND next_retry_at <= ?) OR (status = ? AND updated_at <= ?))",
+			record.ID, record.Attempts,
 			TaskBillingReconciliationPending, now,
 			TaskBillingReconciliationProcessing, now-300).
 		Updates(map[string]any{
@@ -173,7 +183,24 @@ func ClaimTaskBillingReconciliation(id int64) (bool, error) {
 			"attempts":   gorm.Expr("attempts + 1"),
 			"updated_at": now,
 		})
-	return result.RowsAffected == 1, result.Error
+	claimed := result.Error == nil && result.RowsAffected == 1
+	if claimed {
+		record.Attempts++
+		record.Status, record.UpdatedAt = TaskBillingReconciliationProcessing, now
+	}
+	return claimed, result.Error
+}
+
+// UpdateClaim cannot reopen a terminal record or overwrite another worker's
+// reclaimed attempt. Losing the claim is a harmless no-op.
+func (record *TaskBillingReconciliation) UpdateClaim(updates map[string]any) error {
+	if updates == nil {
+		updates = map[string]any{}
+	}
+	updates["updated_at"] = time.Now().Unix()
+	return DB.Model(&TaskBillingReconciliation{}).
+		Where("id = ? AND status = ? AND attempts = ?", record.ID, TaskBillingReconciliationProcessing, record.Attempts).
+		Updates(updates).Error
 }
 
 func UpdateTaskBillingReconciliation(id int64, updates map[string]any) error {
@@ -181,7 +208,9 @@ func UpdateTaskBillingReconciliation(id int64, updates map[string]any) error {
 		updates = map[string]any{}
 	}
 	updates["updated_at"] = time.Now().Unix()
-	return DB.Model(&TaskBillingReconciliation{}).Where("id = ?", id).Updates(updates).Error
+	return DB.Model(&TaskBillingReconciliation{}).
+		Where("id = ? AND status IN ?", id, []string{TaskBillingReconciliationPending, TaskBillingReconciliationProcessing}).
+		Updates(updates).Error
 }
 
 // SettleTaskBillingReconciliation atomically applies the provider-confirmed

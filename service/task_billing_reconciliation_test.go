@@ -2,21 +2,168 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 type taskBillingReconciliationAdaptor struct {
 	resolution         *TaskBillingResolution
 	initializedBaseURL string
+}
+
+func TestCNTaskReconciliationRecoveryFencesStaleWorkers(t *testing.T) {
+	t.Setenv("OPS_CN_FINANCE_V2_ENABLED", "true")
+	t.Setenv("OPS_CN_DURABLE_TASK_ENABLED", "true")
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			var driver gorm.Dialector = sqlite.Open(":memory:")
+			if dialect != "sqlite" {
+				dsn := os.Getenv("AGENCY_HUB_TEST_" + strings.ToUpper(dialect) + "_DSN")
+				if os.Getenv("AGENCY_HUB_RUN_EXTERNAL_DB_TESTS") != "1" || dsn == "" {
+					t.Skip("disposable external database not configured")
+				}
+				if dialect == "mysql" {
+					driver = mysql.Open(dsn)
+				} else {
+					driver = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+				}
+			}
+			prefix := fmt.Sprintf("q58_%d_", time.Now().UnixNano())
+			db, err := gorm.Open(driver, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: prefix}})
+			require.NoError(t, err)
+			pool, err := db.DB()
+			require.NoError(t, err)
+			pool.SetMaxOpenConns(1)
+			oldDB, oldLog, oldFactory := model.DB, model.LOG_DB, GetTaskAdaptorFunc
+			oldMain, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
+			model.DB, model.LOG_DB = db, db
+			common.SetDatabaseTypes(common.DatabaseType(dialect), common.DatabaseType(dialect))
+			t.Cleanup(func() {
+				model.DB, model.LOG_DB, GetTaskAdaptorFunc = oldDB, oldLog, oldFactory
+				common.SetDatabaseTypes(oldMain, oldLogType)
+				tables, err := db.Migrator().GetTables()
+				require.NoError(t, err)
+				for _, table := range tables {
+					if strings.HasPrefix(table, prefix) {
+						require.NoError(t, db.Migrator().DropTable(table))
+					}
+				}
+				require.NoError(t, pool.Close())
+			})
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Task{}, &model.TaskBillingReconciliation{}))
+			require.NoError(t, model.MigrateCNFinance(db, "q58-test"))
+			require.NoError(t, db.Create(&model.User{Id: 1, Username: "q58", AffCode: "q58", Quota: 10000}).Error)
+			require.NoError(t, db.Create(&model.Token{Id: 1, UserId: 1, Key: "q58-token", RemainQuota: 10000}).Error)
+			require.NoError(t, db.Create(&model.Channel{Id: 1, Name: "q58", Type: constant.ChannelTypeSeedanceDomestic}).Error)
+			task := &model.Task{TaskID: "q58-task", UserId: 1, ChannelId: 1, Platform: constant.TaskPlatform("seedance_domestic"), Status: model.TaskStatusSuccess,
+				PrivateData: model.TaskPrivateData{BillingContext: &model.TaskBillingContext{ProviderBilling: &model.TaskProviderBillingSnapshot{Provider: model.TaskBillingProviderSeedanceDomestic, AsyncReconciliationRequired: true}}}}
+			row, err := model.PrepareCNTask(task, "q58-request", model.TaskBillingSourceWallet, 100, 1, false, false)
+			require.NoError(t, err)
+			task.CNBillingKey, task.Quota = row.Key, 100
+			task.PrivateData.TokenId, task.PrivateData.BillingSource = 1, model.TaskBillingSourceWallet
+			task.PrivateData.Execution = &model.TaskExecutionSnapshot{RequestID: row.RequestID}
+			task.PrivateData.UpstreamTaskID = "q58-upstream"
+			require.NoError(t, model.BeginCNTaskDispatch(row.Key, strings.Repeat("a", 64), 1, string(task.Platform)))
+			require.NoError(t, model.RecordCNTaskUpstream(row.Key, task.PrivateData.UpstreamTaskID))
+			require.NoError(t, task.Insert())
+			require.NoError(t, model.EnqueueTaskBillingReconciliation(task, model.TaskBillingProviderSeedanceDomestic))
+			GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor {
+				return &taskBillingReconciliationAdaptor{resolution: &TaskBillingResolution{ActualQuota: 50, TotalTokens: 1}}
+			}
+			failSettlement, recoveredBeforeRetry := true, false
+			var recoveryErr error
+			require.NoError(t, db.Callback().Create().Before("gorm:create").Register("q58-final-failure", func(tx *gorm.DB) {
+				if failSettlement && tx.Statement.Schema != nil && tx.Statement.Schema.Name == "CNFinanceOutbox" {
+					failSettlement = false
+					tx.AddError(errors.New("q58 injected final fact failure"))
+				}
+			}))
+			// Interleave recovery after the failed financial transaction returns,
+			// before the original worker starts its retry update transaction.
+			require.NoError(t, db.Callback().Update().Before("gorm:begin_transaction").Register("q58-recover-before-retry", func(tx *gorm.DB) {
+				updates, ok := tx.Statement.Dest.(map[string]any)
+				if !ok || recoveredBeforeRetry || tx.Statement.Schema == nil || tx.Statement.Schema.Name != "TaskBillingReconciliation" || updates["status"] != model.TaskBillingReconciliationPending {
+					return
+				}
+				recoveredBeforeRetry = true
+				recoveryErr = db.Model(&model.CNTaskBilling{}).Where(map[string]any{"key": row.Key}).Update("next_attempt_at", 0).Error
+				if recoveryErr == nil {
+					recoveryErr = model.RecoverCNTaskBilling(context.Background(), db, 10)
+				}
+			}))
+			summary := RunTaskBillingReconciliationOnce(context.Background(), 10)
+			require.NoError(t, db.Callback().Create().Remove("q58-final-failure"))
+			require.NoError(t, db.Callback().Update().Remove("q58-recover-before-retry"))
+			require.True(t, recoveredBeforeRetry)
+			require.NoError(t, recoveryErr)
+			require.Equal(t, 1, summary.Retried)
+			require.NoError(t, db.First(&row, map[string]any{"key": row.Key}).Error)
+			require.Equal(t, "final", row.State)
+			require.False(t, row.Pending)
+			var record model.TaskBillingReconciliation
+			require.NoError(t, db.Where("task_id = ?", task.ID).First(&record).Error)
+			require.Equal(t, model.TaskBillingReconciliationSettled, record.Status)
+			terminal := record
+			retryTaskBillingReconciliation(&record, errors.New("late retry"))
+			require.NoError(t, finishTaskBillingReconciliation(&record, model.TaskBillingReconciliationNotNeeded, "late finish"))
+			require.NoError(t, model.UpdateTaskBillingReconciliation(record.ID, map[string]any{"status": model.TaskBillingReconciliationPending}))
+			require.NoError(t, db.First(&record, record.ID).Error)
+			require.Equal(t, terminal, record)
+			require.Zero(t, RunTaskBillingReconciliationOnce(context.Background(), 10).Pending)
+			var user model.User
+			var token model.Token
+			require.NoError(t, db.First(&user, 1).Error)
+			require.NoError(t, db.First(&token, 1).Error)
+			require.Equal(t, 9950, user.Quota)
+			require.Equal(t, 50, user.UsedQuota)
+			require.Equal(t, 9950, token.RemainQuota)
+			var facts int64
+			require.NoError(t, db.Model(&model.CNFinanceOutbox{}).Count(&facts).Error)
+			require.EqualValues(t, 2, facts)
+
+			legacy := model.TaskBillingReconciliation{TaskID: 9999, Status: model.TaskBillingReconciliationPending}
+			require.NoError(t, db.Create(&legacy).Error)
+			staleDue := legacy
+			claimed, err := legacy.Claim()
+			require.NoError(t, err)
+			require.True(t, claimed)
+			require.NoError(t, db.Model(&legacy).Update("updated_at", time.Now().Unix()-301).Error)
+			claimed, err = staleDue.Claim()
+			require.NoError(t, err)
+			require.False(t, claimed, "old due-list attempt cannot claim a newer lease")
+			var successor model.TaskBillingReconciliation
+			require.NoError(t, db.First(&successor, legacy.ID).Error)
+			claimed, err = successor.Claim()
+			require.NoError(t, err)
+			require.True(t, claimed)
+			retryTaskBillingReconciliation(&legacy, errors.New("superseded worker"))
+			require.NoError(t, finishTaskBillingReconciliation(&legacy, model.TaskBillingReconciliationNotNeeded, "superseded worker"))
+			var current model.TaskBillingReconciliation
+			require.NoError(t, db.First(&current, legacy.ID).Error)
+			require.Equal(t, successor, current)
+			require.NoError(t, finishTaskBillingReconciliation(&successor, model.TaskBillingReconciliationNotNeeded, "owner finished"))
+			retryTaskBillingReconciliation(&successor, errors.New("late owner retry"))
+			require.NoError(t, db.First(&current, legacy.ID).Error)
+			require.Equal(t, model.TaskBillingReconciliationNotNeeded, current.Status)
+		})
+	}
 }
 
 func (a *taskBillingReconciliationAdaptor) Init(info *relaycommon.RelayInfo) {
@@ -124,10 +271,11 @@ END`).Error)
 	assert.Equal(t, 50, record.ActualQuota)
 	assert.Equal(t, -50, record.QuotaDelta)
 
-	require.NoError(t, model.UpdateTaskBillingReconciliation(record.ID, map[string]any{
+	// Seed a deliberately reopened legacy record to verify settlement replay.
+	require.NoError(t, model.DB.Model(&record).Updates(map[string]any{
 		"status":        model.TaskBillingReconciliationPending,
 		"next_retry_at": 0,
-	}))
+	}).Error)
 	replay := RunTaskBillingReconciliationOnce(context.Background(), 10)
 	assert.Equal(t, 1, replay.Settled)
 	assert.Equal(t, 10_050, getUserQuota(t, userID))

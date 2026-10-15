@@ -249,6 +249,29 @@ func TestCNRefundAtomicWorkflowAcrossDialects(t *testing.T) {
 			assert.EqualValues(t, 75, lot.PaidRevoked)
 			assert.Zero(t, lot.PaidReserved)
 			assert.Zero(t, user.Quota)
+			// The canonical receipt must survive publication, not just staging.
+			cursor, exported := "", 0
+			for {
+				page, err := ReadCNFacts(ctx, s.DB, cursor, 1000)
+				require.NoError(t, err)
+				for _, item := range page["items"].([]CNFact) {
+					if item.FactID == paid.CanonicalFactID {
+						exported++
+						assert.Equal(t, "payment_refund", item.PostingRole)
+						assert.Equal(t, r.OperationID, item.OperationID)
+					}
+				}
+				cursor = page["nextCursor"].(string)
+				if !page["hasMore"].(bool) {
+					break
+				}
+			}
+			assert.Equal(t, 1, exported)
+			page, err := ReadCNFacts(ctx, s.DB, cursor, 1000)
+			require.NoError(t, err)
+			for _, item := range page["items"].([]CNFact) {
+				assert.NotEqual(t, paid.CanonicalFactID, item.FactID)
+			}
 		})
 	}
 }

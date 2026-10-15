@@ -370,6 +370,35 @@ hashes the fence row with only fenceBodyHash omitted and fenceHash equals that
 digest. openingReceiptHash hashes the ordered opening rows of that admission.
 paymentSnapshotHash is null or hashes the committed payment snapshot alone.
 
+The generation mapping is exact in this version: each control generation G
+after fencing has a complete writer membership set whose every leaseGeneration
+equals G, and exactly one fence row whose generation equals G. Its writerIds
+are exactly that set's sorted unique writer IDs. Compute each membershipBodyHash
+from that writer row with only membershipBodyHash omitted; sort those `sha256:`
+digest strings lexicographically, and hash the JCS array to get writerSetHash.
+The control's writerSetHash equals its fence's writerSetHash. Its fenceHash equals
+that fence's fenceBodyHash, hashed with only fenceBodyHash omitted. Every original
+at controlGeneration G copies those same two hashes and resolves writerId/build
+to that generation's membership. Never select an arbitrary latest lease version.
+
+Every later control change, including pause/break/close without a lease renewal,
+appends a full writer set and fence at the new generation. Copies retain their
+actual leaseExpiresAt and drainAcknowledgedThrough; increasing leaseGeneration
+does not renew a lease or attest new drainage. Changed membership/build/lease or
+drainage requires fresh corresponding evidence. All prior rows remain immutable.
+The initial prepared control has no fenced writer set: writerSetHash is the JCS
+hash of `[]`, `sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945`,
+and fenceHash is present as null. Controls before the first fence use that same
+empty/null representation. A complete manifest itself requires a real fence;
+only pre-fence pending/gap manifests may have a present-null header fenceHash.
+
+Example mapping: prepare is generation `1`; start is generation `2`, with all
+writers.leaseGeneration `2` and fence.generation `2`; pause is generation `3`,
+with copied writer memberships at leaseGeneration `3` and a new fence.generation
+`3`. A receipt committed after pause uses controlGeneration `3` and that new
+writerSetHash/fenceHash even though no lease expiry was extended. This mapping
+is independent of mutationSequence, batchSequence, freezeSequence and revisions.
+
 ## Readonly Export And Verification
 
 Reuse existing export-token bearer authentication, constant-time configured hash

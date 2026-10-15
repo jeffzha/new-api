@@ -1,7 +1,8 @@
 # Ordinary Wallet Native Funding Integrity V2 Proposal
 
-Status: proposed for coordinator contract review; no v2 implementation or live
-activation is authorized by this document. Target: the existing mixed Gateway
+Status: wire candidate for coordinator freeze. Additive native foundation is
+authorized; new wire/API and consumer activation await this contract's freeze.
+No live activation is authorized by this document. Target: the existing mixed Gateway
 source, currently described as 196 users, with historical unknown value intact.
 An empty-history v1 fixture is not acceptance evidence for that source.
 
@@ -131,14 +132,15 @@ reassigns historical reversals or automatically resumes a suspended pool.
 
 ## Ops Ownership And Activation
 
-Before activation, persist a transition receipt with previous authority, customer
-and chain/lot scope, last posted Ops watermark, native opening manifest and an
-explicit reconciled native chain set. Ops must reject intersecting active claims
-and atomically claim this epoch's monetary chains. Replaying native monetary facts
-already posted by old FIFO is forbidden. First rollout should use a provably
-disjoint set of new purchases and new charge chains; existing holds/charges stay
-with their frozen old owner. Any overlapping value requires explicit reconciliation
-approved under the frozen contract, not a SQL authority change.
+First-version eligibility excludes every customer with any existing Ops FIFO
+history or intersecting authority. A customer having historical unknown native
+activity alone is eligible; the actual mixed-source population must be scanned,
+not inferred from the descriptive count 196. Same-customer old FIFO plus native
+transition is deferred. Existing holds/charges retain their frozen unknown/old
+owner. Ops must reject intersecting active claims and atomically claim exact
+manifest facts/chains. Replaying native monetary facts already posted by old FIFO
+is forbidden. No path/time filter or evidence-recordType separation establishes
+disjoint authority. The wire rules below define exact grant/borrowed membership.
 
 Run register, native capture, publish, daily, source-vs-native compare, then
 activate for the same immutable scope/watermark. Activation requires nonempty
@@ -166,10 +168,11 @@ ownership and revision obligations; it cannot erase unknown history.
 
 ## Implementation And Acceptance Order
 
-Freeze this contract and companion activation/report rules in root/Ops first.
-Then implement additive epoch/admission/disposition/control models; transactional
-writer receipts; independent scanner; wire proof; Ops exclusive claims/activation;
-and operational rollout checks. Each step is separately reviewable.
+Implement the authorized additive epoch/admission/original receipt/disposition/
+scanner foundation separately, disabled by default. Freeze this wire and companion
+activation/report rules in root/Ops before new wire/API or consumer integration.
+Then integrate transactional writers, frozen export, Ops exclusive claims and
+activation, and operational rollout checks. Each step is separately reviewable.
 
 Real SQLite/MySQL/PostgreSQL acceptance must cover a populated mixed-source
 upgrade twice, existing holds and unknown history, known/unknown TopUps, same-second
@@ -179,3 +182,298 @@ source switch, flag pause, crash/restart, old-writer fence and overlapping Ops
 ownership rejection. The end-to-end existing-source result must show native
 integrity activation only after reconciliation while whole reports remain
 incomplete because historical unknown and required legacy gaps are retained.
+
+## Exact Dependency Wire
+
+Keep the existing exact `CNDependency` JSON field set and existing `CNFact` wire.
+Do not add `integrity` or other extension keys to dependency or fact. The current
+Go struct has 14 serialized keys (the coordination shorthand "16-field" does not
+authorize adding two fields). All legacy source/version semantics stay unchanged.
+The following new tagged tuple alone selects sidecar semantics:
+
+```json
+{
+  "sourceId": "ordinary_wallet_native_funding_integrity",
+  "version": "native-funding-integrity-v2",
+  "required": true,
+  "coverageFrom": "2026-10-15T00:00:00Z",
+  "coverageTo": "2026-10-15T01:00:00Z",
+  "sourceCutoff": "2026-10-15T01:00:00Z",
+  "capturedThrough": "2026-10-15T01:00:00Z",
+  "publishedThrough": "2026-10-15T01:00:00Z",
+  "pendingCount": 0,
+  "unknownCount": 0,
+  "supportedPaths": ["ordinary-wallet/native-funding-integrity-v2"],
+  "excludedPaths": ["historical-and-uninstrumented", "ops-fifo-customer-transition"],
+  "proofId": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "status": "complete"
+}
+```
+
+The digest above is illustrative, not a valid downloadable proof. `proofId` is
+required and content addressed for this tuple; fetch the exact manifest using it.
+An unrecognized tuple, absent sidecar, wrong hash, incomplete pages or unsupported
+sidecar schema fails closed. No dependency complete status alone grants authority.
+For this version only, `unknownCount` counts unresolved integrity errors, including
+missing capture, mismatch, orphan, duplicate and broken writer fence. It does not
+count properly reconciled intentional unknown dispositions. Sidecar
+`intentionalUnknownByReason` records those explicitly. `pendingCount` counts
+unresolved originals/dispositions/facts awaiting completion/publication, each
+entity once by its stable ID. Status complete requires both counts zero, an
+unbroken fence, nonempty known activity and all graph/control equations verified.
+Legacy required gaps and their unknown counts are never rewritten or suppressed.
+
+## Canonical Encoding And Frozen Header
+
+All objects below are strict: reject unknown/missing keys, duplicate JSON keys,
+invalid enum values and noncanonical encodings. Nullable fields are present as
+null. IDs are nonempty UTF-8 strings; array ordering is specified below. Sequence,
+ordinal, revision, quota and count fields are decimal strings, regex
+`0|[1-9][0-9]*`, bounded to signed int64; signed quota delta permits `-` only for
+nonzero values. Values are canonical exact decimal strings, never JSON floats.
+Times use existing CN UTC second precision. Hashes use lowercase
+`sha256:` plus 64 hex digits. Hash input is UTF-8 RFC 8785 JCS with no BOM/newline.
+Implementations must use the same JCS conformance vectors; Go struct field order
+or Python default JSON serialization is not canonicalization.
+
+An explicitly requested local `freeze` materializes rows from one consistent DB
+snapshot. GET never scans mutable native/capture tables. The manifest has exactly:
+
+| Key | Type and invariant |
+| --- | --- |
+| schema | literal `cn-funding-integrity-manifest-v2` |
+| sourceId, version, path | exact tagged values above |
+| sourceSystem, gatewayId, streamEpoch | existing immutable fact stream identity |
+| integrityEpoch | independent UUID; never replaces streamEpoch |
+| policyVersion, writerProtocolVersion | `ordinary-unknown-first-paid-fifo-v1`, `native-mutation-receipt-v2` |
+| batchSequence, parentProofId | positive decimal string; first batch `1`/null, otherwise prior accepted proof hash |
+| controlGeneration, writerSetHash, fenceHash | durable generation and frozen control/fence digests |
+| membershipThrough, mutationThrough, publicationThrough | committed membership/mutation counter and original stream publication sequence |
+| capturedAt, sourceCutoff, capturedThrough, publishedThrough | UTC times; informational, not membership predicates |
+| authorityKinds | sorted array `charge,funding_allocation,funding_lot,payment,recognized_revenue` |
+| supportedPaths, excludedPaths, companionSourceIds | sorted unique string arrays; include existing required legacy dependencies |
+| status | `complete`, `pending` or `gap` |
+| pendingCount, unresolvedIntegrityCount | decimal strings matching base counts |
+| intentionalUnknownByReason | exact keys below, decimal-string original disposition counts |
+| knownMutationCount, admittedCustomerCount | decimal strings; derived from frozen rows |
+| collections | exact descriptor map for every collection listed below |
+
+`intentionalUnknownByReason` exact keys are `opening_history`, `opening_hold`,
+`missing_payment_value`, `allocation_disabled`, `admission_disabled`,
+`preexisting_fact`, `suspended`, `source_switched`, `unsupported_path`. Each counts
+dispositions whose primary reason is that key, including zeros. Unknown portions
+are in disposition quota/value fields; these counts never imply known money.
+`unsupported_path` is intentional only for a frozen excluded path/customer with
+full original receipt; unsupported mutation of an admitted covered balance is an
+integrity error. Pending/error detail belongs in `findings`, not this reason map.
+
+Every descriptor has exactly `{count,root}`. `count` is a decimal string. A row's
+ordinal starts at `0` and is contiguous. For collection name C, define
+`h0=SHA256(JCS(["cn-integrity-rows-v2",C]))` and
+`h(i+1)=SHA256(JCS(["cn-integrity-row-v2",hi,i,row]))`, with digests encoded in the
+specified string format and i encoded as a decimal string. Root is h(count),
+including h0 for an empty collection. Every row and every page must be consumed
+to verify that root; a page digest alone is insufficient. No cross-resource hash
+cycles occur. Manifest digest is SHA256(JCS(the whole manifest)), and both
+snapshotId and proofId equal that digest; neither is a field inside manifest.
+Parent hash is the previous immutable manifest, so this is acyclic.
+
+## Frozen Collections And Graph Schema
+
+Every collection exists, including empty ones. Fields below are exact, not
+examples of optional metadata. References must resolve in this snapshot or in
+the explicitly imported immutable parent history; the first version exports
+cumulative collections, so all references resolve locally. String arrays are
+sorted unique unless explicitly a chronological predecessor list. `body` in facts
+is the unchanged complete CNFact. Rows sort lexicographically by the indicated
+tuple using UTF-8 bytes, with sequence/revision compared numerically.
+
+| Collection / sort key | Exact row keys |
+| --- | --- |
+| admissions / membershipSequence | admissionId, membershipSequence, customerKey, nativeUserId, billingMode, admittedAt, openingBalance, openingUnknownQuota, openingHoldIds, openingReceiptHash, nativeLineageId, eligibilityId |
+| eligibility / customerKey | eligibilityId, customerKey, opsInventoryId, opsInventoryHash, opsFifoHistoryCount, intersectingAuthorityIds, decision |
+| openings / openingId | openingId, admissionId, nativeKind, nativeKey, nativeRevision, heldQuota, actualQuota, ownerMode, nativeLineageId, originalBodyHash |
+| originals / mutationSequence | receiptId, mutationSequence, membershipSequence, admissionId, customerKey, nativeKind, nativeKey, nativeRevision, predecessorReceiptId, writerId, writerBuild, controlGeneration, writerSetHash, fenceHash, effectiveAt, occurredAt, quotaDelta, cumulativeActual, heldDelta, originalBody, originalBodyHash, paymentSnapshotHash, nativeLineageId |
+| dispositions / receiptId | dispositionId, receiptId, admissionId, customerKey, originalBodyHash, outcome, reason, knownQuota, unknownQuota, valueByCurrency, allocationSliceIds, factIds, nativeLineageId |
+| slices / sliceId | sliceId, receiptId, lotId, allocationId, predecessorSliceId, quotaDelta, valueDelta, currency, nativeLineageId |
+| memberships / factId | factId, bodyHash, kind, economicId, segmentId, revision, predecessorFactId, publicationSequence, customerKey, receiptId, admissionId, nativeLineageId, claimMode, borrowedAuthorityId |
+| facts / factId | factId, bodyHash, body |
+| edges / fromId,relation,toId | fromId, relation, toId, targetBodyHash |
+| controls / generation | generation, previousGeneration, state, admissionEnabled, allocationEnabled, captureEnabled, writerSetHash, fenceHash, mutationThrough, operatorEvidenceId, changedAt |
+| writers / writerId | writerId, buildId, protocolVersion, capabilityPaths, leaseGeneration, leaseExpiresAt, drainAcknowledgedThrough, membershipBodyHash |
+| fence / fenceId | fenceId, generation, writerSetHash, writerIds, inventoryEvidenceId, inventoryEvidenceHash, oldWritersDrained, redisDisabled, batchDisabled, externalSqlExcluded, unguardedHandlesExcluded, operatorAttestationId, attestedAt, fenceBodyHash |
+| findings / findingId | findingId, category, entityType, entityId, reason, pending, relatedIds, resolvesFindingId |
+
+`nativeUserId` is a positive decimal string. `decision` is `eligible`/`excluded`;
+eligible requires opsFifoHistoryCount `0` and no intersectingAuthorityIds.
+`ownerMode` is `unknown` or `external_existing`; inherited holds never get new
+known-value ownership. `nativeKind` identifies the original source boundary
+(`topup_credit`, `wallet_reserve`, `wallet_release`, `wallet_final`, `task_reserve`,
+`task_revision`, `quota_mutation`, `source_switch`). `originalBody` has exactly
+`schema,nativeKind,nativeKey,nativeRevision,nativeRowId,customerKey,balanceBefore,
+balanceAfter,heldBefore,heldAfter,actualBefore,actualAfter,billingModeBefore,
+billingModeAfter,nativeStatus,paymentSnapshot,quotaConversionSnapshot,effectiveAt,
+occurredAt`. Schema is `cn-original-mutation-v2`. IDs/status/modes are strings;
+amounts use signed quota strings, nativeRevision is positive. The two snapshot
+fields are null except for topup_credit, where each is either null (unknown value)
+or the unchanged committed snapshot object from TopUp; their existing exact
+schemas stay unchanged. Every field is present for every nativeKind: held and
+actual are `0` only when that boundary actually has none. This is independent
+source data, not a copy of attribution output. Topup credit matches credited
+quota, successful status and CompleteTime; reserves/releases match native held
+values; final/task revisions match original actual target. Source-native revision
+history must be persisted before overwriting cumulative rows. Unknown original
+schema makes the proof unverifiable. A new protocol schema requires review.
+
+`outcome` is `known`, `unknown`, `mixed`, `no_economic_effect` or `invalidated`.
+`reason` is null or one of the intentional unknown keys. Missing capture cannot
+be represented as outcome unknown. `valueByCurrency` is an object of uppercase
+ISO currency to canonical decimal. Nonmonetary reserve/release has no money.
+`claimMode` is `grant`/`borrowed`, and borrowedAuthorityId is null exactly for grant.
+Every member has one matching fact body/hash and original receipt/admission.
+`relation` is `payment_lot`, `charge_allocation`, `lot_allocation`,
+`allocation_revenue`, `receipt_fact`, `revision_predecessor` or `borrowed_authority`.
+Edges bind exact body hashes, including borrowed payment/charge dependencies.
+`state` is `prepared`, `fenced`, `active`, `paused`, `broken` or `closed`.
+`category` is `missing_capture`, `mismatch`, `orphan`, `duplicate`, `fence_broken`,
+`pending_native` or `pending_publication`; only the last two have pending=true.
+
+Hashes must bind independent data without recursion: originalBodyHash hashes
+only originalBody; native receipt identities/hashes exclude disposition/fact
+hashes. Fact bodyHash hashes JCS of the actual unchanged CNFact body. Sidecar
+memberships/edges bind those hashes after staging. nativeLineageId is stable from
+original Gateway identity and native purchase/charge key; it MUST NOT contain
+integrityEpoch, batchSequence, proofId or authority ID. New epoch/auth cannot
+manufacture a new economic owner. SourceEvidence arrays are part of bodyHash;
+legacy facts cannot be enriched to acquire membership.
+membershipBodyHash hashes the writer row with only membershipBodyHash omitted;
+writerSetHash hashes the sorted array of those membership digests. fenceBodyHash
+hashes the fence row with only fenceBodyHash omitted and fenceHash equals that
+digest. openingReceiptHash hashes the ordered opening rows of that admission.
+paymentSnapshotHash is null or hashes the committed payment snapshot alone.
+
+## Readonly Export And Verification
+
+Reuse existing export-token bearer authentication, constant-time configured hash
+comparison and no-store behavior. Base URL is `/api/ops-export/v2/funding-integrity`.
+No refund credential and no public control mutation endpoint are introduced.
+
+| Method/path | Result |
+| --- | --- |
+| GET `/snapshots/{proofId}` | exact manifest bytes; content hash must equal proofId |
+| GET `/snapshots/{proofId}/{collection}?ordinal=0&limit=500` | frozen contiguous page |
+
+Allowed collections are exactly the table above. `ordinal` is the next decimal
+ordinal; limit is an integer 1..1000, default 500. Snapshot/resource/ordinal are
+the full page identity; no mutable "latest" alias. Response has exactly
+`schema,snapshotId,proofId,collection,ordinal,nextOrdinal,totalCount,root,
+prefixHash,suffixHash,rows`. Schema is `cn-funding-integrity-page-v2`;
+snapshotId=proofId, prefixHash=h(ordinal), suffixHash=h(ordinal+len(rows)),
+nextOrdinal is null at count, otherwise that ending ordinal. Row order is frozen.
+End ordinal returns an empty terminal page. Ordinal beyond count, unknown query
+key, unknown collection or malformed identity returns 400; absent snapshot 404;
+incomplete/unsealed snapshot 409. Retention may return 410 for explicitly retired
+unreferenced snapshots, but active/parent-referenced proofs cannot be retired.
+Retries return identical rows and hashes; consumers reject skipping/duplicates,
+cross-proof pages, count/root mismatch and reference/hash mismatch. Publication
+progress requires a new frozen snapshot, never rescanning while paging.
+
+Ops imports every collection, validates canonical hashes/counts/roots and the
+original receipt/disposition/fact graph, independently checks its local posting
+and authority inventory, and commits a verified proof record. It does not trust
+Gateway's eligibility declaration in place of checking local Ops state. A
+manifest root proves immutable bytes, not source truth; original receipt scans,
+writer fencing and accounting equations are independent required evidence.
+
+## Exact Authority And Continuous Batch CAS
+
+The initial authority can grant all five kinds `payment`, `charge`, `funding_lot`,
+`funding_allocation`, `recognized_revenue`, but ONLY the exact membership rows
+whose claimMode is grant. This closes the actual production dependency problem:
+old payments_topups/charge global proofs can be gap and there is no preexisting
+Bridge authority. Do not relax those global proofs or grant the whole tagged
+path/time interval. A known lot requires its linked verified payment; a recognized
+amount requires its linked original charge, allocation and actual canonical cash
+posting. A borrowed dependency must already have exactly one eligible authority,
+matching body hash and successful canonical posting. It cannot simultaneously
+be granted here. A mixed graph with absent/unposted/ambiguous dependency is pending
+or gap, never recognized revenue with invented cash.
+
+Compare every proposed grant with ALL active authority predicates, all sourceEvidence
+entries and all already posted facts/chains for the source/customer. Two recordType
+filters can match different evidence entries of one fact. Thus a broad topup
+authority whose economicKinds contains funding_lot intersects a native lot with
+both topup and native-lot evidence; reject it before activation. A reviewed scope
+split is a later transition protocol. First production registration may configure
+payment-only authority if needed, marking those exact payments borrowed; otherwise
+one exact manifest authority grants the closed five-kind graph. Existing unknown
+history does not block this finite known subset and never becomes grant membership.
+
+Persist an immutable economic owner key from
+`(sourceSystem,gatewayId,streamEpoch,customerKey,kind,economicId,segmentId,
+nativeLineageId)`. Use the existing canonical kind-chain identity to detect
+equivalent aliases; source reset/renaming cannot evade an existing owner. Atomic
+claim uniqueness is both per stable chain and per canonical factId/bodyHash.
+The claimed owner is fixed on the first accepted grant and shared by every
+revision; authority ID, integrityEpoch and batch are attributes, not key material.
+Opening unknown/external chains cannot later acquire a native known owner.
+
+Each new frozen batch is cumulative and extends the prior accepted batch:
+
+1. Freeze against one committed counter/snapshot. batchSequence increments by one,
+   parentProofId is the exact previous accepted proof, and all three sequence
+   cutoffs are nondecreasing. Publication cutoff stays in the original stream.
+2. Retain every prior immutable row and membership unchanged, including fact
+   hashes, claimMode, owner lineage and source receipt. Append new originals,
+   revisions, controls, findings/resolutions and publication memberships only.
+   A finding resolution is a new finding event referencing the earlier ID; the
+   earlier evidence remains. Snapshot counters summarize unresolved heads.
+3. Verify all new rows, parent prefix consistency and the full graph. Late
+   revisions have new mutation/publication sequences but original chain owner,
+   even when effectiveAt predates admission. They cannot be dropped by time.
+4. In one Ops transaction, CAS the accepted head from
+   `(source,streamEpoch,integrityEpoch,parentProofId,batchSequence-1)` to this
+   proof; atomically claim new chains/facts and advance ingest authorization.
+   Same proof retry is idempotent. Different child of an already advanced head
+   conflicts, requiring refreeze/rebase; do not partially install either child.
+5. Ingestion may post only exact granted membership from verified accepted
+   batches, and borrowed facts use their existing unique owner. Arrival ahead of
+   a verified batch waits. New batches permit continuous sync; accepting the first
+   batch is not permanent permission for future arbitrary facts. Publication lag
+   or broken capture stops head advancement and preserves prior owner/corrections.
+
+The fixed nullable `resolvesFindingId` references an earlier finding, and counts consider only
+unresolved heads. A resolution has the same category/entity and reason evidence,
+and never deletes the original. This field is part of the exact findings schema.
+New epochs require separately reviewed opening/fence and retain the stable chain
+claims; they cannot reclaim old facts or reset old gaps.
+
+## Durable Start And Mutation Fence
+
+Default is no epoch and no v2 complete proof. Environment flags alone cannot
+create an epoch, grant writer membership or attest drainage. Use local operator
+CLI commands with explicit expectedGeneration; prepare -> register writer set ->
+drain and attest -> fence -> start. Every change appends a control receipt and
+CASes durable generation. prepare cannot admit known value; start requires frozen
+inventory evidence for all actual writer processes/handles and their pending
+work. Unknown old binaries, Redis, batch or external SQL writers prevent complete.
+Heartbeat presence cannot prove their absence. Trusted operator attestation and
+deployment inventory are required evidence, alongside DB capability checks.
+
+Every covered original mutation, including flags-off capture and correction,
+locks User then current durable epoch control/counter, validates exact active
+generation, writer membership/build/capabilities/lease and fence hash in that same
+transaction, then writes original receipt, disposition and attribution/outbox.
+Never acquire another User while holding counter. Control operations use counter
+without later acquiring User; this fences in-flight writers at a committed prefix.
+Business mutations with unsupported/broken capture append an invalidation when
+possible and leave the epoch broken; they cannot produce a complete prefix beyond
+the break. Durable admission/allocation pause continues receipts and unknown
+dispositions plus original frozen reversals. Disabling capture permanently breaks
+that epoch. Restore requires a new reviewed epoch and retains previous evidence.
+
+Freeze validates durable generation/writer fence against its committed prefix,
+independently enumerates original business receipts forward and reverse against
+the graph, and seals only immutable rows. A scanner that sees only successful
+disposition rows or uses ExpectedQuota equality as writer coverage is insufficient.
+There is no automatic startup migration that opens/fences/activates an epoch.

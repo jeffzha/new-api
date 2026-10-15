@@ -250,7 +250,7 @@ snapshot. GET never scans mutable native/capture tables. The manifest has exactl
 | sourceSystem, gatewayId, streamEpoch | existing immutable fact stream identity |
 | integrityEpoch | independent UUID; never replaces streamEpoch |
 | policyVersion, writerProtocolVersion | `ordinary-unknown-first-paid-fifo-v1`, `native-mutation-receipt-v2` |
-| batchSequence, parentProofId | positive decimal string; first batch `1`/null, otherwise prior accepted proof hash |
+| batchSequence, parentProofId | positive decimal string; first batch `1`/null, otherwise previous source-frozen proof hash in this integrity epoch |
 | controlGeneration, writerSetHash, fenceHash | durable generation and frozen control/fence digests |
 | membershipThrough, mutationThrough, publicationThrough | committed membership/mutation counter and original stream publication sequence |
 | capturedAt, sourceCutoff, capturedThrough | UTC times; informational, not membership predicates |
@@ -433,8 +433,11 @@ Opening unknown/external chains cannot later acquire a native known owner.
 Each new frozen batch is cumulative and extends the prior accepted batch:
 
 1. Freeze against one committed counter/snapshot. batchSequence increments by one,
-   parentProofId is the exact previous accepted proof, and all three sequence
-   cutoffs are nondecreasing. Publication cutoff stays in the original stream.
+   parentProofId is the exact previous source-frozen proof (Gateway cannot know
+   Ops acceptance), and all three sequence
+   cutoffs are nondecreasing, including equality. Publication cutoff stays in the
+   original stream. A new hold/unknown/control/broken batch may have exactly the
+   same publicationThrough as its parent and MUST still be discovered/imported.
 2. Retain every prior immutable row and membership unchanged, including fact
    hashes, claimMode, owner lineage and source receipt. Append new originals,
    revisions, controls, findings/resolutions and publication memberships only.
@@ -447,9 +450,13 @@ Each new frozen batch is cumulative and extends the prior accepted batch:
    even when effectiveAt predates admission. They cannot be dropped by time.
 4. In one Ops transaction, CAS the accepted head from
    `(source,streamEpoch,integrityEpoch,parentProofId,batchSequence-1)` to this
-   proof; atomically claim new chains/facts and advance ingest authorization.
+   verified imported proof head. Ops fetches missing source-frozen parents and
+   imports every parent in order. A complete eligible batch atomically claims
+   new chains/facts and advances ingest authorization; pending/gap batches are
+   durably imported without new grants and retain their findings/control fence.
    Same proof retry is idempotent. Different child of an already advanced head
-   conflicts, requiring refreeze/rebase; do not partially install either child.
+   conflicts; do not partially install either child. Source freeze itself uses
+   a durable parent-head CAS, so source siblings cannot be sealed normally.
 5. Ingestion may post only exact granted membership from verified accepted
    batches, and borrowed facts use their existing unique owner. Arrival ahead of
    a verified batch waits. New batches permit continuous sync; accepting the first
@@ -555,3 +562,70 @@ Go and Python. These are the same four numeric/binary64/UTF16/non-normalization
 vectors; the eight bytes/hash vectors above supplement them with identities and
 snapshot examples. Validation passed with both pinned implementations; raw log:
 `model/testdata/cn-task/s4-integrity-wire-jcs.log`.
+
+## Append-Only Snapshot Discovery
+
+Every sealed freeze has an independent positive int64 `freezeSequence`, from one
+durable Gateway-global counter, shared across integrity epochs and original
+stream epochs. Never reset it on stream rebuild. It is index metadata, outside
+the manifest hash (the immutable index entry binds the manifest proofId).
+Sealing manifest/collections, assigning freezeSequence, appending the index entry
+and CASing the source frozen parent head occur in one transaction. A failed
+freeze publishes neither a discoverable index entry nor a new parent head.
+The counter is not a native mutation/publication counter and never changes facts.
+
+Readonly GET `/api/ops-export/v2/funding-integrity/snapshots?after=0&limit=500`
+reads only the append-only sealed snapshot index, with the existing export-token
+auth. It never scans current native/capture/disposition tables and never causes
+a freeze. Allowed query keys are only `after` (default `0`, decimal int64 cursor)
+and `limit` (default 500, range 1..1000). Malformed/unknown query keys return 400.
+The `/snapshots` list route is distinct from `/snapshots/{proofId}` manifest GET.
+
+Response exact keys are `schema,sourceSystem,gatewayId,after,observedThrough,
+nextCursor,hasMore,items`. schema is `cn-funding-integrity-index-v2`; sourceSystem
+is `gateway-cn`; gatewayId is the stable configured identity. Cursor/count fields
+are decimal strings; hasMore is boolean. observedThrough is the highest sealed
+freezeSequence visible in the index read snapshot, or `0` when empty. Each item
+has exactly:
+
+| Key | Type/invariant |
+| --- | --- |
+| freezeSequence | decimal positive int64, ascending and greater than after |
+| proofId | content-addressed sealed manifest hash |
+| sourceId, version, path | exact new integrity tagged tuple |
+| sourceSystem, gatewayId, streamEpoch | manifest source identity; streamEpoch is per item, since this index spans rebuilds |
+| integrityEpoch | independent integrity epoch UUID |
+| batchSequence | positive decimal int64 in that epoch |
+| parentProofId | null for batch 1, otherwise previous source-frozen proofId |
+| publicationThrough | original-stream decimal publication sequence, allowed equal to parent |
+| status | immutable manifest `complete`, `pending` or `gap` status |
+
+Return the first limit entries with `after < freezeSequence <= observedThrough`.
+nextCursor equals the last returned freezeSequence, or the supplied after for an
+empty page. hasMore is true exactly when an additional sealed index entry exists
+in that observed prefix. No filter on status, publicationThrough, economic fact
+count or dates is permitted. An after ahead of current observedThrough returns
+409 `integrity_discovery_cursor_ahead`; do not silently reset an Ops checkpoint.
+Index entries and referenced manifests are retained permanently for the initial
+version; index compaction/epoch reset requires a separate reviewed protocol.
+
+Ops checkpoints discovery by freezeSequence only, after the entry and complete
+immutable payload are durably stored (verification/grant work may remain pending).
+It persists each manifest's separate verified/imported/authorized state. A list
+poll after hasMore=false resumes at nextCursor and finds later freezes, including
+equal-publication and broken-capture batches. Duplicate entry/proof retries are
+idempotent only with identical fields. Fetch any missing parent by proofId and
+perform ordered per-epoch parent CAS; discovery across epochs does not change
+stable native owner claims. Verify index identity/cutoff/status against the hashed
+manifest. A proof content hash does not replace the authenticated index's sequence
+and source checks.
+
+Existing `/daily` remains keyed/frozen by its existing day and original publication
+sequence, and its existing payload/proofs are never rewritten because a new
+sidecar was frozen. Do not advance a fabricated fact sequence to advertise an
+unknown/control-only batch. V2 authority/health uses the independently verified
+snapshot register and discovery checkpoint, not a replacement proof inside an
+already frozen `cn_daily(day,seq)` row. The exact existing CNDependency shape above
+is the tagged dependency representation for an immutable proof; consumers derive
+it from that exact frozen manifest/proofId when storing the v2 snapshot register.
+Changing sidecars do not make old global payment/charge/historical proofs complete.

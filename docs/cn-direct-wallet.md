@@ -53,7 +53,16 @@ recognized revenue, paid value or a reconstructed payment.
 
 Source proof dependency `ordinary_wallet_direct_realtime` measures rows, segment
 sums, terminal receipts, publication, pending cancellations, conversion unknowns
-and usage gaps. Supported paths:
+and usage gaps. Version `direct-realtime-bound-token-v2` also measures frozen
+unlimited flags and deleted-token dispositions. New direct receipts bind the
+actual token's unlimited flag before upstream I/O. Migration leaves old receipts
+at token binding version zero; they cannot be rebound or accept a new debit,
+and remain unknown coverage. Their known reservation can still be cancelled.
+For a soft/hard-deleted token, negative reconciliation releases the wallet but
+never restores or credits that token. The receipt records status and disposed
+quota; the final fact adds `cn_direct_wallet_token_disposition` evidence. Such
+disposition remains unknown coverage. Positive debits reject missing/deleted,
+disabled/expired tokens and changed unlimited flags. Supported paths:
 `ordinary-relay/forward-free-quote-final-v1` and
 `ordinary-realtime/cumulative-absolute-target-v1`. S5 must register those paths
 for `wallet` / `cn_direct_wallet_final`, only `charge`, namespace `gateway-cn`.
@@ -126,6 +135,11 @@ Real engines: SQLite 3.50.4, MySQL 8.0.39, PostgreSQL 17.6. Isolated databases:
 - Actual published `s4r-http-artifacts/direct-wallet-canonical-{sqlite,mysql,
   postgres}.json` each passes S5 `validate_fact` (read-only import). See
   `s4r-direct-s5-wire-validation.log`. Authority adoption remains an integration gate.
+- Follow-up `s4r-direct-token-disposition-three-db.log` passes on all three:
+  actual prior direct schema upgrade twice, no inferred unlimited binding,
+  old-receipt new-debit rejection, soft/hard-deleted token cancellation,
+  failed outbox rollback, recovered/replayed disposition with no restoration,
+  successful segment retained and unlimited flag mismatch rejection.
 
 S4 prerequisite `b15ffcc24c4267e52d383521b3e7d70414478e5c` is present as local
 cherry-pick `7ccad9c`. There were no production actions, pushes or deployments.

@@ -89,6 +89,23 @@ func TestCNDirectWalletAtomicAcrossDialects(t *testing.T) {
 			require.Error(t, BeginCNDirectWallet(id, u.Id, token.Id, channel.Id, 10))
 			common.BatchUpdateEnabled = false
 			require.Error(t, BeginCNDirectWallet("", u.Id, token.Id, channel.Id, 10))
+			oldRequest := id + "old-direct"
+			require.NoError(t, BeginCNDirectWallet(oldRequest, u.Id, token.Id, channel.Id, 30))
+			for _, column := range []string{"token_unlimited", "token_binding_version", "token_adjustment_status", "token_disposed_quota"} {
+				require.NoError(t, db.Migrator().DropColumn(&CNDirectWallet{}, column))
+			}
+			for range 2 {
+				require.NoError(t, MigrateCNFinance(db, "test-cn"))
+			}
+			require.ErrorIs(t, BeginCNDirectWallet(oldRequest, u.Id, token.Id, channel.Id, 30), ErrCNConflict)
+			_, err = ApplyCNDirectWalletSegment(oldRequest, u.Id, 1, `{"total_tokens":1}`, 1)
+			require.ErrorIs(t, err, ErrCNWalletBindingRequired)
+			oldDirect, err := ReadCNDirectWallet(oldRequest, u.Id)
+			require.NoError(t, err)
+			require.Zero(t, oldDirect.TokenBindingVersion)
+			require.NoError(t, RequestCNDirectWalletCancellation(oldRequest, u.Id))
+			require.NoError(t, RecoverCNDirectWalletCancellations(context.Background(), db, 100))
+			check(0, 0, 0, 0)
 			require.NoError(t, db.Callback().Create().Before("gorm:create").Register("direct-reserve-fail", func(tx *gorm.DB) {
 				if tx.Statement.Table == "cn_direct_wallets" {
 					tx.AddError(errors.New("injected reserve receipt failure"))
@@ -233,6 +250,83 @@ func TestCNDirectWalletAtomicAcrossDialects(t *testing.T) {
 			var kept int64
 			require.NoError(t, db.Model(&CNDirectWalletSegment{}).Where("request_id = ?", id).Count(&kept).Error)
 			require.EqualValues(t, 2, kept)
+			for _, deleted := range []string{"soft", "hard"} {
+				request := id + deleted
+				account := User{Username: request, AffCode: request, Quota: 10000, Status: common.UserStatusEnabled}
+				require.NoError(t, db.Create(&account).Error)
+				credential := Token{UserId: account.Id, Key: request, Status: common.TokenStatusEnabled, RemainQuota: 1000}
+				require.NoError(t, db.Create(&credential).Error)
+				require.NoError(t, BeginCNDirectWallet(request, account.Id, credential.Id, channel.Id, 40))
+				_, err = ApplyCNDirectWalletSegment(request, account.Id, 1, `{"total_tokens":7}`, 7)
+				require.NoError(t, err)
+				query := db
+				status := "deleted_token_not_recredited"
+				if deleted == "hard" {
+					query = db.Unscoped()
+					status = "missing_token_not_recredited"
+				}
+				require.NoError(t, query.Delete(&Token{}, credential.Id).Error)
+				_, err = ApplyCNDirectWalletSegment(request, account.Id, 2, `{"total_tokens":8}`, 1)
+				require.Error(t, err)
+				require.NoError(t, RequestCNDirectWalletCancellation(request, account.Id))
+				require.NoError(t, db.Callback().Create().Before("gorm:create").Register("direct-deleted-outbox-fail", func(tx *gorm.DB) {
+					if tx.Statement.Table == "cn_finance_outboxes" {
+						tx.AddError(errors.New("injected deleted token disposition failure"))
+					}
+				}))
+				require.Error(t, RecoverCNDirectWalletCancellations(context.Background(), db, 100))
+				require.NoError(t, db.First(&account, account.Id).Error)
+				require.Equal(t, 9953, account.Quota)
+				disposition, err := ReadCNDirectWallet(request, account.Id)
+				require.NoError(t, err)
+				require.Zero(t, disposition.TokenDisposedQuota)
+				require.NoError(t, db.Callback().Create().Remove("direct-deleted-outbox-fail"))
+				require.NoError(t, RecoverCNDirectWalletCancellations(context.Background(), db.Session(&gorm.Session{NewDB: true}), 100))
+				require.NoError(t, RecoverCNDirectWalletCancellations(context.Background(), db, 100))
+				require.NoError(t, db.First(&account, account.Id).Error)
+				require.Equal(t, 9993, account.Quota)
+				require.Equal(t, 7, account.UsedQuota)
+				require.Equal(t, 1, account.RequestCount)
+				disposition, err = ReadCNDirectWallet(request, account.Id)
+				require.NoError(t, err)
+				require.Equal(t, "cancelled", disposition.State)
+				require.Equal(t, status, disposition.TokenAdjustmentStatus)
+				require.EqualValues(t, 40, disposition.TokenDisposedQuota)
+				var count int64
+				require.NoError(t, db.Model(&Token{}).Where("id = ?", credential.Id).Count(&count).Error)
+				require.Zero(t, count)
+				if deleted == "soft" {
+					require.NoError(t, db.Unscoped().First(&credential, credential.Id).Error)
+					require.Equal(t, 953, credential.RemainQuota)
+					require.Equal(t, 47, credential.UsedQuota)
+				} else {
+					require.NoError(t, db.Unscoped().Model(&Token{}).Where("id = ?", credential.Id).Count(&count).Error)
+					require.Zero(t, count)
+				}
+				var outbox CNFinanceOutbox
+				require.NoError(t, db.Where("chain_key = ?", CNIdentity("charge", "request:"+request, "0")).First(&outbox).Error)
+				var final CNFact
+				require.NoError(t, common.UnmarshalJsonStr(outbox.Payload, &final))
+				var evidenced bool
+				for _, e := range final.SourceEvidence {
+					evidenced = evidenced || e.RecordType == "cn_direct_wallet_token_disposition"
+				}
+				require.True(t, evidenced)
+			}
+			unlimited := Token{UserId: u.Id, Key: id + "unlimited", Status: common.TokenStatusEnabled, UnlimitedQuota: true}
+			require.NoError(t, db.Create(&unlimited).Error)
+			request := id + "unlimited"
+			require.NoError(t, BeginCNDirectWallet(request, u.Id, unlimited.Id, channel.Id, 10))
+			require.NoError(t, db.Model(&Token{}).Where("id = ?", unlimited.Id).Update("unlimited_quota", false).Error)
+			_, err = ApplyCNDirectWalletSegment(request, u.Id, 1, `{"total_tokens":1}`, 1)
+			require.ErrorIs(t, err, ErrCNConflict)
+			require.NoError(t, db.Model(&Token{}).Where("id = ?", unlimited.Id).Update("unlimited_quota", true).Error)
+			_, err = ApplyCNDirectWalletSegment(request, u.Id, 1, `{"total_tokens":1}`, 1)
+			require.NoError(t, err)
+			require.NoError(t, FinalizeCNDirectWallet(request, u.Id, 1))
+			require.NoError(t, db.First(&unlimited, unlimited.Id).Error)
+			require.Equal(t, -1, unlimited.RemainQuota)
+			require.Equal(t, 1, unlimited.UsedQuota)
 			t.Logf("%s atomic direct-wallet receipts, replay, rollback, cancellation recovery and published conversion PASS", dialect)
 		})
 	}

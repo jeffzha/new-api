@@ -8,7 +8,7 @@ import (
 )
 
 func cnDirectWalletProof(tx *gorm.DB, stream *CNFinanceStream, receipts map[string]bool) (cnProofScan, error) {
-	scan := cnProofScan{dependency: CNDependency{SourceID: "ordinary_wallet_direct_realtime", Version: "direct-realtime-absolute-v1", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{"ordinary-relay/forward-free-quote-final-v1", "ordinary-realtime/cumulative-absolute-target-v1"}, ExcludedPaths: []string{"pre-epoch", "redis", "batch", "direct-relay-without-forward-receipt", "delta-only-realtime", "local-estimated-usage", "subscription", "playground", "fixed-price-realtime", "tiered-expression-realtime", "channel-switch-retry"}}}
+	scan := cnProofScan{dependency: CNDependency{SourceID: "ordinary_wallet_direct_realtime", Version: "direct-realtime-bound-token-v2", Required: true, CoverageFrom: stream.StartedAt, SupportedPaths: []string{"ordinary-relay/forward-free-quote-final-v1", "ordinary-realtime/cumulative-absolute-target-v1"}, ExcludedPaths: []string{"pre-epoch", "redis", "batch", "direct-relay-without-forward-receipt", "delta-only-realtime", "local-estimated-usage", "subscription", "playground", "fixed-price-realtime", "tiered-expression-realtime", "channel-switch-retry", "unbound-direct-token-flags"}}}
 	if !CNDirectWalletAvailable() {
 		scan.coverageGap = true
 	}
@@ -17,13 +17,13 @@ func cnDirectWalletProof(tx *gorm.DB, stream *CNFinanceStream, receipts map[stri
 		return scan, err
 	}
 	for _, row := range rows {
-		scan.records = append(scan.records, []any{row.RequestID, row.UserID, row.TokenID, row.ChannelID, row.State, row.Version, row.Reserved, row.SegmentQuota, row.Actual, row.FinalHash, row.ConversionJSON, row.CoverageGap, row.LastErrorCode})
+		scan.records = append(scan.records, []any{row.RequestID, row.UserID, row.TokenID, row.TokenUnlimited, row.TokenBindingVersion, row.TokenAdjustmentStatus, row.TokenDisposedQuota, row.ChannelID, row.State, row.Version, row.Reserved, row.SegmentQuota, row.Actual, row.FinalHash, row.ConversionJSON, row.CoverageGap, row.LastErrorCode})
 		if row.State != "settled" && row.State != "cancelled" {
 			scan.dependency.PendingCount++
 		} else if !receipts["cn_direct_wallet_final:"+row.RequestID] {
 			scan.dependency.PendingCount++
 		}
-		if row.ConversionJSON == "" || row.CoverageGap != "" || row.LastErrorCode != "" {
+		if row.ConversionJSON == "" || row.CoverageGap != "" || row.LastErrorCode != "" || row.TokenBindingVersion != 1 || row.TokenDisposedQuota > 0 {
 			scan.dependency.UnknownCount++
 		}
 		var segments []CNDirectWalletSegment

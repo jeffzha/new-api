@@ -20,25 +20,29 @@ func CNDirectWalletAvailable() bool { return CNDirectWalletRequested() && CNDura
 
 // Permanent receipts; neither request completion nor legacy cleanup deletes them.
 type CNDirectWallet struct {
-	RequestID         string `gorm:"size:191;primaryKey"`
-	UserID            int    `gorm:"not null;index"`
-	TokenID           int    `gorm:"not null"`
-	Kind              string `gorm:"size:32;not null"`
-	ChannelID         int    `gorm:"not null"`
-	InitialReserve    int64  `gorm:"not null"`
-	Reserved          int64  `gorm:"not null"`
-	SegmentQuota      int64  `gorm:"not null"`
-	Actual            int64  `gorm:"not null"`
-	Version           int64  `gorm:"not null"`
-	State             string `gorm:"size:32;not null;index"`
-	UsageJSON         string `gorm:"type:text"`
-	ConversionJSON    string `gorm:"type:text"`
-	CreatedAt         string `gorm:"size:40;not null"`
-	FinalizedAt       string `gorm:"size:40"`
-	FinalHash         string `gorm:"size:64"`
-	CancelRequestedAt string `gorm:"size:40"`
-	LastErrorCode     string `gorm:"size:64"`
-	CoverageGap       string `gorm:"size:64"`
+	RequestID             string `gorm:"size:191;primaryKey"`
+	UserID                int    `gorm:"not null;index"`
+	TokenID               int    `gorm:"not null"`
+	TokenUnlimited        bool   `gorm:"not null;default:false"`
+	TokenBindingVersion   int    `gorm:"not null;default:0"`
+	TokenAdjustmentStatus string `gorm:"size:40"`
+	TokenDisposedQuota    int64  `gorm:"not null;default:0"`
+	Kind                  string `gorm:"size:32;not null"`
+	ChannelID             int    `gorm:"not null"`
+	InitialReserve        int64  `gorm:"not null"`
+	Reserved              int64  `gorm:"not null"`
+	SegmentQuota          int64  `gorm:"not null"`
+	Actual                int64  `gorm:"not null"`
+	Version               int64  `gorm:"not null"`
+	State                 string `gorm:"size:32;not null;index"`
+	UsageJSON             string `gorm:"type:text"`
+	ConversionJSON        string `gorm:"type:text"`
+	CreatedAt             string `gorm:"size:40;not null"`
+	FinalizedAt           string `gorm:"size:40"`
+	FinalHash             string `gorm:"size:64"`
+	CancelRequestedAt     string `gorm:"size:40"`
+	LastErrorCode         string `gorm:"size:64"`
+	CoverageGap           string `gorm:"size:64"`
 }
 
 type CNDirectWalletSegment struct {
@@ -86,7 +90,7 @@ func beginCNDirectWallet(request string, user, token, channel, initial int, kind
 		var row CNDirectWallet
 		err := tx.Where("request_id = ?", request).First(&row).Error
 		if err == nil {
-			if row.UserID != user || row.TokenID != token || row.ChannelID != channel || row.Kind != kind || row.InitialReserve != int64(initial) || row.State != "reserved" {
+			if row.UserID != user || row.TokenID != token || row.ChannelID != channel || row.Kind != kind || row.InitialReserve != int64(initial) || row.State != "reserved" || row.TokenBindingVersion != 1 {
 				return ErrCNConflict
 			}
 			return nil
@@ -123,7 +127,7 @@ func beginCNDirectWallet(request string, user, token, channel, initial int, kind
 			}
 			frozen = string(raw)
 		}
-		row = CNDirectWallet{RequestID: request, UserID: user, TokenID: token, ChannelID: channel, Kind: kind, InitialReserve: int64(initial), Reserved: int64(initial), State: "reserved", Version: 1, ConversionJSON: frozen, CreatedAt: time.Now().UTC().Format(CNTimeLayout)}
+		row = CNDirectWallet{RequestID: request, UserID: user, TokenID: token, TokenUnlimited: credential.UnlimitedQuota, TokenBindingVersion: 1, ChannelID: channel, Kind: kind, InitialReserve: int64(initial), Reserved: int64(initial), State: "reserved", Version: 1, ConversionJSON: frozen, CreatedAt: time.Now().UTC().Format(CNTimeLayout)}
 		if err = cnDirectQuotaTx(tx, &row, int64(initial), true); err != nil {
 			return err
 		}
@@ -136,11 +140,31 @@ func cnDirectQuotaTx(tx *gorm.DB, row *CNDirectWallet, delta int64, requireAvail
 	if err := tx.Select("id", "quota", "status").First(&user, row.UserID).Error; err != nil {
 		return err
 	}
-	var token Token
-	if err := lockForUpdate(tx).Where("id = ? AND user_id = ?", row.TokenID, row.UserID).First(&token).Error; err != nil {
-		return err
+	if delta == 0 && !requireAvailable {
+		return nil
 	}
-	if requireAvailable && (user.Status != common.UserStatusEnabled || token.Status != common.TokenStatusEnabled) {
+	if row.TokenBindingVersion != 1 && (delta > 0 || requireAvailable) {
+		return ErrCNWalletBindingRequired
+	}
+	var token Token
+	err := lockForUpdate(tx.Unscoped()).Where("id = ?", row.TokenID).First(&token).Error
+	status := ""
+	if errors.Is(err, gorm.ErrRecordNotFound) && delta < 0 {
+		status = "missing_token_not_recredited"
+	} else if err != nil {
+		return err
+	} else if token.UserId != row.UserID {
+		return ErrCNConflict
+	} else if token.DeletedAt.Valid {
+		if delta >= 0 {
+			return ErrCNConflict
+		}
+		status = "deleted_token_not_recredited"
+	}
+	if status == "" && row.TokenBindingVersion == 1 && token.UnlimitedQuota != row.TokenUnlimited {
+		return ErrCNConflict
+	}
+	if (requireAvailable || delta > 0) && (user.Status != common.UserStatusEnabled || token.Status != common.TokenStatusEnabled || (token.ExpiredTime > 0 && token.ExpiredTime < common.GetTimestamp())) {
 		return ErrCNConflict
 	}
 	if delta == 0 {
@@ -157,6 +181,11 @@ func cnDirectQuotaTx(tx *gorm.DB, row *CNDirectWallet, delta int64, requireAvail
 	}
 	if err := tx.Model(&User{}).Where("id = ?", row.UserID).Update("quota", remaining).Error; err != nil {
 		return err
+	}
+	if status != "" {
+		row.TokenAdjustmentStatus = status
+		row.TokenDisposedQuota += -delta
+		return tx.Model(&CNDirectWallet{}).Where("request_id = ?", row.RequestID).Updates(map[string]any{"token_adjustment_status": status, "token_disposed_quota": row.TokenDisposedQuota}).Error
 	}
 	result := tx.Model(&Token{}).Where("id = ? AND user_id = ?", row.TokenID, row.UserID).Updates(map[string]any{"remain_quota": tokenRemaining, "used_quota": tokenUsed, "accessed_time": common.GetTimestamp()})
 	if result.Error != nil {
@@ -306,6 +335,10 @@ func finalizeCNDirectWalletTx(tx *gorm.DB, row *CNDirectWallet, actual int64, ca
 	fact.Quality = "settled_quota"
 	fact.EffectiveAt = row.CreatedAt
 	fact.SourcePeriod = row.CreatedAt[:7]
+	if row.TokenDisposedQuota > 0 {
+		disposition := CNIdentity(row.RequestID, strconv.Itoa(row.TokenID), row.TokenAdjustmentStatus, strconv.FormatInt(row.TokenDisposedQuota, 10))
+		fact.SourceEvidence = append(fact.SourceEvidence, CNEvidence{System: "gateway-cn", RecordType: "cn_direct_wallet_token_disposition", RecordID: row.RequestID, EvidenceID: disposition})
+	}
 	if row.ConversionJSON != "" {
 		if err := common.UnmarshalJsonStr(row.ConversionJSON, &fact.Conversion); err != nil {
 			return err

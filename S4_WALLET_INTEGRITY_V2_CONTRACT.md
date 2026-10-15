@@ -258,6 +258,7 @@ snapshot. GET never scans mutable native/capture tables. The manifest has exactl
 | batchSequence, parentProofId | positive decimal string; first batch `1`/null, otherwise previous source-frozen proof hash in this integrity epoch |
 | controlGeneration, writerSetHash, fenceHash | durable generation and frozen control/fence digests |
 | membershipThrough, mutationThrough, publicationThrough | committed membership/mutation counter and original stream publication sequence |
+| valueThrough | committed positive/zero value-state sequence; independent of native mutation/publication counters |
 | coverageFrom, coverageTo | UTC microsecond strings; exact declared half-open reporting range, coverageFrom < coverageTo |
 | capturedAt, sourceCutoff, capturedThrough | UTC times; informational, not membership predicates |
 | publishedThrough | decimal publication sequence, equal to publicationThrough and base dependency publishedThrough |
@@ -314,6 +315,7 @@ tuple using UTF-8 bytes, with sequence/revision compared numerically.
 | writers / leaseGeneration,writerId | writerId, buildId, protocolVersion, capabilityPaths, leaseGeneration, leaseExpiresAt, drainAcknowledgedThrough, membershipBodyHash |
 | fence / fenceId | fenceId, generation, writerSetHash, writerIds, inventoryEvidenceId, inventoryEvidenceHash, oldWritersDrained, redisDisabled, batchDisabled, externalSqlExcluded, unguardedHandlesExcluded, operatorAttestationId, attestedAt, fenceBodyHash |
 | findings / findingId | findingId, category, entityType, entityId, reason, pending, relatedIds, resolvesFindingId |
+| valueStates / stateSequence | stateId, stateSequence, entityType, entityId, customerKey, admissionId, triggerType, triggerId, controlGeneration, mutationSequence, batchSequence, predecessorStateId, before, after, bodyHash |
 
 `nativeUserId` is a positive decimal string. `decision` is `eligible`/`excluded`;
 eligible requires opsFifoHistoryCount `0` and no intersectingAuthorityIds.
@@ -369,6 +371,117 @@ control/fence; it never overwrites an earlier exported row. fenceBodyHash
 hashes the fence row with only fenceBodyHash omitted and fenceHash equals that
 digest. openingReceiptHash hashes the ordered opening rows of that admission.
 paymentSnapshotHash is null or hashes the committed payment snapshot alone.
+
+## Native Value-State Evidence
+
+`valueStates` is the required fourteenth cumulative frozen collection. Its rows
+are independently captured native state receipts, not reconstructed purchased
+minus latest allocation. The manifest's valueThrough is their committed epoch
+sequence cutoff; stateSequence starts at `1`, is contiguous and never reuses a
+committed sequence. stateId is raw lowercase SHA256 of JCS
+`["cn-native-value-state-v2",integrityEpoch,stateSequence]`. bodyHash hashes the
+whole row with only bodyHash omitted. predecessorStateId is null only for the
+first event of `(integrityEpoch,entityType,entityId)`, otherwise the exact prior
+event of that entity. Its before must equal the prior after byte-for-byte under
+JCS. A new entity has before=null; deletion is forbidden. All fields are present.
+
+entityType is `account`, `lot` or `refund_hold`. customerKey/admissionId resolve
+the admitted native owner. triggerType is `admission`, `original`, `control`,
+`refund` or `cutoff`; triggerId resolves respectively to admissionId, original
+receiptId, decimal control generation, original native hold OperationID, or
+decimal batchSequence. An original event's mutationSequence/controlGeneration
+equal its referenced original. Refund events use the same durable writer fence
+and a journal of the actual native hold transition in its original transaction;
+they cannot be inferred later from a current balance. Other non-original events
+carry the committed native mutation prefix visible in that transaction.
+batchSequence is null except for cutoff events, where it equals the sealed batch.
+Control events bind the exact same generation as their durable control receipt.
+
+Account entityId is customerKey. Its before/after object has exactly
+`balance,billingMode,walletHeldQuota,taskHeldQuota,valueAccount`.
+balance is the signed native User.Quota. The two held fields are nonnegative
+sums of original ordinary wallet reserved quota and original wallet Task
+HeldQuota-Actual, respectively, at this boundary. valueAccount is null if no
+CNWalletValueAccount exists; otherwise it has exactly
+`expectedQuota,unknownQuota,openingQuota,openingBalance,suspended,gapCount,
+suspendedAt,suspendReason`. The four quota/balance values here are signed int64;
+gapCount is nonnegative; suspended is boolean; absent suspension time/reason are
+present-null. All financial integer values are canonical decimal strings.
+The opening unknown amount before a value account exists is exactly admission
+openingBalance plus its frozen wallet/Task holds, including negative debt.
+
+Lot entityId is its actual CNWalletValueLot.LotID. Its object has exactly
+`sourceId,paymentId,currency,purchasedQuota,purchasedValue,isolated,remainingQuota,
+remainingValue,heldQuota,heldValue,retiredQuota,retiredValue`. sourceId is the
+original TopUp.TradeNo; paymentId is the unchanged canonical payment economicId.
+Purchased quota/value are CNWalletValueLot.Quota/Amount and must equal
+CNFundingValueLot.InitialQuota/PaidValue and the original verified purchase.
+Remaining/held/retired fields copy the corresponding CNFundingValueLot fields;
+isolated copies CNWalletValueLot.Isolated. Quotas and values are nonnegative,
+currency is the original immutable uppercase currency, and no current price/FX
+participates. Identity/purchase/currency fields are immutable through this chain.
+
+Refund hold entityId is actual CNFundingValueHold.OperationID. Its object has
+exactly `operationId,nativeLotId,lotId,quota,value,state`. nativeLotId is the
+original positive native lot ID, and native ownership must resolve to the same
+admitted customer/lot; copying an unrelated agency hold into an ordinary pool is
+invalid. state is `held`, `released` or `retired`. Quota/value/lot identity freeze
+on first hold. State may advance only held->released or held->retired; replay
+does not reserve/debit again. These state receipts confer no additional monetary
+authority and never invent a refund cash fact. Existing refund cash coverage and
+authority remain independently required. Export all historical hold states for
+every granted native lot, including terminal holds, not only active rows.
+
+At admission and every original/refund/control boundary, append all changed
+account/lot/hold states in the same transaction, in order account, lots by lotId,
+holds by operationId, using UTF-8 ordering within each class. A source switch or
+uncovered writer still retains its real gap and state evidence; neither a state
+row nor cutoff can relabel lost native capture as intentional unknown. Freeze
+independently enumerates native accounts, all admitted lots/pools and their holds
+in both directions and appends one cutoff event per existing entity, with
+before=after=current native state. Every admitted account and every lot/hold
+referenced by membership must have exactly one cutoff at that batch, including
+zero/isolated/retired entities. Cutoff rows must equal the replayed state heads;
+unexplained differences are gap. Prior cutoff rows remain immutable in later
+cumulative batches; GET never rescans these native tables.
+
+Ops verifies at every captured boundary and cutoff:
+
+1. Per lot, purchasedQuota = remainingQuota + heldQuota + retiredQuota + sum of
+   latest native allocation quota; purchasedValue obeys the identical exact
+   decimal equation. Sum only that lot's actual charge-owned allocations, and
+   independently reconcile their immutable slice deltas and published heads.
+2. Per lot, heldQuota/heldValue equal the sums of native hold rows whose state is
+   held. Released holds return their frozen exact quota/value to remaining;
+   retired holds transfer the same frozen values from held to retired. Neither
+   terminal transition debits User quota a second time.
+3. For an account, signed unknownQuota + sum of nonisolated remainingQuota equals
+   signed native balance + walletHeldQuota + taskHeldQuota. Refund holds are
+   already removed from both native spendable balance and pool remaining; do not
+   add them again to this spendable equation. Equivalently one may add the same
+   nonisolated refund-held quota to both sides, never only one side. Isolated
+   remaining quota is excluded from known spendable value.
+4. A known topup against signed unknown debt U<0 retires R=min(creditedQuota,-U).
+   Retired quota increases R, unknown increases R, and retired value is the saved
+   half-even share of original paid value; remaining gets the exact residual.
+   No allocation/revenue is created for debt retirement. The original purchase
+   fact remains purchased quota/value, not spendable remaining quota/value.
+5. On isolation false->true, transfer that lot's current remaining quota to
+   signed unknown, preserve its pool amounts and existing allocation owners, and
+   suspend further known allocation. An exact reversal into an isolated lot
+   increases its remaining quota/value and also increases signed unknown by the
+   restored quota. It never resumes or reassigns the paid owner.
+
+Concrete shared arithmetic vectors (quota, USD value) for a verified purchase
+of quota `5`, value `10`: opening debt `-3` plus the purchase gives native balance
+`2`, unknown `0`, remaining `(2,4)`, retired `(3,6)`, allocations `(0,0)`.
+Reserve refund `(1,2)` gives balance `1`, remaining `(1,2)`, held `(1,2)`;
+release returns balance `2`, remaining `(2,4)`, held `(0,0)`; retirement instead
+keeps balance `1`, remaining `(1,2)`, held `(0,0)`, retired `(4,8)`.
+A paused unknown charge of quota `1` from the debt-retirement state gives balance
+`1`, unknown `-1`, remaining `(2,4)` unchanged. Isolating that lot then gives
+unknown `1`, isolated remaining `(2,4)` and balance `1`. These are conserved
+native states; purchased minus allocation alone incorrectly reports quota `5`.
 
 The generation mapping is exact in this version: each control generation G
 after fencing has a complete writer membership set whose every leaseGeneration

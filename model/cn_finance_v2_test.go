@@ -34,7 +34,7 @@ func cnReset(t *testing.T, db *gorm.DB) {
 	require.NoError(t, db.Migrator().DropTable(AgencyModels()...))
 	models := []any{&CNFinancePublication{}, &CNFinanceOutbox{}, &CNFinanceIntent{}, &CNFinanceAssociation{}, &CNFinanceGap{}, &CNFinanceStream{}, &CNWalletLifecycle{}, &OpsExportFact{}, &OpsExportPublisher{}, &AgencyBillingOutbox{}, &AgencyBillingOperation{}, &AgencyBillingJournal{}, &AgencyCommissionLedger{}, &AgencyFundingAllocation{}, &AgencyFundingLot{}, &AgencyTopupFact{}, &TopUp{}, &Task{}, &TaskBillingReconciliation{}, &User{}, &Token{}, &UserSubscription{}, &Model{}, &Vendor{}, &Channel{}, &Ability{}, &Option{}}
 	require.NoError(t, db.Migrator().DropTable(models...))
-	require.NoError(t, db.Migrator().DropTable(&CNWalletCancellation{}, &CNFinanceReceipt{}, &CNFundingValueAllocation{}, &CNFundingValueLot{}))
+	require.NoError(t, db.Migrator().DropTable(&CNWalletCancellation{}, &CNFinanceReceipt{}, &CNFundingValueAllocation{}, &CNFundingValueLot{}, &CNFundingValueHold{}))
 	require.NoError(t, MigrateCNFinance(db, "test-cn"))
 }
 
@@ -887,6 +887,186 @@ func TestCNOpsInventoryAcrossDialects(t *testing.T) {
 			require.NoError(t, db.CreateInBatches(&channels, 100).Error)
 			_, err = ReadOpsInventory(context.Background(), db, "inventory-g1")
 			require.ErrorIs(t, err, ErrOpsInventoryTooLarge)
+		})
+	}
+}
+
+func TestCNFundingValueHoldAcrossDialects(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := agencyDialectDB(t, dialect)
+			if db == nil {
+				t.Skip("disposable external database not configured")
+			}
+			pool, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = pool.Close() })
+			cnReset(t, db)
+			require.NoError(t, db.AutoMigrate(&User{}, &AgencyFundingAccount{}, &AgencyFundingLot{}, &AgencyTopupFact{}))
+			user := User{Username: "pool-hold-user", BillingMode: AgencyDurableBillingMode, Quota: 6}
+			require.NoError(t, db.Create(&user).Error)
+			require.NoError(t, db.Create(&AgencyFundingAccount{UserID: int64(user.Id), Version: 1}).Error)
+			lot := AgencyFundingLot{UserID: int64(user.Id), SourceKind: "payment", SourceID: "pool-payment", PaidInitial: 6, PaidAvailable: 6}
+			require.NoError(t, db.Create(&lot).Error)
+			require.NoError(t, db.Create(&AgencyTopupFact{UserID: int64(user.Id), SourceOperationID: lot.SourceID, PaymentStatus: "success", PaymentReference: "pool-receipt", ActualMoney: "1", CurrencyCode: "USD"}).Error)
+			withLocks := func(fn func(*gorm.DB) error) error {
+				return db.Transaction(func(tx *gorm.DB) error {
+					if err := tx.Model(&User{}).Where("id = ?", user.Id).Update("quota", gorm.Expr("quota + 0")).Error; err != nil {
+						return err
+					}
+					var account AgencyFundingAccount
+					if err := lockForUpdate(tx).Where("user_id = ?", user.Id).First(&account).Error; err != nil {
+						return err
+					}
+					var native AgencyFundingLot
+					if err := lockForUpdate(tx).First(&native, lot.ID).Error; err != nil {
+						return err
+					}
+					return fn(tx)
+				})
+			}
+			lotID := CNIdentity("agency-lot", lot.SourceKind, lot.SourceID, "paid")
+			require.Error(t, ReserveCNFundingValueTx(db, lot.ID, "not-a-transaction", 3, "0.5"))
+			require.NoError(t, withLocks(func(tx *gorm.DB) error {
+				value, err := cnFundingValueTx(tx, lotID, "consumed-first", 6, 1, decimal.NewFromInt(1))
+				assert.Equal(t, "0.166666666666666667", value.String())
+				return err
+			}))
+			require.NoError(t, db.Migrator().DropTable(&CNFundingValueHold{}))
+			require.NoError(t, MigrateCNFinance(db, "test-cn"))
+			require.NoError(t, MigrateCNFinance(db, "test-cn"))
+			require.NoError(t, withLocks(func(tx *gorm.DB) error {
+				quoted, err := QuoteCNFundingValueTx(tx, lot.ID, 3)
+				if err != nil {
+					return err
+				}
+				assert.Equal(t, "0.5", quoted)
+				return ReserveCNFundingValueTx(tx, lot.ID, "cash-hold", 3, quoted)
+			}))
+			require.NoError(t, withLocks(func(tx *gorm.DB) error { return ReserveCNFundingValueTx(tx, lot.ID, "cash-hold", 3, "0.5") }))
+			require.ErrorIs(t, withLocks(func(tx *gorm.DB) error { return ReserveCNFundingValueTx(tx, lot.ID, "cash-hold", 3, "0.500000") }), ErrCNConflict)
+			require.ErrorIs(t, withLocks(func(tx *gorm.DB) error { return ReserveCNFundingValueTx(tx, lot.ID, "cash-hold", 2, "0.5") }), ErrCNConflict)
+			rollback := errors.New("rollback retire")
+			require.ErrorIs(t, withLocks(func(tx *gorm.DB) error {
+				if err := RetireCNFundingValueTx(tx, "cash-hold"); err != nil {
+					return err
+				}
+				return rollback
+			}), rollback)
+			var balance CNFundingValueLot
+			require.NoError(t, db.Where("lot_id = ?", lotID).First(&balance).Error)
+			assert.EqualValues(t, 3, balance.HeldQuota)
+			assert.Equal(t, "0", balance.RetiredValue)
+			require.NoError(t, withLocks(func(tx *gorm.DB) error { return RetireCNFundingValueTx(tx, "cash-hold") }))
+			require.NoError(t, withLocks(func(tx *gorm.DB) error { return RetireCNFundingValueTx(tx, "cash-hold") }))
+			require.ErrorIs(t, withLocks(func(tx *gorm.DB) error { return ReleaseCNFundingValueTx(tx, "cash-hold") }), ErrCNConflict)
+			if dialect == "sqlite" {
+				pool.SetMaxOpenConns(1)
+			}
+			var wg sync.WaitGroup
+			errs := make(chan error, 2)
+			for i := range 2 {
+				wg.Go(func() {
+					errs <- withLocks(func(tx *gorm.DB) error {
+						_, err := cnFundingValueTx(tx, lotID, fmt.Sprintf("after-refund-%d", i), 6, 1, decimal.NewFromInt(1))
+						return err
+					})
+				})
+			}
+			wg.Wait()
+			close(errs)
+			for err := range errs {
+				require.NoError(t, err)
+			}
+			require.NoError(t, db.Where("lot_id = ?", lotID).First(&balance).Error)
+			assert.Equal(t, "0", balance.RemainingValue)
+			assert.Zero(t, balance.RemainingQuota)
+			assert.Equal(t, "0.5", balance.RetiredValue)
+			var allocations []CNFundingValueAllocation
+			require.NoError(t, db.Where("lot_id = ?", lotID).Find(&allocations).Error)
+			sum := decimal.Zero
+			for _, allocation := range allocations {
+				value, err := cnDecimal(allocation.Value)
+				require.NoError(t, err)
+				sum = sum.Add(value)
+			}
+			assert.Equal(t, "0.5", sum.String(), "recognition equals net paid after cash retirement")
+			// Restore the allocation values to test hold release and stale quotes.
+			for _, allocation := range allocations {
+				require.NoError(t, withLocks(func(tx *gorm.DB) error {
+					_, err := cnFundingValueTx(tx, lotID, allocation.AllocationID, 6, 0, decimal.NewFromInt(1))
+					return err
+				}))
+			}
+			require.NoError(t, withLocks(func(tx *gorm.DB) error {
+				quote, err := QuoteCNFundingValueTx(tx, lot.ID, 3)
+				if err != nil {
+					return err
+				}
+				assert.Equal(t, "0.5", quote)
+				return ReserveCNFundingValueTx(tx, lot.ID, "release-hold", 3, quote)
+			}))
+			require.NoError(t, MigrateCNFinance(db, "test-cn"))
+			require.NoError(t, MigrateCNFinance(db, "test-cn"))
+			require.NoError(t, withLocks(func(tx *gorm.DB) error { return ReleaseCNFundingValueTx(tx, "release-hold") }))
+			require.NoError(t, withLocks(func(tx *gorm.DB) error { return ReleaseCNFundingValueTx(tx, "release-hold") }))
+			require.NoError(t, withLocks(func(tx *gorm.DB) error { return ReserveCNFundingValueTx(tx, lot.ID, "release-hold", 3, "0.5") }))
+			require.NoError(t, db.Where("lot_id = ?", lotID).First(&balance).Error)
+			assert.Equal(t, "0.5", balance.RemainingValue)
+			assert.Zero(t, balance.HeldQuota)
+			require.NoError(t, db.Callback().Create().Before("gorm:create").Register("s4-hold-marker-failure", func(tx *gorm.DB) {
+				if tx.Statement.Table == "cn_funding_value_holds" {
+					tx.AddError(errors.New("injected hold record failure"))
+				}
+			}))
+			require.Error(t, withLocks(func(tx *gorm.DB) error { return ReserveCNFundingValueTx(tx, lot.ID, "rollback-hold", 3, "0.5") }))
+			require.NoError(t, db.Callback().Create().Remove("s4-hold-marker-failure"))
+			require.NoError(t, db.Where("lot_id = ?", lotID).First(&balance).Error)
+			assert.Equal(t, "0.5", balance.RemainingValue)
+			assert.Zero(t, balance.HeldQuota)
+			// Simultaneous full-pool holds cannot both reserve the same value.
+			errs = make(chan error, 2)
+			for i := range 2 {
+				wg.Go(func() {
+					errs <- withLocks(func(tx *gorm.DB) error {
+						return ReserveCNFundingValueTx(tx, lot.ID, fmt.Sprintf("competing-%d", i), 3, "0.5")
+					})
+				})
+			}
+			wg.Wait()
+			close(errs)
+			success := 0
+			for err := range errs {
+				if err == nil {
+					success++
+				} else {
+					require.ErrorIs(t, err, ErrCNConflict)
+				}
+			}
+			assert.Equal(t, 1, success)
+			// A final cash quote must carry the pool's exact residual, even when
+			// it differs by one attounit from the original purchase proportion.
+			lot = AgencyFundingLot{UserID: int64(user.Id), SourceKind: "payment", SourceID: "quote-residual", PaidInitial: 6, PaidAvailable: 6}
+			require.NoError(t, db.Create(&lot).Error)
+			require.NoError(t, db.Create(&AgencyTopupFact{UserID: int64(user.Id), SourceOperationID: lot.SourceID, PaymentStatus: "success", PaymentReference: "quote-receipt", ActualMoney: "1", CurrencyCode: "USD"}).Error)
+			lotID = CNIdentity("agency-lot", lot.SourceKind, lot.SourceID, "paid")
+			for i := range 2 {
+				require.NoError(t, withLocks(func(tx *gorm.DB) error {
+					_, err := cnFundingValueTx(tx, lotID, fmt.Sprintf("quote-consumed-%d", i), 6, 1, decimal.NewFromInt(1))
+					return err
+				}))
+			}
+			require.NoError(t, withLocks(func(tx *gorm.DB) error {
+				quote, err := QuoteCNFundingValueTx(tx, lot.ID, 4)
+				assert.Equal(t, "0.666666666666666666", quote)
+				return err
+			}))
+			require.ErrorIs(t, withLocks(func(tx *gorm.DB) error {
+				return ReserveCNFundingValueTx(tx, lot.ID, "stale-quote", 4, "0.666666666666666667")
+			}), ErrCNConflict)
+			require.NoError(t, withLocks(func(tx *gorm.DB) error {
+				return ReserveCNFundingValueTx(tx, lot.ID, "exact-quote", 4, "0.666666666666666666")
+			}))
 		})
 	}
 }

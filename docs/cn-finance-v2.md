@@ -118,9 +118,24 @@ lot scope. Each new allocation uses HALF_EVEN_18; the final remaining quota
 receives the exact residual. Partial release uses the allocation's frozen actual
 value and full release restores it exactly. Upgrades seed immutable allocation
 heads without repricing published history; inconsistent prior over-allocation
-fails closed. Refund hold/release/retire hooks are a separate follow-up; this
-commit does not enable cash refunds. Held/retired pool fields reserve their
-accounting buckets for that integration.
+fails closed. Internal `GetCNFundingValueTx`, `QuoteCNFundingValueTx`,
+`ReserveCNFundingValueTx`, `ReleaseCNFundingValueTx`, `RetireCNFundingValueTx`
+hooks require a real caller transaction and user/account/native-lot locks.
+Callers must update native spendable/held projections in that same transaction.
+The exact quote uses the final remaining residual; a stale approval value is
+rejected, never changed silently. Operation identity freezes lot/quota/value;
+held -> released/retired is mutually exclusive and idempotent. Unknown provider
+outcomes cannot be released on a timer. This does not enable cash execution.
+
+Pool invariant: remaining + held + retired + active allocations equals initial
+quota/paid value, with nonnegative buckets. Refund reservation moves exact value
+from remaining to held, release returns it, and confirmed refund retires it.
+These are internal balances, not new exported funding fields or independent
+Ops-visible hold proofs. Ops may validate visible allocation totals against paid
+or canonical net-paid evidence, but cannot independently verify this hidden pool.
+CN outbox/publication and pool tables have no pruning/expiry implementation and
+must be retained. Historical cleanup/archive restore needs a separately verified
+head checkpoint; an empty pruned history must never become fresh paid value.
 
 `model/cn_finance_v2_test.go` consolidates fixture/revision/cursor/daily, durable
 wallet, publisher starvation/poison and catalog regressions. Existing

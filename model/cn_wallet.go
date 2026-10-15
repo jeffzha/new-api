@@ -289,7 +289,7 @@ func CompleteCNWalletCancellation(ctx context.Context, db *gorm.DB, request stri
 
 func RecoverCNWalletCancellations(ctx context.Context, db *gorm.DB, limit int) error {
 	var intents []CNWalletCancellation
-	if err := db.WithContext(ctx).Where("state = ? AND next_attempt_at <= ?", "pending", time.Now().Unix()).Order("requested_at, request_id").Limit(min(max(limit, 1), 1000)).Find(&intents).Error; err != nil {
+	if err := db.WithContext(ctx).Where("state = ? AND next_attempt_at <= ?", "pending", time.Now().Unix()).Order("next_attempt_at, requested_at, request_id").Limit(min(max(limit, 1), 1000)).Find(&intents).Error; err != nil {
 		return err
 	}
 	var failures []error

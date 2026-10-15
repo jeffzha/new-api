@@ -152,7 +152,12 @@ func cnFundingValueTx(tx *gorm.DB, lotID, allocationID string, initial, target i
 		return decimal.Zero, err
 	}
 	err = tx.Model(&CNFundingValueAllocation{}).Where("allocation_id = ?", allocationID).Updates(map[string]any{"quota": target, "value": value.String()}).Error
-	return value, err
+	if err != nil {
+		return decimal.Zero, err
+	}
+	balance.RemainingQuota -= delta
+	balance.RemainingValue = remaining.String()
+	return value, cnValidateFundingValueTx(tx, balance)
 }
 
 // CaptureCNAgencyFundingTx freezes forward native allocations at the financial

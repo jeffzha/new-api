@@ -144,7 +144,7 @@ func MigrateCNFinance(db *gorm.DB, gatewayID string) error {
 	if gatewayID == "" || len(gatewayID) > 191 {
 		return errors.New("invalid finance gateway identity")
 	}
-	if err := db.AutoMigrate(&CNFinanceStream{}, &CNFinanceOutbox{}, &CNFinancePublication{}, &CNFinanceIntent{}, &CNFinanceAssociation{}, &CNFinanceGap{}, &CNWalletLifecycle{}, &CNWalletCancellation{}, &CNFinanceReceipt{}, &CNFundingValueLot{}, &CNFundingValueAllocation{}); err != nil {
+	if err := db.AutoMigrate(&CNFinanceStream{}, &CNFinanceOutbox{}, &CNFinancePublication{}, &CNFinanceIntent{}, &CNFinanceAssociation{}, &CNFinanceGap{}, &CNWalletLifecycle{}, &CNWalletCancellation{}, &CNFinanceReceipt{}, &CNFundingValueLot{}, &CNFundingValueAllocation{}, &CNFundingValueHold{}); err != nil {
 		return err
 	}
 	row := CNFinanceStream{ID: 1, GatewayID: gatewayID, Epoch: uuid.NewString(), StartedAt: time.Now().UTC().Format(CNTimeLayout), Migration: "CN_EXPORT_0001"}

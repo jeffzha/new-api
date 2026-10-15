@@ -336,14 +336,18 @@ addEventListener('message', async event => {
 parent.postMessage({source:'new-api-agency-verification',ready:true},location.origin);
 </script>`
 
-const browserAccountLinkBridge = `<!doctype html><meta charset="utf-8"><script>
+const browserAccountLinkBridge = `<!doctype html><meta charset="utf-8"><button id="confirm" type="button">确认关联此账号</button><script>
+let requestId = '';
 addEventListener('message', async event => {
-  if (event.source !== parent || event.origin !== location.origin || event.data?.source !== 'agency-hub-account-link') return;
-  const result = await fetch('/__fixture/platform-link-proof', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request_id:event.data.request_id})});
-  const data = await result.json();
-  parent.postMessage({source:'new-api-agency-link',request_id:event.data.request_id,ok:result.ok,proof:data.proof,error:data.error},location.origin);
+  if (event.source !== window.opener || event.origin !== location.origin || event.data?.source !== 'agency-hub-account-link') return;
+  requestId = event.data.request_id;
 });
-parent.postMessage({source:'new-api-agency-link',ready:true},location.origin);
+document.getElementById('confirm').addEventListener('click', async () => {
+  const result = await fetch('/__fixture/platform-link-proof', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request_id:requestId})});
+  const data = await result.json();
+  window.opener.postMessage({source:'new-api-agency-link',request_id:requestId,ok:result.ok,proof:data.proof,error:data.error},location.origin);
+});
+window.opener.postMessage({source:'new-api-agency-link',ready:true},location.origin);
 </script>`
 
 func browserSSOBridge(message []byte) string {

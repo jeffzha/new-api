@@ -19,7 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { z } from 'zod'
 
-import { sanitizeAuthRedirect } from '@/features/auth/lib/auth-redirect'
+import {
+  requiresDocumentAuthRedirect,
+  sanitizeAuthRedirect,
+} from '@/features/auth/lib/auth-redirect'
 import { SignIn } from '@/features/auth/sign-in'
 import {
   getAgencyCenterUrl,
@@ -48,11 +51,7 @@ export const Route = createFileRoute('/(auth)/sign-in')({
     // 或已关联代理商账号的用户通过；未关联用户仍可返回输入代理商账号。
     if (auth.user && search?.mode === 'agency') {
       if (
-        shouldAutoEnterAgencyCenter(
-          true,
-          search.mode,
-          search.agency_signed_out
-        )
+        shouldAutoEnterAgencyCenter(true, search.mode, search.agency_signed_out)
       ) {
         throw redirect({ href: getAgencyCenterUrl(true), replace: true })
       }
@@ -63,7 +62,11 @@ export const Route = createFileRoute('/(auth)/sign-in')({
       const target =
         sanitizeAuthRedirect(search?.redirect, window.location.origin) ??
         '/dashboard'
-      throw redirect({ href: target, replace: true })
+      throw redirect({
+        href: target,
+        reloadDocument: requiresDocumentAuthRedirect(target),
+        replace: true,
+      })
     }
   },
 })

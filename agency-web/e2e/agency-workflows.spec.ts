@@ -36,18 +36,29 @@ test("operator links its own platform account for scoped passwordless sign-in an
   await operatorLogin(page);
   await page.getByRole("button", { name: "Account security", exact: true }).click();
   await expect(
-    page.getByText("Link your own platform account for passwordless Agency Center sign-in.", {
-      exact: true,
-    }),
+    page.getByText(
+      "Platform and agency usernames may differ. Choose and confirm the platform account in the authorization window.",
+      { exact: true },
+    ),
   ).toBeVisible();
 
   const agencyPassword = page.getByLabel("Current agency password", { exact: true });
   await agencyPassword.fill("wrong-password");
+  const rejectedAuthorizationWindowPromise = page.waitForEvent("popup");
   await page.getByRole("button", { name: "Link platform account", exact: true }).click();
+  const rejectedAuthorizationWindow = await rejectedAuthorizationWindowPromise;
+  await rejectedAuthorizationWindow
+    .getByRole("button", { name: "确认关联此账号", exact: true })
+    .click();
   await expect(page.getByText("代理商密码错误", { exact: true })).toBeVisible();
 
   await agencyPassword.fill(operatorPassword);
+  const authorizationWindowPromise = page.waitForEvent("popup");
   await page.getByRole("button", { name: "Link platform account", exact: true }).click();
+  const authorizationWindow = await authorizationWindowPromise;
+  await authorizationWindow
+    .getByRole("button", { name: "确认关联此账号", exact: true })
+    .click();
   await expect(
     page.getByText("Linked platform account: browser-platform-operator", { exact: true }),
   ).toBeVisible();
@@ -65,9 +76,10 @@ test("operator links its own platform account for scoped passwordless sign-in an
     await page.getByLabel("Current agency password", { exact: true }).fill(operatorPassword);
     await page.getByRole("button", { name: "Unlink platform account", exact: true }).click();
     await expect(
-      page.getByText("Link your own platform account for passwordless Agency Center sign-in.", {
-        exact: true,
-      }),
+      page.getByText(
+        "Platform and agency usernames may differ. Choose and confirm the platform account in the authorization window.",
+        { exact: true },
+      ),
     ).toBeVisible();
     await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
 

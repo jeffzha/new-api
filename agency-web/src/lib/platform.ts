@@ -22,7 +22,7 @@ function requestSource(mode: "verify" | "link"): string {
 }
 
 function platformBridge(
-  mode: "sso" | "verify" | "link",
+  mode: "sso" | "verify",
   stateHash?: string,
   payload?: VerificationPayload,
   signal?: AbortSignal,
@@ -108,10 +108,87 @@ export function requestRootProof(
 export function requestPlatformLinkProof(
   signal?: AbortSignal,
 ): Promise<{ proof: string; requestId: string }> {
-  return platformBridge("link", undefined, undefined, signal).then((result) => ({
-    proof: result.value,
-    requestId: result.requestId,
-  }));
+  return new Promise((resolve, reject) => {
+    const platform = new URL(hubConfig().platform_base_url || location.origin);
+    if (
+      !["https:", "http:"].includes(platform.protocol) ||
+      platform.username ||
+      platform.password
+    ) {
+      reject(new Error("Invalid platform address."));
+      return;
+    }
+
+    const requestId = crypto.randomUUID();
+    const url = new URL("/api/agency/sso", platform);
+    url.searchParams.set("origin", location.origin);
+    url.searchParams.set("mode", "link");
+    const popup = window.open(
+      url.href,
+      "new-api-agency-account-link",
+      "popup=yes,width=520,height=620,resizable=yes,scrollbars=yes",
+    );
+    if (!popup) {
+      reject(new Error("Allow the platform authorization window, then try again."));
+      return;
+    }
+    const popupWindow = popup;
+
+    const timeout = window.setTimeout(
+      () => finish(undefined, new Error("Platform authentication timed out. Try again.")),
+      120000,
+    );
+    const closed = window.setInterval(() => {
+      if (popupWindow.closed) finish(undefined, new Error("Platform authorization was cancelled."));
+    }, 500);
+
+    function finish(proof?: string, error?: Error) {
+      clearTimeout(timeout);
+      clearInterval(closed);
+      window.removeEventListener("message", receive);
+      signal?.removeEventListener("abort", abort);
+      if (!popupWindow.closed) popupWindow.close();
+      if (error) reject(error);
+      else resolve({ proof: proof || "", requestId });
+    }
+    function abort() {
+      finish(undefined, new Error("Operation cancelled."));
+    }
+    function receive(event: MessageEvent<BridgeMessage>) {
+      if (event.origin !== platform.origin || event.source !== popupWindow) return;
+      const data = event.data;
+      if (!data || data.source !== responseSource("link")) return;
+      if (data.ready) {
+        sendRequest();
+        return;
+      }
+      if (data.request_id !== requestId) return;
+      if (!data.ok) {
+        finish(undefined, new Error(data.error || "Platform authentication failed."));
+        return;
+      }
+      if (!data.proof) {
+        finish(undefined, new Error("Invalid authentication response."));
+        return;
+      }
+      finish(data.proof);
+    }
+    function sendRequest() {
+      popupWindow.postMessage(
+        { source: requestSource("link"), request_id: requestId },
+        platform.origin,
+      );
+    }
+
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    signal?.addEventListener("abort", abort, { once: true });
+    window.addEventListener("message", receive);
+    sendRequest();
+    popupWindow.focus();
+  });
 }
 
 export async function startPlatformSSO(signal?: AbortSignal): Promise<void> {

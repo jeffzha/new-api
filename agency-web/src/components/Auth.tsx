@@ -273,7 +273,7 @@ function PlatformAccountLink(props: { identity: Identity; done: () => Promise<vo
         <p className="muted">
           {linked
             ? t("Linked platform account: {{username}}", { username: linked.username })
-            : t("Link your own platform account for passwordless Agency Center sign-in.")}
+            : t("Platform and agency usernames may differ. Choose and confirm the platform account in the authorization window.")}
         </p>
       </div>
       <Field label={t("Current agency password")}>

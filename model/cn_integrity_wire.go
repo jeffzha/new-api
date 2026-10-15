@@ -2,6 +2,7 @@ package model
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -62,4 +63,19 @@ func CNIntegrityNativeIdentity(gatewayID string, user int, nativeKind, nativeKey
 	}
 	lineageHash, err := CNIntegrityBodyHash(body)
 	return chainKey, strings.TrimPrefix(lineageHash, "sha256:"), err
+}
+
+func CNIntegrityNativeOwnerKey(chainKey string) (string, error) {
+	if len(chainKey) != 64 || strings.ToLower(chainKey) != chainKey {
+		return "", errors.New("invalid native chain owner identity")
+	}
+	if _, err := hex.DecodeString(chainKey); err != nil {
+		return "", errors.New("invalid native chain owner identity")
+	}
+	body, err := common.Marshal([]string{"cn-native-owner-v2", chainKey})
+	if err != nil {
+		return "", err
+	}
+	hash, err := CNIntegrityBodyHash(body)
+	return strings.TrimPrefix(hash, "sha256:"), err
 }

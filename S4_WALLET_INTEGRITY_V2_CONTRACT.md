@@ -424,10 +424,13 @@ payment-only authority if needed, marking those exact payments borrowed; otherwi
 one exact manifest authority grants the closed five-kind graph. Existing unknown
 history does not block this finite known subset and never becomes grant membership.
 
-Persist an immutable economic owner key from
-`(sourceSystem,gatewayId,customerKey,kind,economicId,segmentId,
-nativeLineageId)`. Use the existing canonical kind-chain identity to detect
-equivalent aliases. Independently enforce uniqueness of stable
+Persist one immutable native owner per stable nativeChainKey. Payment and
+funding_lot share their original purchase owner; charge, funding_allocation and
+recognized_revenue share their original charge owner. The canonical financial
+kind-chain `(sourceSystem,gatewayId,customerKey,kind,economicId,segmentId)` is a
+separate unique chain claim mapped to that native owner, not owner hash material.
+Use the existing canonical kind-chain identity to detect equivalent aliases.
+Independently enforce uniqueness of stable
 `(sourceSystem,gatewayId,customerKey,nativeChainKey)` so changed financial chain
 aliases cannot evade the original native owner; nativeChainKey is the original
 native purchase or charge identity. streamEpoch and integrityEpoch are attributes
@@ -583,6 +586,27 @@ Go and Python. These are the same four numeric/binary64/UTF16/non-normalization
 vectors; the eight bytes/hash vectors above supplement them with identities and
 snapshot examples. Validation passed with both pinned implementations; raw log:
 `model/testdata/cn-task/s4-integrity-wire-jcs.log`.
+
+Exact `ownerKey` is lowercase raw SHA256 hex of RFC8785 JCS encoding of
+`["cn-native-owner-v2",nativeChainKey]`. The nativeChainKey must first be verified
+against the native identity material above; it is exactly 64 lowercase hex
+characters, with no `sha256:` prefix. Do not add kind, economicId, segmentId,
+nativeLineageId, epochs, authority, batch or proof to ownerKey hash material.
+The stable chain already binds native source namespace, Gateway, customer,
+entity and original key. Financial chain_claims map each canonical kind-chain
+to this ownerKey; every revision retains that same mapping. Allocation/revenue
+chain claims map to the charge owner, while the lot dependency edge retains its
+purchase owner's separate ownerKey. They never merge purchase and charge owners.
+
+Shared example: Gateway `test-cn`, customer `196`, wallet RequestID `request-A`
+gives nativeChainKey
+`7b4865805493268eb6823b6acd230eeb192c36646708366006c3d5cfb93b12d2`.
+The exact ASCII/UTF-8 JCS bytes with no newline are
+`["cn-native-owner-v2","7b4865805493268eb6823b6acd230eeb192c36646708366006c3d5cfb93b12d2"]`.
+The ownerKey is
+`f01aac62316d372c0a39f6a9908cb6ca3ef417cb5cdefb45db6acb51a63bba5b`.
+`CNIntegrityNativeOwnerKey` is the matching Go helper; both wallet reserve/final
+and all financial charge/allocation/revenue aliases of this wallet share it.
 
 ## Append-Only Snapshot Discovery
 

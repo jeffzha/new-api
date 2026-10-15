@@ -50,8 +50,28 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	if s.settled {
 		return nil
 	}
+	// The legacy wallet can acknowledge buffered writes. Keep a durable intent
+	// before that boundary and never publish buffered acknowledgments as cash.
+	wallet, durableWallet := s.funding.(*WalletFunding)
+	durableWallet = durableWallet && wallet.durable
+	if s.relayInfo != nil && s.relayInfo.AgencyPricing == nil && !durableWallet {
+		intent, captureErr := model.BeginCNLegacyIntent(s.relayInfo.RequestId, s.relayInfo.UserId, s.funding.Source(), s.preConsumedQuota, actualQuota)
+		if captureErr != nil {
+			common.SysError("CN finance finalization intent unavailable: " + captureErr.Error())
+		}
+		defer func() {
+			if err := model.FinishCNLegacyIntent(intent, s.fundingSettled || s.settled); err != nil {
+				common.SysError("CN finance finalization evidence requires repair: " + err.Error())
+			}
+		}()
+	}
 	delta := actualQuota - s.preConsumedQuota
 	if delta == 0 {
+		if durableWallet {
+			if err := wallet.Settle(0); err != nil {
+				return err
+			}
+		}
 		s.settled = true
 		return nil
 	}
@@ -216,6 +236,9 @@ func (s *BillingSession) needsRefundLocked() bool {
 		return false
 	}
 	if s.tokenConsumed > 0 {
+		return true
+	}
+	if wallet, ok := s.funding.(*WalletFunding); ok && wallet.durable {
 		return true
 	}
 	// 订阅可能在 tokenConsumed=0 时仍预扣了额度
@@ -412,6 +435,17 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 func (s *BillingSession) reserveFunding(delta int, requireAvailableQuota bool) error {
 	switch funding := s.funding.(type) {
 	case *WalletFunding:
+		if funding.durable {
+			reserved, err := model.ReserveCNWallet(funding.requestId, funding.userId, funding.consumed+delta, requireAvailableQuota)
+			if err != nil {
+				return err
+			}
+			if !reserved {
+				return ErrInsufficientWalletQuota
+			}
+			funding.consumed += delta
+			return nil
+		}
 		if s.relayInfo.AgencyPricing != nil && s.agencyChargeID != "" {
 			durable := model.IsAgencyDurableUser(funding.userId)
 			var paid int64
@@ -490,6 +524,14 @@ func (s *BillingSession) reserveFunding(delta int, requireAvailableQuota bool) e
 func (s *BillingSession) rollbackFundingReserve(delta int) {
 	switch funding := s.funding.(type) {
 	case *WalletFunding:
+		if funding.durable {
+			if ok, err := model.ReserveCNWallet(funding.requestId, funding.userId, funding.consumed-delta, false); err != nil || !ok {
+				common.SysError("CN wallet reservation rollback requires repair")
+			} else {
+				funding.consumed -= delta
+			}
+			return
+		}
 		if s.agencyAtomicFunding && s.agencyChargeID != "" {
 			var paid int64
 			var err error
@@ -681,7 +723,7 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 
 		session := &BillingSession{
 			relayInfo: relayInfo,
-			funding:   &WalletFunding{userId: relayInfo.UserId},
+			funding:   &WalletFunding{userId: relayInfo.UserId, requestId: relayInfo.RequestId},
 		}
 		if apiErr := session.preConsume(c, preConsumedQuota); apiErr != nil {
 			return nil, apiErr

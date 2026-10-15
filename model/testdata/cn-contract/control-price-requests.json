@@ -1,0 +1,19 @@
+{
+  "synthetic": true,
+  "targetOnly": true,
+  "gatesPatch": {"operationId": "fixture-enable-collection", "expectedVersion": 1, "collectionEnabled": true, "financePostingEnabled": false, "estimateEnabled": false, "reason": "Start shadow capture"},
+  "packagePost": {"name": "Fixture Coding", "packageType": "coding_plan", "typeFields": {"callCountAllowance": 100, "allowedModels": ["fixture-text"], "allowedCallTypes": ["text_generation"]}, "validityPolicy": {"mode": "duration_days", "durationDays": 30}, "salePriceAmount": "80", "priceCurrency": "CNY", "effectiveFrom": "2026-10-16", "status": "active", "reason": "Synthetic template"},
+  "priceDraftPost": {
+    "operationId": "fixture-price-draft",
+    "vendorName": "Fixture vendor",
+    "modelName": "fixture-video",
+    "callType": "video_generation",
+    "currency": "CNY",
+    "effectiveFrom": "2026-10-16T00:00:00Z",
+    "components": [{"componentCode": "video_total_token", "unit": "token", "denominator": 1000000, "defaultPrice": "10", "conditions": [{"conditionId": "fixture-resolution", "predicate": {"resolution": {"eq": "720p"}}, "price": "8"}]}],
+    "reason": "Synthetic draft, not publication"
+  },
+  "priceConfirmPost": {"operationId": "fixture-price-confirm", "expectedVersion": 2, "reviewId": "fixture-review", "contentHash": "fixture-hash-replace-with-computed-sha256", "baseCatalogVersion": "fixture-catalog-before"},
+  "litellmRunPost": {"operationId": "fixture-litellm-run", "pinnedSourceVersion": "fixture-litellm-commit", "currency": "CNY"},
+  "expectedStaleConfirm": {"httpStatus": 409, "error": {"code": "stale_changeset", "retryable": false, "operationId": "fixture-price-confirm", "details": {"reason": "baseCatalogVersion changed"}}}
+}

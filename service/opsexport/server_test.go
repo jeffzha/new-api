@@ -30,9 +30,14 @@ func TestOpsExportCredentialAndCursorBoundary(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	Register(router.Group("/api/ops-export/v1"))
+	RegisterV2(router.Group("/api/ops-export/v2"))
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/ops-export/v1/facts", nil))
 	assert.Equal(t, 404, w.Code)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/ops-export/v2/facts", nil))
+	assert.Equal(t, 404, w.Code)
+	assert.Contains(t, w.Body.String(), `"code":"source_unavailable"`)
 	t.Setenv("OPS_EXPORT_TOKEN_SHA256", "invalid")
 	require.Error(t, StartConfigured(db))
 	token := strings.Repeat("fixture-", 8)
@@ -73,4 +78,38 @@ func TestOpsExportCredentialAndCursorBoundary(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer "+token)
 	router.ServeHTTP(w, request)
 	assert.Equal(t, 404, w.Code)
+	for _, tc := range []struct {
+		path, credential, code string
+		status                 int
+	}{
+		{"/facts", "Bearer management-token", "unauthorized", 401},
+		{"/facts?after=djI6MA", "Bearer " + token, "invalid_cursor", 400},
+		{"/facts?limit=1&limit=2", "Bearer " + token, "invalid_payload", 400},
+		{"/facts?extra=1", "Bearer " + token, "invalid_payload", 400},
+		{"/daily?date=2026-02-30", "Bearer " + token, "invalid_payload", 400},
+		{"/facts", "Bearer " + token, "", 200},
+		{"/refund-capabilities", "Bearer " + token, "", 200},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "/api/ops-export/v2"+tc.path, nil)
+		request.Header.Set("Authorization", tc.credential)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, request)
+		require.Equal(t, tc.status, w.Code, w.Body.String())
+		assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+		assert.NotContains(t, w.Body.String(), token)
+		var body map[string]any
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &body))
+		if tc.code != "" {
+			failure := body["error"].(map[string]any)
+			assert.Equal(t, tc.code, failure["code"])
+			assert.Equal(t, false, failure["retryable"])
+			assert.Nil(t, failure["operationId"])
+		} else if tc.path == "/refund-capabilities" {
+			assert.Equal(t, false, body["reservationAvailable"])
+			assert.Equal(t, false, body["executionAvailable"])
+			assert.Equal(t, false, body["manualVoucherEvidenceAvailable"])
+		} else {
+			assert.Equal(t, model.CNFinanceSource, body["sourceSystem"])
+		}
+	}
 }

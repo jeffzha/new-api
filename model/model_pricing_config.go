@@ -250,7 +250,11 @@ func PreviewModelPricing(name string, draft PricingValues) (PricingValues, error
 }
 
 func GetModelPricingSnapshot(names []string) (*ModelPricingSnapshot, error) {
-	values, _, _, err := readModelPricingMaps(DB)
+	return modelPricingSnapshot(DB, names)
+}
+
+func modelPricingSnapshot(db *gorm.DB, names []string) (*ModelPricingSnapshot, error) {
+	values, _, _, err := readModelPricingMaps(db)
 	if err != nil {
 		return nil, err
 	}

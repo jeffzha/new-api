@@ -1,0 +1,96 @@
+{
+  "schemaVersion": "2",
+  "gatewayId": "gw-cn-fixture",
+  "sourceSystem": "gateway-cn-finance-v2",
+  "streamEpoch": "fixture",
+  "items": [
+    {
+      "factId": "fixture-charge-r1",
+      "publicationSequence": "1",
+      "economicId": "fixture-charge",
+      "segmentId": "0",
+      "kind": "charge",
+      "operationId": "fixture-finalize",
+      "postingRole": "charge",
+      "revision": 1,
+      "previousFactId": null,
+      "basis": "gateway_actual",
+      "billingSource": "agency_wallet",
+      "requestId": "fixture-request",
+      "taskId": null,
+      "customerKey": "fixture-user",
+      "occurredAt": "2026-10-14T01:00:00Z",
+      "effectiveAt": "2026-10-14T01:00:00Z",
+      "sourcePeriod": "2026-10",
+      "status": "settled",
+      "quality": "settled_quota",
+      "cumulative": {
+        "quota": "500000",
+        "money": {"currency": "CNY", "originalCurrency": "CNY", "originalAmount": "10", "gross": "10", "net": "10", "tax": "0", "taxTreatment": "not_applicable", "taxEvidenceId": "fixture-tax-policy"}
+      },
+      "delta": {
+        "quota": "500000",
+        "money": {"currency": "CNY", "originalCurrency": "CNY", "originalAmount": "10", "gross": "10", "net": "10", "tax": "0", "taxTreatment": "not_applicable", "taxEvidenceId": "fixture-tax-policy"}
+      },
+      "recognition": {
+        "cumulative": {"currency": "CNY", "originalCurrency": "CNY", "originalAmount": "8", "gross": "8", "net": "8", "tax": "0", "taxTreatment": "not_applicable", "taxEvidenceId": "fixture-tax-policy"},
+        "delta": {"currency": "CNY", "originalCurrency": "CNY", "originalAmount": "8", "gross": "8", "net": "8", "tax": "0", "taxTreatment": "not_applicable", "taxEvidenceId": "fixture-tax-policy"},
+        "policyVersion": "paid-lot-v1",
+        "evidenceIds": ["fixture-payment-proof", "fixture-allocation-proof-1"],
+        "allocationIds": ["fixture-allocation"],
+        "scheduleId": null
+      },
+      "conversion": {"sourceUnit": "quota", "quotaPerUnit": "50000", "originalCurrency": "CNY", "settlementCurrency": "CNY", "exchangeRate": "1", "fxVersion": "fixture-cny-1", "rounding": "HALF_EVEN_18"},
+      "sourceEvidence": [
+        {"system": "gateway-cn", "recordType": "agency_billing_outbox", "recordId": "fixture-outbox-1", "evidenceId": "fixture-final"}
+      ],
+      "links": {"paymentIds": ["fixture-payment"], "fundingLotIds": ["fixture-lot"], "allocationIds": ["fixture-allocation"], "chargeFactIds": [], "refundIds": [], "supplierBillIds": [], "approvalIds": []}
+    },
+    {
+      "factId": "fixture-charge-r4",
+      "publicationSequence": "2",
+      "economicId": "fixture-charge",
+      "segmentId": "0",
+      "kind": "charge",
+      "operationId": "fixture-correction",
+      "postingRole": "charge",
+      "revision": 4,
+      "previousFactId": "fixture-charge-r1",
+      "basis": "gateway_actual",
+      "billingSource": "agency_wallet",
+      "requestId": "fixture-request",
+      "taskId": null,
+      "customerKey": "fixture-user",
+      "occurredAt": "2026-10-14T02:00:00Z",
+      "effectiveAt": "2026-10-14T01:00:00Z",
+      "sourcePeriod": "2026-10",
+      "status": "settled",
+      "quality": "settled_quota",
+      "cumulative": {
+        "quota": "400000",
+        "money": {"currency": "CNY", "originalCurrency": "CNY", "originalAmount": "8", "gross": "8", "net": "8", "tax": "0", "taxTreatment": "not_applicable", "taxEvidenceId": "fixture-tax-policy"}
+      },
+      "delta": {
+        "quota": "-100000",
+        "money": {"currency": "CNY", "originalCurrency": "CNY", "originalAmount": "-2", "gross": "-2", "net": "-2", "tax": "0", "taxTreatment": "not_applicable", "taxEvidenceId": "fixture-tax-policy"}
+      },
+      "recognition": {
+        "cumulative": {"currency": "CNY", "originalCurrency": "CNY", "originalAmount": "6.4", "gross": "6.4", "net": "6.4", "tax": "0", "taxTreatment": "not_applicable", "taxEvidenceId": "fixture-tax-policy"},
+        "delta": {"currency": "CNY", "originalCurrency": "CNY", "originalAmount": "-1.6", "gross": "-1.6", "net": "-1.6", "tax": "0", "taxTreatment": "not_applicable", "taxEvidenceId": "fixture-tax-policy"},
+        "policyVersion": "paid-lot-v1",
+        "evidenceIds": ["fixture-payment-proof", "fixture-allocation-proof-4"],
+        "allocationIds": ["fixture-allocation"],
+        "scheduleId": null
+      },
+      "conversion": {"sourceUnit": "quota", "quotaPerUnit": "50000", "originalCurrency": "CNY", "settlementCurrency": "CNY", "exchangeRate": "1", "fxVersion": "fixture-cny-1", "rounding": "HALF_EVEN_18"},
+      "sourceEvidence": [
+        {"system": "gateway-cn", "recordType": "agency_billing_outbox", "recordId": "fixture-outbox-4", "evidenceId": "fixture-correct"}
+      ],
+      "links": {"paymentIds": ["fixture-payment"], "fundingLotIds": ["fixture-lot"], "allocationIds": ["fixture-allocation"], "chargeFactIds": ["fixture-charge-r1"], "refundIds": [], "supplierBillIds": [], "approvalIds": []}
+    }
+  ],
+  "nextCursor": "Y25mMjpmaXh0dXJlOjI",
+  "hasMore": false,
+  "publishedThrough": "Y25mMjpmaXh0dXJlOjI",
+  "publicationPendingCount": 0
+}

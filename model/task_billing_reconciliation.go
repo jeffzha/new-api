@@ -431,7 +431,7 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 		if updatedRecord.RowsAffected != 1 {
 			return fmt.Errorf("task billing reconciliation changed concurrently")
 		}
-		return nil
+		return CaptureCNTaskChargeTx(tx, &task, result.PreConsumedQuota+result.QuotaDelta)
 	})
 	if err != nil {
 		return nil, err

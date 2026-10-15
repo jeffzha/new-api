@@ -71,7 +71,7 @@ func ApplyTaskQuotaAdjustment(task *Task, targetQuota int) (*TaskQuotaAdjustment
 		result.QuotaDelta = targetQuota - current.Quota
 		if result.QuotaDelta == 0 {
 			result.AppliedQuota = current.Quota
-			return nil
+			return CaptureCNTaskChargeTx(tx, current, current.Quota)
 		}
 		if handled, err := applyAgencyTaskRefundTx(tx, current, targetQuota, result); handled || err != nil {
 			return err
@@ -147,7 +147,7 @@ func ApplyTaskQuotaAdjustment(task *Task, targetQuota int) (*TaskQuotaAdjustment
 			current.Quota = effectiveTarget
 			result.Changed = true
 		}
-		return nil
+		return CaptureCNTaskChargeTx(tx, current, result.AppliedQuota)
 	})
 	if err != nil {
 		return nil, err

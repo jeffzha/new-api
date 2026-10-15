@@ -33,13 +33,27 @@ type FundingSource interface {
 var ErrInsufficientWalletQuota = errors.New("wallet quota insufficient")
 
 type WalletFunding struct {
-	userId   int
-	consumed int // 实际预扣的用户额度
+	userId    int
+	requestId string
+	durable   bool
+	consumed  int // 实际预扣的用户额度
 }
 
 func (w *WalletFunding) Source() string { return BillingSourceWallet }
 
 func (w *WalletFunding) PreConsume(amount int) error {
+	if w.requestId != "" && model.CNDurableWalletAvailable() {
+		reserved, err := model.ReserveCNWallet(w.requestId, w.userId, amount, true)
+		if err != nil {
+			return err
+		}
+		if !reserved {
+			return ErrInsufficientWalletQuota
+		}
+		w.durable = true
+		w.consumed = amount
+		return nil
+	}
 	if amount <= 0 {
 		return nil
 	}
@@ -55,6 +69,9 @@ func (w *WalletFunding) PreConsume(amount int) error {
 }
 
 func (w *WalletFunding) Settle(delta int) error {
+	if w.durable {
+		return model.FinalizeCNWallet(w.requestId, w.userId, w.consumed+delta, false)
+	}
 	if delta == 0 {
 		return nil
 	}
@@ -65,6 +82,9 @@ func (w *WalletFunding) Settle(delta int) error {
 }
 
 func (w *WalletFunding) Refund() error {
+	if w.durable {
+		return model.FinalizeCNWallet(w.requestId, w.userId, 0, true)
+	}
 	if w.consumed <= 0 {
 		return nil
 	}

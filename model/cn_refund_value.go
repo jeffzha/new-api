@@ -9,7 +9,7 @@ import (
 
 // Caller holds the native user/account/lot locks. S4 owns pool conservation
 // and immutable held -> released/retired transitions within this transaction.
-func cnRefundReserveValueTx(tx *gorm.DB, l AgencyFundingLot, paid, amount decimal.Decimal, quota int64, key string) error {
+func cnRefundReserveValueTx(tx *gorm.DB, l AgencyFundingLot, amount decimal.Decimal, quota int64, key string) error {
 	quoted, err := QuoteCNFundingValueTx(tx, l.ID, quota)
 	if err != nil {
 		return err

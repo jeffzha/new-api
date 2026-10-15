@@ -208,7 +208,10 @@ func cnRefundPurchase(tx *gorm.DB, u User, a AgencyFundingAccount, l AgencyFundi
 	value, err := cnDecimal(p.ActualMoney)
 	if err != nil || !value.IsPositive() || p.CurrencyCode != "CNY" || p.PaymentReference == "" ||
 		p.PaymentStatus != "success" || p.RefundedQuota != 0 || p.PaidQuota != l.PaidInitial || p.FundingSource != l.SourceKind ||
-		p.PaidQuota <= 0 || l.BonusInitial != 0 || l.PaidDebtRepaid != 0 ||
+		p.PaidQuota <= 0 || p.PaidQuota > int64(common.MaxWalletQuota) || l.BonusInitial != 0 || l.PaidDebtRepaid != 0 ||
+		l.PaidAvailable < 0 || l.PaidReserved < 0 || l.PaidConsumed < 0 || l.PaidRevoked < 0 ||
+		a.PaidAvailable < 0 || a.NonpaidAvailable < 0 || a.NonpaidAvailable > int64(common.MaxWalletQuota) || a.PaidAvailable > int64(common.MaxWalletQuota)-a.NonpaidAvailable ||
+		a.Version <= 0 || a.MoneySeq < 0 || l.Version <= 0 ||
 		agencyFundingLotIsLegacyUnknown(l) || a.ReconcileBlocked || a.DebtQuota != 0 ||
 		int64(u.Quota) != a.PaidAvailable+a.NonpaidAvailable-a.DebtQuota {
 		return p, decimal.Zero, ErrCNRefundUnsupported
@@ -402,7 +405,7 @@ func (s *CNRefundService) Reserve(ctx context.Context, r CNRefundReserveRequest)
 			row := CNRefundReservation{Key: key, PaymentKey: paymentKey, SourceOperationID: p.SourceOperationID, PaymentReference: p.PaymentReference, UserID: r.UserID, LotID: r.LotID,
 				RequestJSON: string(raw), RequestHash: hash, Status: "reserved", Version: 1, HeldQuota: quota, ReservedFundingVersion: a.Version + 1,
 				ReservedLotVersion: l.Version + 1, CreatedAt: time.Now().UnixMilli(), UpdatedAt: time.Now().UnixMilli()}
-			if err = cnRefundReserveValueTx(tx, l, paid, money, quota, key); err != nil {
+			if err = cnRefundReserveValueTx(tx, l, money, quota, key); err != nil {
 				return err
 			}
 			if err = cnRefundMoveHoldTx(tx, &u, &a, &l, quota, "reserve", r.OperationID); err != nil {

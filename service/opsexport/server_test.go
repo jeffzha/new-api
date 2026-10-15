@@ -94,12 +94,19 @@ func TestOpsExportRefundCredentialScopeAndReservation(t *testing.T) {
 		assert.NotContains(t, w.Body.String(), mutationToken)
 		return w
 	}
+	artifact := func(name string, body []byte) {
+		if dir := os.Getenv("S4R_TEST_ARTIFACT_DIR"); dir != "" {
+			require.NoError(t, os.MkdirAll(dir, 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, name+".json"), body, 0600))
+		}
+	}
 	payment := model.CNIdentity("agency-payment", "http-payment")
 	lookup := "/refund-balances?tenantId=tenant-http&gatewayId=refund-http&originalPaymentId=" + payment
 	assert.Equal(t, 401, call("GET", lookup, exportToken, "", nil).Code)
 	w := call("GET", lookup, mutationToken, "", nil)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	var balance model.CNRefundBalance
+	artifact("refund-balance", w.Body.Bytes())
 	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &balance))
 	assert.Equal(t, "60", balance.AvailableRefundable)
 	r := model.CNRefundReserveRequest{TenantID: "tenant-http", GatewayID: "refund-http", OperationID: "http-refund", ApprovalID: "finance-approval", ApprovalHash: strings.Repeat("a", 64), OriginalPaymentID: payment, LotID: balance.LotID, UserID: balance.UserID, Amount: "60", Currency: "CNY", ExpectedFundingVersion: balance.FundingVersion, ExpectedLotVersion: balance.LotVersion}
@@ -118,6 +125,7 @@ func TestOpsExportRefundCredentialScopeAndReservation(t *testing.T) {
 	w = call("POST", "/refund-reservations", mutationToken, r.OperationID, r)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	var receipt model.CNRefundReceipt
+	artifact("refund-reservation", w.Body.Bytes())
 	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &receipt))
 	assert.Equal(t, "reserved", receipt.Status)
 	require.Equal(t, w.Body.String(), call("POST", "/refund-reservations", mutationToken, r.OperationID, r).Body.String())
@@ -141,6 +149,7 @@ func TestOpsExportRefundCredentialScopeAndReservation(t *testing.T) {
 	require.Equal(t, 200, w.Code, w.Body.String())
 	assert.Contains(t, w.Body.String(), "unknown_reconcile")
 	assert.Equal(t, 1, provider.calls)
+	artifact("refund-unknown", w.Body.Bytes())
 	assert.Equal(t, w.Body.String(), call("POST", path, mutationToken, r.OperationID, c).Body.String())
 	assert.Equal(t, 1, provider.calls)
 	assert.Equal(t, 404, call("POST", "/refund-reservations/"+r.OperationID+"/release", mutationToken, r.OperationID, c).Code)

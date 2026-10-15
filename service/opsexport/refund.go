@@ -178,6 +178,10 @@ func (s *Server) refundCapabilities() map[string]any {
 	result["executionAvailable"] = s.Refund.Provider != nil
 	result["status"] = "limited"
 	result["supportedPaths"] = []string{"native_agency_paid_cny_exact_quota"}
-	result["blockerCodes"] = []string{"ordinary_wallet_unsupported", "manual_unsupported", "real_provider_unconfigured"}
+	blockers := []string{"ordinary_wallet_unsupported", "manual_unsupported"}
+	if s.Refund.Provider == nil {
+		blockers = append(blockers, "provider_executor_not_configured")
+	}
+	result["blockers"], result["blockerCodes"] = blockers, blockers
 	return result
 }

@@ -149,6 +149,11 @@ func (a *App) ReservePaid(tx *gorm.DB, userID int64, chargeID string, amount int
 	if err := tx.Model(&account).Updates(map[string]any{"paid_available": account.PaidAvailable - amount, "money_seq": seq, "version": account.Version + 1, "updated_at": time.Now().Unix()}).Error; err != nil {
 		return nil, err
 	}
+	if err := tx.Create(&model.AgencyFundingLedger{OperationID: fmt.Sprintf("funding-reserve:%d:%d", userID, seq),
+		UserID: userID, MoneySeq: seq, SourceKind: "paid_reservation", PaidDelta: -amount,
+		PaidAfter: account.PaidAvailable - amount, NonpaidAfter: account.NonpaidAvailable, DebtAfter: account.DebtQuota, CreatedAtMS: time.Now().UnixMilli()}).Error; err != nil {
+		return nil, err
+	}
 	return allocations, nil
 }
 

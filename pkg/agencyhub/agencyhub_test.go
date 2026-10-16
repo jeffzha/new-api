@@ -56,6 +56,78 @@ func seedConfirmedPlatformPricing(t *testing.T, app *App, prices ...agencycontra
 	require.NoError(t, app.db.Create(&model.AgencyPlatformPriceState{ID: 1, Revision: 1, CurrentVersionID: version.ID, UpdatedAtMS: 1}).Error)
 }
 
+func TestOpsPolicyCustomerSnapshotAndReplay(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			var dialector gorm.Dialector
+			if dialect == "sqlite" {
+				dialector = sqlite.Open(filepath.Join(t.TempDir(), "ops-policy.sqlite"))
+			} else {
+				dsn := strings.TrimSpace(os.Getenv("AGENCY_HUB_TEST_" + strings.ToUpper(dialect) + "_DSN"))
+				if os.Getenv("AGENCY_HUB_RUN_EXTERNAL_DB_TESTS") != "1" || dsn == "" {
+					t.Skip("isolated external test database is not configured")
+				}
+				if dialect == "mysql" {
+					dialector = mysql.Open(dsn)
+				} else {
+					dialector = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+				}
+			}
+			db, err := gorm.Open(dialector, &gorm.Config{})
+			require.NoError(t, err)
+			pool, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, pool.Close()) })
+			require.NoError(t, model.MigrateAgency(db))
+			require.NoError(t, model.MigrateAgency(db))
+			db = db.Begin()
+			require.NoError(t, db.Error)
+			t.Cleanup(func() { require.NoError(t, db.Rollback().Error) })
+			runOpsPolicyCustomerSnapshotAndReplay(t, New(db, db, Config{SalesCapBPS: 30000}))
+		})
+	}
+}
+
+func runOpsPolicyCustomerSnapshotAndReplay(t *testing.T, app *App) {
+	t.Helper()
+	policy := agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultChildCostBPS: 9000, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
+	agency, _, err := app.CreateAgency(1, "Ops policy", "ops-policy", policy)
+	require.NoError(t, err)
+	require.NoError(t, app.db.Create(&model.AgencyActiveUserBinding{UserID: 42, AgencyID: agency.ID, BindingID: 42, Revision: 1}).Error)
+	overrides := []OpsCustomerSalesOverride{{UserID: 42, OriginModelName: "*", SalesBPS: 9500}}
+	revision, created, err := ApplyOpsAgencyPolicy(app.db, agency.ID, policy, overrides, nil, "ops-p1")
+	require.NoError(t, err)
+	assert.True(t, created)
+	assert.EqualValues(t, 2, revision)
+	var row model.AgencyCustomerSalesOverride
+	require.NoError(t, app.db.Where("agency_id = ? AND user_id = ?", agency.ID, 42).First(&row).Error)
+	assert.Empty(t, row.ModelKey)
+	assert.Empty(t, row.OriginModelName)
+	assert.Equal(t, 9500, row.SalesBPS)
+	overrides[0].SalesBPS = 10000
+	revision, created, err = ApplyOpsAgencyPolicy(app.db, agency.ID, policy, overrides, nil, "ops-p2")
+	require.NoError(t, err)
+	assert.True(t, created, "customer-only changes must publish")
+	assert.EqualValues(t, 3, revision)
+	row = model.AgencyCustomerSalesOverride{}
+	require.NoError(t, app.db.Where("agency_id = ? AND user_id = ?", agency.ID, 42).First(&row).Error)
+	assert.Equal(t, 10000, row.SalesBPS)
+	assert.EqualValues(t, 3, row.Revision)
+	overrides[0].SalesBPS = 9500
+	revision, created, err = ApplyOpsAgencyPolicy(app.db, agency.ID, policy, overrides, nil, "ops-p1")
+	require.NoError(t, err)
+	assert.False(t, created)
+	assert.EqualValues(t, 2, revision, "replay returns original receipt without reverting new prices")
+	row = model.AgencyCustomerSalesOverride{}
+	require.NoError(t, app.db.Where("agency_id = ? AND user_id = ?", agency.ID, 42).First(&row).Error)
+	assert.Equal(t, 10000, row.SalesBPS)
+	overrides[0].UserID = 43
+	_, _, err = ApplyOpsAgencyPolicy(app.db, agency.ID, policy, overrides, nil, "ops-outside")
+	require.ErrorContains(t, err, "outside")
+	_, _, err = ApplyOpsAgencyPolicy(app.db, agency.ID, policy, overrides, nil, "ops-p1")
+	require.ErrorContains(t, err, "identity conflict")
+}
+
 func TestCreateAgencyAndInvitePreview(t *testing.T) {
 	app := newAgencyTestApp(t)
 	require.NoError(t, app.db.AutoMigrate(&model.User{}, &model.Task{}))

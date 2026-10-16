@@ -160,7 +160,7 @@ func main() {
 		common.FatalLog("failed to initialize Ops export: " + err.Error())
 		return
 	}
-	if err := opsbridge.StartConfigured(commandWorkerCtx); err != nil {
+	if err := opsbridge.StartConfigured(commandWorkerCtx, service.OpsAgencyCommandExecutor{}, service.OpsBillingEventSource{}, service.OpsBillingEventSource{}); err != nil {
 		common.FatalLog("failed to initialize Ops bridge: " + err.Error())
 		return
 	}

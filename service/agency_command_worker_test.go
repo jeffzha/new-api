@@ -14,10 +14,193 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/QuantumNous/new-api/pkg/agencyhub"
+	"github.com/QuantumNous/new-api/service/opsbridge"
 	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestOpsAgencyPythonHTTPAcceptance(t *testing.T) {
+	raw := os.Getenv("OPS_AGENCY_HTTP_FIXTURE")
+	if raw == "" {
+		t.Skip("run from TokenOps HTTP acceptance script")
+	}
+	var fixture struct {
+		URL          string `json:"url"`
+		GatewayID    string `json:"gatewayId"`
+		GatewayKey   string `json:"gatewayKey"`
+		SigningKey   string `json:"signingKey"`
+		CommandCount int    `json:"commandCount"`
+	}
+	require.NoError(t, common.Unmarshal([]byte(raw), &fixture))
+	require.Equal(t, 3, fixture.CommandCount)
+	previousDB, previousLogDB := model.DB, model.LOG_DB
+	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
+	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/gateway.sqlite"), &gorm.Config{})
+	require.NoError(t, err)
+	model.DB, model.LOG_DB = db, db
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = previousDB, previousLogDB
+		common.SetDatabaseTypes(previousMain, previousLog)
+		pool, poolErr := db.DB()
+		if poolErr == nil {
+			_ = pool.Close()
+		}
+	})
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}))
+	require.NoError(t, model.MigrateAgency(db))
+	policy := agencycontract.Policy{Revision: 1, DefaultSettlementBPS: 7500, DefaultChildCostBPS: 9000, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
+	encoded, err := common.Marshal(policy)
+	require.NoError(t, err)
+	policyHash, err := agencycontract.CanonicalHash(policy)
+	require.NoError(t, err)
+	version := model.AgencyPricePolicyVersion{AgencyID: 7, Revision: 1, PolicyJSON: string(encoded), PolicyHash: policyHash}
+	require.NoError(t, db.Create(&version).Error)
+	require.NoError(t, db.Create(&model.Agency{ID: 7, Code: "ops-http", InviteCode: "OPSHTTP", Status: agencyhub.AgencyStatusActive, PriceRevision: 1, CurrentPolicyVersionID: version.ID}).Error)
+	require.NoError(t, db.Create(&model.User{Id: 42, Username: "ops-http-customer", AffCode: "opshttp", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1}).Error)
+	binding := model.AgencyUserBinding{UserID: 42, AgencyID: 7, Revision: 1, InviteSnapshot: "OPSHTTP", CreatedSource: "test"}
+	require.NoError(t, db.Create(&binding).Error)
+	require.NoError(t, db.Create(&model.AgencyActiveUserBinding{UserID: 42, AgencyID: 7, BindingID: binding.ID, Revision: 1}).Error)
+	now := time.Now().Unix()
+	require.NoError(t, db.Create(&model.UserSession{SID: "ops-http-session", UserID: 42, Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive, RefreshHash: "fixture", ExpiresAt: now + 3600, LastActiveAt: now}).Error)
+	bridge, err := opsbridge.Open(opsbridge.Config{URL: fixture.URL, GatewayID: fixture.GatewayID, Key: fixture.GatewayKey, CommandSigningKey: fixture.SigningKey, StateDir: t.TempDir(), CommandExecutor: OpsAgencyCommandExecutor{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, bridge.Close()) })
+	for index := range fixture.CommandCount {
+		processed, err := bridge.ProcessAgencyCommand(t.Context(), time.Now())
+		require.NoError(t, err)
+		require.True(t, processed)
+		var user model.User
+		require.NoError(t, db.First(&user, 42).Error)
+		if index == 0 {
+			assert.Equal(t, common.UserStatusDisabled, user.Status)
+			assert.EqualValues(t, 2, user.AuthVersion)
+			var session model.UserSession
+			require.NoError(t, db.Where("sid = ?", "ops-http-session").First(&session).Error)
+			assert.Equal(t, model.UserSessionStatusRevoked, session.Status)
+		} else {
+			assert.Equal(t, common.UserStatusEnabled, user.Status)
+			assert.EqualValues(t, 3, user.AuthVersion)
+		}
+	}
+	var agency model.Agency
+	require.NoError(t, db.First(&agency, 7).Error)
+	assert.EqualValues(t, 2, agency.PriceRevision)
+	var applied model.AgencyPricePolicyVersion
+	require.NoError(t, db.First(&applied, agency.CurrentPolicyVersionID).Error)
+	var stored agencycontract.Policy
+	require.NoError(t, common.Unmarshal([]byte(applied.PolicyJSON), &stored))
+	assert.Equal(t, 7500, stored.DefaultSettlementBPS)
+	assert.Equal(t, 9000, stored.DefaultSalesBPS)
+	processed, err := bridge.ProcessAgencyCommand(t.Context(), time.Now())
+	require.NoError(t, err)
+	assert.False(t, processed)
+}
+
+func TestOpsAgencyPolicyMapping(t *testing.T) {
+	base := map[string]any{"modelName": "*", "costMultiplier": "0.75", "childCostMultiplier": "0.85", "saleMultiplier": "0.9", "minSpreadMultiplier": "0.05", "maxSaleMultiplier": "3"}
+	modelRule := map[string]any{"modelName": "model", "costMultiplier": "0.8", "childCostMultiplier": "0.95", "saleMultiplier": "1"}
+	customer := map[string]any{"modelName": "model", "customerId": "ops-customer", "externalUserId": "42", "costMultiplier": "0.8", "saleMultiplier": "1.1"}
+	for _, rules := range [][]any{{customer, modelRule, base}, {base, modelRule, customer}} {
+		policy, customers, children, err := mapOpsAgencyPolicy(rules)
+		require.NoError(t, err)
+		require.NoError(t, agencycontract.ValidatePolicy(policy))
+		assert.Equal(t, 7500, policy.DefaultSettlementBPS)
+		assert.Equal(t, 8500, policy.DefaultChildCostBPS)
+		assert.Equal(t, 9000, policy.DefaultSalesBPS)
+		assert.Empty(t, children)
+		resolved, err := agencycontract.Resolve(policy, "model")
+		require.NoError(t, err)
+		assert.Equal(t, 8000, resolved.SettlementBPS)
+		assert.Equal(t, 10000, resolved.SalesBPS)
+		require.Len(t, policy.ModelOverrides, 1)
+		require.NotNil(t, policy.ModelOverrides[0].ChildCostBPS)
+		assert.Equal(t, 9500, *policy.ModelOverrides[0].ChildCostBPS)
+		require.Len(t, customers, 1)
+		assert.Equal(t, 11000, customers[0].SalesBPS)
+	}
+	for _, tc := range []struct {
+		name string
+		rule map[string]any
+	}{
+		{"child offer", map[string]any{"modelName": "*", "childAgencyId": "child", "saleMultiplier": "1"}},
+		{"model spread", map[string]any{"modelName": "model", "minSpreadMultiplier": "0.1"}},
+		{"customer cost", map[string]any{"modelName": "*", "customerId": "customer", "externalUserId": "42", "costMultiplier": "0.8", "saleMultiplier": "1"}},
+		{"precision", map[string]any{"modelName": "model", "saleMultiplier": "0.90001"}},
+		{"missing model", map[string]any{"saleMultiplier": "1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, err := mapOpsAgencyPolicy([]any{base, tc.rule})
+			require.Error(t, err)
+		})
+	}
+	_, customers, _, err := mapOpsAgencyPolicy([]any{map[string]any{"modelName": "*", "customerId": "customer", "externalUserId": "42", "saleMultiplier": "1"}, base})
+	require.NoError(t, err)
+	assert.Equal(t, "*", customers[0].OriginModelName)
+	_, _, children, err := mapOpsAgencyPolicy([]any{base, map[string]any{"modelName": "*", "childAgencyId": "child", "externalChildAgencyId": "8", "childCostMultiplier": "0.88", "saleMultiplier": "1.1"}})
+	require.NoError(t, err)
+	require.Len(t, children, 1)
+	assert.EqualValues(t, 8, children[0].AgencyID)
+	assert.Equal(t, 8800, children[0].SettlementBPS)
+	require.NotNil(t, children[0].SalesBPS)
+	assert.Equal(t, 11000, *children[0].SalesBPS)
+}
+
+func TestOpsAgencyCustomerCommandsEnforceBindingAndRevokeSessions(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:ops-customer-commands?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		pool, err := db.DB()
+		if err == nil {
+			_ = pool.Close()
+		}
+	})
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}))
+	require.NoError(t, model.MigrateAgency(db))
+	agency := model.Agency{ID: 7, Code: "ops-test", InviteCode: "OPS", Status: agencyhub.AgencyStatusActive}
+	require.NoError(t, db.Create(&agency).Error)
+	user := model.User{Id: 42, Username: "ops-customer", AffCode: "opscustomer", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+	require.NoError(t, db.Create(&user).Error)
+	command := opsbridge.OpsAgencyCommand{ID: "ops-customer-1", Kind: "provision_customer", Payload: map[string]any{"externalAgencyId": "7", "externalUserId": "42"}}
+	executor := OpsAgencyCommandExecutor{}
+	_, err = executor.ExecuteOpsAgencyCommand(t.Context(), command)
+	require.ErrorContains(t, err, "gateway_root_provisioning_required")
+	var count int64
+	require.NoError(t, db.Model(&model.AgencyActiveUserBinding{}).Count(&count).Error)
+	assert.Zero(t, count)
+	binding := model.AgencyUserBinding{UserID: 42, AgencyID: 7, Revision: 1, InviteSnapshot: "OPS", CreatedSource: "test"}
+	require.NoError(t, db.Create(&binding).Error)
+	require.NoError(t, db.Create(&model.AgencyActiveUserBinding{UserID: 42, AgencyID: 7, BindingID: binding.ID, Revision: 1}).Error)
+	_, err = executor.ExecuteOpsAgencyCommand(t.Context(), command)
+	require.NoError(t, err)
+	now := time.Now().Unix()
+	require.NoError(t, db.Create(&model.UserSession{SID: "ops-customer-session", UserID: 42, Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive, RefreshHash: "fixture", ExpiresAt: now + 3600, LastActiveAt: now}).Error)
+	command.Kind = "suspend_customer"
+	_, err = executor.ExecuteOpsAgencyCommand(t.Context(), command)
+	require.NoError(t, err)
+	stored := model.User{}
+	require.NoError(t, db.First(&stored, 42).Error)
+	assert.Equal(t, common.UserStatusDisabled, stored.Status)
+	assert.EqualValues(t, 2, stored.AuthVersion)
+	var session model.UserSession
+	require.NoError(t, db.First(&session, "sid = ?", "ops-customer-session").Error)
+	assert.Equal(t, model.UserSessionStatusRevoked, session.Status)
+	command.Payload["externalAgencyId"] = "8"
+	_, err = executor.ExecuteOpsAgencyCommand(t.Context(), command)
+	require.Error(t, err)
+	command.Payload["externalAgencyId"] = "7"
+	command.Kind = "resume_customer"
+	_, err = executor.ExecuteOpsAgencyCommand(t.Context(), command)
+	require.NoError(t, err)
+	require.NoError(t, db.First(&stored, 42).Error)
+	assert.Equal(t, common.UserStatusEnabled, stored.Status)
+	assert.EqualValues(t, 3, stored.AuthVersion)
+}
 
 func TestAgencyCommandWorkerExecutesProvisioningCancelWithFreshRootSession(t *testing.T) {
 	previousDB, previousLogDB := model.DB, model.LOG_DB

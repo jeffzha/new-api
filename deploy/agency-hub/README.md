@@ -76,7 +76,7 @@ service. A safe first deployment sequence is:
 
 ```sh
 docker network create agency_backend 2>/dev/null || true
-docker compose -f deploy/agency-hub/docker-compose.yml build agency-hub
+docker compose -f deploy/agency-hub/docker-compose.yml pull agency-hub
 docker compose -f deploy/agency-hub/docker-compose.yml run --rm \
   --entrypoint /agency-hub agency-hub migrate
 docker compose -f deploy/agency-hub/docker-compose.yml up -d agency-hub
@@ -208,16 +208,17 @@ the Compose environment. New ciphertexts use `AGENCY_PAYOUT_KEY_ID` (default
 keys are read only for decrypting historical account snapshots; all newly
 written accounts use the current key.
 
-The compose file builds the current `agency-web` sources, embeds that exact Vite
-output in a freshly compiled Linux binary, and uses `deploy/agency-hub/Dockerfile`.
-It does not depend on manually copied binaries or the old committed frontend.
+Build the image outside production with `deploy/agency-hub/Dockerfile`, including
+the matching `agency-web` output, and publish it with an immutable tag or digest.
+The production Compose file requires `AGENCY_HUB_IMAGE` and never builds source.
 The runtime runs as UID/GID 10001, mounts a
 persistent export volume, and joins the external `agency_backend` network. Create
 that network once (and attach PostgreSQL or use a reachable DSN) before starting:
 
 ```sh
 docker network create agency_backend 2>/dev/null || true
-docker compose -f deploy/agency-hub/docker-compose.yml up -d --build
+docker compose -f deploy/agency-hub/docker-compose.yml pull agency-hub
+docker compose -f deploy/agency-hub/docker-compose.yml up -d agency-hub
 ```
 
 The sample limits the sidecar to 0.75 CPU, 768 MiB RAM, 20 open database

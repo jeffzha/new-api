@@ -474,6 +474,10 @@ func (a *App) publishPlatformPricing(c *gin.Context) {
 		if lockErr := model.AgencyLockForUpdate(tx).Order("id ASC").Find(&agencies).Error; lockErr != nil {
 			return lockErr
 		}
+		_, previousPolicies, previousPlatform, err := loadPricingBillingPathsTx(tx)
+		if err != nil {
+			return err
+		}
 		candidates, transactionConflicts, validationErr := platformPricingCandidates(tx, policy)
 		if validationErr != nil {
 			return validationErr
@@ -560,6 +564,9 @@ func (a *App) publishPlatformPricing(c *gin.Context) {
 			if err := recordAuditTx(tx, c, identity, "pricing.inherited_cost.sync", "agency", stringID(agency.ID), request.Reason, gin.H{"revision": agency.PriceRevision}, gin.H{"revision": candidate.Revision, "platform_revision": policy.Revision}); err != nil {
 				return err
 			}
+		}
+		if err := validatePricingBillingPathsTx(tx, previousPolicies, previousPlatform); err != nil {
+			return &platformPricingConflictError{Conflicts: []string{pricingErrorMessage(err)}}
 		}
 		return recordAuditTx(tx, c, identity, "pricing.platform.publish", "platform_pricing", "current", request.Reason, gin.H{"revision": request.ExpectedRevision}, gin.H{"revision": policy.Revision, "model_count": len(policy.ModelPrices)})
 	})

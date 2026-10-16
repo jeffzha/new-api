@@ -88,7 +88,11 @@ func (a *App) getChildPricing(c *gin.Context) {
 			return
 		}
 		modelRow := childPricingModel{OriginModelName: catalogRow.OriginModelName, AgencyCostBPS: resolvedParent.SettlementBPS, VendorName: catalogRow.VendorName, VendorIcon: catalogRow.VendorIcon}
-		modelRow.MinimumCostBPS, _ = directChildCost(parentEffective, catalogRow.OriginModelName)
+		modelRow.MinimumCostBPS, _, err = minimumDirectChildCost(parentEffective, policy, catalogRow.OriginModelName)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "invalid_pricing", "读取下级成本底线失败", nil)
+			return
+		}
 		for _, override := range policy.ModelOverrides {
 			if override.OriginModelName == catalogRow.OriginModelName {
 				modelRow.SettlementBPS = override.SettlementBPS

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -283,11 +284,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
-	// The laomandi/seedance gateway reads generation parameters (duration,
-	// resolution, ratio, audio) from the metadata object — top-level values are
-	// ignored and fall back to upstream defaults (5s/adaptive/with-audio).
-	// Forward them inside metadata (matching the established convention) and keep
-	// the prompt/model/image at the top level.
+	// Preserve the metadata contract used by laomandi and legacy gateways.
 	metadata := map[string]any{
 		"duration":       request.Duration,
 		"resolution":     request.Resolution,
@@ -301,6 +298,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		"metadata": metadata,
 	}
 	if isAimodelGateway(a.baseURL) {
+		// Aimodel also reads generation parameters at the top level; metadata
+		// alone can be rejected with "resolution is epmty".
+		maps.Copy(outbound, metadata)
 		// aimodel requires the prompt in its content array as well, and accepts
 		// multiple reference images as content items with role "reference_image".
 		content := []map[string]any{{"type": "text", "text": request.Prompt}}

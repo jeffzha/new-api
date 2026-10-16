@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,37 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestRelayRejectsVideoOnTextEndpointBeforeBilling(t *testing.T) {
+	t.Setenv("FEISHU_ALERT_WEBHOOK_URL", "")
+	for _, tc := range []struct {
+		path   string
+		format types.RelayFormat
+	}{
+		{"/v1/chat/completions", types.RelayFormatOpenAI},
+		{"/v1/responses", types.RelayFormatOpenAIResponses},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(`{"model":"doubao-seedance-2-0-fast-260128"}`))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			Relay(ctx, tc.format)
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+			var response struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+			assert.Equal(t, "invalid_request", response.Error.Code)
+			assert.Contains(t, response.Error.Message, "POST /v1/videos")
+			assert.Contains(t, response.Error.Message, tc.path)
+			assert.NotContains(t, response.Error.Message, "expr")
+		})
+	}
+}
 
 func TestProcessChannelErrorUsesSnapshotWithoutLeakingChannelMetadata(t *testing.T) {
 	gin.SetMode(gin.TestMode)

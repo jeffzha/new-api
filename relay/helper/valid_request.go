@@ -133,6 +133,13 @@ func ExceedsMaxTokensLimit(values ...*uint) bool {
 	return false
 }
 
+func validateTextModelEndpoint(modelName, path string) error {
+	if common.IsVideoGenerationModel(modelName) {
+		return fmt.Errorf("model %s is a video generation model; use POST /v1/videos instead of %s (视频模型请使用视频接口 /v1/videos)", modelName, path)
+	}
+	return nil
+}
+
 func GetAndValidateResponsesRequest(c *gin.Context) (*dto.OpenAIResponsesRequest, error) {
 	request := &dto.OpenAIResponsesRequest{}
 	err := common.UnmarshalBodyReusable(c, request)
@@ -141,6 +148,9 @@ func GetAndValidateResponsesRequest(c *gin.Context) (*dto.OpenAIResponsesRequest
 	}
 	if request.Model == "" {
 		return nil, errors.New("model is required")
+	}
+	if err := validateTextModelEndpoint(request.Model, c.Request.URL.Path); err != nil {
+		return nil, err
 	}
 	if request.Input == nil {
 		return nil, errors.New("input is required")
@@ -317,6 +327,11 @@ func GetAndValidateTextRequest(c *gin.Context, relayMode int) (*dto.GeneralOpenA
 	err := common.UnmarshalBodyReusable(c, textRequest)
 	if err != nil {
 		return nil, err
+	}
+	if relayMode == relayconstant.RelayModeChatCompletions || relayMode == relayconstant.RelayModeCompletions {
+		if err := validateTextModelEndpoint(textRequest.Model, c.Request.URL.Path); err != nil {
+			return nil, err
+		}
 	}
 
 	if relayMode == relayconstant.RelayModeModerations && textRequest.Model == "" {

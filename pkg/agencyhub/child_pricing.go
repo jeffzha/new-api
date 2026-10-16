@@ -2,6 +2,7 @@ package agencyhub
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -145,6 +146,16 @@ func (a *App) publishChildPricing(c *gin.Context) {
 	}
 
 	candidate := old
+	parent, parentPolicy, err := a.loadAgencyPolicy(*identity.AgencyID)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取上级价格失败", nil)
+		return
+	}
+	parentEffective, err := a.effectiveAgencyPolicy(parent, parentPolicy)
+	if err != nil {
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
+		return
+	}
 	candidate.ModelOverrides = append([]agencycontract.ModelOverride(nil), old.ModelOverrides...)
 	positions := make(map[string]int, len(candidate.ModelOverrides))
 	for i, override := range candidate.ModelOverrides {
@@ -155,9 +166,15 @@ func (a *App) publishChildPricing(c *gin.Context) {
 		}
 		positions[key] = i
 	}
-	if request.DefaultSettlementBPS != nil {
+	if request.DefaultSettlementBPS != nil && *request.DefaultSettlementBPS != candidate.DefaultSettlementBPS {
 		candidate.DefaultSettlementBPS = *request.DefaultSettlementBPS
 		candidate.SettlementSource = agencycontract.PriceSourceManual
+		quote, sale := &candidate.DefaultChildCostBPS, &candidate.DefaultSalesBPS
+		if err := refreshAutomaticCostDependents(candidate.DefaultSettlementBPS, parentEffective.DefaultSalesBPS, candidate.MinSpreadBPS, candidate.SalesCapBPS, &quote, &candidate.ChildCostSource, &sale, &candidate.SalesSource); err != nil {
+			respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", childPricingErrorMessage(child, err), nil)
+			return
+		}
+		candidate.DefaultChildCostBPS, candidate.DefaultSalesBPS = *quote, *sale
 	}
 	for _, requested := range request.ModelCostOverrides {
 		modelName := strings.TrimSpace(requested.OriginModelName)
@@ -170,18 +187,15 @@ func (a *App) publishChildPricing(c *gin.Context) {
 			respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(keyErr), nil)
 			return
 		}
+		previousCost := old.DefaultSettlementBPS
+		if previous := findModelOverride(old, modelName); previous != nil && previous.SettlementBPS != nil {
+			previousCost = *previous.SettlementBPS
+		}
 		if position, exists := positions[key]; exists {
-			candidate.ModelOverrides[position].SettlementBPS = requested.SettlementBPS
+			current := &candidate.ModelOverrides[position]
+			updateManualCoefficient(&current.SettlementBPS, &current.SettlementSource, requested.SettlementBPS)
 			if requested.ChildCostBPS != nil {
-				candidate.ModelOverrides[position].ChildCostBPS = requested.ChildCostBPS
-			}
-			if requested.SettlementBPS != nil {
-				candidate.ModelOverrides[position].SettlementSource = agencycontract.PriceSourceManual
-			} else {
-				candidate.ModelOverrides[position].SettlementSource = ""
-			}
-			if requested.ChildCostBPS != nil {
-				candidate.ModelOverrides[position].ChildCostSource = agencycontract.PriceSourceManual
+				updateManualCoefficient(&current.ChildCostBPS, &current.ChildCostSource, requested.ChildCostBPS)
 			}
 		} else if requested.SettlementBPS != nil || requested.ChildCostBPS != nil {
 			positions[key] = len(candidate.ModelOverrides)
@@ -193,15 +207,24 @@ func (a *App) publishChildPricing(c *gin.Context) {
 		}
 		if position, exists := positions[key]; exists {
 			override := &candidate.ModelOverrides[position]
-			if override.ChildCostBPS == nil && override.SettlementBPS != nil {
-				childCost := *override.SettlementBPS + agencycontract.DefaultChildMarkupBPS
-				override.ChildCostBPS = &childCost
-				override.ChildCostSource = agencycontract.PriceSourceDefault
+			newCost := candidate.DefaultSettlementBPS
+			if override.SettlementBPS != nil {
+				newCost = *override.SettlementBPS
+			}
+			if newCost != previousCost {
+				parentPrice, resolveErr := agencycontract.Resolve(parentEffective, modelName)
+				if resolveErr == nil {
+					resolveErr = refreshAutomaticCostDependents(newCost, parentPrice.SalesBPS, candidate.MinSpreadBPS, candidate.SalesCapBPS, &override.ChildCostBPS, &override.ChildCostSource, &override.SalesBPS, &override.SalesSource)
+				}
+				if resolveErr != nil {
+					respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", childPricingErrorMessage(child, resolveErr), nil)
+					return
+				}
 			}
 		}
 	}
 	if err := agencycontract.ValidatePolicy(candidate); err != nil {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", childPricingErrorMessage(child, err), nil)
 		return
 	}
 	if child.ParentAgencyID == nil {
@@ -215,4 +238,40 @@ func (a *App) publishChildPricing(c *gin.Context) {
 	if err := a.publishPolicy(c, child.ID, request.ExpectedRevision, candidate, request.Reason, identity.ActorType, true); err != nil {
 		return
 	}
+}
+
+// Recalculate dependent defaults only for a cost that was actually changed.
+func refreshAutomaticCostDependents(cost, parentSales, spread, cap int, quote **int, quoteSource *string, sale **int, saleSource *string) error {
+	if cap == 0 {
+		cap = agencycontract.DefaultSalesCapBPS
+	}
+	if *quote == nil || **quote == 0 || *quoteSource == agencycontract.PriceSourceDefault || *quoteSource == agencycontract.PriceSourceInherited {
+		value := cost + agencycontract.DefaultChildMarkupBPS
+		*quote, *quoteSource = &value, agencycontract.PriceSourceDefault
+	}
+	if *sale == nil || *saleSource == agencycontract.PriceSourceDefault || *saleSource == agencycontract.PriceSourceInherited {
+		value, err := inheritedSalesBPS(parentSales, cost, spread, cap)
+		if err != nil {
+			return err
+		}
+		*sale, *saleSource = &value, agencycontract.PriceSourceDefault
+	}
+	return nil
+}
+
+func childPricingErrorMessage(child model.Agency, err error) string {
+	prefix := fmt.Sprintf("下级代理商“%s”（ID %d）：", child.DisplayName, child.ID)
+	var coefficient *agencycontract.PolicyCoefficientError
+	if !errors.As(err, &coefficient) {
+		return prefix + pricingErrorMessage(err)
+	}
+	field := map[string]string{"child_cost_bps": "我的下级渠道价（系数）", "sales_bps": "销售价格（系数）", "settlement_bps": "我的成本（系数）", "default_child_cost_bps": "默认我的下级渠道价（系数）", "default_sales_bps": "默认销售价格（系数）", "default_settlement_bps": "默认我的成本（系数）"}[coefficient.Field]
+	if field == "" || !coefficient.BelowCost {
+		return prefix + pricingErrorMessage(err)
+	}
+	name := coefficient.OriginModelName
+	if name == "" {
+		name = "全局默认价格"
+	}
+	return prefix + fmt.Sprintf("模型 %s：本次成本调整后，“我的成本（系数）”为 %.4f；该代理商的“%s”为 %.4f，低于允许下限 %.4f = 成本 %.4f + 适用最低价差 %.4f。这里的 %.4f 是冲突字段的值，不是本次输入的成本。请到该代理商“价格策略 → %s”调整至至少 %.4f，或降低本次成本；手动价格不会自动覆盖，默认加点 0.0500 不是强制利润。本次未保存。", name, float64(coefficient.SettlementBPS)/10000, field, float64(coefficient.ValueBPS)/10000, float64(coefficient.MinimumBPS)/10000, float64(coefficient.SettlementBPS)/10000, float64(coefficient.MinSpreadBPS)/10000, float64(coefficient.ValueBPS)/10000, field, float64(coefficient.MinimumBPS)/10000)
 }

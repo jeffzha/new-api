@@ -24,7 +24,14 @@ async function openWorkspace(page: Page, root: boolean, acting = false) {
         must_change_password: false,
       };
     if (path === "/root/sync/status")
-      data = { schema: { ready: true }, capabilities: { billing_events: true }, backlog: { deliveries: { pending: 2, retry: 1, completed: 50 }, open_reconciliation_issues: 4 } };
+      data = {
+        schema: { ready: true },
+        capabilities: { billing_events: true },
+        backlog: {
+          deliveries: { pending: 2, retry: 1, completed: 50 },
+          open_reconciliation_issues: 4,
+        },
+      };
     if (path === "/root/agencies") data = { items: [], total: 7 };
     if (path === "/root/customers") data = { items: [], total: 42 };
     if (path === "/root/platform-pricing")
@@ -78,11 +85,51 @@ async function openWorkspace(page: Page, root: boolean, acting = false) {
     if (path === "/models")
       data = { items: ["unlisted-model"], catalog: [{ model: "unlisted-model", channels }] };
     if (path === "/children")
-      data = { items: [{ id: 9, display_name: "Child agency", operator_username: "child", status: "active", depth: 1, price_revision: 3 }] };
+      data = {
+        items: [
+          {
+            id: 9,
+            display_name: "Child agency",
+            operator_username: "child",
+            status: "active",
+            depth: 1,
+            price_revision: 3,
+          },
+        ],
+      };
     if (path === "/hierarchy")
-      data = { current: { id: 1, display_name: "Root agency", status: "active", depth: 0, price_revision: 1 }, parents: [], children: [] };
+      data = {
+        current: {
+          id: 1,
+          display_name: "Root agency",
+          status: "active",
+          depth: 0,
+          price_revision: 1,
+        },
+        parents: [],
+        children: [],
+      };
     if (path === "/children/9/pricing")
-      data = { revision: 3, default_settlement_bps: 7000, model_overrides: [{ origin_model_name: "unlisted-model", agency_cost_bps: 7000, minimum_cost_bps: 7500, settlement_bps: 7000, channels }, { origin_model_name: "second-model", agency_cost_bps: 7200, minimum_cost_bps: 7500, settlement_bps: 7500, channels: [channels[1]] }] };
+      data = {
+        revision: 3,
+        default_settlement_bps: 7000,
+        model_overrides: [
+          {
+            origin_model_name: "unlisted-model",
+            agency_cost_bps: 7000,
+            minimum_cost_bps: 7500,
+            settlement_bps: 7000,
+            channels,
+          },
+          {
+            origin_model_name: "second-model",
+            agency_cost_bps: 7200,
+            minimum_cost_bps: 7500,
+            settlement_bps: 7500,
+            channels: [channels[1]],
+          },
+        ],
+      };
     await route.fulfill({ json: { success: true, data } });
   });
   await page.goto("/agency/");
@@ -131,15 +178,29 @@ test("root pricing renders configured models with null channel lists", async ({ 
   page.on("pageerror", (error) => errors.push(error.message));
   await openWorkspace(page, true);
   await page.route("**/agency/api/v1/root/platform-pricing", (route) =>
-    route.fulfill({ json: { success: true, data: {
-      revision: 1,
-      refreshed_at_ms: 1,
-      items: [{ origin_model_name: "unavailable-model", channel_names: null, channel_costs: null,
-        agency_cost_bps: 7000, default_sales_bps: 9000 }],
-    } } }),
+    route.fulfill({
+      json: {
+        success: true,
+        data: {
+          revision: 1,
+          refreshed_at_ms: 1,
+          items: [
+            {
+              origin_model_name: "unavailable-model",
+              channel_names: null,
+              channel_costs: null,
+              agency_cost_bps: 7000,
+              default_sales_bps: 9000,
+            },
+          ],
+        },
+      },
+    }),
   );
   await page.getByRole("button", { name: "Pricing", exact: true }).click();
-  await expect(page.locator(".pricing-matrix").getByText("unavailable-model", { exact: true })).toBeVisible();
+  await expect(
+    page.locator(".pricing-matrix").getByText("unavailable-model", { exact: true }),
+  ).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -148,7 +209,9 @@ test("root pricing renders a null model list without crashing", async ({ page })
   page.on("pageerror", (error) => errors.push(error.message));
   await openWorkspace(page, true);
   await page.route("**/agency/api/v1/root/platform-pricing", (route) =>
-    route.fulfill({ json: { success: true, data: { revision: 1, refreshed_at_ms: 1, items: null } } }),
+    route.fulfill({
+      json: { success: true, data: { revision: 1, refreshed_at_ms: 1, items: null } },
+    }),
   );
   await page.getByRole("button", { name: "Pricing", exact: true }).click();
   await expect(page.locator(".pricing-matrix")).toBeVisible();
@@ -182,9 +245,7 @@ for (const width of [1440, 390]) {
     });
   });
 
-  test(`agency and customer pricing hide upstream channels at width ${width}`, async ({
-    page,
-  }) => {
+  test(`agency and customer pricing hide upstream channels at width ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await openWorkspace(page, false);
     await page.getByRole("button", { name: "Pricing", exact: true }).click();
@@ -220,31 +281,50 @@ test("reconciliation keeps checks and history visible while hiding service statu
   }
 });
 
-test("child pricing uses the shared search and provider tabs without dropping untouched edits", async ({ page }) => {
+test("child pricing uses the shared search and provider tabs without dropping untouched edits", async ({
+  page,
+}) => {
   await openWorkspace(page, false);
   await page.getByRole("button", { name: "Agencies", exact: true }).click();
   await page.getByRole("button", { name: "Manage child pricing", exact: true }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByPlaceholder("Search models or providers", { exact: true })).toBeVisible();
+  await expect(
+    dialog.getByPlaceholder("Search models or providers", { exact: true }),
+  ).toBeVisible();
   const input = dialog.getByLabel("Child cost coefficient: unlisted-model", { exact: true });
   await expect(dialog.getByText("Minimum child cost: 0.7500", { exact: true })).toHaveCount(2);
   await input.fill("0.7800");
   await dialog.getByPlaceholder("Search models or providers", { exact: true }).fill("unlisted");
   await expect(input).toHaveValue("0.7800");
-  const published = page.waitForRequest((request) => request.method() === "POST" && request.url().endsWith("/children/9/pricing/publish"));
+  const published = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" && request.url().endsWith("/children/9/pricing/publish"),
+  );
   await dialog.getByRole("button", { name: "Publish child pricing", exact: true }).click();
-  expect((await published).postDataJSON().model_cost_overrides).toEqual([{ origin_model_name: "unlisted-model", settlement_bps: 7800 }]);
+  expect((await published).postDataJSON().model_cost_overrides).toEqual([
+    { origin_model_name: "unlisted-model", settlement_bps: 7800 },
+  ]);
 });
 
-test("root overview restores totals, capabilities and unfinished queue counts", async ({ page }) => {
+test("root overview restores totals, capabilities and unfinished queue counts", async ({
+  page,
+}) => {
   await openWorkspace(page, true);
   await expect(page.getByRole("heading", { name: "Service status", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Capability", exact: true })).toBeVisible();
-  await expect(page.locator(".commission-metrics article").filter({ hasText: "Agencies" }).locator("strong")).toHaveText("7");
-  await expect(page.locator(".commission-metrics article").filter({ hasText: "Customers" }).locator("strong")).toHaveText("42");
-  await expect(page.locator(".status-kpi").filter({ hasText: "Pending work" }).locator("strong")).toHaveText("3");
+  await expect(
+    page.locator(".commission-metrics article").filter({ hasText: "Agencies" }).locator("strong"),
+  ).toHaveText("7");
+  await expect(
+    page.locator(".commission-metrics article").filter({ hasText: "Customers" }).locator("strong"),
+  ).toHaveText("42");
+  await expect(
+    page.locator(".status-kpi").filter({ hasText: "Pending work" }).locator("strong"),
+  ).toHaveText("3");
   const totals = await page.locator(".commission-metrics").boundingBox();
-  const serviceStatus = await page.getByRole("heading", { name: "Service status", exact: true }).boundingBox();
+  const serviceStatus = await page
+    .getByRole("heading", { name: "Service status", exact: true })
+    .boundingBox();
   expect(serviceStatus!.y - (totals!.y + totals!.height)).toBeGreaterThanOrEqual(16);
 });
 
@@ -261,8 +341,71 @@ test("root acting as an agency gets the ordinary agency pricing experience", asy
   await expect(page.getByRole("button", { name: /All channels/ })).toHaveCount(0);
 });
 
+test("publishing one agency price does not submit unchanged automatic or manual prices", async ({
+  page,
+}) => {
+  await openWorkspace(page, false);
+  await page.route("**/agency/api/v1/pricing/model-sales", (route) =>
+    route.fulfill({
+      json: {
+        success: true,
+        data: {
+          agency_id: 7,
+          agency_name: "Layout agency",
+          revision: 1,
+          platform_revision: 1,
+          min_spread_bps: 0,
+          default_sales_bps: 10000,
+          items: [
+            {
+              origin_model_name: "automatic-model",
+              agency_cost_bps: 7000,
+              child_cost_bps: 7500,
+              sales_bps: 10000,
+              override_sales_bps: null,
+              override_child_cost_bps: null,
+              sales_source: "default",
+              child_cost_source: "default",
+            },
+            {
+              origin_model_name: "manual-model",
+              agency_cost_bps: 7000,
+              child_cost_bps: 8000,
+              sales_bps: 9000,
+              override_sales_bps: 9000,
+              override_child_cost_bps: 8000,
+              sales_source: "manual",
+              child_cost_source: "manual",
+            },
+          ],
+        },
+      },
+    }),
+  );
+  await page.getByRole("button", { name: "Pricing", exact: true }).click();
+  const table = page.locator(".pricing-matrix");
+  await expect(
+    table
+      .getByRole("row")
+      .filter({ hasText: "automatic-model" })
+      .getByText("Agency override", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByLabel("Sales price (coefficient): manual-model", { exact: true }).fill("0.9500");
+  const published = page.waitForRequest(
+    (request) => request.method() === "POST" && request.url().endsWith("/pricing/sales/publish"),
+  );
+  await page.getByRole("button", { name: "Publish sales coefficients", exact: true }).click();
+  const payload = (await published).postDataJSON();
+  expect(payload.model_sales_overrides).toEqual([
+    { origin_model_name: "manual-model", sales_bps: 9500 },
+  ]);
+  expect(payload.model_child_cost_overrides).toEqual([]);
+});
+
 for (const width of [1440, 390]) {
-  test(`child cost dialog contains its table and bulk preview at width ${width}`, async ({ page }) => {
+  test(`child cost dialog contains its table and bulk preview at width ${width}`, async ({
+    page,
+  }) => {
     await page.setViewportSize({ width, height: 1000 });
     await openWorkspace(page, false);
     await page.getByRole("button", { name: "Agencies", exact: true }).click();
@@ -272,22 +415,38 @@ for (const width of [1440, 390]) {
     expect(box!.width).toBeLessThanOrEqual(width);
     if (width > 1000) {
       expect(box!.width).toBeGreaterThan(1100);
-      expect(await dialog.locator(".child-pricing-matrix-wrap").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+      expect(
+        await dialog
+          .locator(".child-pricing-matrix-wrap")
+          .evaluate((element) => element.scrollWidth <= element.clientWidth),
+      ).toBe(true);
     }
     await dialog.getByLabel("Child cost coefficient: second-model", { exact: true }).fill("0.7600");
     await dialog.getByLabel("Select model: unlisted-model", { exact: true }).check();
     await dialog.getByRole("button", { name: "Increase/decrease child cost", exact: true }).click();
     const adjust = page.locator(".coefficient-adjust-dialog");
-    await expect(adjust.getByRole("button", { name: "From my cost", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(adjust.getByRole("button", { name: "From my cost", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     await expect(adjust.locator(".coefficient-adjust-next")).toHaveText("0.8000");
     await adjust.getByRole("button", { name: "+0.1", exact: true }).click();
     await expect(adjust.locator(".coefficient-adjust-next")).toHaveText("0.9000");
     await adjust.getByRole("button", { name: "-0.1", exact: true }).click();
     await expect(adjust.locator(".coefficient-adjust-next")).toHaveText("0.8000");
-    await page.screenshot({ path: test.info().outputPath(`child-adjust-${width}.png`), fullPage: true });
+    await page.screenshot({
+      path: test.info().outputPath(`child-adjust-${width}.png`),
+      fullPage: true,
+    });
     await adjust.getByRole("button", { name: "Apply to selected models", exact: true }).click();
-    await expect(dialog.getByLabel("Child cost coefficient: unlisted-model", { exact: true })).toHaveValue("0.8000");
-    await expect(dialog.getByLabel("Child cost coefficient: second-model", { exact: true })).toHaveValue("0.7600");
-    expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+    await expect(
+      dialog.getByLabel("Child cost coefficient: unlisted-model", { exact: true }),
+    ).toHaveValue("0.8000");
+    await expect(
+      dialog.getByLabel("Child cost coefficient: second-model", { exact: true }),
+    ).toHaveValue("0.7600");
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
+    ).toBe(false);
   });
 }

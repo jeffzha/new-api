@@ -170,6 +170,9 @@ func writeAgencyJournalEventTx(tx *gorm.DB, journal *AgencyBillingJournal, event
 		Payload: string(payload), PayloadHash: hash, SchemaVersion: event.SchemaVersion, CreatedAtMS: event.OccurredAtMS}).Error; err != nil {
 		return err
 	}
+	if err := CaptureCNAgencyFundingTx(tx, *event); err != nil {
+		return err
+	}
 	return tx.Create(&AgencyEventDelivery{EventID: event.EventID, Status: "pending", NextRetryAt: event.OccurredAtMS / 1000, CreatedAt: event.OccurredAtMS / 1000}).Error
 }
 

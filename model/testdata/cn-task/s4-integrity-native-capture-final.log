@@ -1,0 +1,451 @@
+=== RUN   TestCNIntegrityRealApprovedExportAcrossDialects
+=== RUN   TestCNIntegrityRealApprovedExportAcrossDialects/sqlite
+    cn_integrity_real_export_test.go:81: 3.50.4
+=== RUN   TestCNIntegrityRealApprovedExportAcrossDialects/mysql
+    cn_integrity_real_export_test.go:81: 8.0.39
+=== RUN   TestCNIntegrityRealApprovedExportAcrossDialects/postgres
+    cn_integrity_real_export_test.go:81: PostgreSQL 17.6 on x86_64-windows, compiled by msvc-19.44.35213, 64-bit
+--- PASS: TestCNIntegrityRealApprovedExportAcrossDialects (13.42s)
+    --- PASS: TestCNIntegrityRealApprovedExportAcrossDialects/sqlite (2.72s)
+    --- PASS: TestCNIntegrityRealApprovedExportAcrossDialects/mysql (4.20s)
+    --- PASS: TestCNIntegrityRealApprovedExportAcrossDialects/postgres (6.50s)
+=== RUN   TestCNIntegrityValueStateVectors
+=== RUN   TestCNIntegrityValueStateVectors/opening-debt
+=== RUN   TestCNIntegrityValueStateVectors/retire-debt
+=== RUN   TestCNIntegrityValueStateVectors/refund-held
+=== RUN   TestCNIntegrityValueStateVectors/refund-released
+=== RUN   TestCNIntegrityValueStateVectors/refund-retired
+=== RUN   TestCNIntegrityValueStateVectors/paused-unknown-charge
+=== RUN   TestCNIntegrityValueStateVectors/isolated-lot
+=== RUN   TestCNIntegrityValueStateVectors/isolated-before-reversal
+=== RUN   TestCNIntegrityValueStateVectors/isolated-after-reversal
+=== RUN   TestCNIntegrityValueStateVectors/reject-purchased-minus-allocation
+=== RUN   TestCNIntegrityValueStateVectors/reject-negative-debt-clamped
+=== RUN   TestCNIntegrityValueStateVectors/reject-refund-hold-double-count
+--- PASS: TestCNIntegrityValueStateVectors (0.13s)
+    --- PASS: TestCNIntegrityValueStateVectors/opening-debt (0.00s)
+    --- PASS: TestCNIntegrityValueStateVectors/retire-debt (0.00s)
+    --- PASS: TestCNIntegrityValueStateVectors/refund-held (0.00s)
+    --- PASS: TestCNIntegrityValueStateVectors/refund-released (0.00s)
+    --- PASS: TestCNIntegrityValueStateVectors/refund-retired (0.00s)
+    --- PASS: TestCNIntegrityValueStateVectors/paused-unknown-charge (0.00s)
+    --- PASS: TestCNIntegrityValueStateVectors/isolated-lot (0.00s)
+    --- PASS: TestCNIntegrityValueStateVectors/isolated-before-reversal (0.00s)
+    --- PASS: TestCNIntegrityValueStateVectors/isolated-after-reversal (0.00s)
+    --- PASS: TestCNIntegrityValueStateVectors/reject-purchased-minus-allocation (0.00s)
+    --- PASS: TestCNIntegrityValueStateVectors/reject-negative-debt-clamped (0.00s)
+    --- PASS: TestCNIntegrityValueStateVectors/reject-refund-hold-double-count (0.00s)
+=== RUN   TestCNIntegrityFoundationAcrossDialects
+=== RUN   TestCNIntegrityFoundationAcrossDialects/sqlite
+=== RUN   TestCNIntegrityFoundationAcrossDialects/sqlite/negative_opening_debt_is_preserved
+=== RUN   TestCNIntegrityFoundationAcrossDialects/sqlite/stream_reset_cannot_reclaim_native_receipt
+=== RUN   TestCNIntegrityFoundationAcrossDialects/sqlite/skipped_native_revision_rolls_back
+=== RUN   TestCNIntegrityFoundationAcrossDialects/sqlite/independent_native_scan_detects_missing_capture
+=== RUN   TestCNIntegrityFoundationAcrossDialects/sqlite/missing_disposition_and_orphan_are_distinct
+=== RUN   TestCNIntegrityFoundationAcrossDialects/sqlite/hidden_payment_snapshot_tampering_is_visible
+=== RUN   TestCNIntegrityFoundationAcrossDialects/sqlite/original_receipt_tampering_is_visible
+=== RUN   TestCNIntegrityFoundationAcrossDialects/mysql
+=== RUN   TestCNIntegrityFoundationAcrossDialects/mysql/negative_opening_debt_is_preserved
+=== RUN   TestCNIntegrityFoundationAcrossDialects/mysql/stream_reset_cannot_reclaim_native_receipt
+=== RUN   TestCNIntegrityFoundationAcrossDialects/mysql/skipped_native_revision_rolls_back
+=== RUN   TestCNIntegrityFoundationAcrossDialects/mysql/independent_native_scan_detects_missing_capture
+=== RUN   TestCNIntegrityFoundationAcrossDialects/mysql/missing_disposition_and_orphan_are_distinct
+=== RUN   TestCNIntegrityFoundationAcrossDialects/mysql/hidden_payment_snapshot_tampering_is_visible
+=== RUN   TestCNIntegrityFoundationAcrossDialects/mysql/original_receipt_tampering_is_visible
+=== RUN   TestCNIntegrityFoundationAcrossDialects/postgres
+=== RUN   TestCNIntegrityFoundationAcrossDialects/postgres/negative_opening_debt_is_preserved
+=== RUN   TestCNIntegrityFoundationAcrossDialects/postgres/stream_reset_cannot_reclaim_native_receipt
+=== RUN   TestCNIntegrityFoundationAcrossDialects/postgres/skipped_native_revision_rolls_back
+=== RUN   TestCNIntegrityFoundationAcrossDialects/postgres/independent_native_scan_detects_missing_capture
+=== RUN   TestCNIntegrityFoundationAcrossDialects/postgres/missing_disposition_and_orphan_are_distinct
+=== RUN   TestCNIntegrityFoundationAcrossDialects/postgres/hidden_payment_snapshot_tampering_is_visible
+=== RUN   TestCNIntegrityFoundationAcrossDialects/postgres/original_receipt_tampering_is_visible
+--- PASS: TestCNIntegrityFoundationAcrossDialects (5.68s)
+    --- PASS: TestCNIntegrityFoundationAcrossDialects/sqlite (0.07s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/sqlite/negative_opening_debt_is_preserved (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/sqlite/stream_reset_cannot_reclaim_native_receipt (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/sqlite/skipped_native_revision_rolls_back (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/sqlite/independent_native_scan_detects_missing_capture (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/sqlite/missing_disposition_and_orphan_are_distinct (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/sqlite/hidden_payment_snapshot_tampering_is_visible (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/sqlite/original_receipt_tampering_is_visible (0.00s)
+    --- PASS: TestCNIntegrityFoundationAcrossDialects/mysql (2.61s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/mysql/negative_opening_debt_is_preserved (0.01s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/mysql/stream_reset_cannot_reclaim_native_receipt (0.02s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/mysql/skipped_native_revision_rolls_back (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/mysql/independent_native_scan_detects_missing_capture (0.01s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/mysql/missing_disposition_and_orphan_are_distinct (0.02s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/mysql/hidden_payment_snapshot_tampering_is_visible (0.01s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/mysql/original_receipt_tampering_is_visible (0.01s)
+    --- PASS: TestCNIntegrityFoundationAcrossDialects/postgres (3.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/postgres/negative_opening_debt_is_preserved (0.01s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/postgres/stream_reset_cannot_reclaim_native_receipt (0.01s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/postgres/skipped_native_revision_rolls_back (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/postgres/independent_native_scan_detects_missing_capture (0.01s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/postgres/missing_disposition_and_orphan_are_distinct (0.02s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/postgres/hidden_payment_snapshot_tampering_is_visible (0.01s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/postgres/original_receipt_tampering_is_visible (0.01s)
+=== RUN   TestCNWalletValueAcrossDialects
+=== RUN   TestCNWalletValueAcrossDialects/sqlite
+    cn_wallet_value_test.go:289: database version: 3.50.4
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/upgrade_preserves_history_and_open_reservations
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/minimum_signed_debt_retires_small_native_topup_without_overflow
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/unknown_first_currency_residual_and_task_reversal
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/atomic_outbox_failure_and_cancel_release
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/committed_payment_time_and_preexisting_facts
+[SYS] 2026/10/15 - 23:48:10 | 易支付充值成功 trade_no=value-provider-epay user_id=105 quota_to_add=20 money=3.00 
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/increment_slices_restore_late_unknown_before_paid
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/fifo_uses_frozen_purchase_time_and_stable_lot_id
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/map_column
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/map_field
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/struct
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/slice_model
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/pointer_select
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/field_select
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/star_omit_quota
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/projection
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/nil_primary
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/update_column
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/update_columns
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/skip_transaction
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/save
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/omitted_mode_preserves_owner_selected_zero_invalidates
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/old_snapshot_cannot_hide_new_owner_or_paid_lot
+    cn_wallet_value_test.go:691: SQLite serializes the writer before this external snapshot window
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/covered_writers_use_current_owner_after_old_snapshot
+    cn_wallet_value_test.go:721: SQLite cannot upgrade this old read snapshot to a concurrent writer
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/old_snapshot_admission_counts_current_holds_and_agency_owner
+    cn_wallet_value_test.go:779: SQLite cannot upgrade this old read snapshot to a concurrent writer
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/uncovered_writers_commit_and_permanently_suspend
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/flags_off_and_source_switch
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/zero_bonus_unknown_payment_and_flags_off_existing_owner
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/flags_off_original_business_writers_keep_results
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/flags_off_original_business_writers_keep_results/admin
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/flags_off_original_business_writers_keep_results/grant
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/flags_off_original_business_writers_keep_results/debit
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/flags_off_original_business_writers_keep_results/legacy_reserve
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/flags_off_original_business_writers_keep_results/without_default_transaction
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/flags_off_original_business_writers_keep_results/save_zero
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/concurrent_topup_reserve_finalize
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/independent_first_owners_do_not_gap_lock
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/cold_flags_off_recovery_and_invalidation
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/clean_source_complete_then_unknown_keeps_gap
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/capture_disabled
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/unregistered_writer
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/expired_writer
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/tampered_membership
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/durable_pause
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/durable_close
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/source_switch
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/unidentified_credit
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/atomic_receipt_failure
+[SYS] 2026/10/15 - 23:48:16 | creem topup failed: fixture capture write failed 
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/independent_scan_rejects_slice_tampering
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/failed_freeze_rolls_back_every_published_boundary
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/independent_graph_detects_omitted_captured_fact_ids
+=== RUN   TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/changed_parent_disposition_cannot_be_sealed
+=== RUN   TestCNWalletValueAcrossDialects/mysql
+    cn_wallet_value_test.go:289: database version: 8.0.39
+=== RUN   TestCNWalletValueAcrossDialects/mysql/upgrade_preserves_history_and_open_reservations
+=== RUN   TestCNWalletValueAcrossDialects/mysql/minimum_signed_debt_retires_small_native_topup_without_overflow
+=== RUN   TestCNWalletValueAcrossDialects/mysql/unknown_first_currency_residual_and_task_reversal
+=== RUN   TestCNWalletValueAcrossDialects/mysql/atomic_outbox_failure_and_cancel_release
+=== RUN   TestCNWalletValueAcrossDialects/mysql/committed_payment_time_and_preexisting_facts
+[SYS] 2026/10/15 - 23:48:21 | 易支付充值成功 trade_no=value-provider-epay user_id=105 quota_to_add=20 money=3.00 
+=== RUN   TestCNWalletValueAcrossDialects/mysql/increment_slices_restore_late_unknown_before_paid
+=== RUN   TestCNWalletValueAcrossDialects/mysql/fifo_uses_frozen_purchase_time_and_stable_lot_id
+=== RUN   TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back
+=== RUN   TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/map_column
+=== RUN   TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/map_field
+=== RUN   TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/struct
+=== RUN   TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/slice_model
+=== RUN   TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/pointer_select
+=== RUN   TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/field_select
+=== RUN   TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/star_omit_quota
+=== RUN   TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/projection
+=== RUN   TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/nil_primary
+=== RUN   TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/update_column
+=== RUN   TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/update_columns
+=== RUN   TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/skip_transaction
+=== RUN   TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/save
+=== RUN   TestCNWalletValueAcrossDialects/mysql/omitted_mode_preserves_owner_selected_zero_invalidates
+=== RUN   TestCNWalletValueAcrossDialects/mysql/old_snapshot_cannot_hide_new_owner_or_paid_lot
+=== RUN   TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot
+=== RUN   TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/reserve_6
+=== RUN   TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/final_6
+=== RUN   TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/topup_6
+=== RUN   TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/reserve_9
+=== RUN   TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/final_9
+=== RUN   TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/topup_9
+=== RUN   TestCNWalletValueAcrossDialects/mysql/old_snapshot_admission_counts_current_holds_and_agency_owner
+=== RUN   TestCNWalletValueAcrossDialects/mysql/uncovered_writers_commit_and_permanently_suspend
+=== RUN   TestCNWalletValueAcrossDialects/mysql/flags_off_and_source_switch
+=== RUN   TestCNWalletValueAcrossDialects/mysql/zero_bonus_unknown_payment_and_flags_off_existing_owner
+=== RUN   TestCNWalletValueAcrossDialects/mysql/flags_off_original_business_writers_keep_results
+=== RUN   TestCNWalletValueAcrossDialects/mysql/flags_off_original_business_writers_keep_results/admin
+=== RUN   TestCNWalletValueAcrossDialects/mysql/flags_off_original_business_writers_keep_results/grant
+=== RUN   TestCNWalletValueAcrossDialects/mysql/flags_off_original_business_writers_keep_results/debit
+=== RUN   TestCNWalletValueAcrossDialects/mysql/flags_off_original_business_writers_keep_results/legacy_reserve
+=== RUN   TestCNWalletValueAcrossDialects/mysql/flags_off_original_business_writers_keep_results/without_default_transaction
+=== RUN   TestCNWalletValueAcrossDialects/mysql/flags_off_original_business_writers_keep_results/save_zero
+=== RUN   TestCNWalletValueAcrossDialects/mysql/concurrent_topup_reserve_finalize
+=== RUN   TestCNWalletValueAcrossDialects/mysql/independent_first_owners_do_not_gap_lock
+=== RUN   TestCNWalletValueAcrossDialects/mysql/cold_flags_off_recovery_and_invalidation
+=== RUN   TestCNWalletValueAcrossDialects/mysql/clean_source_complete_then_unknown_keeps_gap
+=== RUN   TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner
+=== RUN   TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/capture_disabled
+=== RUN   TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/unregistered_writer
+=== RUN   TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/expired_writer
+=== RUN   TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/tampered_membership
+=== RUN   TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/durable_pause
+=== RUN   TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/durable_close
+=== RUN   TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/source_switch
+=== RUN   TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/unidentified_credit
+=== RUN   TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/atomic_receipt_failure
+[SYS] 2026/10/15 - 23:48:35 | creem topup failed: fixture capture write failed 
+=== RUN   TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/independent_scan_rejects_slice_tampering
+=== RUN   TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/failed_freeze_rolls_back_every_published_boundary
+=== RUN   TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/independent_graph_detects_omitted_captured_fact_ids
+=== RUN   TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/changed_parent_disposition_cannot_be_sealed
+=== RUN   TestCNWalletValueAcrossDialects/postgres
+    cn_wallet_value_test.go:289: database version: PostgreSQL 17.6 on x86_64-windows, compiled by msvc-19.44.35213, 64-bit
+=== RUN   TestCNWalletValueAcrossDialects/postgres/upgrade_preserves_history_and_open_reservations
+=== RUN   TestCNWalletValueAcrossDialects/postgres/minimum_signed_debt_retires_small_native_topup_without_overflow
+=== RUN   TestCNWalletValueAcrossDialects/postgres/unknown_first_currency_residual_and_task_reversal
+=== RUN   TestCNWalletValueAcrossDialects/postgres/atomic_outbox_failure_and_cancel_release
+=== RUN   TestCNWalletValueAcrossDialects/postgres/committed_payment_time_and_preexisting_facts
+[SYS] 2026/10/15 - 23:48:45 | 易支付充值成功 trade_no=value-provider-epay user_id=105 quota_to_add=20 money=3.00 
+=== RUN   TestCNWalletValueAcrossDialects/postgres/increment_slices_restore_late_unknown_before_paid
+=== RUN   TestCNWalletValueAcrossDialects/postgres/fifo_uses_frozen_purchase_time_and_stable_lot_id
+=== RUN   TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back
+=== RUN   TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/map_column
+=== RUN   TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/map_field
+=== RUN   TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/struct
+=== RUN   TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/slice_model
+=== RUN   TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/pointer_select
+=== RUN   TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/field_select
+=== RUN   TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/star_omit_quota
+=== RUN   TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/projection
+=== RUN   TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/nil_primary
+=== RUN   TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/update_column
+=== RUN   TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/update_columns
+=== RUN   TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/skip_transaction
+=== RUN   TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/save
+=== RUN   TestCNWalletValueAcrossDialects/postgres/omitted_mode_preserves_owner_selected_zero_invalidates
+=== RUN   TestCNWalletValueAcrossDialects/postgres/old_snapshot_cannot_hide_new_owner_or_paid_lot
+=== RUN   TestCNWalletValueAcrossDialects/postgres/covered_writers_use_current_owner_after_old_snapshot
+=== RUN   TestCNWalletValueAcrossDialects/postgres/covered_writers_use_current_owner_after_old_snapshot/reserve_6
+=== RUN   TestCNWalletValueAcrossDialects/postgres/covered_writers_use_current_owner_after_old_snapshot/final_6
+=== RUN   TestCNWalletValueAcrossDialects/postgres/covered_writers_use_current_owner_after_old_snapshot/topup_6
+=== RUN   TestCNWalletValueAcrossDialects/postgres/covered_writers_use_current_owner_after_old_snapshot/reserve_9
+=== RUN   TestCNWalletValueAcrossDialects/postgres/covered_writers_use_current_owner_after_old_snapshot/final_9
+=== RUN   TestCNWalletValueAcrossDialects/postgres/covered_writers_use_current_owner_after_old_snapshot/topup_9
+=== RUN   TestCNWalletValueAcrossDialects/postgres/old_snapshot_admission_counts_current_holds_and_agency_owner
+=== RUN   TestCNWalletValueAcrossDialects/postgres/uncovered_writers_commit_and_permanently_suspend
+=== RUN   TestCNWalletValueAcrossDialects/postgres/flags_off_and_source_switch
+=== RUN   TestCNWalletValueAcrossDialects/postgres/zero_bonus_unknown_payment_and_flags_off_existing_owner
+=== RUN   TestCNWalletValueAcrossDialects/postgres/flags_off_original_business_writers_keep_results
+=== RUN   TestCNWalletValueAcrossDialects/postgres/flags_off_original_business_writers_keep_results/admin
+=== RUN   TestCNWalletValueAcrossDialects/postgres/flags_off_original_business_writers_keep_results/grant
+=== RUN   TestCNWalletValueAcrossDialects/postgres/flags_off_original_business_writers_keep_results/debit
+=== RUN   TestCNWalletValueAcrossDialects/postgres/flags_off_original_business_writers_keep_results/legacy_reserve
+=== RUN   TestCNWalletValueAcrossDialects/postgres/flags_off_original_business_writers_keep_results/without_default_transaction
+=== RUN   TestCNWalletValueAcrossDialects/postgres/flags_off_original_business_writers_keep_results/save_zero
+=== RUN   TestCNWalletValueAcrossDialects/postgres/concurrent_topup_reserve_finalize
+=== RUN   TestCNWalletValueAcrossDialects/postgres/independent_first_owners_do_not_gap_lock
+=== RUN   TestCNWalletValueAcrossDialects/postgres/cold_flags_off_recovery_and_invalidation
+=== RUN   TestCNWalletValueAcrossDialects/postgres/clean_source_complete_then_unknown_keeps_gap
+=== RUN   TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner
+=== RUN   TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/capture_disabled
+=== RUN   TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/unregistered_writer
+=== RUN   TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/expired_writer
+=== RUN   TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/tampered_membership
+=== RUN   TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/durable_pause
+=== RUN   TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/durable_close
+=== RUN   TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/source_switch
+=== RUN   TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/unidentified_credit
+=== RUN   TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/atomic_receipt_failure
+[SYS] 2026/10/15 - 23:48:58 | creem topup failed: fixture capture write failed 
+=== RUN   TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/independent_scan_rejects_slice_tampering
+=== RUN   TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/failed_freeze_rolls_back_every_published_boundary
+=== RUN   TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/independent_graph_detects_omitted_captured_fact_ids
+=== RUN   TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/changed_parent_disposition_cannot_be_sealed
+--- PASS: TestCNWalletValueAcrossDialects (50.15s)
+    --- PASS: TestCNWalletValueAcrossDialects/sqlite (7.68s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/upgrade_preserves_history_and_open_reservations (0.19s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/minimum_signed_debt_retires_small_native_topup_without_overflow (0.01s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/unknown_first_currency_residual_and_task_reversal (0.14s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/atomic_outbox_failure_and_cancel_release (0.05s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/committed_payment_time_and_preexisting_facts (0.20s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/increment_slices_restore_late_unknown_before_paid (0.15s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/fifo_uses_frozen_purchase_time_and_stable_lot_id (0.10s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back (1.75s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/map_column (0.11s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/map_field (0.08s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/struct (0.08s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/slice_model (0.12s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/pointer_select (0.09s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/field_select (0.18s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/star_omit_quota (0.15s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/projection (0.14s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/nil_primary (0.15s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/update_column (0.14s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/update_columns (0.16s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/skip_transaction (0.16s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/billing_mode_writer_shapes_suspend_before_switch_back/save (0.15s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/omitted_mode_preserves_owner_selected_zero_invalidates (0.08s)
+        --- SKIP: TestCNWalletValueAcrossDialects/sqlite/old_snapshot_cannot_hide_new_owner_or_paid_lot (0.00s)
+        --- SKIP: TestCNWalletValueAcrossDialects/sqlite/covered_writers_use_current_owner_after_old_snapshot (0.00s)
+        --- SKIP: TestCNWalletValueAcrossDialects/sqlite/old_snapshot_admission_counts_current_holds_and_agency_owner (0.00s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/uncovered_writers_commit_and_permanently_suspend (0.13s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/flags_off_and_source_switch (1.13s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/zero_bonus_unknown_payment_and_flags_off_existing_owner (0.12s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/flags_off_original_business_writers_keep_results (0.34s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/flags_off_original_business_writers_keep_results/admin (0.04s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/flags_off_original_business_writers_keep_results/grant (0.10s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/flags_off_original_business_writers_keep_results/debit (0.06s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/flags_off_original_business_writers_keep_results/legacy_reserve (0.05s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/flags_off_original_business_writers_keep_results/without_default_transaction (0.05s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/flags_off_original_business_writers_keep_results/save_zero (0.05s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/concurrent_topup_reserve_finalize (0.09s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/independent_first_owners_do_not_gap_lock (0.07s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/cold_flags_off_recovery_and_invalidation (0.07s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/clean_source_complete_then_unknown_keeps_gap (1.17s)
+        --- PASS: TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner (0.95s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/capture_disabled (0.01s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/unregistered_writer (0.01s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/expired_writer (0.01s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/tampered_membership (0.02s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/durable_pause (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/durable_close (0.02s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/source_switch (0.02s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/unidentified_credit (0.01s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/atomic_receipt_failure (0.01s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/independent_scan_rejects_slice_tampering (0.01s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/failed_freeze_rolls_back_every_published_boundary (0.06s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/independent_graph_detects_omitted_captured_fact_ids (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/sqlite/integrity_actual_writers_capture_and_keep_opening_owner/changed_parent_disposition_cannot_be_sealed (0.03s)
+    --- PASS: TestCNWalletValueAcrossDialects/mysql (19.42s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/upgrade_preserves_history_and_open_reservations (0.93s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/minimum_signed_debt_retires_small_native_topup_without_overflow (0.03s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/unknown_first_currency_residual_and_task_reversal (0.41s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/atomic_outbox_failure_and_cancel_release (0.13s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/committed_payment_time_and_preexisting_facts (0.23s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/increment_slices_restore_late_unknown_before_paid (0.36s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/fifo_uses_frozen_purchase_time_and_stable_lot_id (0.21s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back (2.61s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/map_column (0.12s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/map_field (0.13s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/struct (0.25s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/slice_model (0.14s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/pointer_select (0.16s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/field_select (0.21s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/star_omit_quota (0.26s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/projection (0.27s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/nil_primary (0.27s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/update_column (0.23s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/update_columns (0.20s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/skip_transaction (0.16s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/billing_mode_writer_shapes_suspend_before_switch_back/save (0.17s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/omitted_mode_preserves_owner_selected_zero_invalidates (0.06s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/old_snapshot_cannot_hide_new_owner_or_paid_lot (0.18s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot (1.10s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/reserve_6 (0.19s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/final_6 (0.20s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/topup_6 (0.17s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/reserve_9 (0.21s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/final_9 (0.18s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/topup_9 (0.15s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/old_snapshot_admission_counts_current_holds_and_agency_owner (2.39s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/uncovered_writers_commit_and_permanently_suspend (0.16s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/flags_off_and_source_switch (0.85s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/zero_bonus_unknown_payment_and_flags_off_existing_owner (0.20s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/flags_off_original_business_writers_keep_results (0.36s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/flags_off_original_business_writers_keep_results/admin (0.04s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/flags_off_original_business_writers_keep_results/grant (0.06s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/flags_off_original_business_writers_keep_results/debit (0.05s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/flags_off_original_business_writers_keep_results/legacy_reserve (0.07s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/flags_off_original_business_writers_keep_results/without_default_transaction (0.06s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/flags_off_original_business_writers_keep_results/save_zero (0.07s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/concurrent_topup_reserve_finalize (0.18s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/independent_first_owners_do_not_gap_lock (0.08s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/cold_flags_off_recovery_and_invalidation (0.13s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/clean_source_complete_then_unknown_keeps_gap (2.49s)
+        --- PASS: TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner (2.13s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/capture_disabled (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/unregistered_writer (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/expired_writer (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/tampered_membership (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/durable_pause (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/durable_close (0.04s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/source_switch (0.04s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/unidentified_credit (0.02s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/atomic_receipt_failure (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/independent_scan_rejects_slice_tampering (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/failed_freeze_rolls_back_every_published_boundary (0.13s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/independent_graph_detects_omitted_captured_fact_ids (0.09s)
+            --- PASS: TestCNWalletValueAcrossDialects/mysql/integrity_actual_writers_capture_and_keep_opening_owner/changed_parent_disposition_cannot_be_sealed (0.09s)
+    --- PASS: TestCNWalletValueAcrossDialects/postgres (23.05s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/upgrade_preserves_history_and_open_reservations (4.59s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/minimum_signed_debt_retires_small_native_topup_without_overflow (0.04s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/unknown_first_currency_residual_and_task_reversal (0.28s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/atomic_outbox_failure_and_cancel_release (0.08s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/committed_payment_time_and_preexisting_facts (0.15s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/increment_slices_restore_late_unknown_before_paid (0.26s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/fifo_uses_frozen_purchase_time_and_stable_lot_id (0.15s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back (1.01s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/map_column (0.10s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/map_field (0.07s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/struct (0.08s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/slice_model (0.08s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/pointer_select (0.08s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/field_select (0.08s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/star_omit_quota (0.07s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/projection (0.07s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/nil_primary (0.07s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/update_column (0.07s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/update_columns (0.07s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/skip_transaction (0.07s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/billing_mode_writer_shapes_suspend_before_switch_back/save (0.07s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/omitted_mode_preserves_owner_selected_zero_invalidates (0.03s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/old_snapshot_cannot_hide_new_owner_or_paid_lot (0.25s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/covered_writers_use_current_owner_after_old_snapshot (0.61s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/covered_writers_use_current_owner_after_old_snapshot/reserve_6 (0.13s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/covered_writers_use_current_owner_after_old_snapshot/final_6 (0.11s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/covered_writers_use_current_owner_after_old_snapshot/topup_6 (0.08s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/covered_writers_use_current_owner_after_old_snapshot/reserve_9 (0.11s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/covered_writers_use_current_owner_after_old_snapshot/final_9 (0.10s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/covered_writers_use_current_owner_after_old_snapshot/topup_9 (0.08s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/old_snapshot_admission_counts_current_holds_and_agency_owner (0.70s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/uncovered_writers_commit_and_permanently_suspend (0.12s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/flags_off_and_source_switch (2.79s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/zero_bonus_unknown_payment_and_flags_off_existing_owner (0.11s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/flags_off_original_business_writers_keep_results (0.20s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/flags_off_original_business_writers_keep_results/admin (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/flags_off_original_business_writers_keep_results/grant (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/flags_off_original_business_writers_keep_results/debit (0.05s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/flags_off_original_business_writers_keep_results/legacy_reserve (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/flags_off_original_business_writers_keep_results/without_default_transaction (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/flags_off_original_business_writers_keep_results/save_zero (0.02s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/concurrent_topup_reserve_finalize (0.27s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/independent_first_owners_do_not_gap_lock (0.27s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/cold_flags_off_recovery_and_invalidation (0.25s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/clean_source_complete_then_unknown_keeps_gap (1.64s)
+        --- PASS: TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner (1.60s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/capture_disabled (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/unregistered_writer (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/expired_writer (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/tampered_membership (0.02s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/durable_pause (0.02s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/durable_close (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/source_switch (0.03s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/unidentified_credit (0.01s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/atomic_receipt_failure (0.02s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/independent_scan_rejects_slice_tampering (0.02s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/failed_freeze_rolls_back_every_published_boundary (0.09s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/independent_graph_detects_omitted_captured_fact_ids (0.06s)
+            --- PASS: TestCNWalletValueAcrossDialects/postgres/integrity_actual_writers_capture_and_keep_opening_owner/changed_parent_disposition_cannot_be_sealed (0.07s)
+PASS
+ok  	github.com/QuantumNous/new-api/model	70.487s

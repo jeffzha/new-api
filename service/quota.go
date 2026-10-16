@@ -96,6 +96,10 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 // per-segment financial journal. The legacy wrapper above preserves the
 // existing error-only API.
 func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) (int, int64, error) {
+	if CNDirectRealtimeRequested(relayInfo) {
+		// Delta-only callers have no durable response identity.
+		return 0, 0, model.ErrCNConflict
+	}
 	if relayInfo.UsePrice {
 		// Price-based realtime requests do not reserve through the legacy
 		// wallet path, but managed users still need a durable segment fact.
@@ -215,6 +219,12 @@ func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.Relay
 
 func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelName string,
 	usage *dto.RealtimeUsage, extraContent string) {
+	if CNDirectRealtimeRequested(relayInfo) {
+		if err := FinalizeCNDirectRealtime(relayInfo, usage); err != nil {
+			logger.LogError(ctx, "CN direct realtime finalization requires retry")
+		}
+		return
+	}
 
 	var tieredResult *billingexpr.TieredResult
 	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, billingexpr.TokenParams{
@@ -501,6 +511,11 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	}
 
 	// record all the consume log even if quota is 0
+	direct, bindErr := BindCNDirectRelayUsage(relayInfo, usage, totalTokens != 0 || fixedPriceBilling)
+	if bindErr != nil {
+		logger.LogError(ctx, "CN direct audio usage identity missing")
+		return
+	}
 	if totalTokens == 0 && !fixedPriceBilling {
 		// in this case, must be some error happened
 		// we cannot just return, because we may have to return the pre-consumed quota
@@ -509,8 +524,10 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
 			"tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, billingModelName, relayInfo.FinalPreConsumedQuota))
 	} else {
-		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
-		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
+		if !direct {
+			model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
+			model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
+		}
 	}
 
 	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
@@ -585,6 +602,23 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 }
 
 func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (result postConsumeQuotaResult, err error) {
+	if CNDirectRealtimeRequested(relayInfo) && relayInfo.BillingSource != BillingSourceSubscription {
+		s, ok := relayInfo.Billing.(*cnDirectRelaySession)
+		if !ok || s.usage == "" || preConsumedQuota != 0 || relayInfo.FinalPreConsumedQuota != 0 {
+			return result, model.ErrCNConflict
+		}
+		row, err := model.ReadCNDirectWallet(relayInfo.RequestId, relayInfo.UserId)
+		if err != nil {
+			return result, err
+		}
+		if row.Kind != "relay" || row.TokenID != relayInfo.TokenId || row.ChannelID != relayInfo.ChannelId {
+			return result, model.ErrCNConflict
+		}
+		if err = model.FinalizeCNDirectRelayWallet(relayInfo.RequestId, relayInfo.UserId, quota, s.usage, s.countRequest); err != nil {
+			return result, err
+		}
+		return postConsumeQuotaResult{FundingApplied: true, TokenApplied: true}, nil
+	}
 	tokenAppliedAtomically := false
 
 	// 1) Consume from wallet quota OR subscription item

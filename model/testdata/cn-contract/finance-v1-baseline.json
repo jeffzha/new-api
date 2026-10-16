@@ -1,0 +1,33 @@
+{
+  "gatewayId": "gw-cn-fixture",
+  "items": [
+    {
+      "eventId": "ops-charge-fixture-final",
+      "kind": "charge",
+      "occurredAt": "2026-10-14T01:00:00Z",
+      "referenceId": "fixture-charge:0",
+      "revision": 1,
+      "quotaDelta": 500000,
+      "evidenceId": "fixture-final",
+      "status": "settled",
+      "quality": "settled_quota",
+      "amount": "10",
+      "currency": "CNY"
+    },
+    {
+      "eventId": "ops-charge-fixture-correct",
+      "kind": "charge",
+      "occurredAt": "2026-10-14T02:00:00Z",
+      "referenceId": "fixture-charge:0",
+      "revision": 4,
+      "quotaDelta": -100000,
+      "evidenceId": "fixture-correct",
+      "status": "settled",
+      "quality": "settled_quota",
+      "amount": "8",
+      "currency": "CNY"
+    }
+  ],
+  "nextCursor": "djI6Mg",
+  "hasMore": false
+}

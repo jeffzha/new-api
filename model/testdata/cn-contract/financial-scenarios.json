@@ -1,0 +1,14 @@
+{
+  "synthetic": true,
+  "currency": "CNY",
+  "paidLot": {"lotId": "scenario-paid", "paymentId": "scenario-payment", "purchasedQuota": "100", "paidAmount": "80", "consumedQuota": "25", "recognizedAmount": "20", "unconsumedQuota": "75", "refundableCashValue": "60", "policyVersion": "paid-lot-v1"},
+  "bonusLot": {"lotId": "scenario-bonus", "purchasedQuota": "10", "paidAmount": "0", "consumedQuota": "10", "recognizedAmount": "0", "refundableCashValue": "0"},
+  "openingUnknown": {"lotId": "scenario-opening", "purchasedQuota": "100", "paidAmount": null, "consumedQuota": "10", "recognizedAmount": null, "status": "legacy_unknown", "eligibleForRefund": false},
+  "subscriptionWithoutSchedule": {"recognizedAmount": null, "status": "waiting_evidence"},
+  "inclusiveRevenue": {"gross": "106", "net": "100", "tax": "6", "taxTreatment": "inclusive", "taxEvidenceId": "scenario-output-vat"},
+  "confirmedCost": {"gross": "53", "net": "50", "tax": "3", "taxTreatment": "inclusive", "inputTaxRecoverable": true, "profitDeduction": "50", "taxEvidenceId": "scenario-input-vat"},
+  "benefit": {"recognizedNet": "100", "confirmedCost": "50", "commission": "5", "paymentFee": "2", "businessTax": "3", "otherBusinessExpense": "1", "payrollExcluded": "20", "rentExcluded": "10", "expectedNetBenefit": "39", "allRequiredEvidenceComplete": true},
+  "refund": {"kind": "unconsumed_refund", "requestedAmount": "60", "remainingAvailableCash": "0", "cashOut": "60", "recognizedAdjustment": "0", "recognizedAfterRefund": "20"},
+  "closedCorrection": {"sourcePeriod": "2026-09", "postingPeriod": "2026-10", "oldBillImmutable": true, "delta": "-2", "reopenHistoricalPeriod": false},
+  "v2ChainFundingEvidence": {"paymentId": "fixture-payment", "paidAmount": "80", "purchasedQuota": "5000000", "lotId": "fixture-lot", "firstAllocatedQuota": "500000", "firstRecognized": "8", "correctedAllocatedQuota": "400000", "correctedRecognized": "6.4", "postingStatus": "waiting_evidence", "note": "Linked source documents are referenced but not exported in the charge-only page; they must arrive before recognition posts."}
+}

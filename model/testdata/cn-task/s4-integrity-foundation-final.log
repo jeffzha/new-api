@@ -1,0 +1,46 @@
+=== RUN   TestCNIntegrityFoundationAcrossDialects
+=== RUN   TestCNIntegrityFoundationAcrossDialects/sqlite
+=== RUN   TestCNIntegrityFoundationAcrossDialects/sqlite/stream_reset_cannot_reclaim_native_receipt
+=== RUN   TestCNIntegrityFoundationAcrossDialects/sqlite/skipped_native_revision_rolls_back
+=== RUN   TestCNIntegrityFoundationAcrossDialects/sqlite/independent_native_scan_detects_missing_capture
+=== RUN   TestCNIntegrityFoundationAcrossDialects/sqlite/missing_disposition_and_orphan_are_distinct
+=== RUN   TestCNIntegrityFoundationAcrossDialects/sqlite/hidden_payment_snapshot_tampering_is_visible
+=== RUN   TestCNIntegrityFoundationAcrossDialects/sqlite/original_receipt_tampering_is_visible
+=== RUN   TestCNIntegrityFoundationAcrossDialects/mysql
+=== RUN   TestCNIntegrityFoundationAcrossDialects/mysql/stream_reset_cannot_reclaim_native_receipt
+=== RUN   TestCNIntegrityFoundationAcrossDialects/mysql/skipped_native_revision_rolls_back
+=== RUN   TestCNIntegrityFoundationAcrossDialects/mysql/independent_native_scan_detects_missing_capture
+=== RUN   TestCNIntegrityFoundationAcrossDialects/mysql/missing_disposition_and_orphan_are_distinct
+=== RUN   TestCNIntegrityFoundationAcrossDialects/mysql/hidden_payment_snapshot_tampering_is_visible
+=== RUN   TestCNIntegrityFoundationAcrossDialects/mysql/original_receipt_tampering_is_visible
+=== RUN   TestCNIntegrityFoundationAcrossDialects/postgres
+=== RUN   TestCNIntegrityFoundationAcrossDialects/postgres/stream_reset_cannot_reclaim_native_receipt
+=== RUN   TestCNIntegrityFoundationAcrossDialects/postgres/skipped_native_revision_rolls_back
+=== RUN   TestCNIntegrityFoundationAcrossDialects/postgres/independent_native_scan_detects_missing_capture
+=== RUN   TestCNIntegrityFoundationAcrossDialects/postgres/missing_disposition_and_orphan_are_distinct
+=== RUN   TestCNIntegrityFoundationAcrossDialects/postgres/hidden_payment_snapshot_tampering_is_visible
+=== RUN   TestCNIntegrityFoundationAcrossDialects/postgres/original_receipt_tampering_is_visible
+--- PASS: TestCNIntegrityFoundationAcrossDialects (3.24s)
+    --- PASS: TestCNIntegrityFoundationAcrossDialects/sqlite (0.04s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/sqlite/stream_reset_cannot_reclaim_native_receipt (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/sqlite/skipped_native_revision_rolls_back (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/sqlite/independent_native_scan_detects_missing_capture (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/sqlite/missing_disposition_and_orphan_are_distinct (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/sqlite/hidden_payment_snapshot_tampering_is_visible (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/sqlite/original_receipt_tampering_is_visible (0.00s)
+    --- PASS: TestCNIntegrityFoundationAcrossDialects/mysql (1.53s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/mysql/stream_reset_cannot_reclaim_native_receipt (0.01s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/mysql/skipped_native_revision_rolls_back (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/mysql/independent_native_scan_detects_missing_capture (0.01s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/mysql/missing_disposition_and_orphan_are_distinct (0.01s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/mysql/hidden_payment_snapshot_tampering_is_visible (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/mysql/original_receipt_tampering_is_visible (0.01s)
+    --- PASS: TestCNIntegrityFoundationAcrossDialects/postgres (1.67s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/postgres/stream_reset_cannot_reclaim_native_receipt (0.01s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/postgres/skipped_native_revision_rolls_back (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/postgres/independent_native_scan_detects_missing_capture (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/postgres/missing_disposition_and_orphan_are_distinct (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/postgres/hidden_payment_snapshot_tampering_is_visible (0.00s)
+        --- PASS: TestCNIntegrityFoundationAcrossDialects/postgres/original_receipt_tampering_is_visible (0.00s)
+PASS
+ok  	github.com/QuantumNous/new-api/model	3.612s

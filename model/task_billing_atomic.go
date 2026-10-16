@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -49,14 +50,43 @@ func ApplyTaskQuotaAdjustment(task *Task, targetQuota int) (*TaskQuotaAdjustment
 	if modelMax := int64(common.MaxQuota); int64(targetQuota) > modelMax {
 		return nil, errors.New("task quota adjustment exceeds quota limit")
 	}
+	if task.CNBillingKey != "" {
+		before := task.Quota
+		if err := RequestCNTaskAdjustment(task, targetQuota, task.Status == TaskStatusSuccess || task.Status == TaskStatusFailure); err != nil {
+			return nil, err
+		}
+		if err := CompleteCNTaskIntent(context.Background(), DB, task.CNBillingKey); err != nil {
+			return nil, err
+		}
+		if err := DB.First(task, task.ID).Error; err != nil {
+			return nil, err
+		}
+		return &TaskQuotaAdjustmentResult{Task: task, PreConsumedQuota: before, AppliedQuota: task.Quota, QuotaDelta: task.Quota - before, TokenID: task.PrivateData.TokenId, Changed: before != task.Quota, WalletAdjusted: task.PrivateData.BillingSource == TaskBillingSourceWallet}, nil
+	}
 
 	result := &TaskQuotaAdjustmentResult{}
+	owner := task.UserId
+	if task.ID > 0 {
+		var identity Task
+		if err := DB.Select("user_id").First(&identity, task.ID).Error; err != nil {
+			return nil, err
+		}
+		if identity.UserId != owner {
+			return nil, ErrCNConflict
+		}
+	}
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockTaskBillingUserTx(tx, owner); err != nil {
+			return err
+		}
 		current := task
 		if task.ID > 0 {
 			var persisted Task
 			if err := lockForUpdate(tx).Where("id = ?", task.ID).First(&persisted).Error; err != nil {
 				return err
+			}
+			if persisted.CNBillingKey != "" || persisted.UserId != owner {
+				return ErrCNConflict
 			}
 			if persisted.Quota != task.Quota {
 				return fmt.Errorf("task quota changed concurrently")
@@ -71,7 +101,7 @@ func ApplyTaskQuotaAdjustment(task *Task, targetQuota int) (*TaskQuotaAdjustment
 		result.QuotaDelta = targetQuota - current.Quota
 		if result.QuotaDelta == 0 {
 			result.AppliedQuota = current.Quota
-			return nil
+			return CaptureCNTaskChargeTx(tx, current, current.Quota)
 		}
 		if handled, err := applyAgencyTaskRefundTx(tx, current, targetQuota, result); handled || err != nil {
 			return err
@@ -147,7 +177,7 @@ func ApplyTaskQuotaAdjustment(task *Task, targetQuota int) (*TaskQuotaAdjustment
 			current.Quota = effectiveTarget
 			result.Changed = true
 		}
-		return nil
+		return CaptureCNTaskChargeTx(tx, current, result.AppliedQuota)
 	})
 	if err != nil {
 		return nil, err
@@ -171,6 +201,12 @@ func ApplyTaskQuotaAdjustment(task *Task, targetQuota int) (*TaskQuotaAdjustment
 		}
 	}
 	return result, nil
+}
+
+// Legacy tasks coexist with the durable lane. Both must serialize on the user
+// before task/token locks, including SQLite's first transactional statement.
+func lockTaskBillingUserTx(tx *gorm.DB, user int) error {
+	return tx.Model(&User{}).Where("id = ?", user).Update("quota", gorm.Expr("quota + 0")).Error
 }
 
 func applyTaskFundingDeltaTx(tx *gorm.DB, task *Task, delta, targetQuota int) error {

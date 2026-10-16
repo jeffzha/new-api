@@ -1,0 +1,16 @@
+{
+  "synthetic": true,
+  "targetOnly": true,
+  "create": {"operationId": "fixture-refund", "gatewayId": "gw-cn-fixture", "originalPaymentId": "scenario-payment", "amount": "60", "currency": "CNY", "kind": "unconsumed_refund", "reason": "Unconsumed paid value only"},
+  "approve": {"operationId": "fixture-refund", "expectedVersion": 1, "policyVersion": "refund-policy-1", "evidenceIds": ["scenario-payment-proof", "scenario-lot-proof"], "reason": "Finance approval by different actor"},
+  "execute": {"operationId": "fixture-refund", "expectedVersion": 2, "mode": "original_route", "manualVoucherId": null, "reason": "Approved route"},
+  "gatewayAtomicReservation": {"reservationId": "fixture-refund-reserve", "operationId": "fixture-refund", "amount": "60", "currency": "CNY", "lotIds": ["scenario-paid"], "expectedFundingVersion": "7", "reservedFundingVersion": "8", "status": "reserved", "chargingRespectsReservation": true, "releaseWhileUnknownAllowed": false},
+  "failedExecutionCas": {"expectedFundingVersion": "7", "actualFundingVersion": "9", "paymentAllowed": false, "status": "blocked_balance_changed"},
+  "timeoutResponse": {"refundId": "fixture-refund-id", "operationId": "fixture-refund", "status": "unknown_reconcile", "version": 4, "frozenAmount": "60", "availableRefundable": "0", "executionAvailable": false, "evidenceIds": ["fixture-execution-attempt"], "postingIds": []},
+  "reconcile": {"operationId": "fixture-refund", "expectedVersion": 4, "result": "succeeded", "evidenceIds": ["fixture-provider-final-receipt"], "reason": "Provider final result verified"},
+  "canonicalPosting": {"operationId": "fixture-refund", "postingRole": "payment_refund", "economicId": "fixture-refund-id", "segmentId": "0", "authoritativeSource": "gateway-cn-finance-v2", "grossDelta": "60", "currency": "CNY"},
+  "executorPostingPolicy": "receipt_only_until_canonical_fact",
+  "expectedCashPostingCountAfterCallbackAndReplay": 1,
+  "expectedRecognizedAdjustment": "0",
+  "manualAlternateAllowedWhileUnknown": false
+}

@@ -259,6 +259,9 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 	)
 	if billingErr != nil {
 		common.SysLog("error consuming Midjourney quota: " + billingErr.Error())
+		if model.CNMidjourneyRequested() {
+			return service.MidjourneyErrorWrapper(constant.MjRequestError, "midjourney_billing_unavailable")
+		}
 	}
 	err = midjourneyTask.Insert()
 	if err != nil {
@@ -268,7 +271,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 	if billingErr != nil {
 		common.SysLog("error settling Midjourney quota: " + billingErr.Error())
 	}
-	if billingApplied {
+	if billingApplied && midjourneyTask.CNBillingKey == "" {
 		billingChannelId := midjourneyTask.GetBillingChannelId()
 		tokenName := c.GetString("token_name")
 		logContent := fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s", priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, constant.MjActionSwapFace)
@@ -623,6 +626,9 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 	)
 	if billingErr != nil {
 		common.SysLog("error consuming Midjourney quota: " + billingErr.Error())
+		if model.CNMidjourneyRequested() {
+			return service.MidjourneyErrorWrapper(constant.MjRequestError, "midjourney_billing_unavailable")
+		}
 	}
 	err = midjourneyTask.Insert()
 	if err != nil {
@@ -635,7 +641,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 	if billingErr != nil {
 		common.SysLog("error settling Midjourney quota: " + billingErr.Error())
 	}
-	if billingApplied {
+	if billingApplied && midjourneyTask.CNBillingKey == "" {
 		billingChannelId := midjourneyTask.GetBillingChannelId()
 		tokenName := c.GetString("token_name")
 		logContent := fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s，ID %s", priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, midjRequest.Action, midjResponse.Result)

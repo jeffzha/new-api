@@ -1,0 +1,30 @@
+{
+  "attestation": {
+    "batchDisabled": true,
+    "externalSqlExcluded": true,
+    "inventoryHash": "sha256:e19bff1d55e3b1cacc2778fd03c27244d74798c3de66f79814de5c6ddeb2b7ae",
+    "inventoryId": "1b5cac45-07f4-4281-a5a3-69b6ca29818e",
+    "oldWritersDrained": true,
+    "operatorEvidenceId": "synthetic-cli-start",
+    "redisDisabled": true,
+    "unguardedHandlesExcluded": true
+  },
+  "writers": [
+    {
+      "buildId": "s4-cli-acceptance",
+      "capabilityPaths": [
+        "quota_mutation",
+        "source_switch",
+        "task_reserve",
+        "task_revision",
+        "topup_credit",
+        "wallet_final",
+        "wallet_release",
+        "wallet_reserve"
+      ],
+      "leaseUntil": "2026-10-15T18:05:13.826808Z",
+      "protocolVersion": "native-mutation-receipt-v2",
+      "writerId": "operator-cli-writer"
+    }
+  ]
+}

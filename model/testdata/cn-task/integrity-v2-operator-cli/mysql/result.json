@@ -1,0 +1,40 @@
+{
+  "databaseScope": "s4_operator_097417a0f5d6",
+  "databaseVersion": "8.0.39",
+  "engine": "mysql",
+  "final": {
+    "batchSequence": 2,
+    "epochId": "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+    "generation": 3,
+    "latestProofId": "sha256:ed1b038d9ec73e47332e23c837734b4057f08ed8c9ec185fde0ac74c0eb76d5a",
+    "membershipThrough": 1,
+    "mutationThrough": 3,
+    "operatorEvidenceId": "",
+    "state": "paused"
+  },
+  "financialGrants": 0,
+  "gatewayId": "test-cn",
+  "native": {
+    "nativeBalance": 4
+  },
+  "prepared": {
+    "epochId": "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+    "generation": 1,
+    "operatorEvidenceId": "synthetic-cli-prepare",
+    "state": "prepared"
+  },
+  "productionEligibility": false,
+  "seconds": 7.759797200036701,
+  "streamEpoch": "0f097a8f-7ff9-4eb4-a666-daf1e1fa9700",
+  "syntheticIntegration": true,
+  "verified": [
+    {
+      "pages": 14,
+      "proofId": "sha256:bcf895030b7329547a10d5710d9a3e5bba7b53ce16fb97b5e3ff81065dea7cd5"
+    },
+    {
+      "pages": 14,
+      "proofId": "sha256:ed1b038d9ec73e47332e23c837734b4057f08ed8c9ec185fde0ac74c0eb76d5a"
+    }
+  ]
+}

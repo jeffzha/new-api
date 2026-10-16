@@ -540,6 +540,9 @@ func RecordAgencyBillingEvent(relayInfo *relaycommon.RelayInfo, actualQuota int6
 	if relayInfo == nil || relayInfo.AgencyPricing == nil {
 		return nil
 	}
+	if err := model.BindCNChargeRequest(relayInfo.RequestId, relayInfo.RequestId, relayInfo.UserId); err != nil {
+		common.SysError("CN finance agency association requires repair: " + err.Error())
+	}
 	// Realtime sessions commit one immutable journal/outbox per successful
 	// segment. The connection-close hook receives cumulative usage and must
 	// not append a second aggregate event after those segment facts exist.

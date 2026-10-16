@@ -179,12 +179,35 @@ func creditTopUpQuotaWithFunding(tx *gorm.DB, userId int, creditedQuota int, upd
 			return err
 		}
 	}
+	captureSupported := true
+	if billingMode != AgencyDurableBillingMode {
+		if err := cnBeginIntegrityCaptureTx(tx, userId); err != nil {
+			return err
+		}
+		if value, exists := tx.Statement.Settings.Load(cnIntegrityCaptureScopeKey); exists {
+			var native TopUp
+			err := lockForUpdate(tx).Where("trade_no = ? AND user_id = ? AND status = ?", sourceID, userId, common.TopUpStatusSuccess).First(&native).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			if errors.Is(err, gorm.ErrRecordNotFound) || sourceID == "" {
+				captureSupported = false
+				if err := cnInvalidateIntegrityUserTx(tx, userId); err != nil {
+					return err
+				}
+			}
+			delete(value.(*cnIntegrityCaptureScope).BeforeRows, CNIdentity("topup", sourceID))
+		}
+		if err := cnWalletValueTopupTx(tx, userId, int64(creditedQuota), sourceID, snapshots); err != nil {
+			return err
+		}
+	}
 
 	updateFields := make(map[string]any, len(updates)+1)
 	maps.Copy(updateFields, updates)
 	updateFields["quota"] = gorm.Expr("quota + ?", creditedQuota)
 
-	result := tx.Model(&User{}).
+	result := cnWalletValueWrite(tx).Model(&User{}).
 		Where("id = ? AND quota <= ?", userId, maxCurrentQuota).
 		Updates(updateFields)
 	if result.Error != nil {
@@ -198,7 +221,18 @@ func creditTopUpQuotaWithFunding(tx *gorm.DB, userId int, creditedQuota int, upd
 		if len(snapshots) == 1 && snapshots[0] != nil {
 			actorID = snapshots[0].InitiatedByUserID
 		}
-		return RecordAgencyTopupWithActor(tx, int64(userId), sourceKind, sourceID, "payment_callback", int64(creditedQuota), 0, actorID, snapshots...)
+		if err := RecordAgencyTopupWithActor(tx, int64(userId), sourceKind, sourceID, "payment_callback", int64(creditedQuota), 0, actorID, snapshots...); err != nil {
+			return err
+		}
+		if billingMode != AgencyDurableBillingMode && captureSupported {
+			if _, capturing := tx.Statement.Settings.Load(cnIntegrityCaptureScopeKey); capturing {
+				if err := tx.Model(&TopUp{}).Where("trade_no = ? AND user_id = ? AND credited_quota = ? AND status = ?", sourceID, userId, 0, common.TopUpStatusSuccess).Update("credited_quota", creditedQuota).Error; err != nil {
+					return err
+				}
+			}
+			return cnFinishIntegrityCaptureTx(tx, userId, "topup", sourceID)
+		}
+		return nil
 	}
 
 	var count int64

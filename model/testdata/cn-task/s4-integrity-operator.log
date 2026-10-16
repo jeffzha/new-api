@@ -1,0 +1,12 @@
+=== RUN   TestOperatorFreezeRecoveryAcrossDialects
+=== RUN   TestOperatorFreezeRecoveryAcrossDialects/sqlite
+=== RUN   TestOperatorFreezeRecoveryAcrossDialects/mysql
+=== RUN   TestOperatorFreezeRecoveryAcrossDialects/postgres
+--- PASS: TestOperatorFreezeRecoveryAcrossDialects (9.73s)
+    --- PASS: TestOperatorFreezeRecoveryAcrossDialects/sqlite (1.63s)
+    --- PASS: TestOperatorFreezeRecoveryAcrossDialects/mysql (1.85s)
+    --- PASS: TestOperatorFreezeRecoveryAcrossDialects/postgres (6.25s)
+=== RUN   TestOperatorStartupRequiresExistingExplicitDatabase
+--- PASS: TestOperatorStartupRequiresExistingExplicitDatabase (0.01s)
+PASS
+ok  	github.com/QuantumNous/new-api/cmd/cn-integrity-operator	10.017s

@@ -72,6 +72,13 @@ const rows: [string, string, string, string, string, string, string][] = [
     "Безопасность аккаунта",
     "Bảo mật tài khoản",
   ],
+  ["Platform account", "主站账号", "主站帳號", "Compte plateforme", "プラットフォームアカウント", "Аккаунт платформы", "Tài khoản nền tảng"],
+  ["Current agency password", "当前代理商密码", "目前代理商密碼", "Mot de passe agence actuel", "現在の代理店パスワード", "Текущий пароль агентства", "Mật khẩu đại lý hiện tại"],
+  ["Link platform account", "关联主站账号", "關聯主站帳號", "Lier le compte plateforme", "プラットフォームアカウントを連携", "Связать аккаунт платформы", "Liên kết tài khoản nền tảng"],
+  ["Unlink platform account", "解除主站关联", "解除主站關聯", "Dissocier le compte plateforme", "プラットフォーム連携を解除", "Отвязать аккаунт платформы", "Hủy liên kết tài khoản nền tảng"],
+  ["Link your own platform account for passwordless Agency Center sign-in.", "关联你自己的主站账号后，可免密登录当前代理商账号。", "關聯你自己的主站帳號後，可免密登入目前代理商帳號。", "Liez votre propre compte plateforme pour accéder au Centre des agences sans mot de passe.", "自分のプラットフォームアカウントを連携すると、代理店センターへパスワードなしでログインできます。", "Свяжите собственный аккаунт платформы для входа в центр агентства без пароля.", "Liên kết tài khoản nền tảng của bạn để đăng nhập Trung tâm đại lý không cần mật khẩu."],
+  ["Platform and agency usernames may differ. Choose and confirm the platform account in the authorization window.", "主站账号与代理商账号名称可以不同，请在授权窗口选择并确认要关联的主站账号。", "主站帳號與代理商帳號名稱可以不同，請在授權視窗選擇並確認要關聯的主站帳號。", "Les identifiants plateforme et agence peuvent différer. Choisissez et confirmez le compte plateforme dans la fenêtre d’autorisation.", "プラットフォームと代理店のユーザー名は異なっていても構いません。認証ウィンドウで連携するアカウントを選択して確認してください。", "Имена аккаунтов платформы и агентства могут отличаться. Выберите и подтвердите аккаунт платформы в окне авторизации.", "Tên tài khoản nền tảng và đại lý có thể khác nhau. Hãy chọn và xác nhận tài khoản nền tảng trong cửa sổ ủy quyền."],
+  ["Linked platform account: {{username}}", "已关联主站账号：{{username}}", "已關聯主站帳號：{{username}}", "Compte plateforme lié : {{username}}", "連携済みプラットフォームアカウント：{{username}}", "Связанный аккаунт платформы: {{username}}", "Tài khoản nền tảng đã liên kết: {{username}}"],
   [
     "Current password",
     "当前密码",

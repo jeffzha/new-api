@@ -661,6 +661,14 @@ export const STATIC_I18N_KEYS = [
   'Reset to Default',
 
   // Available models
+  'Text models',
+  'Video models',
+  'Image models',
+  'Audio models',
+  'Embedding models',
+  'This model does not support chat in Playground. Call it through the API.',
+  'This model is available through API calls only',
+  'Other models',
   'Available Models',
   'View all currently available models',
   'No available models',

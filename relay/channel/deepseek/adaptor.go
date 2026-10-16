@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -94,7 +95,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			return fmt.Sprintf("%s/completions", fimBaseUrl), nil
 		case constant.RelayModeResponses:
 			if responsesUseChatCompletionsUpstream(info) {
-				return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
+				return fmt.Sprintf("%s/v1/chat/completions", strings.TrimRight(info.ChannelBaseUrl, "/")), nil
 			}
 			return fmt.Sprintf("%s/responses", info.ChannelBaseUrl), nil
 		default:
@@ -269,7 +270,15 @@ func useOpenAICompatibleClaude(info *relaycommon.RelayInfo) bool {
 }
 
 func useChatCompletionsForResponses(info *relaycommon.RelayInfo) bool {
-	return info != nil && info.ChannelMeta != nil && info.ChannelOtherSettings.ResponsesUseChatCompletions
+	if info == nil || info.ChannelMeta == nil {
+		return false
+	}
+	if info.ChannelOtherSettings.ResponsesUseChatCompletions {
+		return true
+	}
+	// LocoPal exposes its DeepSeek models through the OpenAI chat endpoint.
+	baseURL, err := url.Parse(info.ChannelBaseUrl)
+	return err == nil && strings.EqualFold(baseURL.Hostname(), "locopalai.com")
 }
 
 func responsesUseChatCompletionsUpstream(info *relaycommon.RelayInfo) bool {

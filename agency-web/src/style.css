@@ -1035,6 +1035,19 @@ h3 {
   font-weight: 650;
   white-space: nowrap;
 }
+.pricing-pending-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid #fed7aa;
+  border-radius: 999px;
+  color: #9a3412;
+  background: #fff7ed;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
 .pricing-matrix-wrap { max-height: min(62vh, 680px); }
 .pricing-matrix { min-width: 860px; }
 .agency-sales-card .pricing-matrix { min-width: 800px; }
@@ -1529,6 +1542,27 @@ a.button.secondary {
 .password-actions button {
   min-width: 136px;
   white-space: nowrap;
+}
+.platform-account-link {
+  display: grid;
+  gap: 16px;
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid #eaecf0;
+}
+.platform-account-link h3,
+.platform-account-link p {
+  margin: 0;
+}
+.platform-account-link h3 {
+  margin-bottom: 6px;
+  color: #172033;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+.platform-account-link button {
+  width: fit-content;
+  min-width: 168px;
 }
 .notice {
   overflow-wrap: anywhere;

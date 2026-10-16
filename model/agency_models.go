@@ -49,6 +49,22 @@ type AgencyOperatorAccount struct {
 
 func (AgencyOperatorAccount) TableName() string { return AgencyTablePrefix + "operator_accounts" }
 
+// AgencyOperatorIdentityBinding links one authenticated platform user to one
+// existing agency operator account. It is intentionally separate from customer
+// ownership and billing bindings: this table grants login identity only.
+type AgencyOperatorIdentityBinding struct {
+	ID                int64 `gorm:"primaryKey" json:"id"`
+	OperatorAccountID int64 `gorm:"not null;uniqueIndex:uidx_agency_operator_identity_operator" json:"operator_account_id"`
+	AgencyID          int64 `gorm:"not null;index:idx_agency_operator_identity_agency" json:"agency_id"`
+	PlatformUserID    int64 `gorm:"not null;uniqueIndex:uidx_agency_operator_identity_user" json:"platform_user_id"`
+	CreatedAt         int64 `gorm:"not null" json:"created_at"`
+	UpdatedAt         int64 `gorm:"not null" json:"updated_at"`
+}
+
+func (AgencyOperatorIdentityBinding) TableName() string {
+	return AgencyTablePrefix + "operator_identity_bindings"
+}
+
 type AgencySession struct {
 	ID                   int64  `gorm:"primaryKey" json:"id"`
 	TokenHash            string `gorm:"size:128;not null;uniqueIndex:uidx_agency_session_token" json:"-"`
@@ -922,6 +938,54 @@ type AgencyDebtRepayment struct {
 
 func (AgencyDebtRepayment) TableName() string { return AgencyTablePrefix + "debt_repayments" }
 
+// AgencyOpsWriterState is the durable source-writer fence shared by every
+// application instance. The singleton row is advanced with compare-and-swap.
+type AgencyOpsWriterState struct {
+	ID              int64  `gorm:"primaryKey" json:"id"`
+	Mode            string `gorm:"size:32;not null" json:"mode"`
+	FenceVersion    int64  `gorm:"not null" json:"fence_version"`
+	ManifestVersion int64  `gorm:"not null" json:"manifest_version"`
+	LastCommandID   string `gorm:"size:191;uniqueIndex:uidx_agency_writer_command" json:"last_command_id,omitempty"`
+	Reason          string `gorm:"type:text" json:"reason"`
+	EvidenceJSON    string `gorm:"type:text" json:"evidence_json"`
+	UpdatedAtMS     int64  `gorm:"not null" json:"updated_at_ms"`
+}
+
+func (AgencyOpsWriterState) TableName() string { return AgencyTablePrefix + "ops_writer_states" }
+
+// AgencyOpsWriterTransition is the immutable execution receipt for one writer
+// fence command. It makes command replay stable after later transitions have
+// advanced the singleton writer state.
+type AgencyOpsWriterTransition struct {
+	ID                    int64  `gorm:"primaryKey" json:"id"`
+	CommandID             string `gorm:"size:191;not null;uniqueIndex:uidx_agency_writer_transition_command" json:"command_id"`
+	PayloadHash           string `gorm:"size:128;not null" json:"payload_hash"`
+	TargetMode            string `gorm:"size:32;not null" json:"target_mode"`
+	ExpectedFenceVersion  int64  `gorm:"not null" json:"expected_fence_version"`
+	ResultingFenceVersion int64  `gorm:"not null" json:"resulting_fence_version"`
+	ManifestVersion       int64  `gorm:"not null" json:"manifest_version"`
+	Reason                string `gorm:"type:text;not null" json:"reason"`
+	EvidenceJSON          string `gorm:"type:text;not null" json:"evidence_json"`
+	ResultJSON            string `gorm:"type:text;not null" json:"result_json"`
+	CreatedAtMS           int64  `gorm:"not null" json:"created_at_ms"`
+}
+
+func (AgencyOpsWriterTransition) TableName() string {
+	return AgencyTablePrefix + "ops_writer_transitions"
+}
+
+// AgencyOpsSourceManifest freezes what the source database claimed at a
+// writer-fence version. TokenOps receives this exact payload and proof.
+type AgencyOpsSourceManifest struct {
+	Version      int64  `gorm:"primaryKey"`
+	FenceVersion int64  `gorm:"not null"`
+	Payload      string `gorm:"type:text;not null"`
+	PayloadHash  string `gorm:"size:128;not null"`
+	CreatedAtMS  int64  `gorm:"not null"`
+}
+
+func (AgencyOpsSourceManifest) TableName() string { return AgencyTablePrefix + "ops_source_manifests" }
+
 // AgencyCreditTerms is the customer's approved credit contract. Credit is
 // intentionally kept outside AgencyFundingDebt so chargeback/reversal debt
 // remains distinguishable from ordinary monthly credit usage.
@@ -971,10 +1035,11 @@ func (AgencyCreditInvoice) TableName() string { return AgencyTablePrefix + "cred
 
 func AgencyModels() []any {
 	return []any{
-		&Agency{}, &AgencyOperatorAccount{}, &AgencySession{}, &AgencySSOTicketUse{}, &AgencyVerificationUse{}, &AgencyDeliverySecret{},
+		&Agency{}, &AgencyOperatorAccount{}, &AgencyOperatorIdentityBinding{}, &AgencySession{}, &AgencySSOTicketUse{}, &AgencyVerificationUse{}, &AgencyDeliverySecret{},
 		&AgencyUserBinding{}, &AgencyActiveUserBinding{}, &AgencyCustomerSalesOverride{}, &AgencyPricePolicyVersion{}, &AgencyPricePolicyItem{}, &AgencyPlatformPriceState{}, &AgencyPlatformPriceVersion{}, &AgencyIdempotencyRecord{},
 		&AgencyFundingAccount{}, &AgencyFundingLot{}, &AgencyFundingAllocation{}, &AgencyFundingLedger{}, &AgencyFundingDebt{}, &AgencyDebtRepayment{}, &AgencyFundingReversal{}, &AgencyFundingReversalChargeRecord{}, &AgencyCreditTerms{}, &AgencyCreditInvoice{},
 		&AgencyBillingJournal{}, &AgencyBillingOperation{}, &AgencyBillingOutbox{}, &AgencyEventDelivery{}, &AgencyTaskSubmissionAttempt{},
+		&AgencyOpsPublisher{}, &AgencyOpsPublication{}, &AgencyOpsWriterState{}, &AgencyOpsWriterTransition{}, &AgencyOpsSourceManifest{},
 		&AgencyBillingCorrection{},
 		&AgencyChargeComponent{}, &AgencyComponentFunding{},
 		&AgencySourceEvent{}, &AgencyUsageFact{}, &AgencyTopupFact{}, &AgencyCommissionJob{}, &AgencyCommissionLedger{}, &AgencyCommissionBalance{},

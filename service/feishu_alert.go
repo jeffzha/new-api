@@ -90,6 +90,8 @@ func classifyAlert(code, message string, info *relaycommon.RelayInfo) (owner, ev
 	}
 	lower := strings.ToLower(message)
 	switch {
+	case code == "invalid_request" && strings.Contains(lower, "video generation model; use post /v1/videos"):
+		owner, evidence, action = "客户端调用方式", "视频模型误用了文本接口，平台已在计费和请求上游前拒绝", "请将视频生成请求改为 POST /v1/videos，并使用视频接口参数"
 	case code == "model_price_error":
 		owner, evidence, action = "平台配置", "平台价格校验未通过，未发送上游请求", "配置模型价格；视频模型使用 /v1/videos"
 	case code == "invalid_request" && (strings.Contains(lower, "seconds") || strings.Contains(lower, "prompt is required") || strings.Contains(lower, "cannot unmarshal")):
@@ -105,7 +107,6 @@ func classifyAlert(code, message string, info *relaycommon.RelayInfo) (owner, ev
 	}
 	return
 }
-
 
 func requestIDForAlert(c *gin.Context) string {
 	if c == nil {

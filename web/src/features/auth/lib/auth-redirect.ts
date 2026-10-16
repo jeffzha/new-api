@@ -78,3 +78,7 @@ export function sanitizeAuthRedirect(
 
   return `${redirectURL.pathname}${redirectURL.search}${redirectURL.hash}`
 }
+
+export function requiresDocumentAuthRedirect(target: string): boolean {
+  return target === '/api/agency/sso' || target.startsWith('/api/agency/sso?')
+}

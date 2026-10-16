@@ -163,7 +163,7 @@ func main() {
 	if opsexport.Default != nil {
 		go model.RunCNWalletCancellationRecovery(commandWorkerCtx, model.DB)
 	}
-	if err := opsbridge.StartConfigured(commandWorkerCtx); err != nil {
+	if err := opsbridge.StartConfigured(commandWorkerCtx, service.OpsAgencyCommandExecutor{}, service.OpsBillingEventSource{}, service.OpsBillingEventSource{}); err != nil {
 		common.FatalLog("failed to initialize Ops bridge: " + err.Error())
 		return
 	}

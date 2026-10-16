@@ -22,8 +22,11 @@ import (
 )
 
 type Config struct {
-	URL, GatewayID, Key, StateDir string
-	EnforceCalls                  bool
+	URL, GatewayID, Key, StateDir, CommandSigningKey string
+	EnforceCalls                                     bool
+	CommandExecutor                                  CommandExecutor
+	BillingSource                                    BillingEventSource
+	ManifestSource                                   SourceManifestSource
 }
 
 type Delivery struct {
@@ -36,32 +39,41 @@ type Delivery struct {
 	NextAt    int64          `json:"next_at"`
 	LastError string         `json:"last_error,omitempty"`
 	RequestID string         `json:"request_id,omitempty"`
+	Sequence  int64          `json:"sequence,omitempty"`
 }
 
 type State struct {
-	Schema              int                    `json:"schema"`
-	Scope               string                 `json:"scope"`
-	Deliveries          map[string]*Delivery   `json:"deliveries"`
-	Notifications       map[string]any         `json:"notifications"`
-	LatestNotifications map[string]any         `json:"latest_notifications,omitempty"`
-	Requests            map[string]string      `json:"requests"`
-	Imports             map[string]*ImportPlan `json:"imports"`
-	Baselines           map[string]Baseline    `json:"baselines"`
-	Tasks               map[string]PendingTask `json:"tasks,omitempty"`
+	Schema               int                        `json:"schema"`
+	Scope                string                     `json:"scope"`
+	Deliveries           map[string]*Delivery       `json:"deliveries"`
+	Notifications        map[string]any             `json:"notifications"`
+	LatestNotifications  map[string]any             `json:"latest_notifications,omitempty"`
+	Requests             map[string]string          `json:"requests"`
+	Imports              map[string]*ImportPlan     `json:"imports"`
+	Baselines            map[string]Baseline        `json:"baselines"`
+	Tasks                map[string]PendingTask     `json:"tasks,omitempty"`
+	CommandReceipts      map[string]*CommandReceipt `json:"command_receipts,omitempty"`
+	BillingCursor        int64                      `json:"billing_cursor,omitempty"`
+	ManifestCursor       int64                      `json:"manifest_cursor,omitempty"`
+	NextDeliverySequence int64                      `json:"next_delivery_sequence,omitempty"`
 }
 
 type Bridge struct {
-	cfg            Config
-	client         *http.Client
-	mu             sync.Mutex
-	state          State
-	lock           *os.File
-	importMu       sync.Mutex
-	deliveryMu     sync.Mutex
-	notificationMu sync.Mutex
-	fault          string
-	stop           context.CancelFunc
-	done           chan struct{}
+	cfg             Config
+	client          *http.Client
+	mu              sync.Mutex
+	state           State
+	lock            *os.File
+	importMu        sync.Mutex
+	deliveryMu      sync.Mutex
+	notificationMu  sync.Mutex
+	commandMu       sync.Mutex
+	commandExecutor CommandExecutor
+	billingSource   BillingEventSource
+	manifestSource  SourceManifestSource
+	fault           string
+	stop            context.CancelFunc
+	done            chan struct{}
 }
 
 var Default *Bridge
@@ -71,13 +83,26 @@ func (b *Bridge) Scope() string { return b.state.Scope }
 
 // StartConfigured fails startup on an invalid enabled configuration. Credentials
 // never enter persistent state or application responses.
-func StartConfigured(ctx context.Context) error {
+func StartConfigured(ctx context.Context, commandExecutor CommandExecutor, billingSource BillingEventSource, manifestSources ...SourceManifestSource) error {
 	if os.Getenv("OPS_BRIDGE_ENABLED") != "true" {
 		return nil
 	}
+	if os.Getenv("OPS_AGENCY_COMMANDS_ENABLED") != "true" {
+		commandExecutor = nil
+	} else if commandExecutor == nil {
+		return errors.New("Ops agency command executor is required")
+	}
+	var manifestSource SourceManifestSource
+	if len(manifestSources) > 0 {
+		manifestSource = manifestSources[0]
+	}
 	b, err := Open(Config{URL: os.Getenv("OPS_BRIDGE_URL"), GatewayID: os.Getenv("OPS_GATEWAY_ID"),
 		Key: os.Getenv("OPS_GATEWAY_KEY"), StateDir: os.Getenv("OPS_BRIDGE_STATE_DIR"),
-		EnforceCalls: os.Getenv("OPS_ENFORCE_CALLS") == "true"})
+		CommandSigningKey: os.Getenv("OPS_AGENCY_COMMAND_SIGNING_KEY"),
+		CommandExecutor:   commandExecutor,
+		BillingSource:     billingSource,
+		ManifestSource:    manifestSource,
+		EnforceCalls:      os.Getenv("OPS_ENFORCE_CALLS") == "true"})
 	if err != nil {
 		return err
 	}
@@ -96,6 +121,9 @@ func StartConfigured(ctx context.Context) error {
 }
 
 func Open(cfg Config) (*Bridge, error) {
+	if cfg.CommandExecutor != nil && len(cfg.CommandSigningKey) < 32 {
+		return nil, errors.New("Ops agency command signing key must contain at least 32 characters")
+	}
 	u, err := url.Parse(cfg.URL)
 	if err != nil || u == nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, errors.New("invalid Ops URL")
@@ -114,7 +142,7 @@ func Open(cfg Config) (*Bridge, error) {
 	if err != nil {
 		return nil, errors.New("Ops state directory is already in use or unavailable")
 	}
-	b := &Bridge{cfg: cfg, lock: lock, client: &http.Client{Timeout: 15 * time.Second,
+	b := &Bridge{cfg: cfg, lock: lock, commandExecutor: cfg.CommandExecutor, billingSource: cfg.BillingSource, manifestSource: cfg.ManifestSource, client: &http.Client{Timeout: 15 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	b.state = State{Schema: 1, Scope: hash([]byte(cfg.URL + "\n" + cfg.GatewayID)), Deliveries: map[string]*Delivery{},
 		Notifications: map[string]any{}, Requests: map[string]string{}, Imports: map[string]*ImportPlan{}, Baselines: map[string]Baseline{}}
@@ -136,6 +164,35 @@ func Open(cfg Config) (*Bridge, error) {
 	}
 	if b.state.Tasks == nil {
 		b.state.Tasks = map[string]PendingTask{}
+	}
+	if b.state.CommandReceipts == nil {
+		b.state.CommandReceipts = map[string]*CommandReceipt{}
+	}
+	// Older state files did not persist enqueue order. Assign a deterministic
+	// one once, then preserve it for all future restarts.
+	legacy := make([]string, 0)
+	for id, delivery := range b.state.Deliveries {
+		if delivery.Sequence == 0 {
+			legacy = append(legacy, id)
+		}
+		if delivery.Sequence > b.state.NextDeliverySequence {
+			b.state.NextDeliverySequence = delivery.Sequence
+		}
+	}
+	sort.Strings(legacy)
+	for _, id := range legacy {
+		b.state.NextDeliverySequence++
+		b.state.Deliveries[id].Sequence = b.state.NextDeliverySequence
+	}
+	if len(legacy) > 0 {
+		if err := b.saveLocked(); err != nil {
+			b.Close()
+			return nil, err
+		}
+	}
+	if err := b.recoverCommandReceiptDeliveries(); err != nil {
+		b.Close()
+		return nil, err
 	}
 	return b, nil
 }
@@ -298,7 +355,8 @@ func (b *Bridge) enqueueLocked(path, key string, body map[string]any, requestID,
 	if len(b.state.Deliveries) >= 10000 {
 		return errors.New("Ops outbox capacity exceeded")
 	}
-	b.state.Deliveries[id] = &Delivery{ID: id, Path: path, Key: key, Body: frozen, Status: "pending", RequestID: requestID}
+	b.state.NextDeliverySequence++
+	b.state.Deliveries[id] = &Delivery{ID: id, Path: path, Key: key, Body: frozen, Status: "pending", RequestID: requestID, Sequence: b.state.NextDeliverySequence}
 	previous := b.state.Requests[requestID]
 	if requestID != "" {
 		b.state.Requests[requestID] = status
@@ -321,18 +379,36 @@ func (b *Bridge) ProcessNext(ctx context.Context, now time.Time) (bool, error) {
 	b.deliveryMu.Lock()
 	defer b.deliveryMu.Unlock()
 	b.mu.Lock()
-	ids := make([]string, 0, len(b.state.Deliveries))
-	for id, job := range b.state.Deliveries {
-		if job.Status == "pending" && job.NextAt <= now.Unix() {
-			ids = append(ids, id)
+	jobs := make([]*Delivery, 0, len(b.state.Deliveries))
+	for _, job := range b.state.Deliveries {
+		jobs = append(jobs, job)
+	}
+	sort.Slice(jobs, func(i, j int) bool {
+		if jobs[i].Sequence == jobs[j].Sequence {
+			return jobs[i].ID < jobs[j].ID
+		}
+		return jobs[i].Sequence < jobs[j].Sequence
+	})
+	var selected *Delivery
+	billingBlocked := false
+	for _, candidate := range jobs {
+		isBilling := candidate.Path == "agency-center/billing-events"
+		if isBilling && candidate.Status != "delivered" {
+			if billingBlocked {
+				continue
+			}
+			billingBlocked = true
+		}
+		if candidate.Status == "pending" && candidate.NextAt <= now.Unix() && (!isBilling || billingBlocked) {
+			selected = candidate
+			break
 		}
 	}
-	sort.Strings(ids)
-	if len(ids) == 0 {
+	if selected == nil {
 		b.mu.Unlock()
 		return false, nil
 	}
-	job := *b.state.Deliveries[ids[0]]
+	job := *selected
 	b.mu.Unlock()
 	err := b.request(ctx, http.MethodPost, job.Path, job.Key, job.Body, nil)
 	b.mu.Lock()
@@ -346,7 +422,9 @@ func (b *Bridge) ProcessNext(ctx context.Context, now time.Time) (bool, error) {
 		current.LastError = err.Error()
 		current.NextAt = now.Add(time.Duration(min(3600, 1<<min(current.Attempts, 11))) * time.Second).Unix()
 		var remote *HTTPError
-		if errors.As(err, &remote) && remote.Status >= 400 && remote.Status < 500 && remote.Status != 408 && remote.Status != 429 {
+		isHTTPError := errors.As(err, &remote)
+		sequenceGapMayRecover := job.Path == "agency-center/billing-events" && isHTTPError && remote.Status == http.StatusConflict
+		if isHTTPError && remote.Status >= 400 && remote.Status < 500 && remote.Status != 408 && remote.Status != 429 && !sequenceGapMayRecover {
 			current.Status = "needs_repair"
 		}
 	}
@@ -384,8 +462,30 @@ func (b *Bridge) Status() map[string]any {
 		}
 	}
 	sort.Slice(requestItems, func(i, j int) bool { return requestItems[i]["id"] < requestItems[j]["id"] })
-	return map[string]any{"enabled": true, "persistence_error": b.fault, "enforce_calls": b.cfg.EnforceCalls, "deliveries": jobs, "request_states": requests,
+	commands := map[string]int{}
+	for _, receipt := range b.state.CommandReceipts {
+		commands[receipt.Status]++
+	}
+	return map[string]any{"enabled": true, "persistence_error": b.fault, "enforce_calls": b.cfg.EnforceCalls, "deliveries": jobs, "request_states": requests, "agency_commands": commands,
 		"requests": requestItems, "finance_coverage": "not_exported", "supported_relay_types": []string{"text_generation", "embedding"}}
+}
+
+// DeliveryHealth is a bounded snapshot used by the database-backed cutover
+// fence. Delivered evidence does not block a transition; queued and repair
+// deliveries do.
+func (b *Bridge) DeliveryHealth() DeliveryHealth {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	result := DeliveryHealth{}
+	for _, job := range b.state.Deliveries {
+		if job.Status != "delivered" {
+			result.Backlog++
+		}
+		if job.Status == "needs_repair" {
+			result.NeedsRepair++
+		}
+	}
+	return result
 }
 
 func (b *Bridge) Run(ctx context.Context) {
@@ -396,6 +496,21 @@ func (b *Bridge) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
+			if b.billingSource != nil {
+				if _, err := b.PublishBillingEvent(ctx); err != nil {
+					common.SysError(err.Error())
+				}
+			}
+			if b.manifestSource != nil && now.Unix()%5 == 0 {
+				if _, err := b.PublishSourceManifest(ctx); err != nil {
+					common.SysError(err.Error())
+				}
+			}
+			if b.commandExecutor != nil && now.Unix()%2 == 0 {
+				if _, err := b.ProcessAgencyCommand(ctx, now); err != nil {
+					common.SysError(err.Error())
+				}
+			}
 			if now.Unix()%60 == 0 {
 				if err := b.RenewTasks(ctx); err != nil {
 					common.SysError(err.Error())

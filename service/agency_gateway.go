@@ -309,14 +309,22 @@ func AgencyQuoteForUser(userID, tokenID int, originModelName string, acceptedAtM
 	if err != nil {
 		return nil, err
 	}
+	pending := !agencycontract.ModelPricingConfirmed(platform, originModelName)
+	if pending {
+		// Pending prices remain callable at the standard sale, without an
+		// invented procurement boundary or inherited/customer discounts.
+		policy = agencycontract.Policy{DefaultSalesBPS: 10000}
+	}
 	// Platform pricing owns the root agency's procurement boundary. Child
 	// policies already contain their immutable inherited cost and must not be
 	// overwritten with the platform cost here.
-	if agency.ParentAgencyID == nil {
+	if !pending && agency.ParentAgencyID == nil {
 		policy, err = agencycontract.ApplyPlatformPolicy(policy, platform)
 		if err != nil {
 			return nil, err
 		}
+	} else if !pending {
+		policy = agencycontract.ConfirmedModelPolicy(policy, platform)
 	}
 	resolved, err := agencycontract.Resolve(policy, originModelName)
 	if err != nil {
@@ -329,9 +337,14 @@ func AgencyQuoteForUser(userID, tokenID int, originModelName string, acceptedAtM
 	overrideErr := model.DB.Where("agency_id = ? AND user_id = ? AND model_key IN ?", agency.ID, userID, []string{modelKey, ""}).
 		Order("CASE WHEN model_key = '' THEN 1 ELSE 0 END ASC").First(&customerOverride).Error
 	if overrideErr == nil {
-		resolved.SalesBPS = customerOverride.SalesBPS
+		if !pending {
+			resolved.SalesBPS = customerOverride.SalesBPS
+		}
 	} else if !errors.Is(overrideErr, gorm.ErrRecordNotFound) {
 		return nil, overrideErr
+	}
+	if pending {
+		overrideErr = gorm.ErrRecordNotFound
 	}
 	if acceptedAtMS == 0 {
 		acceptedAtMS = time.Now().UnixMilli()
@@ -355,9 +368,13 @@ func AgencyQuoteForUser(userID, tokenID int, originModelName string, acceptedAtM
 	if resolved.SalesBPS < resolved.SettlementBPS {
 		return nil, errors.New("customer sales coefficient is below agency cost")
 	}
-	hierarchy, hierarchyEligible, hierarchyReason, err := agencyPricingHierarchy(agency, originModelName, resolved.SalesBPS, overrideErr == nil, modelKey, platform)
-	if err != nil {
-		return nil, err
+	var hierarchy []agencycontract.PricingTierNode
+	hierarchyEligible, hierarchyReason := false, "platform_pricing_pending"
+	if !pending {
+		hierarchy, hierarchyEligible, hierarchyReason, err = agencyPricingHierarchy(agency, originModelName, resolved.SalesBPS, overrideErr == nil, modelKey, platform)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if !hierarchyEligible {
 		eligible = false
@@ -366,7 +383,7 @@ func AgencyQuoteForUser(userID, tokenID int, originModelName string, acceptedAtM
 		}
 	}
 	platformCostBPS := 0
-	if platformPrice, priceErr := agencycontract.ResolvePlatform(platform, originModelName); priceErr == nil && platformPrice != nil {
+	if platformPrice, priceErr := agencycontract.ResolvePlatform(platform, originModelName); !pending && priceErr == nil && platformPrice != nil {
 		platformCostBPS = platformPrice.PlatformCostBPS
 	}
 	return &agencycontract.PricingSnapshot{SchemaVersion: agencycontract.SchemaVersion, UserID: int64(userID), TokenID: int64(tokenID), AgencyID: agency.ID, BindingID: binding.ID, BindingRevision: binding.Revision, AgencyStateRevision: agency.StateRevision, PolicyVersionID: policyRow.ID, PolicyRevision: policyRow.Revision, OriginModelName: originModelName, ModelKey: resolved.ModelKey, SettlementBPS: resolved.SettlementBPS, SalesBPS: resolved.SalesBPS, CommissionEligible: eligible, EligibilityReason: reason, CurrencyCode: currencyCode, CurrencyConfigVersion: "operation-setting-v1", QuotaPerUnit: strconv.FormatFloat(common.QuotaPerUnit, 'f', -1, 64), ExchangeRate: strconv.FormatFloat(exchangeRate, 'f', -1, 64), AcceptedAtMS: acceptedAtMS, FundingRuleVersion: agencycontract.FundingRuleVersion, PricingEngineVersion: "gateway-v1", Hierarchy: hierarchy, MinSpreadBPS: hierarchyMinSpreadBPS(hierarchy, policy.MinSpreadBPS), CustomerSalesOverrideBPS: func() *int {

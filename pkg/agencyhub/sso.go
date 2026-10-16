@@ -27,6 +27,9 @@ type SSOTicketClaims struct {
 	StateHash       string `json:"state_hash"`
 	JTI             string `json:"jti"`
 	KeyID           string `json:"kid"`
+	ActorType       string `json:"actor_type,omitempty"`
+	ActorID         int64  `json:"actor_id,omitempty"`
+	AgencyID        int64  `json:"agency_id,omitempty"`
 	Action          string `json:"action,omitempty"`
 	CommandID       string `json:"command_id,omitempty"`
 	ObjectID        string `json:"object_id,omitempty"`
@@ -36,6 +39,8 @@ type SSOTicketClaims struct {
 	NotBefore       int64  `json:"nbf"`
 	ExpiresAt       int64  `json:"exp"`
 }
+
+var errSSOTicketConsumed = errors.New("SSO ticket already used")
 
 func SignSSOTicket(privateKey ed25519.PrivateKey, claims SSOTicketClaims) (string, error) {
 	if len(privateKey) != ed25519.PrivateKeySize || claims.Subject <= 0 || claims.JTI == "" {
@@ -51,7 +56,7 @@ func SignSSOTicket(privateKey ed25519.PrivateKey, claims SSOTicketClaims) (strin
 	if claims.ExpiresAt == 0 {
 		claims.ExpiresAt = now + 60
 	}
-	tokenClaims := jwt.MapClaims{"iss": claims.Issuer, "aud": claims.Audience, "sub": claims.Subject, "sid": claims.SourceSID, "user_auth_version": claims.UserAuthVersion, "session_version": claims.SessionVersion, "state_hash": claims.StateHash, "jti": claims.JTI, "kid": claims.KeyID, "action": claims.Action, "command_id": claims.CommandID, "object_id": claims.ObjectID, "expected_version": claims.ExpectedVersion, "body_hash": claims.BodyHash, "iat": claims.IssuedAt, "nbf": claims.NotBefore, "exp": claims.ExpiresAt}
+	tokenClaims := jwt.MapClaims{"iss": claims.Issuer, "aud": claims.Audience, "sub": claims.Subject, "sid": claims.SourceSID, "user_auth_version": claims.UserAuthVersion, "session_version": claims.SessionVersion, "state_hash": claims.StateHash, "jti": claims.JTI, "kid": claims.KeyID, "actor_type": claims.ActorType, "actor_id": claims.ActorID, "agency_id": claims.AgencyID, "action": claims.Action, "command_id": claims.CommandID, "object_id": claims.ObjectID, "expected_version": claims.ExpectedVersion, "body_hash": claims.BodyHash, "iat": claims.IssuedAt, "nbf": claims.NotBefore, "exp": claims.ExpiresAt}
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, tokenClaims)
 	token.Header["kid"] = claims.KeyID
 	return token.SignedString(privateKey)
@@ -91,7 +96,7 @@ func VerifySSOTicket(publicKey ed25519.PublicKey, raw string, issuer, audience s
 		}
 		return 0
 	}
-	result := SSOTicketClaims{Issuer: asString(claims["iss"]), Audience: asString(claims["aud"]), Subject: toInt(claims["sub"]), SourceSID: asString(claims["sid"]), UserAuthVersion: toInt(claims["user_auth_version"]), SessionVersion: toInt(claims["session_version"]), StateHash: asString(claims["state_hash"]), JTI: asString(claims["jti"]), KeyID: claimKid, Action: asString(claims["action"]), CommandID: asString(claims["command_id"]), ObjectID: asString(claims["object_id"]), ExpectedVersion: toInt(claims["expected_version"]), BodyHash: asString(claims["body_hash"]), IssuedAt: toInt(claims["iat"]), NotBefore: toInt(claims["nbf"]), ExpiresAt: toInt(claims["exp"])}
+	result := SSOTicketClaims{Issuer: asString(claims["iss"]), Audience: asString(claims["aud"]), Subject: toInt(claims["sub"]), SourceSID: asString(claims["sid"]), UserAuthVersion: toInt(claims["user_auth_version"]), SessionVersion: toInt(claims["session_version"]), StateHash: asString(claims["state_hash"]), JTI: asString(claims["jti"]), KeyID: claimKid, ActorType: asString(claims["actor_type"]), ActorID: toInt(claims["actor_id"]), AgencyID: toInt(claims["agency_id"]), Action: asString(claims["action"]), CommandID: asString(claims["command_id"]), ObjectID: asString(claims["object_id"]), ExpectedVersion: toInt(claims["expected_version"]), BodyHash: asString(claims["body_hash"]), IssuedAt: toInt(claims["iat"]), NotBefore: toInt(claims["nbf"]), ExpiresAt: toInt(claims["exp"])}
 	now := time.Now().Unix()
 	if result.Subject <= 0 || result.JTI == "" ||
 		result.IssuedAt <= 0 || result.NotBefore <= 0 || result.ExpiresAt <= now ||
@@ -210,27 +215,38 @@ func (a *App) ssoCallback(c *gin.Context) {
 		return
 	}
 	now := time.Now().Unix()
-	var used model.AgencySSOTicketUse
 	err = a.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("jti = ?", claims.JTI).First(&used).Error; err == nil {
-			return errors.New("SSO票据已使用")
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		if err := tx.Create(&model.AgencySSOTicketUse{JTI: claims.JTI, ActorID: claims.Subject, SourceSID: claims.SourceSID, ExpiresAt: claims.ExpiresAt, ConsumedAt: now, CreatedAt: now}).Error; err != nil {
-			return err
-		}
-		return nil
+		return consumeSSOTicket(tx, claims, now)
 	})
-	if err != nil {
-		respondError(c, http.StatusUnauthorized, "ticket_replayed", err.Error(), nil)
+	if errors.Is(err, errSSOTicketConsumed) {
+		respondError(c, http.StatusUnauthorized, "ticket_replayed", "SSO票据已使用", nil)
 		return
 	}
-	token, csrf, err := a.CreateRootSession(claims.Subject, claims.SourceSID, claims.SessionVersion)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "session_failed", "SSO登录失败", nil)
+		respondError(c, http.StatusInternalServerError, "ticket_check_failed", "SSO票据校验失败", nil)
 		return
 	}
+	var token, csrf string
+	actorType := claims.ActorType
+	if actorType == ActorTypeOperator {
+		token, csrf, err = a.CreateOperatorSSOSession(claims.Subject, claims.ActorID, claims.AgencyID, claims.SourceSID, claims.SessionVersion)
+	} else if actorType == ActorTypeRoot || actorType == "" {
+		// Empty actor type is reserved for the existing Root ticket format.
+		// The source session is checked before creating any privileged session.
+		err = a.validateRootSourceSession(model.AgencySession{SourceUserID: claims.Subject, SourceSID: claims.SourceSID, SourceSessionVersion: claims.SessionVersion})
+		if err == nil {
+			token, csrf, err = a.CreateRootSession(claims.Subject, claims.SourceSID, claims.SessionVersion)
+		}
+		actorType = ActorTypeRoot
+	} else {
+		err = errors.New("invalid SSO actor type")
+	}
+	if err != nil {
+		respondError(c, http.StatusUnauthorized, "session_failed", "SSO登录身份或关联已失效", nil)
+		return
+	}
+	c.SetCookie("agency_sso_state", "", -1, a.config.BasePath, "", a.config.CookieSecure, true)
+	c.SetCookie("agency_sso_nonce", "", -1, a.config.BasePath, "", a.config.CookieSecure, true)
 	a.setSessionCookies(c, token, csrf, now+int64(a.config.SessionAbsolute/time.Second))
-	respondOK(c, gin.H{"redirect": a.config.BasePath + "/", "actor_type": ActorTypeRoot})
+	respondOK(c, gin.H{"redirect": a.config.BasePath + "/", "actor_type": actorType})
 }

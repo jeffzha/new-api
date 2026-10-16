@@ -23,6 +23,9 @@ import (
 type agencySSORequest struct {
 	StateHash string `json:"state_hash"`
 }
+type agencyLinkProofRequest struct {
+	RequestID string `json:"request_id"`
+}
 type agencyVerifyRequest struct {
 	Password string `json:"password"`
 	Action   string `json:"action"`
@@ -92,15 +95,74 @@ func IssueAgencySSOTicket(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "agency SSO is unavailable"})
 		return
 	}
+	user, err := model.GetUserById(identity.UserID, true)
+	if err != nil || user.Status != common.UserStatusEnabled {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "platform account is unavailable"})
+		return
+	}
+	actorType := agencyhub.ActorTypeRoot
+	var actorID, agencyID int64
+	if user.Role != common.RoleRootUser {
+		var binding model.AgencyOperatorIdentityBinding
+		err = model.DB.
+			Joins("JOIN agency_hub_operator_accounts ON agency_hub_operator_accounts.id = agency_hub_operator_identity_bindings.operator_account_id AND agency_hub_operator_accounts.agency_id = agency_hub_operator_identity_bindings.agency_id AND agency_hub_operator_accounts.status = ?", agencyhub.OperatorStatusActive).
+			Joins("JOIN agency_hub_agencies ON agency_hub_agencies.id = agency_hub_operator_identity_bindings.agency_id AND agency_hub_agencies.status = ?", agencyhub.AgencyStatusActive).
+			Where("agency_hub_operator_identity_bindings.platform_user_id = ?", identity.UserID).
+			First(&binding).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "当前主站账号尚未关联代理商账号"})
+			return
+		}
+		if err != nil {
+			common.SysError("failed to resolve agency operator binding: " + err.Error())
+			c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "agency SSO is unavailable"})
+			return
+		}
+		actorType = agencyhub.ActorTypeOperator
+		actorID = binding.OperatorAccountID
+		agencyID = binding.AgencyID
+	}
 	now := time.Now().Unix()
 	jti := common.NewRequestId()
-	ticket, err := agencyhub.SignSSOTicket(key, agencyhub.SSOTicketClaims{Issuer: "new-api", Audience: "agency-hub", Subject: int64(identity.UserID), SourceSID: identity.SessionID, UserAuthVersion: identity.UserAuthVersion, SessionVersion: identity.SessionVersion, StateHash: request.StateHash, JTI: jti, KeyID: kid, IssuedAt: now, NotBefore: now, ExpiresAt: now + 60})
+	ticket, err := agencyhub.SignSSOTicket(key, agencyhub.SSOTicketClaims{Issuer: "new-api", Audience: "agency-hub", Subject: int64(identity.UserID), SourceSID: identity.SessionID, UserAuthVersion: identity.UserAuthVersion, SessionVersion: identity.SessionVersion, StateHash: request.StateHash, JTI: jti, KeyID: kid, ActorType: actorType, ActorID: actorID, AgencyID: agencyID, IssuedAt: now, NotBefore: now, ExpiresAt: now + 60})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to sign agency ticket"})
 		return
 	}
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"ticket": ticket, "expires_at": now + 60}})
+}
+
+func IssueAgencyLinkProof(c *gin.Context) {
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok || c.GetBool("use_access_token") || !sameOriginWorkbenchRequest(c.Request) {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "a browser session is required"})
+		return
+	}
+	var request agencyLinkProofRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil || strings.TrimSpace(request.RequestID) == "" || len(request.RequestID) > 128 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid link proof request"})
+		return
+	}
+	user, err := model.GetUserById(identity.UserID, true)
+	if err != nil || user.Status != common.UserStatusEnabled || user.Role == common.RoleRootUser {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "该主站账号不能关联代理商账号"})
+		return
+	}
+	key, kid, err := loadAgencySigningKey()
+	if err != nil {
+		common.SysError(err.Error())
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "agency account linking is unavailable"})
+		return
+	}
+	now := time.Now().Unix()
+	proof, err := agencyhub.SignSSOTicket(key, agencyhub.SSOTicketClaims{Issuer: "new-api", Audience: "agency-hub-account-link", Subject: int64(identity.UserID), SourceSID: identity.SessionID, UserAuthVersion: identity.UserAuthVersion, SessionVersion: identity.SessionVersion, JTI: common.NewRequestId(), KeyID: kid, ActorType: agencyhub.ActorTypePlatformUser, ObjectID: request.RequestID, IssuedAt: now, NotBefore: now, ExpiresAt: now + 60})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to sign account link proof"})
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"proof": proof, "expires_at": now + 60}})
 }
 
 func IssueAgencyVerification(c *gin.Context) {

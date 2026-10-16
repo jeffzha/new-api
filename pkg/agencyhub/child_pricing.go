@@ -25,6 +25,7 @@ type childPricingRequest struct {
 type childPricingModel struct {
 	OriginModelName string `json:"origin_model_name"`
 	AgencyCostBPS   int    `json:"agency_cost_bps"`
+	MinimumCostBPS  int    `json:"minimum_cost_bps"`
 	SettlementBPS   *int   `json:"settlement_bps"`
 	ChildCostBPS    *int   `json:"child_cost_bps"`
 	VendorName      string `json:"vendor_name,omitempty"`
@@ -78,12 +79,20 @@ func (a *App) getChildPricing(c *gin.Context) {
 	}
 	models := make([]childPricingModel, 0, len(catalog.Items)+len(policy.ModelOverrides))
 	for _, catalogRow := range catalog.Items {
+		if (catalogRow.PricingConfirmed != nil && !*catalogRow.PricingConfirmed) || (catalogRow.AgencyCostConfirmed != nil && !*catalogRow.AgencyCostConfirmed) {
+			continue
+		}
 		resolvedParent, resolveErr := agencycontract.Resolve(parentEffective, catalogRow.OriginModelName)
 		if resolveErr != nil {
 			respondError(c, http.StatusInternalServerError, "invalid_pricing", "当前代理商价格策略无效", nil)
 			return
 		}
 		modelRow := childPricingModel{OriginModelName: catalogRow.OriginModelName, AgencyCostBPS: resolvedParent.SettlementBPS, VendorName: catalogRow.VendorName, VendorIcon: catalogRow.VendorIcon}
+		modelRow.MinimumCostBPS, _, err = minimumDirectChildCost(parentEffective, policy, catalogRow.OriginModelName)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "invalid_pricing", "读取下级成本底线失败", nil)
+			return
+		}
 		for _, override := range policy.ModelOverrides {
 			if override.OriginModelName == catalogRow.OriginModelName {
 				modelRow.SettlementBPS = override.SettlementBPS
@@ -129,6 +138,11 @@ func (a *App) publishChildPricing(c *gin.Context) {
 		respondError(c, http.StatusConflict, "price_revision_conflict", "价格版本已变化，请刷新后重试", nil)
 		return
 	}
+	platform, err := model.LoadAgencyPlatformPolicy(a.db)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取平台价格策略失败", nil)
+		return
+	}
 
 	candidate := old
 	candidate.ModelOverrides = append([]agencycontract.ModelOverride(nil), old.ModelOverrides...)
@@ -143,9 +157,14 @@ func (a *App) publishChildPricing(c *gin.Context) {
 	}
 	if request.DefaultSettlementBPS != nil {
 		candidate.DefaultSettlementBPS = *request.DefaultSettlementBPS
+		candidate.SettlementSource = agencycontract.PriceSourceManual
 	}
 	for _, requested := range request.ModelCostOverrides {
 		modelName := strings.TrimSpace(requested.OriginModelName)
+		if !agencycontract.ModelPricingConfirmed(platform, modelName) {
+			respondError(c, http.StatusUnprocessableEntity, "pricing_pending", "模型 "+modelName+"：平台成本和下级系数尚未确认，暂不可设置代理商价格", nil)
+			return
+		}
 		key, keyErr := agencycontract.ModelKey(modelName)
 		if keyErr != nil {
 			respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(keyErr), nil)
@@ -153,10 +172,32 @@ func (a *App) publishChildPricing(c *gin.Context) {
 		}
 		if position, exists := positions[key]; exists {
 			candidate.ModelOverrides[position].SettlementBPS = requested.SettlementBPS
-			candidate.ModelOverrides[position].ChildCostBPS = requested.ChildCostBPS
-		} else if requested.SettlementBPS != nil {
+			if requested.ChildCostBPS != nil {
+				candidate.ModelOverrides[position].ChildCostBPS = requested.ChildCostBPS
+			}
+			if requested.SettlementBPS != nil {
+				candidate.ModelOverrides[position].SettlementSource = agencycontract.PriceSourceManual
+			} else {
+				candidate.ModelOverrides[position].SettlementSource = ""
+			}
+			if requested.ChildCostBPS != nil {
+				candidate.ModelOverrides[position].ChildCostSource = agencycontract.PriceSourceManual
+			}
+		} else if requested.SettlementBPS != nil || requested.ChildCostBPS != nil {
 			positions[key] = len(candidate.ModelOverrides)
-			candidate.ModelOverrides = append(candidate.ModelOverrides, agencycontract.ModelOverride{OriginModelName: modelName, SettlementBPS: requested.SettlementBPS, ChildCostBPS: requested.ChildCostBPS})
+			override := agencycontract.ModelOverride{OriginModelName: modelName, SettlementBPS: requested.SettlementBPS, ChildCostBPS: requested.ChildCostBPS, SettlementSource: agencycontract.PriceSourceManual}
+			if requested.ChildCostBPS != nil {
+				override.ChildCostSource = agencycontract.PriceSourceManual
+			}
+			candidate.ModelOverrides = append(candidate.ModelOverrides, override)
+		}
+		if position, exists := positions[key]; exists {
+			override := &candidate.ModelOverrides[position]
+			if override.ChildCostBPS == nil && override.SettlementBPS != nil {
+				childCost := *override.SettlementBPS + agencycontract.DefaultChildMarkupBPS
+				override.ChildCostBPS = &childCost
+				override.ChildCostSource = agencycontract.PriceSourceDefault
+			}
 		}
 	}
 	if err := agencycontract.ValidatePolicy(candidate); err != nil {
@@ -168,10 +209,10 @@ func (a *App) publishChildPricing(c *gin.Context) {
 		return
 	}
 	if err := a.validateChildPolicy(*child.ParentAgencyID, candidate); err != nil {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", "下级代理商“"+child.DisplayName+"”（ID "+stringID(child.ID)+"）："+pricingErrorMessage(err), nil)
 		return
 	}
-	if err := a.publishPolicy(c, child.ID, request.ExpectedRevision, candidate, request.Reason, identity.ActorType, false); err != nil {
+	if err := a.publishPolicy(c, child.ID, request.ExpectedRevision, candidate, request.Reason, identity.ActorType, true); err != nil {
 		return
 	}
 }

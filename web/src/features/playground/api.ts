@@ -62,7 +62,11 @@ export async function getUserModels(
   options?: { chatOnly?: boolean }
 ): Promise<ModelOption[]> {
   const res = await api.get(API_ENDPOINTS.USER_MODELS, {
-    params: { group, chat_only: options?.chatOnly || undefined },
+    params: {
+      group,
+      chat_only: options?.chatOnly || undefined,
+      include_metadata: true,
+    },
   })
   const { data } = res
   requireServerSuccess(data)
@@ -71,10 +75,28 @@ export async function getUserModels(
     return []
   }
 
-  return data.data.map((model: string) => ({
-    label: model,
-    value: model,
-  }))
+  return data.data.map((entry: string | Record<string, unknown>) => {
+    if (typeof entry === 'string') {
+      return { label: entry, value: entry }
+    }
+
+    const model = String(entry.model ?? '')
+    const kind = String(entry.kind ?? 'text')
+    const categoryByKind: Record<string, ModelOption['category']> = {
+      text: 'Text',
+      video: 'Video',
+      image: 'Image',
+      audio: 'Audio',
+      embedding: 'Embedding',
+    }
+
+    return {
+      label: model,
+      value: model,
+      category: categoryByKind[kind] ?? 'Text',
+      chatSupported: entry.chat_supported === true,
+    }
+  })
 }
 
 /**

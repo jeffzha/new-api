@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { ActionIcon } from "./components/Heading";
 import { api, ApiError, hubConfig } from "./lib/api";
 import { startPlatformSSO } from "./lib/platform";
+import { agencySignInURL } from "./lib/navigation";
 import type { Identity } from "./lib/types";
 import { useMutation } from "./lib/mutation-context";
 import { MutationProvider } from "./components/MutationProvider";
@@ -82,7 +83,7 @@ export function App() {
       // An expired session is already signed out and should not strand the user.
       if (!(cause instanceof ApiError && cause.status === 401)) throw cause;
     }
-    window.location.replace(agencySignInURL(true));
+    window.location.replace(platformAgencySignInURL(true));
   }
   if (identity.must_change_password)
     return (
@@ -102,26 +103,21 @@ export function App() {
   );
 }
 
-function agencySignInURL(signedOut = false) {
-  const target = new URL(
-    "/sign-in?mode=agency",
-    hubConfig().platform_base_url || location.origin,
-  );
-  if (signedOut) target.searchParams.set("agency_signed_out", "true");
-  return target.href;
+function platformAgencySignInURL(signedOut = false) {
+  return agencySignInURL(hubConfig().platform_base_url, location.origin, signedOut);
 }
 
 function PlatformLoginRedirect(props: { error: unknown }) {
   const { t } = useTranslation();
   useEffect(() => {
     if (props.error) return;
-    window.location.replace(agencySignInURL());
+    window.location.replace(platformAgencySignInURL());
   }, [props.error]);
   return (
     <main className="shell">
       {props.error ? <ErrorNotice error={props.error} /> : <Loading />}
       {Boolean(props.error) && (
-        <button type="button" onClick={() => window.location.replace(agencySignInURL())}>
+        <button type="button" onClick={() => window.location.replace(platformAgencySignInURL(true))}>
           {t("Sign in")}
         </button>
       )}
@@ -320,7 +316,7 @@ function Dashboard({
       content = <AuditPage root={root} />;
       break;
     case "security":
-      content = <PasswordChange done={refresh} />;
+      content = <PasswordChange done={refresh} identity={identity} />;
       break;
     default:
       content = <OverviewPage identity={identity} />;

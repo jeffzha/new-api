@@ -47,19 +47,12 @@ type agencyHierarchyNode struct {
 
 const maxAgencyDepth = 10
 
-func minCoefficient(value, cap int) int {
-	if cap <= 0 || value < 0 {
-		return value
-	}
-	if value > cap {
-		return cap
-	}
-	return value
-}
-
 func inheritedSalesBPS(inheritedSales, settlement, minSpread, cap int) (int, error) {
+	if cap == 0 {
+		cap = agencycontract.DefaultSalesCapBPS
+	}
 	minimum := settlement + minSpread
-	if minimum > cap {
+	if max(inheritedSales, minimum) > cap {
 		return 0, errors.New("inherited sales coefficient exceeds sales cap")
 	}
 	return max(inheritedSales, minimum), nil
@@ -99,37 +92,20 @@ func validateChildPolicyTx(tx *gorm.DB, parentID int64, policy agencycontract.Po
 	if err := common.Unmarshal([]byte(row.PolicyJSON), &parentPolicy); err != nil {
 		return errors.New("parent agency pricing is invalid")
 	}
-	parentEffective := parentPolicy
-	if parent.ParentAgencyID == nil {
-		var err error
-		parentEffective, err = (&App{db: tx}).effectivePolicy(parentPolicy)
-		if err != nil {
-			return err
-		}
+	parentEffective, err := (&App{db: tx}).effectiveAgencyPolicy(parent, parentPolicy)
+	if err != nil {
+		return err
 	}
 	if policy.MinSpreadBPS == 0 {
 		policy.MinSpreadBPS = parentEffective.MinSpreadBPS
 	} else if policy.MinSpreadBPS < parentEffective.MinSpreadBPS {
 		return errors.New("child minimum spread cannot be below parent minimum spread")
 	}
-	parentDefaultChildCost := parentEffective.DefaultChildCostBPS
-	if parentDefaultChildCost != 0 && policy.DefaultSettlementBPS < parentDefaultChildCost {
-		return errors.New("child default cost must not be below parent child cost")
+	platform, err := model.LoadAgencyPlatformPolicy(tx)
+	if err != nil {
+		return err
 	}
-	for _, childOverride := range policy.ModelOverrides {
-		childResolved, resolveErr := agencycontract.Resolve(policy, childOverride.OriginModelName)
-		if resolveErr != nil {
-			return resolveErr
-		}
-		parentChildCost := parentDefaultChildCost
-		if parentOverride := findModelOverride(parentEffective, childOverride.OriginModelName); parentOverride != nil && parentOverride.ChildCostBPS != nil {
-			parentChildCost = *parentOverride.ChildCostBPS
-		}
-		if childResolved.SettlementBPS < parentChildCost {
-			return fmt.Errorf("child cost for model %s must not be below parent child cost", childOverride.OriginModelName)
-		}
-	}
-	return nil
+	return validateChildBoundary(parentEffective, agencycontract.ConfirmedModelPolicy(policy, platform))
 }
 
 func findModelOverride(policy agencycontract.Policy, modelName string) *agencycontract.ModelOverride {
@@ -162,13 +138,9 @@ func inheritChildCostPolicy(tx *gorm.DB, parentID int64, policy agencycontract.P
 	if err := common.Unmarshal([]byte(row.PolicyJSON), &parentPolicy); err != nil {
 		return agencycontract.Policy{}, errors.New("parent agency pricing is invalid")
 	}
-	parentEffective := parentPolicy
-	if parent.ParentAgencyID == nil {
-		var err error
-		parentEffective, err = (&App{db: tx}).effectivePolicy(parentPolicy)
-		if err != nil {
-			return agencycontract.Policy{}, err
-		}
+	parentEffective, err := (&App{db: tx}).effectiveAgencyPolicy(parent, parentPolicy)
+	if err != nil {
+		return agencycontract.Policy{}, err
 	}
 	if policy.MinSpreadBPS == 0 {
 		policy.MinSpreadBPS = parentEffective.MinSpreadBPS
@@ -178,37 +150,41 @@ func inheritChildCostPolicy(tx *gorm.DB, parentID int64, policy agencycontract.P
 	if policy.SalesCapBPS == 0 {
 		policy.SalesCapBPS = parentEffective.SalesCapBPS
 	}
+	if policy.SalesCapBPS == 0 {
+		policy.SalesCapBPS = agencycontract.DefaultSalesCapBPS
+	}
 	if policy.DefaultSettlementBPS == 0 {
 		policy.DefaultSettlementBPS = parentEffective.DefaultChildCostBPS
+		policy.SettlementSource = agencycontract.PriceSourceInherited
 	}
-	if policy.DefaultSalesBPS == 0 || policy.DefaultSalesBPS == 10000 {
+	if policy.DefaultSalesBPS == 0 {
 		var salesErr error
 		policy.DefaultSalesBPS, salesErr = inheritedSalesBPS(parentEffective.DefaultSalesBPS, policy.DefaultSettlementBPS, policy.MinSpreadBPS, policy.SalesCapBPS)
 		if salesErr != nil {
 			return agencycontract.Policy{}, salesErr
 		}
+		policy.SalesSource = agencycontract.PriceSourceDefault
 	}
-	parentDefaultChildCost := parentEffective.DefaultChildCostBPS
-	// A blank default child cost is intentional. It prevents silently adding
-	// another spread at every hierarchy level; the parent must explicitly set
-	// one before creating a child. A model-specific direct-child cost is also
-	// sufficient, but then every enabled platform model needs its own value.
 	platform, err := model.LoadAgencyPlatformPolicy(tx)
 	if err != nil {
 		return agencycontract.Policy{}, err
 	}
 	modelNames := make([]string, 0, len(platform.ModelPrices))
 	for _, price := range platform.ModelPrices {
+		if !price.IsPricingConfirmed() {
+			continue
+		}
 		modelNames = append(modelNames, price.OriginModelName)
 	}
 	if len(modelNames) == 0 {
-		for _, override := range parentEffective.ModelOverrides {
-			modelNames = append(modelNames, override.OriginModelName)
-		}
+		policy.DefaultSalesBPS = 10000
+		policy.DefaultSettlementBPS = 0
+		policy.DefaultChildCostBPS = 0
+		policy.ModelOverrides = nil
+		policy.SalesSource = agencycontract.PriceSourceDefault
+		return policy, nil
 	}
-	if parentDefaultChildCost == 0 && len(modelNames) == 0 {
-		return agencycontract.Policy{}, errors.New("parent child agency cost is not configured; configure it before creating a child agency")
-	}
+	policy = agencycontract.ConfirmedModelPolicy(policy, platform)
 	positions := make(map[string]int, len(policy.ModelOverrides))
 	for i, override := range policy.ModelOverrides {
 		key, err := agencycontract.ModelKey(override.OriginModelName)
@@ -230,30 +206,45 @@ func inheritChildCostPolicy(tx *gorm.DB, parentID int64, policy agencycontract.P
 		if cost == 0 {
 			return agencycontract.Policy{}, errors.New("parent child agency cost is not configured; configure it before creating a child agency")
 		}
-		if policy.DefaultSettlementBPS == 0 {
-			policy.DefaultSettlementBPS = cost
-		}
 		position, exists := positions[key]
 		if !exists {
-			cost = minCoefficient(cost, policy.SalesCapBPS)
+			if cost > policy.SalesCapBPS {
+				return agencycontract.Policy{}, &agencycontract.PolicyCoefficientError{OriginModelName: modelName, Field: "settlement_bps", ValueBPS: cost, MaximumBPS: policy.SalesCapBPS, Cause: errors.New("继承成本超过价格上限")}
+			}
 			sales, salesErr := inheritedSalesBPS(parentResolved.SalesBPS, cost, policy.MinSpreadBPS, policy.SalesCapBPS)
 			if salesErr != nil {
 				return agencycontract.Policy{}, salesErr
 			}
-			policy.ModelOverrides = append(policy.ModelOverrides, agencycontract.ModelOverride{OriginModelName: modelName, SettlementBPS: &cost, SalesBPS: &sales})
+			childCost := cost + agencycontract.DefaultChildMarkupBPS
+			if childCost > policy.SalesCapBPS {
+				return agencycontract.Policy{}, errors.New("默认下级系数超过价格上限")
+			}
+			policy.ModelOverrides = append(policy.ModelOverrides, agencycontract.ModelOverride{OriginModelName: modelName, SettlementBPS: &cost, ChildCostBPS: &childCost, SalesBPS: &sales, SettlementSource: agencycontract.PriceSourceInherited, ChildCostSource: agencycontract.PriceSourceDefault, SalesSource: agencycontract.PriceSourceDefault})
 			positions[key] = len(policy.ModelOverrides) - 1
 			continue
 		}
 		if policy.ModelOverrides[position].SettlementBPS == nil {
-			cost = minCoefficient(cost, policy.SalesCapBPS)
+			if cost > policy.SalesCapBPS {
+				return agencycontract.Policy{}, &agencycontract.PolicyCoefficientError{OriginModelName: modelName, Field: "settlement_bps", ValueBPS: cost, MaximumBPS: policy.SalesCapBPS, Cause: errors.New("继承成本超过价格上限")}
+			}
 			policy.ModelOverrides[position].SettlementBPS = &cost
+			policy.ModelOverrides[position].SettlementSource = agencycontract.PriceSourceInherited
 			if policy.ModelOverrides[position].SalesBPS == nil {
 				sales, salesErr := inheritedSalesBPS(parentResolved.SalesBPS, cost, policy.MinSpreadBPS, policy.SalesCapBPS)
 				if salesErr != nil {
 					return agencycontract.Policy{}, salesErr
 				}
 				policy.ModelOverrides[position].SalesBPS = &sales
+				policy.ModelOverrides[position].SalesSource = agencycontract.PriceSourceDefault
 			}
+		}
+		if policy.ModelOverrides[position].ChildCostBPS == nil {
+			childCost := cost + agencycontract.DefaultChildMarkupBPS
+			if childCost > policy.SalesCapBPS {
+				return agencycontract.Policy{}, errors.New("默认下级系数超过价格上限")
+			}
+			policy.ModelOverrides[position].ChildCostBPS = &childCost
+			policy.ModelOverrides[position].ChildCostSource = agencycontract.PriceSourceDefault
 		}
 	}
 	return policy, nil
@@ -266,7 +257,7 @@ func (a *App) createChildAgencyHTTP(c *gin.Context) {
 		return
 	}
 	var request createAgencyRequest
-	request.Pricing = agencycontract.Policy{DefaultSalesBPS: 10000, MinSpreadBPS: a.config.MinSpreadBPS}
+	request.Pricing = agencycontract.Policy{MinSpreadBPS: a.config.MinSpreadBPS}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		respondError(c, http.StatusBadRequest, "invalid_request", "请求格式错误", nil)
 		return

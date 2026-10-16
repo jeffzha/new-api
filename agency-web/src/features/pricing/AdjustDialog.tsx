@@ -61,7 +61,7 @@ export function CoefficientAdjustDialog(props: {
 
   function message(code: CoefficientAdjustmentError) {
     if (code === "missing_cost") return t("My cost is missing for this model.");
-    if (code === "below_cost") return t("This adjustment would be below the agency cost.");
+    if (code === "below_cost") return props.rows.some((row) => row.minimumBPS != null) ? t("This adjustment would be below my cost plus the applicable minimum spread.") : t("This adjustment would be below the agency cost.");
     if (code === "below_spread")
       return t(
         "This adjustment is above cost but does not meet the minimum spread. Use the exact cost price or meet the full minimum spread.",

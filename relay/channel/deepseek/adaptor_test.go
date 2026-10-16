@@ -17,6 +17,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestLocoPalResponsesAutomaticallyConvertsToChat(t *testing.T) {
+	for _, baseURL := range []string{"https://locopalai.com", "https://locopalai.com/"} {
+		t.Run(baseURL, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			info := &relaycommon.RelayInfo{
+				RelayMode: relayconstant.RelayModeResponses, RelayFormat: types.RelayFormatOpenAIResponses,
+				ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: baseURL, UpstreamModelName: "deepseek-v4-1-flash-260910"},
+			}
+			info.InitRequestConversionChain()
+			converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(ctx, info, dto.OpenAIResponsesRequest{
+				Model: "deepseek-v4-1-flash-260910", Input: []byte(`"hello"`), Instructions: []byte(`"be concise"`),
+				MaxOutputTokens: common.GetPointer(uint(16)), Temperature: common.GetPointer(0.0),
+			})
+			require.NoError(t, err)
+			chat, ok := converted.(*dto.GeneralOpenAIRequest)
+			require.True(t, ok)
+			require.Equal(t, "deepseek-v4-1-flash-260910", chat.Model)
+			require.Len(t, chat.Messages, 2)
+			require.Equal(t, "be concise", chat.Messages[0].StringContent())
+			require.Equal(t, "hello", chat.Messages[1].StringContent())
+			require.EqualValues(t, 16, *chat.MaxCompletionTokens)
+			require.NotNil(t, chat.Temperature)
+			require.Zero(t, *chat.Temperature)
+			requestURL, err := (&Adaptor{}).GetRequestURL(info)
+			require.NoError(t, err)
+			require.Equal(t, "https://locopalai.com/v1/chat/completions", requestURL)
+		})
+	}
+}
+
+func TestLocoPalResponsesCompatibilityDoesNotMatchOtherHosts(t *testing.T) {
+	for _, baseURL := range []string{"https://api.deepseek.com", "https://locopalai.com.example.org", "https://locopalai.com@other.example"} {
+		info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: baseURL}}
+		require.False(t, useChatCompletionsForResponses(info))
+	}
+}
+
+func TestLocoPalResponsesRejectsUnsupportedStateInsteadOfDroppingIt(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeResponses, RelayFormat: types.RelayFormatOpenAIResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://locopalai.com"},
+	}
+	_, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(ctx, info, dto.OpenAIResponsesRequest{
+		Model: "deepseek-v4-1-flash-260910", Input: []byte(`"hello"`), PreviousResponseID: "resp_previous",
+	})
+	require.ErrorContains(t, err, "previous_response_id")
+}
+
 func TestClaudeOpenAICompatibilityIsChannelScoped(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -186,9 +237,7 @@ func TestResponsesChatCompatibilityConvertsResponseBackToResponses(t *testing.T)
 		RelayFormat: types.RelayFormatOpenAIResponses,
 		ChannelMeta: &relaycommon.ChannelMeta{
 			UpstreamModelName: "deepseek-v4-flash",
-			ChannelOtherSettings: dto.ChannelOtherSettings{
-				ResponsesUseChatCompletions: true,
-			},
+			ChannelBaseUrl:    "https://locopalai.com",
 		},
 	}
 	info.InitRequestConversionChain()
@@ -238,9 +287,7 @@ func TestResponsesChatCompatibilityConvertsStreamBackToResponses(t *testing.T) {
 		DisablePing: true,
 		ChannelMeta: &relaycommon.ChannelMeta{
 			UpstreamModelName: "deepseek-v4-flash",
-			ChannelOtherSettings: dto.ChannelOtherSettings{
-				ResponsesUseChatCompletions: true,
-			},
+			ChannelBaseUrl:    "https://locopalai.com",
 		},
 	}
 	info.InitRequestConversionChain()

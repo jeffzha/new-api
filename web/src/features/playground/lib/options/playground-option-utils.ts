@@ -28,7 +28,11 @@ export function getModelFallback(
     return null
   }
 
-  return models[0].value
+  return (
+    models.find((model) => model.chatSupported !== false)?.value ??
+    models[0]?.value ??
+    null
+  )
 }
 
 export function shouldClearModelForGroup(

@@ -2218,7 +2218,14 @@ func reserveAgencyFundingTxWithRule(tx *gorm.DB, userID int64, chargeID string, 
 		}
 		debt := account.DebtQuota + debtDelta
 		seq := account.MoneySeq + 1
-		return tx.Model(&account).Updates(map[string]any{"paid_available": account.PaidAvailable - paidTake - legacyPaidTake, "nonpaid_available": nonpaid, "debt_quota": debt, "money_seq": seq, "version": account.Version + 1, "updated_at": time.Now().Unix()}).Error
+		paidAfter := account.PaidAvailable - paidTake - legacyPaidTake
+		if err := tx.Create(&AgencyFundingLedger{OperationID: fmt.Sprintf("funding-consume:%d:%d", userID, seq),
+			UserID: userID, MoneySeq: seq, SourceKind: "model_reservation",
+			PaidDelta: paidAfter - account.PaidAvailable, NonpaidDelta: nonpaid - account.NonpaidAvailable, DebtDelta: debtDelta,
+			PaidAfter: paidAfter, NonpaidAfter: nonpaid, DebtAfter: debt, CreatedAtMS: time.Now().UnixMilli()}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&account).Updates(map[string]any{"paid_available": paidAfter, "nonpaid_available": nonpaid, "debt_quota": debt, "money_seq": seq, "version": account.Version + 1, "updated_at": time.Now().Unix()}).Error
 	}()
 	return paid, err
 }
@@ -2413,7 +2420,16 @@ func releaseAgencyFundingDetailedTx(tx *gorm.DB, chargeID string, amount int64) 
 		if err != nil {
 			return err
 		}
-		return tx.Model(&account).Updates(map[string]any{"paid_available": account.PaidAvailable + result.PaidReleased + restoredDebtPaid + restoredLegacyPaid - paidRepaid, "nonpaid_available": account.NonpaidAvailable + restoredNonpaid - nonpaidRepaid, "debt_quota": newDebt - paidRepaid - nonpaidRepaid, "money_seq": seq, "version": account.Version + 1, "updated_at": time.Now().Unix()}).Error
+		paidAfter := account.PaidAvailable + result.PaidReleased + restoredDebtPaid + restoredLegacyPaid - paidRepaid
+		nonpaidAfter := account.NonpaidAvailable + restoredNonpaid - nonpaidRepaid
+		debtAfter := newDebt - paidRepaid - nonpaidRepaid
+		if err := tx.Create(&AgencyFundingLedger{OperationID: fmt.Sprintf("funding-release:%d:%d", account.UserID, seq),
+			UserID: account.UserID, MoneySeq: seq, SourceKind: "model_release",
+			PaidDelta: paidAfter - account.PaidAvailable, NonpaidDelta: nonpaidAfter - account.NonpaidAvailable, DebtDelta: debtAfter - account.DebtQuota,
+			PaidAfter: paidAfter, NonpaidAfter: nonpaidAfter, DebtAfter: debtAfter, CreatedAtMS: time.Now().UnixMilli()}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&account).Updates(map[string]any{"paid_available": paidAfter, "nonpaid_available": nonpaidAfter, "debt_quota": debtAfter, "money_seq": seq, "version": account.Version + 1, "updated_at": time.Now().Unix()}).Error
 	}()
 	return result, err
 }

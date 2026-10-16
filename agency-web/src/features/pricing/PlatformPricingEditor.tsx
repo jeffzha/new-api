@@ -24,7 +24,7 @@ import { normalizePlatformPricing, type PlatformPriceRow, type PlatformPricing }
 
 type PlatformDraft = Record<
   string,
-  { channelCosts: Record<string, string>; agencyCost: string; defaultSales: string }
+  { channelCosts: Record<string, string>; platformCost: string; agencyCost: string; defaultSales: string }
 >;
 
 type AdjustTarget = "agencyCost" | "defaultSales";
@@ -35,6 +35,8 @@ type PublishedPlatformModelPrice = {
   channel_costs?: { channel_id: number; platform_cost_bps: number }[];
   agency_cost_bps: number;
   default_sales_bps: number;
+  pricing_confirmed?: boolean;
+  agency_cost_confirmed?: boolean;
 };
 
 export function PlatformPricingEditor() {
@@ -78,9 +80,10 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
             channelCosts: Object.fromEntries(
               row.channel_costs.map((channel) => [
                 String(channel.channel_id),
-                coefficientValue(channel.platform_cost_bps ?? 10000),
+                coefficientValue(channel.platform_cost_bps),
               ]),
             ),
+            platformCost: coefficientValue(row.platform_cost_bps),
             agencyCost: coefficientValue(suggested.agencyCostBPS),
             defaultSales: coefficientValue(suggested.salesBPS),
           },
@@ -130,7 +133,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
   const allPageSelected =
     pageRows.length > 0 && pageRows.every((row) => selected.includes(row.origin_model_name));
 
-  function update(model: string, key: "agencyCost" | "defaultSales", value: string) {
+  function update(model: string, key: "platformCost" | "agencyCost" | "defaultSales", value: string) {
     setDraft((current) => ({ ...current, [model]: { ...current[model], [key]: value } }));
     setRowErrors((current) => dropRowError(current, model));
     setBulkResult(null);
@@ -219,24 +222,17 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
       const modelPrices: PublishedPlatformModelPrice[] =
         props.data.items.flatMap<PublishedPlatformModelPrice>((row) => {
           const value = draft[row.origin_model_name];
+          const hasAllChannelCosts = row.channel_costs.every(
+            (channel) => (value.channelCosts[String(channel.channel_id)] ?? "").trim() !== "",
+          );
+          const hasPlatformCost = row.channel_costs.length > 0 ? hasAllChannelCosts : value.platformCost.trim() !== "";
+          const hasAgencyCost = value.agencyCost.trim() !== "";
+          const confirmed = hasPlatformCost && hasAgencyCost;
+          const defaultSales = value.defaultSales.trim() === "" ? 10000 : parseCoefficient(value.defaultSales);
           if (row.channel_costs.length === 0) {
-            const values = [
-              coefficientValue(row.platform_cost_bps ?? 10000),
-              value.agencyCost,
-              value.defaultSales,
-            ];
-            if (values.every((item) => item === "")) return [];
-            if (values.some((item) => item === "")) {
-              throw new Error(
-                t(
-                  "Complete the platform cost, agency cost, and sales coefficient for a configured model.",
-                ),
-              );
-            }
-            const platformCost = parseCoefficient(coefficientValue(row.platform_cost_bps ?? 10000));
-            const agencyCost = parseCoefficient(value.agencyCost);
-            const defaultSales = parseCoefficient(value.defaultSales);
-            if (defaultSales < agencyCost) {
+            const platformCost = value.platformCost.trim() ? parseCoefficient(value.platformCost) : 0;
+            const agencyCost = hasAgencyCost ? parseCoefficient(value.agencyCost) : 0;
+            if (confirmed && defaultSales < agencyCost) {
               throw new Error(
                 t(
                   "Sales coefficient cannot be lower than agency cost coefficient. Model: {{model}}",
@@ -250,28 +246,19 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
                 platform_cost_bps: platformCost,
                 agency_cost_bps: agencyCost,
                 default_sales_bps: defaultSales,
+                pricing_confirmed: hasPlatformCost,
+                agency_cost_confirmed: hasAgencyCost,
               },
             ];
           }
-          const channelValues = row.channel_costs.map(
-            (channel) => value.channelCosts[String(channel.channel_id)] ?? "",
-          );
-          const values = [...channelValues, value.agencyCost, value.defaultSales];
-          if (values.every((item) => item === "")) return [];
-          if (values.some((item) => item === "")) {
-            throw new Error(
-              t(
-                "Complete every enabled channel cost, agency cost, and sales coefficient for a configured model.",
-              ),
-            );
-          }
-          const channelCosts = row.channel_costs.map((channel) => ({
-            channel_id: channel.channel_id,
-            platform_cost_bps: parseCoefficient(value.channelCosts[String(channel.channel_id)]),
-          }));
-          const agencyCost = parseCoefficient(value.agencyCost);
-          const defaultSales = parseCoefficient(value.defaultSales);
-          if (defaultSales < agencyCost) {
+          const channelCosts = row.channel_costs
+            .filter((channel) => value.channelCosts[String(channel.channel_id)]?.trim())
+            .map((channel) => ({
+              channel_id: channel.channel_id,
+              platform_cost_bps: parseCoefficient(value.channelCosts[String(channel.channel_id)]),
+            }));
+          const agencyCost = hasAgencyCost ? parseCoefficient(value.agencyCost) : 0;
+          if (confirmed && defaultSales < agencyCost) {
             throw new Error(
               t(
                 "Sales coefficient cannot be lower than agency cost coefficient. Model: {{model}}",
@@ -285,6 +272,8 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
               channel_costs: channelCosts,
               agency_cost_bps: agencyCost,
               default_sales_bps: defaultSales,
+              pricing_confirmed: hasPlatformCost,
+              agency_cost_confirmed: hasAgencyCost,
             },
           ];
         });
@@ -416,6 +405,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
                 toggle={toggleModel}
                 update={update}
                 updateChannelCost={updateChannelCost}
+                pending={row.pricing_confirmed === false || row.agency_cost_confirmed === false}
               />
             ))}
           </tbody>
@@ -492,11 +482,12 @@ function PlatformPricingRow(props: {
   value: PlatformDraft[string];
   selected: boolean;
   toggle: (model: string) => void;
-  update: (model: string, key: "agencyCost" | "defaultSales", value: string) => void;
+  update: (model: string, key: "platformCost" | "agencyCost" | "defaultSales", value: string) => void;
   updateChannelCost: (model: string, channelID: number, value: string) => void;
+  pending: boolean;
 }) {
   const { t } = useTranslation();
-  const value = props.value ?? { channelCosts: {}, agencyCost: "", defaultSales: "" };
+  const value = props.value ?? { channelCosts: {}, platformCost: "", agencyCost: "", defaultSales: "" };
   return (
     <ChannelPricingRows
       className={props.hasError ? "customer-pricing-row-error" : undefined}
@@ -514,6 +505,7 @@ function PlatformPricingRow(props: {
             name={props.row.vendor_name?.trim() || t("Other providers")}
           />
           <strong>{props.row.origin_model_name}</strong>
+          {props.pending && <span className="pricing-pending-badge">{t("Pending confirmation")}</span>}
         </div>,
       ]}
       channels={props.row.channel_costs.map((channel) => ({
@@ -535,6 +527,15 @@ function PlatformPricingRow(props: {
           />
         ),
       }))}
+      emptyCost={
+        <input
+          aria-label={t("My cost (coefficient)") + ": " + props.row.origin_model_name}
+          inputMode="decimal"
+          placeholder="1.0000"
+          value={value.platformCost}
+          onChange={(event) => props.update(props.row.origin_model_name, "platformCost", event.target.value)}
+        />
+      }
       trailing={[
         <CoefficientInput
           key="downstream"

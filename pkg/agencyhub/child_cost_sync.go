@@ -25,21 +25,20 @@ func (e *childPricingPropagationError) Error() string {
 func (e *childPricingPropagationError) Unwrap() error { return e.Cause }
 
 type childCostBoundaryError struct {
-	ModelName                 string
-	Cost, Minimum, ParentCost int
-	Generated                 bool
+	ModelName                         string
+	Cost, Minimum, ParentCost, Spread int
 }
+
+type pricingBillingPathError struct{ message string }
+
+func (e *pricingBillingPathError) Error() string { return e.message }
 
 func (e *childCostBoundaryError) Error() string {
 	name := e.ModelName
 	if name == "" {
 		name = "全局默认价格"
 	}
-	source := "上级已设置的下级渠道报价"
-	if e.Generated {
-		source = fmt.Sprintf("上级成本 %.4f + 默认下级加价 0.0500（不是最低价差）", float64(e.ParentCost)/10000)
-	}
-	return fmt.Sprintf("模型 %s：本次下级代理商成本系数 %.4f，低于上级下级渠道报价 %.4f；下限来源：%s。请在上级的“代理商管理 → 管理下级成本”将该模型设为至少 %.4f，或先在上级“价格策略 → 我的下级渠道价”调整报价；销售价格仍须不低于各自成本 + 最低价差。", name, float64(e.Cost)/10000, float64(e.Minimum)/10000, source, float64(e.Minimum)/10000)
+	return fmt.Sprintf("模型 %s：在上级“代理商管理 → 管理下级成本”为该下级设置的“我的成本（系数）”为 %.4f，最低允许 %.4f = 上级“我的成本（系数）” %.4f + 适用最低价差 %.4f。可以低于上级“我的下级渠道价（系数）”单独优惠，但不能低于此成本底线；默认加点 0.0500 不是强制利润。请由上级在“管理下级成本”调整；下级自己的“我的成本（系数）”只读。", name, float64(e.Cost)/10000, float64(e.Minimum)/10000, float64(e.ParentCost)/10000, float64(e.Spread)/10000)
 }
 
 // directChildCost resolves the cost a parent charges for one direct child
@@ -51,28 +50,36 @@ func directChildCost(policy agencycontract.Policy, modelName string) (int, bool)
 	return policy.DefaultChildCostBPS, policy.DefaultChildCostBPS != 0
 }
 
+// A child quote is a default, not the minimum for a negotiated child price.
+func minimumDirectChildCost(parent, child agencycontract.Policy, modelName string) (int, int, error) {
+	if modelName == "" {
+		return parent.DefaultSettlementBPS + max(parent.MinSpreadBPS, child.MinSpreadBPS), parent.DefaultSettlementBPS, nil
+	}
+	resolved, err := agencycontract.Resolve(parent, modelName)
+	if err != nil {
+		return 0, 0, err
+	}
+	return resolved.SettlementBPS + max(parent.MinSpreadBPS, child.MinSpreadBPS), resolved.SettlementBPS, nil
+}
+
 func validateChildBoundary(parent, child agencycontract.Policy) error {
 	if child.MinSpreadBPS < parent.MinSpreadBPS {
 		return errors.New("child minimum spread cannot be below parent minimum spread")
 	}
-	check := func(name string, cost, minimum int) error {
+	check := func(name string, cost int) error {
+		minimum, parentCost, err := minimumDirectChildCost(parent, child, name)
+		if err != nil {
+			return err
+		}
 		if cost >= minimum {
 			return nil
 		}
-		parentCost := parent.DefaultSettlementBPS
-		source := parent.ChildCostSource
-		if override := findModelOverride(parent, name); override != nil {
-			if override.SettlementBPS != nil {
-				parentCost = *override.SettlementBPS
-			}
-			if override.ChildCostBPS != nil {
-				source = override.ChildCostSource
-			}
-		}
-		return &childCostBoundaryError{ModelName: name, Cost: cost, Minimum: minimum, ParentCost: parentCost, Generated: source == agencycontract.PriceSourceDefault}
+		return &childCostBoundaryError{ModelName: name, Cost: cost, Minimum: minimum, ParentCost: parentCost, Spread: minimum - parentCost}
 	}
-	if err := check("", child.DefaultSettlementBPS, parent.DefaultChildCostBPS); err != nil {
-		return err
+	if _, configured := directChildCost(parent, ""); configured {
+		if err := check("", child.DefaultSettlementBPS); err != nil {
+			return err
+		}
 	}
 	names := make(map[string]struct{})
 	for _, policy := range []agencycontract.Policy{parent, child} {
@@ -86,12 +93,11 @@ func validateChildBoundary(parent, child agencycontract.Policy) error {
 	}
 	slices.Sort(orderedNames)
 	for _, name := range orderedNames {
-		cost, _ := directChildCost(parent, name)
 		resolved, err := agencycontract.Resolve(child, name)
 		if err != nil {
 			return err
 		}
-		if err := check(name, resolved.SettlementBPS, cost); err != nil {
+		if err := check(name, resolved.SettlementBPS); err != nil {
 			return err
 		}
 	}
@@ -315,6 +321,138 @@ func (a *App) syncChildPoliciesTx(tx *gorm.DB, c *gin.Context, identity *Identit
 		}
 	}
 	return nil
+}
+
+// Validate complete billing paths as the gateway uses the largest minimum
+// spread on each root-to-customer path, not just the immediate parent edge.
+func validatePricingBillingPaths(agencies []model.Agency, policies map[int64]agencycontract.Policy, platform agencycontract.PlatformPolicy) error {
+	return validateChangedPricingBillingPaths(agencies, policies, platform, nil, agencycontract.PlatformPolicy{})
+}
+
+func validateChangedPricingBillingPaths(agencies []model.Agency, policies map[int64]agencycontract.Policy, platform agencycontract.PlatformPolicy, previous map[int64]agencycontract.Policy, previousPlatform agencycontract.PlatformPolicy) error {
+	byID := make(map[int64]model.Agency, len(agencies))
+	for _, agency := range agencies {
+		byID[agency.ID] = agency
+	}
+	for _, leaf := range agencies {
+		chain := []model.Agency{}
+		current := leaf
+		spread := 0
+		for {
+			if len(chain) >= maxAgencyDepth {
+				return errors.New("agency hierarchy depth limit exceeded")
+			}
+			policy, ok := policies[current.ID]
+			if !ok {
+				return errors.New("agency pricing path is incomplete")
+			}
+			spread = max(spread, policy.MinSpreadBPS)
+			chain = append(chain, current)
+			if current.ParentAgencyID == nil {
+				break
+			}
+			current, ok = byID[*current.ParentAgencyID]
+			if !ok {
+				return errors.New("agency pricing parent is missing")
+			}
+		}
+		slices.Reverse(chain)
+		path := chain[0].DisplayName
+		for _, agency := range chain[1:] {
+			path += " → " + agency.DisplayName
+		}
+		for _, price := range platform.ModelPrices {
+			if !price.IsPricingConfirmed() {
+				continue
+			}
+			// Existing unrelated conflicts must not block a negotiated price edit.
+			if previous != nil && unchangedBillingPath(chain, price.OriginModelName, policies, platform, previous, previousPlatform) {
+				continue
+			}
+			previous := 0
+			for index, agency := range chain {
+				policy := policies[agency.ID]
+				if index == 0 {
+					var err error
+					policy, err = agencycontract.ApplyPlatformPolicy(policy, platform)
+					if err != nil {
+						return err
+					}
+				}
+				resolved, err := agencycontract.Resolve(policy, price.OriginModelName)
+				if err != nil {
+					return err
+				}
+				if index > 0 && resolved.SettlementBPS < previous+spread {
+					return &childPricingPropagationError{AgencyPath: path, Cause: &pricingBillingPathError{message: fmt.Sprintf("模型 %s：代理商 %s 的“我的成本（系数）” %.4f 低于整条计费路径允许的 %.4f（上级成本 %.4f + 路径最低价差 %.4f）。请由其上级在“代理商管理 → 管理下级成本”调整；路径中较深层代理商的最低价差也参与计费校验，默认加点 0.0500 不参与此底线计算。", price.OriginModelName, agency.DisplayName, float64(resolved.SettlementBPS)/10000, float64(previous+spread)/10000, float64(previous)/10000, float64(spread)/10000)}}
+				}
+				previous = resolved.SettlementBPS
+			}
+		}
+	}
+	return nil
+}
+
+func unchangedBillingPath(chain []model.Agency, name string, policies map[int64]agencycontract.Policy, platform agencycontract.PlatformPolicy, previous map[int64]agencycontract.Policy, previousPlatform agencycontract.PlatformPolicy) bool {
+	if !agencycontract.ModelPricingConfirmed(previousPlatform, name) {
+		return false
+	}
+	for index, agency := range chain {
+		before, ok := previous[agency.ID]
+		if !ok {
+			return false
+		}
+		after := policies[agency.ID]
+		if before.MinSpreadBPS != after.MinSpreadBPS {
+			return false
+		}
+		if index == 0 {
+			var err error
+			before, err = agencycontract.ApplyPlatformPolicy(before, previousPlatform)
+			if err != nil {
+				return false
+			}
+			after, err = agencycontract.ApplyPlatformPolicy(after, platform)
+			if err != nil {
+				return false
+			}
+		}
+		oldPrice, oldErr := agencycontract.Resolve(before, name)
+		newPrice, newErr := agencycontract.Resolve(after, name)
+		if oldErr != nil || newErr != nil || oldPrice.SettlementBPS != newPrice.SettlementBPS {
+			return false
+		}
+	}
+	return true
+}
+
+func loadPricingBillingPathsTx(tx *gorm.DB) ([]model.Agency, map[int64]agencycontract.Policy, agencycontract.PlatformPolicy, error) {
+	var agencies []model.Agency
+	if err := tx.Order("id ASC").Find(&agencies).Error; err != nil {
+		return nil, nil, agencycontract.PlatformPolicy{}, err
+	}
+	policies := make(map[int64]agencycontract.Policy, len(agencies))
+	for _, agency := range agencies {
+		var version model.AgencyPricePolicyVersion
+		if err := tx.First(&version, agency.CurrentPolicyVersionID).Error; err != nil {
+			return nil, nil, agencycontract.PlatformPolicy{}, err
+		}
+		var policy agencycontract.Policy
+		if err := common.UnmarshalJsonStr(version.PolicyJSON, &policy); err != nil {
+			return nil, nil, agencycontract.PlatformPolicy{}, err
+		}
+		policies[agency.ID] = policy
+	}
+	platform, err := model.LoadAgencyPlatformPolicy(tx)
+	return agencies, policies, platform, err
+}
+
+func validatePricingBillingPathsTx(tx *gorm.DB, previous map[int64]agencycontract.Policy, previousPlatform agencycontract.PlatformPolicy) error {
+	agencies, policies, platform, err := loadPricingBillingPathsTx(tx)
+	if err != nil {
+		return err
+	}
+	return validateChangedPricingBillingPaths(agencies, policies, platform, previous, previousPlatform)
 }
 
 func preservePendingModelOverrides(candidate, stored agencycontract.Policy, platform agencycontract.PlatformPolicy) agencycontract.Policy {

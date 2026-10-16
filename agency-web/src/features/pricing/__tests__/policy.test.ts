@@ -15,10 +15,12 @@ import type { Policy } from "../types";
 import { normalizeModelSales, normalizePlatformPricing } from "../types";
 
 describe("pricing request contracts", () => {
-  test("child cost adjustment honors the published quote without changing the cost anchor", () => {
-    const rows = [{ model: "model-a", costBPS: 8000, minimumBPS: 8500, inheritedBPS: 8000 }];
+  test("negotiated child cost uses the actual floor rather than the default quote", () => {
+    const rows = [{ model: "model-a", costBPS: 8000, minimumBPS: 8200, inheritedBPS: 8500 }];
     expect(adjustCoefficientValues(rows, {}, ["model-a"], 0, { anchor: "cost" }).errors).toEqual({ "model-a": "below_cost" });
-    expect(adjustCoefficientValues(rows, {}, ["model-a"], 500, { anchor: "cost" }).values).toEqual({ "model-a": "0.8500" });
+    expect(adjustCoefficientValues(rows, {}, ["model-a"], 100, { anchor: "cost" }).errors).toEqual({ "model-a": "below_cost" });
+    expect(adjustCoefficientValues(rows, {}, ["model-a"], 200, { anchor: "cost" }).values).toEqual({ "model-a": "0.8200" });
+    expect(adjustCoefficientValues([{ ...rows[0], minimumBPS: 8000 }], {}, ["model-a"], 0, { anchor: "cost" }).values).toEqual({ "model-a": "0.8000" });
   });
   test("pricing responses normalize nullable collections before rendering", () => {
     const sales = normalizeModelSales({

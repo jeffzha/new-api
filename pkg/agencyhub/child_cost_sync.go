@@ -12,12 +12,12 @@ import (
 )
 
 type childPricingPropagationError struct {
-	ChildName string
-	Cause     error
+	AgencyPath string
+	Cause      error
 }
 
 func (e *childPricingPropagationError) Error() string {
-	return "下级代理商 " + e.ChildName + " 无法同步成本：" + pricingErrorMessage(e.Cause)
+	return "代理路径：" + e.AgencyPath + "；价格冲突：" + pricingErrorMessage(e.Cause)
 }
 
 func (e *childPricingPropagationError) Unwrap() error { return e.Cause }
@@ -31,16 +31,81 @@ func directChildCost(policy agencycontract.Policy, modelName string) (int, bool)
 	return policy.DefaultChildCostBPS, policy.DefaultChildCostBPS != 0
 }
 
-// synchronizeChildCostPolicy copies a parent's newly published direct-child
-// costs into the child's own settlement costs. It never changes child sales or
-// the child's cost for its own descendants.
+func validateChildBoundary(parent, child agencycontract.Policy) error {
+	if child.MinSpreadBPS < parent.MinSpreadBPS {
+		return errors.New("child minimum spread cannot be below parent minimum spread")
+	}
+	check := func(name string, cost, minimum int) error {
+		if cost >= minimum {
+			return nil
+		}
+		return &agencycontract.PolicyCoefficientError{OriginModelName: name, Field: "settlement_bps", ValueBPS: cost, MinimumBPS: minimum, MaximumBPS: agencycontract.MaxCoefficientBPS, Cause: errors.New("child cost must not be below parent child cost")}
+	}
+	if err := check("", child.DefaultSettlementBPS, parent.DefaultChildCostBPS); err != nil {
+		return err
+	}
+	names := make(map[string]struct{})
+	for _, policy := range []agencycontract.Policy{parent, child} {
+		for _, override := range policy.ModelOverrides {
+			names[override.OriginModelName] = struct{}{}
+		}
+	}
+	for name := range names {
+		cost, _ := directChildCost(parent, name)
+		resolved, err := agencycontract.Resolve(child, name)
+		if err != nil {
+			return err
+		}
+		if err := check(name, resolved.SettlementBPS, cost); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// synchronizeChildCostPolicy copies a parent's direct-child costs into the
+// child's settlement boundary. Generated downstream and sales values follow
+// the new cost; legacy/explicit values have no source marker and are therefore
+// treated as manual values that must never be overwritten.
 func synchronizeChildCostPolicy(parent, child agencycontract.Policy) (agencycontract.Policy, bool, error) {
 	candidate := child
 	candidate.ModelOverrides = append([]agencycontract.ModelOverride(nil), child.ModelOverrides...)
 	changed := false
-	if parent.DefaultChildCostBPS != 0 && candidate.DefaultSettlementBPS != parent.DefaultChildCostBPS {
+	cap := candidate.SalesCapBPS
+	if cap == 0 {
+		cap = agencycontract.DefaultSalesCapBPS
+	}
+	// A populated legacy value without a source marker is treated as an
+	// explicit/manual value. Only an empty value or one previously generated
+	// by propagation may be changed when the parent publishes again.
+	if parent.DefaultChildCostBPS != 0 && (candidate.DefaultSettlementBPS == 0 || candidate.SettlementSource == agencycontract.PriceSourceInherited || candidate.SettlementSource == agencycontract.PriceSourceDefault) && candidate.DefaultSettlementBPS != parent.DefaultChildCostBPS {
 		candidate.DefaultSettlementBPS = parent.DefaultChildCostBPS
+		candidate.SettlementSource = agencycontract.PriceSourceInherited
 		changed = true
+	}
+	if candidate.DefaultSettlementBPS != 0 {
+		if candidate.DefaultChildCostBPS == 0 || candidate.ChildCostSource == agencycontract.PriceSourceDefault || candidate.ChildCostSource == agencycontract.PriceSourceInherited {
+			defaultChild := candidate.DefaultSettlementBPS + agencycontract.DefaultChildMarkupBPS
+			if defaultChild > cap {
+				return agencycontract.Policy{}, false, errors.New("默认下级系数超过价格上限")
+			}
+			if candidate.DefaultChildCostBPS != defaultChild || candidate.ChildCostSource != agencycontract.PriceSourceDefault {
+				candidate.DefaultChildCostBPS = defaultChild
+				candidate.ChildCostSource = agencycontract.PriceSourceDefault
+				changed = true
+			}
+		}
+		if candidate.DefaultSalesBPS == 0 || candidate.SalesSource == agencycontract.PriceSourceDefault || candidate.SalesSource == agencycontract.PriceSourceInherited {
+			defaultSales, err := inheritedSalesBPS(parent.DefaultSalesBPS, candidate.DefaultSettlementBPS, candidate.MinSpreadBPS, candidate.SalesCapBPS)
+			if err != nil {
+				return agencycontract.Policy{}, false, err
+			}
+			if candidate.DefaultSalesBPS != defaultSales || candidate.SalesSource != agencycontract.PriceSourceDefault {
+				candidate.DefaultSalesBPS = defaultSales
+				candidate.SalesSource = agencycontract.PriceSourceDefault
+				changed = true
+			}
+		}
 	}
 
 	positions := make(map[string]int, len(candidate.ModelOverrides))
@@ -54,12 +119,47 @@ func synchronizeChildCostPolicy(parent, child agencycontract.Policy) (agencycont
 		if !afterConfigured {
 			continue
 		}
-		if override.SettlementBPS != nil && *override.SettlementBPS == afterCost {
-			continue
-		}
 		value := afterCost
-		candidate.ModelOverrides[index].SettlementBPS = &value
-		changed = true
+		current := &candidate.ModelOverrides[index]
+		if current.SettlementBPS == nil || current.SettlementSource == agencycontract.PriceSourceInherited || current.SettlementSource == agencycontract.PriceSourceDefault {
+			if current.SettlementBPS != nil && *current.SettlementBPS == value && current.SettlementSource == agencycontract.PriceSourceInherited {
+				// Already synchronized.
+			} else {
+				current.SettlementBPS = &value
+				current.SettlementSource = agencycontract.PriceSourceInherited
+				changed = true
+			}
+		}
+		effectiveCost := value
+		if current.SettlementBPS != nil {
+			effectiveCost = *current.SettlementBPS
+		}
+		if current.ChildCostBPS == nil || current.ChildCostSource == agencycontract.PriceSourceDefault || current.ChildCostSource == agencycontract.PriceSourceInherited {
+			defaultChild := effectiveCost + agencycontract.DefaultChildMarkupBPS
+			if defaultChild > cap {
+				return agencycontract.Policy{}, false, errors.New("默认下级系数超过价格上限")
+			}
+			if current.ChildCostBPS == nil || *current.ChildCostBPS != defaultChild || current.ChildCostSource != agencycontract.PriceSourceDefault {
+				current.ChildCostBPS = &defaultChild
+				current.ChildCostSource = agencycontract.PriceSourceDefault
+				changed = true
+			}
+		}
+		if current.SalesBPS == nil || current.SalesSource == agencycontract.PriceSourceDefault || current.SalesSource == agencycontract.PriceSourceInherited {
+			parentResolved, err := agencycontract.Resolve(parent, override.OriginModelName)
+			if err != nil {
+				return agencycontract.Policy{}, false, err
+			}
+			defaultSales, err := inheritedSalesBPS(parentResolved.SalesBPS, effectiveCost, candidate.MinSpreadBPS, candidate.SalesCapBPS)
+			if err != nil {
+				return agencycontract.Policy{}, false, err
+			}
+			if current.SalesBPS == nil || *current.SalesBPS != defaultSales || current.SalesSource != agencycontract.PriceSourceDefault {
+				current.SalesBPS = &defaultSales
+				current.SalesSource = agencycontract.PriceSourceDefault
+				changed = true
+			}
+		}
 	}
 
 	for _, override := range parent.ModelOverrides {
@@ -75,47 +175,72 @@ func synchronizeChildCostPolicy(parent, child agencycontract.Policy) (agencycont
 			continue
 		}
 		value := afterCost
-		candidate.ModelOverrides = append(candidate.ModelOverrides, agencycontract.ModelOverride{OriginModelName: override.OriginModelName, SettlementBPS: &value})
+		defaultChild := value + agencycontract.DefaultChildMarkupBPS
+		if defaultChild > cap {
+			return agencycontract.Policy{}, false, errors.New("默认下级系数超过价格上限")
+		}
+		parentResolved, err := agencycontract.Resolve(parent, override.OriginModelName)
+		if err != nil {
+			return agencycontract.Policy{}, false, err
+		}
+		defaultSales, err := inheritedSalesBPS(parentResolved.SalesBPS, value, candidate.MinSpreadBPS, candidate.SalesCapBPS)
+		if err != nil {
+			return agencycontract.Policy{}, false, err
+		}
+		candidate.ModelOverrides = append(candidate.ModelOverrides, agencycontract.ModelOverride{OriginModelName: override.OriginModelName, SettlementBPS: &value, ChildCostBPS: &defaultChild, SalesBPS: &defaultSales, SettlementSource: agencycontract.PriceSourceInherited, ChildCostSource: agencycontract.PriceSourceDefault, SalesSource: agencycontract.PriceSourceDefault})
 		positions[key] = len(candidate.ModelOverrides) - 1
 		changed = true
 	}
 
-	if !changed {
-		return child, false, nil
-	}
 	if err := agencycontract.ValidatePolicy(candidate); err != nil {
 		return agencycontract.Policy{}, false, err
 	}
-	return candidate, true, nil
+	if err := validateChildBoundary(parent, candidate); err != nil {
+		return agencycontract.Policy{}, false, err
+	}
+	return candidate, changed, nil
 }
 
 func (a *App) syncDirectChildPoliciesTx(tx *gorm.DB, c *gin.Context, identity *Identity, parent model.Agency, after agencycontract.Policy, reason, actorType string) error {
+	return a.syncChildPoliciesTx(tx, c, identity, parent, after, reason, actorType, parent.DisplayName)
+}
+
+func (a *App) syncChildPoliciesTx(tx *gorm.DB, c *gin.Context, identity *Identity, parent model.Agency, after agencycontract.Policy, reason, actorType, parentPath string) error {
+	if parent.Depth > maxAgencyDepth {
+		return errors.New("agency hierarchy depth limit exceeded")
+	}
 	var children []model.Agency
 	if err := model.AgencyLockForUpdate(tx).Where("parent_agency_id = ?", parent.ID).Order("id ASC").Find(&children).Error; err != nil {
 		return err
 	}
 	for _, child := range children {
+		childPath := parentPath + " → " + child.DisplayName
 		var current model.AgencyPricePolicyVersion
 		if err := tx.Where("id = ? AND agency_id = ?", child.CurrentPolicyVersionID, child.ID).First(&current).Error; err != nil {
 			return err
 		}
 		var childPolicy agencycontract.Policy
 		if err := common.Unmarshal([]byte(current.PolicyJSON), &childPolicy); err != nil {
-			return &childPricingPropagationError{ChildName: child.DisplayName, Cause: errors.New("代理商价格策略数据异常")}
+			return &childPricingPropagationError{AgencyPath: childPath, Cause: errors.New("代理商价格策略数据异常")}
 		}
-		candidate, changed, err := synchronizeChildCostPolicy(after, childPolicy)
+		platform, err := model.LoadAgencyPlatformPolicy(tx)
 		if err != nil {
-			return &childPricingPropagationError{ChildName: child.DisplayName, Cause: err}
+			return err
+		}
+		candidate, changed, err := synchronizeChildCostPolicy(after, agencycontract.ConfirmedModelPolicy(childPolicy, platform))
+		if err != nil {
+			return &childPricingPropagationError{AgencyPath: childPath, Cause: err}
+		}
+		if err := validateCustomerSalesForPlatformTx(tx, child.ID, candidate, platform); err != nil {
+			return &childPricingPropagationError{AgencyPath: childPath, Cause: err}
 		}
 		if !changed {
+			if err := a.syncChildPoliciesTx(tx, c, identity, child, candidate, reason, actorType, childPath); err != nil {
+				return err
+			}
 			continue
 		}
-		if child.Status != AgencyStatusActive {
-			return &childPricingPropagationError{ChildName: child.DisplayName, Cause: errors.New("代理商已停用，请先启用后再同步成本")}
-		}
-		if err := validateCustomerSalesPolicyTx(tx, child.ID, candidate); err != nil {
-			return &childPricingPropagationError{ChildName: child.DisplayName, Cause: err}
-		}
+		candidate = preservePendingModelOverrides(candidate, childPolicy, platform)
 		candidate.Revision = child.PriceRevision + 1
 		encoded, err := common.Marshal(candidate)
 		if err != nil {
@@ -147,6 +272,21 @@ func (a *App) syncDirectChildPoliciesTx(tx *gorm.DB, c *gin.Context, identity *I
 		if err := recordAuditTx(tx, c, identity, "pricing.inherited_cost.sync", "agency", stringID(child.ID), childReason, map[string]any{"revision": childPolicy.Revision}, map[string]any{"revision": candidate.Revision, "policy_version_id": row.ID, "source_agency_id": parent.ID}); err != nil {
 			return err
 		}
+		child.CurrentPolicyVersionID = row.ID
+		child.PriceRevision = candidate.Revision
+		child.Version++
+		if err := a.syncChildPoliciesTx(tx, c, identity, child, agencycontract.ConfirmedModelPolicy(candidate, platform), reason, actorType, childPath); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func preservePendingModelOverrides(candidate, stored agencycontract.Policy, platform agencycontract.PlatformPolicy) agencycontract.Policy {
+	for _, override := range stored.ModelOverrides {
+		if !agencycontract.ModelPricingConfirmed(platform, override.OriginModelName) {
+			candidate.ModelOverrides = append(candidate.ModelOverrides, override)
+		}
+	}
+	return candidate
 }

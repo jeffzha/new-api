@@ -26,6 +26,7 @@ const (
 	OperatorStatusDisabled = "disabled"
 	ActorTypeRoot          = "root"
 	ActorTypeOperator      = "agency_operator"
+	ActorTypePlatformUser  = "platform_user"
 	ActorTypeSystem        = "system"
 )
 
@@ -43,15 +44,20 @@ type App struct {
 }
 
 type Identity struct {
-	ActorType            string          `json:"actor_type"`
-	ActorID              int64           `json:"actor_id"`
-	AgencyID             *int64          `json:"agency_id,omitempty"`
-	Username             string          `json:"username,omitempty"`
-	MustChangePassword   bool            `json:"must_change_password"`
-	ActingAgency         *AgencyIdentity `json:"acting_agency,omitempty"`
-	SessionID            int64           `json:"-"`
-	SourceSID            string          `json:"-"`
-	SourceSessionVersion int64           `json:"-"`
+	ActorType            string            `json:"actor_type"`
+	ActorID              int64             `json:"actor_id"`
+	AgencyID             *int64            `json:"agency_id,omitempty"`
+	Username             string            `json:"username,omitempty"`
+	MustChangePassword   bool              `json:"must_change_password"`
+	ActingAgency         *AgencyIdentity   `json:"acting_agency,omitempty"`
+	PlatformAccount      *PlatformIdentity `json:"platform_account,omitempty"`
+	SessionID            int64             `json:"-"`
+	SourceSID            string            `json:"-"`
+	SourceSessionVersion int64             `json:"-"`
+}
+
+type PlatformIdentity struct {
+	Username string `json:"username"`
 }
 
 // AgencyIdentity is the business-facing identity used when a root session is
@@ -83,6 +89,12 @@ func New(db, logDB *gorm.DB, config Config) *App {
 	}
 	if config.CookieName == "" {
 		config.CookieName = "agency_session"
+	}
+	if config.MaxLoginAttempts <= 0 {
+		config.MaxLoginAttempts = 5
+	}
+	if config.LoginLockout <= 0 {
+		config.LoginLockout = 15 * time.Minute
 	}
 	cursorSecret := []byte(strings.TrimSpace(config.CursorSecret))
 	if len(cursorSecret) < 32 {
@@ -119,6 +131,8 @@ func (a *App) Router() *gin.Engine {
 	api.POST("/auth/logout", a.logout)
 	api.POST("/auth/change-password", a.changePassword)
 	api.POST("/auth/verify", a.operatorVerify)
+	api.POST("/auth/platform-link", a.linkPlatformAccount)
+	api.POST("/auth/platform-link/remove", a.unlinkPlatformAccount)
 	api.GET("/pricing", a.getOwnPricing)
 	api.GET("/pricing/history", a.getOwnPricingHistory)
 	api.GET("/pricing/model-sales", a.getOwnModelSales)

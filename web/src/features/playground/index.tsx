@@ -68,6 +68,19 @@ export function Playground() {
     onMessageUpdate: updateMessages,
   })
 
+  const { isLoadingModels, canChat } = usePlaygroundOptions({
+    chatOnly: isRoot && pricingAssistantEnabled,
+    currentGroup: config.group,
+    currentModel: config.model,
+    setGroups,
+    setModels,
+    updateConfig,
+  })
+  const canSend =
+    !isGenerating &&
+    !isPricingAssistantQuerying &&
+    ((isRoot && pricingAssistantEnabled) || canChat)
+
   const sendPricingAssistant = useCallback(
     async (nextMessages: Message[]) => {
       const lastUserMessage = [...nextMessages]
@@ -151,6 +164,7 @@ export function Playground() {
     applyEdit,
     handleDeleteMessage,
   } = usePlaygroundConversation({
+    canSend,
     messages,
     updateMessages,
     sendChat: pricingAssistantEnabled ? sendPricingAssistant : sendChat,
@@ -167,15 +181,6 @@ export function Playground() {
     clearMessages()
     setPricingAssistantEnabled(enabled)
   }
-
-  const { isLoadingModels } = usePlaygroundOptions({
-    chatOnly: isRoot && pricingAssistantEnabled,
-    currentGroup: config.group,
-    currentModel: config.model,
-    setGroups,
-    setModels,
-    updateConfig,
-  })
 
   return (
     <div
@@ -202,6 +207,7 @@ export function Playground() {
       {/* Input area: center content and constrain to the same container width */}
       <div className='signal-studio-composer mx-auto w-full max-w-4xl'>
         <PlaygroundInput
+          canSend={canSend}
           config={config}
           disabled={
             isGenerating ||

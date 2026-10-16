@@ -126,6 +126,16 @@ func TestProcessChannelErrorMasksDisableReasonAndNotification(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, apiErr.StatusCode)
 }
 
+func TestVideoEndpointAlertExplainsClientAction(t *testing.T) {
+	text := formatRelayAlert("req-video", "/v1/chat/completions", 208, 0,
+		"doubao-seedance-2-0-fast-260128", "openai", http.StatusBadRequest, "invalid_request", "new_api_error",
+		"model doubao-seedance-2-0-fast-260128 is a video generation model; use POST /v1/videos instead of /v1/chat/completions", nil, "video endpoint required")
+	assert.Contains(t, text, "责任归属: 客户端调用方式")
+	assert.Contains(t, text, "计费和请求上游前拒绝")
+	assert.Contains(t, text, "POST /v1/videos")
+	assert.NotContains(t, text, "待核实")
+}
+
 func TestFeishuRelayAlertSignsMasksAndDeduplicates(t *testing.T) {
 	assert.Equal(t, "wSds2BzzFIIGf/WrhUO+NI1q/9j+FRJd3JNHKAq0NZY=", signFeishuAlert(1599360473, "test-secret"))
 

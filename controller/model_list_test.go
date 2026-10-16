@@ -235,6 +235,8 @@ func TestGetUserModelsChatOnlyExcludesTaskAndImageModels(t *testing.T) {
 		{Group: "default", Model: "zz-task-model", ChannelId: 1005, Enabled: true},
 		{Group: "default", Model: "gpt-image-zz", ChannelId: 1006, Enabled: true},
 		{Group: "default", Model: "zz-rerank-model", ChannelId: 1007, Enabled: true},
+		{Group: "default", Model: "text-embedding-3-small", ChannelId: 1004, Enabled: true},
+		{Group: "default", Model: "whisper-1", ChannelId: 1004, Enabled: true},
 	}).Error)
 
 	allRecorder := httptest.NewRecorder()
@@ -242,7 +244,7 @@ func TestGetUserModelsChatOnlyExcludesTaskAndImageModels(t *testing.T) {
 	allContext.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?group=default", nil)
 	allContext.Set("id", 1004)
 	GetUserModels(allContext)
-	require.ElementsMatch(t, []string{"zz-chat-model", "zz-task-model", "gpt-image-zz", "zz-rerank-model"}, decodeUserModelsResponse(t, allRecorder))
+	require.ElementsMatch(t, []string{"zz-chat-model", "zz-task-model", "gpt-image-zz", "zz-rerank-model", "text-embedding-3-small", "whisper-1"}, decodeUserModelsResponse(t, allRecorder))
 
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)
@@ -252,6 +254,89 @@ func TestGetUserModelsChatOnlyExcludesTaskAndImageModels(t *testing.T) {
 	GetUserModels(context)
 
 	require.Equal(t, []string{"zz-chat-model"}, decodeUserModelsResponse(t, recorder))
+}
+
+func TestPlaygroundModelCapabilities(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		channelType int
+		kind        string
+		chat        bool
+	}{
+		{"doubao-seed-2.1-lite", constant.ChannelTypeOpenAI, "text", true},
+		{"MiniMax-H3", constant.ChannelTypeTaskPlugin, "video", false},
+		{"doubao-seedance-2-0-fast-260128", constant.ChannelTypeOpenAI, "video", false},
+		{"wan2.7-i2v", constant.ChannelTypeOpenAI, "video", false},
+		{"wan2.6-t2v", constant.ChannelTypeOpenAI, "video", false},
+		{"custom-music-model", constant.ChannelTypeSunoAPI, "audio", false},
+		{"suno-v4", constant.ChannelTypeOpenAI, "audio", false},
+		{"custom-drawing-model", constant.ChannelTypeMidjourney, "image", false},
+		{"midjourney-v7", constant.ChannelTypeOpenAI, "image", false},
+		{"gpt-image-1", constant.ChannelTypeOpenAI, "image", false},
+		{"doubao-seedream-4.0", constant.ChannelTypeOpenAI, "image", false},
+		{"gemini-2.5-flash-image", constant.ChannelTypeGemini, "image", false},
+		{"text-embedding-3-small", constant.ChannelTypeOpenAI, "embedding", false},
+		{"bge-m3", constant.ChannelTypeOpenAI, "embedding", false},
+		{"custom-rerank", constant.ChannelTypeJina, "embedding", false},
+		{"whisper-1", constant.ChannelTypeOpenAI, "audio", false},
+		{"tts-1", constant.ChannelTypeOpenAI, "audio", false},
+		{"gpt-4o-audio-preview", constant.ChannelTypeOpenAI, "audio", false},
+		{"o3-pro", constant.ChannelTypeOpenAI, "text", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.kind, playgroundModelKind(tc.channelType, tc.name))
+			assert.Equal(t, tc.chat, playgroundModelSupportsChat(tc.channelType, tc.name))
+		})
+	}
+}
+
+func TestGetUserModelsIncludesPlaygroundCapabilityMetadata(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1008,
+		Username: "playground-capability-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 1008, Type: constant.ChannelTypeOpenAI, Key: "text-key", Name: "text", Status: common.ChannelStatusEnabled},
+		{Id: 1009, Type: constant.ChannelTypeHappyHorse, Key: "task-key", Name: "task", Status: common.ChannelStatusEnabled},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "zz-chat-model", ChannelId: 1008, Enabled: true},
+		{Group: "default", Model: "zz-video-model", ChannelId: 1009, Enabled: true},
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?group=default&include_metadata=true", nil)
+	context.Set("id", 1008)
+
+	GetUserModels(context)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    []struct {
+			Model         string `json:"model"`
+			Kind          string `json:"kind"`
+			ChatSupported bool   `json:"chat_supported"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	require.Len(t, response.Data, 2)
+	assert.Contains(t, response.Data, struct {
+		Model         string `json:"model"`
+		Kind          string `json:"kind"`
+		ChatSupported bool   `json:"chat_supported"`
+	}{Model: "zz-chat-model", Kind: "text", ChatSupported: true})
+	assert.Contains(t, response.Data, struct {
+		Model         string `json:"model"`
+		Kind          string `json:"kind"`
+		ChatSupported bool   `json:"chat_supported"`
+	}{Model: "zz-video-model", Kind: "video", ChatSupported: false})
 }
 
 func TestGetUserModelsExpandsAutoGroupsInConfiguredOrder(t *testing.T) {

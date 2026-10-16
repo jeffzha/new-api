@@ -29,6 +29,84 @@ async function operatorLogin(
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
 }
 
+test("operator links its own platform account for scoped passwordless sign-in and can unlink it", async ({
+  page,
+  browser,
+}) => {
+  await operatorLogin(page);
+  await page.getByRole("button", { name: "Account security", exact: true }).click();
+  await expect(
+    page.getByText(
+      "Platform and agency usernames may differ. Choose and confirm the platform account in the authorization window.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+
+  const agencyPassword = page.getByLabel("Current agency password", { exact: true });
+  await agencyPassword.fill("wrong-password");
+  const rejectedAuthorizationWindowPromise = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Link platform account", exact: true }).click();
+  const rejectedAuthorizationWindow = await rejectedAuthorizationWindowPromise;
+  await rejectedAuthorizationWindow
+    .getByRole("button", { name: "确认关联此账号", exact: true })
+    .click();
+  await expect(page.getByText("代理商密码错误", { exact: true })).toBeVisible();
+
+  await agencyPassword.fill(operatorPassword);
+  const authorizationWindowPromise = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Link platform account", exact: true }).click();
+  const authorizationWindow = await authorizationWindowPromise;
+  await authorizationWindow
+    .getByRole("button", { name: "确认关联此账号", exact: true })
+    .click();
+  await expect(
+    page.getByText("Linked platform account: browser-platform-operator", { exact: true }),
+  ).toBeVisible();
+
+  const passwordlessContext = await browser.newContext({ baseURL: new URL(page.url()).origin });
+  try {
+    const passwordlessPage = await passwordlessContext.newPage();
+    await passwordlessPage.goto("/agency/?platform_login=1");
+    await expect(
+      passwordlessPage.getByRole("button", { name: "Sign out", exact: true }),
+    ).toBeVisible();
+    await expect(passwordlessPage.getByText("browser-operator", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Account security", exact: true }).click();
+    await page.getByLabel("Current agency password", { exact: true }).fill(operatorPassword);
+    await page.getByRole("button", { name: "Unlink platform account", exact: true }).click();
+    await expect(
+      page.getByText(
+        "Platform and agency usernames may differ. Choose and confirm the platform account in the authorization window.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
+
+    await passwordlessPage.goto("/agency/?platform_login=1");
+    await expect(
+      passwordlessPage.getByText("Platform account is not linked.", { exact: true }),
+    ).toBeVisible();
+    const manualSignIn = passwordlessPage.getByRole("button", { name: "Sign in", exact: true });
+    await expect(manualSignIn).toBeVisible();
+    await manualSignIn.click();
+    await expect(passwordlessPage).toHaveURL(
+      /\/sign-in\?mode=agency&agency_signed_out=true$/,
+    );
+  } finally {
+    await passwordlessContext.close();
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({
+    path: test.info().outputPath("platform-account-link-mobile.png"),
+    fullPage: true,
+  });
+});
+
 test("operator copies its invitation and downloads the QR code after a recoverable image error", async ({
   page,
 }) => {

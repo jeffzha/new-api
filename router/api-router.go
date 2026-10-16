@@ -28,7 +28,8 @@ func SetApiRouter(router *gin.Engine) {
 	controller.RegisterOpsBridgeRoutes(opsBridgeRoute)
 	agencyRoute := apiRouter.Group("/agency")
 	agencyRoute.GET("/sso", controller.AgencySSOPage)
-	agencyRoute.POST("/sso-ticket", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-sso"), middleware.DisableCache(), controller.IssueAgencySSOTicket)
+	agencyRoute.POST("/sso-ticket", middleware.UserAuth(), middleware.UserCriticalRateLimit("agency-sso"), middleware.DisableCache(), controller.IssueAgencySSOTicket)
+	agencyRoute.POST("/link-proof", middleware.UserAuth(), middleware.UserCriticalRateLimit("agency-account-link"), middleware.DisableCache(), controller.IssueAgencyLinkProof)
 	// Both proof endpoints check the Root password and share one guessing budget.
 	agencyRoute.POST("/verify", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-verification"), middleware.DisableCache(), controller.IssueAgencyVerification)
 	agencyRoute.POST("/command-proof", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-verification"), middleware.DisableCache(), controller.IssueAgencyCommandProof)

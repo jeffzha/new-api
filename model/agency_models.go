@@ -49,6 +49,22 @@ type AgencyOperatorAccount struct {
 
 func (AgencyOperatorAccount) TableName() string { return AgencyTablePrefix + "operator_accounts" }
 
+// AgencyOperatorIdentityBinding links one authenticated platform user to one
+// existing agency operator account. It is intentionally separate from customer
+// ownership and billing bindings: this table grants login identity only.
+type AgencyOperatorIdentityBinding struct {
+	ID                int64 `gorm:"primaryKey" json:"id"`
+	OperatorAccountID int64 `gorm:"not null;uniqueIndex:uidx_agency_operator_identity_operator" json:"operator_account_id"`
+	AgencyID          int64 `gorm:"not null;index:idx_agency_operator_identity_agency" json:"agency_id"`
+	PlatformUserID    int64 `gorm:"not null;uniqueIndex:uidx_agency_operator_identity_user" json:"platform_user_id"`
+	CreatedAt         int64 `gorm:"not null" json:"created_at"`
+	UpdatedAt         int64 `gorm:"not null" json:"updated_at"`
+}
+
+func (AgencyOperatorIdentityBinding) TableName() string {
+	return AgencyTablePrefix + "operator_identity_bindings"
+}
+
 type AgencySession struct {
 	ID                   int64  `gorm:"primaryKey" json:"id"`
 	TokenHash            string `gorm:"size:128;not null;uniqueIndex:uidx_agency_session_token" json:"-"`
@@ -971,7 +987,7 @@ func (AgencyCreditInvoice) TableName() string { return AgencyTablePrefix + "cred
 
 func AgencyModels() []any {
 	return []any{
-		&Agency{}, &AgencyOperatorAccount{}, &AgencySession{}, &AgencySSOTicketUse{}, &AgencyVerificationUse{}, &AgencyDeliverySecret{},
+		&Agency{}, &AgencyOperatorAccount{}, &AgencyOperatorIdentityBinding{}, &AgencySession{}, &AgencySSOTicketUse{}, &AgencyVerificationUse{}, &AgencyDeliverySecret{},
 		&AgencyUserBinding{}, &AgencyActiveUserBinding{}, &AgencyCustomerSalesOverride{}, &AgencyPricePolicyVersion{}, &AgencyPricePolicyItem{}, &AgencyPlatformPriceState{}, &AgencyPlatformPriceVersion{}, &AgencyIdempotencyRecord{},
 		&AgencyFundingAccount{}, &AgencyFundingLot{}, &AgencyFundingAllocation{}, &AgencyFundingLedger{}, &AgencyFundingDebt{}, &AgencyDebtRepayment{}, &AgencyFundingReversal{}, &AgencyFundingReversalChargeRecord{}, &AgencyCreditTerms{}, &AgencyCreditInvoice{},
 		&AgencyBillingJournal{}, &AgencyBillingOperation{}, &AgencyBillingOutbox{}, &AgencyEventDelivery{}, &AgencyTaskSubmissionAttempt{},

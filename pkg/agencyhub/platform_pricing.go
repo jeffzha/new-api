@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,35 +49,60 @@ func (e *platformPricingConflictError) Error() string {
 }
 
 func validatePlatformPricingCustomerSales(db *gorm.DB, policy agencycontract.PlatformPolicy) ([]string, error) {
+	_, conflicts, err := platformPricingCandidates(db, policy)
+	return conflicts, err
+}
+
+func platformPricingCandidates(db *gorm.DB, policy agencycontract.PlatformPolicy) (map[int64]agencycontract.Policy, []string, error) {
 	var activePolicies []platformPricingAgencyPolicy
 	if err := db.Table((model.Agency{}).TableName() + " AS agency").
 		Select("agency.id AS agency_id, agency.parent_agency_id, agency.display_name, version.policy_json").
 		Joins("JOIN " + (model.AgencyPricePolicyVersion{}).TableName() + " AS version ON version.id = agency.current_policy_version_id AND version.agency_id = agency.id").
 		Scan(&activePolicies).Error; err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-
+	candidates := make(map[int64]agencycontract.Policy, len(activePolicies))
+	paths := make(map[int64]string, len(activePolicies))
+	pending := append([]platformPricingAgencyPolicy(nil), activePolicies...)
 	conflicts := make([]string, 0)
-	for _, row := range activePolicies {
-		var agencyPolicy agencycontract.Policy
-		if err := common.Unmarshal([]byte(row.PolicyJSON), &agencyPolicy); err != nil {
-			return nil, fmt.Errorf("代理商价格策略数据异常：%s", row.DisplayName)
+	for depth := 0; len(pending) > 0 && depth <= maxAgencyDepth; depth++ {
+		next := make([]platformPricingAgencyPolicy, 0)
+		for _, row := range pending {
+			if row.ParentAgencyID != nil {
+				if _, ready := candidates[*row.ParentAgencyID]; !ready {
+					next = append(next, row)
+					continue
+				}
+			}
+			var agencyPolicy agencycontract.Policy
+			if err := common.Unmarshal([]byte(row.PolicyJSON), &agencyPolicy); err != nil {
+				return nil, nil, fmt.Errorf("代理商价格策略数据异常：%s", row.DisplayName)
+			}
+			path := row.DisplayName
+			var validationErr error
+			effectivePolicy := agencyPolicy
+			if row.ParentAgencyID == nil {
+				effectivePolicy, validationErr = agencycontract.ApplyPlatformPolicy(agencyPolicy, policy)
+			} else {
+				path = paths[*row.ParentAgencyID] + " → " + row.DisplayName
+				effectivePolicy, _, validationErr = synchronizeChildCostPolicy(candidates[*row.ParentAgencyID], agencycontract.ConfirmedModelPolicy(agencyPolicy, policy))
+			}
+			if validationErr == nil {
+				validationErr = validateCustomerSalesForPlatformTx(db, row.AgencyID, effectivePolicy, policy)
+			}
+			if validationErr != nil {
+				conflicts = append(conflicts, path+"："+pricingErrorMessage(validationErr)+" 修改位置：对应代理商 → 价格策略 / 客户管理 → 客户销售系数。")
+				return nil, conflicts, nil
+			}
+			candidates[row.AgencyID] = effectivePolicy
+			paths[row.AgencyID] = path
 		}
-		var validationErr error
-		effectivePolicy := agencyPolicy
-		if row.ParentAgencyID == nil {
-			effectivePolicy, validationErr = agencycontract.ApplyPlatformPolicy(agencyPolicy, policy)
-		} else {
-			validationErr = agencycontract.ValidatePolicy(agencyPolicy)
-		}
-		if validationErr == nil {
-			validationErr = validateCustomerSalesPolicyTx(db, row.AgencyID, effectivePolicy)
-		}
-		if validationErr != nil {
-			conflicts = append(conflicts, row.DisplayName+"："+pricingErrorMessage(validationErr))
-		}
+		pending = next
 	}
-	return conflicts, nil
+	if len(pending) > 0 {
+		return nil, nil, errors.New("代理商层级存在循环、缺失上级或超过最大深度")
+	}
+	return candidates, conflicts, nil
 }
 
 type PlatformPricingCatalogChannel struct {
@@ -96,10 +122,12 @@ type PlatformPricingCatalogRow struct {
 	ChannelCosts    []PlatformPricingCatalogChannel `json:"channel_costs"`
 	// PlatformCostBPS is a read-only legacy fallback for a policy published
 	// before per-channel platform costs were introduced.
-	PlatformCostBPS *int `json:"platform_cost_bps"`
-	AgencyCostBPS   *int `json:"agency_cost_bps"`
-	ChildCostBPS    *int `json:"child_cost_bps"`
-	DefaultSalesBPS *int `json:"default_sales_bps"`
+	PlatformCostBPS     *int  `json:"platform_cost_bps"`
+	AgencyCostBPS       *int  `json:"agency_cost_bps"`
+	ChildCostBPS        *int  `json:"child_cost_bps"`
+	DefaultSalesBPS     *int  `json:"default_sales_bps"`
+	PricingConfirmed    *bool `json:"pricing_confirmed"`
+	AgencyCostConfirmed *bool `json:"agency_cost_confirmed"`
 }
 
 // PlatformPricingCatalog is the current, read-only view of the pricing
@@ -225,10 +253,12 @@ func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
 	for _, item := range live {
 		row := byModel[item.Model]
 		if row == nil {
-			row = &PlatformPricingCatalogRow{OriginModelName: item.Model, ChannelNames: []string{}, ChannelCosts: []PlatformPricingCatalogChannel{}}
+			pending := false
+			row = &PlatformPricingCatalogRow{OriginModelName: item.Model, ChannelNames: []string{}, ChannelCosts: []PlatformPricingCatalogChannel{}, PricingConfirmed: &pending, AgencyCostConfirmed: &pending}
 			if price, ok := configured[item.Model]; ok {
 				agencyCost, defaultSales := price.AgencyCostBPS, price.DefaultSalesBPS
 				row.AgencyCostBPS, row.DefaultSalesBPS = &agencyCost, &defaultSales
+				row.PricingConfirmed, row.AgencyCostConfirmed = price.PricingConfirmed, price.AgencyCostConfirmed
 				if len(price.ChannelCosts) == 0 {
 					legacyCost := price.PlatformCostBPS
 					row.PlatformCostBPS = &legacyCost
@@ -259,7 +289,7 @@ func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
 		publicCosts := publicChannelCosts(price.ChannelCosts, internalChannels)
 		if row == nil {
 			agencyCost, defaultSales := price.AgencyCostBPS, price.DefaultSalesBPS
-			row = &PlatformPricingCatalogRow{OriginModelName: name, ChannelNames: []string{}, ChannelCosts: []PlatformPricingCatalogChannel{}, AgencyCostBPS: &agencyCost, DefaultSalesBPS: &defaultSales}
+			row = &PlatformPricingCatalogRow{OriginModelName: name, ChannelNames: []string{}, ChannelCosts: []PlatformPricingCatalogChannel{}, AgencyCostBPS: &agencyCost, DefaultSalesBPS: &defaultSales, PricingConfirmed: price.PricingConfirmed, AgencyCostConfirmed: price.AgencyCostConfirmed}
 			if len(price.ChannelCosts) == 0 {
 				legacyCost := price.PlatformCostBPS
 				row.PlatformCostBPS = &legacyCost
@@ -291,6 +321,13 @@ func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
 	}
 	items := make([]PlatformPricingCatalogRow, 0, len(order))
 	for _, name := range order {
+		row := byModel[name]
+		if row.AgencyCostConfirmed != nil && !*row.AgencyCostConfirmed {
+			row.AgencyCostBPS = nil
+		}
+		if row.PricingConfirmed != nil && !*row.PricingConfirmed && len(row.ChannelCosts) == 0 {
+			row.PlatformCostBPS = nil
+		}
 		if vendor, ok := vendors[name]; ok {
 			byModel[name].VendorName = vendor.Name
 			byModel[name].VendorIcon = vendor.Icon
@@ -320,6 +357,9 @@ func containsCatalogChannel(costs []PlatformPricingCatalogChannel, channelID int
 
 func configuredChannelCost(price agencycontract.PlatformModelPrice, channelID int) *int {
 	if len(price.ChannelCosts) == 0 {
+		if price.PricingConfirmed != nil && !*price.PricingConfirmed {
+			return nil
+		}
 		cost := price.PlatformCostBPS
 		return &cost
 	}
@@ -403,7 +443,7 @@ func (a *App) publishPlatformPricing(c *gin.Context) {
 			respondError(c, http.StatusConflict, "channel_unavailable", "渠道已不属于该模型或当前不可用，请刷新后重试。", nil)
 			return
 		}
-		if active := liveChannels[price.OriginModelName]; len(active) > 0 {
+		if active := liveChannels[price.OriginModelName]; len(active) > 0 && price.IsPricingConfirmed() {
 			configured := make(map[int]struct{}, len(price.ChannelCosts))
 			for _, cost := range price.ChannelCosts {
 				configured[cost.ChannelID] = struct{}{}
@@ -434,7 +474,7 @@ func (a *App) publishPlatformPricing(c *gin.Context) {
 		if lockErr := model.AgencyLockForUpdate(tx).Order("id ASC").Find(&agencies).Error; lockErr != nil {
 			return lockErr
 		}
-		transactionConflicts, validationErr := validatePlatformPricingCustomerSales(tx, policy)
+		candidates, transactionConflicts, validationErr := platformPricingCandidates(tx, policy)
 		if validationErr != nil {
 			return validationErr
 		}
@@ -475,6 +515,50 @@ func (a *App) publishPlatformPricing(c *gin.Context) {
 			}
 			if result.RowsAffected != 1 {
 				return agencycontract.ErrPolicyRevision
+			}
+		}
+		for _, agency := range agencies {
+			candidate, exists := candidates[agency.ID]
+			if !exists {
+				return errors.New("代理商价格策略缺失")
+			}
+			var current model.AgencyPricePolicyVersion
+			if err := tx.First(&current, agency.CurrentPolicyVersionID).Error; err != nil {
+				return err
+			}
+			var stored agencycontract.Policy
+			if err := common.Unmarshal([]byte(current.PolicyJSON), &stored); err != nil {
+				return err
+			}
+			candidate = preservePendingModelOverrides(candidate, stored, policy)
+			if reflect.DeepEqual(candidate, stored) {
+				continue
+			}
+			candidate.Revision = agency.PriceRevision + 1
+			encoded, err := common.Marshal(candidate)
+			if err != nil {
+				return err
+			}
+			hash, err := agencycontract.CanonicalHash(candidate)
+			if err != nil {
+				return err
+			}
+			row := model.AgencyPricePolicyVersion{AgencyID: agency.ID, Revision: candidate.Revision, PolicyJSON: string(encoded), PolicyHash: hash, CreatedByType: ActorTypeRoot, CreatedByID: identity.ActorID, Reason: request.Reason, CreatedAtMS: now}
+			if err := tx.Create(&row).Error; err != nil {
+				return err
+			}
+			if err := a.writePolicyItems(tx, row.ID, candidate); err != nil {
+				return err
+			}
+			result := tx.Model(&agency).Where("id = ? AND price_revision = ?", agency.ID, agency.PriceRevision).Updates(map[string]any{"current_policy_version_id": row.ID, "price_revision": candidate.Revision, "version": agency.Version + 1, "updated_at": now / 1000})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return agencycontract.ErrPolicyRevision
+			}
+			if err := recordAuditTx(tx, c, identity, "pricing.inherited_cost.sync", "agency", stringID(agency.ID), request.Reason, gin.H{"revision": agency.PriceRevision}, gin.H{"revision": candidate.Revision, "platform_revision": policy.Revision}); err != nil {
+				return err
 			}
 		}
 		return recordAuditTx(tx, c, identity, "pricing.platform.publish", "platform_pricing", "current", request.Reason, gin.H{"revision": request.ExpectedRevision}, gin.H{"revision": policy.Revision, "model_count": len(policy.ModelPrices)})

@@ -25,12 +25,16 @@ const (
 	BillingEventCorrected = "agency.billing_corrected"
 	// Keep the historical value available because old pricing snapshots are
 	// immutable and must continue to settle with their original ordering.
-	FundingRuleVersionV1 = "paid_first_v1"
-	FundingRuleVersionV2 = "redeem_admin_paid_v2"
-	FundingRuleVersion   = FundingRuleVersionV2
-	DefaultSalesCapBPS   = 30000
-	MinCoefficientBPS    = 0
-	MaxCoefficientBPS    = 100000
+	FundingRuleVersionV1  = "paid_first_v1"
+	FundingRuleVersionV2  = "redeem_admin_paid_v2"
+	FundingRuleVersion    = FundingRuleVersionV2
+	DefaultSalesCapBPS    = 30000
+	MinCoefficientBPS     = 0
+	MaxCoefficientBPS     = 100000
+	PriceSourceInherited  = "inherited"
+	PriceSourceDefault    = "default"
+	PriceSourceManual     = "manual"
+	DefaultChildMarkupBPS = 500
 )
 
 var (
@@ -43,11 +47,19 @@ var (
 // ModelOverride is an exact public-model override. A nil coefficient inherits
 // the policy default; zero is an intentional zero coefficient.
 type ModelOverride struct {
-	OriginModelName string `json:"origin_model_name"`
-	SettlementBPS   *int   `json:"settlement_bps,omitempty"`
-	ChildCostBPS    *int   `json:"child_cost_bps,omitempty"`
-	SalesBPS        *int   `json:"sales_bps,omitempty"`
+	OriginModelName  string `json:"origin_model_name"`
+	SettlementBPS    *int   `json:"settlement_bps,omitempty"`
+	ChildCostBPS     *int   `json:"child_cost_bps,omitempty"`
+	SalesBPS         *int   `json:"sales_bps,omitempty"`
+	SettlementSource string `json:"settlement_source,omitempty"`
+	ChildCostSource  string `json:"child_cost_source,omitempty"`
+	SalesSource      string `json:"sales_source,omitempty"`
 }
+
+// PricingSource fields on policy defaults let propagation distinguish a
+// generated/inherited value from an administrator-entered value. Empty is
+// kept backward-compatible with legacy snapshots and is treated as manual
+// when the value is already present.
 
 // Policy is an immutable pricing package. The active agency row points to one
 // complete package rather than maintaining independently mutable defaults.
@@ -58,6 +70,9 @@ type Policy struct {
 	DefaultSalesBPS      int             `json:"default_sales_bps"`
 	MinSpreadBPS         int             `json:"min_spread_bps"`
 	SalesCapBPS          int             `json:"sales_cap_bps"`
+	SettlementSource     string          `json:"settlement_source,omitempty"`
+	ChildCostSource      string          `json:"child_cost_source,omitempty"`
+	SalesSource          string          `json:"sales_source,omitempty"`
 	ModelOverrides       []ModelOverride `json:"model_overrides,omitempty"`
 }
 
@@ -91,6 +106,37 @@ type PlatformModelPrice struct {
 	AgencyCostBPS   int                   `json:"agency_cost_bps"`
 	ChildCostBPS    int                   `json:"child_cost_bps"`
 	DefaultSalesBPS int                   `json:"default_sales_bps"`
+	// nil is compatible with historical published snapshots and means the
+	// price was confirmed. false is an explicit pending/unpublished row.
+	PricingConfirmed    *bool `json:"pricing_confirmed,omitempty"`
+	AgencyCostConfirmed *bool `json:"agency_cost_confirmed,omitempty"`
+}
+
+func (price PlatformModelPrice) IsPricingConfirmed() bool {
+	if price.PricingConfirmed != nil && !*price.PricingConfirmed {
+		return false
+	}
+	if price.AgencyCostConfirmed != nil && !*price.AgencyCostConfirmed {
+		return false
+	}
+	return true
+}
+
+func ModelPricingConfirmed(platform PlatformPolicy, modelName string) bool {
+	price, err := ResolvePlatform(platform, modelName)
+	return err == nil && price != nil && price.IsPricingConfirmed()
+}
+
+// Unconfirmed models must not inherit a historical or agency-wide override.
+func ConfirmedModelPolicy(policy Policy, platform PlatformPolicy) Policy {
+	result := policy
+	result.ModelOverrides = make([]ModelOverride, 0, len(policy.ModelOverrides))
+	for _, override := range policy.ModelOverrides {
+		if ModelPricingConfirmed(platform, override.OriginModelName) {
+			result.ModelOverrides = append(result.ModelOverrides, override)
+		}
+	}
+	return result
 }
 
 type PlatformPolicy struct {
@@ -145,6 +191,9 @@ func ValidatePlatformPolicy(policy PlatformPolicy) error {
 				}
 			}
 		}
+		if !price.IsPricingConfirmed() {
+			continue
+		}
 		if price.DefaultSalesBPS < price.AgencyCostBPS {
 			return fmt.Errorf("model %s sales coefficient must cover agency cost", price.OriginModelName)
 		}
@@ -174,8 +223,7 @@ func ResolvePlatform(policy PlatformPolicy, originModelName string) (*PlatformMo
 // sale onto an agency policy without mutating either input. An explicit agency
 // sales override wins; platform cost always remains administrator-owned.
 func ApplyPlatformPolicy(policy Policy, platform PlatformPolicy) (Policy, error) {
-	result := policy
-	result.ModelOverrides = append([]ModelOverride(nil), policy.ModelOverrides...)
+	result := ConfirmedModelPolicy(policy, platform)
 	positions := make(map[string]int, len(result.ModelOverrides))
 	for i, override := range result.ModelOverrides {
 		key, err := ModelKey(override.OriginModelName)
@@ -185,6 +233,9 @@ func ApplyPlatformPolicy(policy Policy, platform PlatformPolicy) (Policy, error)
 		positions[key] = i
 	}
 	for _, price := range platform.ModelPrices {
+		if !price.IsPricingConfirmed() {
+			continue
+		}
 		key, err := ModelKey(price.OriginModelName)
 		if err != nil {
 			return Policy{}, err
@@ -192,16 +243,27 @@ func ApplyPlatformPolicy(policy Policy, platform PlatformPolicy) (Policy, error)
 		agencyCost := price.AgencyCostBPS
 		if position, exists := positions[key]; exists {
 			override := result.ModelOverrides[position]
+			// The first-level agency cost is owned by the platform administrator.
+			// A legacy/manual source marker must not let an agency override that
+			// boundary; only downstream and sales values remain agency-owned.
 			override.SettlementBPS = &agencyCost
-			if override.SalesBPS == nil {
+			override.SettlementSource = PriceSourceInherited
+			if override.ChildCostBPS == nil || override.ChildCostSource == PriceSourceDefault || override.ChildCostSource == PriceSourceInherited {
+				childCost := agencyCost + DefaultChildMarkupBPS
+				override.ChildCostBPS = &childCost
+				override.ChildCostSource = PriceSourceDefault
+			}
+			if override.SalesBPS == nil || override.SalesSource == PriceSourceDefault || override.SalesSource == PriceSourceInherited {
 				defaultSales := max(price.DefaultSalesBPS, agencyCost+result.MinSpreadBPS)
 				override.SalesBPS = &defaultSales
+				override.SalesSource = PriceSourceDefault
 			}
 			result.ModelOverrides[position] = override
 			continue
 		}
 		defaultSales := max(price.DefaultSalesBPS, agencyCost+result.MinSpreadBPS)
-		modelOverride := ModelOverride{OriginModelName: price.OriginModelName, SettlementBPS: &agencyCost, SalesBPS: &defaultSales}
+		childCost := agencyCost + DefaultChildMarkupBPS
+		modelOverride := ModelOverride{OriginModelName: price.OriginModelName, SettlementBPS: &agencyCost, ChildCostBPS: &childCost, SalesBPS: &defaultSales, SettlementSource: PriceSourceInherited, ChildCostSource: PriceSourceDefault, SalesSource: PriceSourceDefault}
 		result.ModelOverrides = append(result.ModelOverrides, modelOverride)
 		positions[key] = len(result.ModelOverrides) - 1
 	}
@@ -256,6 +318,15 @@ func ValidatePolicy(policy Policy) error {
 	if policy.MinSpreadBPS < 0 || policy.MinSpreadBPS > cap {
 		return fmt.Errorf("invalid minimum spread: %d", policy.MinSpreadBPS)
 	}
+	if err := validatePriceSource(policy.SettlementSource); err != nil {
+		return err
+	}
+	if err := validatePriceSource(policy.ChildCostSource); err != nil {
+		return err
+	}
+	if err := validatePriceSource(policy.SalesSource); err != nil {
+		return err
+	}
 	if err := ValidateCoefficient(policy.DefaultSettlementBPS, cap); err != nil {
 		return &PolicyCoefficientError{Field: "default_settlement_bps", ValueBPS: policy.DefaultSettlementBPS, MaximumBPS: cap, Cause: err}
 	}
@@ -278,6 +349,11 @@ func ValidatePolicy(policy Policy) error {
 		return errors.New("too many model overrides")
 	}
 	for _, override := range policy.ModelOverrides {
+		for _, source := range []string{override.SettlementSource, override.ChildCostSource, override.SalesSource} {
+			if source != "" && source != PriceSourceInherited && source != PriceSourceDefault && source != PriceSourceManual {
+				return fmt.Errorf("invalid price source: %s", source)
+			}
+		}
 		key, err := ModelKey(override.OriginModelName)
 		if err != nil {
 			return err
@@ -315,6 +391,13 @@ func ValidatePolicy(policy Policy) error {
 		if sales < settlement+policy.MinSpreadBPS {
 			return &PolicyCoefficientError{OriginModelName: override.OriginModelName, Field: "sales_bps", ValueBPS: sales, MinimumBPS: settlement + policy.MinSpreadBPS, MaximumBPS: cap, SettlementBPS: settlement, MinSpreadBPS: policy.MinSpreadBPS, BelowCost: true, Cause: fmt.Errorf("model %s violates minimum spread", override.OriginModelName)}
 		}
+	}
+	return nil
+}
+
+func validatePriceSource(source string) error {
+	if source != "" && source != PriceSourceInherited && source != PriceSourceDefault && source != PriceSourceManual {
+		return fmt.Errorf("invalid price source: %s", source)
 	}
 	return nil
 }

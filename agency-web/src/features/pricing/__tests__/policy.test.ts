@@ -77,13 +77,13 @@ describe("pricing request contracts", () => {
     });
   });
 
-  test("new platform rows default missing coefficients to 1 while preserving explicit values", () => {
+  test("new platform rows keep missing costs pending while defaulting sales to 1", () => {
     expect(suggestedPlatformCoefficients([5000, 5500], null, null)).toEqual({
-      agencyCostBPS: 10000,
+      agencyCostBPS: null,
       salesBPS: 10000,
     });
     expect(suggestedPlatformCoefficients([9200], null, null)).toEqual({
-      agencyCostBPS: 10000,
+      agencyCostBPS: null,
       salesBPS: 10000,
     });
     expect(suggestedPlatformCoefficients([5000], 6200, 8800)).toEqual({

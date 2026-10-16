@@ -19,12 +19,12 @@ describe("child pricing editor", () => {
     ]);
   });
 
-  test("retains an existing value when the editor input is untouched", () => {
+  test("does not resubmit untouched prices as manual changes", () => {
     expect(
       childPricingOverridePayload(
         [{ origin_model_name: "glm-5.3", agency_cost_bps: 7000, settlement_bps: 7500 }],
         {},
       ),
-    ).toEqual([{ origin_model_name: "glm-5.3", settlement_bps: 7500 }]);
+    ).toEqual([]);
   });
 });

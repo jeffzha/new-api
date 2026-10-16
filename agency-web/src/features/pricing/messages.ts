@@ -1,6 +1,9 @@
 import type { Locale } from "../../lib/i18n-types";
 
 const rows = [
+  ["This adjustment would be below my cost or my published child quote.", "调整后不能低于我的成本或已生效的下级渠道报价。", "調整後不能低於我的成本或已生效的下級渠道報價。", "Le résultat serait inférieur à mon coût ou à mon tarif enfant publié.", "調整後の値は自社原価または公開済みの子代理店価格以上である必要があります。", "Результат ниже моей стоимости или опубликованной цены для дочернего агентства.", "Kết quả thấp hơn chi phí của tôi hoặc giá cấp dưới đã công bố."],
+  ["Minimum child cost", "下级成本下限", "下級成本下限", "Coût enfant minimum", "子代理店原価の下限", "Минимальная дочерняя стоимость", "Chi phí cấp dưới tối thiểu"],
+  ["Adjust from my cost. The result must also meet my published child quote.", "以我的成本为基准调整，调整后还须满足已生效的下级渠道报价。", "以我的成本為基準調整，調整後還須滿足已生效的下級渠道報價。", "Ajustez depuis mon coût. Respectez aussi mon tarif enfant publié.", "自社原価を基準に調整します。公開済みの子代理店価格も満たす必要があります。", "Изменение относительно моей стоимости с учётом опубликованной дочерней цены.", "Điều chỉnh từ chi phí của tôi và đáp ứng giá cấp dưới đã công bố."],
   ["Increase/decrease child cost", "统一增/减下级成本", "統一增/減下級成本", "Augmenter/réduire le coût enfant", "下級原価を一括増減", "Увеличить/уменьшить дочернюю стоимость", "Tăng/giảm chi phí cấp dưới"],
   ["Adjust selected child cost coefficients by a fixed amount. Values cannot be negative.", "按固定幅度调整已选模型的下级成本系数，调整后不能为负数，发布时会校验上级成本。", "依固定幅度調整已選模型的下級成本係數，不可為負數，發布時會驗證上級成本。", "Ajuster les coûts sélectionnés. Les valeurs doivent être positives ; le coût parent est vérifié à la publication.", "選択した下級原価係数を調整します。負の値は禁止され、公開時に上級原価が検証されます。", "Изменить выбранные коэффициенты. Отрицательные значения запрещены, стоимость родителя проверяется при публикации.", "Điều chỉnh hệ số chi phí đã chọn. Không được âm; chi phí cấp trên được kiểm tra khi xuất bản."],
   ["Not configured", "未配置", "未設定", "Non configuré", "未設定", "Не настроено", "Chưa cấu hình"],

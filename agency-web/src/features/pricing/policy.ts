@@ -130,6 +130,7 @@ export type CoefficientAdjustmentRow = {
   model: string;
   costBPS: number | null;
   inheritedBPS: number | null;
+  minimumBPS?: number;
 };
 
 export type CoefficientAdjustmentOptions = {
@@ -184,7 +185,7 @@ export function adjustCoefficientValues(
     const nextBPS = baseBPS + deltaBPS;
     if (!Number.isSafeInteger(nextBPS) || nextBPS < 0) {
       errors[row.model] = "below_cost";
-    } else if (row.costBPS != null && nextBPS < row.costBPS) {
+    } else if (nextBPS < Math.max(row.minimumBPS ?? 0, row.costBPS ?? 0)) {
       errors[row.model] = "below_cost";
     } else if (nextBPS > capBPS) {
       errors[row.model] = "above_cap";

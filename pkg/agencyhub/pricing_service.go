@@ -47,6 +47,10 @@ func pricingErrorMessage(err error) string {
 		return propagation.Error() + " 修改位置：对应代理商 → 价格策略，客户单独定价请到客户管理 → 客户销售系数。"
 	}
 	var customerErr *customerSalesPolicyError
+	var boundaryErr *childCostBoundaryError
+	if errors.As(err, &boundaryErr) {
+		return boundaryErr.Error()
+	}
 	if errors.As(err, &customerErr) {
 		var coefficientErr *customerSalesCoefficientError
 		if errors.As(customerErr.Cause, &coefficientErr) {
@@ -853,7 +857,7 @@ func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, po
 			status = http.StatusConflict
 			code = "child_pricing_conflict"
 		}
-		respondError(c, status, code, err.Error(), nil)
+		respondError(c, status, code, pricingErrorMessage(err), nil)
 		return err
 	}
 	respondOK(c, gin.H{"policy_version_id": row.ID, "revision": policy.Revision, "committed_at_ms": now})

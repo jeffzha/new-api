@@ -25,6 +25,7 @@ type childPricingRequest struct {
 type childPricingModel struct {
 	OriginModelName string `json:"origin_model_name"`
 	AgencyCostBPS   int    `json:"agency_cost_bps"`
+	MinimumCostBPS  int    `json:"minimum_cost_bps"`
 	SettlementBPS   *int   `json:"settlement_bps"`
 	ChildCostBPS    *int   `json:"child_cost_bps"`
 	VendorName      string `json:"vendor_name,omitempty"`
@@ -87,6 +88,7 @@ func (a *App) getChildPricing(c *gin.Context) {
 			return
 		}
 		modelRow := childPricingModel{OriginModelName: catalogRow.OriginModelName, AgencyCostBPS: resolvedParent.SettlementBPS, VendorName: catalogRow.VendorName, VendorIcon: catalogRow.VendorIcon}
+		modelRow.MinimumCostBPS, _ = directChildCost(parentEffective, catalogRow.OriginModelName)
 		for _, override := range policy.ModelOverrides {
 			if override.OriginModelName == catalogRow.OriginModelName {
 				modelRow.SettlementBPS = override.SettlementBPS
@@ -166,7 +168,9 @@ func (a *App) publishChildPricing(c *gin.Context) {
 		}
 		if position, exists := positions[key]; exists {
 			candidate.ModelOverrides[position].SettlementBPS = requested.SettlementBPS
-			candidate.ModelOverrides[position].ChildCostBPS = requested.ChildCostBPS
+			if requested.ChildCostBPS != nil {
+				candidate.ModelOverrides[position].ChildCostBPS = requested.ChildCostBPS
+			}
 			if requested.SettlementBPS != nil {
 				candidate.ModelOverrides[position].SettlementSource = agencycontract.PriceSourceManual
 			} else {
@@ -174,8 +178,6 @@ func (a *App) publishChildPricing(c *gin.Context) {
 			}
 			if requested.ChildCostBPS != nil {
 				candidate.ModelOverrides[position].ChildCostSource = agencycontract.PriceSourceManual
-			} else {
-				candidate.ModelOverrides[position].ChildCostSource = ""
 			}
 		} else if requested.SettlementBPS != nil || requested.ChildCostBPS != nil {
 			positions[key] = len(candidate.ModelOverrides)
@@ -203,7 +205,7 @@ func (a *App) publishChildPricing(c *gin.Context) {
 		return
 	}
 	if err := a.validateChildPolicy(*child.ParentAgencyID, candidate); err != nil {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
+		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", "下级代理商“"+child.DisplayName+"”（ID "+stringID(child.ID)+"）："+pricingErrorMessage(err), nil)
 		return
 	}
 	if err := a.publishPolicy(c, child.ID, request.ExpectedRevision, candidate, request.Reason, identity.ActorType, true); err != nil {

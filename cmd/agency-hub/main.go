@@ -64,7 +64,26 @@ func run() error {
 		return nil
 	}
 	if command != "serve" {
-		return fmt.Errorf("unknown command %q; expected serve, migrate, or reconcile", command)
+		if command == "repair-pricing" || command == "rollback-pricing" {
+			app := agencyhub.New(model.DB, nil, config)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			rootID, _ := strconv.ParseInt(os.Getenv("AGENCY_PRICING_REPAIR_ROOT_ID"), 10, 64)
+			if command == "rollback-pricing" {
+				return app.RollbackPricingRepair(ctx, os.Getenv("AGENCY_PRICING_REPAIR_PLAN_HASH"), rootID)
+			}
+			report, err := app.RepairPricing(ctx, os.Getenv("AGENCY_PRICING_REPAIR_PLAN_HASH"), rootID)
+			if err != nil {
+				return fmt.Errorf("pricing repair failed: %w", err)
+			}
+			encoded, err := common.Marshal(report)
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(encoded))
+			return nil
+		}
+		return fmt.Errorf("unknown command %q; expected serve, migrate, reconcile, repair-pricing, or rollback-pricing", command)
 	}
 	if config.AutoMigrate {
 		if err := model.MigrateAgency(model.DB); err != nil {

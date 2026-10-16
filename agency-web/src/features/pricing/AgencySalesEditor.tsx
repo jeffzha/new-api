@@ -14,6 +14,7 @@ import {
   vendorKeyOf,
 } from "./vendorOptions";
 import {
+  changedCoefficientOverrides,
   formatCoefficient,
   parseCoefficient,
   type CoefficientAdjustmentError,
@@ -212,19 +213,21 @@ function AgencySalesForm(props: {
           default_sales_bps: parseCoefficient(defaultSales),
           default_child_cost_bps:
             defaultChildCost.trim() === "" ? 0 : parseCoefficient(defaultChildCost),
-          model_sales_overrides: props.data.items.map((row) => ({
-            origin_model_name: row.origin_model_name,
-            sales_bps:
-              sales[row.origin_model_name] === ""
-                ? null
-                : parseCoefficient(sales[row.origin_model_name]),
+          model_sales_overrides: changedCoefficientOverrides(
+            props.data.items,
+            sales,
+            "override_sales_bps",
+          ).map(({ origin_model_name, bps }) => ({
+            origin_model_name,
+            sales_bps: bps,
           })),
-          model_child_cost_overrides: props.data.items.map((row) => ({
-            origin_model_name: row.origin_model_name,
-            child_cost_bps:
-              childCosts[row.origin_model_name] === ""
-                ? null
-                : parseCoefficient(childCosts[row.origin_model_name]),
+          model_child_cost_overrides: changedCoefficientOverrides(
+            props.data.items,
+            childCosts,
+            "override_child_cost_bps",
+          ).map(({ origin_model_name, bps }) => ({
+            origin_model_name,
+            child_cost_bps: bps,
           })),
           reason,
         },
@@ -284,12 +287,12 @@ function AgencySalesForm(props: {
         <label className="search-field">
           <ActionIcon name="search" />
           <input
-            aria-label={
-              t(props.root ? "Search models, providers, or channels" : "Search models or providers")
-            }
-            placeholder={
-              t(props.root ? "Search models, providers, or channels" : "Search models or providers")
-            }
+            aria-label={t(
+              props.root ? "Search models, providers, or channels" : "Search models or providers",
+            )}
+            placeholder={t(
+              props.root ? "Search models, providers, or channels" : "Search models or providers",
+            )}
             value={search}
             onChange={(event) => {
               setSearch(event.target.value);
@@ -394,7 +397,7 @@ function AgencySalesForm(props: {
                     <div key="model" className="model-name-cell">
                       <VendorMark
                         icon={row.vendor_icon}
-                      name={row.vendor_name?.trim() || t("Other providers")}
+                        name={row.vendor_name?.trim() || t("Other providers")}
                       />
                       <strong>{row.origin_model_name}</strong>
                     </div>,
@@ -436,7 +439,13 @@ function AgencySalesForm(props: {
                                 value: formatCoefficient(row.child_cost_bps),
                               })
                             : t("Not configured")
-                          : t("Agency override")}
+                          : t(
+                              childCosts[row.origin_model_name] !==
+                                formatCoefficient(row.override_child_cost_bps ?? 0) ||
+                                row.child_cost_source === "manual"
+                                ? "Agency override"
+                                : "Saved price (legacy source)",
+                            )}
                       </small>
                       {rowError && errorTarget === "childCost" && (
                         <small className="customer-pricing-inline-error">
@@ -449,15 +458,21 @@ function AgencySalesForm(props: {
                         aria-label={`${t("Sales price (coefficient)")}: ${row.origin_model_name}`}
                         inputMode="decimal"
                         value={sales[row.origin_model_name]}
-                        placeholder={formatCoefficient(row.platform_default_sales_bps)}
+                        placeholder={formatCoefficient(row.sales_bps)}
                         onChange={(event) => updateSales(row.origin_model_name, event.target.value)}
                       />
                       <small>
                         {sales[row.origin_model_name] === ""
-                          ? t("Using platform default {{value}}", {
-                              value: formatCoefficient(row.platform_default_sales_bps),
+                          ? t("Using automatic sales price {{value}}", {
+                              value: formatCoefficient(row.sales_bps),
                             })
-                          : t("Agency override")}
+                          : t(
+                              sales[row.origin_model_name] !==
+                                formatCoefficient(row.override_sales_bps ?? 0) ||
+                                row.sales_source === "manual"
+                                ? "Agency override"
+                                : "Saved price (legacy source)",
+                            )}
                       </small>
                       {rowError && errorTarget === "sales" && (
                         <small className="customer-pricing-inline-error">

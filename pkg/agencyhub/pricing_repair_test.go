@@ -2,6 +2,8 @@ package agencyhub
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -172,8 +175,108 @@ func TestPricingRepairAcrossDialects(t *testing.T) {
 			require.NoError(t, err)
 			assert.Empty(t, again.Changes)
 			assert.False(t, again.RestorationReview[0].Restored)
+			runChildCostEditRegression(t, app)
 		})
 	}
+}
+
+func runChildCostEditRegression(t *testing.T, app *App) {
+	t.Helper()
+	platform, err := model.LoadAgencyPlatformPolicy(app.db)
+	require.NoError(t, err)
+	platform.ModelPrices[0].ChannelCosts[0].PlatformCostBPS = 4000
+	platform.ModelPrices[0].AgencyCostBPS = 4500
+	platform.ModelPrices[0].DefaultSalesBPS = 5500
+	encodedPlatform, err := common.Marshal(platform)
+	require.NoError(t, err)
+	require.NoError(t, app.db.Model(&model.AgencyPlatformPriceVersion{}).Where("revision = ?", platform.Revision).Update("policy_json", string(encodedPlatform)).Error)
+	cost, quote, sale, otherCost := 4500, 7000, 5500, 6000
+	parentPolicy := agencycontract.Policy{Revision: 1, DefaultSalesBPS: 10000, SalesCapBPS: 30000, ModelOverrides: []agencycontract.ModelOverride{{OriginModelName: "model-a", SettlementBPS: &cost, SettlementSource: agencycontract.PriceSourceManual, ChildCostBPS: &quote, SalesBPS: &sale}}}
+	childCost, childQuote, childSale := 7000, 7500, 7000
+	childPolicy := agencycontract.Policy{Revision: 1, DefaultSalesBPS: 10000, SalesCapBPS: 30000, ModelOverrides: []agencycontract.ModelOverride{{OriginModelName: "model-a", SettlementBPS: &childCost, ChildCostBPS: &childQuote, ChildCostSource: agencycontract.PriceSourceDefault, SalesBPS: &childSale, SalesSource: agencycontract.PriceSourceInherited}, {OriginModelName: "untouched-model", SettlementBPS: &otherCost}}}
+	parent := model.Agency{Code: "edit-parent", InviteCode: "EDITP", DisplayName: "父代理", Depth: 1, Status: AgencyStatusActive, PriceRevision: 1, Version: 1}
+	require.NoError(t, app.db.Create(&parent).Error)
+	child := model.Agency{Code: "edit-child", InviteCode: "EDITC", DisplayName: "子代理", Depth: 2, ParentAgencyID: &parent.ID, Status: AgencyStatusActive, PriceRevision: 1, Version: 1}
+	require.NoError(t, app.db.Create(&child).Error)
+	for i, agency := range []*model.Agency{&parent, &child} {
+		encoded, err := common.Marshal([]agencycontract.Policy{parentPolicy, childPolicy}[i])
+		require.NoError(t, err)
+		version := model.AgencyPricePolicyVersion{AgencyID: agency.ID, Revision: 1, PolicyJSON: string(encoded)}
+		require.NoError(t, app.db.Create(&version).Error)
+		require.NoError(t, app.db.Model(agency).Update("current_policy_version_id", version.ID).Error)
+	}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/children/"+stringID(child.ID)+"/pricing", strings.NewReader(`{"expected_revision":1,"model_cost_overrides":[{"origin_model_name":"model-a","settlement_bps":7600}]}`))
+	ctx.Params = gin.Params{{Key: "id", Value: stringID(child.ID)}}
+	ctx.Set("agency_identity", &Identity{ActorType: ActorTypeRoot, ActorID: 1, AgencyID: &parent.ID})
+	app.publishChildPricing(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	_, actual, err := app.loadAgencyPolicy(child.ID)
+	require.NoError(t, err)
+	changed := findModelOverride(actual, "model-a")
+	assert.Equal(t, 7600, *changed.SettlementBPS)
+	assert.Equal(t, 8100, *changed.ChildCostBPS)
+	assert.Equal(t, 7600, *changed.SalesBPS)
+	assert.Equal(t, childPolicy.ModelOverrides[1], *findModelOverride(actual, "untouched-model"))
+	// Source restoration is a separate, amount-preserving, audited operation.
+	changed.ChildCostSource = agencycontract.PriceSourceManual
+	actual.ModelOverrides[0] = *changed
+	encoded, err := common.Marshal(actual)
+	require.NoError(t, err)
+	var live model.Agency
+	require.NoError(t, app.db.First(&live, child.ID).Error)
+	require.NoError(t, app.db.Model(&model.AgencyPricePolicyVersion{}).Where("id = ?", live.CurrentPolicyVersionID).Update("policy_json", string(encoded)).Error)
+	// A genuine manual amount must not be replaced on the next cost edit.
+	recorder = httptest.NewRecorder()
+	ctx, _ = gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/children/"+stringID(child.ID)+"/pricing", strings.NewReader(`{"expected_revision":2,"model_cost_overrides":[{"origin_model_name":"model-a","settlement_bps":8200}]}`))
+	ctx.Params = gin.Params{{Key: "id", Value: stringID(child.ID)}}
+	ctx.Set("agency_identity", &Identity{ActorType: ActorTypeRoot, ActorID: 1, AgencyID: &parent.ID})
+	app.publishChildPricing(ctx)
+	assert.Equal(t, http.StatusUnprocessableEntity, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "子代理")
+	assert.Contains(t, recorder.Body.String(), "我的下级渠道价")
+	assert.Contains(t, recorder.Body.String(), "0.8100")
+	assert.Contains(t, recorder.Body.String(), "0.8200")
+	_, unchanged, err := app.loadAgencyPolicy(child.ID)
+	require.NoError(t, err)
+	assert.Equal(t, actual, unchanged)
+	// Simulate the old full-table save changing only a source marker.
+	automaticQuote := 5000
+	parentPolicy.ModelOverrides[0].ChildCostBPS = &automaticQuote
+	var parentVersion model.AgencyPricePolicyVersion
+	require.NoError(t, app.db.Where("agency_id = ? AND revision = ?", parent.ID, 1).First(&parentVersion).Error)
+	parentPolicy.ModelOverrides[0].ChildCostSource = agencycontract.PriceSourceDefault
+	encoded, err = common.Marshal(parentPolicy)
+	require.NoError(t, err)
+	require.NoError(t, app.db.Model(&parentVersion).Update("policy_json", string(encoded)).Error)
+	parentPolicy.Revision = 2
+	parentPolicy.ModelOverrides[0].ChildCostSource = agencycontract.PriceSourceManual
+	encoded, err = common.Marshal(parentPolicy)
+	require.NoError(t, err)
+	version := model.AgencyPricePolicyVersion{AgencyID: parent.ID, Revision: 2, PolicyJSON: string(encoded)}
+	require.NoError(t, app.db.Create(&version).Error)
+	require.NoError(t, app.db.Model(&parent).Updates(map[string]any{"current_policy_version_id": version.ID, "price_revision": 2}).Error)
+	plan, err := app.RecoverPricingSources(context.Background(), "", 0)
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Changes)
+	_, err = app.RecoverPricingSources(context.Background(), "stale", 1)
+	require.ErrorContains(t, err, "changed since dry run")
+	_, err = app.RecoverPricingSources(context.Background(), plan.PlanHash, 0)
+	require.ErrorContains(t, err, "root actor")
+	var root model.User
+	require.NoError(t, app.db.Where("role >= ?", common.RoleRootUser).First(&root).Error)
+	applied, err := app.RecoverPricingSources(context.Background(), plan.PlanHash, int64(root.Id))
+	require.NoError(t, err)
+	assert.True(t, applied.Applied)
+	_, recovered, err := app.loadAgencyPolicy(parent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, automaticQuote, *recovered.ModelOverrides[0].ChildCostBPS)
+	assert.Equal(t, agencycontract.PriceSourceDefault, recovered.ModelOverrides[0].ChildCostSource)
+	next, err := app.RecoverPricingSources(context.Background(), "", 0)
+	require.NoError(t, err)
+	assert.Empty(t, next.Changes)
 }
 
 func TestNegotiatedChildCostBoundaryAndPropagation(t *testing.T) {
@@ -256,6 +359,144 @@ func TestNegotiatedChildCostBoundaryAndPropagation(t *testing.T) {
 			assert.Contains(t, pricingErrorMessage(err), "最低允许 0.8200")
 			assert.Contains(t, pricingErrorMessage(err), "0.8000 + 适用最低价差 0.0200")
 			assert.Contains(t, pricingErrorMessage(err), "管理下级成本")
+		})
+	}
+}
+
+func TestAutomaticPriceSourceHistory(t *testing.T) {
+	t.Run("historical platform overlay preserves generated child defaults", func(t *testing.T) {
+		cost, sale, quote := 4500, 5500, 7000
+		parent := agencycontract.Policy{DefaultSalesBPS: 10000, DefaultChildCostBPS: quote, SalesCapBPS: 30000}
+		platform := agencycontract.PlatformPolicy{ModelPrices: []agencycontract.PlatformModelPrice{{OriginModelName: "model-a", AgencyCostBPS: cost, DefaultSalesBPS: sale}}}
+		parent = legacySourceParentPolicy(parent, platform)
+		child := agencycontract.Policy{Revision: 1, DefaultSalesBPS: 10000, SalesCapBPS: 30000, ModelOverrides: []agencycontract.ModelOverride{{OriginModelName: "model-a", SettlementBPS: &quote, SalesBPS: &quote}}}
+		encoded, err := common.Marshal(child)
+		require.NoError(t, err)
+		result, changes, err := recoverAutomaticPriceSources(model.Agency{ID: 2}, child, []model.AgencyPricePolicyVersion{{Revision: 1, CreatedByType: ActorTypeOperator, PolicyJSON: string(encoded)}}, &parent)
+		require.NoError(t, err)
+		require.Len(t, changes, 2)
+		assert.Equal(t, quote, *result.ModelOverrides[0].SettlementBPS)
+		assert.Equal(t, quote, *result.ModelOverrides[0].SalesBPS)
+		assert.Equal(t, agencycontract.PriceSourceInherited, result.ModelOverrides[0].SettlementSource)
+		assert.Equal(t, agencycontract.PriceSourceInherited, result.ModelOverrides[0].SalesSource)
+		child.ModelOverrides[0].SettlementSource = agencycontract.PriceSourceManual
+		assert.False(t, legacyGeneratedChildPolicy(child, parent), "explicit manual provenance must never be inferred as generated")
+	})
+	t.Run("cost source restoration does not overwrite quote provenance", func(t *testing.T) {
+		cost, quote, sale := 4500, 5000, 6000
+		before := agencycontract.Policy{DefaultSalesBPS: 10000, ModelOverrides: []agencycontract.ModelOverride{{OriginModelName: "model-a", SettlementBPS: &cost, SettlementSource: agencycontract.PriceSourceManual, ChildCostBPS: &quote, ChildCostSource: agencycontract.PriceSourceManual, SalesBPS: &sale, SalesSource: agencycontract.PriceSourceManual}}}
+		after := before
+		after.ModelOverrides = append([]agencycontract.ModelOverride(nil), before.ModelOverrides...)
+		after.ModelOverrides[0].SettlementSource = agencycontract.PriceSourceInherited
+		platform := agencycontract.PlatformPolicy{ModelPrices: []agencycontract.PlatformModelPrice{{OriginModelName: "model-a", PlatformCostBPS: 4000, AgencyCostBPS: cost, DefaultSalesBPS: sale}}}
+		changes := []PricingSourceChange{{Model: "model-a", Field: "settlement_bps", Before: agencycontract.PriceSourceManual, After: agencycontract.PriceSourceInherited}}
+		result, kept, skipped, err := preserveEffectiveSourcePrices(before, after, platform, changes)
+		require.NoError(t, err)
+		assert.Equal(t, changes, kept)
+		assert.Empty(t, skipped)
+		assert.Equal(t, agencycontract.PriceSourceInherited, result.ModelOverrides[0].SettlementSource)
+		assert.Equal(t, agencycontract.PriceSourceManual, result.ModelOverrides[0].ChildCostSource)
+	})
+	t.Run("audited system repair preserves automatic lineage only", func(t *testing.T) {
+		cost, sale, raised := 7000, 9000, 9300
+		initial := agencycontract.Policy{Revision: 1, DefaultSalesBPS: 10000, ModelOverrides: []agencycontract.ModelOverride{{OriginModelName: "model-a", SettlementBPS: &cost, SalesBPS: &sale, SalesSource: agencycontract.PriceSourceInherited}}}
+		current := initial
+		current.Revision = 2
+		current.ModelOverrides = append([]agencycontract.ModelOverride(nil), initial.ModelOverrides...)
+		current.ModelOverrides[0].SalesBPS = &raised
+		current.ModelOverrides[0].SalesSource = ""
+		beforeJSON, err := common.Marshal(initial)
+		require.NoError(t, err)
+		afterJSON, err := common.Marshal(current)
+		require.NoError(t, err)
+		history := []model.AgencyPricePolicyVersion{{Revision: 1, PolicyJSON: string(beforeJSON)}, {Revision: 2, PolicyJSON: string(afterJSON), CreatedByType: ActorTypeRoot, CreatedByID: 1, Reason: "历史价格边界订正：repair-hash"}}
+		audit := model.AgencyAuditLog{Action: "pricing.repair", ActorType: ActorTypeRoot, ActorID: 1, ObjectID: "1", Reason: "repair-hash", BeforeJSON: string(beforeJSON), AfterJSON: string(afterJSON)}
+		for _, valid := range []bool{false, true} {
+			candidateAudit := audit
+			if !valid {
+				candidateAudit.ObjectID = "2"
+			}
+			result, changes, err := recoverAutomaticPriceSources(model.Agency{ID: 1}, current, history, nil, candidateAudit)
+			require.NoError(t, err)
+			assert.Equal(t, raised, *result.ModelOverrides[0].SalesBPS)
+			if valid {
+				assert.Len(t, changes, 1)
+				assert.Equal(t, agencycontract.PriceSourceInherited, result.ModelOverrides[0].SalesSource)
+			} else {
+				assert.Empty(t, changes)
+				assert.Equal(t, "", result.ModelOverrides[0].SalesSource)
+			}
+		}
+	})
+	t.Run("history gaps cannot prove automatic provenance", func(t *testing.T) {
+		cost, sale := 7000, 10000
+		initial := agencycontract.Policy{Revision: 1, DefaultSalesBPS: 10000, ModelOverrides: []agencycontract.ModelOverride{{OriginModelName: "model-a", SettlementBPS: &cost, SalesBPS: &sale, SalesSource: agencycontract.PriceSourceDefault}}}
+		current := initial
+		current.Revision = 3
+		current.ModelOverrides = append([]agencycontract.ModelOverride(nil), initial.ModelOverrides...)
+		current.ModelOverrides[0].SalesSource = agencycontract.PriceSourceManual
+		beforeJSON, err := common.Marshal(initial)
+		require.NoError(t, err)
+		afterJSON, err := common.Marshal(current)
+		require.NoError(t, err)
+		result, changes, err := recoverAutomaticPriceSources(model.Agency{ID: 1}, current, []model.AgencyPricePolicyVersion{{Revision: 1, PolicyJSON: string(beforeJSON)}, {Revision: 3, PolicyJSON: string(afterJSON)}}, nil)
+		require.NoError(t, err)
+		assert.Empty(t, changes)
+		assert.Equal(t, current, result)
+	})
+	t.Run("source recovery cannot silently change effective prices", func(t *testing.T) {
+		cost, quote, sale := 4500, 7000, 6000
+		before := agencycontract.Policy{DefaultSalesBPS: 10000, ModelOverrides: []agencycontract.ModelOverride{{OriginModelName: "model-a", SettlementBPS: &cost, ChildCostBPS: &quote, ChildCostSource: agencycontract.PriceSourceManual, SalesBPS: &sale, SalesSource: agencycontract.PriceSourceManual}}}
+		after := before
+		after.ModelOverrides = append([]agencycontract.ModelOverride(nil), before.ModelOverrides...)
+		after.ModelOverrides[0].ChildCostSource = agencycontract.PriceSourceDefault
+		platform := agencycontract.PlatformPolicy{ModelPrices: []agencycontract.PlatformModelPrice{{OriginModelName: "model-a", PlatformCostBPS: 4000, AgencyCostBPS: cost, DefaultSalesBPS: 5500}}}
+		changes := []PricingSourceChange{{Model: "model-a", Field: "child_cost_bps", Before: agencycontract.PriceSourceManual, After: agencycontract.PriceSourceDefault}}
+		result, kept, skipped, err := preserveEffectiveSourcePrices(before, after, platform, changes)
+		require.NoError(t, err)
+		assert.Empty(t, kept)
+		assert.Equal(t, changes, skipped)
+		assert.Equal(t, before, result)
+	})
+	cost, quote, sale := 7000, 7500, 7000
+	parent := agencycontract.Policy{DefaultSalesBPS: 5500, DefaultChildCostBPS: cost, SalesCapBPS: 30000}
+	for _, tc := range []struct {
+		name          string
+		initialSource string
+		changed       bool
+		generated     bool
+		want          string
+	}{
+		{"unchanged default relabelled", agencycontract.PriceSourceDefault, false, false, agencycontract.PriceSourceDefault},
+		{"real manual edit retained", agencycontract.PriceSourceDefault, true, false, agencycontract.PriceSourceManual},
+		{"unknown legacy retained", "", false, false, agencycontract.PriceSourceManual},
+		{"old generated child sales", "", false, true, agencycontract.PriceSourceInherited},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			initial := agencycontract.Policy{Revision: 1, DefaultSalesBPS: 10000, SalesCapBPS: 30000, ModelOverrides: []agencycontract.ModelOverride{{OriginModelName: "model-a", SettlementBPS: &cost, SalesBPS: &sale, SalesSource: tc.initialSource}}}
+			current := initial
+			current.Revision = 2
+			current.ModelOverrides = append([]agencycontract.ModelOverride(nil), initial.ModelOverrides...)
+			current.ModelOverrides[0].SalesSource = agencycontract.PriceSourceManual
+			current.ModelOverrides[0].ChildCostBPS = &quote
+			if tc.changed {
+				value := 8500
+				current.ModelOverrides[0].SalesBPS = &value
+			}
+			beforeJSON, err := common.Marshal(initial)
+			require.NoError(t, err)
+			afterJSON, err := common.Marshal(current)
+			require.NoError(t, err)
+			history := []model.AgencyPricePolicyVersion{{Revision: 1, PolicyJSON: string(beforeJSON), CreatedByType: ActorTypeOperator}, {Revision: 2, PolicyJSON: string(afterJSON)}}
+			var creationParent *agencycontract.Policy
+			if tc.generated {
+				creationParent = &parent
+			}
+			result, _, err := recoverAutomaticPriceSources(model.Agency{ID: 1}, current, history, creationParent)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, result.ModelOverrides[0].SalesSource)
+			assert.Equal(t, *current.ModelOverrides[0].SalesBPS, *result.ModelOverrides[0].SalesBPS)
+			assert.Equal(t, *current.ModelOverrides[0].ChildCostBPS, *result.ModelOverrides[0].ChildCostBPS)
 		})
 	}
 }

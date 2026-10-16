@@ -27,6 +27,18 @@ export function formatCoefficient(bps: number): string {
   return (bps / 10000).toFixed(4);
 }
 
+export function changedCoefficientOverrides<K extends string>(
+  rows: Array<{ origin_model_name: string } & Record<K, number | null>>,
+  values: Record<string, string>,
+  key: K,
+) {
+  return rows.flatMap((row) => {
+    const value = values[row.origin_model_name]?.trim() ?? "";
+    const bps = value === "" ? null : parseCoefficient(value);
+    return bps === row[key] ? [] : [{ origin_model_name: row.origin_model_name, bps }];
+  });
+}
+
 export function parseCoefficient(value: string): number {
   if (!/^\d+(?:\.\d{1,4})?$/.test(value)) {
     throw new Error("Use a coefficient with up to four decimal places.");

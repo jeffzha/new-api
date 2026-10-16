@@ -227,12 +227,16 @@ func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agen
 	}
 	overrides := make(map[string]*int, len(policy.ModelOverrides))
 	childOverrides := make(map[string]*int, len(policy.ModelOverrides))
+	salesSources := make(map[string]string, len(policy.ModelOverrides))
+	childSources := make(map[string]string, len(policy.ModelOverrides))
 	for _, override := range policy.ModelOverrides {
-		if override.SalesBPS != nil {
+		salesSources[override.OriginModelName] = override.SalesSource
+		childSources[override.OriginModelName] = override.ChildCostSource
+		if override.SalesBPS != nil && override.SalesSource != agencycontract.PriceSourceDefault && override.SalesSource != agencycontract.PriceSourceInherited {
 			value := *override.SalesBPS
 			overrides[override.OriginModelName] = &value
 		}
-		if override.ChildCostBPS != nil {
+		if override.ChildCostBPS != nil && override.ChildCostSource != agencycontract.PriceSourceDefault && override.ChildCostSource != agencycontract.PriceSourceInherited {
 			value := *override.ChildCostBPS
 			childOverrides[override.OriginModelName] = &value
 		}
@@ -281,6 +285,8 @@ func (a *App) respondModelSales(c *gin.Context, agency model.Agency, policy agen
 			"platform_default_sales_bps": price.DefaultSalesBPS,
 			"sales_bps":                  sales,
 			"override_sales_bps":         override,
+			"sales_source":               salesSources[price.OriginModelName],
+			"child_cost_source":          childSources[price.OriginModelName],
 			"override_child_cost_bps":    childOverrides[price.OriginModelName],
 			"default_child_cost_bps":     effective.DefaultChildCostBPS,
 		}
@@ -644,8 +650,17 @@ func (a *App) mergePublishedSalesPolicy(base agencycontract.Policy, request sale
 	}
 
 	candidate := base
+	if candidate.DefaultSalesBPS != request.DefaultSalesBPS {
+		candidate.SalesSource = agencycontract.PriceSourceManual
+	}
 	candidate.DefaultSalesBPS = request.DefaultSalesBPS
 	if request.DefaultChildCostBPS != nil {
+		if candidate.DefaultChildCostBPS != *request.DefaultChildCostBPS {
+			candidate.ChildCostSource = agencycontract.PriceSourceManual
+			if *request.DefaultChildCostBPS == 0 {
+				candidate.ChildCostSource = ""
+			}
+		}
 		candidate.DefaultChildCostBPS = *request.DefaultChildCostBPS
 	}
 	candidate.ModelOverrides = make([]agencycontract.ModelOverride, 0, len(base.ModelOverrides)+len(request.ModelSalesOverrides))
@@ -671,8 +686,8 @@ func (a *App) mergePublishedSalesPolicy(base agencycontract.Policy, request sale
 			return agencycontract.Policy{}, errors.New("sales coefficient model is not managed by platform pricing")
 		}
 		if position, exists := positions[key]; exists {
-			candidate.ModelOverrides[position].SalesBPS = override.SalesBPS
-			candidate.ModelOverrides[position].SalesSource = agencycontract.PriceSourceManual
+			current := &candidate.ModelOverrides[position]
+			updateManualCoefficient(&current.SalesBPS, &current.SalesSource, override.SalesBPS)
 			continue
 		}
 		if override.SalesBPS != nil {
@@ -689,8 +704,8 @@ func (a *App) mergePublishedSalesPolicy(base agencycontract.Policy, request sale
 			return agencycontract.Policy{}, errors.New("sales coefficient model is not managed by platform pricing")
 		}
 		if position, exists := positions[key]; exists {
-			candidate.ModelOverrides[position].ChildCostBPS = override.ChildCostBPS
-			candidate.ModelOverrides[position].ChildCostSource = agencycontract.PriceSourceManual
+			current := &candidate.ModelOverrides[position]
+			updateManualCoefficient(&current.ChildCostBPS, &current.ChildCostSource, override.ChildCostBPS)
 		} else if override.ChildCostBPS != nil {
 			positions[key] = len(candidate.ModelOverrides)
 			candidate.ModelOverrides = append(candidate.ModelOverrides, agencycontract.ModelOverride{OriginModelName: override.OriginModelName, ChildCostBPS: override.ChildCostBPS, ChildCostSource: agencycontract.PriceSourceManual})
@@ -701,8 +716,17 @@ func (a *App) mergePublishedSalesPolicy(base agencycontract.Policy, request sale
 
 func mergeSalesPolicy(base agencycontract.Policy, request salesPricingRequest) (agencycontract.Policy, error) {
 	candidate := base
+	if candidate.DefaultSalesBPS != request.DefaultSalesBPS {
+		candidate.SalesSource = agencycontract.PriceSourceManual
+	}
 	candidate.DefaultSalesBPS = request.DefaultSalesBPS
 	if request.DefaultChildCostBPS != nil {
+		if candidate.DefaultChildCostBPS != *request.DefaultChildCostBPS {
+			candidate.ChildCostSource = agencycontract.PriceSourceManual
+			if *request.DefaultChildCostBPS == 0 {
+				candidate.ChildCostSource = ""
+			}
+		}
 		candidate.DefaultChildCostBPS = *request.DefaultChildCostBPS
 	}
 	byKey := make(map[string]agencycontract.ModelOverride, len(base.ModelOverrides)+len(request.ModelSalesOverrides))
@@ -730,8 +754,7 @@ func mergeSalesPolicy(base agencycontract.Policy, request salesPricingRequest) (
 		if current.OriginModelName == "" {
 			current.OriginModelName = override.OriginModelName
 		}
-		current.SalesBPS = override.SalesBPS
-		current.SalesSource = agencycontract.PriceSourceManual
+		updateManualCoefficient(&current.SalesBPS, &current.SalesSource, override.SalesBPS)
 		byKey[key] = current
 	}
 	for _, override := range request.ModelChildCostOverrides {
@@ -744,8 +767,7 @@ func mergeSalesPolicy(base agencycontract.Policy, request salesPricingRequest) (
 		if current.OriginModelName == "" {
 			current.OriginModelName = override.OriginModelName
 		}
-		current.ChildCostBPS = override.ChildCostBPS
-		current.ChildCostSource = agencycontract.PriceSourceManual
+		updateManualCoefficient(&current.ChildCostBPS, &current.ChildCostSource, override.ChildCostBPS)
 		byKey[key] = current
 	}
 	candidate.ModelOverrides = make([]agencycontract.ModelOverride, 0, len(byKey))
@@ -757,6 +779,18 @@ func mergeSalesPolicy(base agencycontract.Policy, request salesPricingRequest) (
 		candidate.ModelOverrides = append(candidate.ModelOverrides, override)
 	}
 	return candidate, nil
+}
+
+// Re-submitting an unchanged amount must not convert an automatic price to a manual one.
+func updateManualCoefficient(current **int, source *string, requested *int) {
+	if (*current == nil && requested == nil) || (*current != nil && requested != nil && **current == *requested) {
+		return
+	}
+	*current = requested
+	*source = ""
+	if requested != nil {
+		*source = agencycontract.PriceSourceManual
+	}
 }
 
 func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, policy agencycontract.Policy, reason, actorType string, syncChildren bool) error {
@@ -829,6 +863,11 @@ func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, po
 			}
 		}
 		policy.Revision = agency.PriceRevision + 1
+		var previousPolicy agencycontract.Policy
+		if err := common.Unmarshal([]byte(currentVersion.PolicyJSON), &previousPolicy); err != nil {
+			return err
+		}
+		policy = preservePendingModelOverrides(policy, previousPolicy, previousPlatform)
 		encoded, err := common.Marshal(policy)
 		if err != nil {
 			return err

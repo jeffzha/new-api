@@ -84,6 +84,8 @@ export type ModelSaleRow = {
   platform_default_sales_bps: number;
   sales_bps: number;
   override_sales_bps: number | null;
+  sales_source?: string;
+  child_cost_source?: string;
   default_child_cost_bps?: number;
   override_child_cost_bps: number | null;
 };

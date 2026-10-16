@@ -1,6 +1,8 @@
 import type { Locale } from "../../lib/i18n-types";
 
 const rows = [
+  ["Using automatic sales price {{value}}", "按默认规则计算 {{value}}", "依預設規則計算 {{value}}", "Prix automatique {{value}}", "自動販売価格 {{value}}", "Автоматическая цена {{value}}", "Giá tự động {{value}}"],
+  ["Saved price (legacy source)", "已保存价格（历史来源未标记）", "已儲存價格（歷史來源未標記）", "Prix enregistré (source historique)", "保存済み価格（旧ソース）", "Сохранённая цена (источник не указан)", "Giá đã lưu (chưa ghi nguồn)"],
   ["This adjustment would be below my cost plus the applicable minimum spread.", "调整后不能低于我的成本（系数）＋适用最低价差；可以低于默认的我的下级渠道价（系数）。", "調整後不能低於我的成本（係數）＋適用最低價差；可以低於預設的我的下級渠道價（係數）。", "Le résultat serait inférieur à mon coût augmenté de la marge minimale applicable.", "調整後の値は自社原価と適用最低価格差の合計以上である必要があります。", "Результат ниже моей стоимости плюс применимая минимальная наценка.", "Kết quả thấp hơn chi phí của tôi cộng chênh lệch tối thiểu áp dụng."],
   ["Minimum child cost", "下级成本下限", "下級成本下限", "Coût enfant minimum", "子代理店原価の下限", "Минимальная дочерняя стоимость", "Chi phí cấp dưới tối thiểu"],
   ["Adjust from my cost plus the applicable minimum spread. Negotiated prices may be below my default child quote.", "以我的成本（系数）为基准调整，最低为我的成本＋适用最低价差；单独优惠可以低于默认的我的下级渠道价（系数）。", "以我的成本（係數）為基準調整，最低為我的成本＋適用最低價差；單獨優惠可以低於預設的我的下級渠道價（係數）。", "Ajustez depuis mon coût avec la marge minimale applicable. Un tarif négocié peut être inférieur au tarif enfant par défaut.", "自社原価と適用最低価格差が下限です。個別価格は既定の子代理店価格未満に設定できます。", "Нижняя граница — моя стоимость плюс минимальная наценка. Индивидуальная цена может быть ниже цены по умолчанию.", "Mức tối thiểu là chi phí cộng chênh lệch tối thiểu. Giá thỏa thuận có thể thấp hơn giá cấp dưới mặc định."],

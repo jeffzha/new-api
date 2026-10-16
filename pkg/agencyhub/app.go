@@ -126,6 +126,7 @@ func (a *App) Router() *gin.Engine {
 	api := r.Group(a.config.BasePath + "/api/v1")
 	api.Use(a.sessionMiddleware())
 	api.Use(a.idempotencyMiddleware())
+	api.Use(a.writerFenceMiddleware())
 	api.GET("/auth/me", a.me)
 	api.GET("/invitation", a.getOwnInvitation)
 	api.POST("/auth/logout", a.logout)

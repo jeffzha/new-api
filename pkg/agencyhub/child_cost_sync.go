@@ -2,6 +2,8 @@ package agencyhub
 
 import (
 	"errors"
+	"fmt"
+	"slices"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -22,6 +24,24 @@ func (e *childPricingPropagationError) Error() string {
 
 func (e *childPricingPropagationError) Unwrap() error { return e.Cause }
 
+type childCostBoundaryError struct {
+	ModelName                 string
+	Cost, Minimum, ParentCost int
+	Generated                 bool
+}
+
+func (e *childCostBoundaryError) Error() string {
+	name := e.ModelName
+	if name == "" {
+		name = "全局默认价格"
+	}
+	source := "上级已设置的下级渠道报价"
+	if e.Generated {
+		source = fmt.Sprintf("上级成本 %.4f + 默认下级加价 0.0500（不是最低价差）", float64(e.ParentCost)/10000)
+	}
+	return fmt.Sprintf("模型 %s：本次下级代理商成本系数 %.4f，低于上级下级渠道报价 %.4f；下限来源：%s。请在上级的“代理商管理 → 管理下级成本”将该模型设为至少 %.4f，或先在上级“价格策略 → 我的下级渠道价”调整报价；销售价格仍须不低于各自成本 + 最低价差。", name, float64(e.Cost)/10000, float64(e.Minimum)/10000, source, float64(e.Minimum)/10000)
+}
+
 // directChildCost resolves the cost a parent charges for one direct child
 // model. A zero value means that the parent did not configure that cost.
 func directChildCost(policy agencycontract.Policy, modelName string) (int, bool) {
@@ -39,7 +59,17 @@ func validateChildBoundary(parent, child agencycontract.Policy) error {
 		if cost >= minimum {
 			return nil
 		}
-		return &agencycontract.PolicyCoefficientError{OriginModelName: name, Field: "settlement_bps", ValueBPS: cost, MinimumBPS: minimum, MaximumBPS: agencycontract.MaxCoefficientBPS, Cause: errors.New("child cost must not be below parent child cost")}
+		parentCost := parent.DefaultSettlementBPS
+		source := parent.ChildCostSource
+		if override := findModelOverride(parent, name); override != nil {
+			if override.SettlementBPS != nil {
+				parentCost = *override.SettlementBPS
+			}
+			if override.ChildCostBPS != nil {
+				source = override.ChildCostSource
+			}
+		}
+		return &childCostBoundaryError{ModelName: name, Cost: cost, Minimum: minimum, ParentCost: parentCost, Generated: source == agencycontract.PriceSourceDefault}
 	}
 	if err := check("", child.DefaultSettlementBPS, parent.DefaultChildCostBPS); err != nil {
 		return err
@@ -50,7 +80,12 @@ func validateChildBoundary(parent, child agencycontract.Policy) error {
 			names[override.OriginModelName] = struct{}{}
 		}
 	}
+	orderedNames := make([]string, 0, len(names))
 	for name := range names {
+		orderedNames = append(orderedNames, name)
+	}
+	slices.Sort(orderedNames)
+	for _, name := range orderedNames {
 		cost, _ := directChildCost(parent, name)
 		resolved, err := agencycontract.Resolve(child, name)
 		if err != nil {

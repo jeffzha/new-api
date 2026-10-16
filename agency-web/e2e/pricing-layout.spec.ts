@@ -82,7 +82,7 @@ async function openWorkspace(page: Page, root: boolean, acting = false) {
     if (path === "/hierarchy")
       data = { current: { id: 1, display_name: "Root agency", status: "active", depth: 0, price_revision: 1 }, parents: [], children: [] };
     if (path === "/children/9/pricing")
-      data = { revision: 3, default_settlement_bps: 7000, model_overrides: [{ origin_model_name: "unlisted-model", agency_cost_bps: 7000, settlement_bps: 7000, channels }, { origin_model_name: "second-model", agency_cost_bps: 7200, settlement_bps: 7500, channels: [channels[1]] }] };
+      data = { revision: 3, default_settlement_bps: 7000, model_overrides: [{ origin_model_name: "unlisted-model", agency_cost_bps: 7000, minimum_cost_bps: 7500, settlement_bps: 7000, channels }, { origin_model_name: "second-model", agency_cost_bps: 7200, minimum_cost_bps: 7500, settlement_bps: 7500, channels: [channels[1]] }] };
     await route.fulfill({ json: { success: true, data } });
   });
   await page.goto("/agency/");
@@ -227,12 +227,13 @@ test("child pricing uses the shared search and provider tabs without dropping un
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByPlaceholder("Search models or providers", { exact: true })).toBeVisible();
   const input = dialog.getByLabel("Child cost coefficient: unlisted-model", { exact: true });
-  await input.fill("0.7300");
+  await expect(dialog.getByText("Minimum child cost: 0.7500", { exact: true })).toHaveCount(2);
+  await input.fill("0.7800");
   await dialog.getByPlaceholder("Search models or providers", { exact: true }).fill("unlisted");
-  await expect(input).toHaveValue("0.7300");
+  await expect(input).toHaveValue("0.7800");
   const published = page.waitForRequest((request) => request.method() === "POST" && request.url().endsWith("/children/9/pricing/publish"));
   await dialog.getByRole("button", { name: "Publish child pricing", exact: true }).click();
-  expect((await published).postDataJSON()).toMatchObject({ model_cost_overrides: [{ origin_model_name: "unlisted-model", settlement_bps: 7300 }, { origin_model_name: "second-model", settlement_bps: 7500 }] });
+  expect((await published).postDataJSON().model_cost_overrides).toEqual([{ origin_model_name: "unlisted-model", settlement_bps: 7800 }]);
 });
 
 test("root overview restores totals, capabilities and unfinished queue counts", async ({ page }) => {

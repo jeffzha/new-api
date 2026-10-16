@@ -36,6 +36,14 @@ func MigrateAgency(db *gorm.DB) error {
 	if err := db.AutoMigrate(models...); err != nil {
 		return fmt.Errorf("agency migration: %w", err)
 	}
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&AgencyOpsPublisher{ID: 1}).Error; err != nil {
+		return fmt.Errorf("agency migration: Ops publisher: %w", err)
+	}
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&AgencyOpsWriterState{
+		ID: 1, Mode: "source_primary", FenceVersion: 1, UpdatedAtMS: time.Now().UnixMilli(),
+	}).Error; err != nil {
+		return fmt.Errorf("agency migration: Ops writer state: %w", err)
+	}
 	// Legacy agencies were all directly managed by Root. Backfill the new
 	// hierarchy marker without touching their pricing or bindings.
 	if db.Migrator().HasColumn(&Agency{}, "depth") {

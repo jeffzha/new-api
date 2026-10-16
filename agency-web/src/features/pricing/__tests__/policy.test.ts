@@ -15,6 +15,11 @@ import type { Policy } from "../types";
 import { normalizeModelSales, normalizePlatformPricing } from "../types";
 
 describe("pricing request contracts", () => {
+  test("child cost adjustment honors the published quote without changing the cost anchor", () => {
+    const rows = [{ model: "model-a", costBPS: 8000, minimumBPS: 8500, inheritedBPS: 8000 }];
+    expect(adjustCoefficientValues(rows, {}, ["model-a"], 0, { anchor: "cost" }).errors).toEqual({ "model-a": "below_cost" });
+    expect(adjustCoefficientValues(rows, {}, ["model-a"], 500, { anchor: "cost" }).values).toEqual({ "model-a": "0.8500" });
+  });
   test("pricing responses normalize nullable collections before rendering", () => {
     const sales = normalizeModelSales({
       agency_id: 1,

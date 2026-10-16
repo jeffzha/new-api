@@ -87,7 +87,12 @@ test("operator links its own platform account for scoped passwordless sign-in an
     await expect(
       passwordlessPage.getByText("Platform account is not linked.", { exact: true }),
     ).toBeVisible();
-    await expect(passwordlessPage.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+    const manualSignIn = passwordlessPage.getByRole("button", { name: "Sign in", exact: true });
+    await expect(manualSignIn).toBeVisible();
+    await manualSignIn.click();
+    await expect(passwordlessPage).toHaveURL(
+      /\/sign-in\?mode=agency&agency_signed_out=true$/,
+    );
   } finally {
     await passwordlessContext.close();
   }

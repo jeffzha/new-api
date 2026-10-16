@@ -64,6 +64,21 @@ func run() error {
 		return nil
 	}
 	if command != "serve" {
+		if command == "recover-pricing-sources" {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			rootID, _ := strconv.ParseInt(os.Getenv("AGENCY_PRICING_REPAIR_ROOT_ID"), 10, 64)
+			report, err := agencyhub.New(model.DB, nil, config).RecoverPricingSources(ctx, os.Getenv("AGENCY_PRICING_REPAIR_PLAN_HASH"), rootID)
+			if err != nil {
+				return err
+			}
+			encoded, err := common.Marshal(report)
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(encoded))
+			return nil
+		}
 		if command == "repair-pricing" || command == "rollback-pricing" || command == "restore-negotiated-pricing" {
 			app := agencyhub.New(model.DB, nil, config)
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -89,7 +104,7 @@ func run() error {
 			fmt.Println(string(encoded))
 			return nil
 		}
-		return fmt.Errorf("unknown command %q; expected serve, migrate, reconcile, repair-pricing, restore-negotiated-pricing, or rollback-pricing", command)
+		return fmt.Errorf("unknown command %q; expected serve, migrate, reconcile, recover-pricing-sources, repair-pricing, restore-negotiated-pricing, or rollback-pricing", command)
 	}
 	if config.AutoMigrate {
 		if err := model.MigrateAgency(model.DB); err != nil {

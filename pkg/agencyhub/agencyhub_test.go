@@ -372,6 +372,22 @@ func TestRootCreateAgencyReturnsInviteLinkAndQR(t *testing.T) {
 }
 
 func TestSalesPolicyPublishPreservesRootSettlementOverrides(t *testing.T) {
+	t.Run("unchanged generated values retain their source", func(t *testing.T) {
+		quote, sale := 7500, 8000
+		base := agencycontract.Policy{DefaultSalesBPS: 10000, ModelOverrides: []agencycontract.ModelOverride{{OriginModelName: "model-a", ChildCostBPS: &quote, ChildCostSource: agencycontract.PriceSourceDefault, SalesBPS: &sale, SalesSource: agencycontract.PriceSourceInherited}}}
+		request := salesPricingRequest{DefaultSalesBPS: 10000}
+		request.ModelSalesOverrides = append(request.ModelSalesOverrides, struct {
+			OriginModelName string `json:"origin_model_name"`
+			SalesBPS        *int   `json:"sales_bps"`
+		}{"model-a", &sale})
+		request.ModelChildCostOverrides = append(request.ModelChildCostOverrides, struct {
+			OriginModelName string `json:"origin_model_name"`
+			ChildCostBPS    *int   `json:"child_cost_bps"`
+		}{"model-a", &quote})
+		candidate, err := mergeSalesPolicy(base, request)
+		require.NoError(t, err)
+		assert.Equal(t, base, candidate)
+	})
 	settlement := 7000
 	oldSales := 9300
 	newSales := 9500

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   adjustCoefficientValues,
   adjustCustomerSalesValues,
+  changedCoefficientOverrides,
   draftToPolicy,
   initialPolicy,
   parseCoefficient,
@@ -15,12 +16,37 @@ import type { Policy } from "../types";
 import { normalizeModelSales, normalizePlatformPricing } from "../types";
 
 describe("pricing request contracts", () => {
+  test("publishing preserves untouched defaults and only submits changed coefficients", () => {
+    const rows = [
+      { origin_model_name: "auto", override_sales_bps: null },
+      { origin_model_name: "manual", override_sales_bps: 8000 },
+    ];
+    expect(
+      changedCoefficientOverrides(rows, { auto: "", manual: "0.8000" }, "override_sales_bps"),
+    ).toEqual([]);
+    expect(
+      changedCoefficientOverrides(rows, { auto: "0.7600", manual: "" }, "override_sales_bps"),
+    ).toEqual([
+      { origin_model_name: "auto", bps: 7600 },
+      { origin_model_name: "manual", bps: null },
+    ]);
+  });
   test("negotiated child cost uses the actual floor rather than the default quote", () => {
     const rows = [{ model: "model-a", costBPS: 8000, minimumBPS: 8200, inheritedBPS: 8500 }];
-    expect(adjustCoefficientValues(rows, {}, ["model-a"], 0, { anchor: "cost" }).errors).toEqual({ "model-a": "below_cost" });
-    expect(adjustCoefficientValues(rows, {}, ["model-a"], 100, { anchor: "cost" }).errors).toEqual({ "model-a": "below_cost" });
-    expect(adjustCoefficientValues(rows, {}, ["model-a"], 200, { anchor: "cost" }).values).toEqual({ "model-a": "0.8200" });
-    expect(adjustCoefficientValues([{ ...rows[0], minimumBPS: 8000 }], {}, ["model-a"], 0, { anchor: "cost" }).values).toEqual({ "model-a": "0.8000" });
+    expect(adjustCoefficientValues(rows, {}, ["model-a"], 0, { anchor: "cost" }).errors).toEqual({
+      "model-a": "below_cost",
+    });
+    expect(adjustCoefficientValues(rows, {}, ["model-a"], 100, { anchor: "cost" }).errors).toEqual({
+      "model-a": "below_cost",
+    });
+    expect(adjustCoefficientValues(rows, {}, ["model-a"], 200, { anchor: "cost" }).values).toEqual({
+      "model-a": "0.8200",
+    });
+    expect(
+      adjustCoefficientValues([{ ...rows[0], minimumBPS: 8000 }], {}, ["model-a"], 0, {
+        anchor: "cost",
+      }).values,
+    ).toEqual({ "model-a": "0.8000" });
   });
   test("pricing responses normalize nullable collections before rendering", () => {
     const sales = normalizeModelSales({

@@ -2,6 +2,9 @@ name: Build agency release artifacts
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - "agency-release-artifact-*"
 
 permissions:
   contents: read

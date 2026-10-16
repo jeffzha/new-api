@@ -25,11 +25,12 @@ type PricingRepairChange struct {
 }
 
 type PricingRepairReport struct {
-	PlanHash              string                `json:"plan_hash"`
-	Applied               bool                  `json:"applied"`
-	AgencyCount           int                   `json:"agency_count"`
-	CustomerOverrideCount int                   `json:"customer_override_count"`
-	Changes               []PricingRepairChange `json:"changes"`
+	RestorationReview     []PricingRestorationReview `json:"restoration_review,omitempty"`
+	PlanHash              string                     `json:"plan_hash"`
+	Applied               bool                       `json:"applied"`
+	AgencyCount           int                        `json:"agency_count"`
+	CustomerOverrideCount int                        `json:"customer_override_count"`
+	Changes               []PricingRepairChange      `json:"changes"`
 }
 
 type pricingRepairEntry struct {
@@ -39,16 +40,41 @@ type pricingRepairEntry struct {
 }
 
 type pricingRepairPlan struct {
-	Platform      agencycontract.PlatformPolicy
-	Entries       []pricingRepairEntry
-	Customers     []model.AgencyCustomerSalesOverride
-	CustomerAfter []int
+	OriginalRepairHash string
+	Platform           agencycontract.PlatformPolicy
+	Entries            []pricingRepairEntry
+	Customers          []model.AgencyCustomerSalesOverride
+	CustomerAfter      []int
 }
 
 // RepairPricing is an offline operator command, not an HTTP endpoint. Dry runs
 // never write. Applying requires the exact dry-run hash and records new immutable
 // versions; historical billing snapshots and wallet amounts are never modified.
 func (a *App) RepairPricing(ctx context.Context, expectedHash string, rootID int64) (PricingRepairReport, error) {
+	return a.repairPricing(ctx, "", expectedHash, rootID)
+}
+
+type PricingRestorationReview struct {
+	AgencyID int64  `json:"agency_id"`
+	Model    string `json:"model"`
+	Field    string `json:"field"`
+	Original int    `json:"original_bps"`
+	Current  int    `json:"current_bps"`
+	Minimum  int    `json:"minimum_bps"`
+	Restored bool   `json:"restored"`
+	Reason   string `json:"reason"`
+}
+
+// RestoreNegotiatedPricing restores only explicit increases from one audited
+// repair. It does not undo catalog initialization, later edits, or billing.
+func (a *App) RestoreNegotiatedPricing(ctx context.Context, originalHash, expectedHash string, rootID int64) (PricingRepairReport, error) {
+	if originalHash == "" {
+		return PricingRepairReport{}, errors.New("original pricing repair hash is required")
+	}
+	return a.repairPricing(ctx, originalHash, expectedHash, rootID)
+}
+
+func (a *App) repairPricing(ctx context.Context, originalHash, expectedHash string, rootID int64) (PricingRepairReport, error) {
 	report := PricingRepairReport{Changes: []PricingRepairChange{}}
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var state model.AgencyPlatformPriceState
@@ -68,7 +94,20 @@ func (a *App) RepairPricing(ctx context.Context, expectedHash string, rootID int
 			return err
 		}
 		report.AgencyCount, report.CustomerOverrideCount = len(agencies), len(customers)
-		plan := pricingRepairPlan{Platform: platform, Customers: customers}
+		plan := pricingRepairPlan{OriginalRepairHash: originalHash, Platform: platform, Customers: customers}
+		repairAudits := map[string]model.AgencyAuditLog{}
+		if originalHash != "" {
+			var logs []model.AgencyAuditLog
+			if err := tx.Where("reason = ? AND action = ?", originalHash, "pricing.repair").Order("id ASC").Find(&logs).Error; err != nil {
+				return err
+			}
+			if len(logs) == 0 {
+				return errors.New("original pricing repair audit records not found")
+			}
+			for _, log := range logs {
+				repairAudits[log.ObjectID] = log
+			}
+		}
 		effective := map[int64]agencycontract.Policy{}
 		names := map[int64]string{}
 		for _, agency := range agencies {
@@ -89,11 +128,64 @@ func (a *App) RepairPricing(ctx context.Context, expectedHash string, rootID int
 				}
 				parent = &value
 			}
-			after, changes, err := repairAgencyPricePolicy(agency, stored, platform, parent)
+			candidate := stored
+			restoreModels := map[string]bool{}
+			if audit, ok := repairAudits[stringID(agency.ID)]; ok {
+				var reviews []PricingRestorationReview
+				var restores []PricingRepairChange
+				candidate, reviews, restores, err = restoreNegotiatedFields(agency, stored, parent, audit)
+				if err != nil {
+					return err
+				}
+				report.RestorationReview = append(report.RestorationReview, reviews...)
+				report.Changes = append(report.Changes, restores...)
+				for _, change := range restores {
+					restoreModels[change.Model] = true
+				}
+			}
+			after, changes, err := repairAgencyPricePolicy(agency, candidate, platform, parent)
 			if err != nil {
 				return fmt.Errorf("agency %d: %w", agency.ID, err)
 			}
 			report.Changes = append(report.Changes, changes...)
+			if originalHash != "" {
+				// Restoration must not normalize unrelated prices. Only restored
+				// models and descendants of a changed parent quote may propagate.
+				if agency.ParentAgencyID != nil {
+					for _, entry := range plan.Entries {
+						if entry.Agency.ID != *agency.ParentAgencyID {
+							continue
+						}
+						for _, override := range entry.After.ModelOverrides {
+							beforeQuote, _ := directChildCost(entry.Before, override.OriginModelName)
+							afterQuote, _ := directChildCost(entry.After, override.OriginModelName)
+							if beforeQuote != afterQuote {
+								restoreModels[override.OriginModelName] = true
+							}
+						}
+					}
+				}
+				filtered := candidate
+				filtered.ModelOverrides = append([]agencycontract.ModelOverride(nil), candidate.ModelOverrides...)
+				for index, override := range filtered.ModelOverrides {
+					if restoreModels[override.OriginModelName] {
+						if replacement := findModelOverride(after, override.OriginModelName); replacement != nil {
+							filtered.ModelOverrides[index] = *replacement
+						}
+					}
+				}
+				after = filtered
+				retained := report.Changes[:len(report.Changes)-len(changes)]
+				for _, change := range changes {
+					if restoreModels[change.Model] && change.Model != "" {
+						retained = append(retained, change)
+					}
+				}
+				report.Changes = retained
+				if err := agencycontract.ValidatePolicy(agencycontract.ConfirmedModelPolicy(after, platform)); err != nil {
+					return err
+				}
+			}
 			effective[agency.ID] = agencycontract.ConfirmedModelPolicy(after, platform)
 			names[agency.ID] = agency.DisplayName
 			plan.Entries = append(plan.Entries, pricingRepairEntry{Agency: agency, Before: stored, After: after})
@@ -132,6 +224,9 @@ func (a *App) RepairPricing(ctx context.Context, expectedHash string, rootID int
 			if err := agencycontract.ValidateCoefficient(sales, agencycontract.MaxCoefficientBPS); err != nil {
 				return err
 			}
+			if originalHash != "" && sales != customer.SalesBPS {
+				return fmt.Errorf("restoration would alter unrelated customer %d pricing; review separately", customer.UserID)
+			}
 			plan.CustomerAfter = append(plan.CustomerAfter, sales)
 			if sales != customer.SalesBPS {
 				before := customer.SalesBPS
@@ -139,6 +234,22 @@ func (a *App) RepairPricing(ctx context.Context, expectedHash string, rootID int
 			}
 		}
 		report.PlanHash, err = agencycontract.CanonicalHash(plan)
+		validationPlatform := platform
+		if originalHash != "" {
+			changedModels := map[string]bool{}
+			for _, change := range report.Changes {
+				changedModels[change.Model] = true
+			}
+			validationPlatform.ModelPrices = nil
+			for _, price := range platform.ModelPrices {
+				if changedModels[price.OriginModelName] {
+					validationPlatform.ModelPrices = append(validationPlatform.ModelPrices, price)
+				}
+			}
+		}
+		if validationErr := validatePricingBillingPaths(agencies, effective, validationPlatform); validationErr != nil {
+			return validationErr
+		}
 		if err != nil {
 			return err
 		}
@@ -216,6 +327,81 @@ func (a *App) RepairPricing(ctx context.Context, expectedHash string, rootID int
 	return report, err
 }
 
+func restoreNegotiatedFields(agency model.Agency, current agencycontract.Policy, parent *agencycontract.Policy, audit model.AgencyAuditLog) (agencycontract.Policy, []PricingRestorationReview, []PricingRepairChange, error) {
+	var before, repaired agencycontract.Policy
+	if err := common.UnmarshalJsonStr(audit.BeforeJSON, &before); err != nil {
+		return current, nil, nil, err
+	}
+	if err := common.UnmarshalJsonStr(audit.AfterJSON, &repaired); err != nil {
+		return current, nil, nil, err
+	}
+	encoded, err := common.Marshal(current)
+	if err != nil {
+		return current, nil, nil, err
+	}
+	var candidate agencycontract.Policy
+	if err := common.Unmarshal(encoded, &candidate); err != nil {
+		return current, nil, nil, err
+	}
+	reviews := []PricingRestorationReview{}
+	changes := []PricingRepairChange{}
+	for _, original := range before.ModelOverrides {
+		raised := findModelOverride(repaired, original.OriginModelName)
+		target := findModelOverride(candidate, original.OriginModelName)
+		if raised == nil || target == nil {
+			continue
+		}
+		for _, field := range []string{"settlement_bps", "sales_bps"} {
+			old, repairedValue, value := original.SettlementBPS, raised.SettlementBPS, target.SettlementBPS
+			source, repairedSource, currentSource := original.SettlementSource, raised.SettlementSource, target.SettlementSource
+			if field == "sales_bps" {
+				old, repairedValue, value = original.SalesBPS, raised.SalesBPS, target.SalesBPS
+				source, repairedSource, currentSource = original.SalesSource, raised.SalesSource, target.SalesSource
+			}
+			if old == nil || repairedValue == nil || value == nil || *old >= *repairedValue {
+				continue
+			}
+			review := PricingRestorationReview{AgencyID: agency.ID, Model: original.OriginModelName, Field: field, Original: *old, Current: *value}
+			switch {
+			case source != "" && source != agencycontract.PriceSourceManual:
+				review.Reason = "原值属于自动继承，不按单独约定恢复"
+			case current.Revision != repaired.Revision || *value != *repairedValue || currentSource != repairedSource:
+				review.Reason = "订正后已修改或已恢复，保留当前值"
+			case field == "settlement_bps" && parent == nil:
+				review.Reason = "一级代理商成本由平台已确认报价决定，不属于默认加点限制"
+			default:
+				if field == "settlement_bps" {
+					review.Minimum, _, err = minimumDirectChildCost(*parent, candidate, original.OriginModelName)
+					if err != nil {
+						return current, nil, nil, err
+					}
+				} else {
+					resolved, resolveErr := agencycontract.Resolve(candidate, original.OriginModelName)
+					if resolveErr != nil {
+						return current, nil, nil, resolveErr
+					}
+					review.Minimum = resolved.SettlementBPS + candidate.MinSpreadBPS
+				}
+				if *old < review.Minimum {
+					review.Reason = "原值仍低于实际成本＋最低价差，不可回退"
+				} else {
+					restored := *old
+					if field == "settlement_bps" {
+						target.SettlementBPS, target.SettlementSource = &restored, agencycontract.PriceSourceManual
+					} else {
+						target.SalesBPS, target.SalesSource = &restored, agencycontract.PriceSourceManual
+					}
+					review.Restored, review.Reason = true, "恢复原来合法的手动价格；默认下级报价不再作为硬性底价"
+					previous := *value
+					changes = append(changes, PricingRepairChange{AgencyID: agency.ID, AgencyName: agency.DisplayName, Model: original.OriginModelName, Field: field, Before: &previous, After: restored, Reason: review.Reason})
+				}
+			}
+			reviews = append(reviews, review)
+		}
+	}
+	return candidate, reviews, changes, nil
+}
+
 func repairAgencyPricePolicy(agency model.Agency, stored agencycontract.Policy, platform agencycontract.PlatformPolicy, parent *agencycontract.Policy) (agencycontract.Policy, []PricingRepairChange, error) {
 	encoded, err := common.Marshal(stored)
 	if err != nil {
@@ -244,11 +430,21 @@ func repairAgencyPricePolicy(agency model.Agency, stored agencycontract.Policy, 
 			result.MinSpreadBPS = parent.MinSpreadBPS
 			change("", "min_spread_bps", &before, result.MinSpreadBPS, "最低价差不能低于上级")
 		}
-		floor := parent.DefaultChildCostBPS
-		if floor != 0 && (result.DefaultSettlementBPS < floor || result.SettlementSource == agencycontract.PriceSourceInherited || result.SettlementSource == agencycontract.PriceSourceDefault) {
+		floor, _, err := minimumDirectChildCost(*parent, result, "")
+		if err != nil {
+			return result, nil, err
+		}
+		cost := result.DefaultSettlementBPS
+		if result.SettlementSource == agencycontract.PriceSourceInherited || result.SettlementSource == agencycontract.PriceSourceDefault {
+			if quote, configured := directChildCost(*parent, ""); configured {
+				cost = quote
+			}
+		}
+		cost = max(cost, floor)
+		if result.DefaultSettlementBPS != cost {
 			before := result.DefaultSettlementBPS
-			result.DefaultSettlementBPS = floor
-			change("", "default_settlement_bps", &before, floor, "对齐上级已生效的默认下级报价")
+			result.DefaultSettlementBPS = cost
+			change("", "default_settlement_bps", &before, cost, "继承默认下级报价；单独报价仅校验上级成本与最低价差底线")
 		}
 	}
 	if result.DefaultChildCostBPS != 0 && result.DefaultChildCostBPS < result.DefaultSettlementBPS+result.MinSpreadBPS {
@@ -284,12 +480,18 @@ func repairAgencyPricePolicy(agency model.Agency, stored agencycontract.Policy, 
 			}
 			current.SettlementSource = agencycontract.PriceSourceInherited
 		} else {
-			floor, configured := directChildCost(*parent, name)
-			if configured && (cost < floor || current.SettlementBPS == nil || current.SettlementSource == agencycontract.PriceSourceInherited || current.SettlementSource == agencycontract.PriceSourceDefault) {
-				cost = floor
-				set(name, "settlement_bps", &current.SettlementBPS, cost, "下级成本不得低于上级已生效的下级报价；继承值同步上级报价")
+			floor, _, err := minimumDirectChildCost(*parent, result, name)
+			if err != nil {
+				return result, nil, err
+			}
+			if current.SettlementBPS == nil || current.SettlementSource == agencycontract.PriceSourceInherited || current.SettlementSource == agencycontract.PriceSourceDefault {
+				if quote, configured := directChildCost(*parent, name); configured {
+					cost = quote
+				}
 				current.SettlementSource = agencycontract.PriceSourceInherited
 			}
+			cost = max(cost, floor)
+			set(name, "settlement_bps", &current.SettlementBPS, cost, "继承默认下级报价；合法单独报价保留，底线为上级成本与最低价差之和")
 		}
 		minimum := cost + result.MinSpreadBPS
 		if current.ChildCostBPS == nil {

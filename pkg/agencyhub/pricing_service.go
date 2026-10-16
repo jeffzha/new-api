@@ -48,6 +48,10 @@ func pricingErrorMessage(err error) string {
 	}
 	var customerErr *customerSalesPolicyError
 	var boundaryErr *childCostBoundaryError
+	var pathErr *pricingBillingPathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Error()
+	}
 	if errors.As(err, &boundaryErr) {
 		return boundaryErr.Error()
 	}
@@ -815,6 +819,10 @@ func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, po
 		if err := validateCustomerSalesPolicyTx(tx, agency.ID, policy); err != nil {
 			return &childPricingPropagationError{AgencyPath: agency.DisplayName, Cause: err}
 		}
+		_, previousPolicies, previousPlatform, err := loadPricingBillingPathsTx(tx)
+		if err != nil {
+			return err
+		}
 		{
 			if err := a.syncDirectChildPoliciesTx(tx, c, identity, agency, policy, reason, actorType); err != nil {
 				return err
@@ -842,6 +850,9 @@ func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, po
 		}
 		if result.RowsAffected != 1 {
 			return agencycontract.ErrPolicyRevision
+		}
+		if err := validatePricingBillingPathsTx(tx, previousPolicies, previousPlatform); err != nil {
+			return err
 		}
 		return recordAuditTx(tx, c, identity, "pricing.publish", "agency", stringID(agencyID), reason,
 			map[string]any{"revision": agency.PriceRevision},

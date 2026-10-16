@@ -22,6 +22,7 @@ func SetApiRouter(router *gin.Engine) {
 	apiRouter.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
 	apiRouter.Use(middleware.GlobalAPIRateLimit())
 	opsexport.Register(apiRouter.Group("/ops-export/v1", middleware.DisableCache()))
+	opsexport.RegisterV2(apiRouter.Group("/ops-export/v2", middleware.DisableCache()))
 	anonymousRequestBodyLimit := middleware.AnonymousRequestBodyLimit()
 	registerWorkbenchIdentityRoutes(apiRouter)
 	opsBridgeRoute := apiRouter.Group("/ops-bridge", middleware.RootAuth(), middleware.UserCriticalRateLimit("ops-bridge"), middleware.DisableCache())

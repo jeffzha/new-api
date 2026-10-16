@@ -652,6 +652,54 @@ func TestPrepareMidjourneyTaskBillingKeepsUnbilledMarkerClear(t *testing.T) {
 	assert.Zero(t, task.BillingChannelId)
 }
 
+func TestCNMidjourneyServiceRoutingAndRecovery(t *testing.T) {
+	truncate(t)
+	t.Setenv("OPS_CN_FINANCE_V2_ENABLED", "true")
+	t.Setenv("OPS_CN_DURABLE_MIDJOURNEY_ENABLED", "true")
+	require.NoError(t, model.MigrateCNFinance(model.DB, "s4-service-test"))
+	seedUser(t, 87, 1000)
+	seedToken(t, 87, 87, "mj-durable-test-key", 1000)
+	seedChannel(t, 87)
+	info := &relaycommon.RelayInfo{UserId: 87, TokenId: 87, TokenKey: "mj-durable-test-key", ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 87}}
+	task := &model.Midjourney{UserId: 87, MjId: "service-durable-mj", ChannelId: 87, Action: "IMAGINE"}
+	prepared, err := PrepareMidjourneyTaskBilling(info, task, 100, true)
+	require.NoError(t, err)
+	require.True(t, prepared)
+	require.NotEmpty(t, task.CNBillingKey)
+	require.NoError(t, task.Insert())
+	billed, err := SettleMidjourneyTaskBilling(info, task, prepared)
+	require.NoError(t, err)
+	require.True(t, billed)
+	assert.Equal(t, 900, getUserQuota(t, 87))
+	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register("mj-intent-fail", func(tx *gorm.DB) {
+		if tx.Statement.Table == "cn_midjourney_billings" {
+			if values, ok := tx.Statement.Dest.(map[string]any); ok && values["refund_requested_at"] != nil {
+				tx.AddError(errors.New("injected intent failure"))
+			}
+		}
+	}))
+	assert.False(t, RefundMidjourneyQuota(context.Background(), task, "failed"))
+	require.NoError(t, model.DB.Callback().Update().Remove("mj-intent-fail"))
+	assert.Equal(t, 900, getUserQuota(t, 87))
+	assert.True(t, RefundMidjourneyQuota(context.Background(), task, "failed"))
+	assert.True(t, RefundMidjourneyQuota(context.Background(), task, "failed"))
+	assert.Equal(t, 1000, getUserQuota(t, 87))
+	assert.Equal(t, 1000, getTokenRemainQuota(t, 87))
+	var user model.User
+	require.NoError(t, model.DB.First(&user, 87).Error)
+	assert.Zero(t, user.UsedQuota)
+	assert.Equal(t, 1, user.RequestCount)
+	require.NoError(t, model.DeliverCNMidjourneyEffects(context.Background(), model.DB, model.LOG_DB, 100))
+	blocked := &model.Midjourney{UserId: 87, MjId: "redis-fence", ChannelId: 87}
+	common.RedisEnabled = true
+	_, err = PrepareMidjourneyTaskBilling(info, blocked, 10, true)
+	common.RedisEnabled = false
+	require.Error(t, err)
+	info.BillingSource = BillingSourceSubscription
+	_, err = PrepareMidjourneyTaskBilling(info, blocked, 10, true)
+	require.Error(t, err)
+}
+
 func TestSettleMidjourneyTaskBillingRequiresPersistedTask(t *testing.T) {
 	truncate(t)
 

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -33,13 +34,18 @@ type FundingSource interface {
 var ErrInsufficientWalletQuota = errors.New("wallet quota insufficient")
 
 type WalletFunding struct {
-	userId   int
-	consumed int // 实际预扣的用户额度
+	userId    int
+	requestId string
+	durable   bool
+	consumed  int // 实际预扣的用户额度
 }
 
 func (w *WalletFunding) Source() string { return BillingSourceWallet }
 
 func (w *WalletFunding) PreConsume(amount int) error {
+	if model.CNDurableWalletRequested() {
+		return model.ErrCNWalletBindingRequired
+	}
 	if amount <= 0 {
 		return nil
 	}
@@ -54,7 +60,20 @@ func (w *WalletFunding) PreConsume(amount int) error {
 	return nil
 }
 
+func (w *WalletFunding) preConsumeDurable(amount, token int, unlimited, playground bool) error {
+	reserved, err := model.PreConsumeCNBoundWallet(w.requestId, w.userId, amount, token, unlimited, playground)
+	if err != nil {
+		return err
+	}
+	w.durable = true
+	w.consumed = reserved
+	return nil
+}
+
 func (w *WalletFunding) Settle(delta int) error {
+	if w.durable {
+		return model.FinalizeCNBoundWallet(w.requestId, w.userId, w.consumed+delta)
+	}
 	if delta == 0 {
 		return nil
 	}
@@ -65,6 +84,12 @@ func (w *WalletFunding) Settle(delta int) error {
 }
 
 func (w *WalletFunding) Refund() error {
+	if w.durable {
+		if err := model.RequestCNBoundWalletCancellation(model.DB, w.requestId, w.userId); err != nil {
+			return err
+		}
+		return model.CompleteCNWalletCancellation(context.Background(), model.DB, w.requestId)
+	}
 	if w.consumed <= 0 {
 		return nil
 	}
@@ -78,6 +103,7 @@ func (w *WalletFunding) Refund() error {
 // ---------------------------------------------------------------------------
 
 type SubscriptionFunding struct {
+	durable        bool
 	requestId      string
 	userId         int
 	modelName      string
@@ -99,6 +125,21 @@ func (s *SubscriptionFunding) PreConsume(_ int) error {
 	if err != nil {
 		return err
 	}
+	s.applyPreConsumeResult(res)
+	return nil
+}
+
+func (s *SubscriptionFunding) preConsumeDurable(token int, unlimited, playground bool) error {
+	res, err := model.PreConsumeCNSubscription(s.requestId, s.userId, int(s.amount), token, unlimited, playground)
+	if err != nil {
+		return err
+	}
+	s.durable = true
+	s.applyPreConsumeResult(res)
+	return nil
+}
+
+func (s *SubscriptionFunding) applyPreConsumeResult(res *model.SubscriptionPreConsumeResult) {
 	s.subscriptionId = res.UserSubscriptionId
 	s.preConsumed = res.PreConsumed
 	s.AmountTotal = res.AmountTotal
@@ -108,10 +149,12 @@ func (s *SubscriptionFunding) PreConsume(_ int) error {
 		s.PlanId = planInfo.PlanId
 		s.PlanTitle = planInfo.PlanTitle
 	}
-	return nil
 }
 
 func (s *SubscriptionFunding) Settle(delta int) error {
+	if s.durable {
+		return model.FinalizeCNSubscription(s.requestId, s.userId, int(s.preConsumed)+delta)
+	}
 	if delta == 0 {
 		return nil
 	}
@@ -119,6 +162,12 @@ func (s *SubscriptionFunding) Settle(delta int) error {
 }
 
 func (s *SubscriptionFunding) Refund() error {
+	if s.durable {
+		if err := model.RequestCNSubscriptionCancellation(model.DB, s.requestId, s.userId); err != nil {
+			return err
+		}
+		return model.CompleteCNSubscriptionCancellation(context.Background(), model.DB, s.requestId)
+	}
 	if s.preConsumed <= 0 {
 		return nil
 	}

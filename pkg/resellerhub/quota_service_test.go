@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,8 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -205,4 +208,57 @@ func TestStaleReconciliationPausesNewQuotaWrites(t *testing.T) {
 
 	err := app.ensureQuotaWritesConverged(context.Background(), reseller.ID)
 	require.ErrorContains(t, err, "paused")
+}
+
+func TestUserQuotaAdjustmentProtectsNativeFundingAcrossDialects(t *testing.T) {
+	previousRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = previousRedisEnabled })
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			var driver gorm.Dialector
+			switch dialect {
+			case "sqlite":
+				driver = sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name()))
+			case "mysql":
+				if os.Getenv("AGENCY_HUB_RUN_EXTERNAL_DB_TESTS") != "1" || os.Getenv("AGENCY_HUB_TEST_MYSQL_DSN") == "" {
+					t.Skip("isolated external database not configured")
+				}
+				driver = mysql.Open(os.Getenv("AGENCY_HUB_TEST_MYSQL_DSN"))
+			case "postgres":
+				if os.Getenv("AGENCY_HUB_RUN_EXTERNAL_DB_TESTS") != "1" || os.Getenv("AGENCY_HUB_TEST_POSTGRES_DSN") == "" {
+					t.Skip("isolated external database not configured")
+				}
+				driver = postgres.Open(os.Getenv("AGENCY_HUB_TEST_POSTGRES_DSN"))
+			}
+			db, err := gorm.Open(driver, &gorm.Config{})
+			require.NoError(t, err)
+			pool, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = pool.Close() })
+			require.NoError(t, db.AutoMigrate(&model.User{}, &QuotaLedger{}))
+			app := New(db, db, Config{})
+			currency := CurrencyConfig{DisplayType: "USD", Symbol: "$", QuotaPerUnit: decimal.NewFromInt(500000), USDToDisplayRate: decimal.NewFromInt(1)}
+			for _, mode := range []string{"", model.AgencyDurableBillingMode, model.AgencyProvisioningBillingMode} {
+				id := "guard" + common.GetUUID()[:15]
+				user := model.User{Username: id, AffCode: id, Status: common.UserStatusEnabled, Quota: 100, BillingMode: mode}
+				require.NoError(t, db.Create(&user).Error)
+				input := quotaAdjustmentRequest{Mode: "add", InputUnit: "quota", Amount: "50", Reason: "test", IdempotencyKey: id}
+				_, _, err := app.applyUserQuotaAdjustment(quotaTestContext(9), Reseller{ID: user.Id, QuotaCarrierUserID: user.Id}, input, currency, 50, decimal.Zero)
+				var stored model.User
+				require.NoError(t, db.First(&stored, user.Id).Error)
+				var count int64
+				require.NoError(t, db.Model(&QuotaLedger{}).Where("idempotency_key = ?", id).Count(&count).Error)
+				if mode == "" {
+					require.NoError(t, err)
+					assert.Equal(t, 150, stored.Quota)
+					assert.EqualValues(t, 1, count)
+				} else {
+					require.ErrorIs(t, err, model.ErrAgencyFundingUnavailable)
+					assert.Equal(t, 100, stored.Quota)
+					assert.Zero(t, count)
+				}
+			}
+		})
+	}
 }

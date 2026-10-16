@@ -21,9 +21,11 @@ import (
 )
 
 type Server struct {
-	DB        *gorm.DB
-	GatewayID string
-	TokenHash [32]byte
+	DB              *gorm.DB
+	GatewayID       string
+	TokenHash       [32]byte
+	RefundTokenHash [32]byte
+	Refund          *model.CNRefundService
 }
 
 var Default *Server
@@ -48,16 +50,35 @@ func StartConfigured(db *gorm.DB) error {
 	if err := model.MigrateOpsExport(db); err != nil {
 		return err
 	}
+	if err := model.MigrateCNFinance(db, gateway); err != nil {
+		return err
+	}
 	server := &Server{DB: db, GatewayID: gateway}
 	copy(server.TokenHash[:], decoded)
+	if err := server.configureRefund(); err != nil {
+		return err
+	}
 	Default = server
 	return nil
 }
 
 func Register(group *gin.RouterGroup) {
+	useExportAuth(group, false)
+	group.GET("/facts", func(c *gin.Context) { Default.Facts(c) })
+	group.GET("/daily", func(c *gin.Context) { Default.Daily(c) })
+	group.GET("/catalog", func(c *gin.Context) { Default.Catalog(c) })
+	group.GET("/inventory", func(c *gin.Context) { Default.Inventory(c) })
+}
+
+func useExportAuth(group *gin.RouterGroup, structured bool) {
 	group.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		if Default == nil {
+			if structured {
+				cnError(c, http.StatusNotFound, "source_unavailable")
+				c.Abort()
+				return
+			}
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
@@ -65,13 +86,16 @@ func Register(group *gin.RouterGroup) {
 		digest := sha256.Sum256([]byte(token))
 		if !ok || len(token) < 32 || len(token) > 256 || strings.ContainsAny(token, "\r\n \t") ||
 			subtle.ConstantTimeCompare(digest[:], Default.TokenHash[:]) != 1 {
+			if structured {
+				cnError(c, http.StatusUnauthorized, "unauthorized")
+				c.Abort()
+				return
+			}
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
 		c.Next()
 	})
-	group.GET("/facts", func(c *gin.Context) { Default.Facts(c) })
-	group.GET("/daily", func(c *gin.Context) { Default.Daily(c) })
 }
 
 func (s *Server) Facts(c *gin.Context) {

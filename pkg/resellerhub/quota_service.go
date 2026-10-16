@@ -273,8 +273,11 @@ func (a *App) applyUserQuotaAdjustment(c *gin.Context, reseller Reseller, input 
 			return err
 		}
 		var user model.User
-		if err := tx.Where("id = ? AND status = ?", reseller.QuotaCarrierUserID, common.UserStatusEnabled).First(&user).Error; err != nil {
+		if err := model.AgencyLockForUpdate(tx).Where("id = ? AND status = ?", reseller.QuotaCarrierUserID, common.UserStatusEnabled).First(&user).Error; err != nil {
 			return errors.New("quota carrier account not found or disabled")
+		}
+		if user.BillingMode == model.AgencyDurableBillingMode || user.BillingMode == model.AgencyProvisioningBillingMode {
+			return model.ErrAgencyFundingUnavailable
 		}
 		ledger.QuotaBefore = user.Quota
 		ledger.UsedQuotaBefore = user.UsedQuota

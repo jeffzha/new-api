@@ -1,0 +1,21 @@
+Evidence source: transcript of the first S4 independent Python replay on 2026-10-15.
+This is a retained transcript excerpt, not a saved copy of the failed HTTP pages.
+The original noncanonical pages were regenerated before separate preservation.
+The deterministic reconstructed serialization regression is labeled separately.
+
+sqlite batch-1 pending sha256:2ffc0560251ad5aad85fdcc4a57571918d638823782fb590831650394e1e9ff6 PASS
+Traceback (most recent call last):
+  verify_integrity_exports.py, line 47, in verify
+    page = wire.page(path.read_bytes(), manifest, proof, name, ordinal)
+  cn_integrity_wire.py, line 112, in page
+    body = exact(codec.load(raw), PAGE_KEYS)
+  cn_integrity_codec.py, line 63, in load
+    fail("integrity_json_not_canonical")
+  cn_integrity_codec.py, line 19, in fail
+    raise FinanceV2Error(code, 422)
+cn_finance_v2.FinanceV2Error: integrity_json_not_canonical
+
+Independent coordinator reproduction: SQLite batch 1 passed; facts/originals
+pages in batches 2-7 failed strict JCS on all three engines. At facts offset 325,
+the nested body began with factId/publicationSequence instead of canonical
+basis/billingSource/conversion. Ops did not normalize or admit the failed page.

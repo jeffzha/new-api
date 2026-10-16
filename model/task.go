@@ -80,8 +80,11 @@ type Task struct {
 	Properties                   Properties `json:"properties" gorm:"type:json"`
 	Username                     string     `json:"username,omitempty" gorm:"-"`
 	// 禁止返回给用户，内部可能包含key等隐私信息
-	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
-	Data        json.RawMessage `json:"data" gorm:"type:json"`
+	PrivateData   TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
+	Data          json.RawMessage `json:"data" gorm:"type:json"`
+	CNBillingKey  string          `json:"-" gorm:"size:64;index"`
+	cnFinalTarget *int            `gorm:"-"`
+	cnFinalError  string          `gorm:"-"`
 }
 
 func (t *Task) SetData(data any) {
@@ -532,6 +535,12 @@ func (Task *Task) Insert() error {
 }
 
 func (Task *Task) InsertWithContext(ctx context.Context) error {
+	if Task.CNBillingKey != "" {
+		return cnInsertTask(ctx, Task)
+	}
+	if err := cnGuardLegacyTask(Task); err != nil {
+		return err
+	}
 	return DB.WithContext(ctx).Create(Task).Error
 }
 
@@ -574,16 +583,26 @@ func (t *Task) Snapshot() taskSnapshot {
 }
 
 func (Task *Task) Update() error {
+	if Task.CNBillingKey != "" {
+		_, err := cnUpdateTask(Task, nil)
+		return err
+	}
+	if err := cnGuardLegacyTask(Task); err != nil {
+		return err
+	}
 	var err error
 	err = DB.Save(Task).Error
 	return err
 }
 
 func (t *Task) UpdateQuota() error {
+	if t != nil && t.CNBillingKey != "" {
+		return ErrCNConflict
+	}
 	if t == nil || t.ID <= 0 {
 		return errors.New("task id is required to update quota")
 	}
-	result := DB.Model(&Task{}).Where("id = ?", t.ID).Update("quota", t.Quota)
+	result := DB.Model(&Task{}).Where("id = ? AND (cn_billing_key = ? OR cn_billing_key IS NULL)", t.ID, "").Update("quota", t.Quota)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -603,7 +622,10 @@ func (t *Task) UpdateQuota() error {
 // falls back to INSERT ON CONFLICT when the WHERE-guarded UPDATE matches
 // zero rows, which silently bypasses the CAS guard.
 func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
-	result := DB.Model(t).Where("status = ?", fromStatus).Select("*").Updates(t)
+	if t.CNBillingKey != "" {
+		return cnUpdateTask(t, &fromStatus)
+	}
+	result := DB.Model(t).Where("status = ? AND (cn_billing_key = ? OR cn_billing_key IS NULL)", fromStatus, "").Select("*").Updates(t)
 	if result.Error != nil {
 		return false, result.Error
 	}
@@ -621,6 +643,7 @@ func TaskBulkUpdateByID(ids []int64, params map[string]any) error {
 	}
 	return DB.Model(&Task{}).
 		Where("id in (?)", ids).
+		Where("cn_billing_key = ? OR cn_billing_key IS NULL", "").
 		Updates(params).Error
 }
 

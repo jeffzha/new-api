@@ -1,0 +1,9 @@
+{
+  "synthetic": true,
+  "targetOnly": true,
+  "authority": {"authorityId": "fixture-authority-v2", "tenantId": "fixture-tenant", "gatewayId": "gw-cn-fixture", "sourceSystem": "gateway-cn-finance-v2", "schemaVersion": "2", "streamEpoch": "fixture", "recordNamespace": "gateway-cn", "paths": ["agency-durable-v1"], "economicKinds": ["charge"], "coverageFrom": "2026-10-14T00:00:00Z", "coverageTo": "2026-10-15T00:00:00Z", "generation": 1, "evidenceIds": ["fixture-coverage-proof"], "status": "shadow"},
+  "compareRequest": {"operationId": "fixture-compare", "expectedVersion": 1, "from": "2026-10-14T00:00:00Z", "to": "2026-10-15T00:00:00Z", "previousAuthorityId": "fixture-authority-v1"},
+  "comparison": {"comparisonId": "fixture-comparison", "v1Watermark": "djI6Mg", "v2Watermark": "Y25mMjpmaXh0dXJlOjI", "rawV1Gross": "18", "rawV2Gross": "18", "economicV1Gross": "8", "economicV2Gross": "8", "economicQuotaDelta": "400000", "missingKeys": [], "extraKeys": [], "unknownFields": ["v1.billingSource", "v1.requestId", "historical-payment-and-allocation-evidence"], "predecessorGaps": [], "status": "blocked", "activationAllowed": false},
+  "disjointForwardAlternative": {"coverageFrom": "2026-10-15T00:00:00Z", "coverageTo": "2026-10-16T00:00:00Z", "requiresIndependentCompleteProof": true, "historicalScopeRemainsUnverified": true},
+  "expectedEconomicPostingsPerChargeAndRevision": 1
+}

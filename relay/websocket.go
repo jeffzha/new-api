@@ -23,6 +23,11 @@ func WssHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.
 		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
 	}
 	adaptor.Init(info)
+	if service.CNDirectRealtimeRequested(info) {
+		if err := service.BeginCNDirectRealtime(info, info.FinalPreConsumedQuota); err != nil {
+			return types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
+		}
+	}
 	//var requestBody io.Reader
 	//firstWssRequest, _ := c.Get("first_wss_request")
 	//requestBody = bytes.NewBuffer(firstWssRequest.([]byte))
@@ -56,6 +61,16 @@ func WssHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 		return newAPIError
 	}
-	service.PostWssConsumeQuota(c, info, info.UpstreamModelName, usage.(*dto.RealtimeUsage), "")
+	if service.CNDirectRealtimeRequested(info) {
+		realtimeUsage, ok := usage.(*dto.RealtimeUsage)
+		if !ok {
+			return types.NewError(fmt.Errorf("missing durable realtime usage"), types.ErrorCodeBadResponse)
+		}
+		if err := service.FinalizeCNDirectRealtime(info, realtimeUsage); err != nil {
+			return types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
+		}
+	} else {
+		service.PostWssConsumeQuota(c, info, info.UpstreamModelName, usage.(*dto.RealtimeUsage), "")
+	}
 	return nil
 }

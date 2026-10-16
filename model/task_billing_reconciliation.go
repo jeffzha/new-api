@@ -162,10 +162,20 @@ func GetDueTaskBillingReconciliations(limit int) ([]*TaskBillingReconciliation, 
 }
 
 func ClaimTaskBillingReconciliation(id int64) (bool, error) {
+	var record TaskBillingReconciliation
+	if err := DB.First(&record, id).Error; err != nil {
+		return false, err
+	}
+	return record.Claim()
+}
+
+// Claim advances the observed attempt atomically, so a delayed due-list entry
+// cannot acquire a newer lease and retain an obsolete attempt identity.
+func (record *TaskBillingReconciliation) Claim() (bool, error) {
 	now := time.Now().Unix()
 	result := DB.Model(&TaskBillingReconciliation{}).
-		Where("id = ? AND ((status = ? AND next_retry_at <= ?) OR (status = ? AND updated_at <= ?))",
-			id,
+		Where("id = ? AND attempts = ? AND ((status = ? AND next_retry_at <= ?) OR (status = ? AND updated_at <= ?))",
+			record.ID, record.Attempts,
 			TaskBillingReconciliationPending, now,
 			TaskBillingReconciliationProcessing, now-300).
 		Updates(map[string]any{
@@ -173,7 +183,24 @@ func ClaimTaskBillingReconciliation(id int64) (bool, error) {
 			"attempts":   gorm.Expr("attempts + 1"),
 			"updated_at": now,
 		})
-	return result.RowsAffected == 1, result.Error
+	claimed := result.Error == nil && result.RowsAffected == 1
+	if claimed {
+		record.Attempts++
+		record.Status, record.UpdatedAt = TaskBillingReconciliationProcessing, now
+	}
+	return claimed, result.Error
+}
+
+// UpdateClaim cannot reopen a terminal record or overwrite another worker's
+// reclaimed attempt. Losing the claim is a harmless no-op.
+func (record *TaskBillingReconciliation) UpdateClaim(updates map[string]any) error {
+	if updates == nil {
+		updates = map[string]any{}
+	}
+	updates["updated_at"] = time.Now().Unix()
+	return DB.Model(&TaskBillingReconciliation{}).
+		Where("id = ? AND status = ? AND attempts = ?", record.ID, TaskBillingReconciliationProcessing, record.Attempts).
+		Updates(updates).Error
 }
 
 func UpdateTaskBillingReconciliation(id int64, updates map[string]any) error {
@@ -181,7 +208,9 @@ func UpdateTaskBillingReconciliation(id int64, updates map[string]any) error {
 		updates = map[string]any{}
 	}
 	updates["updated_at"] = time.Now().Unix()
-	return DB.Model(&TaskBillingReconciliation{}).Where("id = ?", id).Updates(updates).Error
+	return DB.Model(&TaskBillingReconciliation{}).
+		Where("id = ? AND status IN ?", id, []string{TaskBillingReconciliationPending, TaskBillingReconciliationProcessing}).
+		Updates(updates).Error
 }
 
 // SettleTaskBillingReconciliation atomically applies the provider-confirmed
@@ -189,18 +218,37 @@ func UpdateTaskBillingReconciliation(id int64, updates map[string]any) error {
 // row. A retry can therefore observe either the complete settlement or none of
 // it, never a partially applied balance adjustment.
 func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliationSettlement) (*TaskBillingReconciliationSettlementResult, error) {
+	var identity TaskBillingReconciliation
+	var identityTask Task
+	if id > 0 {
+		if err := DB.First(&identity, id).Error; err != nil {
+			return nil, err
+		}
+		if err := DB.First(&identityTask, identity.TaskID).Error; err != nil {
+			return nil, err
+		}
+		if identityTask.CNBillingKey != "" {
+			return settleCNTaskReconciliation(&identityTask, id, settlement)
+		}
+	}
 	if id <= 0 || settlement.ActualQuota < 0 || int64(settlement.ActualQuota) > int64(common.MaxQuota) || settlement.TotalTokens <= 0 {
 		return nil, fmt.Errorf("invalid task billing settlement")
 	}
 	result := &TaskBillingReconciliationSettlementResult{}
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockTaskBillingUserTx(tx, identityTask.UserId); err != nil {
+			return err
+		}
+		var task Task
+		if err := lockForUpdate(tx).Where("id = ?", identity.TaskID).First(&task).Error; err != nil {
+			return err
+		}
 		var record TaskBillingReconciliation
 		if err := lockForUpdate(tx).Where("id = ?", id).First(&record).Error; err != nil {
 			return err
 		}
-		var task Task
-		if err := lockForUpdate(tx).Where("id = ?", record.TaskID).First(&task).Error; err != nil {
-			return err
+		if record.TaskID != task.ID || task.UserId != identityTask.UserId || task.CNBillingKey != "" {
+			return ErrCNConflict
 		}
 		var firstCharge agencycontract.BillingEvent
 		var firstJournal AgencyBillingJournal
@@ -431,7 +479,7 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 		if updatedRecord.RowsAffected != 1 {
 			return fmt.Errorf("task billing reconciliation changed concurrently")
 		}
-		return nil
+		return CaptureCNTaskChargeTx(tx, &task, result.PreConsumedQuota+result.QuotaDelta)
 	})
 	if err != nil {
 		return nil, err

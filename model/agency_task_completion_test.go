@@ -462,3 +462,34 @@ func TestAgencyTaskPerRequestProviderBillFinalizesWithoutUsageTokens(t *testing.
 	assert.Equal(t, int64(18), event.ChargedTotalQuota)
 	assert.True(t, event.FinancialFinal)
 }
+
+func TestAgencyTaskPerRequestProviderBillMatchesProductionPricing(t *testing.T) {
+	provider := &TaskProviderBillingSnapshot{
+		Provider:            "openai_seedance",
+		Currency:            "CNY",
+		BillingUnit:         "request",
+		UnitPricePerRequest: "23",
+		CNYPerUSD:           "7.3",
+		GroupRatio:          0.9,
+	}
+	basis := AgencyTaskChargeBasis{
+		Version:         AgencyTaskChargeBasisVersion,
+		Mode:            "cny_request",
+		QuotaPerUnit:    500000,
+		OtherMultiplier: 1,
+		ProviderBilling: provider,
+	}
+	pricing := agencycontract.PricingSnapshot{
+		SalesBPS:           9000,
+		SettlementBPS:      8800,
+		CommissionEligible: true,
+	}
+
+	event, err := AgencyTaskFinalCharge(basis, pricing, 40594, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1575342), event.StandardQuota)
+	assert.Equal(t, int64(1417808), event.ChargedTotalQuota)
+	assert.Equal(t, int64(1386301), event.SettlementCostQuota)
+	assert.Equal(t, int64(31507), event.TheoreticalCommissionQuota)
+	assert.True(t, event.FinancialFinal)
+}

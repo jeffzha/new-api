@@ -478,14 +478,17 @@ func (a *TaskAdaptor) ParseTaskResult(_ *model.Task, _ *http.Response, respBody 
 		return nil, fmt.Errorf("unmarshal task result failed: %w", err)
 	}
 	result := &relaycommon.TaskInfo{Code: 0}
-	switch resTask.Status {
+	// Gateways are not consistent about the case of terminal statuses.
+	// Normalize it here so a successful upstream task is not misclassified as
+	// hook_error and left out of terminal billing.
+	switch strings.ToLower(strings.TrimSpace(resTask.Status)) {
 	case "queued", "pending":
 		result.Status = model.TaskStatusQueued
 		result.Progress = taskcommon.ProgressQueued
 	case "processing", "in_progress":
 		result.Status = model.TaskStatusInProgress
 		result.Progress = taskcommon.ProgressInProgress
-	case "completed", "succeeded":
+	case "completed", "succeeded", "success":
 		result.Status = model.TaskStatusSuccess
 		result.Url = resTask.Content.VideoURL
 		if result.Url == "" {

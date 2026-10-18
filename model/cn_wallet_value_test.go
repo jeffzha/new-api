@@ -21,6 +21,24 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestCNSuspendWalletValueSkipsMissingOptionalProjection(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := agencyDialectDB(t, dialect)
+			if db == nil {
+				t.Skip("disposable external database not configured")
+			}
+			pool, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = pool.Close() })
+
+			require.NoError(t, db.Migrator().DropTable(&CNWalletValueAccount{}))
+			require.NoError(t, cnSuspendWalletValueTx(db, 1))
+		})
+	}
+	require.NoError(t, cnSuspendWalletValueTx(nil, 1))
+}
+
 func TestCNIntegrityFoundationAcrossDialects(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {

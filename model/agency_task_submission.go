@@ -198,6 +198,35 @@ func PendingTerminalTaskSettlementCharges(limit int) ([]string, error) {
 	return chargeIDs, nil
 }
 
+// HasPendingAgencyTaskSettlementRepairs reports whether the async task worker
+// has a durable agency settlement repair to run even when no provider task is
+// still polling and no provider-billing receipt is due. Without this wake-up,
+// an otherwise idle system can leave a completed legacy charge parked forever.
+func HasPendingAgencyTaskSettlementRepairs() bool {
+	if DB == nil {
+		return false
+	}
+	if DB.Migrator().HasTable(&AgencyBillingJournal{}) {
+		var id int64
+		err := DB.Model(&AgencyBillingJournal{}).
+			Where("status = ? AND last_error IN ?", "reconcile_required", []string{"final_usage_pending", "terminal_settlement_failed"}).
+			Limit(1).
+			Pluck("id", &id).Error
+		if err == nil && id != 0 {
+			return true
+		}
+	}
+	if DB.Migrator().HasTable(&AgencyBillingOperation{}) {
+		var id int64
+		err := DB.Model(&AgencyBillingOperation{}).
+			Where("operation = ? AND money_seq = 0 AND (operation_id IS NULL OR operation_id = ?)", "finalize", "").
+			Limit(1).
+			Pluck("id", &id).Error
+		return err == nil && id != 0
+	}
+	return false
+}
+
 // AgencyTaskForCharge resolves the task that owns a durable agency charge
 // through its submission receipt, which is written before provider I/O.
 func AgencyTaskForCharge(chargeID string) (*Task, error) {

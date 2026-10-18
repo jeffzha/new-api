@@ -140,7 +140,8 @@ type asyncTaskPollHandler struct{}
 func (asyncTaskPollHandler) Type() string { return model.SystemTaskTypeAsyncTaskPoll }
 
 func (asyncTaskPollHandler) Enabled() bool {
-	return constant.UpdateTask && (model.HasUnfinishedSyncTasks() || model.HasPendingTaskBillingReconciliations() || model.HasDueCNTaskSubmissions())
+	return constant.UpdateTask && (model.HasUnfinishedSyncTasks() || model.HasPendingTaskBillingReconciliations() ||
+		model.HasDueCNTaskSubmissions() || model.HasPendingAgencyTaskSettlementRepairs())
 }
 
 func (asyncTaskPollHandler) Interval() time.Duration { return 15 * time.Second }

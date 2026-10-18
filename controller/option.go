@@ -498,6 +498,12 @@ func UpdateOption(c *gin.Context) {
 	case seedancepricing.OptionKey:
 		err = seedancepricing.ValidatePricesCNYJSON(option.Value.(string))
 		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+	case seedancepricing.RequestOptionKey:
+		err = seedancepricing.ValidateRequestPricesCNYJSON(option.Value.(string))
+		if err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
 				"message": err.Error(),

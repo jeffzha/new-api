@@ -33,6 +33,7 @@ type generateRequest struct {
 	// single-image upstreams that only understand a top-level "image" field keep
 	// working unchanged.
 	ReferenceImages []string `json:"-"`
+	ReferenceVideos []string `json:"-"`
 }
 
 // responseTask mirrors the OpenAI-compatible video task status response that

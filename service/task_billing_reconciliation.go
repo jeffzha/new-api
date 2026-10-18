@@ -57,6 +57,12 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 	if repaired := repairPendingFinalUsageTaskSettlements(ctx, limit); repaired > 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("agency task final usage repair finalized %d charge(s)", repaired))
 	}
+	// A successful task can also be parked when its terminal settlement
+	// transaction failed after the wallet reservation. Retry that same
+	// canonical, idempotent settlement before provider-bill work.
+	if repaired := repairPendingTerminalTaskSettlements(ctx, limit); repaired > 0 {
+		logger.LogInfo(ctx, fmt.Sprintf("agency terminal task settlement repair finalized %d charge(s)", repaired))
+	}
 	if _, err := model.EnqueuePendingTaskBillingReconciliations(limit); err != nil {
 		logger.LogError(ctx, "recover task billing reconciliation enqueue failed: "+err.Error())
 	}
@@ -333,6 +339,34 @@ func repairPendingFinalUsageTaskSettlements(ctx context.Context, limit int) int 
 		}
 		if settleErr := model.SettleAgencyTaskAtChargedQuota(task, int64(task.Quota)); settleErr != nil {
 			logger.LogWarn(ctx, fmt.Sprintf("agency final usage charge %s repair failed: %s", chargeID, settleErr.Error()))
+			continue
+		}
+		repaired++
+	}
+	return repaired
+}
+
+func repairPendingTerminalTaskSettlements(ctx context.Context, limit int) int {
+	charges, err := model.PendingTerminalTaskSettlementCharges(limit)
+	if err != nil {
+		logger.LogError(ctx, "load terminal agency task settlements failed: "+err.Error())
+		return 0
+	}
+	repaired := 0
+	for _, chargeID := range charges {
+		if _, attempted := repairedFinalUsageAttempts.LoadOrStore("terminal:"+chargeID, struct{}{}); attempted {
+			continue
+		}
+		task, findErr := model.AgencyTaskForCharge(chargeID)
+		if findErr != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("terminal agency task charge %s repair skipped: %s", chargeID, findErr.Error()))
+			continue
+		}
+		if task.Status != model.TaskStatusSuccess {
+			continue
+		}
+		if settleErr := model.SettleAgencyTaskAtChargedQuota(task, int64(task.Quota)); settleErr != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("terminal agency task charge %s repair failed: %s", chargeID, settleErr.Error()))
 			continue
 		}
 		repaired++

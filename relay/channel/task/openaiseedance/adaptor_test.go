@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	seedancepricing "github.com/QuantumNous/new-api/setting/seedance_video_pricing"
 	"github.com/gin-gonic/gin"
@@ -44,6 +45,57 @@ func TestOpenAISeedanceBuildsNativeRequestFromOpenAIVideoShape(t *testing.T) {
 	url, err := adaptor.BuildRequestURL(info)
 	require.NoError(t, err)
 	require.Equal(t, "https://vedioapi.laomandi.com/v1/video/generations", url)
+}
+
+func TestOpenAISeedanceGenerationParametersMatchAimodelContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, test := range []struct {
+		name, baseURL, fields, resolution, ratio string
+		duration                                 int
+		audio                                    bool
+		topLevel                                 bool
+	}{
+		{name: "aimodel defaults", baseURL: "https://aimodel.szhtp.com", resolution: "720p", ratio: "adaptive", duration: 5, audio: true, topLevel: true},
+		{name: "aimodel explicit parameters", baseURL: "https://aimodel.szhtp.com", fields: `,"resolution":"1080p","ratio":"16:9","duration":10,"generate_audio":false`, resolution: "1080p", ratio: "16:9", duration: 10, topLevel: true},
+		{name: "aimodel metadata priority", baseURL: "https://aimodel.szhtp.com", fields: `,"resolution":"720p","duration":5,"metadata":{"resolution":"1080p","ratio":"9:16","duration":8,"audio_status":0}`, resolution: "1080p", ratio: "9:16", duration: 8, topLevel: true},
+		{name: "aimodel size fallback", baseURL: "https://aimodel.szhtp.com", fields: `,"size":"1920x1080","seconds":"6"`, resolution: "1080p", ratio: "adaptive", duration: 6, audio: true, topLevel: true},
+		{name: "laomandi metadata only", baseURL: "https://vedioapi.laomandi.com", fields: `,"resolution":"1080p","duration":10,"generate_audio":false`, resolution: "1080p", ratio: "adaptive", duration: 10},
+		{name: "other gateways metadata only", baseURL: "https://video.example.com", resolution: "720p", ratio: "adaptive", duration: 5, audio: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			body := `{"model":"doubao-seedance-2.0","prompt":"A paper boat"` + test.fields + `}`
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			info := &relaycommon.RelayInfo{
+				OriginModelName: seedancepricing.AimodelSeedance20Model,
+				ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: seedancepricing.AimodelSeedance20Model},
+			}
+			adaptor := &TaskAdaptor{baseURL: test.baseURL}
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+			bodyReader, err := adaptor.BuildRequestBody(ctx, info)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, common.DecodeJson(bodyReader, &payload))
+			metadata, ok := payload["metadata"].(map[string]any)
+			require.True(t, ok)
+			audioStatus := float64(0)
+			if test.audio {
+				audioStatus = 1
+			}
+			for field, expected := range map[string]any{
+				"resolution": test.resolution, "duration": float64(test.duration), "ratio": test.ratio,
+				"generate_audio": test.audio, "audio_status": audioStatus,
+			} {
+				assert.Equal(t, expected, metadata[field], "metadata.%s", field)
+				if test.topLevel {
+					assert.Equal(t, expected, payload[field], "top-level %s", field)
+				} else {
+					assert.NotContains(t, payload, field)
+				}
+			}
+		})
+	}
 }
 
 func TestOpenAISeedanceExtractsPromptFromContentText(t *testing.T) {
@@ -199,6 +251,19 @@ func TestOpenAISeedanceSingleImageLaomandiKeepsLegacyShape(t *testing.T) {
 	require.Nil(t, payload["content"])
 }
 
+func TestOpenAISeedanceParsesUppercaseSuccessStatus(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResult(nil, nil, []byte(`{
+		"status":"SUCCESS",
+		"progress":100,
+		"result_url":"https://example.test/video.mp4"
+	}`))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, model.TaskStatusSuccess, result.Status)
+	assert.Equal(t, "100%", result.Progress)
+	assert.Equal(t, "https://example.test/video.mp4", result.Url)
+}
+
 func TestOpenAISeedanceRejectsLaomandiSeedance20Below720p(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -263,4 +328,20 @@ func TestOpenAISeedanceDurationLimitDependsOnModel(t *testing.T) {
 			require.NotNil(t, result)
 		})
 	}
+}
+
+func TestOpenAISeedancePerRequestSettlementDoesNotQueryUsage(t *testing.T) {
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 100
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	task := &model.Task{}
+	task.PrivateData.BillingContext = &model.TaskBillingContext{ProviderBilling: &model.TaskProviderBillingSnapshot{
+		BillingUnit: "request", UnitPricePerRequest: "23", Provider: providerName, Currency: "CNY", CNYPerUSD: "1", GroupRatio: 1,
+	}}
+	quota, clamp, handled, err := (&TaskAdaptor{}).AdjustBillingOnCompleteChecked(task, &relaycommon.TaskInfo{})
+	require.NoError(t, err)
+	require.True(t, handled)
+	assert.Nil(t, clamp)
+	assert.Equal(t, 2300, quota)
 }

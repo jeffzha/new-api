@@ -174,6 +174,7 @@ const MODELS_SECTIONS = [
     build: (settings: ModelSettings) => (
       <SeedanceVideoPricingCard
         defaultValue={settings['seedance_video_pricing.prices_cny']}
+        requestDefaultValue={settings['seedance_video_pricing.request_prices_cny']}
       />
     ),
   },

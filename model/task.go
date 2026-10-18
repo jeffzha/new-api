@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -14,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -208,6 +210,8 @@ type TaskBillingContext struct {
 // TaskProviderBillingSnapshot freezes provider-specific pricing inputs at
 // submission time so settlement is independent of later configuration changes.
 type TaskProviderBillingSnapshot struct {
+	BillingUnit                 string  `json:"billing_unit,omitempty"`
+	UnitPricePerRequest         string  `json:"unit_price_per_request,omitempty"`
 	Provider                    string  `json:"provider"`
 	Currency                    string  `json:"currency"`
 	UnitPricePerMillionTokens   string  `json:"unit_price_per_million_tokens"`
@@ -217,6 +221,36 @@ type TaskProviderBillingSnapshot struct {
 	HasVideoInput               bool    `json:"has_video_input"`
 	EstimatedTokens             int64   `json:"estimated_tokens"`
 	AsyncReconciliationRequired bool    `json:"async_reconciliation_required"`
+}
+
+// CNYBaseChargeUSD uses the frozen unit, never the model's current pricing.
+// An absent unit retains token billing for tasks submitted before this change.
+func (s *TaskProviderBillingSnapshot) CNYBaseChargeUSD(totalTokens int64) (decimal.Decimal, error) {
+	if s == nil || s.Provider == "" || s.Currency != "CNY" {
+		return decimal.Zero, fmt.Errorf("invalid frozen CNY provider snapshot")
+	}
+	priceText := s.UnitPricePerMillionTokens
+	quantity := decimal.NewFromInt(1)
+	switch s.BillingUnit {
+	case "request":
+		priceText = s.UnitPricePerRequest
+	case "", "token":
+		if totalTokens <= 0 {
+			return decimal.Zero, ErrAgencyTaskUsagePending
+		}
+		quantity = decimal.NewFromInt(totalTokens).Div(decimal.NewFromInt(1_000_000))
+	default:
+		return decimal.Zero, fmt.Errorf("unsupported frozen CNY billing unit %q", s.BillingUnit)
+	}
+	price, err := decimal.NewFromString(priceText)
+	if err != nil || !price.IsPositive() {
+		return decimal.Zero, fmt.Errorf("invalid frozen CNY unit price")
+	}
+	rate, err := decimal.NewFromString(s.CNYPerUSD)
+	if err != nil || !rate.IsPositive() {
+		return decimal.Zero, fmt.Errorf("invalid frozen CNY/USD exchange rate")
+	}
+	return quantity.Mul(price).Div(rate), nil
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）

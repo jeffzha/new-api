@@ -3,8 +3,9 @@ package model
 import seedancepricing "github.com/QuantumNous/new-api/setting/seedance_video_pricing"
 
 const (
-	providerPricingKindVideoTokenMatrix = "video_token_matrix"
-	mobileCloudSeedanceModel            = "doubao-seedance-2.0"
+	providerPricingKindVideoTokenMatrix   = "video_token_matrix"
+	providerPricingKindVideoRequestMatrix = "video_request_matrix"
+	mobileCloudSeedanceModel              = "doubao-seedance-2.0"
 )
 
 type ProviderPricing struct {
@@ -47,8 +48,14 @@ func getProviderPricing(modelName string) *ProviderPricing {
 	}
 
 	tiers := make([]VideoTokenPricingTier, 0, len(resolutions))
+	getPrice := seedancepricing.GetUnitPriceCNY
+	kind, unit := providerPricingKindVideoTokenMatrix, "1M_video_tokens"
+	if seedancepricing.IsPerRequest(priceModel) {
+		getPrice = seedancepricing.GetRequestPriceCNY
+		kind, unit = providerPricingKindVideoRequestMatrix, "request"
+	}
 	for _, resolution := range resolutions {
-		withoutVideo, ok := seedancepricing.GetUnitPriceCNY(
+		withoutVideo, ok := getPrice(
 			priceModel,
 			resolution,
 			false,
@@ -56,7 +63,7 @@ func getProviderPricing(modelName string) *ProviderPricing {
 		if !ok {
 			return nil
 		}
-		withVideo, ok := seedancepricing.GetUnitPriceCNY(
+		withVideo, ok := getPrice(
 			priceModel,
 			resolution,
 			true,
@@ -72,9 +79,9 @@ func getProviderPricing(modelName string) *ProviderPricing {
 	}
 
 	return &ProviderPricing{
-		Kind:     providerPricingKindVideoTokenMatrix,
+		Kind:     kind,
 		Currency: "CNY",
-		Unit:     "1M_video_tokens",
+		Unit:     unit,
 		Tiers:    tiers,
 	}
 }

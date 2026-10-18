@@ -189,6 +189,10 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 		effectiveResolution = "720p"
 	}
 	unitPrice, ok := seedancepricing.GetUnitPriceCNY(info.OriginModelName, resolution, hasVideo)
+	perRequest := seedancepricing.IsPerRequest(info.OriginModelName)
+	if perRequest {
+		unitPrice, ok = seedancepricing.GetRequestPriceCNY(info.OriginModelName, resolution, hasVideo)
+	}
 	if !ok {
 		return nil, service.TaskErrorWrapperLocal(
 			fmt.Errorf("CNY price is not configured for model %s at resolution %s", info.OriginModelName, resolution),
@@ -285,6 +289,12 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 		EstimatedTokens:             estimatedTokens,
 		AsyncReconciliationRequired: false,
 	}
+	if perRequest {
+		snapshot.BillingUnit = "request"
+		snapshot.UnitPricePerRequest = unitPrice.String()
+		snapshot.UnitPricePerMillionTokens = ""
+		snapshot.EstimatedTokens = 0
+	}
 	quota, clamp, err := taskcommon.QuotaFromCNYPerMillionTokens(estimatedTokens, snapshot)
 	if err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "model_price_error", http.StatusInternalServerError)
@@ -346,7 +356,7 @@ func (a *TaskAdaptor) AdjustBillingOnCompleteChecked(task *model.Task, taskResul
 		return 0, nil, false, nil
 	}
 	if snapshot := bc.ProviderBilling; snapshot != nil && snapshot.Provider == model.TaskBillingProviderDoubaoVideoCNY {
-		if taskResult.TotalTokens <= 0 {
+		if taskResult.TotalTokens <= 0 && snapshot.BillingUnit != "request" {
 			return 0, nil, true, fmt.Errorf("Doubao Video succeeded without usage.total_tokens")
 		}
 		quota, clamp, err := taskcommon.QuotaFromCNYPerMillionTokens(int64(taskResult.TotalTokens), snapshot)

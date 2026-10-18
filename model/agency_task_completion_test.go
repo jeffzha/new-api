@@ -435,3 +435,61 @@ func TestSettleAgencyTaskAtChargedQuotaRepairsLegacyFinalizeReceipt(t *testing.T
 	require.NoError(t, db.Model(&AgencyBillingOperation{}).Where("charge_id = ? AND operation = ?", chargeID, "finalize").Count(&finalizeCount).Error)
 	assert.Equal(t, int64(1), finalizeCount)
 }
+func TestAgencyTaskPerRequestProviderBillFinalizesWithoutUsageTokens(t *testing.T) {
+	provider := &TaskProviderBillingSnapshot{Provider: TaskBillingProviderSeedanceDomestic, Currency: "CNY", BillingUnit: "request", UnitPricePerRequest: "23", CNYPerUSD: "1", GroupRatio: 1}
+	basis := AgencyTaskChargeBasis{Version: AgencyTaskChargeBasisVersion, Mode: "cny_request", QuotaPerUnit: 1, OtherMultiplier: 1, ProviderBilling: provider}
+	db, task, user, token := agencySubmittedTaskFixture(t, basis, 100)
+	task.Status = TaskStatusSuccess
+	result, err := CompleteAgencyTask(&task, TaskStatusInProgress, 0)
+	require.NoError(t, err)
+	assert.True(t, result.Changed)
+	assert.True(t, result.FinancialFinal)
+	assert.Equal(t, -82, result.QuotaDelta)
+	assert.Equal(t, 18, result.Task.Quota)
+	require.NoError(t, db.First(&user, user.Id).Error)
+	require.NoError(t, db.First(&token, token.Id).Error)
+	assert.Equal(t, 82, user.Quota)
+	assert.Equal(t, 82, token.RemainQuota)
+	var journal AgencyBillingJournal
+	require.NoError(t, db.Where("charge_id = ?", task.PrivateData.BillingContext.AgencyChargeID).First(&journal).Error)
+	assert.Equal(t, "finalized", journal.Status)
+	assert.Equal(t, int64(18), journal.ChargedTotalQuota)
+	var operation AgencyBillingOperation
+	require.NoError(t, db.Where("charge_id = ? AND operation = ?", task.PrivateData.BillingContext.AgencyChargeID, "finalize").First(&operation).Error)
+	var event agencycontract.BillingEvent
+	require.NoError(t, common.Unmarshal([]byte(operation.CommittedResult), &event))
+	assert.Equal(t, int64(23), event.StandardQuota)
+	assert.Equal(t, int64(18), event.ChargedTotalQuota)
+	assert.True(t, event.FinancialFinal)
+}
+
+func TestAgencyTaskPerRequestProviderBillMatchesProductionPricing(t *testing.T) {
+	provider := &TaskProviderBillingSnapshot{
+		Provider:            "openai_seedance",
+		Currency:            "CNY",
+		BillingUnit:         "request",
+		UnitPricePerRequest: "23",
+		CNYPerUSD:           "7.3",
+		GroupRatio:          0.9,
+	}
+	basis := AgencyTaskChargeBasis{
+		Version:         AgencyTaskChargeBasisVersion,
+		Mode:            "cny_request",
+		QuotaPerUnit:    500000,
+		OtherMultiplier: 1,
+		ProviderBilling: provider,
+	}
+	pricing := agencycontract.PricingSnapshot{
+		SalesBPS:           9000,
+		SettlementBPS:      8800,
+		CommissionEligible: true,
+	}
+
+	event, err := AgencyTaskFinalCharge(basis, pricing, 40594, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1575342), event.StandardQuota)
+	assert.Equal(t, int64(1417808), event.ChargedTotalQuota)
+	assert.Equal(t, int64(1386301), event.SettlementCostQuota)
+	assert.Equal(t, int64(31507), event.TheoreticalCommissionQuota)
+	assert.True(t, event.FinancialFinal)
+}

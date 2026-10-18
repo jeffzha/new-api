@@ -210,6 +210,12 @@ func cnInstallWalletValueGuard(db *gorm.DB) error {
 // default transaction it commits first, conservatively keeping the gap even if
 // the following write fails. It never restores attribution automatically.
 func cnSuspendWalletValueTx(tx *gorm.DB, user int) error {
+	// CN wallet-value accounting is an optional projection. Older production
+	// databases may run the normal wallet/Agency path before this projection
+	// has been migrated; never issue a query against a table that is absent.
+	if tx == nil || !tx.Migrator().HasTable(&CNWalletValueAccount{}) {
+		return nil
+	}
 	var account CNWalletValueAccount
 	err := lockForUpdate(tx).Where("user_id = ?", user).First(&account).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) || account.Suspended {

@@ -64,6 +64,24 @@ func TestAlibabaWan3(t *testing.T) {
 		assert.NotContains(t, parameters, "duration")
 	})
 
+	t.Run("compatibility metadata resolution is normalized for host usage validation", func(t *testing.T) {
+		value, callErr := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"}, map[string]any{
+			"model": "wan3.0-video",
+			"body": map[string]any{"kind": "json", "value": map[string]any{
+				"model": "wan3.0-video", "prompt": "a cat", "duration": 2, "resolution": "480p",
+				"metadata": map[string]any{"duration": 2, "resolution": "480p", "ratio": "16:9"},
+			}},
+		})
+		require.NoError(t, callErr)
+		requestBody := roundTrip(t, value)["requestBody"].(map[string]any)
+		assert.Equal(t, "480P", requestBody["resolution"])
+		assert.Equal(t, "480P", requestBody["metadata"].(map[string]any)["resolution"])
+
+		usage, callErr := plugin.Engine.Call(t.Context(), "extractUsage", usageCtx("facts", requestBody))
+		require.NoError(t, callErr)
+		assert.Equal(t, map[string]any{"seconds": float64(2), "resolution": "480P"}, roundTrip(t, usage))
+	})
+
 	t.Run("auto_duration submits -1 upstream and bills 30 seconds up front", func(t *testing.T) {
 		body := map[string]any{"model": "wan3.0-video", "prompt": "a cat", "auto_duration": true}
 		value, callErr := plugin.Engine.Call(t.Context(), "buildSubmitRequest", submitCtx("wan3.0-video", "wan3.0-video", body))

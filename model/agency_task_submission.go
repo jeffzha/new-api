@@ -140,6 +140,9 @@ func NonCanonicalTaskFinalizeCharges(limit int) ([]string, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
+	if DB == nil || !DB.Migrator().HasTable(&AgencyBillingOperation{}) {
+		return nil, nil
+	}
 	var chargeIDs []string
 	err := DB.Model(&AgencyBillingOperation{}).
 		Where("operation = ? AND money_seq = 0 AND (operation_id IS NULL OR operation_id = ?)", "finalize", "").
@@ -161,9 +164,33 @@ func PendingFinalUsageTaskCharges(limit int) ([]string, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
+	if DB == nil || !DB.Migrator().HasTable(&AgencyBillingJournal{}) {
+		return nil, nil
+	}
 	var chargeIDs []string
 	err := DB.Model(&AgencyBillingJournal{}).
 		Where("status = ? AND last_error = ?", "reconcile_required", "final_usage_pending").
+		Order("id").Limit(limit).Pluck("charge_id", &chargeIDs).Error
+	if err != nil {
+		return nil, err
+	}
+	return chargeIDs, nil
+}
+
+// PendingTerminalTaskSettlementCharges lists successful task charges whose
+// terminal settlement failed after the wallet reservation. They are repaired
+// through SettleAgencyTaskAtChargedQuota, which is idempotent and does not move
+// money a second time.
+func PendingTerminalTaskSettlementCharges(limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	if DB == nil || !DB.Migrator().HasTable(&AgencyBillingJournal{}) {
+		return nil, nil
+	}
+	var chargeIDs []string
+	err := DB.Model(&AgencyBillingJournal{}).
+		Where("status = ? AND last_error = ?", "reconcile_required", "terminal_settlement_failed").
 		Order("id").Limit(limit).Pluck("charge_id", &chargeIDs).Error
 	if err != nil {
 		return nil, err

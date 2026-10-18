@@ -251,6 +251,19 @@ func TestOpenAISeedanceSingleImageLaomandiKeepsLegacyShape(t *testing.T) {
 	require.Nil(t, payload["content"])
 }
 
+func TestOpenAISeedanceParsesUppercaseSuccessStatus(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResult(nil, nil, []byte(`{
+		"status":"SUCCESS",
+		"progress":100,
+		"result_url":"https://example.test/video.mp4"
+	}`))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, model.TaskStatusSuccess, result.Status)
+	assert.Equal(t, "100%", result.Progress)
+	assert.Equal(t, "https://example.test/video.mp4", result.Url)
+}
+
 func TestOpenAISeedanceRejectsLaomandiSeedance20Below720p(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())

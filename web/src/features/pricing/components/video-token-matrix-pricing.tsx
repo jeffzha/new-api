@@ -37,6 +37,7 @@ interface VideoTokenMatrixPricingProps {
 
 export function VideoTokenMatrixPricing(props: VideoTokenMatrixPricingProps) {
   const { t } = useTranslation()
+  const unitLabel = props.pricing.unit === 'request' ? t('CNY / request') : t('CNY / 1M video tokens')
   const tiers = scaleVideoTokenPricingTiers(
     props.pricing,
     props.groupRatio ?? 1
@@ -74,7 +75,7 @@ export function VideoTokenMatrixPricing(props: VideoTokenMatrixPricingProps) {
         </div>
         <div className='text-muted-foreground/60 mt-1 truncate text-[10px]'>
           {t('Without input video')} / {t('With input video')} {'\u00b7'}{' '}
-          {t('CNY / 1M video tokens')}
+          {unitLabel}
         </div>
       </div>
     )
@@ -118,7 +119,7 @@ export function VideoTokenMatrixPricing(props: VideoTokenMatrixPricingProps) {
         ]}
       />
       <p className='text-muted-foreground/50 mt-1.5 text-[10px]'>
-        {t('Prices shown per')} {t('CNY / 1M video tokens')}
+        {t('Prices shown per')} {unitLabel}
       </p>
     </div>
   )

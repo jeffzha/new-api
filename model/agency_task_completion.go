@@ -369,6 +369,9 @@ func agencyTaskBackfillBasis(bc *TaskBillingContext, snapshot agencycontract.Pri
 	switch {
 	case bc.ProviderBilling != nil && strings.EqualFold(strings.TrimSpace(bc.ProviderBilling.Currency), "CNY"):
 		basis.Mode, basis.ProviderBilling = "cny_tokens", bc.ProviderBilling
+		if bc.ProviderBilling.BillingUnit == "request" {
+			basis.Mode = "cny_request"
+		}
 	case bc.ModelPrice > 0:
 		basis.Mode = "fixed"
 	default:

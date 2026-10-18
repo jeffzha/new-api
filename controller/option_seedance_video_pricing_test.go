@@ -32,10 +32,14 @@ func TestUpdateOptionRejectsIncompleteSeedanceVideoCNYPrices(t *testing.T) {
 		}
 	})
 
-	incomplete := `{"doubao-seedance-2-0-260128":{"720p":{"without_video":46,"with_video":28}}}`
+	prices := seedancepricing.DefaultPricesCNY()
+	delete(prices[seedancepricing.StandardSeedanceModel], "1080p")
+	delete(prices[seedancepricing.StandardSeedanceModel], "4k")
+	incomplete, err := common.Marshal(prices)
+	require.NoError(t, err)
 	requestBody, err := common.Marshal(OptionUpdateRequest{
 		Key:   seedancepricing.OptionKey,
-		Value: incomplete,
+		Value: string(incomplete),
 	})
 	require.NoError(t, err)
 	recorder := httptest.NewRecorder()
@@ -51,7 +55,7 @@ func TestUpdateOptionRejectsIncompleteSeedanceVideoCNYPrices(t *testing.T) {
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.False(t, response.Success)
-	assert.Contains(t, response.Message, "exactly 3 supported models")
+	assert.Contains(t, response.Message, `model "doubao-seedance-2-0-260128" must configure exactly 3 resolution tiers`)
 	var count int64
 	require.NoError(t, db.Model(&model.Option{}).Where("key = ?", seedancepricing.OptionKey).Count(&count).Error)
 	assert.Zero(t, count)

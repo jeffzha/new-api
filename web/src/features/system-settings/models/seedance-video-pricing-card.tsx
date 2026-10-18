@@ -25,8 +25,8 @@ import {
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { TFunction } from 'i18next'
-import { useEffect, useMemo, useRef } from 'react'
-import { useForm } from 'react-hook-form'
+import { useEffect, useMemo, useRef, type FormEvent } from 'react'
+import { useForm, useFormState } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import * as z from 'zod'
 
@@ -64,13 +64,21 @@ import {
   buildSeedancePricingFormValues,
   MAX_SEEDANCE_VIDEO_PRICE_CNY,
   parseSeedanceVideoPrices,
+  parseSeedanceRequestPrices,
   SEEDANCE_25_MODEL,
   SEEDANCE_FAST_MODEL,
+  SEEDANCE_MINI_MODEL,
   SEEDANCE_PRICE_ROWS,
+  SEEDANCE_REQUEST_PRICE_ROWS,
+  SEEDANCE_REQUEST_PRICING_OPTION_KEY,
   SEEDANCE_STANDARD_MODEL,
   SEEDANCE_VIDEO_PRICING_OPTION_KEY,
   type SeedancePricingFormValues,
 } from './seedance-video-pricing'
+
+type PricingFormValues = SeedancePricingFormValues & {
+  requests: SeedancePricingFormValues
+}
 
 function createSeedancePricingSchema(t: TFunction) {
   const priceSchema = z
@@ -91,6 +99,10 @@ function createSeedancePricingSchema(t: TFunction) {
         })
       )
       .length(SEEDANCE_PRICE_ROWS.length),
+    requests: z.object({
+      rows: z.array(z.object({ without_video: priceSchema, with_video: priceSchema }))
+        .length(SEEDANCE_REQUEST_PRICE_ROWS.length),
+    }),
   })
 }
 
@@ -102,64 +114,90 @@ const modelGroups = [
 
 type Props = {
   defaultValue: string
+  requestDefaultValue: string
 }
 
-export function SeedanceVideoPricingCard({ defaultValue }: Props) {
+export function SeedanceVideoPricingCard(props: Props) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const updateOption = useUpdateOption()
   const parsedDefaults = useMemo(
-    () => parseSeedanceVideoPrices(defaultValue),
-    [defaultValue]
+    () => parseSeedanceVideoPrices(props.defaultValue),
+    [props.defaultValue]
   )
   const formDefaults = useMemo(
-    () => buildSeedancePricingFormValues(parsedDefaults),
-    [parsedDefaults]
+    () => ({
+      ...buildSeedancePricingFormValues(parsedDefaults),
+      requests: parseSeedanceRequestPrices(props.requestDefaultValue),
+    }),
+    [parsedDefaults, props.requestDefaultValue]
   )
   const schema = useMemo(() => createSeedancePricingSchema(t), [t])
   const form = useForm<
-    SeedancePricingFormValues,
+    PricingFormValues,
     unknown,
-    SeedancePricingFormValues
+    PricingFormValues
   >({
     resolver: zodResolver(schema),
     defaultValues: formDefaults,
   })
-  const baselineSerializedRef = useRef(defaultValue)
+  const { control, handleSubmit, reset, resetField } = form
+  const baselineSerializedRef = useRef(props.defaultValue)
+  const requestBaselineRef = useRef(props.requestDefaultValue)
+  const { dirtyFields, isDirty } = useFormState({ control })
 
   useEffect(() => {
-    if (defaultValue === baselineSerializedRef.current) return
+    if (props.defaultValue !== baselineSerializedRef.current) {
+      baselineSerializedRef.current = props.defaultValue
+      resetField('rows', { defaultValue: formDefaults.rows })
+    }
+    if (props.requestDefaultValue !== requestBaselineRef.current) {
+      requestBaselineRef.current = props.requestDefaultValue
+      resetField('requests', { defaultValue: formDefaults.requests })
+    }
+  }, [props.defaultValue, props.requestDefaultValue, resetField, formDefaults])
 
-    baselineSerializedRef.current = defaultValue
-    form.reset(formDefaults)
-  }, [defaultValue, form, formDefaults])
-
-  const onSubmit = async (values: SeedancePricingFormValues) => {
-    const prices = applySeedancePricingFormValues(values)
-    const serialized = JSON.stringify(prices)
+  const onSubmit = async (values: PricingFormValues) => {
+    const tokenDirty = !!dirtyFields.rows
+    const requestDirty = !!dirtyFields.requests
 
     try {
-      const response = await updateOption.mutateAsync({
-        key: SEEDANCE_VIDEO_PRICING_OPTION_KEY,
-        value: serialized,
-      })
-      if (!response.success) return
-
-      baselineSerializedRef.current = serialized
-      form.reset(values)
-      await queryClient.invalidateQueries({ queryKey: ['pricing'] })
+      if (tokenDirty) {
+        const serialized = JSON.stringify(applySeedancePricingFormValues(values, parsedDefaults))
+        const response = await updateOption.mutateAsync({
+          key: SEEDANCE_VIDEO_PRICING_OPTION_KEY, value: serialized,
+        })
+        if (!response.success) return
+        baselineSerializedRef.current = serialized
+        resetField('rows', { defaultValue: values.rows })
+        await queryClient.invalidateQueries({ queryKey: ['pricing'] })
+      }
+      if (requestDirty) {
+        const serialized = JSON.stringify({ [SEEDANCE_MINI_MODEL]: values.requests.rows[0] })
+        const response = await updateOption.mutateAsync({
+          key: SEEDANCE_REQUEST_PRICING_OPTION_KEY, value: serialized,
+        })
+        if (!response.success) return
+        requestBaselineRef.current = serialized
+        resetField('requests', { defaultValue: values.requests })
+        await queryClient.invalidateQueries({ queryKey: ['pricing'] })
+      }
     } catch {
       // useUpdateOption reports the request error to the operator.
     }
   }
 
+  const submitForm = (event: FormEvent<HTMLFormElement>) => {
+    void handleSubmit(onSubmit)(event)
+  }
+
   return (
     <SettingsSection title={t('Seedance CNY Pricing')}>
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)}>
+        <form onSubmit={submitForm}>
           <SettingsPageTitleStatusPortal>
             <span className='text-muted-foreground text-xs font-normal'>
-              {t('CNY / 1M tokens')}
+              {t('CNY')}
             </span>
           </SettingsPageTitleStatusPortal>
           <SettingsPageActionsPortal>
@@ -167,8 +205,8 @@ export function SeedanceVideoPricingCard({ defaultValue }: Props) {
               type='button'
               size='sm'
               variant='outline'
-              onClick={() => form.reset(formDefaults)}
-              disabled={!form.formState.isDirty || updateOption.isPending}
+              onClick={() => reset()}
+              disabled={!isDirty || updateOption.isPending}
             >
               <HugeiconsIcon icon={UndoIcon} strokeWidth={2} />
               <span>{t('Reset')}</span>
@@ -176,7 +214,7 @@ export function SeedanceVideoPricingCard({ defaultValue }: Props) {
             <Button
               type='submit'
               size='sm'
-              disabled={!form.formState.isDirty || updateOption.isPending}
+              disabled={!isDirty || updateOption.isPending}
             >
               {updateOption.isPending ? (
                 <Spinner aria-hidden='true' />
@@ -196,17 +234,18 @@ export function SeedanceVideoPricingCard({ defaultValue }: Props) {
               <CardTitle>{t('Seedance CNY Pricing')}</CardTitle>
               <CardDescription>
                 {t(
-                  'Set the customer base price per million video tokens for each model and resolution.'
+                  'Set base prices by model and resolution. Seedance 2.0 Mini is billed per generation; other models are billed per million video tokens.'
                 )}
               </CardDescription>
             </CardHeader>
             <CardContent>
               <FieldGroup>
-                {modelGroups.map((model) => {
-                  const rows = SEEDANCE_PRICE_ROWS.map((row, index) => ({
-                    ...row,
-                    index,
-                  })).filter((row) => row.model === model)
+                {[...modelGroups, SEEDANCE_MINI_MODEL].map((model) => {
+                  const perRequest = model === SEEDANCE_MINI_MODEL
+                  const priceRows = perRequest ? SEEDANCE_REQUEST_PRICE_ROWS : SEEDANCE_PRICE_ROWS
+                  const rows = priceRows.map((row, index) => ({ ...row, index }))
+                    .filter((row) => row.model === model)
+                  const fieldPrefix = perRequest ? 'requests.rows' : 'rows'
 
                   return (
                     <FieldSet
@@ -219,6 +258,9 @@ export function SeedanceVideoPricingCard({ defaultValue }: Props) {
                           <code className='text-muted-foreground text-xs font-normal break-all'>
                             {model}
                           </code>
+                          <span className='text-muted-foreground text-xs font-normal'>
+                            {perRequest ? t('CNY / request') : t('CNY / 1M video tokens')}
+                          </span>
                         </span>
                       </FieldLegend>
 
@@ -249,10 +291,10 @@ export function SeedanceVideoPricingCard({ defaultValue }: Props) {
                               </div>
 
                               <FormField
-                                control={form.control}
-                                name={`rows.${row.index}.without_video`}
+                                control={control}
+                                name={`${fieldPrefix}.${row.index}.without_video`}
                                 render={({ field, fieldState }) => {
-                                  const inputId = `seedance-${row.index}-without-video`
+                                  const inputId = `seedance-${model}-${row.index}-without-video`
                                   return (
                                     <Field data-invalid={fieldState.invalid}>
                                       <FieldLabel
@@ -295,10 +337,10 @@ export function SeedanceVideoPricingCard({ defaultValue }: Props) {
                               />
 
                               <FormField
-                                control={form.control}
-                                name={`rows.${row.index}.with_video`}
+                                control={control}
+                                name={`${fieldPrefix}.${row.index}.with_video`}
                                 render={({ field, fieldState }) => {
-                                  const inputId = `seedance-${row.index}-with-video`
+                                  const inputId = `seedance-${model}-${row.index}-with-video`
                                   return (
                                     <Field data-invalid={fieldState.invalid}>
                                       <FieldLabel

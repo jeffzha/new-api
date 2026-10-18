@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	seedancepricing "github.com/QuantumNous/new-api/setting/seedance_video_pricing"
 	"github.com/gin-gonic/gin"
@@ -314,4 +315,20 @@ func TestOpenAISeedanceDurationLimitDependsOnModel(t *testing.T) {
 			require.NotNil(t, result)
 		})
 	}
+}
+
+func TestOpenAISeedancePerRequestSettlementDoesNotQueryUsage(t *testing.T) {
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 100
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	task := &model.Task{}
+	task.PrivateData.BillingContext = &model.TaskBillingContext{ProviderBilling: &model.TaskProviderBillingSnapshot{
+		BillingUnit: "request", UnitPricePerRequest: "23", Provider: providerName, Currency: "CNY", CNYPerUSD: "1", GroupRatio: 1,
+	}}
+	quota, clamp, handled, err := (&TaskAdaptor{}).AdjustBillingOnCompleteChecked(task, &relaycommon.TaskInfo{})
+	require.NoError(t, err)
+	require.True(t, handled)
+	assert.Nil(t, clamp)
+	assert.Equal(t, 2300, quota)
 }

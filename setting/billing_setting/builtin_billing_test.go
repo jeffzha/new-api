@@ -3,6 +3,7 @@ package billing_setting_test
 import (
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/controller"
@@ -17,6 +18,61 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLocoPalDeepSeek261017BuiltinBilling(t *testing.T) {
+	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
+	saved := *settings
+	savedRatios, savedPrices := ratio_setting.ModelRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		*settings = saved
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
+	})
+	*settings = billing_setting.BillingSetting{BillingMode: map[string]string{}, BillingExpr: map[string]string{}}
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+
+	const modelName = "deepseek-v4-1-flash-1017"
+	expression, ok := billing_setting.GetBillingExpr(modelName)
+	require.True(t, ok)
+	assert.Equal(t, billing_setting.BillingModeTieredExpr, billing_setting.GetBillingMode(modelName))
+
+	usage := &dto.Usage{
+		PromptTokens: 1_100_000, CompletionTokens: 1_000_000,
+		PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 100_000},
+	}
+	params := service.BuildTieredTokenParams(usage, false, billingexpr.UsedVars(expression))
+	shanghai := time.FixedZone("Asia/Shanghai", 8*60*60)
+
+	for _, tc := range []struct {
+		name  string
+		at    time.Time
+		peak  int
+		quota int
+	}{
+		{"base before morning peak", time.Date(2026, 10, 18, 8, 59, 0, 0, shanghai), -1, 342_603},
+		{"morning peak applies on Sunday", time.Date(2026, 10, 18, 9, 0, 0, 0, shanghai), 0, 685_205},
+		{"base between windows", time.Date(2026, 10, 18, 12, 0, 0, 0, shanghai), -1, 342_603},
+		{"afternoon peak", time.Date(2026, 10, 18, 14, 0, 0, 0, shanghai), 1, 685_205},
+		{"base after afternoon peak", time.Date(2026, 10, 18, 18, 0, 0, 0, shanghai), -1, 342_603},
+		{"peak based on Shanghai rather than UTC", time.Date(2026, 10, 19, 1, 0, 0, 0, time.UTC), 0, 685_205},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := billingexpr.ComputeTieredQuotaWithRequest(&billingexpr.BillingSnapshot{
+				ExprString: expression, ExprHash: billingexpr.ExprHashString(expression),
+				GroupRatio: 1, QuotaPerUnit: 500_000, EvaluationTime: tc.at,
+			}, params, billingexpr.RequestInput{})
+			require.NoError(t, err)
+			assert.Equal(t, "base", result.MatchedTier)
+			assert.Equal(t, tc.quota, result.ActualQuotaAfterGroup)
+			require.Len(t, result.RequestRules, 2)
+			for i, rule := range result.RequestRules {
+				assert.Equal(t, 2.0, rule.Multiplier)
+				assert.Equal(t, i == tc.peak, rule.Matched)
+			}
+		})
+	}
+}
 
 func TestGPT6AstraBuiltinBilling(t *testing.T) {
 	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)

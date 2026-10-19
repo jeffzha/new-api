@@ -858,7 +858,10 @@ func ValidateAgencyPricingSnapshotTx(tx *gorm.DB, userID int64, snapshot *agency
 		agency.CurrentPolicyVersionID != snapshot.PolicyVersionID {
 		return errors.New("agency pricing snapshot is stale")
 	}
-	if snapshot.CommissionEligible != (agency.Status == "active") {
+	// Unpublished models remain callable at the standard sale without commission.
+	pendingStandardSale := agency.Status == "active" && !snapshot.CommissionEligible &&
+		snapshot.EligibilityReason == "platform_pricing_pending" && snapshot.SalesBPS == 10000
+	if !pendingStandardSale && snapshot.CommissionEligible != (agency.Status == "active") {
 		return errors.New("agency pricing eligibility snapshot is stale")
 	}
 	var policy AgencyPricePolicyVersion

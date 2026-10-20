@@ -134,10 +134,18 @@ func ExceedsMaxTokensLimit(values ...*uint) bool {
 }
 
 func validateTextModelEndpoint(modelName, path string) error {
+	if isSeedreamLiteModel(modelName) {
+		return fmt.Errorf("model %s is an image generation model; use POST /v1/images/generations instead of %s (图片模型请使用图片接口 /v1/images/generations，size 使用 2K、3K、4K 或 WIDTHxHEIGHT)", modelName, path)
+	}
 	if common.IsVideoGenerationModel(modelName) {
 		return fmt.Errorf("model %s is a video generation model; use POST /v1/videos instead of %s (视频模型请使用视频接口 /v1/videos)", modelName, path)
 	}
 	return nil
+}
+
+func isSeedreamLiteModel(name string) bool {
+	name = strings.ToLower(name)
+	return name == "doubao-seedream-5-0-lite" || name == "doubao-seedream-5.0-lite"
 }
 
 func GetAndValidateResponsesRequest(c *gin.Context) (*dto.OpenAIResponsesRequest, error) {
@@ -286,6 +294,17 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 	// Provider parameters can override the top-level count. Validate before
 	// pricing so malformed multipliers return a client error, not a pricing
 	// failure after reservation has started.
+	if isSeedreamLiteModel(imageRequest.Model) && imageRequest.Size != "" {
+		size := strings.ToLower(imageRequest.Size)
+		if size != "2k" && size != "3k" && size != "4k" {
+			width, height, found := strings.Cut(size, "x")
+			w, wErr := strconv.Atoi(width)
+			h, hErr := strconv.Atoi(height)
+			if !found || wErr != nil || hErr != nil || w <= 0 || h <= 0 {
+				return nil, fmt.Errorf("model %s: size must be 2K, 3K, 4K or WIDTHxHEIGHT, for example 2048x2048 (图片尺寸请使用 2K、3K、4K 或 宽x高)", imageRequest.Model)
+			}
+		}
+	}
 	if raw, exists := imageRequest.Extra["parameters"]; exists {
 		parameters := &dto.ImageBillingParameters{}
 		if err := common.Unmarshal(raw, parameters); err != nil {
@@ -310,6 +329,9 @@ func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest
 	}
 	if textRequest.Model == "" {
 		return nil, errors.New("field model is required")
+	}
+	if err := validateTextModelEndpoint(textRequest.Model, c.Request.URL.Path); err != nil {
+		return nil, err
 	}
 	if ExceedsMaxTokensLimit(textRequest.MaxTokens, textRequest.MaxTokensToSample) {
 		return nil, errors.New("max_tokens is invalid")

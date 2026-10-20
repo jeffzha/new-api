@@ -4804,6 +4804,7 @@
     "Quota unchanged": "Quota inchangé",
     "Quota update failed": "Échec de la mise à jour du quota",
     "Quota Warning Threshold": "Seuil d'avertissement de quota",
+    "Warning threshold must be greater than zero": "Le seuil d'alerte doit être supérieur à zéro",
     "Quota:": "Quota :",
     "Radius": "Rayon",
     "Random": "Aléatoire",

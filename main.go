@@ -156,6 +156,7 @@ func main() {
 	}
 	commandWorkerCtx, stopAgencyCommandWorker := context.WithCancel(context.Background())
 	defer stopAgencyCommandWorker()
+	service.StartBalanceReminderTask(commandWorkerCtx)
 	if err := opsexport.StartConfigured(model.DB); err != nil {
 		common.FatalLog("failed to initialize Ops export: " + err.Error())
 		return

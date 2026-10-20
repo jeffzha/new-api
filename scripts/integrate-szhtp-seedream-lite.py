@@ -51,9 +51,38 @@ def request(path, method="GET", body=None, headers=None, timeout=40):
         return data, dict(response.headers)
 
 
+def audit_billing(state):
+    token_id = int(state["test_token_id"])
+    for _ in range(12):
+        logs = query(f"SELECT row_to_json(t) FROM (SELECT request_id,upstream_request_id,channel_id,model_name,quota,prompt_tokens,completion_tokens,other FROM logs WHERE token_id={token_id} AND type=2 ORDER BY id DESC LIMIT 1) t")
+        if logs:
+            break
+        time.sleep(5)
+    assert len(logs) == 1, "Consume log not yet visible; inspect instead of resubmitting"
+    log = logs[0]
+    assert log["channel_id"] == 16 and log["model_name"] == MODEL
+    other = json.loads(log["other"] or "{}")
+    assert other.get("upstream_model_name") == UPSTREAM
+    assert log["completion_tokens"] == state["smoke"]["usage"]["output_tokens"]
+    prompt, cached = log["prompt_tokens"], other.get("cache_tokens", 0)
+    assert 0 <= cached <= prompt
+    rates = (0.6, 3.6, 0.12) if prompt <= 32000 else (1.8, 10.8, 0.36) if prompt > 128000 else (0.9, 5.4, 0.18)
+    expected_cny = ((prompt-cached)*rates[0] + log["completion_tokens"]*rates[1] + cached*rates[2]) / 1e6
+    expected = int(expected_cny / 7.3 * 500000 + 0.5)
+    assert log["quota"] == expected, f"Quota differs from base tariff: {log['quota']} != {expected}"
+    token = query(f"SELECT row_to_json(t) FROM (SELECT used_quota,remain_quota FROM tokens WHERE id={token_id}) t")[0]
+    assert token["used_quota"] == log["quota"] and token["remain_quota"] == 100000-log["quota"]
+    state["smoke"]["billing"] = {"request_id": log["request_id"], "upstream_request_id": log["upstream_request_id"],
+        "channel_id": 16, "upstream_model": other["upstream_model_name"], "quota": log["quota"],
+        "prompt_tokens": prompt, "completion_tokens": log["completion_tokens"], "cache_tokens": cached,
+        "amount_cny": log["quota"] / 500000 * 7.3, "expected_base_cny": expected_cny,
+        "token_balance_verified": True,
+        "snapshot": {k: v for k, v in other.items() if k.startswith("billing_") or k in ("group_ratio", "matched_tier")}}
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("phase", choices=["inspect", "apply", "smoke", "verify"])
+    parser.add_argument("phase", choices=["inspect", "apply", "smoke", "verify", "audit"])
     parser.add_argument("--state", required=True)
     args = parser.parse_args()
     os.umask(0o077)
@@ -123,6 +152,11 @@ def main():
         return
     state = json.loads(state_path.read_text())
     assert state.get("applied")
+    if args.phase == "audit":
+        audit_billing(state)
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2))
+        print(json.dumps(state["smoke"], ensure_ascii=False))
+        return
     if args.phase == "verify":
         assert MODEL in channel["models"].split(",")
         assert json.loads(channel["model_mapping"])[MODEL] == UPSTREAM
@@ -165,27 +199,7 @@ def main():
             state["smoke"]["media"] = {"content_type": image.headers.get("Content-Type"), "bytes": len(prefix),
                 "valid_magic": prefix.startswith(b"\x89PNG\r\n\x1a\n") or prefix.startswith(b"\xff\xd8\xff") or prefix[8:12] == b"WEBP"}
         assert state["smoke"]["media"]["valid_magic"]
-        for _ in range(12):
-            logs = query(f"SELECT row_to_json(t) FROM (SELECT request_id,upstream_request_id,channel_id,model_name,quota,prompt_tokens,completion_tokens,other FROM logs WHERE token_id={int(token_id)} AND type=2 ORDER BY id DESC LIMIT 1) t")
-            if logs:
-                break
-            time.sleep(5)
-        assert len(logs) == 1, "Consume log not yet visible; inspect instead of resubmitting"
-        log = logs[0]
-        assert log["channel_id"] == 16 and log["model_name"] == MODEL
-        other = json.loads(log["other"] or "{}")
-        assert other.get("upstream_model_name") == UPSTREAM
-        assert log["completion_tokens"] == state["smoke"]["usage"]["output_tokens"]
-        assert log["prompt_tokens"] == 0, "Unexpected input usage; inspect actual tier/cache before accepting charge"
-        expected = int(log["completion_tokens"] * 3.6 / 7.3 / 2 + 0.5)
-        assert log["quota"] == expected, f"Quota differs from base tariff: {log['quota']} != {expected}"
-        token = query(f"SELECT row_to_json(t) FROM (SELECT used_quota,remain_quota FROM tokens WHERE id={int(token_id)}) t")[0]
-        assert token["used_quota"] == log["quota"] and token["remain_quota"] == 100000-log["quota"]
-        state["smoke"]["billing"] = {"request_id": log["request_id"], "upstream_request_id": log["upstream_request_id"],
-            "channel_id": 16, "upstream_model": other["upstream_model_name"], "quota": log["quota"],
-            "amount_cny": log["quota"] / 500000 * 7.3, "expected_base_cny": log["completion_tokens"] * 3.6 / 1e6,
-            "token_balance_verified": True,
-            "snapshot": {k: v for k, v in other.items() if k.startswith("billing_") or k in ("group_ratio", "matched_tier")}}
+        audit_billing(state)
         print(json.dumps(state["smoke"], ensure_ascii=False))
     finally:
         state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2))

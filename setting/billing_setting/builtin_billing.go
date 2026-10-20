@@ -7,12 +7,17 @@ const deepSeekPeakCondition = `!is_holiday("Asia/Shanghai") && weekday("Asia/Sha
 const deepSeekFlashExpression = deepSeekPeakCondition + ` ? tier("peak", p * 0.273972602739726 + cr * 0.00547945205479452 + c * 1.095890410958904) : tier("off_peak", p * 0.136986301369863 + cr * 0.00273972602739726 + c * 0.547945205479452)`
 const deepSeekProExpression = deepSeekPeakCondition + ` ? tier("peak", p * 1.232876712328767 + cr * 0.0410958904109589 + c * 3.698630136986301) : tier("off_peak", p * 0.6164383561643836 + cr * 0.02054794520547945 + c * 1.849315068493151)`
 const locoPalDeepSeek261017Expression = `(tier("base", p * 0.136986301369863 + cr * 0.00273972602739726 + c * 0.547945205479452)) * (hour("Asia/Shanghai") >= 9 && hour("Asia/Shanghai") < 12 ? 2 : 1) * (hour("Asia/Shanghai") >= 14 && hour("Asia/Shanghai") < 18 ? 2 : 1)`
+
+// Shenzhen Telecom publishes this image alias with context-tiered token prices.
+// Preserve its exact 32000/128000 boundaries and convert CNY to USD at 7.3.
+const szhtpSeedream50LiteExpression = `len <= 32000 ? tier("base", p * 0.0821917808219178 + c * 0.4931506849315068 + cr * 0.01643835616438356) : len > 128000 ? tier("long_context", p * 0.2465753424657534 + c * 1.4794520547945205 + cr * 0.04931506849315068) : tier("medium_context", p * 0.1232876712328767 + c * 0.7397260273972602 + cr * 0.02465753424657534)`
 const happyHorseExpression = `u("kind") == "edit" && u("resolution") == "720P" ? tier("720P-edit", u("seconds") * 0.1232876712328767) : u("kind") == "edit" && u("resolution") == "1080P" ? tier("1080P-edit", u("seconds") * 0.2191780821917808) : u("resolution") == "480P" ? tier("480P", u("seconds") * 0.06164383561643836) : u("resolution") == "1080P" ? tier("1080P", u("seconds") * 0.1643835616438356) : tier("720P", u("seconds") * 0.1232876712328767)`
 const wangpaiH3Expression = `tier("upstream", u("output_credits") * 0.0136986301369863 + u("material_credits") * 0.0136986301369863)`
 
 // Built-in token prices use actual USD per million tokens. Keep new model
 // defaults here instead of splitting them across the legacy ratio tables.
 var builtinBillingExpr = map[string]string{
+	"doubao-seedream-5-0-lite":     szhtpSeedream50LiteExpression,
 	"deepseek-flash":               deepSeekFlashExpression,
 	"deepseek-v4-1-flash-1017":     locoPalDeepSeek261017Expression,
 	"deepseek-v4-flash":            deepSeekFlashExpression,

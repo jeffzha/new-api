@@ -15,6 +15,10 @@ import (
 
 func CNFinanceCaptureEnabled() bool { return os.Getenv("OPS_CN_FINANCE_V2_ENABLED") == "true" }
 
+// Forward-only collection retains the persistent stream boundary, including
+// sources that commit late with lower IDs. History scanning remains opt-out.
+func CNFinanceHistoryScanEnabled() bool { return os.Getenv("OPS_CN_HISTORY_SCAN_ENABLED") != "false" }
+
 func BindCNChargeRequest(charge, request string, user int) error {
 	if !CNFinanceCaptureEnabled() {
 		return nil
@@ -234,9 +238,25 @@ func CaptureCNTaskChargeTx(tx *gorm.DB, task *Task, target int) error {
 // Source scanners use anti-joins, never an increasing source-row cursor: an old
 // row that commits late must receive a new publication sequence.
 func cnCaptureSources(tx *gorm.DB) error {
+	var since time.Time
+	if !CNFinanceHistoryScanEnabled() {
+		var stream CNFinanceStream
+		if err := tx.First(&stream, 1).Error; err != nil {
+			return err
+		}
+		var err error
+		since, err = time.Parse(time.RFC3339Nano, stream.StartedAt)
+		if err != nil {
+			return err
+		}
+	}
 	if tx.Migrator().HasTable(&AgencyBillingOutbox{}) {
 		var sources []AgencyBillingOutbox
-		if err := tx.Where("event_kind IN ?", opsBillingKinds).Order("id").Find(&sources).Error; err != nil {
+		query := tx.Where("event_kind IN ?", opsBillingKinds)
+		if !since.IsZero() {
+			query = query.Where("created_at_ms >= ?", since.UnixMilli())
+		}
+		if err := query.Order("id").Find(&sources).Error; err != nil {
 			return err
 		}
 		for _, source := range sources {
@@ -255,7 +275,11 @@ func cnCaptureSources(tx *gorm.DB) error {
 	}
 	if tx.Migrator().HasTable(&TopUp{}) {
 		var topups []TopUp
-		if err := tx.Where("status = ?", common.TopUpStatusSuccess).Order("id").Find(&topups).Error; err != nil {
+		query := tx.Where("status = ?", common.TopUpStatusSuccess)
+		if !since.IsZero() {
+			query = query.Where("complete_time >= ?", since.Unix())
+		}
+		if err := query.Order("id").Find(&topups).Error; err != nil {
 			return err
 		}
 		for _, topup := range topups {
@@ -264,7 +288,7 @@ func cnCaptureSources(tx *gorm.DB) error {
 			}
 		}
 	}
-	return cnCaptureNativeSources(tx)
+	return cnCaptureNativeSources(tx, since)
 }
 
 func cnCaptureAgencyCharge(tx *gorm.DB, source AgencyBillingOutbox) error {

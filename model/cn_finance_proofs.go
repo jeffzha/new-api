@@ -384,5 +384,5 @@ func cnBuildSourceProofs(tx *gorm.DB, stream *CNFinanceStream) ([]byte, error) {
 			allComplete = false
 		}
 	}
-	return common.Marshal(map[string]any{"dependencies": deps, "backfillComplete": allComplete && pending == 0 && sourceGaps == 0 && quarantined == 0, "sourceCoverageComplete": allComplete, "forwardGatewayScopeComplete": localComplete && sourceGaps == 0 && quarantined == 0, "unresolvedPredecessorCount": pending - quarantined, "quarantinedCount": quarantined, "captureEnabled": CNFinanceCaptureEnabled(), "stagedDigest": CNIdentity(stagedHash...)})
+	return common.Marshal(map[string]any{"dependencies": deps, "backfillComplete": CNFinanceHistoryScanEnabled() && allComplete && pending == 0 && sourceGaps == 0 && quarantined == 0, "sourceCoverageComplete": allComplete, "forwardGatewayScopeComplete": localComplete && sourceGaps == 0 && quarantined == 0, "unresolvedPredecessorCount": pending - quarantined, "quarantinedCount": quarantined, "captureEnabled": CNFinanceCaptureEnabled(), "historyScanEnabled": CNFinanceHistoryScanEnabled(), "stagedDigest": CNIdentity(stagedHash...)})
 }

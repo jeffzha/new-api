@@ -4,7 +4,12 @@ After=network-online.target docker.service
 Wants=network-online.target
 
 [Service]
-Type=oneshot
-TimeoutStartSec=60
+Type=simple
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
 Nice=10
 ExecStart=/usr/local/sbin/newapi-cpu-monitor.sh
+
+[Install]
+WantedBy=multi-user.target

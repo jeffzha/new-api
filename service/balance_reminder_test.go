@@ -3,13 +3,21 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/textproto"
 	"os"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
@@ -45,7 +53,149 @@ func TestBalanceReminderThresholdsAreCNYNotRawQuota(t *testing.T) {
 	operation_setting.USDExchangeRate, common.QuotaPerUnit = 7.3, 500000
 	t.Cleanup(func() { operation_setting.USDExchangeRate, common.QuotaPerUnit = beforeRate, beforeUnit })
 	assert.Equal(t, []int{0, 68493, 136986, 342466}, balanceReminderThresholds(dto.UserSetting{QuotaWarningThreshold: 1000}))
+	assert.Equal(t, []int{0, 68493, 136986, 342466}, balanceReminderThresholds(dto.UserSetting{}))
 	assert.Equal(t, []int{0, 68493, 136986, 342466, 500000}, balanceReminderThresholds(dto.UserSetting{QuotaWarningThreshold: 500000}))
+}
+
+func TestBalanceReminderEmailDestinationAndMissingEmail(t *testing.T) {
+	truncate(t)
+	beforeServer, beforePort, beforeFrom := common.SMTPServer, common.SMTPPort, common.SMTPFrom
+	beforeAccount, beforeToken := common.SMTPAccount, common.SMTPToken
+	beforeSSL, beforeTLS, beforeRedis := common.SMTPSSLEnabled, common.SMTPStartTLSEnabled, common.RedisEnabled
+	beforeNotifyLimit := constant.NotifyLimitCount
+	t.Cleanup(func() {
+		common.SMTPServer, common.SMTPPort, common.SMTPFrom = beforeServer, beforePort, beforeFrom
+		common.SMTPAccount, common.SMTPToken = beforeAccount, beforeToken
+		common.SMTPSSLEnabled, common.SMTPStartTLSEnabled, common.RedisEnabled = beforeSSL, beforeTLS, beforeRedis
+		constant.NotifyLimitCount = beforeNotifyLimit
+	})
+	common.SMTPAccount, common.SMTPToken = "", ""
+	common.SMTPSSLEnabled, common.SMTPStartTLSEnabled, common.RedisEnabled = false, false, false
+	constant.NotifyLimitCount = 100
+	common.SMTPFrom = "service@example.com"
+	for i, tc := range []struct {
+		name, accountEmail, notificationEmail, recipient string
+	}{
+		{"fallback to bound account email", "account@example.com", "", "account@example.com"},
+		{"notification email takes precedence", "account@example.com", "notify@example.com", "notify@example.com"},
+		{"notification email without account binding", "", "notify@example.com", "notify@example.com"},
+		{"neither address means no delivery", "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := 8270 + i
+			user := model.User{Id: id, Username: fmt.Sprintf("reminder-email-%d", id), AffCode: fmt.Sprintf("reminder-email-%d", id), Email: tc.accountEmail, Quota: 1, Status: common.UserStatusEnabled}
+			require.NoError(t, model.DB.Create(&user).Error)
+			settings, err := common.Marshal(dto.UserSetting{NotificationEmail: tc.notificationEmail})
+			require.NoError(t, err)
+			user.Setting = string(settings)
+			t.Cleanup(func() { delete(balanceReminderMemory.states, id) })
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			defer listener.Close()
+			host, port, err := net.SplitHostPort(listener.Addr().String())
+			require.NoError(t, err)
+			common.SMTPServer = host
+			common.SMTPPort, err = strconv.Atoi(port)
+			require.NoError(t, err)
+			messages := make(chan string, 1)
+			if tc.recipient != "" {
+				go func() {
+					conn, err := listener.Accept()
+					if err != nil {
+						return
+					}
+					defer conn.Close()
+					_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+					wire := textproto.NewConn(conn)
+					_ = wire.PrintfLine("220 localhost SMTP test")
+					for {
+						line, err := wire.ReadLine()
+						if err != nil {
+							return
+						}
+						switch {
+						case line == "DATA":
+							_ = wire.PrintfLine("354 send message")
+							body, err := wire.ReadDotBytes()
+							if err != nil {
+								return
+							}
+							messages <- string(body)
+							_ = wire.PrintfLine("250 accepted")
+						case line == "QUIT":
+							_ = wire.PrintfLine("221 goodbye")
+							return
+						default:
+							_ = wire.PrintfLine("250 OK")
+						}
+					}
+				}()
+			}
+			require.NoError(t, checkBalanceReminder(context.Background(), user, NotifyUser))
+			if tc.recipient == "" {
+				assert.NotContains(t, balanceReminderMemory.states, id, "missing address must not consume reminder state")
+				return
+			}
+			select {
+			case message := <-messages:
+				assert.Contains(t, message, "To: "+tc.recipient)
+				assert.Contains(t, message, "当前钱包余额")
+				assert.NotContains(t, message, "{{value}}")
+			case <-time.After(5 * time.Second):
+				t.Fatal("SMTP server did not receive the low-balance email")
+			}
+			require.NoError(t, checkBalanceReminder(context.Background(), user, NotifyUser))
+			assert.Empty(t, messages, "same tier must not deliver twice")
+		})
+	}
+}
+
+// Opt-in smoke test: production SMTP settings arrive through stdin, never files
+// or command arguments. All balances and reminder states remain in test memory.
+func TestBalanceReminderSMTPDeliverySmoke(t *testing.T) {
+	if os.Getenv("REMINDER_SMTP_SMOKE") != "1" {
+		t.Skip("explicit real-email smoke test not enabled")
+	}
+	recipient := os.Getenv("REMINDER_SMTP_RECIPIENT")
+	require.NotEmpty(t, recipient)
+	input, err := io.ReadAll(io.LimitReader(os.Stdin, 64*1024))
+	require.NoError(t, err)
+	var options map[string]string
+	require.NoError(t, common.Unmarshal(input, &options))
+	common.SMTPServer, common.SMTPFrom = options["SMTPServer"], options["SMTPFrom"]
+	common.SMTPAccount, common.SMTPToken = options["SMTPAccount"], options["SMTPToken"]
+	common.SMTPPort, err = strconv.Atoi(options["SMTPPort"])
+	require.NoError(t, err)
+	common.SMTPSSLEnabled = options["SMTPSSLEnabled"] == "true"
+	common.SMTPStartTLSEnabled = options["SMTPStartTLSEnabled"] == "true"
+	common.SMTPForceAuthLogin = options["SMTPForceAuthLogin"] == "true"
+	system_setting.ServerAddress = options["ServerAddress"]
+	require.NotEmpty(t, system_setting.ServerAddress)
+	common.RedisEnabled = false
+	constant.NotifyLimitCount = 2
+	constant.NotificationLimitDurationMinute = 10
+	operation_setting.USDExchangeRate, common.QuotaPerUnit = 7.3, 500000
+	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeCNY
+	truncate(t)
+	const id = 8290
+	quota := common.QuotaRound(4.0 / 7.3 * common.QuotaPerUnit)
+	seedUser(t, id, quota)
+	t.Cleanup(func() { delete(balanceReminderMemory.states, id) })
+	user := model.User{Id: id, Email: recipient}
+	deliveries := 0
+	send := func(id int, email string, settings dto.UserSetting, data dto.Notify) error {
+		deliveries++
+		data.Title = "【测试邮件，无真实扣款】低余额提醒（模拟余额4元）"
+		data.Content = "本邮件由管理员授权测试触发。模拟余额低于5元，未修改线上账户余额、未调用模型、未产生费用。<br/>" + data.Content
+		return NotifyUser(id, email, settings, data)
+	}
+	require.NoError(t, checkBalanceReminder(context.Background(), user, send))
+	require.NoError(t, checkBalanceReminder(context.Background(), user, send))
+	assert.Equal(t, 1, deliveries)
+	var after model.User
+	require.NoError(t, model.DB.First(&after, id).Error)
+	assert.Equal(t, quota, after.Quota)
+	t.Log("SMTP accepted one simulated low-balance email; duplicate suppressed; test balance unchanged")
 }
 
 func TestBalanceReminderDeliveryRetriesAndDeduplicatesAcrossWorkers(t *testing.T) {

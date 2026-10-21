@@ -69,11 +69,13 @@ docker stop ${top_name}
 恢复命令：docker start ${top_name}
 影响：对应运营页面、后台任务或数据采集将中断，恢复后须检查补采及账务同步；不要在业务进行中盲目停止。" ;;
   esac
-  title="【服务器 CPU 超标】new-api"
+  title="【服务器 CPU 超标】[new-api]"
   if "$test_only"; then
-    title="【CPU 告警通路测试】不是超标告警；下方为实时采样，不改变告警状态"
+    title="【CPU 告警通路测试】[new-api] 不是超标告警；下方为实时采样，不改变告警状态"
   fi
+  # Preserve the existing robot's required disk-alert keyword.
   text="${title}
+告警通道：服务器磁盘告警（同一机器人新增 CPU 监控）
 服务器：${host}
 时间：$(date -Is)
 整机 CPU：${usage}%（阈值 ${THRESHOLD}%，${cores} 核，采样 ${SAMPLE_SECONDS} 秒）
@@ -94,7 +96,7 @@ ${advice}
   if ! "$test_only"; then
     printf 'alert' > "$STATE"
   fi
-  printf 'CPU alert sent: host=%s cpu=%s%% top=%s(%s%%)\n' "$host" "$usage" "$top_name" "$top_cpu"
+  printf 'CPU notification sent: test=%s host=%s cpu=%s%% top=%s(%s%%)\n' "$test_only" "$host" "$usage" "$top_name" "$top_cpu"
 elif (( usage < RECOVERY_THRESHOLD )) && [[ "$state" == alert ]]; then
   printf 'ok' > "$STATE"
   printf 'CPU recovered: host=%s cpu=%s%%\n' "$host" "$usage"

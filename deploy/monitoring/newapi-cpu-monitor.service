@@ -2,8 +2,9 @@
 Description=New API host CPU Feishu monitor
 After=network-online.target docker.service
 Wants=network-online.target
-Requires=docker.service
 
 [Service]
 Type=oneshot
+TimeoutStartSec=60
+Nice=10
 ExecStart=/usr/local/sbin/newapi-cpu-monitor.sh

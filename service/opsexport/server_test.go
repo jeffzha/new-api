@@ -26,6 +26,66 @@ import (
 
 type refundHTTPProvider struct{ calls int }
 
+func TestOpsExportDistributorDirectory(t *testing.T) {
+	previous := Default
+	t.Cleanup(func() { Default = previous })
+	db, err := gorm.Open(sqlite.Open("file:distributor-export-http?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	require.NoError(t, err)
+	var sqliteVersion string
+	require.NoError(t, db.Raw("SELECT sqlite_version()").Scan(&sqliteVersion).Error)
+	t.Logf("directory export database: SQLite %s", sqliteVersion)
+	pool, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pool.Close() })
+	require.NoError(t, db.AutoMigrate(&model.Agency{}, &model.AgencyActiveUserBinding{}))
+	token := strings.Repeat("directory-", 8)
+	Default = &Server{DB: db, GatewayID: "g1", TokenHash: sha256.Sum256([]byte(token))}
+	router := gin.New()
+	Register(router.Group("/api/ops-export/v1"))
+	call := func(query, credential string, expected int) map[string]any {
+		req := httptest.NewRequest(http.MethodGet, "/api/ops-export/v1/distributors"+query, nil)
+		req.Header.Set("Authorization", "Bearer "+credential)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.Equal(t, expected, w.Code, w.Body.String())
+		assert.NotContains(t, w.Body.String(), token)
+		assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+		var result map[string]any
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &result))
+		return result
+	}
+	call("", "management-token", 401)
+	call("?page_size=51", token, 400)
+	call("?page_size=1&page_size=2", token, 400)
+	call("?unknown=1", token, 400)
+	empty := call("", token, 200)
+	assert.Empty(t, empty["items"])
+	assert.Empty(t, empty["nextCursor"])
+	parent := model.Agency{ID: 20, Depth: 1, Code: "parent", InviteCode: "secret-parent", DisplayName: "Parent", Status: "active"}
+	child := model.Agency{ID: 10, ParentAgencyID: &parent.ID, Depth: 2, Code: "child", InviteCode: "secret-child", DisplayName: "Child", Status: "disabled"}
+	require.NoError(t, db.Create(&parent).Error)
+	require.NoError(t, db.Create(&child).Error)
+	require.NoError(t, db.Create(&model.AgencyActiveUserBinding{UserID: 7, BindingID: 1, AgencyID: child.ID}).Error)
+	first := call("?page_size=1", token, 200)
+	rows := first["items"].([]any)
+	assert.Equal(t, "20", rows[0].(map[string]any)["externalId"])
+	assert.NotContains(t, rows[0].(map[string]any), "inviteCode")
+	cursor := first["nextCursor"].(string)
+	call("?cursor="+cursor+"tampered", token, 400)
+	second := call("?page_size=1&cursor="+cursor, token, 200)
+	assert.Equal(t, first["snapshotId"], second["snapshotId"])
+	row := second["items"].([]any)[0].(map[string]any)
+	assert.Equal(t, "10", row["externalId"])
+	assert.Equal(t, "20", row["parentExternalId"])
+	assert.Equal(t, "inactive", row["status"])
+	last := call("?page_size=1&cursor="+second["nextCursor"].(string), token, 200)
+	assert.Equal(t, first["snapshotId"], last["snapshotId"])
+	assert.Equal(t, "7", last["customers"].([]any)[0].(map[string]any)["externalUserId"])
+	assert.Empty(t, last["nextCursor"])
+	expired := Default.signDistributorCursor(distributorCursor{Gateway: "g1", Until: time.Now().Unix() - 1})
+	call("?cursor="+expired, token, 400)
+}
+
 func (p *refundHTTPProvider) Name() string { return "http-simulated" }
 func (p *refundHTTPProvider) Submit(ctx context.Context, i model.CNRefundIntent) (model.CNRefundProviderResult, error) {
 	p.calls++

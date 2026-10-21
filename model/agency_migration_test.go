@@ -32,6 +32,7 @@ func TestMigrateAgencySQLiteIsIdempotentAndIndexesReportingFacts(t *testing.T) {
 	require.True(t, db.Migrator().HasIndex(&AgencyTopupFact{}, "idx_agency_topup_user_time"))
 	require.True(t, db.Migrator().HasIndex(&AgencyOperatorIdentityBinding{}, "uidx_agency_operator_identity_operator"))
 	require.True(t, db.Migrator().HasIndex(&AgencyOperatorIdentityBinding{}, "uidx_agency_operator_identity_user"))
+	require.True(t, db.Migrator().HasIndex(&Agency{}, "idx_agency_depth_id"))
 	require.True(t, db.Migrator().HasTable(&AgencyReconciliationRun{}))
 	require.True(t, db.Migrator().HasTable(&AgencyArchiveManifest{}))
 }
@@ -53,6 +54,31 @@ func TestMigrateAgencyAddsOperatorIdentityBindingsToReleasedSchema(t *testing.T)
 	require.NoError(t, db.Create(&first).Error)
 	require.Error(t, db.Create(&AgencyOperatorIdentityBinding{OperatorAccountID: 1, AgencyID: 2, PlatformUserID: 11, CreatedAt: 1, UpdatedAt: 1}).Error)
 	require.Error(t, db.Create(&AgencyOperatorIdentityBinding{OperatorAccountID: 2, AgencyID: 2, PlatformUserID: 10, CreatedAt: 1, UpdatedAt: 1}).Error)
+}
+
+func TestMigrateAgencyAddsDirectoryPagingIndexToReleasedSchema(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:agency-directory-index-upgrade?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, MigrateAgency(db))
+
+	parent := Agency{ID: 101, Depth: 1, Code: "legacy-parent", DisplayName: "Legacy parent", Status: "active", InviteCode: "legacy-parent-invite"}
+	child := Agency{ID: 102, Depth: 2, ParentAgencyID: &parent.ID, Code: "legacy-child", DisplayName: "Legacy child", Status: "active", InviteCode: "legacy-child-invite"}
+	require.NoError(t, db.Create(&parent).Error)
+	require.NoError(t, db.Create(&child).Error)
+	require.NoError(t, db.Migrator().DropIndex(&Agency{}, "idx_agency_depth_id"))
+	require.False(t, db.Migrator().HasIndex(&Agency{}, "idx_agency_depth_id"))
+
+	// Released databases already contain agencies; the upgrade must add only
+	// the paging index and preserve their identity and hierarchy.
+	require.NoError(t, MigrateAgency(db))
+	require.NoError(t, MigrateAgency(db))
+	require.True(t, db.Migrator().HasIndex(&Agency{}, "idx_agency_depth_id"))
+	var rows []Agency
+	require.NoError(t, db.Order("depth ASC, id ASC").Find(&rows).Error)
+	require.Len(t, rows, 2)
+	assert.Equal(t, parent.ID, rows[0].ID)
+	assert.Equal(t, child.ID, rows[1].ID)
+	assert.Equal(t, parent.ID, *rows[1].ParentAgencyID)
 }
 
 func TestMigrateAgencyExternalDatabaseCompatibility(t *testing.T) {
@@ -93,6 +119,7 @@ func TestMigrateAgencyExternalDatabaseCompatibility(t *testing.T) {
 			require.True(t, db.Migrator().HasIndex(&AgencyTopupFact{}, "idx_agency_topup_user_time"))
 			require.True(t, db.Migrator().HasIndex(&AgencyOperatorIdentityBinding{}, "uidx_agency_operator_identity_operator"))
 			require.True(t, db.Migrator().HasIndex(&AgencyOperatorIdentityBinding{}, "uidx_agency_operator_identity_user"))
+			require.True(t, db.Migrator().HasIndex(&Agency{}, "idx_agency_depth_id"))
 		})
 	}
 }

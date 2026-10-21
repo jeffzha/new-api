@@ -7,12 +7,12 @@ package model
 const AgencyTablePrefix = "agency_hub_"
 
 type Agency struct {
-	ID int64 `gorm:"primaryKey" json:"id"`
+	ID int64 `gorm:"primaryKey;index:idx_agency_depth_id,priority:2" json:"id"`
 	// ParentAgencyID is nil for legacy/root-managed agencies. Existing rows are
 	// therefore depth 1 and remain fully compatible with the single-level
 	// pricing path.
 	ParentAgencyID         *int64 `gorm:"index:idx_agency_parent_status" json:"parent_agency_id,omitempty"`
-	Depth                  int    `gorm:"not null;default:1;index:idx_agency_depth" json:"depth"`
+	Depth                  int    `gorm:"not null;default:1;index:idx_agency_depth;index:idx_agency_depth_id,priority:1" json:"depth"`
 	Code                   string `gorm:"size:64;not null;uniqueIndex:uidx_agency_code" json:"code"`
 	DisplayName            string `gorm:"size:191;not null" json:"display_name"`
 	Status                 string `gorm:"size:32;not null;index:idx_agency_status" json:"status"`

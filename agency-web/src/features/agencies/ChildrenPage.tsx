@@ -11,6 +11,7 @@ import { ChannelPricingRows } from "../pricing/ChannelFilter";
 import { VendorMark, VendorTabs } from "../pricing/VendorFilter";
 import { activeVendorKey, buildVendorOptions, matchesPricingSearch, vendorKeyOf } from "../pricing/vendorOptions";
 import { CoefficientAdjustDialog, type AdjustmentOutcome } from "../pricing/AdjustDialog";
+import { PublishReasonDialog } from "../pricing/PublishReasonDialog";
 
 type Child = { id: number | string; display_name: string; operator_username?: string; status: string; depth: number; price_revision: number };
 type ChildrenResponse = { items: Child[] };
@@ -106,7 +107,7 @@ function ChildPricing(props: { child: Child; onClose: () => void; onSaved: () =>
   const mutation = useMutation();
   const [cost, setCost] = useState("");
   const [modelCosts, setModelCosts] = useState<Record<string, string>>({});
-  const [reason, setReason] = useState("");
+  const [publishOpen, setPublishOpen] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [search, setSearch] = useState("");
   const [vendorFilter, setVendorFilter] = useState("all");
@@ -115,7 +116,7 @@ function ChildPricing(props: { child: Child; onClose: () => void; onSaved: () =>
   const [adjustTarget, setAdjustTarget] = useState(false);
   const [bulkResult, setBulkResult] = useState<{ updated: number; failed: number } | null>(null);
   if (query.loading || !query.data) return <Dialog title={t("Manage child pricing")} onClose={props.onClose}><Loading /><ErrorNotice error={query.error} /></Dialog>;
-  return <ChildPricingMatrix child={props.child} onClose={props.onClose} onSaved={props.onSaved} data={query.data} mutation={mutation} cost={cost} setCost={setCost} modelCosts={modelCosts} setModelCosts={setModelCosts} reason={reason} setReason={setReason} error={error} setError={setError} search={search} setSearch={setSearch} vendorFilter={vendorFilter} setVendorFilter={setVendorFilter} page={page} setPage={setPage} selectedModels={selectedModels} setSelectedModels={setSelectedModels} adjustTarget={adjustTarget} setAdjustTarget={setAdjustTarget} bulkResult={bulkResult} setBulkResult={setBulkResult} />;
+  return <ChildPricingMatrix child={props.child} onClose={props.onClose} onSaved={props.onSaved} data={query.data} mutation={mutation} publishOpen={publishOpen} setPublishOpen={setPublishOpen} cost={cost} setCost={setCost} modelCosts={modelCosts} setModelCosts={setModelCosts} error={error} setError={setError} search={search} setSearch={setSearch} vendorFilter={vendorFilter} setVendorFilter={setVendorFilter} page={page} setPage={setPage} selectedModels={selectedModels} setSelectedModels={setSelectedModels} adjustTarget={adjustTarget} setAdjustTarget={setAdjustTarget} bulkResult={bulkResult} setBulkResult={setBulkResult} />;
 }
 
 function ChildPricingMatrix(props: {
@@ -128,8 +129,8 @@ function ChildPricingMatrix(props: {
   setCost: (value: string) => void;
   modelCosts: Record<string, string>;
   setModelCosts: Dispatch<SetStateAction<Record<string, string>>>;
-  reason: string;
-  setReason: (value: string) => void;
+  publishOpen: boolean;
+  setPublishOpen: (value: boolean) => void;
   error: unknown;
   setError: (value: unknown) => void;
   search: string;
@@ -168,11 +169,11 @@ function ChildPricingMatrix(props: {
     props.setSelectedModels([]);
     props.setAdjustTarget(false);
   }
-  async function save() {
+  async function save(reason: string) {
     try {
       props.setError(null);
       const overrides = childPricingOverridePayload(modelOverrides, props.modelCosts);
-      await props.mutation.mutate(`/children/${props.child.id}/pricing/publish`, { expected_revision: data.revision, ...(props.cost.trim() ? { default_settlement_bps: parseCoefficient(props.cost) } : {}), model_cost_overrides: overrides, reason: props.reason.trim() }, { action: "agency.child.pricing.publish", objectId: `agency:${props.child.id}`, title: t("Manage child pricing") });
+      await props.mutation.mutate(`/children/${props.child.id}/pricing/publish`, { expected_revision: data.revision, ...(props.cost.trim() ? { default_settlement_bps: parseCoefficient(props.cost) } : {}), model_cost_overrides: overrides, reason }, { action: "agency.child.pricing.publish", objectId: `agency:${props.child.id}`, title: t("Manage child pricing") });
       props.onSaved();
       props.onClose();
     } catch (cause) {
@@ -182,6 +183,7 @@ function ChildPricingMatrix(props: {
   return <Dialog className="child-pricing-dialog" title={t("Manage child pricing") + " · " + props.child.display_name} onClose={props.onClose} busy={props.mutation.pending}>
     <p className="muted">{t("Only direct child cost can be changed. Sales pricing remains managed by the child agency for its customers.")}</p>
     <Field label={t("Child cost coefficient")}><input inputMode="decimal" value={props.cost || formatCoefficient(data.default_settlement_bps)} onChange={(event) => { props.setError(null); props.setCost(event.target.value); }} /></Field>
+    <div className="pricing-action-bar"><button type="button" className="button-icon" disabled={props.mutation.pending} onClick={() => { props.setError(null); props.setPublishOpen(true); }}><ActionIcon name="save" />{t("Publish child pricing")}</button></div>
     <div className="pricing-search child-pricing-search">
       <label className="search-field"><ActionIcon name="search" /><input aria-label={t("Search models or providers")} placeholder={t("Search models or providers")} value={props.search} onChange={(event) => { props.setSearch(event.target.value); props.setPage(0); }} /></label>
       <span className="pricing-live-badge">{t("Models")} · {visibleRows.length}</span>
@@ -196,6 +198,7 @@ function ChildPricingMatrix(props: {
     {visibleRows.length > pageSize && <Pager nextCursor={currentPage < pageCount - 1 ? String(currentPage + 1) : undefined} hasPrevious={currentPage > 0} onNext={() => props.setPage((value) => Math.min(value + 1, pageCount - 1))} onReset={() => props.setPage(0)} />}
     {visibleRows.length === 0 && <p className="empty">{t("No models match the current filters.")}</p>}
     {props.adjustTarget && <CoefficientAdjustDialog className="coefficient-adjust-dialog" title={t("Increase/decrease child cost")} description={t("Adjust from my cost plus the applicable minimum spread. Negotiated prices may be below my default child quote.")} rows={selectedRows.map((row) => ({ model: row.origin_model_name, costBPS: row.agency_cost_bps, minimumBPS: row.minimum_cost_bps, inheritedBPS: row.settlement_bps ?? data.default_settlement_bps }))} values={Object.fromEntries(selectedRows.map((row) => [row.origin_model_name, props.modelCosts[row.origin_model_name] ?? ""]))} options={{ anchor: "cost", capBPS: 100000 }} onApply={applyAdjustment} onClose={() => props.setAdjustTarget(false)} />}
-    <Field label={t("Change reason (optional)")}><input maxLength={2000} value={props.reason} onChange={(event) => props.setReason(event.target.value)} /></Field><ErrorNotice error={props.error} /><div className="actions dialog-actions"><button className="secondary" type="button" onClick={props.onClose}>{t("Cancel")}</button><button type="button" disabled={props.mutation.pending} onClick={() => void save()}>{t("Publish child pricing")}</button></div>
+    <ErrorNotice error={props.error} />
+    {props.publishOpen && <PublishReasonDialog title={t("Publish child pricing")} busy={props.mutation.pending} error={props.error} onClose={() => props.setPublishOpen(false)} onConfirm={(reason) => void save(reason)} />}
   </Dialog>;
 }

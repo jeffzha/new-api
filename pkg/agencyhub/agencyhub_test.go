@@ -429,6 +429,14 @@ func TestPlatformPricingPublishesLiveModelChannelMatrixAndRejectsAgencyConflict(
 	require.Contains(t, recorder.Body.String(), "\"platform_cost_bps\":5400")
 	require.NoError(t, client.app.db.Model(&channel).Update("status", common.ChannelStatusManuallyDisabled).Error)
 	require.NoError(t, client.app.db.Model(&backupChannel).Update("status", common.ChannelStatusManuallyDisabled).Error)
+	unavailable, err := LoadPlatformPricingCatalog(client.app.db)
+	require.NoError(t, err)
+	require.Len(t, unavailable.Items, 1)
+	require.Len(t, unavailable.Items[0].ChannelCosts, 2)
+	for _, cost := range unavailable.Items[0].ChannelCosts {
+		assert.False(t, cost.Available)
+		assert.Contains(t, []string{channel.Name, backupChannel.Name}, cost.ChannelName)
+	}
 
 	retained := fmt.Sprintf(`{"expected_revision":1,"model_prices":[{"origin_model_name":"glm-5.3","channel_costs":[{"channel_id":%d,"platform_cost_bps":5000},{"channel_id":%d,"platform_cost_bps":5400}],"agency_cost_bps":5500,"default_sales_bps":6000}],"reason":"retain temporarily unavailable model"}`, channel.Id, backupChannel.Id)
 	retainedProof := client.proof(t, retained, "pricing.platform.publish", "platform_pricing:current", "platform-pricing-retained")

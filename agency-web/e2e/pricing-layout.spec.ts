@@ -218,6 +218,23 @@ test("root pricing renders a null model list without crashing", async ({ page })
   expect(errors).toEqual([]);
 });
 
+test("disabled channel keeps its name in the filter and shows status only in the matrix", async ({ page }) => {
+  await openWorkspace(page, true);
+  await page.route("**/agency/api/v1/root/platform-pricing", (route) => route.fulfill({ json: {
+    success: true,
+    data: { revision: 1, refreshed_at_ms: 1, items: [{
+      origin_model_name: "unavailable-model", channel_names: ["Bridge"],
+      channel_costs: [{ channel_id: 38, channel_name: "Bridge", available: false, platform_cost_bps: 5000 }],
+      agency_cost_bps: 7000, default_sales_bps: 8000,
+    }] },
+  } }));
+  await page.getByRole("button", { name: "Pricing", exact: true }).click();
+  await expect(page.locator(".pricing-channel-cell")).toHaveText("Bridge（Currently unavailable）");
+  await page.getByRole("button", { name: "All channels", exact: true }).click();
+  await expect(page.locator(".filter-menu-option").filter({ hasText: "Bridge" })).toHaveText("Bridge1");
+  await expect(page.locator(".filter-menu-panel")).not.toContainText("Channel unavailable");
+});
+
 async function verifyAgencyPricingHidesChannels(table: Locator) {
   await expect(table.locator(".model-name-cell .vendor-mark-monogram")).toHaveText("O");
   await expect(table.getByRole("columnheader", { name: "Channels", exact: true })).toHaveCount(0);
@@ -260,6 +277,11 @@ for (const width of [1440, 390]) {
     await expect(
       dialog.getByRole("columnheader", { name: "After adjustment", exact: true }),
     ).toBeVisible();
+    const apply = dialog.getByRole("button", { name: "Apply to selected models", exact: true });
+    const dialogBox = await dialog.boundingBox();
+    const applyBox = await apply.boundingBox();
+    expect(applyBox!.y).toBeGreaterThan(dialogBox!.y);
+    expect(applyBox!.y + applyBox!.height).toBeLessThanOrEqual(Math.min(dialogBox!.y + dialogBox!.height, 900));
     await page.screenshot({
       path: test.info().outputPath(`customer-${width}.png`),
       fullPage: true,
@@ -301,9 +323,23 @@ test("child pricing uses the shared search and provider tabs without dropping un
       request.method() === "POST" && request.url().endsWith("/children/9/pricing/publish"),
   );
   await dialog.getByRole("button", { name: "Publish child pricing", exact: true }).click();
+  await page.getByRole("dialog").last().getByRole("button", { name: "Publish child pricing", exact: true }).click();
   expect((await published).postDataJSON().model_cost_overrides).toEqual([
     { origin_model_name: "unlisted-model", settlement_bps: 7800 },
   ]);
+});
+
+test("customer bulk adjustment saves once without a separate save click", async ({ page }) => {
+  await openWorkspace(page, false);
+  await page.getByRole("button", { name: "Customers", exact: true }).click();
+  await page.getByRole("button", { name: "Customer pricing", exact: true }).click();
+  await page.getByLabel("Select model: unlisted-model", { exact: true }).check();
+  await page.getByRole("button", { name: "Increase/decrease sales prices", exact: true }).click();
+  const published = page.waitForRequest((request) => request.method() === "PUT" && request.url().endsWith("/customers/42/pricing/batch"));
+  await page.getByRole("dialog").getByRole("button", { name: "Apply to selected models", exact: true }).click();
+  const request = await published;
+  expect(request.postDataJSON().models).toEqual([{ model_name: "unlisted-model", sales_bps: 8000 }]);
+  await expect(page.getByRole("heading", { name: /Customer sales pricing/ })).toHaveCount(0);
 });
 
 test("root overview restores totals, capabilities and unfinished queue counts", async ({
@@ -395,6 +431,7 @@ test("publishing one agency price does not submit unchanged automatic or manual 
     (request) => request.method() === "POST" && request.url().endsWith("/pricing/sales/publish"),
   );
   await page.getByRole("button", { name: "Publish sales coefficients", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Publish sales coefficients", exact: true }).click();
   const payload = (await published).postDataJSON();
   expect(payload.model_sales_overrides).toEqual([
     { origin_model_name: "manual-model", sales_bps: 9500 },
@@ -430,6 +467,8 @@ for (const width of [1440, 390]) {
       "true",
     );
     await expect(adjust.locator(".coefficient-adjust-next")).toHaveText("0.8000");
+    const applyBox = await adjust.getByRole("button", { name: "Apply to selected models", exact: true }).boundingBox();
+    expect(applyBox!.y + applyBox!.height).toBeLessThanOrEqual(1000);
     await adjust.getByRole("button", { name: "+0.1", exact: true }).click();
     await expect(adjust.locator(".coefficient-adjust-next")).toHaveText("0.9000");
     await adjust.getByRole("button", { name: "-0.1", exact: true }).click();

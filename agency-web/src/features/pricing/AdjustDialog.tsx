@@ -34,6 +34,9 @@ export function CoefficientAdjustDialog(props: {
   onApply: (outcome: AdjustmentOutcome) => void;
   onClose: () => void;
   className?: string;
+  requireAllValid?: boolean;
+  busy?: boolean;
+  serverError?: unknown;
 }) {
   const { t } = useTranslation();
   const hasCostAnchor = props.options.anchor === "cost" || props.rows.some((row) => row.costBPS != null);
@@ -94,7 +97,7 @@ export function CoefficientAdjustDialog(props: {
   }
 
   return (
-    <Dialog className={props.className} title={props.title} onClose={props.onClose}>
+    <Dialog className={["coefficient-adjust-dialog", props.className].filter(Boolean).join(" ")} title={props.title} onClose={props.onClose} busy={props.busy}>
       <p className="muted">{props.description}</p>
       <div className="coefficient-adjust-controls">
         <div className="coefficient-anchor" role="group" aria-label={t("Anchor")}>
@@ -185,14 +188,15 @@ export function CoefficientAdjustDialog(props: {
         })}
       </p>
       <ErrorNoticeSlot error={error} />
+      {props.serverError != null && <p className="error" role="alert">{t(props.serverError instanceof Error ? props.serverError.message : String(props.serverError))}</p>}
       <div className="actions dialog-actions">
-        <button className="secondary" type="button" onClick={props.onClose}>
+        <button className="secondary" type="button" disabled={props.busy} onClick={props.onClose}>
           {t("Cancel")}
         </button>
         <button
           type="button"
           className="button-icon"
-          disabled={!outcome || outcome.updated === 0}
+          disabled={props.busy || !outcome || outcome.updated === 0 || (props.requireAllValid && failed > 0)}
           onClick={apply}
         >
           <span aria-hidden="true" className="channel-filter-icon">

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -248,6 +247,31 @@ func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
 	for _, price := range policy.ModelPrices {
 		configured[price.OriginModelName] = price
 	}
+	channelIDs := make([]int, 0)
+	seenChannels := make(map[int]struct{})
+	for _, price := range configured {
+		for _, cost := range publicChannelCosts(price.ChannelCosts, internalChannels) {
+			if _, seen := seenChannels[cost.ChannelID]; seen {
+				continue
+			}
+			seenChannels[cost.ChannelID] = struct{}{}
+			channelIDs = append(channelIDs, cost.ChannelID)
+		}
+	}
+	type channelIdentity struct {
+		ID   int
+		Name string
+	}
+	channelNames := make(map[int]string)
+	if len(channelIDs) > 0 {
+		var identities []channelIdentity
+		if err := db.Table("channels").Select("id, name").Where("id IN ?", channelIDs).Scan(&identities).Error; err != nil {
+			return nil, err
+		}
+		for _, identity := range identities {
+			channelNames[identity.ID] = identity.Name
+		}
+	}
 	byModel := make(map[string]*PlatformPricingCatalogRow)
 	order := make([]string, 0)
 	for _, item := range live {
@@ -308,7 +332,11 @@ func LoadPlatformPricingCatalog(db *gorm.DB) (*PlatformPricingCatalog, error) {
 				continue
 			}
 			costBPS := cost.PlatformCostBPS
-			row.ChannelCosts = append(row.ChannelCosts, PlatformPricingCatalogChannel{ChannelID: cost.ChannelID, ChannelName: "渠道当前不可用 #" + strconv.Itoa(cost.ChannelID), Available: false, PlatformCostBPS: &costBPS})
+			name := channelNames[cost.ChannelID]
+			if name == "" {
+				name = fmt.Sprintf("#%d", cost.ChannelID)
+			}
+			row.ChannelCosts = append(row.ChannelCosts, PlatformPricingCatalogChannel{ChannelID: cost.ChannelID, ChannelName: name, Available: false, PlatformCostBPS: &costBPS})
 		}
 	}
 	sort.Strings(order)

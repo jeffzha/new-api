@@ -222,8 +222,13 @@ func initializePriceExportBoundary(db *gorm.DB, page *priceVersionCursor) error 
 func advancePriceExportPhase(page *priceVersionCursor) bool {
 	switch page.Phase {
 	case pricePhasePlatform:
-		page.Phase, page.After = pricePhaseAgency, 0
-		return page.AgencyCount > 0 || page.CustomerCount > 0
+		page.After = 0
+		if page.AgencyCount > 0 {
+			page.Phase = pricePhaseAgency
+			return true
+		}
+		page.Phase = pricePhaseCustomer
+		return page.CustomerCount > 0
 	case pricePhaseAgency:
 		page.Phase, page.After = pricePhaseCustomer, 0
 		return page.CustomerCount > 0

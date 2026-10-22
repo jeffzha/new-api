@@ -874,6 +874,8 @@ func TestCNOpsInventoryAcrossDialects(t *testing.T) {
 			}
 			require.NoError(t, common.Unmarshal(encoded, &snapshot))
 			require.Len(t, snapshot.Objects, 3)
+			assert.Equal(t, "inventory-user", snapshot.Objects[0]["username"])
+			assert.Equal(t, "active", snapshot.Objects[0]["object_status"])
 			assert.Equal(t, []string{"user", "api_key", "channel"}, snapshot.Types)
 			assert.Equal(t, "disabled", snapshot.Objects[2]["object_status"])
 			repeated, err := ReadOpsInventory(context.Background(), db, "inventory-g1")

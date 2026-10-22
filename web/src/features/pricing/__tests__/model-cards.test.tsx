@@ -120,6 +120,46 @@ describe('model cards', () => {
     expect(screen.getByText('$0.01')).toBeVisible()
     expect(screen.queryByText('/ 1M')).not.toBeInTheDocument()
   })
+  it('shows Fun-ASR as a readable per-second price instead of its billing formula', () => {
+    const expression = 'tier("base", u("seconds") * 0.00003013698630136986)'
+    const previousCurrency = useSystemConfigStore.getState().config.currency
+    useSystemConfigStore.getState().setConfig({
+      currency: {
+        ...DEFAULT_CURRENCY_CONFIG,
+        quotaDisplayType: 'CNY',
+        usdExchangeRate: 7.3,
+      },
+    })
+    render(
+      <ModelCard
+        model={pricingModel({
+          model_name: 'fun-asr-flash-2026-06-15',
+          billing_mode: 'tiered_expr',
+          billing_expr: expression,
+          billing_usage_schema: {
+            seconds: {
+              type: 'number',
+              unit: 'second',
+              description: {
+                en: 'Audio transcription unit price',
+                zh: '音频转写单价',
+              },
+            },
+          },
+        })}
+        onClick={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('Audio transcription unit price')).toBeVisible()
+    expect(screen.getByText('¥0.00022')).toBeVisible()
+    expect(screen.getByText('/ s')).toBeVisible()
+    expect(screen.queryByText(expression)).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('Special billing expression')
+    ).not.toBeInTheDocument()
+    useSystemConfigStore.getState().setConfig({ currency: previousCurrency })
+  })
   it('updates the current time tier at a minute boundary and after returning to the page', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-09-07T08:59:59+08:00'))
@@ -340,7 +380,7 @@ describe('model cards', () => {
     )
   })
 
-  it('keeps task price ranges in their actual usage unit instead of the selected token unit', () => {
+  it('keeps task tier prices in their actual usage unit instead of the selected token unit', () => {
     render(
       <ModelCard
         model={pricingModel({
@@ -356,8 +396,12 @@ describe('model cards', () => {
         tokenUnit='K'
       />
     )
-    expect(screen.getByText(/0.4.*0.8/)).toHaveTextContent(/0.4 – \$0.8/)
-    expect(screen.getByText(/^\/\s*s$/)).toBeVisible()
+    expect(screen.getByText('$0.4').parentElement).toHaveTextContent(
+      /std\s*\$0.4\s*\/\s*s/
+    )
+    expect(screen.getByText('$0.8').parentElement).toHaveTextContent(
+      /pro\s*\$0.8\s*\/\s*s/
+    )
     expect(screen.queryByText(/1K|1M/)).not.toBeInTheDocument()
   })
 

@@ -19,6 +19,7 @@ var defaultVendorRules = map[string]string{
 	"chatglm":  "智谱",
 	"glm-":     "智谱",
 	"qwen":     "阿里巴巴",
+	"fun-asr":  "阿里巴巴",
 	"deepseek": "DeepSeek",
 	"abab":     "MiniMax",
 	"minimax":  "MiniMax",
@@ -83,7 +84,8 @@ func initDefaultVendorMapping(metaMap map[string]*Model, vendorMap map[int]*Vend
 	})
 	for _, ability := range enableAbilities {
 		modelName := ability.Model
-		if _, exists := metaMap[modelName]; exists {
+		meta, exists := metaMap[modelName]
+		if exists && meta.VendorID != 0 {
 			continue
 		}
 
@@ -98,7 +100,13 @@ func initDefaultVendorMapping(metaMap map[string]*Model, vendorMap map[int]*Vend
 			}
 		}
 
-		// 创建模型元数据
+		if exists {
+			resolvedMeta := *meta
+			resolvedMeta.VendorID = vendorID
+			metaMap[modelName] = &resolvedMeta
+			continue
+		}
+
 		metaMap[modelName] = &Model{
 			ModelName: modelName,
 			VendorID:  vendorID,

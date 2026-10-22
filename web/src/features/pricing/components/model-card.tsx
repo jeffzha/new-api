@@ -40,7 +40,7 @@ import { parseTags } from '../lib/filters'
 import { getDisplayGroupRatio, isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import { getVideoTokenMatrixPricing } from '../lib/provider-pricing'
-import { taskUsageUnitLabel } from '../lib/task-price-display'
+import { taskPriceLabel, taskUsageUnitLabel } from '../lib/task-price-display'
 import { getVideoPricingTable } from '../lib/video-pricing-table'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
@@ -157,7 +157,11 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
               >
                 <span>
                   {entry.labelKind === 'schema'
-                    ? entry.shortLabel
+                    ? taskPriceLabel(
+                        entry.description,
+                        entry.shortLabel,
+                        i18n.language
+                      )
                     : t(entry.shortLabel)}
                 </span>{' '}
                 <span className='text-foreground font-mono font-semibold'>

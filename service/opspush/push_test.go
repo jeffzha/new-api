@@ -52,6 +52,10 @@ func TestEventMirrorsPullCollector(t *testing.T) {
 	errorLog.Type, errorLog.RequestId = model.LogTypeError, ""
 	assert.Equal(t, "log-7", Event(&errorLog, "")["requestId"])
 	assert.Equal(t, "error", Event(&errorLog, "")["status"])
+	// A failed attempt of a retried request must not take the request id of its charge.
+	errorLog.RequestId = log.RequestId
+	assert.Equal(t, "20261020235930123456-e7", Event(&errorLog, "")["requestId"])
+	assert.Equal(t, "20261020235930123456", event["requestId"])
 
 	for _, broken := range []model.Log{{Id: 1, Type: model.LogTypeConsume, UserId: 1}, {Id: 2, Type: model.LogTypeConsume, ModelName: "m"},
 		{Id: 3, Type: model.LogTypeTopup, UserId: 1, ModelName: "m"}, {Id: 4, Type: model.LogTypeConsume, UserId: 1, ModelName: "m", RequestId: "bad id"}} {

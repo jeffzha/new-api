@@ -447,8 +447,13 @@ func signWith(keyID, secret, method, target string, body []byte, timestamp, nonc
 func Event(log *model.Log, channelName string) map[string]any {
 	status := map[int]string{model.LogTypeConsume: "success", model.LogTypeError: "error"}[log.Type]
 	requestId := log.RequestId
-	if requestId == "" {
+	switch {
+	case requestId == "":
 		requestId = "log-" + strconv.Itoa(log.Id)
+	case log.Type == model.LogTypeError:
+		// A retried request logs each failed attempt and then its charge under one request id; the error
+		// rows get their own ids so they never take the id of the charge (same rule as the OPS collector).
+		requestId += "-e" + strconv.Itoa(log.Id)
 	}
 	if status == "" || !idPattern.MatchString(requestId) || log.UserId <= 0 || !text(log.ModelName) || log.ModelName == "" {
 		return nil

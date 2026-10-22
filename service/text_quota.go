@@ -69,14 +69,15 @@ type textQuotaSummary struct {
 	ToolSurchargeItems     []ToolSurchargeItem
 	ToolCallSurchargeQuota decimal.Decimal
 	FixedPriceBilling      bool
+	UsageBasedBilling      bool
 }
 
 // hasBillableUsage reports whether this request should incur any charge.
 // A request can carry zero tokens yet still be billable via a tool-call
-// surcharge (e.g. /v1/alpha/search returns no usage but bills one web_search
-// call), so token count alone is not sufficient to decide.
+// surcharge or usage facts such as audio seconds, so token count alone is not
+// sufficient to decide.
 func (s *textQuotaSummary) hasBillableUsage() bool {
-	return s.FixedPriceBilling || s.TotalTokens > 0 || !s.ToolCallSurchargeQuota.IsZero()
+	return s.FixedPriceBilling || s.UsageBasedBilling || s.TotalTokens > 0 || !s.ToolCallSurchargeQuota.IsZero()
 }
 
 func cacheWriteTokensTotal(summary textQuotaSummary) int {
@@ -416,9 +417,11 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if originUsage != nil {
 		ObserveChannelAffinityUsageCacheByRelayFormat(ctx, billingUsage, relayInfo.GetFinalRequestRelayFormat())
 	}
-
 	adminRejectReason := common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason)
 	summary := calculateTextQuotaSummary(ctx, relayInfo, billingUsage)
+	if snap := relayInfo.TieredBillingSnapshot; snap != nil && snap.UsageFactsBilling && relayInfo.BillingRequestInput != nil && len(relayInfo.BillingRequestInput.Usage) > 0 {
+		summary.UsageBasedBilling = true
+	}
 
 	var tieredResult *billingexpr.TieredResult
 	var tieredTokens billingexpr.TokenParams
@@ -427,7 +430,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	// Providers normally estimate missing usage before settlement. Preserve the
 	// same prompt estimate when a fixed-price expression reaches us without it;
 	// its conditions must still run and may select a token-priced fallback.
-	if billingUsage == nil && snap != nil && billingexpr.UsesFixedPricingByHash(snap.ExprString, snap.ExprHash) {
+	if billingUsage == nil && snap != nil && (billingexpr.UsesFixedPricingByHash(snap.ExprString, snap.ExprHash) || snap.UsageFactsBilling) {
 		billingUsage = &dto.Usage{PromptTokens: summary.PromptTokens, CompletionTokens: summary.CompletionTokens, TotalTokens: summary.TotalTokens}
 	}
 	if billingUsage != nil {
@@ -440,6 +443,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		if tieredOk {
 			tieredBillingApplied = true
 			tieredResult = tieredRes
+			if relayInfo.TieredBillingSnapshot != nil && relayInfo.TieredBillingSnapshot.UsageFactsBilling && relayInfo.BillingRequestInput != nil && len(relayInfo.BillingRequestInput.Usage) > 0 {
+				summary.UsageBasedBilling = true
+			}
 			summary.Quota = composeTieredTextQuota(relayInfo, summary, tieredQuota, tieredRes)
 			summary.FixedPriceBilling = isFixedPriceSettlement(relayInfo, tieredRes)
 			if summary.FixedPriceBilling {
@@ -605,6 +611,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if tieredBillingApplied {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 
+	}
+	if snap != nil && snap.UsageFactsBilling && relayInfo.BillingRequestInput != nil && len(relayInfo.BillingRequestInput.Usage) > 0 {
+		other.SetPublic("usage_facts", relayInfo.BillingRequestInput.Usage)
 	}
 
 	attachQuotaSaturation(ctx, relayInfo, other)

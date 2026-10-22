@@ -14,10 +14,15 @@ const szhtpSeedream50LiteExpression = `len <= 32000 ? tier("base", p * 0.0821917
 const happyHorseExpression = `u("kind") == "edit" && u("resolution") == "720P" ? tier("720P-edit", u("seconds") * 0.1232876712328767) : u("kind") == "edit" && u("resolution") == "1080P" ? tier("1080P-edit", u("seconds") * 0.2191780821917808) : u("resolution") == "480P" ? tier("480P", u("seconds") * 0.06164383561643836) : u("resolution") == "1080P" ? tier("1080P", u("seconds") * 0.1643835616438356) : tier("720P", u("seconds") * 0.1232876712328767)`
 const wangpaiH3Expression = `tier("upstream", u("output_credits") * 0.0136986301369863 + u("material_credits") * 0.0136986301369863)`
 
+// Fun-ASR-Flash charges CNY per audio second. Convert to USD at 7.3 CNY/USD;
+// usage-fact billing converts this per-second amount directly into quota.
+const funASRFlashExpression = `tier("base", u("seconds") * 0.00003013698630136986)`
+
 // Built-in token prices use actual USD per million tokens. Keep new model
 // defaults here instead of splitting them across the legacy ratio tables.
 var builtinBillingExpr = map[string]string{
 	"doubao-seedream-5-0-lite":     szhtpSeedream50LiteExpression,
+	"fun-asr-flash-2026-06-15":     funASRFlashExpression,
 	"deepseek-flash":               deepSeekFlashExpression,
 	"deepseek-v4-1-flash-1017":     locoPalDeepSeek261017Expression,
 	"deepseek-v4-flash":            deepSeekFlashExpression,

@@ -61,6 +61,35 @@ func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dt
 
 func GetAndValidAudioRequest(c *gin.Context, relayMode int) (*dto.AudioRequest, error) {
 	audioRequest := &dto.AudioRequest{}
+	if relayMode == relayconstant.RelayModeAudioTranscription && strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
+		form, err := common.ParseMultipartFormReusable(c)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse audio transcription form request: %w", err)
+		}
+		c.Request.MultipartForm = form
+		c.Set(funASRFormContextKey, form)
+		if values := form.Value["model"]; len(values) > 0 {
+			audioRequest.Model = strings.TrimSpace(values[0])
+		}
+		if values := form.Value["response_format"]; len(values) > 0 {
+			audioRequest.ResponseFormat = strings.TrimSpace(values[0])
+		}
+		if audioRequest.Model == "" {
+			return nil, errors.New("model is required")
+		}
+		if audioRequest.ResponseFormat == "" {
+			audioRequest.ResponseFormat = "json"
+		}
+		if IsFunASRModel(audioRequest.Model) {
+			if audioRequest.ResponseFormat != "json" && audioRequest.ResponseFormat != "text" {
+				return nil, fmt.Errorf("Fun-ASR-Flash supports response_format json or text")
+			}
+			if len(form.File["file"]) != 1 {
+				return nil, errors.New("Fun-ASR-Flash requires exactly one uploaded audio file in field 'file'")
+			}
+		}
+		return audioRequest, nil
+	}
 	err := common.UnmarshalBodyReusable(c, audioRequest)
 	if err != nil {
 		return nil, err
@@ -77,6 +106,9 @@ func GetAndValidAudioRequest(c *gin.Context, relayMode int) (*dto.AudioRequest, 
 		if audioRequest.ResponseFormat == "" {
 			audioRequest.ResponseFormat = "json"
 		}
+	}
+	if relayMode == relayconstant.RelayModeAudioTranscription && IsFunASRModel(audioRequest.Model) {
+		return nil, errors.New("Fun-ASR-Flash requires multipart/form-data with exactly one audio file in field 'file'")
 	}
 	return audioRequest, nil
 }

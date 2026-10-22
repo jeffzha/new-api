@@ -74,6 +74,18 @@ func TestLocoPalDeepSeek261017BuiltinBilling(t *testing.T) {
 	}
 }
 
+func TestFunASRFlashBuiltinBilling(t *testing.T) {
+	expression, ok := billing_setting.GetBuiltinBillingExpr("fun-asr-flash-2026-06-15")
+	require.True(t, ok)
+	result, err := billingexpr.ComputeTieredQuotaWithRequest(&billingexpr.BillingSnapshot{
+		ExprString: expression, ExprHash: billingexpr.ExprHashString(expression),
+		GroupRatio: 1, QuotaPerUnit: 500_000, ExprVersion: 1, UsageFactsBilling: true,
+	}, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: map[string]any{"seconds": 36_000.0}})
+	require.NoError(t, err)
+	assert.InDelta(t, 542_465.7534246575, result.ActualQuotaBeforeGroup, 1e-7)
+	assert.Equal(t, 542_466, result.ActualQuotaAfterGroup)
+}
+
 func TestShenzhenSeedreamLiteContextBilling(t *testing.T) {
 	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
 	saved := *settings

@@ -193,11 +193,18 @@ func CountRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *relayco
 		return 0, nil
 	}
 	if info.RelayMode == constant2.RelayModeAudioTranscription || info.RelayMode == constant2.RelayModeAudioTranslation {
-		multiForm, err := common.ParseMultipartFormReusable(c)
-		if err != nil {
-			return 0, fmt.Errorf("error parsing multipart form: %v", err)
+		multiForm := c.Request.MultipartForm
+		if multiForm == nil {
+			var err error
+			multiForm, err = common.ParseMultipartFormReusable(c)
+			if err != nil {
+				return 0, fmt.Errorf("error parsing multipart form: %v", err)
+			}
 		}
 		fileHeaders := multiForm.File["file"]
+		if info.RelayMode == constant2.RelayModeAudioTranscription && strings.EqualFold(info.GetBillingModelName(), "fun-asr-flash-2026-06-15") {
+			return 0, nil
+		}
 		totalAudioToken := 0
 		for _, fileHeader := range fileHeaders {
 			file, err := fileHeader.Open()

@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -412,6 +413,12 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, billing
 			return hosttypes.PriceData{}, err
 		}
 	}
+	if billingexpr.UsedUsageKeys(exprStr)["seconds"] {
+		requestInput, err = ResolveFunASRBillingRequestInput(c, info, requestInput)
+		if err != nil {
+			return hosttypes.PriceData{}, err
+		}
+	}
 
 	rawCost, trace, err := billingexpr.RunExprByHashWithRequest(exprStr, exprHash, billingexpr.TokenParams{
 		P:   float64(promptTokens),
@@ -422,8 +429,11 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, billing
 		return hosttypes.PriceData{}, fmt.Errorf("model %s tiered expr run failed: %w", billingModelName, err)
 	}
 
-	// Expression coefficients are $/1M tokens prices; convert to quota the same way per-call billing does.
+	usageFactsBilling := info.RelayMode == relayconstant.RelayModeAudioTranscription && IsFunASRModel(billingModelName)
 	quotaBeforeGroup := rawCost / 1_000_000 * common.QuotaPerUnit
+	if usageFactsBilling {
+		quotaBeforeGroup = rawCost * common.QuotaPerUnit
+	}
 	preConsumedQuota, err := billingexpr.QuotaRoundStrict(quotaBeforeGroup * groupRatioInfo.GroupRatio)
 	if err != nil {
 		return hosttypes.PriceData{}, err
@@ -454,6 +464,7 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, billing
 		EstimatedFixedPrice:       trace.FixedPrice,
 		QuotaPerUnit:              common.QuotaPerUnit,
 		ExprVersion:               billingexpr.ExprVersion(exprStr),
+		UsageFactsBilling:         usageFactsBilling,
 	}
 	info.TieredBillingSnapshot = snapshot
 	info.BillingRequestInput = &requestInput

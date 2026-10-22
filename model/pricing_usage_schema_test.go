@@ -67,6 +67,17 @@ func TestPricingCarriesTaskUsageSchemaAndRefreshesWithPluginGeneration(t *testin
 	assert.Equal(t, "count", refreshedPricing["pricing-usage-model"].BillingUsageSchema["clips"].Unit)
 }
 
+func TestPricingExposesNativeFunASRAudioUsageSchema(t *testing.T) {
+	const modelName = "fun-asr-flash-2026-06-15"
+	schema := nativeAudioUsageSchema(modelName)
+	require.Contains(t, schema, "seconds")
+	assert.Equal(t, "second", schema["seconds"].Unit)
+	assert.Equal(t, "音频转写单价", schema["seconds"].Description["zh"])
+	expression, ok := billing_setting.GetBuiltinBillingExpr(modelName)
+	require.True(t, ok)
+	assert.Equal(t, `tier("base", u("seconds") * 0.00003013698630136986)`, expression)
+}
+
 func TestPricingAliasCarriesPluginUsageSchemaAndTailExpr(t *testing.T) {
 	resetPricingEndpointTestTables(t)
 	const pluginKey = "pricing-usage-probe"

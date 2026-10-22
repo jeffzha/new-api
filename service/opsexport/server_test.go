@@ -358,6 +358,45 @@ func TestOpsExportPriceVersions(t *testing.T) {
 	assert.Equal(t, []string{"historical", "published", "published", "current"}, statuses)
 }
 
+func TestOpsExportPriceVersionsSkipsEmptyLeadingPhase(t *testing.T) {
+	previous := Default
+	t.Cleanup(func() { Default = previous })
+	db, err := gorm.Open(sqlite.Open("file:price-empty-phase?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	require.NoError(t, err)
+	pool, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pool.Close() })
+	require.NoError(t, db.AutoMigrate(&model.Agency{}, &model.AgencyPlatformPriceState{}, &model.AgencyPlatformPriceVersion{},
+		&model.AgencyPricePolicyVersion{}, &model.AgencyCustomerSalesOverride{}))
+	token := strings.Repeat("empty-phase-", 4)
+	Default = &Server{DB: db, GatewayID: "price-empty-g1", TokenHash: sha256.Sum256([]byte(token))}
+	router := gin.New()
+	Register(router.Group("/api/ops-export/v1"))
+	call := func() map[string]any {
+		request := httptest.NewRequest(http.MethodGet, "/api/ops-export/v1/price-versions?page_size=1", nil)
+		request.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var payload map[string]any
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
+		return payload
+	}
+	policy := agencycontract.Policy{Revision: 1, DefaultSettlementBPS: 8000, DefaultSalesBPS: 10000}
+	encoded, err := common.Marshal(policy)
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.AgencyPricePolicyVersion{ID: 3, AgencyID: 1, Revision: 1,
+		PolicyJSON: string(encoded), CreatedAtMS: 1000}).Error)
+	page := call()
+	require.Len(t, page["items"], 1)
+	assert.Equal(t, "agency_price_version", page["items"].([]any)[0].(map[string]any)["recordType"])
+	assert.Empty(t, page["nextCursor"])
+	require.NoError(t, db.Delete(&model.AgencyPricePolicyVersion{}, 3).Error)
+	empty := call()
+	assert.Equal(t, []any{}, empty["items"])
+	assert.Empty(t, empty["nextCursor"])
+}
+
 func (p *refundHTTPProvider) Name() string { return "http-simulated" }
 func (p *refundHTTPProvider) Submit(ctx context.Context, i model.CNRefundIntent) (model.CNRefundProviderResult, error) {
 	p.calls++

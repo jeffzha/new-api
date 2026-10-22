@@ -152,10 +152,21 @@ func (s *Server) PriceVersions(c *gin.Context) {
 	identity.Phase, identity.After = pricePhasePlatform, 0
 	identity.PlatformHash, identity.AgencyHash, identity.CustomerHash = "", "", ""
 	snapshotID := s.signPriceCursor(identity)
-	items, more, err := readPriceExportPage(db, &page, limit)
-	if err != nil {
-		c.JSON(503, gin.H{"error": "price source unavailable or requires repair"})
-		return
+	var items []gin.H
+	var more bool
+	for {
+		var err error
+		items, more, err = readPriceExportPage(db, &page, limit)
+		if err != nil {
+			c.JSON(503, gin.H{"error": "price source unavailable or requires repair"})
+			return
+		}
+		if len(items) > 0 || more || !advancePriceExportPhase(&page) {
+			break
+		}
+	}
+	if items == nil {
+		items = []gin.H{}
 	}
 	pageJSON, err := common.Marshal(items)
 	if err != nil {
@@ -176,7 +187,7 @@ func (s *Server) PriceVersions(c *gin.Context) {
 		return
 	}
 	next := ""
-	if more || advancePriceExportPhase(&page) {
+	if more || (len(items) > 0 && advancePriceExportPhase(&page)) {
 		next = s.signPriceCursor(page)
 	}
 	c.JSON(200, gin.H{

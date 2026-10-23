@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,6 +15,8 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -171,4 +174,52 @@ func TestOpsExportWalletRangeRejectsTamperedBoundaries(t *testing.T) {
 	assert.Len(t, last["items"], 2)
 	assert.Empty(t, call("?after=3&through=3", 200)["items"])
 	call("?after=0&through=0", 400)
+}
+
+func TestOpsExportFinanceRangeAcrossDatabases(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dsn  string
+		open func(string) gorm.Dialector
+	}{
+		{"sqlite", "file:finance-range-dialects?mode=memory&cache=shared", func(dsn string) gorm.Dialector { return sqlite.Open(dsn) }},
+		{"mysql", os.Getenv("AGENCY_HUB_TEST_MYSQL_DSN"), func(dsn string) gorm.Dialector { return mysql.Open(dsn) }},
+		{"postgres", os.Getenv("AGENCY_HUB_TEST_POSTGRES_DSN"), func(dsn string) gorm.Dialector {
+			return postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.dsn == "" || tc.name != "sqlite" && os.Getenv("AGENCY_HUB_RUN_EXTERNAL_DB_TESTS") != "1" {
+				t.Skip("disposable external database is not configured")
+			}
+			db, err := gorm.Open(tc.open(tc.dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+			require.NoError(t, err)
+			pool, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = pool.Close() })
+			require.NoError(t, db.AutoMigrate(&model.AgencyCommissionLedger{}))
+			// The CI service database is disposable and contains only this test's rows.
+			require.NoError(t, db.Create(&model.AgencyCommissionLedger{ID: 71, EventID: "range-71", ComponentID: "model", EntryType: "earned", AgencyID: 7, CurrencyCode: "CNY"}).Error)
+			require.NoError(t, db.Create(&model.AgencyCommissionLedger{ID: 73, EventID: "range-73", ComponentID: "model", EntryType: "earned", AgencyID: 7, CurrencyCode: "CNY"}).Error)
+			s := &Server{DB: db, GatewayID: "dialect-gateway"}
+			call := func(query string) map[string]any {
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodGet, "/?"+query, nil)
+				c.Params = gin.Params{{Key: "domain", Value: "commission-history"}, {Key: "resource", Value: "ledgerEntries"}}
+				s.FinanceRange(c)
+				require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+				var payload map[string]any
+				require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+				return payload
+			}
+			first := call("page_size=1")
+			assert.Equal(t, "73", first["through"])
+			assert.Equal(t, "71", first["nextAfter"])
+			assert.Equal(t, true, first["hasMore"])
+			last := call("page_size=1&after=71&through=73")
+			assert.Equal(t, false, last["hasMore"])
+			assert.Equal(t, "73", last["items"].([]any)[0].(map[string]any)["externalEntryId"])
+		})
+	}
 }

@@ -75,6 +75,7 @@ func Register(group *gin.RouterGroup) {
 	group.GET("/debt-history", func(c *gin.Context) { Default.DebtHistory(c) })
 	group.GET("/commission-history", func(c *gin.Context) { Default.CommissionHistory(c) })
 	group.GET("/withdrawals", func(c *gin.Context) { Default.Withdrawals(c) })
+	group.GET("/finance-ranges/:domain/:resource", func(c *gin.Context) { Default.FinanceRange(c) })
 	group.GET("/audit-history", func(c *gin.Context) { Default.AuditHistory(c) })
 	group.GET("/capabilities", func(c *gin.Context) { Default.Capabilities(c) })
 	group.GET("/writer-fence", func(c *gin.Context) { Default.WriterFence(c) })

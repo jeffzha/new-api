@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -86,4 +87,88 @@ func TestOpsExportFinanceHistoryRejectsNegativeCursorBoundary(t *testing.T) {
 		_, err := s.parseFinanceHistoryCursor(s.signFinanceHistoryCursor(page), "withdrawals", 3)
 		require.Error(t, err)
 	}
+}
+
+func TestOpsExportFinanceRangeResumesAtFixedBoundary(t *testing.T) {
+	previous := Default
+	t.Cleanup(func() { Default = previous })
+	db, err := gorm.Open(sqlite.Open("file:finance-range-http?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	require.NoError(t, err)
+	pool, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pool.Close() })
+	require.NoError(t, db.AutoMigrate(&model.AgencyCommissionLedger{}))
+	token := strings.Repeat("finance-range-", 4)
+	Default = &Server{DB: db, GatewayID: "finance-g1", TokenHash: sha256.Sum256([]byte(token))}
+	for id := int64(1); id <= 3; id++ {
+		require.NoError(t, db.Create(&model.AgencyCommissionLedger{ID: id, EventID: "event-" + strconv.FormatInt(id, 10), ComponentID: "spread", EntryType: "earned", AgencyID: 4, CurrencyCode: "CNY"}).Error)
+	}
+	router := gin.New()
+	Register(router.Group("/api/ops-export/v1"))
+	call := func(path, auth string, status int) map[string]any {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", auth)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.Equal(t, status, w.Code, w.Body.String())
+		var payload map[string]any
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &payload))
+		return payload
+	}
+	base := "/api/ops-export/v1/finance-ranges/commission-history/ledgerEntries"
+	call(base, "Bearer wrong", 401)
+	call("/api/ops-export/v1/finance-ranges/debt-history/repayments", "Bearer "+token, 400)
+	first := call(base+"?page_size=1", "Bearer "+token, 200)
+	assert.Equal(t, "3", first["through"])
+	assert.Equal(t, "1", first["nextAfter"])
+	assert.Equal(t, true, first["hasMore"])
+	require.NoError(t, db.Create(&model.AgencyCommissionLedger{ID: 4, EventID: "new-event", ComponentID: "spread", EntryType: "earned", AgencyID: 4, CurrencyCode: "CNY"}).Error)
+	second := call(base+"?page_size=2&after=1&through=3", "Bearer "+token, 200)
+	assert.Equal(t, "3", second["through"])
+	assert.Equal(t, false, second["hasMore"])
+	items := second["items"].([]any)
+	require.Len(t, items, 2)
+	assert.Equal(t, "2", items[0].(map[string]any)["externalEntryId"])
+	assert.Equal(t, "3", items[1].(map[string]any)["externalEntryId"])
+	for _, suffix := range []string{"?after=1", "?through=3&after=4", "?through=-1", "?through=3&page_size=201", "?through=3&bad=1"} {
+		call(base+suffix, "Bearer "+token, 400)
+	}
+}
+
+func TestOpsExportWalletRangeRejectsTamperedBoundaries(t *testing.T) {
+	previous := Default
+	t.Cleanup(func() { Default = previous })
+	db, err := gorm.Open(sqlite.Open("file:wallet-range-http?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	require.NoError(t, err)
+	pool, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pool.Close() })
+	require.NoError(t, db.AutoMigrate(&model.AgencyFundingLedger{}))
+	token := strings.Repeat("wallet-range-", 4)
+	Default = &Server{DB: db, GatewayID: "finance-g1", TokenHash: sha256.Sum256([]byte(token))}
+	for id := int64(1); id <= 3; id++ {
+		require.NoError(t, db.Create(&model.AgencyFundingLedger{ID: id, OperationID: "op-" + strconv.FormatInt(id, 10), EntryNo: int(id), UserID: 9, SourceKind: "topup"}).Error)
+	}
+	router := gin.New()
+	Register(router.Group("/api/ops-export/v1"))
+	call := func(query string, status int) map[string]any {
+		req := httptest.NewRequest(http.MethodGet, "/api/ops-export/v1/finance-ranges/wallet-history/ledgerEntries"+query, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.Equal(t, status, w.Code, w.Body.String())
+		var payload map[string]any
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &payload))
+		return payload
+	}
+	first := call("?page_size=1", 200)
+	assert.Equal(t, "3", first["through"])
+	assert.Equal(t, "1", first["nextAfter"])
+	assert.Equal(t, false, first["consistentSnapshot"])
+	require.NoError(t, db.Create(&model.AgencyFundingLedger{ID: 4, OperationID: "new", EntryNo: 4, UserID: 9, SourceKind: "topup"}).Error)
+	last := call("?after=1&through=3&page_size=2", 200)
+	assert.Equal(t, false, last["hasMore"])
+	assert.Len(t, last["items"], 2)
+	assert.Empty(t, call("?after=3&through=3", 200)["items"])
+	call("?after=0&through=0", 400)
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"strconv"
 	"strings"
@@ -143,4 +144,106 @@ func (s *Server) Distributors(c *gin.Context) {
 		}
 	}
 	c.JSON(200, gin.H{"schemaVersion": 1, "gatewayId": s.GatewayID, "supported": true, "snapshotId": snapshot, "items": items, "customers": customers, "nextCursor": next})
+}
+
+// BindingHistory is a bounded reconciliation feed, not an atomic ownership
+// snapshot. A later pass must compare mutable end times and active pointers.
+func (s *Server) BindingHistory(c *gin.Context) {
+	for key, values := range c.Request.URL.Query() {
+		if (key != "after" && key != "through" && key != "page_size") || len(values) != 1 {
+			c.JSON(400, gin.H{"error": "invalid range"})
+			return
+		}
+	}
+	parseID := func(key string) (int64, bool, bool) {
+		raw, present := c.GetQuery(key)
+		if !present {
+			return 0, false, true
+		}
+		value, err := strconv.ParseInt(raw, 10, 64)
+		return value, true, err == nil && value >= 0 && strconv.FormatInt(value, 10) == raw
+	}
+	after, _, validAfter := parseID("after")
+	through, bounded, validThrough := parseID("through")
+	limit := 50
+	if raw, present := c.GetQuery("page_size"); present {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 50 {
+			c.JSON(400, gin.H{"error": "invalid page size"})
+			return
+		}
+		limit = value
+	}
+	if !validAfter || !validThrough || bounded && (through == 0 || after > through) || !bounded && after != 0 {
+		c.JSON(400, gin.H{"error": "invalid range boundary"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)
+	defer cancel()
+	db := s.DB.WithContext(ctx)
+	if !db.Migrator().HasTable(&model.AgencyUserBinding{}) || !db.Migrator().HasTable(&model.AgencyActiveUserBinding{}) {
+		c.JSON(501, gin.H{"error": "binding history unavailable"})
+		return
+	}
+	if !bounded {
+		if err := db.Model(&model.AgencyUserBinding{}).Select("COALESCE(MAX(id),0)").Scan(&through).Error; err != nil {
+			c.JSON(503, gin.H{"error": "binding history unavailable"})
+			return
+		}
+	}
+	var rows []model.AgencyUserBinding
+	if err := db.Select("id", "user_id", "agency_id", "revision", "effective_at_ms", "ended_at_ms").
+		Where("id > ? AND id <= ?", after, through).Order("id ASC").Limit(limit + 1).Find(&rows).Error; err != nil {
+		c.JSON(503, gin.H{"error": "binding history unavailable"})
+		return
+	}
+	more := len(rows) > limit
+	if more {
+		rows = rows[:limit]
+	}
+	users := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		users = append(users, row.UserID)
+	}
+	active := map[int64]model.AgencyActiveUserBinding{}
+	if len(users) > 0 {
+		var pointers []model.AgencyActiveUserBinding
+		if err := db.Select("user_id", "binding_id", "revision", "agency_id").Where("user_id IN ?", users).Find(&pointers).Error; err != nil {
+			c.JSON(503, gin.H{"error": "binding history unavailable"})
+			return
+		}
+		for _, pointer := range pointers {
+			active[pointer.UserID] = pointer
+		}
+	}
+	items := make([]gin.H, 0, len(rows))
+	for _, row := range rows {
+		var ended any
+		if row.EndedAtMS != nil {
+			ended = strconv.FormatInt(*row.EndedAtMS, 10)
+		}
+		var current any
+		if pointer, ok := active[row.UserID]; ok {
+			current = gin.H{"bindingId": strconv.FormatInt(pointer.BindingID, 10),
+				"agencyExternalId": strconv.FormatInt(pointer.AgencyID, 10), "revision": pointer.Revision}
+		}
+		items = append(items, gin.H{"externalBindingId": strconv.FormatInt(row.ID, 10),
+			"externalUserId":   strconv.FormatInt(row.UserID, 10),
+			"agencyExternalId": strconv.FormatInt(row.AgencyID, 10), "revision": row.Revision,
+			"effectiveAtMs": strconv.FormatInt(row.EffectiveAtMS, 10), "endedAtMs": ended,
+			"current": current})
+	}
+	encoded, err := common.Marshal(items)
+	if err != nil {
+		c.JSON(503, gin.H{"error": "binding history unavailable"})
+		return
+	}
+	next := ""
+	if more {
+		next = strconv.FormatInt(rows[len(rows)-1].ID, 10)
+	}
+	digest := sha256.Sum256(encoded)
+	c.JSON(200, gin.H{"schemaVersion": 1, "gatewayId": s.GatewayID, "through": strconv.FormatInt(through, 10),
+		"after": strconv.FormatInt(after, 10), "nextAfter": next, "hasMore": more,
+		"consistentSnapshot": false, "items": items, "pageHash": hex.EncodeToString(digest[:])})
 }

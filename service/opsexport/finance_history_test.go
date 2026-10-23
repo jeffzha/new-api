@@ -223,3 +223,50 @@ func TestOpsExportFinanceRangeAcrossDatabases(t *testing.T) {
 		})
 	}
 }
+
+func TestOpsExportBindingHistoryAcrossDatabases(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dsn  string
+		open func(string) gorm.Dialector
+	}{
+		{"sqlite", "file:binding-history-dialects?mode=memory&cache=shared", func(dsn string) gorm.Dialector { return sqlite.Open(dsn) }},
+		{"mysql", os.Getenv("AGENCY_HUB_TEST_MYSQL_DSN"), func(dsn string) gorm.Dialector { return mysql.Open(dsn) }},
+		{"postgres", os.Getenv("AGENCY_HUB_TEST_POSTGRES_DSN"), func(dsn string) gorm.Dialector {
+			return postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.dsn == "" || tc.name != "sqlite" && os.Getenv("AGENCY_HUB_RUN_EXTERNAL_DB_TESTS") != "1" {
+				t.Skip("disposable external database is not configured")
+			}
+			db, err := gorm.Open(tc.open(tc.dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+			require.NoError(t, err)
+			pool, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = pool.Close() })
+			require.NoError(t, db.AutoMigrate(&model.AgencyUserBinding{}, &model.AgencyActiveUserBinding{}))
+			require.NoError(t, db.Create(&model.AgencyUserBinding{ID: 71, UserID: 7, AgencyID: 10, Revision: 1, EffectiveAtMS: 1000}).Error)
+			require.NoError(t, db.Create(&model.AgencyUserBinding{ID: 73, UserID: 8, AgencyID: 20, Revision: 1, EffectiveAtMS: 2000}).Error)
+			require.NoError(t, db.Create(&model.AgencyActiveUserBinding{UserID: 7, BindingID: 71, AgencyID: 10, Revision: 1}).Error)
+			s := &Server{DB: db, GatewayID: "dialect-gateway"}
+			call := func(query string) map[string]any {
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodGet, "/?"+query, nil)
+				s.BindingHistory(c)
+				require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+				var payload map[string]any
+				require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+				return payload
+			}
+			first := call("page_size=1")
+			assert.Equal(t, "73", first["through"])
+			assert.Equal(t, "71", first["nextAfter"])
+			assert.Equal(t, "71", first["items"].([]any)[0].(map[string]any)["current"].(map[string]any)["bindingId"])
+			last := call("page_size=1&after=71&through=73")
+			assert.Equal(t, false, last["hasMore"])
+			assert.Equal(t, "73", last["items"].([]any)[0].(map[string]any)["externalBindingId"])
+		})
+	}
+}

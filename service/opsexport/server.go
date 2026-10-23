@@ -69,6 +69,7 @@ func Register(group *gin.RouterGroup) {
 	group.GET("/catalog", func(c *gin.Context) { Default.Catalog(c) })
 	group.GET("/inventory", func(c *gin.Context) { Default.Inventory(c) })
 	group.GET("/distributors", func(c *gin.Context) { Default.Distributors(c) })
+	group.GET("/binding-history", func(c *gin.Context) { Default.BindingHistory(c) })
 	group.GET("/agency-identities", func(c *gin.Context) { Default.AgencyIdentityMetadata(c) })
 	group.GET("/price-versions", func(c *gin.Context) { Default.PriceVersions(c) })
 	group.GET("/wallet-history", func(c *gin.Context) { Default.WalletHistory(c) })

@@ -269,6 +269,57 @@ func TestOpsExportDistributorDirectory(t *testing.T) {
 	call("?cursor="+expired, token, 400)
 }
 
+func TestOpsExportBindingHistory(t *testing.T) {
+	previous := Default
+	t.Cleanup(func() { Default = previous })
+	db, err := gorm.Open(sqlite.Open("file:binding-history-http?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	require.NoError(t, err)
+	pool, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pool.Close() })
+	require.NoError(t, db.AutoMigrate(&model.AgencyUserBinding{}, &model.AgencyActiveUserBinding{}))
+	token := strings.Repeat("binding-history-", 4)
+	Default = &Server{DB: db, GatewayID: "g1", TokenHash: sha256.Sum256([]byte(token))}
+	router := gin.New()
+	Register(router.Group("/api/ops-export/v1"))
+	call := func(query, credential string, status int) map[string]any {
+		req := httptest.NewRequest(http.MethodGet, "/api/ops-export/v1/binding-history"+query, nil)
+		req.Header.Set("Authorization", "Bearer "+credential)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		require.Equal(t, status, response.Code, response.Body.String())
+		assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+		var result map[string]any
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		return result
+	}
+	call("", "management-token", 401)
+	call("?page_size=51", token, 400)
+	call("?after=1", token, 400)
+	call("?unknown=1", token, 400)
+	ended := int64(2000)
+	require.NoError(t, db.Create(&model.AgencyUserBinding{ID: 1, UserID: 7, AgencyID: 10, Revision: 1, EffectiveAtMS: 1000, EndedAtMS: &ended}).Error)
+	require.NoError(t, db.Create(&model.AgencyUserBinding{ID: 2, UserID: 7, AgencyID: 20, Revision: 2, EffectiveAtMS: 2000}).Error)
+	require.NoError(t, db.Create(&model.AgencyActiveUserBinding{UserID: 7, BindingID: 2, AgencyID: 20, Revision: 2}).Error)
+	first := call("?page_size=1", token, 200)
+	assert.Equal(t, false, first["consistentSnapshot"])
+	assert.Equal(t, "2", first["through"])
+	assert.Equal(t, "1", first["nextAfter"])
+	row := first["items"].([]any)[0].(map[string]any)
+	assert.Equal(t, "2000", row["endedAtMs"])
+	assert.Equal(t, "2", row["current"].(map[string]any)["bindingId"])
+	call("?after=2&through=1", token, 400)
+	require.NoError(t, db.Create(&model.AgencyUserBinding{ID: 3, UserID: 8, AgencyID: 30, Revision: 1, EffectiveAtMS: 3000}).Error)
+	second := call("?after=1&through=2&page_size=1", token, 200)
+	assert.Equal(t, "2", second["items"].([]any)[0].(map[string]any)["externalBindingId"])
+	assert.Empty(t, second["nextAfter"])
+	assert.Equal(t, "2", second["through"])
+	assert.Len(t, second["pageHash"].(string), 64)
+	next := call("", token, 200)
+	assert.Equal(t, "3", next["through"])
+	assert.Len(t, next["items"], 3)
+}
+
 func TestOpsExportPriceVersions(t *testing.T) {
 	previous := Default
 	t.Cleanup(func() { Default = previous })

@@ -149,5 +149,5 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - name: Verify finance export on all three databases
-        run: go test ./service/opsexport -run '^TestOpsExportFinanceRangeAcrossDatabases$' -count=1 -v
+      - name: Verify Ops exports on all three databases
+        run: go test ./service/opsexport -run '^TestOpsExport(FinanceRange|BindingHistory)AcrossDatabases$' -count=1 -v

@@ -11,8 +11,10 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	seedancepricing "github.com/QuantumNous/new-api/setting/seedance_video_pricing"
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -344,4 +346,36 @@ func TestOpenAISeedancePerRequestSettlementDoesNotQueryUsage(t *testing.T) {
 	require.True(t, handled)
 	assert.Nil(t, clamp)
 	assert.Equal(t, 2300, quota)
+}
+
+func TestOpenAISeedanceMiniEstimatesMillionTokenPriceForVideoInputs(t *testing.T) {
+	oldQuotaPerUnit, oldRate := common.QuotaPerUnit, operation_setting.USDExchangeRate
+	common.QuotaPerUnit, operation_setting.USDExchangeRate = 500_000, 7.3
+	t.Cleanup(func() { common.QuotaPerUnit, operation_setting.USDExchangeRate = oldQuotaPerUnit, oldRate })
+
+	for _, tc := range []struct {
+		name, content, price string
+	}{
+		{name: "without video", content: `[{"type":"text","text":"A blue bird"}]`, price: "23"},
+		{name: "with video", content: `[{"type":"text","text":"A blue bird"},{"type":"video_url","video_url":{"url":"https://example.com/input.mp4"}}]`, price: "14"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			body := fmt.Sprintf(`{"model":"doubao-seedance-2.0-mini","content":%s,"seconds":"5","resolution":"480p"}`, tc.content)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			info := &relaycommon.RelayInfo{OriginModelName: seedancepricing.MiniSeedanceModel, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: seedancepricing.MiniSeedanceModel}}
+			require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(ctx, info))
+			info.PriceData.GroupRatioInfo.GroupRatio = 1
+			estimate, taskErr := (&TaskAdaptor{}).EstimateTaskBilling(ctx, info)
+			require.Nil(t, taskErr)
+			require.NotNil(t, estimate)
+			assert.Empty(t, estimate.Snapshot.BillingUnit)
+			assert.Equal(t, tc.price, estimate.Snapshot.UnitPricePerMillionTokens)
+			assert.Positive(t, estimate.Snapshot.EstimatedTokens)
+			assert.True(t, estimate.Snapshot.AsyncReconciliationRequired)
+			expected := decimal.NewFromInt(estimate.Snapshot.EstimatedTokens).Div(decimal.NewFromInt(1_000_000)).Mul(decimal.RequireFromString(tc.price)).Div(decimal.NewFromFloat(7.3)).Mul(decimal.NewFromInt(500_000))
+			assert.Equal(t, common.QuotaFromDecimal(expected), estimate.PriceData.Quota)
+		})
+	}
 }

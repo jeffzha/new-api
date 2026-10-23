@@ -50,10 +50,6 @@ func getProviderPricing(modelName string) *ProviderPricing {
 	tiers := make([]VideoTokenPricingTier, 0, len(resolutions))
 	getPrice := seedancepricing.GetUnitPriceCNY
 	kind, unit := providerPricingKindVideoTokenMatrix, "1M_video_tokens"
-	if seedancepricing.IsPerRequest(priceModel) {
-		getPrice = seedancepricing.GetRequestPriceCNY
-		kind, unit = providerPricingKindVideoRequestMatrix, "request"
-	}
 	for _, resolution := range resolutions {
 		withoutVideo, ok := getPrice(
 			priceModel,

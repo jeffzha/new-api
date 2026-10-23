@@ -92,8 +92,8 @@ var seedanceVideoPricing = Setting{
 	RequestPricesCNY: DefaultRequestPricesCNY(),
 }
 
-// Request prices have a separate option so legacy token rates are never
-// reinterpreted as per-task prices during an upgrade.
+// Keep the existing option and its values across upgrades. New Mini tasks
+// interpret these prices per million tokens; old task snapshots retain their unit.
 func DefaultRequestPricesCNY() map[string]map[string]float64 {
 	return map[string]map[string]float64{
 		MiniSeedanceModel: {WithoutVideoKey: 23, WithVideoKey: 14},
@@ -103,15 +103,15 @@ func DefaultRequestPricesCNY() map[string]map[string]float64 {
 func ValidateRequestPricesCNYJSON(raw string) error {
 	var prices map[string]map[string]float64
 	if err := common.UnmarshalJsonStr(raw, &prices); err != nil {
-		return fmt.Errorf("parse Seedance per-request CNY prices: %w", err)
+		return fmt.Errorf("parse Seedance Mini CNY prices: %w", err)
 	}
 	if len(prices) != 1 || len(prices[MiniSeedanceModel]) != 2 {
-		return fmt.Errorf("per-request prices must configure only %s with without_video and with_video", MiniSeedanceModel)
+		return fmt.Errorf("Mini prices must configure only %s with without_video and with_video", MiniSeedanceModel)
 	}
 	for _, key := range []string{WithoutVideoKey, WithVideoKey} {
 		price := prices[MiniSeedanceModel][key]
 		if price <= 0 || price > MaxPriceCNYPerMillion || math.IsNaN(price) || math.IsInf(price, 0) {
-			return fmt.Errorf("per-request price %s must be positive, finite, and no greater than %.0f", key, MaxPriceCNYPerMillion)
+			return fmt.Errorf("Mini price %s must be positive, finite, and no greater than %.0f", key, MaxPriceCNYPerMillion)
 		}
 	}
 	return nil
@@ -147,8 +147,8 @@ func ValidatePricesCNY(prices PricesCNY) error {
 	}
 	for modelName, resolutions := range requiredResolutions {
 		modelPrices, ok := prices[modelName]
-		// Accept an optional legacy Mini token matrix without using it for new tasks.
-		if IsPerRequest(modelName) && !ok {
+		// Mini uses the existing request-price option as its token-rate source.
+		if modelName == MiniSeedanceModel {
 			continue
 		}
 		if !ok {
@@ -185,7 +185,7 @@ func RebuildPriceIndex() error {
 	prices := clonePrices(seedanceVideoPricing.PricesCNY)
 	defaults := clonePrices(defaultPricesCNY)
 	for modelName := range requiredResolutions {
-		if IsPerRequest(modelName) {
+		if modelName == MiniSeedanceModel {
 			continue
 		}
 		if _, ok := prices[modelName]; !ok {
@@ -198,7 +198,7 @@ func RebuildPriceIndex() error {
 	}
 	next := &priceIndex{prices: make(map[string]decimal.Decimal, 8)}
 	for modelName, resolutionPrices := range seedanceVideoPricing.PricesCNY {
-		if IsPerRequest(modelName) {
+		if modelName == MiniSeedanceModel {
 			continue
 		}
 		for resolution, inputPrices := range resolutionPrices {
@@ -222,12 +222,8 @@ func RebuildPriceIndex() error {
 	return nil
 }
 
-func IsPerRequest(modelName string) bool {
-	return strings.TrimSpace(modelName) == MiniSeedanceModel
-}
-
 func GetRequestPriceCNY(modelName, resolution string, hasVideo bool) (decimal.Decimal, bool) {
-	if !IsPerRequest(modelName) {
+	if strings.TrimSpace(modelName) != MiniSeedanceModel {
 		return decimal.Zero, false
 	}
 	if _, ok := NormalizeResolution(modelName, resolution); !ok {
@@ -251,9 +247,6 @@ func SupportsModel(modelName string) bool {
 }
 
 func GetUnitPriceCNY(modelName string, resolution string, hasVideo bool) (decimal.Decimal, bool) {
-	if IsPerRequest(modelName) {
-		return decimal.Zero, false
-	}
 	modelName = strings.TrimSpace(modelName)
 	resolution, ok := NormalizeResolution(modelName, resolution)
 	if !ok {
@@ -266,6 +259,10 @@ func GetUnitPriceCNY(modelName string, resolution string, hasVideo bool) (decima
 	index := currentPriceIndex.Load()
 	if index == nil {
 		return decimal.Zero, false
+	}
+	if modelName == MiniSeedanceModel {
+		price, found := index.requestPrices[inputType]
+		return price, found
 	}
 	price, ok := index.prices[priceIndexKey(modelName, resolution, inputType)]
 	return price, ok

@@ -337,6 +337,22 @@ func TestAgencyTaskFixedChargeKeepsIntermediateRounding(t *testing.T) {
 	assert.Equal(t, int64(3), event.TheoreticalCommissionQuota)
 }
 
+func TestAgencyTaskChargedQuotaUsesFrozenStandardQuotaForTieredTask(t *testing.T) {
+	pricing := agencycontract.PricingSnapshot{
+		SalesBPS: 3000, SettlementBPS: 3000, CommissionEligible: true,
+		Hierarchy: []agencycontract.PricingTierNode{
+			{AgencyID: 1, Depth: 0, CostBPS: 2000},
+			{AgencyID: 2, Depth: 1, CostBPS: 2500, SalesBPS: common.GetPointer(3000)},
+		},
+	}
+	event, err := agencyTaskChargedQuotaEvent(&TaskBillingContext{AgencyStandardQuota: 869863}, pricing, 260959)
+	require.NoError(t, err)
+	assert.Equal(t, int64(869863), event.StandardQuota)
+	assert.Equal(t, int64(260959), event.ChargedTotalQuota)
+	assert.Equal(t, int64(260959), event.SettlementCostQuota)
+	assert.Zero(t, event.TheoreticalCommissionQuota)
+}
+
 func TestAgencyTaskMissingUsageRemainsUnfinalized(t *testing.T) {
 	db, task, user, token := agencySubmittedTaskFixture(t, AgencyTaskChargeBasis{Version: AgencyTaskChargeBasisVersion,
 		Mode: "tokens", QuotaPerUnit: 10, ModelRatio: 1.25, OtherMultiplier: 2}, 100)

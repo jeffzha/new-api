@@ -88,7 +88,7 @@ export const meta = {
     en: "LocoPal Seedance and MiniMax H3 video generation",
     zh: "LocoPal Seedance 与 MiniMax H3 视频生成",
   },
-  version: "1.0.3",
+  version: "1.0.4",
   author: { name: "NexusReach" },
   models: [SEEDANCE_MODEL, H3_MODEL],
   fetchMode: "per_task",
@@ -182,9 +182,39 @@ function h3Resolution(request) {
   throw new Error(H3_MODEL + " resolution must be 768P or 2K");
 }
 
+function h3MediaURL(value, type) {
+  if (typeof value === "string") return trimmed(value);
+  const item = objectOf(value);
+  return firstString([item.url, objectOf(item[type]).url]);
+}
+
+function appendH3Media(content, seen, type, role, value) {
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  for (const entry of values) {
+    const url = h3MediaURL(entry, type);
+    if (!url) continue;
+    const key = type + "|" + role + "|" + url;
+    if (seen[key]) continue;
+    const item = { type: type, role: role };
+    item[type] = { url: url };
+    content.push(item);
+    seen[key] = true;
+  }
+}
+
 function h3Content(request) {
   const metadata = objectOf(request.metadata);
-  return Array.isArray(metadata.content) ? metadata.content : Array.isArray(request.content) ? request.content : [];
+  const explicit = Array.isArray(metadata.content) ? metadata.content : Array.isArray(request.content) ? request.content : [];
+  const content = explicit.slice();
+  const seen = {};
+  for (const item of content) {
+    if (!item || typeof item !== "object") continue;
+    const url = h3MediaURL(item, item.type);
+    if (url) seen[item.type + "|" + trimmed(item.role) + "|" + url] = true;
+  }
+  appendH3Media(content, seen, "image_url", "reference_image", metadata.reference_image);
+  appendH3Media(content, seen, "video_url", "reference_video", metadata.reference_video);
+  return content;
 }
 
 function mediaCount(request, type) {
@@ -201,12 +231,6 @@ function mediaCount(request, type) {
     if (trimmed(request.image) || trimmed(request.input_reference)) count += 1;
     if (metadata.first_frame_image) count += 1;
     if (metadata.last_frame_image) count += 1;
-    const references = Array.isArray(metadata.reference_image) ? metadata.reference_image : metadata.reference_image ? [metadata.reference_image] : [];
-    count += references.length;
-  }
-  if (type === "video_url") {
-    const references = Array.isArray(metadata.reference_video) ? metadata.reference_video : metadata.reference_video ? [metadata.reference_video] : [];
-    count += references.length;
   }
   return count;
 }
@@ -234,7 +258,9 @@ function h3Request(request, model) {
   if (ratio === "adaptive" && inputImages === 0 && !hasVideo) throw new Error(H3_MODEL + " ratio adaptive requires an image or video input");
   metadata.resolution = resolution;
   metadata.ratio = ratio;
-  if (content.length) metadata.content = content;
+  delete metadata.content;
+  delete metadata.reference_image;
+  delete metadata.reference_video;
   const body = Object.assign({}, request, {
     model: model,
     prompt: prompt,
@@ -244,6 +270,7 @@ function h3Request(request, model) {
     ratio: ratio,
     metadata: metadata,
   });
+  if (content.length) body.content = content;
   return {
     body: body,
     seconds: seconds,
@@ -387,6 +414,13 @@ function numberInRange(value, minimum, maximum) {
   return Number.isFinite(number) && number >= minimum && number <= maximum ? number : null;
 }
 
+function firstDefined(values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== "") return value;
+  }
+  return undefined;
+}
+
 export function extractUsageOnComplete(ctx, result, body) {
   if (String(result && result.status).toUpperCase() !== "SUCCESS") return null;
   const model = upstreamModel(ctx);
@@ -394,10 +428,10 @@ export function extractUsageOnComplete(ctx, result, body) {
   const usage = objectOf(envelope.usage);
   if (isH3Model(model)) {
     const facts = {};
-    const seconds = numberInRange(usage.output_seconds || usage.seconds || envelope.duration, H3_MIN_SECONDS, H3_MAX_SECONDS);
-    const images = numberInRange(usage.input_image_count || usage.input_images, 0, H3_MAX_IMAGES);
-    const inputSeconds = numberInRange(usage.input_seconds || usage.input_video_seconds, 0, H3_MAX_INPUT_VIDEO_SECONDS);
-    const resolution = trimmed(envelope.resolution || usage.resolution).toUpperCase();
+    const seconds = numberInRange(firstDefined([usage.output_seconds, usage.seconds, envelope.duration]), H3_MIN_SECONDS, H3_MAX_SECONDS);
+    const images = numberInRange(firstDefined([usage.input_image_count, usage.input_images]), 0, H3_MAX_IMAGES);
+    const inputSeconds = numberInRange(firstDefined([usage.input_seconds, usage.input_video_seconds]), 0, H3_MAX_INPUT_VIDEO_SECONDS);
+    const resolution = trimmed(firstDefined([envelope.resolution, usage.resolution])).toUpperCase();
     if (seconds !== null) facts.seconds = seconds;
     if (images !== null && Number.isInteger(images)) facts.input_images = images;
     if (inputSeconds !== null) facts.input_video_seconds = inputSeconds;

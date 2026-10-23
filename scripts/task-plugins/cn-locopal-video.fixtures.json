@@ -270,6 +270,49 @@
       }
     },
     {
+      "name": "h3 normalizes separate reference media for LocoPal",
+      "hook": "buildSubmitRequest",
+      "args": [
+        {
+          "model": "MiniMax-H3",
+          "upstreamModel": "h3-video",
+          "baseUrl": "https://example.com",
+          "apiKey": "fixture-only",
+          "requestBody": {
+            "prompt": "Follow the reference motion",
+            "seconds": 8,
+            "resolution": "768P",
+            "metadata": {
+              "reference_image": "https://example.com/character.png",
+              "reference_video": "https://example.com/motion.mp4"
+            }
+          }
+        }
+      ],
+      "expected": {
+        "url": "https://example.com/v1/videos",
+        "method": "POST",
+        "headers": { "Content-Type": "application/json", "Accept": "application/json", "Authorization": "Bearer fixture-only" },
+        "body": {
+          "prompt": "Follow the reference motion",
+          "seconds": 8,
+          "resolution": "768P",
+          "metadata": {
+            "resolution": "768P",
+            "ratio": "adaptive"
+          },
+          "model": "h3-video",
+          "duration": 8,
+          "ratio": "adaptive",
+          "content": [
+            { "type": "image_url", "role": "reference_image", "image_url": { "url": "https://example.com/character.png" } },
+            { "type": "video_url", "role": "reference_video", "video_url": { "url": "https://example.com/motion.mp4" } }
+          ]
+        },
+        "action": "image_to_video"
+      }
+    },
+    {
       "name": "h3 rejects non-operational display resolution",
       "hook": "extractUsage",
       "args": [
@@ -362,6 +405,30 @@
         "input_images": 2,
         "input_video_seconds": 3,
         "resolution": "2K"
+      }
+    },
+    {
+      "name": "h3 terminal usage preserves explicit zero input video seconds",
+      "hook": "extractUsageOnComplete",
+      "args": [
+        { "model": "MiniMax-H3", "upstreamModel": "h3-video" },
+        { "status": "SUCCESS" },
+        {
+          "status": "succeeded",
+          "resolution": "768P",
+          "duration": 8,
+          "usage": {
+            "output_seconds": 8,
+            "input_image_count": 1,
+            "input_video_seconds": 0
+          }
+        }
+      ],
+      "expected": {
+        "seconds": 8,
+        "input_images": 1,
+        "input_video_seconds": 0,
+        "resolution": "768P"
       }
     }
   ]

@@ -2,6 +2,14 @@ name: Ops finance export compatibility
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/seedance-cn-adapter
+    paths:
+      - .github/workflows/ops-finance-export-test.yml
+      - service/opsexport/finance_ranges.go
+      - service/opsexport/finance_history_test.go
+      - service/opsexport/server.go
 
 permissions:
   contents: read

@@ -146,6 +146,27 @@ func runOpsPolicyCustomerSnapshotAndReplay(t *testing.T, app *App) {
 	require.NoError(t, err)
 	assert.False(t, created)
 	assert.EqualValues(t, 4, revision)
+	// A legacy raw root cost must round-trip when current platform pricing
+	// overlays a different effective cost. Real attempts to change it still fail.
+	seedConfirmedPlatformPricing(t, app, agencycontract.PlatformModelPrice{
+		OriginModelName: "bridge-confirmed", PlatformCostBPS: 6000, AgencyCostBPS: 8000, DefaultSalesBPS: 10000})
+	snapshot, err = ReadOpsPriceSnapshot(app.db, agency.ID)
+	require.NoError(t, err)
+	revision, created, err = ApplyOpsAgencyPolicyAtSnapshot(app.db, agency.ID, snapshot.RawPolicy, overrides, nil, "ops-legacy-root-cost", snapshot.Fingerprint)
+	require.NoError(t, err)
+	assert.True(t, created)
+	assert.EqualValues(t, 5, revision)
+	snapshot, err = ReadOpsPriceSnapshot(app.db, agency.ID)
+	require.NoError(t, err)
+	cost := 7900
+	snapshot.RawPolicy.ModelOverrides = append([]agencycontract.ModelOverride(nil), snapshot.RawPolicy.ModelOverrides...)
+	for i := range snapshot.RawPolicy.ModelOverrides {
+		if snapshot.RawPolicy.ModelOverrides[i].OriginModelName == "bridge-confirmed" {
+			snapshot.RawPolicy.ModelOverrides[i].SettlementBPS = &cost
+		}
+	}
+	_, _, err = ApplyOpsAgencyPolicyAtSnapshot(app.db, agency.ID, snapshot.RawPolicy, overrides, nil, "ops-illegal-root-cost", snapshot.Fingerprint)
+	require.ErrorContains(t, err, "cost conflicts")
 }
 
 func TestCreateAgencyAndInvitePreview(t *testing.T) {

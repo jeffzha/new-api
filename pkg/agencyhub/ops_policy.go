@@ -183,9 +183,6 @@ func applyOpsAgencyPolicy(db *gorm.DB, agencyID int64, policy agencycontract.Pol
 			if err := model.AgencyLockForUpdate(tx).First(&parent, *target.ParentAgencyID).Error; err != nil {
 				return err
 			}
-			if err := validateChildPolicyTx(tx, parent.ID, policy); err != nil {
-				return err
-			}
 		}
 		var agency model.Agency
 		if err := model.AgencyLockForUpdate(tx).First(&agency, agencyID).Error; err != nil {
@@ -204,6 +201,11 @@ func applyOpsAgencyPolicy(db *gorm.DB, agencyID int64, policy agencycontract.Pol
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
+		if target.ParentAgencyID != nil {
+			if err := validateChildPolicyTx(tx, *target.ParentAgencyID, policy); err != nil {
+				return err
+			}
+		}
 		if expectedSnapshot != "" {
 			snapshot, err := ReadOpsPriceSnapshot(tx, agency.ID)
 			if err != nil {
@@ -212,6 +214,14 @@ func applyOpsAgencyPolicy(db *gorm.DB, agencyID int64, policy agencycontract.Pol
 			if snapshot.Fingerprint != expectedSnapshot {
 				return agencycontract.ErrPolicyRevision
 			}
+		}
+		var current model.AgencyPricePolicyVersion
+		if err := tx.Where("id = ? AND agency_id = ?", agency.CurrentPolicyVersionID, agency.ID).First(&current).Error; err != nil {
+			return err
+		}
+		var previousPolicy agencycontract.Policy
+		if err := common.UnmarshalJsonStr(current.PolicyJSON, &previousPolicy); err != nil {
+			return err
 		}
 		txApp := &App{db: tx, config: app.config}
 		effective, err := txApp.effectiveAgencyPolicy(agency, policy)
@@ -224,7 +234,11 @@ func applyOpsAgencyPolicy(db *gorm.DB, agencyID int64, policy agencycontract.Pol
 		for _, override := range effective.ModelOverrides {
 			requested, reqErr := agencycontract.Resolve(policy, override.OriginModelName)
 			applied, appErr := agencycontract.Resolve(effective, override.OriginModelName)
-			if reqErr != nil || appErr != nil || requested.SettlementBPS != applied.SettlementBPS {
+			stored, storedErr := agencycontract.Resolve(previousPolicy, override.OriginModelName)
+			// Legacy stored root costs can differ from the platform-owned
+			// effective cost. An unchanged raw field is not a cost override.
+			if reqErr != nil || appErr != nil || storedErr != nil ||
+				(requested.SettlementBPS != applied.SettlementBPS && requested.SettlementBPS != stored.SettlementBPS) {
 				return errors.New("TokenOps model cost conflicts with platform procurement policy")
 			}
 		}
@@ -256,8 +270,8 @@ func applyOpsAgencyPolicy(db *gorm.DB, agencyID int64, policy agencycontract.Pol
 				return err
 			}
 		}
-		var current model.AgencyPricePolicyVersion
-		if err := tx.Where("id = ? AND agency_id = ?", agency.CurrentPolicyVersionID, agency.ID).First(&current).Error; err != nil {
+		_, previousPolicies, previousPlatform, err := loadPricingBillingPathsTx(tx)
+		if err != nil {
 			return err
 		}
 		identity := &Identity{ActorType: "tokenops", ActorID: 0}
@@ -268,6 +282,7 @@ func applyOpsAgencyPolicy(db *gorm.DB, agencyID int64, policy agencycontract.Pol
 			return err
 		}
 		policy.Revision = agency.PriceRevision + 1
+		policy = preservePendingModelOverrides(policy, previousPolicy, previousPlatform)
 		encoded, err := common.Marshal(policy)
 		if err != nil {
 			return err
@@ -310,6 +325,9 @@ func applyOpsAgencyPolicy(db *gorm.DB, agencyID int64, policy agencycontract.Pol
 				Revision: policy.Revision, CreatedByType: "tokenops", CreatedByID: 0, CreatedAtMS: now, UpdatedAtMS: now}).Error; err != nil {
 				return err
 			}
+		}
+		if err := validatePricingBillingPathsTx(tx, previousPolicies, previousPlatform); err != nil {
+			return err
 		}
 		if err := recordAuditTx(tx, nil, identity, "pricing.tokenops.publish", "agency", strconv.FormatInt(agency.ID, 10),
 			"TokenOps command "+commandID, map[string]any{"revision": agency.PriceRevision},

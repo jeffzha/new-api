@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -32,6 +33,12 @@ func main() {
 	if err := run(); err != nil {
 		// Do not log database errors, DSNs, or payloads to the caller.
 		fmt.Fprintln(os.Stderr, "agency price bridge failed")
+		for _, prefix := range []string{"invalid agency pricing", "agency pricing revision conflict", "TokenOps ", "source price ", "customer ", "child ", "model ", "default ", "agency is disabled"} {
+			if strings.HasPrefix(err.Error(), prefix) {
+				fmt.Fprintln(os.Stderr, err.Error())
+				break
+			}
+		}
 		os.Exit(1)
 	}
 }

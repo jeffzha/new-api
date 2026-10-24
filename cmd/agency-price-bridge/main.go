@@ -32,6 +32,7 @@ type request struct {
 	AfterUserID      int64                                `json:"afterUserId"`
 	UserID           int64                                `json:"userId"`
 	BindingRevision  int64                                `json:"bindingRevision"`
+	Account          agencyhub.OpsPayoutAccount           `json:"account"`
 }
 
 func main() {
@@ -53,8 +54,8 @@ func run() error {
 	if err := common.DecodeJson(io.LimitReader(os.Stdin, 2<<20), &input); err != nil {
 		return err
 	}
-	many := input.Action == "read-many" || input.Action == "directory-read" || input.Action == "customers-read"
-	if (input.AgencyID <= 0 && !many) || (input.Action != "read" && input.Action != "read-many" && input.Action != "apply" && input.Action != "directory-read" && input.Action != "directory-apply" && input.Action != "customers-read" && input.Action != "customer-transfer") || len(input.Customers) > 1000 || len(input.Children) > 1000 {
+	many := input.Action == "read-many" || input.Action == "directory-read" || input.Action == "customers-read" || input.Action == "payout-read"
+	if (input.AgencyID <= 0 && !many) || (input.Action != "read" && input.Action != "read-many" && input.Action != "apply" && input.Action != "directory-read" && input.Action != "directory-apply" && input.Action != "customers-read" && input.Action != "customer-transfer" && input.Action != "payout-read" && input.Action != "payout-apply") || len(input.Customers) > 1000 || len(input.Children) > 1000 {
 		return fmt.Errorf("invalid bounded bridge request")
 	}
 	if input.Action == "read-many" && (len(input.AgencyIDs) < 1 || len(input.AgencyIDs) > 5) {
@@ -77,7 +78,15 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	var result any
-	if input.Action == "customers-read" {
+	if input.Action == "payout-read" {
+		err = model.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var e error
+			result, e = agencyhub.ReadOpsPayoutSnapshots(tx, input.AgencyIDs)
+			return e
+		}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	} else if input.Action == "payout-apply" {
+		result, err = agencyhub.ApplyOpsPayout(model.DB.WithContext(ctx), input.AgencyID, input.Account, input.Status, input.ExpectedSnapshot, input.CommandID)
+	} else if input.Action == "customers-read" {
 		result, err = agencyhub.ReadOpsCustomerBindings(model.DB.WithContext(ctx), input.AfterUserID, 100)
 	} else if input.Action == "customer-transfer" {
 		result, err = agencyhub.ApplyOpsCustomerTransfer(model.DB.WithContext(ctx), input.UserID,

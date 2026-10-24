@@ -168,6 +168,62 @@ func runOpsPolicyCustomerSnapshotAndReplay(t *testing.T, app *App) {
 	_, _, err = ApplyOpsAgencyPolicyAtSnapshot(app.db, agency.ID, snapshot.RawPolicy, overrides, nil, "ops-illegal-root-cost", snapshot.Fingerprint)
 	require.ErrorContains(t, err, "cost conflicts")
 	runOpsDirectorySnapshotAndReplay(t, app)
+	runOpsPayoutSnapshotAndReplay(t, app)
+}
+
+func runOpsPayoutSnapshotAndReplay(t *testing.T, app *App) {
+	t.Helper()
+	t.Setenv("AGENCY_PAYOUT_KEY", strings.Repeat("12", 32))
+	t.Setenv("AGENCY_PAYOUT_KEY_FILE", "")
+	policy := agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultChildCostBPS: 9000, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
+	agency, _, err := app.CreateAgency(1, "Payout sync", "payout-sync", policy)
+	require.NoError(t, err)
+	items, err := ReadOpsPayoutSnapshots(app.db, []int64{agency.ID})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, "absent", items[0].Status)
+	account := OpsPayoutAccount{AccountType: "bank", AccountName: "Northwind Ltd", AccountNo: "6222000012345678", BankName: "Example Bank"}
+	first, err := ApplyOpsPayout(app.db, agency.ID, account, "active", items[0].Fingerprint, "ops-payout-create")
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, first.Version)
+	assert.NotContains(t, first.Ciphertext, account.AccountNo)
+	replay, err := ApplyOpsPayout(app.db, agency.ID, account, "active", items[0].Fingerprint, "ops-payout-create")
+	require.NoError(t, err)
+	assert.Equal(t, first, replay)
+	_, err = ApplyOpsPayout(app.db, agency.ID, account, "active", items[0].Fingerprint, "ops-payout-stale")
+	require.ErrorContains(t, err, "revision conflict")
+	account.AccountNo = "6222000098765432"
+	_, err = ApplyOpsPayout(app.db, agency.ID, account, "active", items[0].Fingerprint, "ops-payout-create")
+	require.ErrorContains(t, err, "identity conflict")
+	second, err := ApplyOpsPayout(app.db, agency.ID, account, "active", first.Fingerprint, "ops-payout-replace")
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, second.Version)
+	plain, _, err := decryptPayoutAccount(second.Ciphertext, agency.ID, second.Version)
+	require.NoError(t, err)
+	assert.Equal(t, account.AccountNo, plain.AccountNo)
+	var old model.AgencyWithdrawalAccount
+	require.NoError(t, app.db.First(&old, first.AccountID).Error)
+	assert.Equal(t, "superseded", old.Status)
+	assert.Equal(t, first.Ciphertext, old.Ciphertext, "historical recipient is immutable")
+	disabled, err := ApplyOpsPayout(app.db, agency.ID, OpsPayoutAccount{}, "disabled", second.Fingerprint, "ops-payout-disable")
+	require.NoError(t, err)
+	assert.Equal(t, "disabled", disabled.Status)
+	assert.Equal(t, second.AccountID, disabled.AccountID)
+	assert.Equal(t, second.Ciphertext, disabled.Ciphertext)
+	_, err = ReadOpsPayoutSnapshots(app.db, []int64{agency.ID, agency.ID})
+	require.Error(t, err)
+	var audits []model.AgencyAuditLog
+	require.NoError(t, app.db.Where("action = ?", "withdrawal_account.tokenops").Find(&audits).Error)
+	for _, row := range audits {
+		assert.NotContains(t, row.AfterJSON, account.AccountNo)
+		assert.NotContains(t, row.AfterJSON, account.AccountName)
+	}
+	var receipts []model.AgencyIdempotencyRecord
+	require.NoError(t, app.db.Where("action = ?", "payout.apply").Find(&receipts).Error)
+	for _, row := range receipts {
+		assert.NotContains(t, row.ResponseJSON, account.AccountNo)
+		assert.NotContains(t, row.ResponseJSON, account.AccountName)
+	}
 }
 
 func runOpsDirectorySnapshotAndReplay(t *testing.T, app *App) {

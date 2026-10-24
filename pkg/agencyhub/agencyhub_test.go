@@ -126,6 +126,26 @@ func runOpsPolicyCustomerSnapshotAndReplay(t *testing.T, app *App) {
 	require.ErrorContains(t, err, "outside")
 	_, _, err = ApplyOpsAgencyPolicy(app.db, agency.ID, policy, overrides, nil, "ops-p1")
 	require.ErrorContains(t, err, "identity conflict")
+	snapshot, err := ReadOpsPriceSnapshot(app.db, agency.ID)
+	require.NoError(t, err)
+	overrides[0].UserID = 42
+	_, _, err = ApplyOpsAgencyPolicyAtSnapshot(app.db, agency.ID, policy, overrides, nil, "ops-stale", strings.Repeat("0", 64))
+	require.ErrorIs(t, err, agencycontract.ErrPolicyRevision)
+	// Customer-only edits do not bump agency.price_revision, but must still
+	// invalidate the source fingerprint before an Ops edit can be applied.
+	require.NoError(t, app.db.Model(&model.AgencyCustomerSalesOverride{}).Where("agency_id = ?", agency.ID).Update("sales_bps", 11000).Error)
+	_, _, err = ApplyOpsAgencyPolicyAtSnapshot(app.db, agency.ID, policy, overrides, nil, "ops-stale-customer", snapshot.Fingerprint)
+	require.ErrorIs(t, err, agencycontract.ErrPolicyRevision)
+	snapshot, err = ReadOpsPriceSnapshot(app.db, agency.ID)
+	require.NoError(t, err)
+	revision, created, err = ApplyOpsAgencyPolicyAtSnapshot(app.db, agency.ID, policy, overrides, nil, "ops-cas-publish", snapshot.Fingerprint)
+	require.NoError(t, err)
+	assert.True(t, created)
+	assert.EqualValues(t, 4, revision)
+	revision, created, err = ApplyOpsAgencyPolicyAtSnapshot(app.db, agency.ID, policy, overrides, nil, "ops-cas-publish", snapshot.Fingerprint)
+	require.NoError(t, err)
+	assert.False(t, created)
+	assert.EqualValues(t, 4, revision)
 }
 
 func TestCreateAgencyAndInvitePreview(t *testing.T) {

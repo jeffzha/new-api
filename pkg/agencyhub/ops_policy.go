@@ -134,6 +134,19 @@ func (a *App) applyOpsChildPolicyOverridesTx(tx *gorm.DB, identity *Identity, pa
 // ApplyOpsAgencyPolicy publishes a complete, already-authorized policy from
 // TokenOps. Its command receipt commits atomically with the policy revision.
 func ApplyOpsAgencyPolicy(db *gorm.DB, agencyID int64, policy agencycontract.Policy, customerSales []OpsCustomerSalesOverride, childPolicies []OpsChildPolicyOverride, commandID string) (int64, bool, error) {
+	return applyOpsAgencyPolicy(db, agencyID, policy, customerSales, childPolicies, commandID, "")
+}
+
+// ApplyOpsAgencyPolicyAtSnapshot refuses to overwrite a concurrent source edit.
+// The snapshot includes customer prices, which have their own revision counter.
+func ApplyOpsAgencyPolicyAtSnapshot(db *gorm.DB, agencyID int64, policy agencycontract.Policy, customerSales []OpsCustomerSalesOverride, childPolicies []OpsChildPolicyOverride, commandID, expectedSnapshot string) (int64, bool, error) {
+	if len(expectedSnapshot) != 64 {
+		return 0, false, errors.New("source price snapshot is required")
+	}
+	return applyOpsAgencyPolicy(db, agencyID, policy, customerSales, childPolicies, commandID, expectedSnapshot)
+}
+
+func applyOpsAgencyPolicy(db *gorm.DB, agencyID int64, policy agencycontract.Policy, customerSales []OpsCustomerSalesOverride, childPolicies []OpsChildPolicyOverride, commandID, expectedSnapshot string) (int64, bool, error) {
 	if db == nil || agencyID <= 0 || commandID == "" {
 		return 0, false, errors.New("invalid Ops agency policy command")
 	}
@@ -150,7 +163,11 @@ func ApplyOpsAgencyPolicy(db *gorm.DB, agencyID int64, policy agencycontract.Pol
 	if err := db.First(&target, agencyID).Error; err != nil {
 		return 0, false, err
 	}
-	body, err := common.Marshal(map[string]any{"agency_id": agencyID, "policy": policy, "customers": customerSales, "children": childPolicies})
+	bodyValues := map[string]any{"agency_id": agencyID, "policy": policy, "customers": customerSales, "children": childPolicies}
+	if expectedSnapshot != "" {
+		bodyValues["expected_snapshot"] = expectedSnapshot
+	}
+	body, err := common.Marshal(bodyValues)
 	if err != nil {
 		return 0, false, err
 	}
@@ -186,6 +203,15 @@ func ApplyOpsAgencyPolicy(db *gorm.DB, agencyID int64, policy agencycontract.Pol
 			return err
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
+		}
+		if expectedSnapshot != "" {
+			snapshot, err := ReadOpsPriceSnapshot(tx, agency.ID)
+			if err != nil {
+				return err
+			}
+			if snapshot.Fingerprint != expectedSnapshot {
+				return agencycontract.ErrPolicyRevision
+			}
 		}
 		txApp := &App{db: tx, config: app.config}
 		effective, err := txApp.effectiveAgencyPolicy(agency, policy)
@@ -267,7 +293,11 @@ func ApplyOpsAgencyPolicy(db *gorm.DB, agencyID int64, policy agencycontract.Pol
 		if result.RowsAffected != 1 {
 			return agencycontract.ErrPolicyRevision
 		}
-		if err := tx.Where("agency_id = ?", agency.ID).Delete(&model.AgencyCustomerSalesOverride{}).Error; err != nil {
+		deleteOverrides := tx.Where("agency_id = ?", agency.ID)
+		if expectedSnapshot != "" {
+			deleteOverrides = deleteOverrides.Where("user_id IN (?)", tx.Model(&model.AgencyActiveUserBinding{}).Select("user_id").Where("agency_id = ?", agency.ID))
+		}
+		if err := deleteOverrides.Delete(&model.AgencyCustomerSalesOverride{}).Error; err != nil {
 			return err
 		}
 		for _, override := range customerSales {

@@ -303,6 +303,7 @@
           "upstreamModel": "h3-video",
           "baseUrl": "https://example.com",
           "apiKey": "fixture-only",
+          "mediaDimensions": {"first_frame": {"width": 360, "height": 640}},
           "requestBody": {
             "prompt": "Follow the reference motion",
             "seconds": 8,
@@ -324,11 +325,11 @@
           "resolution": "768P",
           "metadata": {
             "resolution": "768P",
-            "ratio": "adaptive"
+            "ratio": "9:16"
           },
           "model": "h3-video",
           "duration": 8,
-          "ratio": "adaptive",
+          "ratio": "9:16",
           "content": [
             { "type": "image_url", "role": "reference_image", "image_url": { "url": "https://example.com/character.png" } },
             { "type": "video_url", "role": "reference_video", "video_url": { "url": "https://example.com/motion.mp4" } }

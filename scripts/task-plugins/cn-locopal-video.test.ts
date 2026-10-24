@@ -12,7 +12,7 @@ test("LocoPal HEAD downloads use CDN-compatible GET without changing the artifac
 
 test("H3 ordinary image input reaches upstream content exactly once", () => {
   expect(meta.key).toBe("cn-locopal-video");
-  expect(meta.version).toBe("1.0.8");
+  expect(meta.version).toBe("1.0.9");
   const requestBody = { model: "MiniMax-H3", prompt: "a city", images: ["https://example.test/frame.png"], seconds: 5, metadata: { ratio: "adaptive" } };
   const request = submit(requestBody);
   expect(request.url).toBe("https://locopalai.com/v1/videos");
@@ -122,8 +122,61 @@ test("H3 watermark strings become booleans without changing existing booleans or
 });
 
 test("H3 validates LocoPal 2K ratios before submitting upstream", () => {
-  expect(() => submit({ prompt: "p", resolution: "2K", image_urls: ["frame.png"] })).toThrow("2K requires ratio 16:9, 9:16, or 1:1");
+  expect(submit({ prompt: "p", resolution: "2K", image_urls: ["frame.png"] }).imageProbes).toEqual([{ key: "first_frame", source: "frame.png" }]);
+  expect(() => submit({ prompt: "p", resolution: "2K", ratio: "3:4", image_urls: ["frame.png"] })).toThrow("2K requires ratio 16:9, 9:16, or 1:1");
   expect(submit({ prompt: "p", resolution: "2K", ratio: "9:16", image_urls: ["frame.png"] }).body.ratio).toBe("9:16");
+});
+
+test("H3 auto ratio uses host-measured first-frame dimensions after repeated decoding", () => {
+  for (const [width, height, ratio] of [[360, 640, "9:16"], [1920, 1080, "16:9"], [800, 800, "1:1"], [400, 600, "9:16"]]) {
+    for (const explicit of [undefined, "adaptive"]) {
+      const requestBody = { prompt: "p", image_urls: ["first.png", "last.png"], ratio: explicit, resolution: "2K" };
+      const decoded = protocols.openai_video.decodeRequest({ model: "MiniMax-H3", upstreamModel: "h3-video", body: { kind: "json", value: requestBody } });
+      const decodedAgain = protocols.openai_video.decodeRequest({ model: "MiniMax-H3", upstreamModel: "h3-video", body: { kind: "json", value: decoded.requestBody } });
+      const initial = submit(decodedAgain.requestBody);
+      expect(initial.imageProbes).toEqual([{ key: "first_frame", source: "first.png" }]);
+      const final = buildSubmitRequest({ baseUrl: "https://locopalai.com", upstreamModel: "h3-video", requestBody: decodedAgain.requestBody, mediaDimensions: { first_frame: { width, height } } });
+      expect(final.body.ratio).toBe(ratio);
+      expect(final.body.metadata.ratio).toBe(ratio);
+      expect(final.imageProbes).toBeUndefined();
+      expect(final.body.content).toEqual(initial.body.content);
+      expect(extractUsage({ upstreamModel: "h3-video", requestBody: decodedAgain.requestBody }).input_images).toBe(2);
+    }
+  }
+});
+
+test("H3 auto selects explicit first frame before references and cleans adaptive aliases", () => {
+  const requestBody = {
+    prompt: "p", size: "adaptive", aspectRatio: "adaptive", aspect_ratio: "adaptive",
+    video: { ratio: "adaptive", aspect: "adaptive", keep: true },
+    metadata: { ratio: "adaptive", aspect_ratio: "adaptive" },
+    content: [
+      { type: "image_url", role: "last_frame", image_url: { url: "last.png" } },
+      { type: "image_url", role: "reference_image", image_url: { url: "reference.png" } },
+      { type: "image_url", role: "first_frame", image_url: { url: "first.png" } },
+    ],
+  };
+  const decoded = protocols.openai_video.decodeRequest({ model: "MiniMax-H3", body: { kind: "json", value: requestBody } });
+  expect(submit(decoded.requestBody).imageProbes).toEqual([{ key: "first_frame", source: "first.png" }]);
+  const final = buildSubmitRequest({ baseUrl: "https://locopalai.com", upstreamModel: "h3-video", requestBody: decoded.requestBody, mediaDimensions: { first_frame: { width: 360, height: 640 } } });
+  expect(JSON.stringify(final.body)).not.toContain("adaptive");
+  expect(final.body.video).toEqual({ keep: true });
+  expect(final.body.ratio).toBe("9:16");
+  expect(requestBody.metadata.ratio).toBe("adaptive");
+  const references = { ...requestBody, content: requestBody.content.slice(0, 2) };
+  expect(submit(references).imageProbes[0].source).toBe("reference.png");
+  expect(submit({ ...requestBody, content: requestBody.content.slice(0, 1) }).imageProbes[0].source).toBe("last.png");
+});
+
+test("H3 explicit ratios avoid image probes and video-only adaptive is unchanged", () => {
+  for (const ratio of ["9:16", "16:9", "1:1", "3:4"]) {
+    const result = buildSubmitRequest({ baseUrl: "https://locopalai.com", upstreamModel: "h3-video", requestBody: { prompt: "p", ratio, images: ["unreachable.png"] }, mediaDimensions: { first_frame: { width: 640, height: 360 } } });
+    expect(result.body.ratio).toBe(ratio);
+    expect(result.imageProbes).toBeUndefined();
+  }
+  const video = submit({ prompt: "p", metadata: { reference_video: "v.mp4" } });
+  expect(video.body.ratio).toBe("adaptive");
+  expect(video.imageProbes).toBeUndefined();
 });
 
 test("H3 rejects bare Base64 images before billing or upstream submission", () => {

@@ -78,8 +78,8 @@ export const meta = {
     en: "LocoPal Seedance and MiniMax H3 video generation",
     zh: "LocoPal Seedance 与 MiniMax H3 视频生成",
   },
-  version: "1.0.8",
-  requiredCapabilities: ["media-duration@1"],
+  version: "1.0.9",
+  requiredCapabilities: ["media-duration@1", "image-dimensions@1"],
   author: { name: "NexusReach" },
   models: [SEEDANCE_MODEL, H3_MODEL],
   fetchMode: "per_task",
@@ -265,7 +265,7 @@ function mediaCount(request, type) {
   }).length;
 }
 
-function h3Request(request, model) {
+function h3Request(request, model, dimensions) {
   const metadata = Object.assign({}, objectOf(request.metadata));
   const prompt = promptOf(request);
   const content = h3Content(request);
@@ -287,10 +287,25 @@ function h3Request(request, model) {
   const hasVideo = inputVideos > 0;
   const video = objectOf(request.video);
   const size = trimmed(request.size);
-  const ratio = firstString([metadata.ratio, metadata.aspect_ratio, request.ratio, request.aspect_ratio, request.aspectRatio, video.ratio, video.aspect]) || (H3_RATIOS.includes(size) ? size : h3PixelRatio(size)) || (inputImages > 0 || hasVideo ? "adaptive" : "16:9");
+  let ratio = firstString([metadata.ratio, metadata.aspect_ratio, request.ratio, request.aspect_ratio, request.aspectRatio, video.ratio, video.aspect]) || (H3_RATIOS.includes(size) ? size : h3PixelRatio(size)) || (inputImages > 0 || hasVideo ? "adaptive" : "16:9");
   if (H3_RATIOS.indexOf(ratio) < 0) throw new Error(H3_MODEL + " ratio must be one of " + H3_RATIOS.join(", "));
   if (ratio === "adaptive" && inputImages === 0 && !hasVideo) throw new Error(H3_MODEL + " ratio adaptive requires an image or video input");
-  if (resolution === "2K" && LOCOPAL_H3_2K_RATIOS.indexOf(ratio) < 0) {
+  let imageSource;
+  if (ratio === "adaptive" && inputImages > 0) {
+    const images = content.filter(function (item) { return item.type === "image_url"; });
+    const firstFrame = images.find(function (item) { return item.role === "first_frame"; })
+      || images.find(function (item) { return item.role !== "last_frame"; }) || images[0];
+    imageSource = firstFrame.image_url.url;
+    const measured = objectOf(objectOf(dimensions).first_frame);
+    const width = numberInRange(measured.width, 1, 32768);
+    const height = numberInRange(measured.height, 1, 32768);
+    // Decode stays I/O-free. The host probes once and rebuilds before billing.
+    if (width !== null && height !== null) {
+      ratio = width === height ? "1:1" : width > height ? "16:9" : "9:16";
+      imageSource = undefined;
+    }
+  }
+  if (resolution === "2K" && !imageSource && LOCOPAL_H3_2K_RATIOS.indexOf(ratio) < 0) {
     throw new Error(H3_MODEL + " 2K requires ratio 16:9, 9:16, or 1:1; choose the ratio explicitly");
   }
   for (const key of ["callback_url", "aigc_watermark", "generate_audio"]) {
@@ -302,6 +317,7 @@ function h3Request(request, model) {
   }
   metadata.resolution = resolution;
   metadata.ratio = ratio;
+  if (inputImages > 0 && ratio !== "adaptive" && trimmed(metadata.aspect_ratio) === "adaptive") delete metadata.aspect_ratio;
   delete metadata.content;
   delete metadata.reference_image;
   delete metadata.reference_video;
@@ -322,6 +338,16 @@ function h3Request(request, model) {
   delete body.image;
   delete body.image_url;
   delete body.input_reference;
+  if (inputImages > 0 && ratio !== "adaptive") {
+    for (const key of ["size", "aspect_ratio", "aspectRatio"]) {
+      if (trimmed(body[key]) === "adaptive") delete body[key];
+    }
+    if (trimmed(video.ratio) === "adaptive" || trimmed(video.aspect) === "adaptive") {
+      body.video = Object.assign({}, video);
+      if (trimmed(body.video.ratio) === "adaptive") delete body.video.ratio;
+      if (trimmed(body.video.aspect) === "adaptive") delete body.video.aspect;
+    }
+  }
   if (body.aigc_watermark === "true") body.aigc_watermark = true;
   else if (body.aigc_watermark === "false") body.aigc_watermark = false;
   if (body.generate_audio === "true") body.generate_audio = true;
@@ -333,12 +359,13 @@ function h3Request(request, model) {
     resolution: resolution,
     inputImages: inputImages,
     inputVideoSeconds: hasVideo ? H3_MAX_INPUT_VIDEO_SECONDS : 0,
+    imageSource: imageSource,
   };
 }
 
-function normalizeRequest(request, model) {
+function normalizeRequest(request, model, dimensions) {
   if (!request || typeof request !== "object" || Array.isArray(request)) throw new Error("request body must be an object");
-  if (isH3Model(model)) return h3Request(request, model);
+  if (isH3Model(model)) return h3Request(request, model, dimensions);
   if (model === SEEDANCE_MODEL) return seedanceRequest(request, model);
   throw new Error("unsupported LocoPal video model");
 }
@@ -356,7 +383,7 @@ function estimateSeedanceTokens(seconds, resolution) {
 
 export function buildSubmitRequest(ctx) {
   const model = upstreamModel(ctx);
-  const normalized = normalizeRequest(ctx.requestBody, model);
+  const normalized = normalizeRequest(ctx.requestBody, model, ctx.mediaDimensions);
   const descriptor = {
     url: ctx.baseUrl + "/v1/videos",
     method: "POST",
@@ -377,6 +404,7 @@ export function buildSubmitRequest(ctx) {
           : "text_to_video",
   };
   if (isH3Model(model)) {
+    if (normalized.imageSource) descriptor.imageProbes = [{ key: "first_frame", source: normalized.imageSource }];
     const videos = normalized.body.content ? normalized.body.content.filter(function (item) { return item.type === "video_url"; }) : [];
     if (videos.length) descriptor.mediaProbes = videos.map(function (item, index) {
       return { key: "reference_video_" + index, source: item.video_url.url };

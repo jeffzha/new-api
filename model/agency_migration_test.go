@@ -37,6 +37,31 @@ func TestMigrateAgencySQLiteIsIdempotentAndIndexesReportingFacts(t *testing.T) {
 	require.True(t, db.Migrator().HasTable(&AgencyArchiveManifest{}))
 }
 
+func TestMigrateAgencyWriterFenceUpgradesWithoutResettingState(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:agency-writer-upgrade?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Agency{})) // Representative released schema without writer tables.
+	require.False(t, db.Migrator().HasTable(&AgencyOpsWriterState{}))
+	require.NoError(t, MigrateAgencyWriterFence(db))
+	require.NoError(t, MigrateAgencyWriterFence(db))
+	for _, table := range []any{&AgencyOpsWriterState{}, &AgencyOpsWriterTransition{}, &AgencyOpsSourceManifest{}} {
+		assert.True(t, db.Migrator().HasTable(table))
+	}
+	require.False(t, db.Migrator().HasTable(&AgencyTopupFact{}), "narrow migration must not migrate unrelated agency data")
+	var state AgencyOpsWriterState
+	require.NoError(t, db.First(&state, 1).Error)
+	assert.Equal(t, AgencyWriterSourcePrimary, state.Mode)
+	assert.EqualValues(t, 1, state.FenceVersion)
+	require.NoError(t, db.Model(&state).Updates(map[string]any{"mode": AgencyWriterOpsSingle, "fence_version": 7}).Error)
+	require.NoError(t, MigrateAgencyWriterFence(db))
+	require.NoError(t, db.First(&state, 1).Error)
+	assert.Equal(t, AgencyWriterOpsSingle, state.Mode)
+	assert.EqualValues(t, 7, state.FenceVersion)
+	var count int64
+	require.NoError(t, db.Model(&AgencyOpsWriterState{}).Count(&count).Error)
+	assert.EqualValues(t, 1, count)
+}
+
 func TestMigrateAgencyAddsOperatorIdentityBindingsToReleasedSchema(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:agency-identity-upgrade?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
@@ -114,6 +139,8 @@ func TestMigrateAgencyExternalDatabaseCompatibility(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, MigrateAgency(db))
 			require.NoError(t, MigrateAgency(db))
+			require.NoError(t, MigrateAgencyWriterFence(db))
+			require.NoError(t, MigrateAgencyWriterFence(db))
 			require.True(t, db.Migrator().HasTable(&Agency{}))
 			require.True(t, db.Migrator().HasIndex(&AgencyTopupFact{}, "idx_agency_topup_agency_time"))
 			require.True(t, db.Migrator().HasIndex(&AgencyTopupFact{}, "idx_agency_topup_user_time"))

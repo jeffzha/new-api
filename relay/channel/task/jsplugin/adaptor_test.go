@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"math"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"os"
 	"strings"
 	"testing"
 
@@ -25,6 +27,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/abema/go-mp4"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,6 +64,77 @@ export const protocols = {openai_video: {
   render: function(ctx, task) { return {id: task.task_id, status: "completed"}; }
 }};
 `
+
+func TestTaskAdaptorMeasuresReferenceVideoBeforeBilling(t *testing.T) {
+	var payload bytes.Buffer
+	_, err := mp4.Marshal(&payload, &mp4.Mvhd{Timescale: 1000, DurationV0: 3250}, mp4.Context{})
+	require.NoError(t, err)
+	data := make([]byte, payload.Len()+16)
+	binary.BigEndian.PutUint32(data, uint32(len(data)))
+	copy(data[4:], "moov")
+	binary.BigEndian.PutUint32(data[8:], uint32(len(data)-8))
+	copy(data[12:], "mvhd")
+	copy(data[16:], payload.Bytes())
+
+	for _, tc := range []struct {
+		name, capability string
+		source           any
+		wantError        string
+	}{
+		{name: "data URL", capability: `requiredCapabilities:["media-duration@1"],`, source: "data:video/mp4;base64," + base64.StdEncoding.EncodeToString(data)},
+		{name: "multipart file", capability: `requiredCapabilities:["media-duration@1"],`, source: map[string]any{"__fileRef": "request_file:clip", "encoding": "dataUrl"}},
+		{name: "missing capability", source: "unused", wantError: "media-duration@1"},
+		{name: "unreadable media", capability: `requiredCapabilities:["media-duration@1"],`, source: "data:video/mp4;base64,YmFk", wantError: "no valid MP4 duration"},
+		{name: "URL credentials", capability: `requiredCapabilities:["media-duration@1"],`, source: "https://user:secret@example.test/file.mp4", wantError: "public HTTP(S) MP4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := strings.Replace(mockPlugin, `apiVersion: 1,`, `apiVersion: 1,`+tc.capability, 1)
+			source = strings.Replace(source, `body: {prompt: ctx.requestBody.prompt},`, `body: {prompt: ctx.requestBody.prompt}, mediaProbes:[{key:"reference",source:ctx.requestBody.video}],`, 1)
+			source = strings.Replace(source, `return {seconds: 5, mode: "pro"};`, `return {seconds:ctx.mediaDurations.reference,mode:"pro"};`, 1)
+			plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
+			require.NoError(t, err)
+			adaptor := New(plugin)
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://provider.example"}, TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+			adaptor.Init(info)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+			if tc.name == "multipart file" {
+				c = newMultipartFileContext(t, "clip", "clip.mp4", "video/mp4", data)
+			}
+			c.Set("task_request", map[string]any{"prompt": "p", "video": tc.source})
+			taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+			if tc.wantError != "" {
+				require.NotNil(t, taskErr)
+				assert.Contains(t, taskErr.Error.Error(), tc.wantError)
+				return
+			}
+			require.Nil(t, taskErr)
+			facts, err := adaptor.ExtractUsageFactsValidated(c, info)
+			require.NoError(t, err)
+			assert.Equal(t, 3.25, facts["seconds"])
+		})
+	}
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "truncated", data: data[:20]},
+		{name: "no movie header", data: []byte{0, 0, 0, 8, 'f', 'r', 'e', 'e'}},
+		{name: "invalid box size", data: []byte{0, 0, 0, 1, 'm', 'o', 'o', 'v', 255, 255, 255, 255, 255, 255, 255, 255}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { _, err := mp4MediaDuration(t.Context(), tc.data); assert.Error(t, err) })
+	}
+}
+
+func TestDomesticLocoPalContractFixtures(t *testing.T) {
+	source, err := os.ReadFile("../../../../scripts/task-plugins/cn-locopal-video.js")
+	require.NoError(t, err)
+	fixtures, err := os.ReadFile("../../../../scripts/task-plugins/cn-locopal-video.fixtures.json")
+	require.NoError(t, err)
+	report, err := pluginruntime.ReplayFixture(t.Context(), string(source), fixtures)
+	require.NoError(t, err)
+	assert.Equal(t, report.Total, report.Passed)
+}
 
 func TestTaskAdaptorRejectsDeprecatedClientResponse(t *testing.T) {
 	source := strings.Replace(mockPlugin, `taskData: {accepted: true, status: resp.statusCode},`, `taskData: {}, clientResponse: {id: ctx.publicTaskId},`, 1)

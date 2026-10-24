@@ -78,7 +78,8 @@ export const meta = {
     en: "LocoPal Seedance and MiniMax H3 video generation",
     zh: "LocoPal Seedance 与 MiniMax H3 视频生成",
   },
-  version: "1.0.7",
+  version: "1.0.8",
+  requiredCapabilities: ["media-duration@1"],
   author: { name: "NexusReach" },
   models: [SEEDANCE_MODEL, H3_MODEL],
   fetchMode: "per_task",
@@ -168,25 +169,38 @@ function seedanceRequest(request, model) {
 function h3Resolution(request) {
   const metadata = objectOf(request.metadata);
   const size = trimmed(request.size);
-  const raw = firstString([metadata.resolution, request.resolution, H3_RATIOS.includes(size) ? "" : size]) || "768P";
+  const raw = firstString([metadata.resolution, request.resolution, H3_RATIOS.includes(size) || h3PixelRatio(size) ? "" : size]) || "768P";
   const upper = raw.toUpperCase();
-  if (upper.indexOf("2K") >= 0) return "2K";
-  if (upper.indexOf("768") >= 0) return "768P";
+  if (upper === "2K") return "2K";
+  if (upper === "768" || upper === "768P") return "768P";
   throw new Error(H3_MODEL + " resolution must be 768P or 2K");
 }
 
+function h3PixelRatio(size) {
+  const match = /^(\d{1,5})[xX](\d{1,5})$/.exec(size);
+  if (!match) return "";
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!width || !height) throw new Error(H3_MODEL + " size dimensions must be positive");
+  for (const ratio of H3_RATIOS) {
+    if (ratio === "adaptive") continue;
+    const parts = ratio.split(":");
+    if (width * Number(parts[1]) === height * Number(parts[0])) return ratio;
+  }
+  throw new Error(H3_MODEL + " pixel size has an unsupported aspect ratio; specify ratio explicitly");
+}
+
 function h3MediaURL(value, type) {
-  if (typeof value === "string") {
-    const url = trimmed(value);
+  const item = objectOf(value);
+  if (trimmed(item.__fileRef)) return item;
+  const candidate = typeof value === "string" ? value : item.url !== undefined ? item.url : objectOf(item[type]).url;
+  if (typeof candidate === "string") {
+    const url = trimmed(candidate);
     if (type === "image_url" && url.length >= 128 && !url.includes("://") && !url.startsWith("data:") && /^[A-Za-z0-9+/=_-]+$/.test(url)) {
       throw new Error(H3_MODEL + " image inputs must use a public URL or a data:image/...;base64,... URL; bare Base64 is not supported");
     }
     return url;
   }
-  const item = objectOf(value);
-  if (trimmed(item.__fileRef)) return item;
-  const candidate = item.url !== undefined ? item.url : objectOf(item[type]).url;
-  if (typeof candidate === "string") return trimmed(candidate);
   const placeholder = objectOf(candidate);
   return trimmed(placeholder.__fileRef) ? placeholder : "";
 }
@@ -237,6 +251,7 @@ function h3Content(request) {
     appendH3Media(content, seenRoles, seenURLs, "image_url", role, frames[index], false);
   }
   appendH3Media(content, seenRoles, seenURLs, "image_url", "first_frame", request.image, false);
+  appendH3Media(content, seenRoles, seenURLs, "image_url", "first_frame", request.image_url, false);
   appendH3Media(content, seenRoles, seenURLs, "image_url", "first_frame", request.input_reference, false);
   appendH3Media(content, seenRoles, seenURLs, "image_url", "first_frame", metadata.first_frame_image, false);
   appendH3Media(content, seenRoles, seenURLs, "image_url", "last_frame", metadata.last_frame_image, false);
@@ -272,7 +287,7 @@ function h3Request(request, model) {
   const hasVideo = inputVideos > 0;
   const video = objectOf(request.video);
   const size = trimmed(request.size);
-  const ratio = firstString([metadata.ratio, request.ratio, request.aspect_ratio, video.aspect, H3_RATIOS.includes(size) ? size : ""]) || (inputImages > 0 || hasVideo ? "adaptive" : "16:9");
+  const ratio = firstString([metadata.ratio, metadata.aspect_ratio, request.ratio, request.aspect_ratio, video.ratio, video.aspect, H3_RATIOS.includes(size) ? size : h3PixelRatio(size)]) || (inputImages > 0 || hasVideo ? "adaptive" : "16:9");
   if (H3_RATIOS.indexOf(ratio) < 0) throw new Error(H3_MODEL + " ratio must be one of " + H3_RATIOS.join(", "));
   if (ratio === "adaptive" && inputImages === 0 && !hasVideo) throw new Error(H3_MODEL + " ratio adaptive requires an image or video input");
   if (resolution === "2K" && LOCOPAL_H3_2K_RATIOS.indexOf(ratio) < 0) {
@@ -305,6 +320,7 @@ function h3Request(request, model) {
   delete body.images;
   delete body.image_urls;
   delete body.image;
+  delete body.image_url;
   delete body.input_reference;
   if (body.aigc_watermark === "true") body.aigc_watermark = true;
   else if (body.aigc_watermark === "false") body.aigc_watermark = false;
@@ -341,7 +357,7 @@ function estimateSeedanceTokens(seconds, resolution) {
 export function buildSubmitRequest(ctx) {
   const model = upstreamModel(ctx);
   const normalized = normalizeRequest(ctx.requestBody, model);
-  return {
+  const descriptor = {
     url: ctx.baseUrl + "/v1/videos",
     method: "POST",
     headers: {
@@ -360,11 +376,19 @@ export function buildSubmitRequest(ctx) {
           ? "image_to_video"
           : "text_to_video",
   };
+  if (isH3Model(model)) {
+    const videos = normalized.body.content ? normalized.body.content.filter(function (item) { return item.type === "video_url"; }) : [];
+    if (videos.length) descriptor.mediaProbes = videos.map(function (item, index) {
+      return { key: "reference_video_" + index, source: item.video_url.url };
+    });
+  }
+  return descriptor;
 }
 
 function upstreamTaskId(body) {
   const data = objectOf(body && body.data);
-  return firstString([body && body.id, body && body.task_id, body && body.taskId, data.id, data.task_id, data.taskId]);
+  const task = taskEnvelope(body);
+  return firstString([body && body.id, body && body.task_id, body && body.taskId, data.id, data.task_id, data.taskId, task.id, task.task_id, task.taskId]);
 }
 
 export function parseSubmitResponse(_ctx, response) {
@@ -384,11 +408,19 @@ export function extractUsage(ctx) {
   const model = upstreamModel(ctx);
   const normalized = normalizeRequest(ctx.requestBody, model);
   if (isH3Model(model)) {
+    let inputSeconds = 0;
+    const probes = buildSubmitRequest(ctx).mediaProbes || [];
+    for (const probe of probes) {
+      const measured = numberInRange(objectOf(ctx.mediaDurations)[probe.key], 0.001, H3_MAX_INPUT_VIDEO_SECONDS);
+      if (measured === null) throw new Error(H3_MODEL + " reference video duration could not be verified; provide a publicly accessible MP4 or upload an MP4 file");
+      inputSeconds += measured;
+    }
+    if (inputSeconds > H3_MAX_INPUT_VIDEO_SECONDS) throw new Error(H3_MODEL + " total reference video duration must not exceed 15 seconds");
     return {
       seconds: normalized.seconds,
       resolution: normalized.resolution,
       input_images: normalized.inputImages,
-      input_video_seconds: normalized.inputVideoSeconds,
+      input_video_seconds: inputSeconds,
     };
   }
   return {
@@ -407,9 +439,15 @@ export function buildQueryRequest(ctx) {
 }
 
 function taskEnvelope(body) {
-  const data = objectOf(body && body.data);
-  const task = objectOf(body && body.task);
-  return Object.keys(task).length ? task : Object.keys(data).length ? data : objectOf(body);
+  let envelope = objectOf(body);
+  for (let depth = 0; depth < 4; depth++) {
+    const task = objectOf(envelope.task);
+    const data = objectOf(envelope.data);
+    if (Object.keys(task).length) envelope = task;
+    else if (Object.keys(data).length && (!envelope.status || data.task || data.status)) envelope = data;
+    else break;
+  }
+  return envelope;
 }
 
 function videoUrlOf(body) {
@@ -478,7 +516,7 @@ export function extractUsageOnComplete(ctx, result, body) {
   const usage = objectOf(envelope.usage);
   if (isH3Model(model)) {
     const facts = {};
-    const seconds = numberInRange(firstDefined([usage.output_seconds, usage.seconds, envelope.duration]), H3_MIN_SECONDS, H3_MAX_SECONDS);
+    const seconds = numberInRange(firstDefined([usage.output_seconds, usage.seconds, envelope.duration_secs, envelope.duration]), H3_MIN_SECONDS, H3_MAX_SECONDS);
     const images = numberInRange(firstDefined([usage.input_image_count, usage.input_images]), 0, H3_MAX_IMAGES);
     const inputSeconds = numberInRange(firstDefined([usage.input_seconds, usage.input_video_seconds]), 0, H3_MAX_INPUT_VIDEO_SECONDS);
     const resolution = trimmed(firstDefined([envelope.resolution, usage.resolution])).toUpperCase();

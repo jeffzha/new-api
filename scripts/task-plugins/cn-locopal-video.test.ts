@@ -12,7 +12,7 @@ test("LocoPal HEAD downloads use CDN-compatible GET without changing the artifac
 
 test("H3 ordinary image input reaches upstream content exactly once", () => {
   expect(meta.key).toBe("cn-locopal-video");
-  expect(meta.version).toBe("1.0.7");
+  expect(meta.version).toBe("1.0.8");
   const requestBody = { model: "MiniMax-H3", prompt: "a city", images: ["https://example.test/frame.png"], seconds: 5, metadata: { ratio: "adaptive" } };
   const request = submit(requestBody);
   expect(request.url).toBe("https://locopalai.com/v1/videos");
@@ -53,10 +53,11 @@ test("H3 explicit content and reference media merge into one canonical content l
   expect(extractUsage({ upstreamModel: "h3-video", requestBody: explicit }).input_images).toBe(2);
   const reference = { prompt: "p", metadata: { reference_video: "clip.mp4", ratio: "adaptive" } };
   expect(submit(reference).body.content).toEqual([{ type: "video_url", role: "reference_video", video_url: { url: "clip.mp4" } }]);
-  expect(extractUsage({ upstreamModel: "h3-video", requestBody: reference }).input_video_seconds).toBe(15);
+  expect(() => extractUsage({ upstreamModel: "h3-video", requestBody: reference })).toThrow("duration could not be verified");
+  expect(extractUsage({ upstreamModel: "h3-video", requestBody: reference, mediaDurations: { reference_video_0: 3.2 } }).input_video_seconds).toBe(3.2);
   const decoded = protocols.openai_video.decodeRequest({ model: "MiniMax-H3", upstreamModel: "h3-video", body: { kind: "json", value: reference } });
   expect(submit(decoded.requestBody).body.content).toEqual(submit(reference).body.content);
-  expect(extractUsage({ upstreamModel: "h3-video", requestBody: decoded.requestBody }).input_video_seconds).toBe(15);
+  expect(extractUsage({ upstreamModel: "h3-video", requestBody: decoded.requestBody, mediaDurations: { reference_video_0: 3.2 } }).input_video_seconds).toBe(3.2);
 });
 
 test("H3 preserves explicit frame roles while aliases do not add another charge", () => {
@@ -190,4 +191,36 @@ test("H3 JSON decoder keeps strict object validation", () => {
     upstreamModel: "h3-video",
     body: { kind: "json", value: [] },
   })).toThrow("request body must be an object");
+});
+
+test("H3 accepts documented image_url and rejects nested bare Base64", () => {
+  const requestBody = { prompt: "p", image_url: { url: "https://example.test/portrait.png" }, size: "1080x1920" };
+  const result = submit(requestBody);
+  expect(result.body.ratio).toBe("9:16");
+  expect(result.body.resolution).toBe("768P");
+  expect(result.body.image_url).toBeUndefined();
+  expect(extractUsage({ upstreamModel: "h3-video", requestBody }).input_images).toBe(1);
+  for (const image of [{ url: "A".repeat(160) }, { image_url: { url: "A".repeat(160) } }]) {
+    expect(() => submit({ prompt: "p", images: [image] })).toThrow("bare Base64 is not supported");
+  }
+  expect(submit({ prompt: "p", metadata: { aspect_ratio: "9:16" } }).body.ratio).toBe("9:16");
+  expect(submit({ prompt: "p", video: { ratio: "1:1" } }).body.ratio).toBe("1:1");
+  expect(() => submit({ prompt: "p", size: "111x222" })).toThrow("unsupported aspect ratio");
+  expect(() => submit({ prompt: "p", resolution: "not2K" })).toThrow("resolution must be");
+});
+
+test("H3 measured video usage is bounded and explicit upstream zero wins", () => {
+  const requestBody = { prompt: "p", metadata: { reference_video: ["first.mp4", "second.mp4"] } };
+  expect(submit(requestBody).mediaProbes).toEqual([
+    { key: "reference_video_0", source: "first.mp4" },
+    { key: "reference_video_1", source: "second.mp4" },
+  ]);
+  expect(extractUsage({ upstreamModel: "h3-video", requestBody, mediaDurations: { reference_video_0: 4, reference_video_1: 6.5 } }).input_video_seconds).toBe(10.5);
+  expect(() => extractUsage({ upstreamModel: "h3-video", requestBody, mediaDurations: { reference_video_0: 9, reference_video_1: 8 } })).toThrow("must not exceed 15");
+  const body = { data: { task: { status: "succeeded", duration_secs: 4, content: { url: "https://example.test/video.mp4" }, usage: { input_seconds: 0, input_image_count: 0 } } } };
+  expect(parseTaskResult({}, body)).toMatchObject({ status: "SUCCESS", url: "https://example.test/video.mp4" });
+  expect(extractUsageOnComplete({ upstreamModel: "h3-video" }, { status: "SUCCESS" }, body)).toEqual({ seconds: 4, input_images: 0, input_video_seconds: 0 });
+  expect(parseTaskResult({}, { data: { task: { status: "mystery" } } }).status).toBe("UNKNOWN");
+  expect(parseTaskResult({}, { status: "success", data: body.data })).toMatchObject({ status: "SUCCESS", url: "https://example.test/video.mp4" });
+  expect(parseTaskResult({}, { status: "success", data: { status: "queued" } }).status).toBe("QUEUED");
 });

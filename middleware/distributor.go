@@ -102,6 +102,10 @@ func Distribute() func(c *gin.Context) {
 			if ok, kind := model.ChannelSatisfiesFilters(channel, modelRequest.Model, constraints.Filters); !ok {
 				if kind == taskdto.FilterTaskPluginIdentity {
 					logTaskPluginChannelDecision(c, channel, modelRequest.Model, "channel_rejected", "identity_mismatch")
+					if detail := rejectedTaskPluginDetail(c, channel); detail != "" {
+						abortWithOpenAiMessage(c, http.StatusBadRequest, detail, types.ErrorCode("plugin_request_invalid"))
+						return
+					}
 				}
 				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": common.GetContextKeyString(c, constant.ContextKeyUsingGroup), "Model": modelRequest.Model}), types.ErrorCode(kind))
 				return
@@ -213,6 +217,10 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if channel == nil {
+						if detail := rejectedAvailableTaskPluginDetail(c, usingGroup, modelRequest.Model); detail != "" {
+							abortWithOpenAiMessage(c, http.StatusBadRequest, detail, types.ErrorCode("plugin_request_invalid"))
+							return
+						}
 						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, noAvailableChannelMessage(c, usingGroup, modelRequest.Model), types.ErrorCodeModelNotFound)
 						return
 					}
@@ -324,6 +332,67 @@ func noAvailableChannelMessage(c *gin.Context, group, modelName string) string {
 		return i18n.T(c, i18n.MsgDistributorNoAvailableChannelTaskPlugin, map[string]any{"Group": group, "Model": modelName, "Plugin": strings.Join(keys, ", ")})
 	}
 	return i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": group, "Model": modelName})
+}
+
+func rejectedTaskPluginDetail(c *gin.Context, channel *model.Channel) string {
+	value, exists := c.Get(jsplugin.ContextKeyPinnedEndpoint)
+	pinned, ok := value.(jsplugin.PinnedEndpoint)
+	if !exists || !ok || pinned.Generation == nil || channel == nil {
+		return ""
+	}
+	key := channel.GetSetting().TaskPluginKey
+	if channel.Type != constant.ChannelTypeTaskPlugin {
+		plugin, found := pinned.Generation.GetByChannelType(channel.Type)
+		if !found {
+			return ""
+		}
+		key = plugin.Meta.Key
+	}
+	return pinned.Rejected[key]
+}
+
+// Only report validation from rejected plugins with an otherwise eligible
+// channel in this caller's groups; never expose an unrelated provider's error.
+func rejectedAvailableTaskPluginDetail(c *gin.Context, group, modelName string) string {
+	value, exists := c.Get(jsplugin.ContextKeyPinnedEndpoint)
+	pinned, ok := value.(jsplugin.PinnedEndpoint)
+	if !exists || !ok || pinned.Generation == nil || len(pinned.Rejected) == 0 {
+		return ""
+	}
+	groups := []string{group}
+	if group == "auto" {
+		groups = service.GetRequestAutoGroups(c, common.GetContextKeyString(c, constant.ContextKeyUserGroup))
+	}
+	var filters []taskdto.ChannelFilter
+	for _, filter := range service.GetChannelConstraints(c).Filters {
+		if filter.Kind != taskdto.FilterTaskPluginIdentity {
+			filters = append(filters, filter)
+		}
+	}
+	keys := make([]string, 0, len(pinned.Rejected))
+	for key := range pinned.Rejected {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	var details []string
+	for _, key := range keys {
+		plugin, found := pinned.Generation.Get(key)
+		if !found || pinned.Rejected[key] == "" {
+			continue
+		}
+		candidateFilters := append(slices.Clone(filters), taskdto.ChannelFilter{
+			Kind: taskdto.FilterTaskPluginIdentity, TaskPluginKey: key,
+			TaskPluginKeys: []string{key}, TaskPluginChannelTypes: plugin.Meta.ChannelTypes,
+		})
+		for _, candidateGroup := range groups {
+			channel, err := model.GetRandomSatisfiedChannel(candidateGroup, modelName, 0, candidateFilters)
+			if err == nil && channel != nil {
+				details = append(details, pinned.Rejected[key])
+				break
+			}
+		}
+	}
+	return strings.Join(details, "; ")
 }
 
 func channelMatchesExpectedTaskPlugin(c *gin.Context, channel *model.Channel, expected string) bool {

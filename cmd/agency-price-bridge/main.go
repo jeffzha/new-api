@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/QuantumNous/new-api/pkg/agencyhub"
+	"github.com/QuantumNous/new-api/service/agencyopspush"
 	"gorm.io/gorm"
 )
 
@@ -157,6 +158,11 @@ func run() error {
 	}
 	if err != nil {
 		return err
+	}
+	if input.Action == "apply" || input.Action == "directory-apply" || input.Action == "customer-transfer" ||
+		input.Action == "customer-provision" || input.Action == "distributor-provision" ||
+		input.Action == "payout-apply" || input.Action == "credential-apply" {
+		agencyopspush.NotifyConfiguredCommit()
 	}
 	encoded, err := common.Marshal(result)
 	if err != nil {

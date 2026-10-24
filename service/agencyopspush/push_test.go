@@ -1,12 +1,15 @@
 package agencyopspush
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +24,48 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+func TestBridgeCommitWakesPrivateSender(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("production transport is a Linux container Unix datagram")
+	}
+	directory, err := os.MkdirTemp("", "ops-wake-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	path := filepath.Join(directory, "private", "wake.sock")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	require.NoError(t, listenForCommits(ctx, path))
+	require.Error(t, listenForCommits(ctx, path), "a live listener must not be replaced")
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	for len(model.AgencyOpsCommitted) > 0 {
+		<-model.AgencyOpsCommitted
+	}
+	t.Setenv("OPS_DISTRIBUTOR_EVENTS_ENABLED", "true")
+	t.Setenv("OPS_DISTRIBUTOR_WAKE_SOCKET", path)
+	NotifyConfiguredCommit()
+	select {
+	case <-model.AgencyOpsCommitted:
+	case <-time.After(time.Second):
+		t.Fatal("committed bridge change did not wake sender")
+	}
+	t.Setenv("OPS_DISTRIBUTOR_EVENTS_ENABLED", "false")
+	NotifyConfiguredCommit()
+	assert.Empty(t, model.AgencyOpsCommitted)
+	assert.False(t, notifyCommit(filepath.Join(directory, "missing.sock")), "lost hints are recoverable, not command failures")
+	file := filepath.Join(directory, "private", "ordinary-file")
+	require.NoError(t, os.WriteFile(file, []byte("keep"), 0600))
+	assert.Error(t, listenForCommits(ctx, file))
+	content, err := os.ReadFile(file)
+	require.NoError(t, err)
+	assert.Equal(t, "keep", string(content))
+	public := filepath.Join(directory, "public")
+	require.NoError(t, os.Mkdir(public, 0755))
+	require.NoError(t, os.Chmod(public, 0755))
+	assert.Error(t, listenForCommits(ctx, filepath.Join(public, "wake.sock")))
+}
 
 func TestDistributorEventsAcrossDatabases(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {

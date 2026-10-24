@@ -122,10 +122,13 @@ func ApplyOpsDirectory(db *gorm.DB, id int64, name, status, expected, commandID 
 			if len(ids) > 1000 {
 				return errors.New("source directory subtree exceeds bounded command")
 			}
-			if err := tx.Model(&model.Agency{}).Where("id IN ? AND id <> ? AND status = ?", ids, id, AgencyStatusActive).
-				Updates(map[string]any{"status": status, "state_revision": gorm.Expr("state_revision + 1"),
-					"version": gorm.Expr("version + 1"), "disabled_reason": "ancestor_disabled", "disabled_at": now, "updated_at": now}).Error; err != nil {
-				return err
+			for start := 0; start < len(ids); start += 100 {
+				batch := ids[start:min(start+100, len(ids))]
+				if err := tx.Model(&model.Agency{}).Where("id IN ? AND id <> ? AND status = ?", batch, id, AgencyStatusActive).
+					Updates(map[string]any{"status": status, "state_revision": gorm.Expr("state_revision + 1"),
+						"version": gorm.Expr("version + 1"), "disabled_reason": "ancestor_disabled", "disabled_at": now, "updated_at": now}).Error; err != nil {
+					return err
+				}
 			}
 			if err := tx.Model(&model.AgencySession{}).Where("agency_id IN ? AND revoked_at IS NULL", ids).Update("revoked_at", now).Error; err != nil {
 				return err

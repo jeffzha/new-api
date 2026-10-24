@@ -835,11 +835,9 @@ func (a *App) setAgencyStatus(c *gin.Context, status string) {
 				return descendantErr
 			}
 			affectedAgencyIDs = ids
-			for _, descendantID := range ids {
-				if descendantID == agency.ID {
-					continue
-				}
-				if err := tx.Model(&model.Agency{}).Where("id = ? AND status = ?", descendantID, AgencyStatusActive).Updates(map[string]any{
+			for start := 0; start < len(ids); start += 100 {
+				batch := ids[start:min(start+100, len(ids))]
+				if err := tx.Model(&model.Agency{}).Where("id IN ? AND id <> ? AND status = ?", batch, agency.ID, AgencyStatusActive).Updates(map[string]any{
 					"status": AgencyStatusDisabled, "state_revision": gorm.Expr("state_revision + 1"), "version": gorm.Expr("version + 1"), "disabled_reason": "ancestor_disabled", "disabled_at": now, "updated_at": now,
 				}).Error; err != nil {
 					return err

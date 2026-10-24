@@ -312,7 +312,7 @@ func applyOpsAgencyPolicy(db *gorm.DB, agencyID int64, policy agencycontract.Pol
 		if expectedSnapshot != "" {
 			deleteOverrides = deleteOverrides.Where("user_id IN (?)", tx.Model(&model.AgencyActiveUserBinding{}).Select("user_id").Where("agency_id = ?", agency.ID))
 		}
-		if err := deleteOverrides.Delete(&model.AgencyCustomerSalesOverride{}).Error; err != nil {
+		if err := model.DeleteAgencyCustomerSalesOverridesTx(deleteOverrides); err != nil {
 			return err
 		}
 		for _, override := range customerSales {

@@ -209,7 +209,38 @@ func agencyOpsSafeAudit(value any) any {
 // CaptureAgencyOpsRecordTx accepts only the explicit fact types below. It does
 // not commit, contact OPS, or change any existing financial writer.
 func CaptureAgencyOpsRecordTx(tx *gorm.DB, value any) error {
-	return captureAgencyOpsRecordTx(tx, value, nil)
+	return captureAgencyOpsRecordTx(tx, value, nil, false)
+}
+
+// Delete customer overrides in bounded pages and retain a versioned tombstone.
+// The caller supplies its existing scoped query and owns the business transaction.
+func DeleteAgencyCustomerSalesOverridesTx(query *gorm.DB) error {
+	if os.Getenv("OPS_DISTRIBUTOR_EVENTS_ENABLED") != "true" {
+		return query.Delete(&AgencyCustomerSalesOverride{}).Error
+	}
+	var after int64
+	for {
+		var rows []AgencyCustomerSalesOverride
+		if err := query.Session(&gorm.Session{}).Where("id > ?", after).Order("id").Limit(100).Find(&rows).Error; err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		ids := make([]int64, len(rows))
+		for i := range rows {
+			ids[i] = rows[i].ID
+		}
+		if err := query.Session(&gorm.Session{NewDB: true}).Where("id IN ?", ids).Delete(&AgencyCustomerSalesOverride{}).Error; err != nil {
+			return err
+		}
+		for i := range rows {
+			if err := captureAgencyOpsRecordTx(query, &rows[i], nil, true); err != nil {
+				return err
+			}
+		}
+		after = ids[len(ids)-1]
+	}
 }
 
 // Price publication writes many items with one parent. Load that association
@@ -226,14 +257,14 @@ func CaptureAgencyOpsPriceItemsTx(tx *gorm.DB, items []AgencyPricePolicyItem) er
 		if items[i].PolicyVersionID != version.ID {
 			return fmt.Errorf("Ops price batch requires one version")
 		}
-		if err := captureAgencyOpsRecordTx(tx, &items[i], &version); err != nil {
+		if err := captureAgencyOpsRecordTx(tx, &items[i], &version, false); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func captureAgencyOpsRecordTx(tx *gorm.DB, value any, priceVersion *AgencyPricePolicyVersion) error {
+func captureAgencyOpsRecordTx(tx *gorm.DB, value any, priceVersion *AgencyPricePolicyVersion, deleted bool) error {
 	if os.Getenv("OPS_DISTRIBUTOR_EVENTS_ENABLED") != "true" {
 		return nil
 	}
@@ -292,6 +323,8 @@ func captureAgencyOpsRecordTx(tx *gorm.DB, value any, priceVersion *AgencyPriceP
 		kind, ident, revision = "priceItems", row.ID, 1
 	case *Agency:
 		return CaptureAgencyOpsChangeTx(tx, "source_directory", row.ID)
+	case *AgencyOperatorAccount:
+		return CaptureAgencyOpsChangeTx(tx, "source_credential", row.ID)
 	default:
 		return fmt.Errorf("unsupported Ops fact type")
 	}
@@ -325,6 +358,12 @@ func captureAgencyOpsRecordTx(tx *gorm.DB, value any, priceVersion *AgencyPriceP
 			return fmt.Errorf("Ops contract field is unavailable")
 		}
 		record[name], _ = field.ValueOf(context.Background(), rv)
+	}
+	if deleted {
+		if kind != "salesOverrides" {
+			return fmt.Errorf("unsupported Ops deletion type")
+		}
+		record["is_deleted"] = true
 	}
 	// The envelope identity is always the object's primary key. User-keyed
 	// tables retain their original record without a fabricated database ID.
@@ -458,8 +497,6 @@ func captureAgencyOpsAuditChangeTx(tx *gorm.DB, row *AgencyAuditLog) error {
 	switch {
 	case row.ObjectType == "agency" && strings.HasPrefix(row.Action, "pricing."):
 		kind = "source_price"
-	case row.ObjectType == "agency" && strings.HasPrefix(row.Action, "agency."):
-		kind = "source_directory"
 	case row.ObjectType == "user_binding" && row.Action == "user.transfer":
 		kind = "source_customer"
 	case row.ObjectType == "customer_sales" || row.ObjectType == "customer" && strings.HasPrefix(row.Action, "pricing."):
@@ -481,7 +518,9 @@ func captureAgencyOpsAuditChangeTx(tx *gorm.DB, row *AgencyAuditLog) error {
 	return nil
 }
 
-func (row *Agency) AfterCreate(tx *gorm.DB) error { return CaptureAgencyOpsRecordTx(tx, row) }
+func (row *Agency) AfterCreate(tx *gorm.DB) error  { return CaptureAgencyOpsRecordTx(tx, row) }
+func (row *Agency) BeforeUpdate(tx *gorm.DB) error { return agencyOpsBeforeUpdate(tx, row) }
+func (row *Agency) AfterUpdate(tx *gorm.DB) error  { return agencyOpsAfterUpdate(tx, row) }
 func (row *AgencyWithdrawalAccount) AfterCreate(tx *gorm.DB) error {
 	return CaptureAgencyOpsChangeTx(tx, "source_payout", row.AgencyID)
 }
@@ -500,16 +539,18 @@ func (row *AgencyUserBinding) AfterCreate(tx *gorm.DB) error {
 	return CaptureAgencyOpsChangeTx(tx, "source_customer", int64(row.UserID))
 }
 
-func (row *AgencyOperatorAccount) AfterUpdate(tx *gorm.DB) error {
-	if row.ID <= 0 {
-		return nil
+func (row *AgencyOperatorAccount) BeforeUpdate(tx *gorm.DB) error {
+	// Login counters and transparent rehashes are deliberately excluded.
+	if tx.Statement.Changed("AuthVersion", "Status", "MustChangePassword") {
+		tx.Statement.Settings.Store("agency_ops_operator_changed", true)
+		return agencyOpsBeforeUpdate(tx, row)
 	}
-	// Failed-login counters and transparent hash upgrades are not password
-	// edits. Explicit changes increment auth_version in the same transaction.
-	if values, ok := tx.Statement.Dest.(map[string]any); ok {
-		if _, changed := values["auth_version"]; changed {
-			return CaptureAgencyOpsChangeTx(tx, "source_credential", row.ID)
-		}
+	return nil
+}
+
+func (row *AgencyOperatorAccount) AfterUpdate(tx *gorm.DB) error {
+	if changed, _ := tx.Statement.Settings.Load("agency_ops_operator_changed"); changed == true {
+		return agencyOpsAfterUpdate(tx, row)
 	}
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -50,17 +51,27 @@ func TestDistributorEventsAcrossDatabases(t *testing.T) {
 			t.Setenv("OPS_DISTRIBUTOR_EVENTS_ENABLED", "false")
 			require.NoError(t, db.Migrator().DropTable(model.AgencyModels()...))
 			require.NoError(t, db.Migrator().DropTable(&model.User{}))
+			// Fresh startup and repeated startup must retain all queue indexes.
+			for range 2 {
+				require.NoError(t, model.MigrateAgency(db))
+			}
+			require.True(t, db.Migrator().HasIndex(&model.AgencyOpsEvent{}, "idx_agency_ops_event_due"))
+			require.NoError(t, db.Migrator().DropTable(model.AgencyModels()...))
 			// Start with the released business schema and an existing fact, then
 			// upgrade twice without rewriting history or generating a full scan.
-			models := []any{&model.AgencyUsageFact{}, &model.AgencyTopupFact{}, &model.AgencyCommissionLedger{}, &model.AgencyCommissionBalance{}, &model.AgencyWithdrawal{}, &model.AgencyAuditLog{}}
-			for _, table := range append(models, &model.AgencyOpsEvent{}, &model.AgencyOpsObjectRevision{}, &model.AgencyOpsSenderLease{}) {
-				require.NoError(t, db.Migrator().DropTable(table))
+			// The released schema uses these unchanged business models; only the
+			// three new event tables are excluded from the upgrade fixture.
+			for _, table := range model.AgencyModels() {
+				switch table.(type) {
+				case *model.AgencyOpsEvent, *model.AgencyOpsObjectRevision, *model.AgencyOpsSenderLease:
+					continue
+				}
+				require.NoError(t, db.AutoMigrate(table), "released model %s", reflect.TypeOf(table))
 			}
-			require.NoError(t, db.AutoMigrate(models...))
 			existing := model.AgencyUsageFact{EventID: "old-fact", UserID: 301, ComponentID: "default", ModelKey: "model", OriginModelName: "gpt-4o"}
 			require.NoError(t, db.Create(&existing).Error)
 			for range 2 {
-				require.NoError(t, db.AutoMigrate(&model.AgencyOpsEvent{}, &model.AgencyOpsObjectRevision{}, &model.AgencyOpsSenderLease{}))
+				require.NoError(t, model.MigrateAgency(db))
 			}
 			require.True(t, db.Migrator().HasIndex(&model.AgencyOpsEvent{}, "idx_agency_ops_event_due"))
 			require.NoError(t, db.AutoMigrate(&model.Agency{}))
@@ -144,8 +155,12 @@ func TestDistributorEventsAcrossDatabases(t *testing.T) {
 			assert.Contains(t, priority.Payload, `"kind":"source_price"`)
 			// Exercise MySQL's >64 KiB payload storage rather than assuming TEXT
 			// has the same capacity as PostgreSQL and SQLite.
-			large := model.AgencyUsageFact{EventID: "large", UserID: 301, ComponentID: "default", ModelKey: "model", OriginModelName: "gpt-4o", CumulativeUsage: strings.Repeat("x", 70000)}
-			require.NoError(t, db.Create(&large).Error)
+			// The original business table intentionally still has its existing TEXT
+			// limit. Exercise the independent event storage through its capture API.
+			large := model.AgencyUsageFact{ID: 90001, EventID: "large", UserID: 301, ComponentID: "default", ModelKey: "model", OriginModelName: "gpt-4o", CumulativeUsage: strings.Repeat("x", 70000)}
+			require.NoError(t, model.AgencyOpsTransaction(db, func(tx *gorm.DB) error {
+				return model.CaptureAgencyOpsRecordTx(tx, &large)
+			}))
 			var largeEvent model.AgencyOpsEvent
 			require.NoError(t, db.Where("payload LIKE ?", "%large%").First(&largeEvent).Error)
 			assert.Greater(t, len(largeEvent.Payload), 70000)
@@ -286,6 +301,54 @@ func TestDistributorEventsAcrossDatabases(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, page, 1)
 			assert.Equal(t, int64(8000001), page[0].ID)
+			// Bulk subtree changes emit one identity-only notification for each
+			// affected distributor, including descendants without individual audits.
+			directory := []model.Agency{
+				{Code: "event-parent", DisplayName: "Northwind", InviteCode: "NWROOT2345", Status: "active", Version: 1},
+				{Code: "event-child", DisplayName: "Northwind East", InviteCode: "NWEAST2345", Status: "active", Version: 1},
+			}
+			require.NoError(t, db.Create(&directory).Error)
+			require.NoError(t, db.Model(&model.Agency{}).Where("code IN ?", []string{"event-parent", "event-child"}).
+				Updates(map[string]any{"status": "disabled", "version": gorm.Expr("version + 1")}).Error)
+			var notifications []model.AgencyOpsEvent
+			require.NoError(t, db.Where("payload LIKE ?", `%"kind":"source_directory"%`).Order("id").Find(&notifications).Error)
+			require.Len(t, notifications, 4)
+			for _, event := range notifications {
+				assert.Contains(t, event.Payload, `"kind":"source_directory"`)
+			}
+			// Removing a customer override is not an update of its old value.
+			// Retrying/deferred delivery must carry a higher-revision tombstone.
+			override := model.AgencyCustomerSalesOverride{AgencyID: directory[0].ID, UserID: 301,
+				ModelKey: "customer-model", OriginModelName: "gpt-4o", SalesBPS: 9500, Revision: 1}
+			require.NoError(t, db.Create(&override).Error)
+			require.NoError(t, model.AgencyOpsTransaction(db, func(tx *gorm.DB) error {
+				return model.DeleteAgencyCustomerSalesOverridesTx(tx.Where("agency_id = ?", directory[0].ID))
+			}))
+			var tombstone model.AgencyOpsEvent
+			require.NoError(t, db.Where("payload LIKE ? AND payload LIKE ?",
+				`%"kind":"salesOverrides"%`, `%"is_deleted":true%`).First(&tombstone).Error)
+			var deleted map[string]any
+			require.NoError(t, common.Unmarshal([]byte(tombstone.Payload), &deleted))
+			assert.Equal(t, float64(override.ID), deleted["objectId"])
+			assert.Equal(t, float64(2), deleted["revision"])
+			record, ok := deleted["record"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, true, record["is_deleted"])
+			require.NoError(t, db.Model(&model.AgencyCustomerSalesOverride{}).Count(&count).Error)
+			assert.Zero(t, count)
+			// Empty-model authentication updates must notify the linked operator;
+			// routine login bookkeeping must not create credential traffic.
+			operator := model.AgencyOperatorAccount{AgencyID: directory[0].ID, Username: "event-owner",
+				NormalizedUsername: "event-owner", PasswordHash: "not-a-usable-hash", Status: "active", AuthVersion: 1}
+			require.NoError(t, db.Create(&operator).Error)
+			require.NoError(t, db.Model(&model.AgencyOperatorAccount{}).Where("id = ?", operator.ID).
+				Updates(map[string]any{"auth_version": 2, "status": "disabled"}).Error)
+			require.NoError(t, db.Model(&model.AgencyOperatorAccount{}).Where("id = ?", operator.ID).
+				Updates(map[string]any{"failed_count": 1, "last_login_at": time.Now().Unix()}).Error)
+			var credentialChanges []model.AgencyOpsEvent
+			require.NoError(t, db.Where("payload LIKE ?", `%"kind":"source_credential"%`).Find(&credentialChanges).Error)
+			require.Len(t, credentialChanges, 1)
+			assert.NotContains(t, credentialChanges[0].Payload, operator.PasswordHash)
 			var version string
 			if dialect == "sqlite" {
 				require.NoError(t, db.Raw("SELECT sqlite_version()").Scan(&version).Error)

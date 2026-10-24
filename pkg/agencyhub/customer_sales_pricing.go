@@ -377,7 +377,7 @@ func (a *App) putCustomerSalesPricingBatch(c *gin.Context) {
 				if errors.Is(lookup, gorm.ErrRecordNotFound) {
 					return nil
 				}
-				return tx.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, key).Delete(&model.AgencyCustomerSalesOverride{}).Error
+				return model.DeleteAgencyCustomerSalesOverridesTx(tx.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, key))
 			}
 			if errors.Is(lookup, gorm.ErrRecordNotFound) {
 				return tx.Create(&model.AgencyCustomerSalesOverride{AgencyID: agency.ID, UserID: userID, ModelKey: key, OriginModelName: name, SalesBPS: *sales, Revision: 1, CreatedByType: identity.ActorType, CreatedByID: identity.ActorID, CreatedAtMS: now, UpdatedAtMS: now}).Error
@@ -425,11 +425,13 @@ func (a *App) deleteCustomerSalesPricing(c *gin.Context) {
 	}
 	var deleted int64
 	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
-		result := tx.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, key).Delete(&model.AgencyCustomerSalesOverride{})
-		if result.Error != nil {
-			return result.Error
+		query := tx.Model(&model.AgencyCustomerSalesOverride{}).Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, key)
+		if err := query.Count(&deleted).Error; err != nil {
+			return err
 		}
-		deleted = result.RowsAffected
+		if err := model.DeleteAgencyCustomerSalesOverridesTx(tx.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, key)); err != nil {
+			return err
+		}
 		if deleted == 0 {
 			return nil
 		}

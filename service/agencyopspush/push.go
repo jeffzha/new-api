@@ -221,15 +221,18 @@ func (s *Sender) Step(ctx context.Context) (time.Duration, error) {
 	}
 	if len(leased) == 0 {
 		_ = s.DB.WithContext(ctx).Model(&model.AgencyOpsSenderLease{}).Where("id = ? AND owner = ?", 1, s.Owner).Update("until_ms", 0).Error
-		var next model.AgencyOpsEvent
-		err := s.DB.WithContext(ctx).Where("status IN ?", []string{"queued", "retry"}).Order("next_at_ms").First(&next).Error
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return 30 * time.Second, err
+		wait := 30 * time.Second
+		for _, status := range []string{"queued", "retry"} {
+			var next model.AgencyOpsEvent
+			err := s.DB.WithContext(ctx).Select("id,next_at_ms").Where("status = ?", status).Order("next_at_ms").First(&next).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return 30 * time.Second, err
+			}
+			if err == nil {
+				wait = min(wait, max(time.Second, time.Duration(next.NextAtMS-now)*time.Millisecond))
+			}
 		}
-		if err == nil {
-			return max(time.Second, min(30*time.Second, time.Duration(next.NextAtMS-now)*time.Millisecond)), nil
-		}
-		return 30 * time.Second, nil
+		return wait, nil
 	}
 	var body bytes.Buffer
 	body.WriteString(`{"schemaVersion":"1","events":[`)

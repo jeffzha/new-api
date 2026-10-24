@@ -171,6 +171,65 @@ func runOpsPolicyCustomerSnapshotAndReplay(t *testing.T, app *App) {
 	runOpsDirectorySnapshotAndReplay(t, app)
 	runOpsPayoutSnapshotAndReplay(t, app)
 	runOpsCustomerProvision(t, app)
+	runOpsDistributorProvision(t, app)
+}
+
+func runOpsDistributorProvision(t *testing.T, app *App) {
+	t.Helper()
+	root := model.User{Username: "distributor-root", AffCode: "ops-distributor-root", Password: "unused", Role: common.RoleRootUser, Status: common.UserStatusEnabled}
+	require.NoError(t, app.db.Create(&root).Error)
+	t.Setenv("ACCOUNT_PASSWORD_HASH_ALGORITHM", "argon2id")
+	hash, err := common.HashAccountPassword("portable-password-2026")
+	require.NoError(t, err)
+	input := OpsDistributorProvision{Name: "OPS distributor", Username: "ops-distributor-owner", PasswordHash: hash,
+		MustChangePassword: true, RootID: int64(root.Id), CommandID: "ops-distributor-first"}
+	first, err := ApplyOpsDistributorProvision(app.db, input, app.config)
+	require.NoError(t, err)
+	assert.Equal(t, input.Name, first.Directory.Name)
+	assert.Len(t, first.Directory.InviteCode, 10)
+	var account model.AgencyOperatorAccount
+	require.NoError(t, app.db.First(&account, first.OperatorID).Error)
+	assert.True(t, common.ValidatePasswordAndHash("portable-password-2026", account.PasswordHash))
+	assert.True(t, account.MustChangePassword)
+	replay, err := ApplyOpsDistributorProvision(app.db, input, app.config)
+	require.NoError(t, err)
+	assert.Equal(t, first, replay)
+	changed := input
+	changed.Name = "Conflicting retry"
+	_, err = ApplyOpsDistributorProvision(app.db, changed, app.config)
+	require.ErrorContains(t, err, "identity conflict")
+	changed = input
+	changed.CommandID = "ops-distributor-other-command"
+	_, err = ApplyOpsDistributorProvision(app.db, changed, app.config)
+	require.Error(t, err, "a second command must not create the same account")
+	var count int64
+	require.NoError(t, app.db.Model(&model.Agency{}).Where("display_name = ?", input.Name).Count(&count).Error)
+	assert.EqualValues(t, 1, count, "failed operator creation rolls back the agency and prices")
+	for _, bad := range []OpsDistributorProvision{
+		{Name: "Bad hash", Username: "bad-hash", PasswordHash: "plaintext", RootID: int64(root.Id), CommandID: "ops-distributor-bad-hash"},
+		{Name: "No root", Username: "no-root", PasswordHash: hash, RootID: int64(root.Id) + 100000, CommandID: "ops-distributor-no-root"},
+	} {
+		_, err = ApplyOpsDistributorProvision(app.db, bad, app.config)
+		require.Error(t, err)
+	}
+	price, err := ReadOpsPriceSnapshot(app.db, first.Directory.AgencyID)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, price.RawPolicy.Revision)
+	var receipt model.AgencyIdempotencyRecord
+	require.NoError(t, app.db.Where("action = ? AND resource_id = ?", "distributor.provision", strconv.FormatInt(first.Directory.AgencyID, 10)).First(&receipt).Error)
+	assert.NotContains(t, receipt.ResponseJSON, hash)
+	assert.NotContains(t, receipt.ResponseJSON, "portable-password-2026")
+	child := input
+	child.Name, child.Username, child.CommandID = "OPS child distributor", "ops-child-owner", "ops-distributor-child"
+	child.ParentID = &first.Directory.AgencyID
+	createdChild, err := ApplyOpsDistributorProvision(app.db, child, app.config)
+	require.NoError(t, err)
+	assert.Equal(t, child.ParentID, createdChild.Directory.ParentID)
+	assert.Equal(t, 2, createdChild.Directory.Depth)
+	require.NoError(t, app.db.Model(&model.Agency{}).Where("id = ?", first.Directory.AgencyID).Update("status", AgencyStatusDisabled).Error)
+	child.Username, child.CommandID = "ops-disabled-parent-child", "ops-distributor-disabled-parent"
+	_, err = ApplyOpsDistributorProvision(app.db, child, app.config)
+	require.Error(t, err, "a disabled parent must never receive a new child")
 }
 
 func runOpsCustomerProvision(t *testing.T, app *App) {

@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -100,6 +101,27 @@ func TestTaskModel2DtoNormalizesLegacyAction(t *testing.T) {
 
 	assert.Equal(t, constant.TaskActionFirstTailToVideo, dtoTask.Action)
 	assert.Equal(t, "firstTailGenerate", task.Action)
+}
+
+func TestTaskUsageExpressionAppliesAgencySalesToCustomerQuota(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("group", "default")
+	info := &relaycommon.RelayInfo{UsingGroup: "default", UserGroup: "default"}
+	pricing := &agencycontract.PricingSnapshot{SalesBPS: 3000, SettlementBPS: 3000}
+	expr := `tier("h3-768p", u("seconds") * 0.0684931506849315 + u("input_video_seconds") * 0.0684931506849315 + u("input_images") * 0.027397260273972604)`
+	facts := map[string]any{"seconds": 10, "input_video_seconds": 15, "input_images": 1}
+
+	require.NoError(t, priceTaskUsageExpression(c, info, pricing, "MiniMax-H3", expr, facts))
+
+	assert.Equal(t, int64(869863), info.AgencyStandardQuota)
+	assert.Equal(t, 260959, info.PriceData.Quota)
+	assert.Equal(t, 260959, info.PriceData.QuotaToPreConsume)
+	assert.Equal(t, 0.3, info.PriceData.GroupRatioInfo.GroupRatio)
+	require.NotNil(t, info.TieredBillingSnapshot)
+	assert.Equal(t, 0.3, info.TieredBillingSnapshot.GroupRatio)
+	assert.Equal(t, 260959, info.TieredBillingSnapshot.EstimatedQuotaAfterGroup)
+	assert.Equal(t, "h3-768p", info.TieredBillingSnapshot.EstimatedTier)
 }
 
 const mappingOrderSubmitPlugin = `

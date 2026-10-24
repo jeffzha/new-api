@@ -369,6 +369,9 @@ func agencyTaskBackfillBasis(bc *TaskBillingContext, snapshot agencycontract.Pri
 	switch {
 	case bc.ProviderBilling != nil && strings.EqualFold(strings.TrimSpace(bc.ProviderBilling.Currency), "CNY"):
 		basis.Mode, basis.ProviderBilling = "cny_tokens", bc.ProviderBilling
+		if bc.ProviderBilling.BillingUnit == "request" {
+			basis.Mode = "cny_request"
+		}
 	case bc.ModelPrice > 0:
 		basis.Mode = "fixed"
 	default:
@@ -385,6 +388,10 @@ func agencyTaskBackfillBasis(bc *TaskBillingContext, snapshot agencycontract.Pri
 func agencyTaskChargedQuotaEvent(bc *TaskBillingContext, snapshot agencycontract.PricingSnapshot, charged int64) (agencycontract.BillingEvent, error) {
 	basis, priced := agencyTaskBackfillBasis(bc, snapshot)
 	standard := charged
+	hasFrozenStandard := bc != nil && bc.AgencyStandardQuota > 0
+	if hasFrozenStandard {
+		standard = bc.AgencyStandardQuota
+	}
 	tokens := int64(0)
 	if priced {
 		if basis.Mode == "cny_tokens" && basis.ProviderBilling != nil {
@@ -393,13 +400,13 @@ func agencyTaskChargedQuotaEvent(bc *TaskBillingContext, snapshot agencycontract
 		rebuilt, err := AgencyTaskFinalCharge(basis, snapshot, tokens, false)
 		if err == nil && rebuilt.StandardQuota > 0 {
 			standard = rebuilt.StandardQuota
-		} else if len(snapshot.Hierarchy) > 1 {
+		} else if len(snapshot.Hierarchy) > 1 && !hasFrozenStandard {
 			// A tiered policy recomputes the customer charge from the standard
 			// quota, so an unrecoverable basis cannot be settled without
 			// inventing money.
 			return agencycontract.BillingEvent{}, ErrAgencyChargeConflict
 		}
-	} else if len(snapshot.Hierarchy) > 1 {
+	} else if len(snapshot.Hierarchy) > 1 && !hasFrozenStandard {
 		return agencycontract.BillingEvent{}, ErrAgencyChargeConflict
 	}
 	policy := agencycontract.ResolvedPolicy{SettlementBPS: snapshot.SettlementBPS, SalesBPS: snapshot.SalesBPS,

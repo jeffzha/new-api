@@ -140,7 +140,8 @@ type asyncTaskPollHandler struct{}
 func (asyncTaskPollHandler) Type() string { return model.SystemTaskTypeAsyncTaskPoll }
 
 func (asyncTaskPollHandler) Enabled() bool {
-	return constant.UpdateTask && (model.HasUnfinishedSyncTasks() || model.HasPendingTaskBillingReconciliations())
+	return constant.UpdateTask && (model.HasUnfinishedSyncTasks() || model.HasPendingTaskBillingReconciliations() ||
+		model.HasDueCNTaskSubmissions() || model.HasPendingAgencyTaskSettlementRepairs())
 }
 
 func (asyncTaskPollHandler) Interval() time.Duration { return 15 * time.Second }
@@ -148,6 +149,9 @@ func (asyncTaskPollHandler) Interval() time.Duration { return 15 * time.Second }
 func (asyncTaskPollHandler) NewPayload() any { return nil }
 
 func (asyncTaskPollHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	if err := service.RunCNTaskSubmissionProbes(ctx, 25); err != nil {
+		common.SysError("CN task submission recovery remains pending: " + err.Error())
+	}
 	// Drain provider-billing reconciliations (async video tasks such as
 	// seedance) so their final agency usage event is emitted; without this the
 	// forwarded agency.billing_finalized success event is never produced and

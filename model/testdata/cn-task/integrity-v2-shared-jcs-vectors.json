@@ -1,0 +1,26 @@
+{
+  "schema": "tokenops-rfc8785-vectors-v1",
+  "source": "RFC 8785 sections 3.2.2 and 3.2.3 and Appendix B",
+  "vectors": [
+    {
+      "name": "number-sample",
+      "inputJson": "[333333333.33333329,1E30,4.50,2e-3,0.000000000000000000000000001]",
+      "canonical": "[333333333.3333333,1e+30,4.5,0.002,1e-27]"
+    },
+    {
+      "name": "negative-zero-and-boundaries",
+      "inputJson": "[-0.0,5e-324,1e-7,1e-6,1e20,1e21]",
+      "canonical": "[0,5e-324,1e-7,0.000001,100000000000000000000,1e+21]"
+    },
+    {
+      "name": "utf16-property-order",
+      "inputJson": "{\"\\u20ac\":\"Euro Sign\",\"\\r\":\"Carriage Return\",\"\\ufb33\":\"Hebrew Letter Dalet With Dagesh\",\"1\":\"One\",\"\\ud83d\\ude00\":\"Emoji: Grinning Face\",\"\\u0080\":\"Control\",\"\\u00f6\":\"Latin Small Letter O With Diaeresis\"}",
+      "canonical": "{\"\\r\":\"Carriage Return\",\"1\":\"One\",\"\u0080\":\"Control\",\"\u00f6\":\"Latin Small Letter O With Diaeresis\",\"\u20ac\":\"Euro Sign\",\"\ud83d\ude00\":\"Emoji: Grinning Face\",\"\ufb33\":\"Hebrew Letter Dalet With Dagesh\"}"
+    },
+    {
+      "name": "unicode-not-normalized",
+      "inputJson": "{\"decomposed\":\"e\\u0301\",\"composed\":\"\\u00e9\"}",
+      "canonical": "{\"composed\":\"\u00e9\",\"decomposed\":\"e\u0301\"}"
+    }
+  ]
+}

@@ -74,6 +74,9 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
 }
 
 func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+	if relayconstant.Path2RelayMode(c.Request.URL.Path) == relayconstant.RelayModeAudioTranscription {
+		defer helper.ReleaseFunASRUpload(c)
+	}
 
 	requestId := c.GetString(common.RequestIdKey)
 	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
@@ -173,6 +176,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	if priceData.FreeModel {
 		logger.LogInfo(c, fmt.Sprintf("模型 %s 免费，跳过预扣费", relayInfo.OriginModelName))
+		if err := service.BeginCNDirectRelay(relayInfo); err != nil {
+			newAPIError = types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
+			return
+		}
 	} else {
 		newAPIError = service.PreConsumeBilling(c, priceData.QuotaToPreConsume, relayInfo)
 		if newAPIError != nil {
@@ -698,7 +705,7 @@ func executeTaskSubmissionWith(
 		stage = "submit"
 		result, taskErr = submit(c, relayInfo)
 		attempt.FinishTask(taskErr)
-		if requestErr := c.Request.Context().Err(); requestErr != nil {
+		if requestErr := c.Request.Context().Err(); requestErr != nil && service.CNTaskBillingKey(relayInfo) == "" {
 			// A caller disconnect during submission must be reported as a
 			// cancellation, regardless of the adaptor's transport error.
 			taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
@@ -706,6 +713,9 @@ func executeTaskSubmissionWith(
 		}
 		if taskErr == nil {
 			diagnostics.attemptSucceeded(retryParam.GetRetry()+1, result)
+			break
+		}
+		if c.GetBool("cn_task_attempted") {
 			break
 		}
 		if c.GetString("ops_task_request") != "" {
@@ -758,7 +768,7 @@ func executeTaskSubmissionWith(
 		diagnostics.failed("submit", "missing_result", taskErr, false)
 		return nil, taskErr
 	}
-	if requestErr := c.Request.Context().Err(); requestErr != nil {
+	if requestErr := c.Request.Context().Err(); requestErr != nil && service.CNTaskBillingKey(relayInfo) == "" {
 		diagnostics.cancelled("before_reserve", retryParam.GetRetry()+1)
 		taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 		return nil, taskErr
@@ -767,7 +777,7 @@ func executeTaskSubmissionWith(
 	// Reserve any submit-time upward billing adjustment before persistence.
 	// This keeps insertion failures fully refundable while ensuring settlement
 	// after the barrier normally has a zero positive delta.
-	if relayInfo.Billing != nil {
+	if relayInfo.Billing != nil && service.CNTaskBillingKey(relayInfo) == "" {
 		stage = "reserve"
 		diagnostics.reserve("reserve_start", result.Quota)
 		if reserveErr := relayInfo.Billing.Reserve(result.Quota); reserveErr != nil {
@@ -778,7 +788,7 @@ func executeTaskSubmissionWith(
 		}
 		diagnostics.reserve("reserve_complete", result.Quota)
 	}
-	if requestErr := c.Request.Context().Err(); requestErr != nil {
+	if requestErr := c.Request.Context().Err(); requestErr != nil && service.CNTaskBillingKey(relayInfo) == "" {
 		diagnostics.cancelled("before_insert", retryParam.GetRetry()+1)
 		taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 		return nil, taskErr
@@ -838,6 +848,28 @@ func executeTaskSubmissionWith(
 		}
 	}
 	service.PrepareOpsTaskTerminal(task, relayInfo.ChannelType, task.Data)
+	if key := service.CNTaskBillingKey(relayInfo); key != "" {
+		task.CNBillingKey = key
+		if task.PrivateData.Execution == nil {
+			task.PrivateData.Execution = &model.TaskExecutionSnapshot{}
+		}
+		task.PrivateData.Execution.RequestID = relayInfo.RequestId
+		if immediate := result.Immediate; immediate != nil && immediate.Status == model.TaskStatusSuccess {
+			failure := ""
+			if relayInfo.QuotaClamp != nil {
+				failure = "task_submit_quota_clamped"
+			}
+			if task.PrivateData.BillingContext.TieredSnapshot != nil {
+				settled, _, err := service.EvaluateTaskCompletionUsage(task.PrivateData.BillingContext.TieredSnapshot, immediate.UsageFacts)
+				if err != nil {
+					failure = "task_completion_expression_failed"
+				} else if settled.Clamp != nil {
+					failure = "task_completion_quota_clamped"
+				}
+			}
+			task.PrepareCNFinancialTerminal(&task.Quota, failure)
+		}
+	}
 	diagnostics.insertStart(task)
 	if insertErr := task.InsertWithContext(c.Request.Context()); insertErr != nil {
 		common.SysError("insert task error: " + insertErr.Error())

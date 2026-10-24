@@ -60,6 +60,9 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuo
 		// An unchanged override is a successful operation, including on MySQL
 		// configurations that count only changed rows in RowsAffected.
 		if after != user.Quota {
+			if user.BillingMode == AgencyDurableBillingMode || user.BillingMode == AgencyProvisioningBillingMode {
+				return ErrAgencyFundingUnavailable
+			}
 			result := tx.Model(&User{}).Where("id = ?", userID).Update("quota", after)
 			if result.Error != nil {
 				return result.Error

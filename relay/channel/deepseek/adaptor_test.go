@@ -18,23 +18,28 @@ import (
 )
 
 func TestLocoPalResponsesAutomaticallyConvertsToChat(t *testing.T) {
-	for _, baseURL := range []string{"https://locopalai.com", "https://locopalai.com/"} {
-		t.Run(baseURL, func(t *testing.T) {
+	for _, tc := range []struct{ baseURL, model string }{
+		{"https://locopalai.com", "deepseek-v4-1-flash-260910"},
+		{"https://locopalai.com/", "deepseek-v4-1-flash-260910"},
+		{"https://locopalai.com", "deepseek-v4-1-flash-261017"},
+		{"https://locopalai.com/", "deepseek-v4-1-flash-261017"},
+	} {
+		t.Run(tc.model+"/"+tc.baseURL, func(t *testing.T) {
 			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 			info := &relaycommon.RelayInfo{
 				RelayMode: relayconstant.RelayModeResponses, RelayFormat: types.RelayFormatOpenAIResponses,
-				ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: baseURL, UpstreamModelName: "deepseek-v4-1-flash-260910"},
+				ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: tc.baseURL, UpstreamModelName: tc.model},
 			}
 			info.InitRequestConversionChain()
 			converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(ctx, info, dto.OpenAIResponsesRequest{
-				Model: "deepseek-v4-1-flash-260910", Input: []byte(`"hello"`), Instructions: []byte(`"be concise"`),
+				Model: tc.model, Input: []byte(`"hello"`), Instructions: []byte(`"be concise"`),
 				MaxOutputTokens: common.GetPointer(uint(16)), Temperature: common.GetPointer(0.0),
 			})
 			require.NoError(t, err)
 			chat, ok := converted.(*dto.GeneralOpenAIRequest)
 			require.True(t, ok)
-			require.Equal(t, "deepseek-v4-1-flash-260910", chat.Model)
+			require.Equal(t, tc.model, chat.Model)
 			require.Len(t, chat.Messages, 2)
 			require.Equal(t, "be concise", chat.Messages[0].StringContent())
 			require.Equal(t, "hello", chat.Messages[1].StringContent())
@@ -52,6 +57,38 @@ func TestLocoPalResponsesCompatibilityDoesNotMatchOtherHosts(t *testing.T) {
 	for _, baseURL := range []string{"https://api.deepseek.com", "https://locopalai.com.example.org", "https://locopalai.com@other.example"} {
 		info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: baseURL}}
 		require.False(t, useChatCompletionsForResponses(info))
+		require.False(t, useOpenAICompatibleClaude(info))
+	}
+}
+
+func TestLocoPalClaudeAutomaticallyConvertsToChat(t *testing.T) {
+	for _, tc := range []struct{ baseURL, model string }{
+		{"https://locopalai.com", "deepseek-v4-1-flash-260910"},
+		{"https://locopalai.com/", "deepseek-v4-1-flash-260910"},
+		{"https://locopalai.com", "deepseek-v4-1-flash-261017"},
+		{"https://locopalai.com/", "deepseek-v4-1-flash-261017"},
+	} {
+		t.Run(tc.model+"/"+tc.baseURL, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			info := &relaycommon.RelayInfo{
+				RelayFormat: types.RelayFormatClaude,
+				ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: tc.baseURL, UpstreamModelName: tc.model},
+			}
+			info.InitRequestConversionChain()
+			converted, err := (&Adaptor{}).ConvertClaudeRequest(ctx, info, &dto.ClaudeRequest{
+				Model: tc.model, MaxTokens: common.GetPointer(uint(16)),
+				Messages: []dto.ClaudeMessage{{Role: "user", Content: "hello"}},
+			})
+			require.NoError(t, err)
+			chat, ok := converted.(*dto.GeneralOpenAIRequest)
+			require.True(t, ok)
+			require.Equal(t, tc.model, chat.Model)
+			require.Equal(t, "hello", chat.Messages[0].StringContent())
+			require.Equal(t, types.RelayFormatOpenAI, info.GetFinalRequestRelayFormat())
+			requestURL, err := (&Adaptor{}).GetRequestURL(info)
+			require.NoError(t, err)
+			require.Equal(t, "https://locopalai.com/v1/chat/completions", requestURL)
+		})
 	}
 }
 
@@ -119,9 +156,7 @@ func TestClaudeOpenAICompatibilityConvertsResponseBackToClaude(t *testing.T) {
 		RelayFormat: types.RelayFormatClaude,
 		ChannelMeta: &relaycommon.ChannelMeta{
 			UpstreamModelName: "deepseek-v4-pro",
-			ChannelOtherSettings: dto.ChannelOtherSettings{
-				ClaudeUseOpenAICompatible: true,
-			},
+			ChannelBaseUrl:    "https://locopalai.com",
 		},
 	}
 	resp := &http.Response{
@@ -147,6 +182,44 @@ func TestClaudeOpenAICompatibilityConvertsResponseBackToClaude(t *testing.T) {
 	require.Equal(t, "message", response.Type)
 	require.Len(t, response.Content, 1)
 	require.Equal(t, "OK", response.Content[0].GetText())
+}
+
+func TestLocoPalClaudeConvertsStreamBackToClaude(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Set(common.RequestIdKey, "deepseek-claude-stream-test")
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeChatCompletions, RelayFormat: types.RelayFormatClaude,
+		IsStream: true, DisablePing: true,
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://locopalai.com", UpstreamModelName: "deepseek-v4-1-flash-260910"},
+	}
+	info.InitRequestConversionChain()
+	_, err := (&Adaptor{}).ConvertClaudeRequest(c, info, &dto.ClaudeRequest{
+		Model: "deepseek-v4-1-flash-260910", MaxTokens: common.GetPointer(uint(16)),
+		Messages: []dto.ClaudeMessage{{Role: "user", Content: "hello"}},
+	})
+	require.NoError(t, err)
+	body := strings.Join([]string{
+		`data: {"id":"chatcmpl-test","model":"deepseek-v4-1-flash-260910","choices":[{"index":0,"delta":{"role":"assistant","content":"OK"},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl-test","model":"deepseek-v4-1-flash-260910","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		`data: {"id":"chatcmpl-test","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`,
+		`data: [DONE]`, "",
+	}, "\n")
+	usage, apiErr := (&Adaptor{}).DoResponse(c, &http.Response{
+		StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(body)),
+	}, info)
+	require.Nil(t, apiErr)
+	convertedUsage, ok := usage.(*dto.Usage)
+	require.True(t, ok)
+	require.Equal(t, 4, convertedUsage.TotalTokens)
+	require.Contains(t, recorder.Body.String(), "event: message_start")
+	require.Contains(t, recorder.Body.String(), `"text":"OK"`)
+	require.Contains(t, recorder.Body.String(), "event: message_stop")
 }
 
 func TestResponsesChatCompatibilityIsChannelScoped(t *testing.T) {

@@ -227,7 +227,7 @@ func TestChannelSatisfiesFilters(t *testing.T) {
 	alpha := &Channel{Id: 1, Type: constant.ChannelTypeTaskPlugin, Setting: &alphaSetting}
 	ordinary := &Channel{Id: 2, Type: constant.ChannelTypeOpenAI}
 	custom := &Channel{Id: 3, Type: constant.ChannelTypeAdvancedCustom}
-	seedance := &Channel{Id: 4, Type: constant.ChannelTypeOpenAISeedance}
+	seedance := &Channel{Id: 4, Type: constant.ChannelTypeOpenAISeedance, Models: "doubao-seedance-2-0-fast-260128"}
 	custom.SetOtherSettings(kitdto.ChannelOtherSettings{
 		AdvancedCustom: &kitdto.AdvancedCustomConfig{
 			Routes: []kitdto.AdvancedCustomRoute{{
@@ -271,4 +271,8 @@ func TestChannelSatisfiesFilters(t *testing.T) {
 	ok, kind = ChannelSatisfiesFilters(seedance, "doubao-seedance-2-5-260628", seedanceFilter)
 	assert.False(t, ok)
 	assert.Equal(t, dto.FilterTaskPluginIdentity, kind)
+
+	ok, kind = ChannelSatisfiesFilters(seedance, "doubao-seedance-2-0-fast-260128", seedanceFilter)
+	require.True(t, ok)
+	assert.Equal(t, dto.ChannelFilterKind(""), kind)
 }

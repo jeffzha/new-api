@@ -83,7 +83,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	switch info.RelayFormat {
 	case types.RelayFormatClaude:
 		if useOpenAICompatibleClaude(info) {
-			return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
+			return fmt.Sprintf("%s/v1/chat/completions", strings.TrimRight(info.ChannelBaseUrl, "/")), nil
 		}
 		return fmt.Sprintf("%s/anthropic/v1/messages", info.ChannelBaseUrl), nil
 	default:
@@ -266,7 +266,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 }
 
 func useOpenAICompatibleClaude(info *relaycommon.RelayInfo) bool {
-	return info != nil && info.ChannelMeta != nil && info.ChannelOtherSettings.ClaudeUseOpenAICompatible
+	return info != nil && info.ChannelMeta != nil && (info.ChannelOtherSettings.ClaudeUseOpenAICompatible || isLocoPalChannel(info))
 }
 
 func useChatCompletionsForResponses(info *relaycommon.RelayInfo) bool {
@@ -276,7 +276,14 @@ func useChatCompletionsForResponses(info *relaycommon.RelayInfo) bool {
 	if info.ChannelOtherSettings.ResponsesUseChatCompletions {
 		return true
 	}
-	// LocoPal exposes its DeepSeek models through the OpenAI chat endpoint.
+	return isLocoPalChannel(info)
+}
+
+// LocoPal exposes DeepSeek through chat completions, not native Claude or Responses.
+func isLocoPalChannel(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.ChannelMeta == nil {
+		return false
+	}
 	baseURL, err := url.Parse(info.ChannelBaseUrl)
 	return err == nil && strings.EqualFold(baseURL.Hostname(), "locopalai.com")
 }

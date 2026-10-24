@@ -34,9 +34,10 @@ func TestDefaultPricesCNYAreComplete(t *testing.T) {
 		{name: "2.5 1080p video list price", model: Seedance25Model, resolution: "1080p", hasVideo: true, want: 46},
 		{name: "aimodel 2.0 pricing alias", model: AimodelSeedance20Model, resolution: "720p", want: 46},
 		{name: "aimodel 2.5 pricing alias", model: AimodelSeedance25Model, resolution: "480p", want: 70},
-		{name: "mini 720p", model: MiniSeedanceModel, resolution: "720p", want: 9.2},
-		{name: "mini 480p uses 720p tier", model: MiniSeedanceModel, resolution: "480p", want: 9.2},
-		{name: "mini 720p video", model: MiniSeedanceModel, resolution: "720p", hasVideo: true, want: 5.6},
+		{name: "mini 720p", model: MiniSeedanceModel, resolution: "720p", want: 23},
+		{name: "mini 480p uses 720p tier", model: MiniSeedanceModel, resolution: "480p", want: 23},
+		{name: "mini 720p video", model: MiniSeedanceModel, resolution: "720p", hasVideo: true, want: 14},
+		{name: "mini 480p video uses 720p tier", model: MiniSeedanceModel, resolution: "480p", hasVideo: true, want: 14},
 	}
 
 	for _, tt := range tests {
@@ -60,7 +61,7 @@ func TestSeedance25RejectsUnsupportedResolutionWithoutChangingSeedance20Fallback
 }
 
 func TestMiniSeedanceRejectsUnsupportedResolutions(t *testing.T) {
-	for _, res := range []string{"1080p", "4k", "4K"} {
+	for _, res := range []string{"1080p", "4k", "4K", "future-resolution"} {
 		_, ok := GetUnitPriceCNY(MiniSeedanceModel, res, false)
 		assert.False(t, ok, "resolution %q should be unsupported for mini", res)
 	}
@@ -68,13 +69,16 @@ func TestMiniSeedanceRejectsUnsupportedResolutions(t *testing.T) {
 
 func TestRebuildPriceIndexMigratesLegacySeedanceMatrix(t *testing.T) {
 	original := clonePrices(seedanceVideoPricing.PricesCNY)
+	originalRequests := seedanceVideoPricing.RequestPricesCNY
 	t.Cleanup(func() {
 		seedanceVideoPricing.PricesCNY = original
+		seedanceVideoPricing.RequestPricesCNY = originalRequests
 		require.NoError(t, RebuildPriceIndex())
 	})
 
 	legacy := DefaultPricesCNY()
 	delete(legacy, Seedance25Model)
+	delete(legacy, MiniSeedanceModel)
 	legacy[StandardSeedanceModel]["720p"][WithoutVideoKey] = 49.5
 	seedanceVideoPricing.PricesCNY = legacy
 
@@ -88,6 +92,19 @@ func TestRebuildPriceIndexMigratesLegacySeedanceMatrix(t *testing.T) {
 	aimodelPrice, ok := GetUnitPriceCNY(AimodelSeedance20Model, "720p", false)
 	require.True(t, ok)
 	assert.Equal(t, 46.0, aimodelPrice.InexactFloat64())
+	miniPrice, ok := GetRequestPriceCNY(MiniSeedanceModel, "480p", false)
+	require.True(t, ok)
+	assert.Equal(t, 23.0, miniPrice.InexactFloat64())
+	seedanceVideoPricing.PricesCNY[MiniSeedanceModel] = map[string]map[string]float64{
+		"720p": {WithoutVideoKey: 9.2, WithVideoKey: 5.6},
+	}
+	seedanceVideoPricing.RequestPricesCNY = map[string]map[string]float64{
+		MiniSeedanceModel: {WithoutVideoKey: 24, WithVideoKey: 15},
+	}
+	require.NoError(t, RebuildPriceIndex())
+	customMiniPrice, ok := GetUnitPriceCNY(MiniSeedanceModel, "720p", true)
+	require.True(t, ok)
+	assert.Equal(t, 15.0, customMiniPrice.InexactFloat64())
 }
 
 func TestValidatePricesCNYRejectsIncompleteOrUnsafeMatrices(t *testing.T) {
@@ -176,6 +193,16 @@ func TestValidatePricesCNYRejectsIncompleteOrUnsafeMatrices(t *testing.T) {
 }
 
 func TestValidatePricesCNYJSONUsesStableContract(t *testing.T) {
+	requests, err := common.Marshal(DefaultRequestPricesCNY())
+	require.NoError(t, err)
+	require.NoError(t, ValidateRequestPricesCNYJSON(string(requests)))
+	for _, raw := range []string{
+		`null`, `{}`, `{"doubao-seedance-2.0-mini":{"without_video":0,"with_video":14}}`,
+		`{"doubao-seedance-2.0-mini":{"without_video":23,"with_video":-1}}`,
+		`{"doubao-seedance-2.0-mini":{"without_video":23,"with_video":14,"extra":1}}`,
+	} {
+		assert.Error(t, ValidateRequestPricesCNYJSON(raw))
+	}
 	encoded, err := common.Marshal(DefaultPricesCNY())
 	require.NoError(t, err)
 	require.NoError(t, ValidatePricesCNYJSON(string(encoded)))

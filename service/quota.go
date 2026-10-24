@@ -96,6 +96,10 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 // per-segment financial journal. The legacy wrapper above preserves the
 // existing error-only API.
 func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) (int, int64, error) {
+	if CNDirectRealtimeRequested(relayInfo) {
+		// Delta-only callers have no durable response identity.
+		return 0, 0, model.ErrCNConflict
+	}
 	if relayInfo.UsePrice {
 		// Price-based realtime requests do not reserve through the legacy
 		// wallet path, but managed users still need a durable segment fact.
@@ -215,6 +219,12 @@ func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.Relay
 
 func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelName string,
 	usage *dto.RealtimeUsage, extraContent string) {
+	if CNDirectRealtimeRequested(relayInfo) {
+		if err := FinalizeCNDirectRealtime(relayInfo, usage); err != nil {
+			logger.LogError(ctx, "CN direct realtime finalization requires retry")
+		}
+		return
+	}
 
 	var tieredResult *billingexpr.TieredResult
 	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, billingexpr.TokenParams{
@@ -501,6 +511,11 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	}
 
 	// record all the consume log even if quota is 0
+	direct, bindErr := BindCNDirectRelayUsage(relayInfo, usage, totalTokens != 0 || fixedPriceBilling)
+	if bindErr != nil {
+		logger.LogError(ctx, "CN direct audio usage identity missing")
+		return
+	}
 	if totalTokens == 0 && !fixedPriceBilling {
 		// in this case, must be some error happened
 		// we cannot just return, because we may have to return the pre-consumed quota
@@ -509,8 +524,10 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
 			"tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, billingModelName, relayInfo.FinalPreConsumedQuota))
 	} else {
-		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
-		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
+		if !direct {
+			model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
+			model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
+		}
 	}
 
 	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
@@ -585,6 +602,23 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 }
 
 func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (result postConsumeQuotaResult, err error) {
+	if CNDirectRealtimeRequested(relayInfo) && relayInfo.BillingSource != BillingSourceSubscription {
+		s, ok := relayInfo.Billing.(*cnDirectRelaySession)
+		if !ok || s.usage == "" || preConsumedQuota != 0 || relayInfo.FinalPreConsumedQuota != 0 {
+			return result, model.ErrCNConflict
+		}
+		row, err := model.ReadCNDirectWallet(relayInfo.RequestId, relayInfo.UserId)
+		if err != nil {
+			return result, err
+		}
+		if row.Kind != "relay" || row.TokenID != relayInfo.TokenId || row.ChannelID != relayInfo.ChannelId {
+			return result, model.ErrCNConflict
+		}
+		if err = model.FinalizeCNDirectRelayWallet(relayInfo.RequestId, relayInfo.UserId, quota, s.usage, s.countRequest); err != nil {
+			return result, err
+		}
+		return postConsumeQuotaResult{FundingApplied: true, TokenApplied: true}, nil
+	}
 	tokenAppliedAtomically := false
 
 	// 1) Consume from wallet quota OR subscription item
@@ -679,64 +713,11 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 		result.TokenApplied = true
 	}
 
-	if sendEmail {
-		if (quota + preConsumedQuota) != 0 {
-			checkAndSendQuotaNotify(relayInfo, quota, preConsumedQuota)
-		}
-	}
 	upstreamevent.EmitBillingDelta(nil, relayInfo, "postconsume", quota, preConsumedQuota, quota+preConsumedQuota, map[string]interface{}{
 		"send_email": sendEmail,
 	})
 
 	return result, nil
-}
-
-func checkAndSendQuotaNotify(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int) {
-	gopool.Go(func() {
-		userSetting := relayInfo.UserSetting
-		threshold := common.QuotaRemindThreshold
-		if userSetting.QuotaWarningThreshold != 0 {
-			threshold = int(userSetting.QuotaWarningThreshold)
-		}
-
-		//noMoreQuota := userCache.Quota-(quota+preConsumedQuota) <= 0
-		quotaTooLow := false
-		consumeQuota := quota + preConsumedQuota
-		if relayInfo.UserQuota-consumeQuota < threshold {
-			quotaTooLow = true
-		}
-		if quotaTooLow {
-			prompt := "您的额度即将用尽"
-			topUpLink := PaymentReturnURL("/wallet")
-
-			// 根据通知方式生成不同的内容格式
-			var content string
-			var values []any
-
-			notifyType := userSetting.NotifyType
-			if notifyType == "" {
-				notifyType = dto.NotifyTypeEmail
-			}
-
-			if notifyType == dto.NotifyTypeBark {
-				// Bark推送使用简短文本，不支持HTML
-				content = "{{value}}，剩余额度：{{value}}，请及时充值"
-				values = []any{prompt, logger.FormatQuota(relayInfo.UserQuota)}
-			} else if notifyType == dto.NotifyTypeGotify {
-				content = "{{value}}，当前剩余额度为 {{value}}，请及时充值。"
-				values = []any{prompt, logger.FormatQuota(relayInfo.UserQuota)}
-			} else {
-				// 默认内容格式，适用于Email和Webhook（支持HTML）
-				content = "{{value}}，当前剩余额度为 {{value}}，为了不影响您的使用，请及时充值。<br/>充值链接：<a href='{{value}}'>{{value}}</a>"
-				values = []any{prompt, logger.FormatQuota(relayInfo.UserQuota), topUpLink, topUpLink}
-			}
-
-			err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values))
-			if err != nil {
-				common.SysError(fmt.Sprintf("failed to send quota notify to user %d: %s", relayInfo.UserId, err.Error()))
-			}
-		}
-	})
 }
 
 func checkAndSendSubscriptionQuotaNotify(relayInfo *relaycommon.RelayInfo) {

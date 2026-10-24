@@ -1,0 +1,318 @@
+=== RUN   TestCNTaskControllerEntrances
+=== RUN   TestCNTaskControllerEntrances/image-immediate
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/agency_gateway.go:286 [35;1mSQL logic error: no such table: agency_hub_active_user_bindings (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `agency_hub_active_user_bindings` WHERE user_id = 700 ORDER BY `agency_hub_active_user_bindings`.`user_id` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_task_billings` WHERE request_id = "cn-controller-image-immediate" ORDER BY `cntask_1792059474581172700_cn_task_billings`.`key` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_finance_outboxes` WHERE chain_key = "6ac7ac0f8df5ac92c676140eaa4058c6a27b755ba0c08690d992370bc2d4b27c" ORDER BY revision DESC,`cntask_1792059474581172700_cn_finance_outboxes`.`id` LIMIT 1
+[INFO] 2026/10/15 - 18:17:54 | cn-controller-image-immediate | 预扣费与实际消耗一致，无需调整：＄0.100000（按次计费） 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:232 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_wallet_lifecycles` WHERE request_id = "cn-controller-image-immediate" ORDER BY `cntask_1792059474581172700_cn_wallet_lifecycles`.`request_id` LIMIT 1
+=== RUN   TestCNTaskControllerEntrances/video
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/agency_gateway.go:286 [35;1mSQL logic error: no such table: agency_hub_active_user_bindings (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `agency_hub_active_user_bindings` WHERE user_id = 701 ORDER BY `agency_hub_active_user_bindings`.`user_id` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_task_billings` WHERE request_id = "cn-controller-video" ORDER BY `cntask_1792059474581172700_cn_task_billings`.`key` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_finance_outboxes` WHERE chain_key = "9fe8af88115f2b38f5f824d4437816377b1f437dac716f4ba994f9d576849232" ORDER BY revision DESC,`cntask_1792059474581172700_cn_finance_outboxes`.`id` LIMIT 1
+[INFO] 2026/10/15 - 18:17:54 | cn-controller-video | 预扣费与实际消耗一致，无需调整：＄0.500000（按次计费） 
+[SYS] 2026/10/15 - 18:17:54 | 任务进度轮询开始 
+[INFO] 2026/10/15 - 18:17:54 | SYSTEM | Channel #701 pending video tasks: 1 
+[SYS] 2026/10/15 - 18:17:54 | 任务进度轮询完成 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:232 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_wallet_lifecycles` WHERE request_id = "cn-controller-video" ORDER BY `cntask_1792059474581172700_cn_wallet_lifecycles`.`request_id` LIMIT 1
+=== RUN   TestCNTaskControllerEntrances/native
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/agency_gateway.go:286 [35;1mSQL logic error: no such table: agency_hub_active_user_bindings (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `agency_hub_active_user_bindings` WHERE user_id = 702 ORDER BY `agency_hub_active_user_bindings`.`user_id` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_task_billings` WHERE request_id = "cn-controller-native" ORDER BY `cntask_1792059474581172700_cn_task_billings`.`key` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_finance_outboxes` WHERE chain_key = "e6dd87b86e1fe6a97f40f8b06911096b611c5e3fab04fa3fe6e370378a9077ec" ORDER BY revision DESC,`cntask_1792059474581172700_cn_finance_outboxes`.`id` LIMIT 1
+[INFO] 2026/10/15 - 18:17:54 | cn-controller-native | 预扣费与实际消耗一致，无需调整：＄0.685000（按次计费） 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:232 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_wallet_lifecycles` WHERE request_id = "cn-controller-native" ORDER BY `cntask_1792059474581172700_cn_wallet_lifecycles`.`request_id` LIMIT 1
+[INFO] 2026/10/15 - 18:17:54 | SYSTEM | Channel #702 pending video tasks: 1 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:146 [35;1mSQL logic error: no such table: agency_hub_billing_operations (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `charge_id` FROM `agency_hub_billing_operations` WHERE operation = "finalize" AND money_seq = 0 AND (operation_id IS NULL OR operation_id = "") ORDER BY id LIMIT 100
+[ERR] 2026/10/15 - 18:17:54 | SYSTEM | load non-canonical agency task finalizations failed: SQL logic error: no such table: agency_hub_billing_operations (1) 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:167 [35;1mSQL logic error: no such table: agency_hub_billing_journals (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `charge_id` FROM `agency_hub_billing_journals` WHERE status = "reconcile_required" AND last_error = "final_usage_pending" ORDER BY id LIMIT 100
+[ERR] 2026/10/15 - 18:17:54 | SYSTEM | load agency task charges pending final usage failed: SQL logic error: no such table: agency_hub_billing_journals (1) 
+=== RUN   TestCNTaskControllerEntrances/unknown
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/agency_gateway.go:286 [35;1mSQL logic error: no such table: agency_hub_active_user_bindings (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `agency_hub_active_user_bindings` WHERE user_id = 703 ORDER BY `agency_hub_active_user_bindings`.`user_id` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_task_billings` WHERE request_id = "cn-controller-unknown" ORDER BY `cntask_1792059474581172700_cn_task_billings`.`key` LIMIT 1
+[WARN] 2026/10/15 - 18:17:54 | cn-controller-unknown | CN task funds retained for provider acceptance reconciliation 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:232 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_wallet_lifecycles` WHERE request_id = "cn-controller-unknown" ORDER BY `cntask_1792059474581172700_cn_wallet_lifecycles`.`request_id` LIMIT 1
+=== RUN   TestCNTaskControllerEntrances/accepted-insert-failed
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/agency_gateway.go:286 [35;1mSQL logic error: no such table: agency_hub_active_user_bindings (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `agency_hub_active_user_bindings` WHERE user_id = 704 ORDER BY `agency_hub_active_user_bindings`.`user_id` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_task_billings` WHERE request_id = "cn-controller-accepted-insert-failed" ORDER BY `cntask_1792059474581172700_cn_task_billings`.`key` LIMIT 1
+[SYS] 2026/10/15 - 18:17:54 | insert task error: injected accepted task insert failure 
+[WARN] 2026/10/15 - 18:17:54 | cn-controller-accepted-insert-failed | CN task funds retained for provider acceptance reconciliation 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:232 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_wallet_lifecycles` WHERE request_id = "cn-controller-accepted-insert-failed" ORDER BY `cntask_1792059474581172700_cn_wallet_lifecycles`.`request_id` LIMIT 1
+
+2026/10/15 18:17:54 [34;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:245
+[0m[35m[warn] [0mremoving callback `cn-insert-fail` from C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:245
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_finance_outboxes` WHERE chain_key = "e8389d1f09a71c7166e05251913ff9334e9c605a989e7944cc27a7b4dd1de76f" ORDER BY revision DESC,`cntask_1792059474581172700_cn_finance_outboxes`.`id` LIMIT 1
+
+2026/10/15 18:17:54 [34;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:173
+[0m[35m[warn] [0mremoving callback `cn-insert-fail` from C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:173
+=== RUN   TestCNTaskControllerEntrances/acceptance-payload-failed
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/agency_gateway.go:286 [35;1mSQL logic error: no such table: agency_hub_active_user_bindings (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `agency_hub_active_user_bindings` WHERE user_id = 705 ORDER BY `agency_hub_active_user_bindings`.`user_id` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_task_billings` WHERE request_id = "cn-controller-acceptance-payload-failed" ORDER BY `cntask_1792059474581172700_cn_task_billings`.`key` LIMIT 1
+[SYS] 2026/10/15 - 18:17:54 | insert task error: injected acceptance payload failure 
+[WARN] 2026/10/15 - 18:17:54 | cn-controller-acceptance-payload-failed | CN task funds retained for provider acceptance reconciliation 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:232 [35;1mrecord not found
+[0m[33m[0.529ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_wallet_lifecycles` WHERE request_id = "cn-controller-acceptance-payload-failed" ORDER BY `cntask_1792059474581172700_cn_wallet_lifecycles`.`request_id` LIMIT 1
+
+2026/10/15 18:17:54 [34;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:251
+[0m[35m[warn] [0mremoving callback `cn-payload-fail` from C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:251
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_finance_outboxes` WHERE chain_key = "3cc1887418b6fed8a474791216b06dbbe62ef8bdec30813f275cb38130ff02d0" ORDER BY revision DESC,`cntask_1792059474581172700_cn_finance_outboxes`.`id` LIMIT 1
+
+2026/10/15 18:17:54 [34;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:183
+[0m[35m[warn] [0mremoving callback `cn-payload-fail` from C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:183
+=== RUN   TestCNTaskControllerEntrances/native-insert-failed
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/agency_gateway.go:286 [35;1mSQL logic error: no such table: agency_hub_active_user_bindings (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `agency_hub_active_user_bindings` WHERE user_id = 706 ORDER BY `agency_hub_active_user_bindings`.`user_id` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_task_billings` WHERE request_id = "cn-controller-native-insert-failed" ORDER BY `cntask_1792059474581172700_cn_task_billings`.`key` LIMIT 1
+[SYS] 2026/10/15 - 18:17:54 | insert task error: injected accepted task insert failure 
+[WARN] 2026/10/15 - 18:17:54 | cn-controller-native-insert-failed | CN task funds retained for provider acceptance reconciliation 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:232 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_wallet_lifecycles` WHERE request_id = "cn-controller-native-insert-failed" ORDER BY `cntask_1792059474581172700_cn_wallet_lifecycles`.`request_id` LIMIT 1
+
+2026/10/15 18:17:54 [34;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:245
+[0m[35m[warn] [0mremoving callback `cn-insert-fail` from C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:245
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_finance_outboxes` WHERE chain_key = "ef87a0397a307b627b313a0d110068c90f8736b56cce752bd9d794ca879d7c96" ORDER BY revision DESC,`cntask_1792059474581172700_cn_finance_outboxes`.`id` LIMIT 1
+[INFO] 2026/10/15 - 18:17:54 | SYSTEM | Channel #706 pending video tasks: 1 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:146 [35;1mSQL logic error: no such table: agency_hub_billing_operations (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `charge_id` FROM `agency_hub_billing_operations` WHERE operation = "finalize" AND money_seq = 0 AND (operation_id IS NULL OR operation_id = "") ORDER BY id LIMIT 100
+[ERR] 2026/10/15 - 18:17:54 | SYSTEM | load non-canonical agency task finalizations failed: SQL logic error: no such table: agency_hub_billing_operations (1) 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:167 [35;1mSQL logic error: no such table: agency_hub_billing_journals (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `charge_id` FROM `agency_hub_billing_journals` WHERE status = "reconcile_required" AND last_error = "final_usage_pending" ORDER BY id LIMIT 100
+[ERR] 2026/10/15 - 18:17:54 | SYSTEM | load agency task charges pending final usage failed: SQL logic error: no such table: agency_hub_billing_journals (1) 
+
+2026/10/15 18:17:54 [34;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:173
+[0m[35m[warn] [0mremoving callback `cn-insert-fail` from C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:173
+=== RUN   TestCNTaskControllerEntrances/native-payload-failed
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/agency_gateway.go:286 [35;1mSQL logic error: no such table: agency_hub_active_user_bindings (1)
+[0m[33m[0.528ms] [34;1m[rows:0][0m SELECT * FROM `agency_hub_active_user_bindings` WHERE user_id = 707 ORDER BY `agency_hub_active_user_bindings`.`user_id` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_task_billings` WHERE request_id = "cn-controller-native-payload-failed" ORDER BY `cntask_1792059474581172700_cn_task_billings`.`key` LIMIT 1
+[SYS] 2026/10/15 - 18:17:54 | insert task error: injected acceptance payload failure 
+[WARN] 2026/10/15 - 18:17:54 | cn-controller-native-payload-failed | CN task funds retained for provider acceptance reconciliation 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:232 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_wallet_lifecycles` WHERE request_id = "cn-controller-native-payload-failed" ORDER BY `cntask_1792059474581172700_cn_wallet_lifecycles`.`request_id` LIMIT 1
+
+2026/10/15 18:17:54 [34;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:251
+[0m[35m[warn] [0mremoving callback `cn-payload-fail` from C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:251
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_finance_outboxes` WHERE chain_key = "08efb5560e38978630ae25a4f11e7ad59fc4cca65a6993a400122e8ba1f30b57" ORDER BY revision DESC,`cntask_1792059474581172700_cn_finance_outboxes`.`id` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:146 [35;1mSQL logic error: no such table: agency_hub_billing_operations (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `charge_id` FROM `agency_hub_billing_operations` WHERE operation = "finalize" AND money_seq = 0 AND (operation_id IS NULL OR operation_id = "") ORDER BY id LIMIT 100
+[ERR] 2026/10/15 - 18:17:54 | SYSTEM | load non-canonical agency task finalizations failed: SQL logic error: no such table: agency_hub_billing_operations (1) 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/agency_task_submission.go:167 [35;1mSQL logic error: no such table: agency_hub_billing_journals (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT `charge_id` FROM `agency_hub_billing_journals` WHERE status = "reconcile_required" AND last_error = "final_usage_pending" ORDER BY id LIMIT 100
+[ERR] 2026/10/15 - 18:17:54 | SYSTEM | load agency task charges pending final usage failed: SQL logic error: no such table: agency_hub_billing_journals (1) 
+
+2026/10/15 18:17:54 [34;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:183
+[0m[35m[warn] [0mremoving callback `cn-payload-fail` from C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:183
+=== RUN   TestCNTaskControllerEntrances/caller-cancelled
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/agency_gateway.go:286 [35;1mSQL logic error: no such table: agency_hub_active_user_bindings (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `agency_hub_active_user_bindings` WHERE user_id = 708 ORDER BY `agency_hub_active_user_bindings`.`user_id` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_task_billings` WHERE request_id = "cn-controller-caller-cancelled" ORDER BY `cntask_1792059474581172700_cn_task_billings`.`key` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_finance_outboxes` WHERE chain_key = "bfe2d14dc3e23b8c03c7c4a82e67d268c8f9b5d1c09526bfdc8dd3d95428d54e" ORDER BY revision DESC,`cntask_1792059474581172700_cn_finance_outboxes`.`id` LIMIT 1
+[INFO] 2026/10/15 - 18:17:54 | cn-controller-caller-cancelled | 预扣费与实际消耗一致，无需调整：＄0.500000（按次计费） 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:232 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_wallet_lifecycles` WHERE request_id = "cn-controller-caller-cancelled" ORDER BY `cntask_1792059474581172700_cn_wallet_lifecycles`.`request_id` LIMIT 1
+=== RUN   TestCNTaskControllerEntrances/responses-sync
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/agency_gateway.go:286 [35;1mSQL logic error: no such table: agency_hub_active_user_bindings (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `agency_hub_active_user_bindings` WHERE user_id = 709 ORDER BY `agency_hub_active_user_bindings`.`user_id` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_task_billings` WHERE request_id = "cn-controller-responses-sync" ORDER BY `cntask_1792059474581172700_cn_task_billings`.`key` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_finance_outboxes` WHERE chain_key = "82e62e03df904d6b987d4e304039fe47e851b503322d9753a27a27f1689cf7ae" ORDER BY revision DESC,`cntask_1792059474581172700_cn_finance_outboxes`.`id` LIMIT 1
+[INFO] 2026/10/15 - 18:17:54 | cn-controller-responses-sync | 预扣费与实际消耗一致，无需调整：＄0.100000（按次计费） 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:232 [35;1mrecord not found
+[0m[33m[0.539ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_wallet_lifecycles` WHERE request_id = "cn-controller-responses-sync" ORDER BY `cntask_1792059474581172700_cn_wallet_lifecycles`.`request_id` LIMIT 1
+=== RUN   TestCNTaskControllerEntrances/responses-background
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/agency_gateway.go:286 [35;1mSQL logic error: no such table: agency_hub_active_user_bindings (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `agency_hub_active_user_bindings` WHERE user_id = 710 ORDER BY `agency_hub_active_user_bindings`.`user_id` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_task_billings` WHERE request_id = "cn-controller-responses-background" ORDER BY `cntask_1792059474581172700_cn_task_billings`.`key` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_finance_outboxes` WHERE chain_key = "8fa1d96620799391837e49fe74e6a8ddf986b783079e4a889067733102304a27" ORDER BY revision DESC,`cntask_1792059474581172700_cn_finance_outboxes`.`id` LIMIT 1
+[INFO] 2026/10/15 - 18:17:54 | cn-controller-responses-background | 预扣费与实际消耗一致，无需调整：＄0.100000（按次计费） 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:232 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_wallet_lifecycles` WHERE request_id = "cn-controller-responses-background" ORDER BY `cntask_1792059474581172700_cn_wallet_lifecycles`.`request_id` LIMIT 1
+=== RUN   TestCNTaskControllerEntrances/responses-stream
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/agency_gateway.go:286 [35;1mSQL logic error: no such table: agency_hub_active_user_bindings (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `agency_hub_active_user_bindings` WHERE user_id = 711 ORDER BY `agency_hub_active_user_bindings`.`user_id` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[0.512ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_task_billings` WHERE request_id = "cn-controller-responses-stream" ORDER BY `cntask_1792059474581172700_cn_task_billings`.`key` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_finance_capture.go:112 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_finance_outboxes` WHERE chain_key = "378b1d4de245c5382ade8543d16525d1b04a0a308871f71a3639c6df3bd83634" ORDER BY revision DESC,`cntask_1792059474581172700_cn_finance_outboxes`.`id` LIMIT 1
+[INFO] 2026/10/15 - 18:17:54 | cn-controller-responses-stream | 预扣费与实际消耗一致，无需调整：＄0.100000（按次计费） 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:232 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_wallet_lifecycles` WHERE request_id = "cn-controller-responses-stream" ORDER BY `cntask_1792059474581172700_cn_wallet_lifecycles`.`request_id` LIMIT 1
+=== RUN   TestCNTaskControllerEntrances/submit-timeout
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/agency_gateway.go:286 [35;1mSQL logic error: no such table: agency_hub_active_user_bindings (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `agency_hub_active_user_bindings` WHERE user_id = 712 ORDER BY `agency_hub_active_user_bindings`.`user_id` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_task_billings` WHERE request_id = "cn-controller-submit-timeout" ORDER BY `cntask_1792059474581172700_cn_task_billings`.`key` LIMIT 1
+[WARN] 2026/10/15 - 18:17:54 | cn-controller-submit-timeout | CN task funds retained for provider acceptance reconciliation 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:232 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_wallet_lifecycles` WHERE request_id = "cn-controller-submit-timeout" ORDER BY `cntask_1792059474581172700_cn_wallet_lifecycles`.`request_id` LIMIT 1
+=== RUN   TestCNTaskControllerEntrances/submit-conflict
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/service/agency_gateway.go:286 [35;1mSQL logic error: no such table: agency_hub_active_user_bindings (1)
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `agency_hub_active_user_bindings` WHERE user_id = 713 ORDER BY `agency_hub_active_user_bindings`.`user_id` LIMIT 1
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task.go:186 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_task_billings` WHERE request_id = "cn-controller-submit-conflict" ORDER BY `cntask_1792059474581172700_cn_task_billings`.`key` LIMIT 1
+[WARN] 2026/10/15 - 18:17:54 | cn-controller-submit-conflict | CN task funds retained for provider acceptance reconciliation 
+
+2026/10/15 18:17:54 [31;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/controller/cn_task_test.go:232 [35;1mrecord not found
+[0m[33m[0.000ms] [34;1m[rows:0][0m SELECT * FROM `cntask_1792059474581172700_cn_wallet_lifecycles` WHERE request_id = "cn-controller-submit-conflict" ORDER BY `cntask_1792059474581172700_cn_wallet_lifecycles`.`request_id` LIMIT 1
+--- PASS: TestCNTaskControllerEntrances (0.20s)
+    --- PASS: TestCNTaskControllerEntrances/image-immediate (0.06s)
+    --- PASS: TestCNTaskControllerEntrances/video (0.01s)
+    --- PASS: TestCNTaskControllerEntrances/native (0.01s)
+    --- PASS: TestCNTaskControllerEntrances/unknown (0.00s)
+    --- PASS: TestCNTaskControllerEntrances/accepted-insert-failed (0.01s)
+    --- PASS: TestCNTaskControllerEntrances/acceptance-payload-failed (0.01s)
+    --- PASS: TestCNTaskControllerEntrances/native-insert-failed (0.01s)
+    --- PASS: TestCNTaskControllerEntrances/native-payload-failed (0.01s)
+    --- PASS: TestCNTaskControllerEntrances/caller-cancelled (0.01s)
+    --- PASS: TestCNTaskControllerEntrances/responses-sync (0.01s)
+    --- PASS: TestCNTaskControllerEntrances/responses-background (0.01s)
+    --- PASS: TestCNTaskControllerEntrances/responses-stream (0.01s)
+    --- PASS: TestCNTaskControllerEntrances/submit-timeout (0.00s)
+    --- PASS: TestCNTaskControllerEntrances/submit-conflict (0.00s)
+PASS
+ok  	github.com/QuantumNous/new-api/controller	1.873s

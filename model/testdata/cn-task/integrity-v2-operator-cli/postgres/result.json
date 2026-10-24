@@ -1,0 +1,40 @@
+{
+  "databaseScope": "s4_operator_5a9a7a0872d8",
+  "databaseVersion": "PostgreSQL 17.6 on x86_64-windows, compiled by msvc-19.44.35213, 64-bit",
+  "engine": "postgres",
+  "final": {
+    "batchSequence": 2,
+    "epochId": "6009c284-6475-4b01-be3a-d44b91b56885",
+    "generation": 3,
+    "latestProofId": "sha256:23fa8b1db711f2847604c5f527602ab823d96f666bb7946865732380c5f5b9a3",
+    "membershipThrough": 1,
+    "mutationThrough": 3,
+    "operatorEvidenceId": "",
+    "state": "paused"
+  },
+  "financialGrants": 0,
+  "gatewayId": "test-cn",
+  "native": {
+    "nativeBalance": 4
+  },
+  "prepared": {
+    "epochId": "6009c284-6475-4b01-be3a-d44b91b56885",
+    "generation": 1,
+    "operatorEvidenceId": "synthetic-cli-prepare",
+    "state": "prepared"
+  },
+  "productionEligibility": false,
+  "seconds": 13.569491599977482,
+  "streamEpoch": "2faa92dd-1539-48b4-b165-fb98f799f68f",
+  "syntheticIntegration": true,
+  "verified": [
+    {
+      "pages": 14,
+      "proofId": "sha256:398f5db3081a799fd8d09920696a61f1dee6f1362d9478f73c7b372a195359cb"
+    },
+    {
+      "pages": 14,
+      "proofId": "sha256:23fa8b1db711f2847604c5f527602ab823d96f666bb7946865732380c5f5b9a3"
+    }
+  ]
+}

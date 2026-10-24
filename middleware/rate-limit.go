@@ -166,7 +166,15 @@ func GlobalWebRateLimit() func(c *gin.Context) {
 
 func GlobalAPIRateLimit() func(c *gin.Context) {
 	if common.GlobalApiRateLimitEnable {
-		return rateLimitFactory(common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration, "GA")
+		limited := rateLimitFactory(common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration, "GA")
+		return func(c *gin.Context) {
+			// Caddy's active probe must not depend on Redis rate limiting.
+			if c.Request.Method == http.MethodGet && c.Request.URL.Path == "/api/status" {
+				c.Next()
+				return
+			}
+			limited(c)
+		}
 	}
 	return defNext
 }

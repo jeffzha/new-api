@@ -23,7 +23,11 @@ func completeAgencyTaskBilling(ctx context.Context, task *model.Task, expectedSt
 				logger.LogInfo(ctx, fmt.Sprintf("agency task %s finalized at charged quota without provider usage", task.TaskID))
 				return nil
 			} else {
-				logger.LogError(ctx, fmt.Sprintf("agency task %s charged-quota finalize failed: %v", task.TaskID, settleErr))
+				chargeID := ""
+				if task.PrivateData.BillingContext != nil {
+					chargeID = task.PrivateData.BillingContext.AgencyChargeID
+				}
+				logger.LogError(ctx, fmt.Sprintf("agency task settlement failed task=%s charge=%s path=charged-quota journal_status=unknown error=%v", task.TaskID, chargeID, settleErr))
 			}
 		}
 		reason := "terminal_settlement_failed"
@@ -35,6 +39,11 @@ func completeAgencyTaskBilling(ctx context.Context, task *model.Task, expectedSt
 		if markErr := model.MarkAgencyTaskReconcileRequired(task, reason); markErr != nil {
 			logger.LogError(ctx, fmt.Sprintf("agency task %s reconciliation marker failed: %v", task.TaskID, markErr))
 		}
+		chargeID := ""
+		if task.PrivateData.BillingContext != nil {
+			chargeID = task.PrivateData.BillingContext.AgencyChargeID
+		}
+		logger.LogError(ctx, fmt.Sprintf("agency task settlement failed task=%s charge=%s path=normal expected_status=%s error=%v", task.TaskID, chargeID, expectedStatus, err))
 		return err
 	}
 	if result.Changed && result.QuotaDelta != 0 {

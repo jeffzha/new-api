@@ -72,6 +72,15 @@ func nativeTaskUsageSchema(name string) map[string]jsplugin.UsageFieldSchema {
 	}
 }
 
+func nativeAudioUsageSchema(name string) map[string]jsplugin.UsageFieldSchema {
+	if name != "fun-asr-flash-2026-06-15" {
+		return nil
+	}
+	return map[string]jsplugin.UsageFieldSchema{
+		"seconds": {Type: "number", Unit: "second", Description: jsplugin.LocalizedText{"en": "Audio transcription unit price", "zh": "音频转写单价"}},
+	}
+}
+
 var ErrModelPricingConflict = errors.New("model pricing changed; reload before saving")
 
 // Lock order is stable across instances. Creating missing option rows inside
@@ -108,7 +117,7 @@ func defaultPricingMaps() map[string]map[string]any {
 
 func readModelPricingMaps(db *gorm.DB) (map[string]map[string]any, map[string]bool, []string, error) {
 	var rows []Option
-	if err := db.Where(commonKeyCol+" IN ?", modelPricingOptionKeys).Find(&rows).Error; err != nil {
+	if err := db.Where(map[string]any{"key": modelPricingOptionKeys}).Find(&rows).Error; err != nil {
 		return nil, nil, nil, err
 	}
 	values := defaultPricingMaps()
@@ -250,7 +259,11 @@ func PreviewModelPricing(name string, draft PricingValues) (PricingValues, error
 }
 
 func GetModelPricingSnapshot(names []string) (*ModelPricingSnapshot, error) {
-	values, _, _, err := readModelPricingMaps(DB)
+	return modelPricingSnapshot(DB, names)
+}
+
+func modelPricingSnapshot(db *gorm.DB, names []string) (*ModelPricingSnapshot, error) {
+	values, _, _, err := readModelPricingMaps(db)
 	if err != nil {
 		return nil, err
 	}
@@ -293,6 +306,9 @@ func GetModelPricingSnapshot(names []string) (*ModelPricingSnapshot, error) {
 		}
 		if entry.UsageSchema == nil {
 			entry.UsageSchema = nativeTaskUsageSchema(name)
+		}
+		if entry.UsageSchema == nil {
+			entry.UsageSchema = nativeAudioUsageSchema(name)
 		}
 		plugins := generation.PluginsByModel(name)
 		configuredVariants, _ := configured[billing_setting.PluginBillingExprOption].(map[string]any)
@@ -448,6 +464,8 @@ func validateModelPricing(name string, values, previous PricingValues) error {
 				} else {
 					err = billing_setting.SmokeTestExpr(expression)
 				}
+			} else if schema := nativeAudioUsageSchema(name); schema != nil {
+				err = billing_setting.SmokeTestTaskExpr(expression, schema)
 			} else if previous[key] != expression || len(billingexpr.UsedUsageKeys(expression)) == 0 {
 				err = billing_setting.SmokeTestExpr(expression)
 			}

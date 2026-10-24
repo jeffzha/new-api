@@ -9,9 +9,44 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestWriterFenceFailsClosedWithoutPersistentState(t *testing.T) {
+	app := newAgencyTestApp(t)
+	router := gin.New()
+	router.Use(app.writerFenceMiddleware())
+	router.Any("/agency/api/v1/children", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	probe := func(method string) *httptest.ResponseRecorder {
+		t.Helper()
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(method, "/agency/api/v1/children", nil))
+		return response
+	}
+	assert.Equal(t, http.StatusNoContent, probe(http.MethodPost).Code)
+	assert.Equal(t, http.StatusNoContent, probe(http.MethodGet).Code)
+	require.NoError(t, app.db.Migrator().DropTable(&model.AgencyOpsWriterState{}))
+	assert.Equal(t, http.StatusServiceUnavailable, probe(http.MethodPost).Code)
+	assert.Equal(t, http.StatusNoContent, probe(http.MethodGet).Code)
+	require.NoError(t, app.Migrate())
+	require.NoError(t, app.db.Delete(&model.AgencyOpsWriterState{}, 1).Error)
+	assert.Equal(t, http.StatusServiceUnavailable, probe(http.MethodPost).Code)
+	require.NoError(t, app.Migrate())
+	for _, tc := range []struct {
+		mode string
+		want int
+	}{
+		{model.AgencyWriterShadow, http.StatusNoContent},
+		{model.AgencyWriterDraining, http.StatusConflict},
+		{model.AgencyWriterOpsSingle, http.StatusConflict},
+		{"unknown", http.StatusServiceUnavailable},
+	} {
+		require.NoError(t, app.db.Model(&model.AgencyOpsWriterState{}).Where("id = ?", 1).Update("mode", tc.mode).Error)
+		assert.Equal(t, tc.want, probe(http.MethodPost).Code, tc.mode)
+	}
+}
 
 func TestInternalCommandRejectsTLSWithoutVerifiedClientCertificate(t *testing.T) {
 	app := newAgencyTestApp(t)

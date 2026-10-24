@@ -396,18 +396,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		if factsErr != nil {
 			return nil, service.TaskErrorWrapperLocal(factsErr, "plugin_usage_invalid", http.StatusBadRequest)
 		}
-		cost, trace, runErr := billingexpr.RunExprWithRequest(exprStr, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: facts})
-		if runErr != nil || cost < 0 {
-			if runErr == nil {
-				runErr = errors.New("negative task expression result")
-			}
-			return nil, service.TaskErrorWrapper(runErr, "model_price_error", http.StatusBadRequest)
+		if err := priceTaskUsageExpression(c, info, snapshot, modelName, exprStr, facts); err != nil {
+			return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
 		}
-		groupRatioInfo := helper.HandleGroupRatio(c, info)
-		quota, clamp := common.QuotaRoundChecked(cost * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
-		noteTaskQuotaClamp(info, clamp)
-		info.PriceData = hosttypes.PriceData{Quota: quota, QuotaToPreConsume: quota, GroupRatioInfo: groupRatioInfo}
-		info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: billing_setting.BillingModeTieredExpr, ModelName: modelName, ExprString: exprStr, ExprHash: billingexpr.ExprHashString(exprStr), GroupRatio: groupRatioInfo.GroupRatio, EstimatedQuotaBeforeGroup: cost * common.QuotaPerUnit, EstimatedQuotaAfterGroup: quota, EstimatedTier: trace.MatchedTier, QuotaPerUnit: common.QuotaPerUnit, ExprVersion: billingexpr.ExprVersion(exprStr), TaskUsageBilling: true, UsageFacts: facts}
 	}
 	var standardTaskPrice *channel.TaskBillingEstimate
 	var standardPriceData hosttypes.PriceData
@@ -477,7 +468,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.PriceData.Quota = quota
 		noteTaskQuotaClamp(info, clamp)
 	}
-	if managed && !hasProviderBilling {
+	if managed && !hasProviderBilling && !useTiered {
 		standardQuotaWithRatios, clamp := common.QuotaFromFloatChecked(standardPriceData.ApplyOtherRatiosToFloat(float64(standardPriceData.Quota)))
 		if clamp != nil {
 			noteTaskQuotaClamp(info, clamp)
@@ -488,9 +479,14 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
-	if info.Billing == nil && (!info.PriceData.FreeModel || (managed && model.IsAgencyDurableUser(info.UserId))) {
+	cnTask := model.CNTaskRequested() && !managed && !model.IsAgencyDurableUser(info.UserId) && platform != constant.TaskPlatformSuno && platform != "sunoapi"
+	if info.Billing == nil && (!info.PriceData.FreeModel || (managed && model.IsAgencyDurableUser(info.UserId)) || cnTask) {
 		info.ForcePreConsume = true
-		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
+		if cnTask {
+			if apiErr := service.PreConsumeCNTaskBilling(info, platform, providerBilling, info.PriceData.Quota); apiErr != nil {
+				return nil, service.TaskErrorFromAPIError(apiErr)
+			}
+		} else if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
 			return nil, service.TaskErrorFromAPIError(apiErr)
 		}
 	}
@@ -502,6 +498,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			IgnoreOtherRatios: common.StringsContains(constant.TaskPricePatches, modelName), ProviderBilling: providerBilling}
 		if providerBilling != nil {
 			basis.Mode = "cny_tokens"
+			if providerBilling.BillingUnit == "request" {
+				basis.Mode = "cny_request"
+			}
 		} else if info.PriceData.UsePrice || basis.IgnoreOtherRatios {
 			basis.Mode = "fixed"
 		}
@@ -537,8 +536,19 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if err := opsbridge.BeforeTaskDispatch(c); err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "ops_task_state_unavailable", http.StatusServiceUnavailable)
 	}
+	cnTaskKey := service.CNTaskBillingKey(info)
+	if cnTaskKey != "" {
+		digest := sha256.Sum256(requestBodyBytes)
+		if err := model.BeginCNTaskDispatch(cnTaskKey, hex.EncodeToString(digest[:]), info.ChannelId, string(platform)); err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "task_dispatch_identity_conflict", http.StatusServiceUnavailable)
+		}
+		c.Set("cn_task_attempted", true)
+	}
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
+		if cnTaskKey != "" {
+			_ = model.ResolveCNTaskSubmission(cnTaskKey, false)
+		}
 		c.Set("ops_task_ambiguous", true)
 		if agencyAttempt {
 			_ = model.ResolveAgencyTaskSubmissionFailure(info.RequestId, false, "transport_error")
@@ -547,10 +557,17 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
 	if resp == nil {
+		if cnTaskKey != "" {
+			_ = model.ResolveCNTaskSubmission(cnTaskKey, false)
+		}
 		return nil, service.TaskErrorWrapperLocal(errors.New("upstream returned an empty response"), "fail_to_fetch_task", http.StatusBadGateway)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		if cnTaskKey != "" {
+			definitive := resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusRequestTimeout && resp.StatusCode != http.StatusConflict && !c.GetBool("ops_task_ambiguous")
+			_ = model.ResolveCNTaskSubmission(cnTaskKey, definitive)
+		}
 		responseBody, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 && !c.GetBool("ops_task_ambiguous") {
 			c.Set("ops_task_rejected", true)
@@ -579,6 +596,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// task ID receipt has been committed.
 	parsed, taskErr := adaptor.ParseResponse(c, resp, info)
 	if taskErr != nil {
+		if cnTaskKey != "" {
+			_ = model.ResolveCNTaskSubmission(cnTaskKey, false)
+		}
 		c.Set("ops_task_ambiguous", true)
 		if agencyAttempt {
 			_ = model.ResolveAgencyTaskSubmissionFailure(info.RequestId, false, "response_parse_error")
@@ -587,7 +607,20 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, taskErr
 	}
 	if parsed == nil {
+		if cnTaskKey != "" {
+			_ = model.ResolveCNTaskSubmission(cnTaskKey, false)
+		}
 		return nil, service.TaskErrorWrapperLocal(errors.New("task adaptor returned an empty response"), "plugin_submit_response_invalid", http.StatusBadGateway)
+	}
+	if cnTaskKey != "" {
+		if parsed.UpstreamTaskID == "" && (parsed.Immediate == nil || (parsed.Immediate.Status != model.TaskStatusSuccess && parsed.Immediate.Status != model.TaskStatusFailure)) {
+			_ = model.ResolveCNTaskSubmission(cnTaskKey, false)
+			return nil, service.TaskErrorWrapperLocal(errors.New("upstream task identity missing"), "task_acceptance_identity_missing", http.StatusBadGateway)
+		}
+		if err := model.RecordCNTaskUpstream(cnTaskKey, parsed.UpstreamTaskID); err != nil {
+			_ = model.ResolveCNTaskSubmission(cnTaskKey, false)
+			return nil, service.TaskErrorWrapperLocal(err, "task_acceptance_receipt_failed", http.StatusServiceUnavailable)
+		}
 	}
 	if agencyAttempt {
 		if err := model.RecordAgencyTaskSubmission(info.RequestId, info.PublicTaskID, parsed.UpstreamTaskID); err != nil {
@@ -646,6 +679,35 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Endpoint:        endpoint,
 		ProviderBilling: providerBilling,
 	}, nil
+}
+
+func priceTaskUsageExpression(c *gin.Context, info *relaycommon.RelayInfo, agency *agencycontract.PricingSnapshot, modelName, exprStr string, facts map[string]any) error {
+	cost, trace, err := billingexpr.RunExprWithRequest(exprStr, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: facts})
+	if err != nil {
+		return err
+	}
+	if cost < 0 {
+		return errors.New("negative task expression result")
+	}
+
+	quotaBeforeGroup := cost * common.QuotaPerUnit
+	if agency != nil {
+		c.Set(helper.AgencyRatioOverrideContextKey, float64(1))
+		standardGroup := helper.HandleGroupRatio(c, info)
+		standardQuota, clamp := common.QuotaRoundChecked(quotaBeforeGroup * standardGroup.GroupRatio)
+		noteTaskQuotaClamp(info, clamp)
+		if err := service.AttachAgencyQuote(info, agency, int64(standardQuota)); err != nil {
+			return err
+		}
+		c.Set(helper.AgencyRatioOverrideContextKey, float64(agency.SalesBPS)/10000)
+	}
+
+	groupRatioInfo := helper.HandleGroupRatio(c, info)
+	quota, clamp := common.QuotaRoundChecked(quotaBeforeGroup * groupRatioInfo.GroupRatio)
+	noteTaskQuotaClamp(info, clamp)
+	info.PriceData = hosttypes.PriceData{Quota: quota, QuotaToPreConsume: quota, GroupRatioInfo: groupRatioInfo}
+	info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: billing_setting.BillingModeTieredExpr, ModelName: modelName, ExprString: exprStr, ExprHash: billingexpr.ExprHashString(exprStr), GroupRatio: groupRatioInfo.GroupRatio, EstimatedQuotaBeforeGroup: quotaBeforeGroup, EstimatedQuotaAfterGroup: quota, EstimatedTier: trace.MatchedTier, QuotaPerUnit: common.QuotaPerUnit, ExprVersion: billingexpr.ExprVersion(exprStr), TaskUsageBilling: true, UsageFacts: facts}
+	return nil
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。

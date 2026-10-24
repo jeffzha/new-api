@@ -34,6 +34,7 @@ import (
 	"github.com/QuantumNous/new-api/service/opsbridge"
 	"github.com/QuantumNous/new-api/service/opsexport"
 	"github.com/QuantumNous/new-api/service/opsmonitor"
+	"github.com/QuantumNous/new-api/service/opspush"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -156,16 +157,24 @@ func main() {
 	}
 	commandWorkerCtx, stopAgencyCommandWorker := context.WithCancel(context.Background())
 	defer stopAgencyCommandWorker()
+	service.StartBalanceReminderTask(commandWorkerCtx)
 	if err := opsexport.StartConfigured(model.DB); err != nil {
 		common.FatalLog("failed to initialize Ops export: " + err.Error())
 		return
 	}
-	if err := opsbridge.StartConfigured(commandWorkerCtx); err != nil {
+	if opsexport.Default != nil {
+		go model.RunCNWalletCancellationRecovery(commandWorkerCtx, model.DB)
+	}
+	if err := opsbridge.StartConfigured(commandWorkerCtx, service.OpsAgencyCommandExecutor{}, service.OpsBillingEventSource{}, service.OpsBillingEventSource{}); err != nil {
 		common.FatalLog("failed to initialize Ops bridge: " + err.Error())
 		return
 	}
 	if opsbridge.Default != nil {
 		defer opsbridge.Default.Close()
+	}
+	if err := opspush.StartConfigured(commandWorkerCtx); err != nil {
+		common.FatalLog("failed to initialize Ops push: " + err.Error())
+		return
 	}
 	commandServer, err := service.StartConfiguredAgencyCommandServer()
 	if err != nil {

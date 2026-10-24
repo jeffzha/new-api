@@ -4804,6 +4804,7 @@
     "Quota unchanged": "額度未變更",
     "Quota update failed": "額度更新失敗",
     "Quota Warning Threshold": "配額警告閾值",
+    "Warning threshold must be greater than zero": "提醒金額必須大於零",
     "Quota:": "Quota:",
     "Radius": "圓角",
     "Random": "隨機",

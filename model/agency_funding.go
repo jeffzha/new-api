@@ -250,6 +250,11 @@ func applyAgencyQuotaDeltaTx(tx *gorm.DB, userID, delta int64, sourceKind, sourc
 		return err
 	}
 	paidDelta, nonpaidDelta, debtDelta := int64(0), int64(0), int64(0)
+	if delta < 0 {
+		if err := cnRefundCheckSpendTx(tx, userID, -delta, int64(user.Quota)); err != nil {
+			return err
+		}
+	}
 	if delta > 0 {
 		next := account.NonpaidAvailable + delta
 		if next < account.NonpaidAvailable || next < 0 {
@@ -853,7 +858,10 @@ func ValidateAgencyPricingSnapshotTx(tx *gorm.DB, userID int64, snapshot *agency
 		agency.CurrentPolicyVersionID != snapshot.PolicyVersionID {
 		return errors.New("agency pricing snapshot is stale")
 	}
-	if snapshot.CommissionEligible != (agency.Status == "active") {
+	// Unpublished models remain callable at the standard sale without commission.
+	pendingStandardSale := agency.Status == "active" && !snapshot.CommissionEligible &&
+		snapshot.EligibilityReason == "platform_pricing_pending" && snapshot.SalesBPS == 10000
+	if !pendingStandardSale && snapshot.CommissionEligible != (agency.Status == "active") {
 		return errors.New("agency pricing eligibility snapshot is stale")
 	}
 	var policy AgencyPricePolicyVersion
@@ -1076,8 +1084,13 @@ func EnsureAgencyFundingAccount(tx *gorm.DB, userID int64) error {
 		return ErrAgencyFundingUnavailable
 	}
 	var user User
-	if err := tx.Select("id, quota, billing_mode").First(&user, userID).Error; err != nil {
+	if err := lockForUpdate(tx).Select("id, quota, billing_mode").First(&user, userID).Error; err != nil {
 		return err
+	}
+	if user.BillingMode == AgencyDurableBillingMode && tx.Migrator().HasTable(&CNWalletValueAccount{}) {
+		if err := cnSuspendWalletValueTx(tx, int(userID)); err != nil {
+			return err
+		}
 	}
 	if user.BillingMode != AgencyDurableBillingMode {
 		return nil
@@ -1319,6 +1332,9 @@ func ReverseAgencyTopupTx(tx *gorm.DB, input AgencyFundingReversalInput) ([]Agen
 	}
 	if user.BillingMode != AgencyDurableBillingMode {
 		return nil, false, errors.New("funding reversal requires a durable user")
+	}
+	if err := cnRefundCheckNativeReversalTx(tx, input.UserID, input.SourceOperationID); err != nil {
+		return nil, false, err
 	}
 	if int64(user.Quota)-input.Quota < -int64(common.MaxQuota)-1 {
 		return nil, false, errors.New("funding reversal wallet quota underflow")
@@ -1950,6 +1966,9 @@ func reserveAgencyFundingTxWithRule(tx *gorm.DB, userID int64, chargeID string, 
 			return nil
 		}
 		amount -= allocated
+		if err := cnRefundCheckSpendTx(tx, userID, amount, account.PaidAvailable+account.NonpaidAvailable); err != nil {
+			return err
+		}
 		remaining := amount
 		var lots []AgencyFundingLot
 		if err := AgencyLockForUpdate(tx).Where("user_id = ? AND (paid_available > 0 OR bonus_available > 0)", userID).Find(&lots).Error; err != nil {
@@ -2202,7 +2221,14 @@ func reserveAgencyFundingTxWithRule(tx *gorm.DB, userID int64, chargeID string, 
 		}
 		debt := account.DebtQuota + debtDelta
 		seq := account.MoneySeq + 1
-		return tx.Model(&account).Updates(map[string]any{"paid_available": account.PaidAvailable - paidTake - legacyPaidTake, "nonpaid_available": nonpaid, "debt_quota": debt, "money_seq": seq, "version": account.Version + 1, "updated_at": time.Now().Unix()}).Error
+		paidAfter := account.PaidAvailable - paidTake - legacyPaidTake
+		if err := tx.Create(&AgencyFundingLedger{OperationID: fmt.Sprintf("funding-consume:%d:%d", userID, seq),
+			UserID: userID, MoneySeq: seq, SourceKind: "model_reservation",
+			PaidDelta: paidAfter - account.PaidAvailable, NonpaidDelta: nonpaid - account.NonpaidAvailable, DebtDelta: debtDelta,
+			PaidAfter: paidAfter, NonpaidAfter: nonpaid, DebtAfter: debt, CreatedAtMS: time.Now().UnixMilli()}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&account).Updates(map[string]any{"paid_available": paidAfter, "nonpaid_available": nonpaid, "debt_quota": debt, "money_seq": seq, "version": account.Version + 1, "updated_at": time.Now().Unix()}).Error
 	}()
 	return paid, err
 }
@@ -2397,7 +2423,16 @@ func releaseAgencyFundingDetailedTx(tx *gorm.DB, chargeID string, amount int64) 
 		if err != nil {
 			return err
 		}
-		return tx.Model(&account).Updates(map[string]any{"paid_available": account.PaidAvailable + result.PaidReleased + restoredDebtPaid + restoredLegacyPaid - paidRepaid, "nonpaid_available": account.NonpaidAvailable + restoredNonpaid - nonpaidRepaid, "debt_quota": newDebt - paidRepaid - nonpaidRepaid, "money_seq": seq, "version": account.Version + 1, "updated_at": time.Now().Unix()}).Error
+		paidAfter := account.PaidAvailable + result.PaidReleased + restoredDebtPaid + restoredLegacyPaid - paidRepaid
+		nonpaidAfter := account.NonpaidAvailable + restoredNonpaid - nonpaidRepaid
+		debtAfter := newDebt - paidRepaid - nonpaidRepaid
+		if err := tx.Create(&AgencyFundingLedger{OperationID: fmt.Sprintf("funding-release:%d:%d", account.UserID, seq),
+			UserID: account.UserID, MoneySeq: seq, SourceKind: "model_release",
+			PaidDelta: paidAfter - account.PaidAvailable, NonpaidDelta: nonpaidAfter - account.NonpaidAvailable, DebtDelta: debtAfter - account.DebtQuota,
+			PaidAfter: paidAfter, NonpaidAfter: nonpaidAfter, DebtAfter: debtAfter, CreatedAtMS: time.Now().UnixMilli()}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&account).Updates(map[string]any{"paid_available": paidAfter, "nonpaid_available": nonpaidAfter, "debt_quota": debtAfter, "money_seq": seq, "version": account.Version + 1, "updated_at": time.Now().Unix()}).Error
 	}()
 	return result, err
 }

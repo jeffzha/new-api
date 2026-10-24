@@ -88,6 +88,15 @@ func candidatePassesKindFilters(ch *Channel, exists bool, modelName string, kind
 	return true
 }
 
+func channelDeclaresModel(ch *Channel, modelName string) bool {
+	for _, declared := range ch.GetModels() {
+		if strings.EqualFold(strings.TrimSpace(declared), strings.TrimSpace(modelName)) {
+			return true
+		}
+	}
+	return false
+}
+
 func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilter) bool {
 	switch filter.Kind {
 	case dto.FilterRequestPath:
@@ -123,7 +132,9 @@ func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilte
 		// accidentally receive another model declared by that plugin.
 		if ch.Type == constant.ChannelTypeOpenAISeedance && slices.Contains(filter.TaskPluginChannelTypes, ch.Type) &&
 			!strings.EqualFold(strings.TrimSpace(modelName), "doubao-seedance-2-0-260128") {
-			return false
+			if !channelDeclaresModel(ch, modelName) {
+				return false
+			}
 		}
 		return true
 	case dto.FilterResponsesWebSocket:

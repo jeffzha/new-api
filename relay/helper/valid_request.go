@@ -61,6 +61,35 @@ func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dt
 
 func GetAndValidAudioRequest(c *gin.Context, relayMode int) (*dto.AudioRequest, error) {
 	audioRequest := &dto.AudioRequest{}
+	if relayMode == relayconstant.RelayModeAudioTranscription && strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
+		form, err := common.ParseMultipartFormReusable(c)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse audio transcription form request: %w", err)
+		}
+		c.Request.MultipartForm = form
+		c.Set(funASRFormContextKey, form)
+		if values := form.Value["model"]; len(values) > 0 {
+			audioRequest.Model = strings.TrimSpace(values[0])
+		}
+		if values := form.Value["response_format"]; len(values) > 0 {
+			audioRequest.ResponseFormat = strings.TrimSpace(values[0])
+		}
+		if audioRequest.Model == "" {
+			return nil, errors.New("model is required")
+		}
+		if audioRequest.ResponseFormat == "" {
+			audioRequest.ResponseFormat = "json"
+		}
+		if IsFunASRModel(audioRequest.Model) {
+			if audioRequest.ResponseFormat != "json" && audioRequest.ResponseFormat != "text" {
+				return nil, fmt.Errorf("Fun-ASR-Flash supports response_format json or text")
+			}
+			if len(form.File["file"]) != 1 {
+				return nil, errors.New("Fun-ASR-Flash requires exactly one uploaded audio file in field 'file'")
+			}
+		}
+		return audioRequest, nil
+	}
 	err := common.UnmarshalBodyReusable(c, audioRequest)
 	if err != nil {
 		return nil, err
@@ -77,6 +106,9 @@ func GetAndValidAudioRequest(c *gin.Context, relayMode int) (*dto.AudioRequest, 
 		if audioRequest.ResponseFormat == "" {
 			audioRequest.ResponseFormat = "json"
 		}
+	}
+	if relayMode == relayconstant.RelayModeAudioTranscription && IsFunASRModel(audioRequest.Model) {
+		return nil, errors.New("Fun-ASR-Flash requires multipart/form-data with exactly one audio file in field 'file'")
 	}
 	return audioRequest, nil
 }
@@ -134,10 +166,21 @@ func ExceedsMaxTokensLimit(values ...*uint) bool {
 }
 
 func validateTextModelEndpoint(modelName, path string) error {
+	if IsFunASRModel(modelName) {
+		return fmt.Errorf("model %s is an audio transcription model; use POST /v1/audio/transcriptions with multipart/form-data (model and file) instead of %s (语音识别模型请使用音频转写接口 /v1/audio/transcriptions，上传 file 音频文件)", modelName, path)
+	}
+	if isSeedreamLiteModel(modelName) {
+		return fmt.Errorf("model %s is an image generation model; use POST /v1/images/generations instead of %s (图片模型请使用图片接口 /v1/images/generations，size 使用 2K、3K、4K 或 WIDTHxHEIGHT)", modelName, path)
+	}
 	if common.IsVideoGenerationModel(modelName) {
 		return fmt.Errorf("model %s is a video generation model; use POST /v1/videos instead of %s (视频模型请使用视频接口 /v1/videos)", modelName, path)
 	}
 	return nil
+}
+
+func isSeedreamLiteModel(name string) bool {
+	name = strings.ToLower(name)
+	return name == "doubao-seedream-5-0-lite" || name == "doubao-seedream-5.0-lite"
 }
 
 func GetAndValidateResponsesRequest(c *gin.Context) (*dto.OpenAIResponsesRequest, error) {
@@ -286,6 +329,17 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 	// Provider parameters can override the top-level count. Validate before
 	// pricing so malformed multipliers return a client error, not a pricing
 	// failure after reservation has started.
+	if isSeedreamLiteModel(imageRequest.Model) && imageRequest.Size != "" {
+		size := strings.ToLower(imageRequest.Size)
+		if size != "2k" && size != "3k" && size != "4k" {
+			width, height, found := strings.Cut(size, "x")
+			w, wErr := strconv.Atoi(width)
+			h, hErr := strconv.Atoi(height)
+			if !found || wErr != nil || hErr != nil || w <= 0 || h <= 0 {
+				return nil, fmt.Errorf("model %s: size must be 2K, 3K, 4K or WIDTHxHEIGHT, for example 2048x2048 (图片尺寸请使用 2K、3K、4K 或 宽x高)", imageRequest.Model)
+			}
+		}
+	}
 	if raw, exists := imageRequest.Extra["parameters"]; exists {
 		parameters := &dto.ImageBillingParameters{}
 		if err := common.Unmarshal(raw, parameters); err != nil {
@@ -310,6 +364,9 @@ func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest
 	}
 	if textRequest.Model == "" {
 		return nil, errors.New("field model is required")
+	}
+	if err := validateTextModelEndpoint(textRequest.Model, c.Request.URL.Path); err != nil {
+		return nil, err
 	}
 	if ExceedsMaxTokensLimit(textRequest.MaxTokens, textRequest.MaxTokensToSample) {
 		return nil, errors.New("max_tokens is invalid")

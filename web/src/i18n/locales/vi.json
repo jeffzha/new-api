@@ -4804,6 +4804,7 @@
     "Quota unchanged": "Hạn mức không thay đổi",
     "Quota update failed": "Cập nhật hạn mức thất bại",
     "Quota Warning Threshold": "Ngưỡng cảnh báo hạn mức",
+    "Warning threshold must be greater than zero": "Ngưỡng cảnh báo phải lớn hơn 0",
     "Quota:": "Hạn ngạch:",
     "Radius": "Bo góc",
     "Random": "Ngẫu nhiên",

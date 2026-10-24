@@ -457,6 +457,9 @@ func updatePricing() {
 		if pricing.BillingUsageSchema == nil {
 			pricing.BillingUsageSchema = nativeTaskUsageSchema(model)
 		}
+		if pricing.BillingUsageSchema == nil {
+			pricing.BillingUsageSchema = nativeAudioUsageSchema(model)
+		}
 		providers := activePricingProviders(model, activePluginKeys, pluginGeneration)
 		hasProviderOverride := false
 		for _, provider := range providers {

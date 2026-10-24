@@ -4804,6 +4804,7 @@
     "Quota unchanged": "クォータの変更なし",
     "Quota update failed": "クォータの更新に失敗しました",
     "Quota Warning Threshold": "クォータ警告しきい値",
+    "Warning threshold must be greater than zero": "警告しきい値は0より大きい値にしてください",
     "Quota:": "クォータ：",
     "Radius": "角丸",
     "Random": "ランダム",

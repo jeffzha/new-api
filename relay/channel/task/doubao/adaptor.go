@@ -346,7 +346,7 @@ func (a *TaskAdaptor) AdjustBillingOnCompleteChecked(task *model.Task, taskResul
 		return 0, nil, false, nil
 	}
 	if snapshot := bc.ProviderBilling; snapshot != nil && snapshot.Provider == model.TaskBillingProviderDoubaoVideoCNY {
-		if taskResult.TotalTokens <= 0 {
+		if taskResult.TotalTokens <= 0 && snapshot.BillingUnit != "request" {
 			return 0, nil, true, fmt.Errorf("Doubao Video succeeded without usage.total_tokens")
 		}
 		quota, clamp, err := taskcommon.QuotaFromCNYPerMillionTokens(int64(taskResult.TotalTokens), snapshot)

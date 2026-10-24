@@ -1,14 +1,20 @@
 package hwdramaproxy
 
 import (
+	"bytes"
 	"errors"
+	"image"
+	"image/png"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -17,6 +23,153 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestMaterialImageUpload(t *testing.T) {
+	t.Setenv("VOLC_TEST_AK", "test-access")
+	t.Setenv("VOLC_TEST_SK", "test-secret")
+	dir := t.TempDir()
+	routesPath := filepath.Join(t.TempDir(), "routes.yml")
+	require.NoError(t, SaveRoutesConfig(routesPath, volcengineRoutesConfigForTest("https://aimodel.szhtp.com")))
+	tokenID := 7
+	proxy, err := New(Config{
+		RoutesConfigPath: routesPath,
+		TokenResolver: func(key string) (*TokenIdentity, error) {
+			if key != "test" {
+				return nil, nil
+			}
+			return &TokenIdentity{ID: tokenID}, nil
+		},
+		MaterialFiles: MaterialFilesConfig{Directory: dir, PublicURL: "https://materials.example", TTL: time.Hour},
+	})
+	require.NoError(t, err)
+	var imageData bytes.Buffer
+	require.NoError(t, png.Encode(&imageData, image.NewRGBA(image.Rect(0, 0, 2, 2))))
+	var uploadedPath string
+	for _, tc := range []struct {
+		name, key, filename string
+		data                []byte
+		tokenID, status     int
+	}{
+		{"missing authentication", "", "image.png", imageData.Bytes(), 7, http.StatusUnauthorized},
+		{"invalid token", "bad", "image.png", imageData.Bytes(), 7, http.StatusUnauthorized},
+		{"different customer", "test", "image.png", imageData.Bytes(), 8, http.StatusForbidden},
+		{"active content", "test", "image.svg", []byte(`<svg/>`), 7, http.StatusBadRequest},
+		{"spoofed image", "test", "image.png", []byte(`<html>not an image</html>`), 7, http.StatusBadRequest},
+		{"mismatched extension", "test", "image.jpg", imageData.Bytes(), 7, http.StatusBadRequest},
+		{"oversized image", "test", "image.png", bytes.Repeat([]byte("x"), maxMaterialImageBytes+1), 7, http.StatusRequestEntityTooLarge},
+		{"valid image", "test", "image.png", imageData.Bytes(), 7, http.StatusCreated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenID = tc.tokenID
+			var body bytes.Buffer
+			form := multipart.NewWriter(&body)
+			part, err := form.CreateFormFile("file", tc.filename)
+			require.NoError(t, err)
+			_, err = part.Write(tc.data)
+			require.NoError(t, err)
+			require.NoError(t, form.Close())
+			req := httptest.NewRequest(http.MethodPost, materialFilesPath, &body)
+			req.Header.Set("Content-Type", form.FormDataContentType())
+			if tc.key != "" {
+				req.Header.Set("Authorization", "Bearer sk-"+tc.key)
+			}
+			resp := httptest.NewRecorder()
+			proxy.ServeHTTP(resp, req)
+			require.Equal(t, tc.status, resp.Code, resp.Body.String())
+			if tc.status == http.StatusCreated {
+				var result struct {
+					Data struct {
+						URL       string    `json:"url"`
+						ExpiresAt time.Time `json:"expires_at"`
+					} `json:"data"`
+				}
+				require.NoError(t, common.Unmarshal(resp.Body.Bytes(), &result))
+				u, err := url.Parse(result.Data.URL)
+				require.NoError(t, err)
+				assert.Equal(t, "materials.example", u.Host)
+				assert.True(t, result.Data.ExpiresAt.After(time.Now()))
+				uploadedPath = u.Path
+			}
+		})
+	}
+	require.NotEmpty(t, uploadedPath)
+	t.Run("busy upload is rejected before reading the body", func(t *testing.T) {
+		proxy.materialFiles.mu.Lock()
+		defer proxy.materialFiles.mu.Unlock()
+		req := httptest.NewRequest(http.MethodPost, materialFilesPath, nil)
+		req.Header.Set("Authorization", "Bearer sk-test")
+		resp := httptest.NewRecorder()
+		proxy.ServeHTTP(resp, req)
+		assert.Equal(t, http.StatusTooManyRequests, resp.Code)
+		assert.Equal(t, "1", resp.Header().Get("Retry-After"))
+	})
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		resp := httptest.NewRecorder()
+		proxy.ServeHTTP(resp, httptest.NewRequest(method, uploadedPath, nil))
+		assert.Equal(t, http.StatusOK, resp.Code)
+		assert.Equal(t, "image/png", resp.Header().Get("Content-Type"))
+		assert.Equal(t, "nosniff", resp.Header().Get("X-Content-Type-Options"))
+		assert.Equal(t, "no-store", resp.Header().Get("Cache-Control"))
+		if method == http.MethodGet {
+			_, format, err := image.Decode(bytes.NewReader(resp.Body.Bytes()))
+			require.NoError(t, err)
+			assert.Equal(t, "png", format)
+		}
+	}
+	for _, path := range []string{materialFilesPath + "/../secret.png", materialFilesPath + "/", materialFilesPath + "/image.png"} {
+		resp := httptest.NewRecorder()
+		proxy.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, path, nil))
+		assert.Equal(t, http.StatusNotFound, resp.Code)
+	}
+	expired := time.Now().Add(-2 * time.Hour)
+	require.NoError(t, os.Chtimes(filepath.Join(dir, filepath.Base(uploadedPath)), expired, expired))
+	resp := httptest.NewRecorder()
+	proxy.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, uploadedPath, nil))
+	assert.Equal(t, http.StatusNotFound, resp.Code)
+
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	part, err := form.CreateFormFile("file", "image.png")
+	require.NoError(t, err)
+	_, err = part.Write(imageData.Bytes())
+	require.NoError(t, err)
+	require.NoError(t, form.Close())
+	capacity, err := os.CreateTemp(dir, "capacity-")
+	require.NoError(t, err)
+	require.NoError(t, capacity.Truncate(maxMaterialStorageBytes))
+	require.NoError(t, capacity.Close())
+	for _, status := range []int{http.StatusInsufficientStorage, http.StatusCreated} {
+		req := httptest.NewRequest(http.MethodPost, materialFilesPath, bytes.NewReader(body.Bytes()))
+		req.Header.Set("Authorization", "Bearer sk-test")
+		req.Header.Set("Content-Type", form.FormDataContentType())
+		resp := httptest.NewRecorder()
+		proxy.ServeHTTP(resp, req)
+		assert.Equal(t, status, resp.Code, resp.Body.String())
+		_, err = os.Stat(filepath.Join(dir, filepath.Base(uploadedPath)))
+		assert.ErrorIs(t, err, os.ErrNotExist, "expired image must be removed on upload")
+		if status == http.StatusInsufficientStorage {
+			require.NoError(t, os.Remove(capacity.Name()))
+		}
+	}
+}
+
+func TestMaterialImageConfiguration(t *testing.T) {
+	files, err := newMaterialFiles(MaterialFilesConfig{})
+	require.NoError(t, err)
+	assert.Nil(t, files)
+	for _, tc := range []MaterialFilesConfig{
+		{Directory: t.TempDir(), PublicURL: "http://images.example"},
+		{Directory: t.TempDir(), PublicURL: "https://user:password@images.example"},
+		{Directory: t.TempDir(), PublicURL: "https://images.example/path"},
+		{Directory: t.TempDir(), PublicURL: "https://images.example?key=secret"},
+		{Directory: t.TempDir(), PublicURL: "https://images.example?"},
+		{Directory: "relative", PublicURL: "https://images.example"},
+		{Directory: t.TempDir(), PublicURL: "https://images.example", TTL: 8 * 24 * time.Hour},
+	} {
+		_, err := newMaterialFiles(tc)
+		require.Error(t, err)
+	}
+}
 
 func TestNormalizeAPIKey(t *testing.T) {
 	tests := []struct {
@@ -288,6 +441,10 @@ func TestProxyClassifiesAffinityResponses(t *testing.T) {
 			_, _ = w.Write([]byte(`{"state":"OK","body":{"data":[{"assetId":"asset-affinity-1"},{"assetId":"asset-affinity-2"}]}}`))
 		case "/official-business-error":
 			_, _ = w.Write([]byte(`{"requestId":"req-error","state":"ERROR","errorCode":"AssetNotFound","errorMessage":"asset not found","body":null}`))
+		case "/volcengine-business-error":
+			_, _ = w.Write([]byte(`{"ResponseMetadata":{"Error":{"Code":"AssetNotFound","Message":"asset not found"}},"Result":{"Id":"asset-affinity-1"}}`))
+		case "/volcengine-success":
+			_, _ = w.Write([]byte(`{"ResponseMetadata":{"RequestId":"req-success"},"Result":{"Id":"asset-affinity-1"}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -363,6 +520,23 @@ func TestProxyClassifiesAffinityResponses(t *testing.T) {
 			status:         http.StatusOK,
 			body:           `{"requestId":"req-error","state":"ERROR","errorCode":"AssetNotFound","errorMessage":"asset not found","body":null}`,
 			affinityPathID: "asset-from-path",
+		},
+		{
+			name:          "Volcengine business error does not bind an identifier",
+			upstreamPath:  "/volcengine-business-error",
+			status:        http.StatusOK,
+			body:          `{"ResponseMetadata":{"Error":{"Code":"AssetNotFound","Message":"asset not found"}},"Result":{"Id":"asset-affinity-1"}}`,
+			affinityField: "Result.Id",
+		},
+		{
+			name:            "Volcengine result binds the upstream channel",
+			upstreamPath:    "/volcengine-success",
+			status:          http.StatusOK,
+			body:            `{"ResponseMetadata":{"RequestId":"req-success"},"Result":{"Id":"asset-affinity-1"}}`,
+			namespaceHeader: "seedance-domestic",
+			expectedBinding: true,
+			expectedCount:   1,
+			affinityField:   "Result.Id",
 		},
 	}
 

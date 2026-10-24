@@ -24,10 +24,12 @@ type Midjourney struct {
 	Buttons     string `json:"buttons"`
 	Properties  string `json:"properties"`
 
-	TokenId              int    `json:"-" gorm:"default:0"`
-	BillingChannelId     int    `json:"-" gorm:"default:0"`
-	AgencyChargeID       string `json:"-" gorm:"size:128"`
-	AgencyBillingEventID string `json:"-" gorm:"size:128"`
+	TokenId              int                  `json:"-" gorm:"default:0"`
+	BillingChannelId     int                  `json:"-" gorm:"default:0"`
+	AgencyChargeID       string               `json:"-" gorm:"size:128"`
+	AgencyBillingEventID string               `json:"-" gorm:"size:128"`
+	CNBillingKey         string               `json:"-" gorm:"size:64;index"`
+	cnBilling            *CNMidjourneyBilling `gorm:"-"`
 }
 
 // TaskQueryParams 用于包含所有搜索条件的结构体，可以根据需求添加更多字段
@@ -164,18 +166,28 @@ func UpdateProgress(id int, progress string) error {
 }
 
 func (midjourney *Midjourney) Insert() error {
+	if midjourney.CNBillingKey != "" {
+		return cnInsertMidjourney(midjourney)
+	}
 	var err error
 	err = DB.Create(midjourney).Error
 	return err
 }
 
 func (midjourney *Midjourney) Update() error {
+	if midjourney.CNBillingKey != "" {
+		_, err := cnUpdateMidjourney(midjourney, nil)
+		return err
+	}
 	var err error
 	err = DB.Save(midjourney).Error
 	return err
 }
 
 func (midjourney *Midjourney) UpdateBillingState() error {
+	if midjourney.CNBillingKey != "" {
+		return ErrCNConflict
+	}
 	return DB.Model(midjourney).
 		Select("quota", "token_id", "billing_channel_id", "agency_charge_id", "agency_billing_event_id").
 		Updates(midjourney).Error
@@ -194,6 +206,9 @@ func (midjourney *Midjourney) GetBillingChannelId() int {
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).
 // Uses Model().Select("*").Updates() to avoid GORM Save()'s INSERT fallback.
 func (midjourney *Midjourney) UpdateWithStatus(fromStatus string) (bool, error) {
+	if midjourney.CNBillingKey != "" {
+		return cnUpdateMidjourney(midjourney, &fromStatus)
+	}
 	result := DB.Model(midjourney).Where("status = ?", fromStatus).Select("*").Updates(midjourney)
 	if result.Error != nil {
 		return false, result.Error
@@ -202,15 +217,11 @@ func (midjourney *Midjourney) UpdateWithStatus(fromStatus string) (bool, error) 
 }
 
 func MjBulkUpdate(mjIds []string, params map[string]any) error {
-	return DB.Model(&Midjourney{}).
-		Where("mj_id in (?)", mjIds).
-		Updates(params).Error
+	return cnBulkMidjourney(DB.Model(&Midjourney{}).Where("mj_id in (?)", mjIds), params)
 }
 
 func MjBulkUpdateByTaskIds(taskIDs []int, params map[string]any) error {
-	return DB.Model(&Midjourney{}).
-		Where("id in (?)", taskIDs).
-		Updates(params).Error
+	return cnBulkMidjourney(DB.Model(&Midjourney{}).Where("id in (?)", taskIDs), params)
 }
 
 // CountAllTasks returns total midjourney tasks for admin query

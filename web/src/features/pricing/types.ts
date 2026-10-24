@@ -75,9 +75,9 @@ export type VideoTokenPricingTier = {
 }
 
 export type VideoTokenMatrixPricing = {
-  kind: 'video_token_matrix'
+  kind: 'video_token_matrix' | 'video_request_matrix'
   currency: 'CNY'
-  unit: '1M_video_tokens'
+  unit: '1M_video_tokens' | 'request'
   tiers: VideoTokenPricingTier[]
 }
 

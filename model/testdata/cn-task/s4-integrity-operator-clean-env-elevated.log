@@ -1,0 +1,14 @@
+=== RUN   TestOperatorFreezeRecoveryAcrossDialects
+=== RUN   TestOperatorFreezeRecoveryAcrossDialects/sqlite
+=== RUN   TestOperatorFreezeRecoveryAcrossDialects/mysql
+    main_test.go:55: requires owned real MySQL test database
+=== RUN   TestOperatorFreezeRecoveryAcrossDialects/postgres
+    main_test.go:60: requires owned real PostgreSQL test database
+--- PASS: TestOperatorFreezeRecoveryAcrossDialects (1.62s)
+    --- PASS: TestOperatorFreezeRecoveryAcrossDialects/sqlite (1.62s)
+    --- SKIP: TestOperatorFreezeRecoveryAcrossDialects/mysql (0.00s)
+    --- SKIP: TestOperatorFreezeRecoveryAcrossDialects/postgres (0.00s)
+=== RUN   TestOperatorStartupRequiresExistingExplicitDatabase
+--- PASS: TestOperatorStartupRequiresExistingExplicitDatabase (0.00s)
+PASS
+ok  	github.com/QuantumNous/new-api/cmd/cn-integrity-operator	1.861s

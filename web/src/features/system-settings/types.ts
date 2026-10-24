@@ -253,6 +253,7 @@ export type ModelSettings = {
   'billing_setting.plugin_billing_expr': string
   'tool_price_setting.prices': string
   'seedance_video_pricing.prices_cny': string
+  'seedance_video_pricing.request_prices_cny': string
   TopupGroupRatio: string
   GroupRatio: string
   UserUsableGroups: string

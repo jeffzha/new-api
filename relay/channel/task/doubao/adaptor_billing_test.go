@@ -683,3 +683,40 @@ func TestAdjustBillingOnCompleteFallsBackForUnsupportedCases(t *testing.T) {
 		})
 	}
 }
+
+func TestEstimateMiniTaskBillingUsesMillionTokenPrice(t *testing.T) {
+	oldQuotaPerUnit := appcommon.QuotaPerUnit
+	oldExchangeRate := operation_setting.USDExchangeRate
+	appcommon.QuotaPerUnit = 500_000
+	operation_setting.USDExchangeRate = 7.3
+	t.Cleanup(func() {
+		appcommon.QuotaPerUnit = oldQuotaPerUnit
+		operation_setting.USDExchangeRate = oldExchangeRate
+	})
+
+	for _, test := range []struct {
+		name     string
+		hasVideo bool
+		priceCNY int64
+	}{{name: "text to video", priceCNY: 23}, {name: "video to video", hasVideo: true, priceCNY: 14}} {
+		t.Run(test.name, func(t *testing.T) {
+			estimate := estimateCNYBilling(t, seedancepricing.MiniSeedanceModel, "480p", test.hasVideo, 1, 5)
+			snapshot := estimate.Snapshot
+			require.NotNil(t, snapshot)
+			assert.Equal(t, model.TaskBillingProviderDoubaoVideoCNY, snapshot.Provider)
+			assert.Empty(t, snapshot.BillingUnit)
+			assert.Equal(t, decimal.NewFromInt(test.priceCNY).String(), snapshot.UnitPricePerMillionTokens)
+			assert.Positive(t, snapshot.EstimatedTokens)
+			expected := decimal.NewFromInt(snapshot.EstimatedTokens).Div(decimal.NewFromInt(1_000_000)).Mul(decimal.NewFromInt(test.priceCNY)).Div(decimal.NewFromFloat(7.3)).Mul(decimal.NewFromInt(500_000))
+			assert.Equal(t, appcommon.QuotaFromDecimal(expected), estimate.PriceData.Quota)
+
+			task := &model.Task{}
+			task.PrivateData.BillingContext = &model.TaskBillingContext{GroupRatio: 1, ProviderBilling: snapshot}
+			quota, clamp, handled, err := (&TaskAdaptor{}).AdjustBillingOnCompleteChecked(task, &relaycommon.TaskInfo{TotalTokens: int(snapshot.EstimatedTokens / 2)})
+			require.NoError(t, err)
+			require.True(t, handled)
+			assert.Nil(t, clamp)
+			assert.Less(t, quota, estimate.PriceData.Quota)
+		})
+	}
+}

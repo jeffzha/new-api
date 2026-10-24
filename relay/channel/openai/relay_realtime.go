@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -34,9 +35,14 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	usage := &dto.RealtimeUsage{}
 	localUsage := &dto.RealtimeUsage{}
 	sumUsage := &dto.RealtimeUsage{}
-	// OpenAI Realtime response.done usage is cumulative for the session. Keep
-	// the last accepted frame so repeated cumulative frames become a no-op and
-	// only the positive component delta is reserved.
+	if service.CNDirectRealtimeRequested(info) {
+		accepted, err := service.LoadCNRealtimeUsage(info)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeQueryDataError), nil
+		}
+		sumUsage = accepted
+	}
+	// Retain the legacy baseline only for lanes outside the durable contract.
 	var lastUpstreamUsage *dto.RealtimeUsage
 
 	gopool.Go(func() {
@@ -127,8 +133,20 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 				}
 
 				if realtimeEvent.Type == dto.RealtimeEventTypeResponseDone {
+					if realtimeEvent.Response == nil {
+						errChan <- fmt.Errorf("response.done missing response")
+						return
+					}
 					realtimeUsage := realtimeEvent.Response.Usage
-					if realtimeUsage != nil {
+					if service.CNDirectRealtimeRequested(info) {
+						accepted, err := service.PreConsumeCNRealtimeResponse(c, info, realtimeEvent.Response.ID, realtimeUsage)
+						if err != nil {
+							errChan <- fmt.Errorf("error consume response usage: %v", err)
+							return
+						}
+						*sumUsage = *accepted
+						usage, localUsage = &dto.RealtimeUsage{}, &dto.RealtimeUsage{}
+					} else if realtimeUsage != nil {
 						current := *realtimeUsage
 						// A provider retry may resend the exact same cumulative frame.
 						// Forward it to the client but do not reserve or journal it.
@@ -211,13 +229,24 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 		}
 	})
 
+	var terminalErr error
 	select {
 	case <-clientClosed:
 	case <-targetClosed:
 	case err := <-errChan:
+		terminalErr = err
 		//return service.OpenAIErrorWrapper(err, "realtime_error", http.StatusInternalServerError), nil
 		logger.LogError(c, "realtime error: "+err.Error())
 	case <-c.Done():
+	}
+	if service.CNDirectRealtimeRequested(info) {
+		if terminalErr != nil || localUsage.TotalTokens != 0 {
+			if err := model.MarkCNDirectWalletUsageGap(info.RequestId, info.UserId); err != nil {
+				return types.NewError(err, types.ErrorCodeQueryDataError), nil
+			}
+			return types.NewError(fmt.Errorf("realtime usage requires durable reconciliation"), types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry()), nil
+		}
+		return nil, sumUsage
 	}
 
 	if usage.TotalTokens != 0 {
@@ -304,6 +333,9 @@ func realtimeUsageMonotonic(current, previous *dto.RealtimeUsage) bool {
 func preConsumeUsageWithCumulative(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.RealtimeUsage, totalUsage, cumulative *dto.RealtimeUsage) error {
 	if usage == nil || totalUsage == nil {
 		return fmt.Errorf("invalid usage pointer")
+	}
+	if service.CNDirectRealtimeRequested(info) {
+		return fmt.Errorf("durable realtime requires response.done with response.id")
 	}
 
 	// Build the candidate cumulative frame before reserving. This lets the

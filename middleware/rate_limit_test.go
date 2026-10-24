@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -91,6 +92,155 @@ func TestRedisUserRateLimiterUsesSharedFixedWindow(t *testing.T) {
 	key := redisUserRateLimitKey("USER", 42)
 	assert.True(t, redisServer.Exists(key))
 	assert.Equal(t, 23*time.Second, redisServer.TTL(key))
+}
+
+func TestRelayUserConcurrencyLimitsAndReleasesByUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	redisServer, client := useRateLimitMiniRedis(t)
+	t.Setenv("RELAY_USER_CONCURRENCY_LIMIT", "1")
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	router := gin.New()
+	router.POST("/v1/chat/completions", func(c *gin.Context) {
+		c.Set("id", 143)
+		c.Set(common.RequestIdKey, c.GetHeader("X-Request-Id"))
+	}, RelayUserConcurrency(), func(c *gin.Context) {
+		if c.GetHeader("X-Request-Id") == "first" {
+			close(entered)
+			<-release
+		}
+		c.Status(http.StatusNoContent)
+	})
+	firstDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		request.Header.Set("X-Request-Id", "first")
+		router.ServeHTTP(recorder, request)
+		firstDone <- recorder
+	}()
+	<-entered
+	second := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	request.Header.Set("X-Request-Id", "second")
+	router.ServeHTTP(second, request)
+	assert.Equal(t, http.StatusTooManyRequests, second.Code)
+	assert.Equal(t, "1", second.Header().Get("Retry-After"))
+	assert.Contains(t, second.Body.String(), "concurrency_limit")
+	assert.True(t, redisServer.Exists("relay:user:active:143"))
+	close(release)
+	assert.Equal(t, http.StatusNoContent, (<-firstDone).Code)
+	count, err := client.ZCard(context.Background(), "relay:user:active:143").Result()
+	require.NoError(t, err)
+	assert.Zero(t, count)
+	third := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	request.Header.Set("X-Request-Id", "third")
+	router.ServeHTTP(third, request)
+	assert.Equal(t, http.StatusNoContent, third.Code)
+}
+
+func TestRelayUserConcurrencyDisabledPreservesRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("RELAY_USER_CONCURRENCY_LIMIT", "0")
+	router := gin.New()
+	router.POST("/v1/chat/completions", RelayUserConcurrency(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	assert.Equal(t, http.StatusNoContent, response.Code)
+}
+
+func TestRelayUserConcurrencyFailsOpenWhenRedisUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	_, client := useRateLimitMiniRedis(t)
+	t.Setenv("RELAY_USER_CONCURRENCY_LIMIT", "1")
+	require.NoError(t, client.Close())
+	router := gin.New()
+	router.POST("/v1/chat/completions", func(c *gin.Context) { c.Set("id", 143) }, RelayUserConcurrency(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil))
+	assert.Equal(t, http.StatusNoContent, recorder.Code)
+}
+
+func TestRelayUserConcurrencyScopesWalletsAndRemovesExpiredLease(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	server, client := useRateLimitMiniRedis(t)
+	t.Setenv("RELAY_USER_CONCURRENCY_LIMIT", "1")
+	router := gin.New()
+	router.POST("/v1/chat/completions", func(c *gin.Context) {
+		userID, _ := strconv.Atoi(c.GetHeader("X-User-Id"))
+		c.Set("id", userID)
+		c.Set(common.RequestIdKey, c.GetHeader("X-Request-Id"))
+	}, RelayUserConcurrency(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	key := "relay:user:active:143"
+	now := time.Now()
+	require.NoError(t, client.ZAdd(context.Background(), key, &redis.Z{Score: float64(now.Add(-time.Second).UnixMilli()), Member: "abandoned"}).Err())
+	request := func(user, id string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		req.Header.Set("X-User-Id", user)
+		req.Header.Set("X-Request-Id", id)
+		router.ServeHTTP(recorder, req)
+		return recorder
+	}
+	assert.Equal(t, http.StatusNoContent, request("143", "first").Code)
+	assert.Equal(t, http.StatusNoContent, request("144", "second").Code)
+	assert.False(t, server.Exists(key))
+	assert.Equal(t, http.StatusNoContent, request("143", "third").Code)
+}
+
+func TestRelayUserConcurrencyLeaseRenewalCannotResurrectReleasedRequest(t *testing.T) {
+	_, client := useRateLimitMiniRedis(t)
+	ctx := context.Background()
+	key := "relay:user:active:143"
+	const leaseMillis = int64(300000)
+	admitted, err := acquireRelayUserScript.Run(ctx, client, []string{key}, int64(1000), int64(1000)+leaseMillis, 1, "first", 300).Int()
+	require.NoError(t, err)
+	require.Equal(t, 1, admitted)
+	admitted, err = renewRelayUserScript.Run(ctx, client, []string{key}, int64(2000)+leaseMillis, "first", 300, int64(2000)).Int()
+	require.NoError(t, err)
+	assert.Equal(t, 1, admitted)
+	admitted, err = acquireRelayUserScript.Run(ctx, client, []string{key}, int64(2000), int64(2000)+leaseMillis, 1, "second", 300).Int()
+	require.NoError(t, err)
+	assert.Zero(t, admitted)
+	require.NoError(t, releaseRelayUserScript.Run(ctx, client, []string{key}, "first").Err())
+	admitted, err = renewRelayUserScript.Run(ctx, client, []string{key}, int64(3000)+leaseMillis, "first", 300, int64(3000)).Int()
+	require.NoError(t, err)
+	assert.Zero(t, admitted)
+	admitted, err = acquireRelayUserScript.Run(ctx, client, []string{key}, int64(3000), int64(3000)+leaseMillis, 1, "second", 300).Int()
+	require.NoError(t, err)
+	assert.Equal(t, 1, admitted)
+}
+
+func TestGlobalAPIRateLimitDoesNotGateCaddyStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	_, client := useRateLimitMiniRedis(t)
+	previousEnabled, previousLimit, previousDuration := common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration
+	common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration = true, 1, 60
+	t.Cleanup(func() {
+		common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration = previousEnabled, previousLimit, previousDuration
+	})
+	router := gin.New()
+	router.Use(GlobalAPIRateLimit())
+	router.GET("/api/status", func(c *gin.Context) { c.Status(http.StatusOK) })
+	router.GET("/api/other", func(c *gin.Context) { c.Status(http.StatusOK) })
+	remote := "192.0.2.50:12345"
+	assert.Equal(t, http.StatusOK, performRateLimitRequest(router, "/api/status", remote).Code)
+	assert.Equal(t, http.StatusOK, performRateLimitRequest(router, "/api/status", remote).Code)
+	count, err := client.Exists(context.Background(), redisIPRateLimitKey("GA", "192.0.2.50")).Result()
+	require.NoError(t, err)
+	assert.Zero(t, count)
+	assert.Equal(t, http.StatusOK, performRateLimitRequest(router, "/api/other", remote).Code)
+	assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/api/other", remote).Code)
+	assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/api/status/test", remote).Code)
+	require.NoError(t, client.Close())
+	assert.Equal(t, http.StatusOK, performRateLimitRequest(router, "/api/status", remote).Code)
 }
 
 func TestRedisEmailVerificationRateLimiterPreservesResponseAndTTL(t *testing.T) {

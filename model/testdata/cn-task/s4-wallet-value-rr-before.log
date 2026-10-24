@@ -1,0 +1,71 @@
+=== RUN   TestCNWalletValueAcrossDialects
+=== RUN   TestCNWalletValueAcrossDialects/mysql
+    cn_wallet_value_test.go:66: database version: 8.0.39
+=== RUN   TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot
+=== RUN   TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/reserve
+    cn_wallet_value_test.go:505: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_wallet_value_test.go:505
+        	Error:      	Should be false
+        	Test:       	TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/reserve
+        	Messages:   	covered native changes cannot permanently invalidate the owner
+    cn_wallet_value_test.go:506: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_wallet_value_test.go:506
+        	Error:      	Should be zero, but was 1
+        	Test:       	TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/reserve
+    cn_wallet_value_test.go:514: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_wallet_value_test.go:514
+        	Error:      	Should be zero, but was 2
+        	Test:       	TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/reserve
+        	Messages:   	the newly committed paid lot must remain visible to final allocation
+    cn_wallet_value_test.go:516: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_wallet_value_test.go:516
+        	Error:      	Not equal: 
+        	            	expected: 0
+        	            	actual  : 1
+        	Test:       	TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/reserve
+=== RUN   TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/final
+    cn_wallet_value_test.go:505: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_wallet_value_test.go:505
+        	Error:      	Should be false
+        	Test:       	TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/final
+        	Messages:   	covered native changes cannot permanently invalidate the owner
+    cn_wallet_value_test.go:506: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_wallet_value_test.go:506
+        	Error:      	Should be zero, but was 1
+        	Test:       	TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/final
+    cn_wallet_value_test.go:514: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_wallet_value_test.go:514
+        	Error:      	Should be zero, but was 2
+        	Test:       	TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/final
+        	Messages:   	the newly committed paid lot must remain visible to final allocation
+    cn_wallet_value_test.go:516: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_wallet_value_test.go:516
+        	Error:      	Not equal: 
+        	            	expected: 0
+        	            	actual  : 1
+        	Test:       	TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/final
+=== RUN   TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/topup
+    cn_wallet_value_test.go:505: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_wallet_value_test.go:505
+        	Error:      	Should be false
+        	Test:       	TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/topup
+        	Messages:   	covered native changes cannot permanently invalidate the owner
+    cn_wallet_value_test.go:506: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_wallet_value_test.go:506
+        	Error:      	Should be zero, but was 1
+        	Test:       	TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/topup
+    cn_wallet_value_test.go:516: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_wallet_value_test.go:516
+        	Error:      	Not equal: 
+        	            	expected: 3
+        	            	actual  : 12
+        	Test:       	TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/topup
+--- FAIL: TestCNWalletValueAcrossDialects (4.46s)
+    --- FAIL: TestCNWalletValueAcrossDialects/mysql (4.46s)
+        --- FAIL: TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot (0.79s)
+            --- FAIL: TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/reserve (0.18s)
+            --- FAIL: TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/final (0.36s)
+            --- FAIL: TestCNWalletValueAcrossDialects/mysql/covered_writers_use_current_owner_after_old_snapshot/topup (0.25s)
+FAIL
+FAIL	github.com/QuantumNous/new-api/model	4.757s
+FAIL

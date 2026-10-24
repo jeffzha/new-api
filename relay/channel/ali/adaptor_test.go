@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	rootconstant "github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
 	relayhelper "github.com/QuantumNous/new-api/relay/helper"
@@ -261,6 +262,74 @@ func TestMappedAliImageModelUsesUpstreamProtocol(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, adaptor.IsSyncImageModel)
 	assert.IsType(t, &AliImageRequest{}, converted)
+}
+
+func TestAliFunASRUsesDashScopeAudioEndpointAndHeaders(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", nil)
+	info := &relaycommon.RelayInfo{
+		RelayMode: constant.RelayModeAudioTranscription,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelBaseUrl:    "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+			UpstreamModelName: "fun-asr-flash-2026-06-15",
+		},
+	}
+	adaptor := &Adaptor{}
+	url, err := adaptor.GetRequestURL(info)
+	require.NoError(t, err)
+	assert.Equal(t, "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation", url)
+
+	header := http.Header{}
+	info.ApiKey = "test-key"
+	require.NoError(t, adaptor.SetupRequestHeader(c, &header, info))
+	assert.Equal(t, "Bearer test-key", header.Get("Authorization"))
+	assert.Equal(t, "application/json", header.Get("Content-Type"))
+	assert.Equal(t, "enable", header.Get("X-DashScope-SSE"))
+	assert.Equal(t, "text/event-stream", header.Get("Accept"))
+}
+
+func TestAliFunASRResponseMapsTextAndUsage(t *testing.T) {
+	for _, responseFormat := range []string{"json", "text"} {
+		t.Run(responseFormat, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			info := &relaycommon.RelayInfo{
+				Request:             &dto.AudioRequest{ResponseFormat: responseFormat},
+				BillingRequestInput: &billingexpr.RequestInput{},
+			}
+			resp := &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader("event: result-generated\ndata: {\"request_id\":\"upstream-123\",\"output\":{\"text\":\"recognized text\"}}\n\nevent: task-finished\ndata: {\"usage\":{\"duration\":12.5}}\n\n")),
+			}
+			usage, apiErr := aliFunASRHandler(c, resp, info)
+			require.Nil(t, apiErr)
+			gotUsage, ok := usage.(*dto.Usage)
+			require.True(t, ok)
+			assert.Zero(t, gotUsage.PromptTokens)
+			require.NotNil(t, info.BillingRequestInput)
+			assert.Equal(t, float64(12.5), info.BillingRequestInput.Usage["seconds"])
+			assert.Equal(t, "upstream-123", c.GetString("X-Upstream-Request-Id"))
+			if responseFormat == "json" {
+				assert.JSONEq(t, `{"text":"recognized text"}`, recorder.Body.String())
+			} else {
+				assert.Equal(t, "recognized text", recorder.Body.String())
+				assert.Equal(t, "text/plain; charset=utf-8", recorder.Header().Get("Content-Type"))
+			}
+		})
+	}
+}
+
+func TestAliFunASRResponseRequiresActualDuration(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(`{"output":{"text":"recognized text"},"usage":{}}`)),
+	}
+	usage, apiErr := aliFunASRHandler(c, resp, &relaycommon.RelayInfo{Request: &dto.AudioRequest{}})
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	assert.Contains(t, apiErr.Error(), "usage.duration")
 }
 
 func TestAliImageCountMatchesLegacyReservation(t *testing.T) {

@@ -36,6 +36,14 @@ func MigrateAgency(db *gorm.DB) error {
 	if err := db.AutoMigrate(models...); err != nil {
 		return fmt.Errorf("agency migration: %w", err)
 	}
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&AgencyOpsPublisher{ID: 1}).Error; err != nil {
+		return fmt.Errorf("agency migration: Ops publisher: %w", err)
+	}
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&AgencyOpsWriterState{
+		ID: 1, Mode: "source_primary", FenceVersion: 1, UpdatedAtMS: time.Now().UnixMilli(),
+	}).Error; err != nil {
+		return fmt.Errorf("agency migration: Ops writer state: %w", err)
+	}
 	// Legacy agencies were all directly managed by Root. Backfill the new
 	// hierarchy marker without touching their pricing or bindings.
 	if db.Migrator().HasColumn(&Agency{}, "depth") {
@@ -114,4 +122,21 @@ func MigrateAgencyWithTimeout(db *gorm.DB, timeout time.Duration) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return MigrateAgency(tx)
 	})
+}
+
+// MigrateAgencyWriterFence expands only the writer-control schema. It can run
+// before replacing an older Hub binary, without migrating unrelated tables.
+func MigrateAgencyWriterFence(db *gorm.DB) error {
+	if db == nil {
+		return errors.New("agency writer migration: nil database")
+	}
+	if err := db.AutoMigrate(&AgencyOpsWriterState{}, &AgencyOpsWriterTransition{}, &AgencyOpsSourceManifest{}); err != nil {
+		return fmt.Errorf("agency writer migration: %w", err)
+	}
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&AgencyOpsWriterState{
+		ID: 1, Mode: AgencyWriterSourcePrimary, FenceVersion: 1, UpdatedAtMS: time.Now().UnixMilli(),
+	}).Error; err != nil {
+		return fmt.Errorf("agency writer migration: initial state: %w", err)
+	}
+	return nil
 }

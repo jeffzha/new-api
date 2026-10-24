@@ -16,6 +16,7 @@ const WildcardModel = "*"
 const (
 	UpstreamAuthTypeHeader          = "header"
 	UpstreamAuthTypeMobileCloudAKSK = "mobile_cloud_aksk"
+	UpstreamAuthTypeVolcengineAKSK  = "volcengine_aksk"
 )
 
 const (
@@ -44,6 +45,7 @@ type ActionConfig struct {
 	DownstreamPath        string `yaml:"downstream_path"`
 	DefaultUpstreamMethod string `yaml:"default_upstream_method"`
 	DefaultUpstreamPath   string `yaml:"default_upstream_path"`
+	UpstreamAction        string `yaml:"upstream_action,omitempty"`
 	AffinityResponseField string `yaml:"affinity_response_field,omitempty"`
 	AffinityPathParam     string `yaml:"affinity_path_param,omitempty"`
 	ScopeOperation        string `yaml:"scope_operation,omitempty"`
@@ -106,6 +108,7 @@ func (config *RoutesConfig) Normalize() {
 		action.DefaultUpstreamMethod = normalizeMethod(action.DefaultUpstreamMethod)
 		action.DownstreamPath = strings.TrimSpace(action.DownstreamPath)
 		action.DefaultUpstreamPath = strings.TrimSpace(action.DefaultUpstreamPath)
+		action.UpstreamAction = strings.TrimSpace(action.UpstreamAction)
 		action.AffinityResponseField = strings.TrimSpace(action.AffinityResponseField)
 		action.AffinityPathParam = strings.TrimSpace(action.AffinityPathParam)
 		action.ScopeOperation = strings.ToLower(strings.TrimSpace(action.ScopeOperation))
@@ -216,6 +219,9 @@ func (config *RoutesConfig) Validate(secretLookup func(string) string) error {
 	routeNames := make(map[string]bool, len(config.Routes))
 	routeKeys := make(map[string]string)
 	mobileCloudScopeAssignments := make(map[string]string)
+	volcengineCredentialAssignments := make(map[string]string)
+	volcengineTokenAssignments := make(map[int]string)
+	volcengineTokenEndpoints := make(map[int]string)
 	for i, route := range config.Routes {
 		prefix := fmt.Sprintf("route[%d]", i)
 		if route.Name == "" {
@@ -263,15 +269,19 @@ func (config *RoutesConfig) Validate(secretLookup func(string) string) error {
 			if secretLookup != nil && strings.TrimSpace(secretLookup(route.UpstreamAPIKeyEnv)) == "" {
 				return fmt.Errorf("route %s upstream api key env %s is empty", route.Name, route.UpstreamAPIKeyEnv)
 			}
-		case UpstreamAuthTypeMobileCloudAKSK:
+		case UpstreamAuthTypeMobileCloudAKSK, UpstreamAuthTypeVolcengineAKSK:
+			authLabel := "mobile cloud"
+			if route.UpstreamAuthType == UpstreamAuthTypeVolcengineAKSK {
+				authLabel = "Volcengine"
+			}
 			if !strings.EqualFold(baseURL.Scheme, "https") && !isLoopbackHost(baseURL.Hostname()) {
-				return fmt.Errorf("route %s mobile cloud AK/SK authentication requires an HTTPS upstream", route.Name)
+				return fmt.Errorf("route %s %s AK/SK authentication requires an HTTPS upstream", route.Name, authLabel)
 			}
 			if route.AllAPIKeys {
-				return fmt.Errorf("route %s scoped mobile cloud authentication does not allow all_api_keys", route.Name)
+				return fmt.Errorf("route %s scoped %s authentication does not allow all_api_keys", route.Name, authLabel)
 			}
 			if len(route.APIKeyIDs) == 0 {
-				return fmt.Errorf("route %s mobile cloud authentication requires at least one api_key_id", route.Name)
+				return fmt.Errorf("route %s %s authentication requires at least one api_key_id", route.Name, authLabel)
 			}
 			if route.UpstreamAccessKeyEnv == "" {
 				return fmt.Errorf("route %s upstream_access_key_env cannot be empty", route.Name)
@@ -286,10 +296,30 @@ func (config *RoutesConfig) Validate(secretLookup func(string) string) error {
 				return fmt.Errorf("route %s upstream secret key env %s is empty", route.Name, route.UpstreamSecretKeyEnv)
 			}
 			if route.AssetNamespaceID == "" {
-				return fmt.Errorf("route %s asset_namespace_id is required for scoped mobile cloud authentication", route.Name)
+				return fmt.Errorf("route %s asset_namespace_id is required for scoped %s authentication", route.Name, authLabel)
 			}
-			if route.AssetScopeID == "" {
+			if route.AssetScopeID == "" && route.UpstreamAuthType == UpstreamAuthTypeMobileCloudAKSK {
 				return fmt.Errorf("route %s asset_scope_id is required for scoped mobile cloud authentication", route.Name)
+			}
+			if route.UpstreamAuthType == UpstreamAuthTypeVolcengineAKSK {
+				if len(route.APIKeyIDs) != 1 || route.AssetScopeID != "" {
+					return fmt.Errorf("route %s Volcengine authentication requires exactly one api_key_id and no asset_scope_id", route.Name)
+				}
+				// Until per-group isolation is supported, dedicate each upstream account to one token.
+				credential := route.UpstreamAccessKeyEnv
+				if secretLookup != nil {
+					credential = strings.TrimSpace(secretLookup(route.UpstreamAccessKeyEnv))
+				}
+				assignment := fmt.Sprintf("%d\x00%d\x00%s\x00%s", route.APIKeyIDs[0], route.ChannelID, route.AssetNamespaceID, baseURL.String())
+				if existing, ok := volcengineCredentialAssignments[credential]; ok && existing != assignment {
+					return fmt.Errorf("route %s reuses Volcengine credentials across token, channel or namespace boundaries", route.Name)
+				}
+				volcengineCredentialAssignments[credential] = assignment
+				tokenAssignment := credential + "\x00" + assignment
+				if existing, ok := volcengineTokenAssignments[route.APIKeyIDs[0]]; ok && existing != tokenAssignment {
+					return fmt.Errorf("route %s assigns a Volcengine token to conflicting upstream accounts or channels", route.Name)
+				}
+				volcengineTokenAssignments[route.APIKeyIDs[0]] = tokenAssignment
 			}
 			assignment := fmt.Sprintf("%s\x00%d", route.AssetScopeID, route.ChannelID)
 			for _, apiKeyID := range route.APIKeyIDs {
@@ -305,7 +335,7 @@ func (config *RoutesConfig) Validate(secretLookup func(string) string) error {
 				mobileCloudScopeAssignments[key] = assignment
 			}
 		default:
-			return fmt.Errorf("route %s upstream_auth_type must be %q or %q", route.Name, UpstreamAuthTypeHeader, UpstreamAuthTypeMobileCloudAKSK)
+			return fmt.Errorf("route %s upstream_auth_type must be %q, %q or %q", route.Name, UpstreamAuthTypeHeader, UpstreamAuthTypeMobileCloudAKSK, UpstreamAuthTypeVolcengineAKSK)
 		}
 		if len(route.EnabledActions) == 0 {
 			return fmt.Errorf("route %s enabled_actions cannot be empty", route.Name)
@@ -322,8 +352,26 @@ func (config *RoutesConfig) Validate(secretLookup func(string) string) error {
 				return fmt.Errorf("route %s action %s requires scope_operation", route.Name, actionKey)
 			}
 			upstreamPath := action.DefaultUpstreamPath
+			if route.UpstreamAuthType == UpstreamAuthTypeVolcengineAKSK {
+				if action.ScopeOperation != "" {
+					return fmt.Errorf("route %s Volcengine actions cannot use mobile cloud scope operations", route.Name)
+				}
+				if !isVolcengineAssetAction(action.UpstreamAction) || action.DefaultUpstreamMethod != "POST" {
+					return fmt.Errorf("route %s action %s requires a supported Volcengine asset action and POST method", route.Name, actionKey)
+				}
+				if override := route.UpstreamActionOverrides[actionKey]; override.UpstreamMethod != "" && override.UpstreamMethod != "POST" {
+					return fmt.Errorf("route %s Volcengine actions require POST", route.Name)
+				}
+			}
 			if override, hasOverride := route.UpstreamActionOverrides[actionKey]; hasOverride && override.UpstreamPath != "" {
 				upstreamPath = override.UpstreamPath
+			}
+			if route.UpstreamAuthType == UpstreamAuthTypeVolcengineAKSK {
+				endpoint := singleJoiningSlash(baseURL.Path, upstreamPath)
+				if existing, ok := volcengineTokenEndpoints[route.APIKeyIDs[0]]; ok && existing != endpoint {
+					return fmt.Errorf("route %s assigns a Volcengine token to conflicting material endpoints", route.Name)
+				}
+				volcengineTokenEndpoints[route.APIKeyIDs[0]] = endpoint
 			}
 			if isPrivateBillingPath(singleJoiningSlash(baseURL.Path, upstreamPath)) {
 				return fmt.Errorf("route %s cannot expose the private Seedance billing endpoint", route.Name)

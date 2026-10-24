@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -56,8 +58,7 @@ func (a *TaskAdaptor) GetChannelName() string { return channelName }
 func (a *TaskAdaptor) GetModelList() []string { return ModelList }
 
 // SupportsTaskBilling reports whether this channel type provides its own price
-// for the model using the shared seedance_video_pricing.prices_cny table —
-// the same pricing source as "Seedance Domestic".
+// for the model using the shared Seedance pricing configuration.
 func (a *TaskAdaptor) SupportsTaskBilling(_ int, modelName string) bool {
 	return seedancepricing.SupportsModel(modelName)
 }
@@ -102,6 +103,26 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		Prompt:          prompt,
 		Image:           firstOf(referenceImages),
 		ReferenceImages: referenceImages,
+	}
+	for _, item := range request.Content {
+		if item["type"] != "video_url" && item["video_url"] == nil {
+			continue
+		}
+		var videoURL string
+		switch value := item["video_url"].(type) {
+		case string:
+			videoURL = value
+		case map[string]any:
+			videoURL, _ = value["url"].(string)
+		}
+		videoURL = strings.TrimSpace(videoURL)
+		if videoURL == "" {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("content video_url.url is required"), "invalid_request", http.StatusBadRequest)
+		}
+		normalized.ReferenceVideos = append(normalized.ReferenceVideos, videoURL)
+	}
+	if len(normalized.ReferenceVideos) > 3 {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("content supports at most 3 video inputs"), "invalid_request", http.StatusBadRequest)
 	}
 	var metadata requestMetadata
 	if err := request.UnmarshalMetadata(&metadata); err != nil {
@@ -223,9 +244,9 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 		return nil, service.TaskErrorWrapperLocal(
 			fmt.Errorf("unsupported resolution %q", request.Resolution), "model_price_error", http.StatusBadRequest)
 	}
-	hasVideo := hasVideoInput(c)
+	hasVideo := len(request.ReferenceVideos) > 0
 	exchangeRate := operation_setting.USDExchangeRate
-	if exchangeRate <= 0 {
+	if exchangeRate <= 0 || math.IsNaN(exchangeRate) || math.IsInf(exchangeRate, 0) {
 		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("USD exchange rate must be positive"), "model_price_error", http.StatusInternalServerError)
 	}
 	unitPrice, ok := seedancepricing.GetUnitPriceCNY(info.OriginModelName, request.Resolution, hasVideo)
@@ -267,6 +288,18 @@ func (a *TaskAdaptor) AdjustBillingOnSubmit(_ *relaycommon.RelayInfo, _ []byte) 
 }
 func (a *TaskAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int { return 0 }
 
+func (a *TaskAdaptor) AdjustBillingOnCompleteChecked(task *model.Task, _ *relaycommon.TaskInfo) (int, *common.QuotaClamp, bool, error) {
+	if task == nil || task.PrivateData.BillingContext == nil {
+		return 0, nil, false, nil
+	}
+	snapshot := task.PrivateData.BillingContext.ProviderBilling
+	if snapshot == nil || snapshot.Provider != providerName || snapshot.BillingUnit != "request" {
+		return 0, nil, false, nil
+	}
+	quota, clamp, err := quotaFromUsage(0, snapshot)
+	return quota, clamp, true, err
+}
+
 func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
 	return buildUpstreamURL(a.baseURL, submitPath)
 }
@@ -283,11 +316,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
-	// The laomandi/seedance gateway reads generation parameters (duration,
-	// resolution, ratio, audio) from the metadata object — top-level values are
-	// ignored and fall back to upstream defaults (5s/adaptive/with-audio).
-	// Forward them inside metadata (matching the established convention) and keep
-	// the prompt/model/image at the top level.
+	// Preserve the metadata contract used by laomandi and legacy gateways.
 	metadata := map[string]any{
 		"duration":       request.Duration,
 		"resolution":     request.Resolution,
@@ -301,6 +330,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		"metadata": metadata,
 	}
 	if isAimodelGateway(a.baseURL) {
+		// Aimodel also reads generation parameters at the top level; metadata
+		// alone can be rejected with "resolution is epmty".
+		maps.Copy(outbound, metadata)
 		// aimodel requires the prompt in its content array as well, and accepts
 		// multiple reference images as content items with role "reference_image".
 		content := []map[string]any{{"type": "text", "text": request.Prompt}}
@@ -313,7 +345,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if len(request.ReferenceImages) == 1 && request.Image != "" {
 			outbound["image"] = request.Image
 		}
-	} else if isLaomandiGateway(a.baseURL) && len(request.ReferenceImages) >= 2 {
+	} else if len(request.ReferenceVideos) > 0 || (isLaomandiGateway(a.baseURL) && len(request.ReferenceImages) >= 2) {
 		// laomandi complete mode: multiple reference images ride in the volcengine
 		// content[] array with role "reference_image" (see Normandy_AI_API docs).
 		// Single-image and text-only requests keep the legacy top-level shape.
@@ -326,6 +358,13 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		// Other gateways (e.g. vedioapi.laomandi.com single-image) read the
 		// reference image from the top-level OpenAI "image" field.
 		outbound["image"] = request.Image
+	}
+	if len(request.ReferenceVideos) > 0 {
+		content := outbound["content"].([]map[string]any)
+		for _, url := range request.ReferenceVideos {
+			content = append(content, map[string]any{"type": "video_url", "video_url": map[string]string{"url": url}, "role": "reference_video"})
+		}
+		outbound["content"] = content
 	}
 	data, err := common.Marshal(outbound)
 	if err != nil {
@@ -427,14 +466,17 @@ func (a *TaskAdaptor) ParseTaskResult(_ *model.Task, _ *http.Response, respBody 
 		return nil, fmt.Errorf("unmarshal task result failed: %w", err)
 	}
 	result := &relaycommon.TaskInfo{Code: 0}
-	switch resTask.Status {
+	// Gateways are not consistent about the case of terminal statuses.
+	// Normalize it here so a successful upstream task is not misclassified as
+	// hook_error and left out of terminal billing.
+	switch strings.ToLower(strings.TrimSpace(resTask.Status)) {
 	case "queued", "pending":
 		result.Status = model.TaskStatusQueued
 		result.Progress = taskcommon.ProgressQueued
 	case "processing", "in_progress":
 		result.Status = model.TaskStatusInProgress
 		result.Progress = taskcommon.ProgressInProgress
-	case "completed", "succeeded":
+	case "completed", "succeeded", "success":
 		result.Status = model.TaskStatusSuccess
 		result.Url = resTask.Content.VideoURL
 		if result.Url == "" {
@@ -485,6 +527,10 @@ func (a *TaskAdaptor) ResolveTaskBilling(ctx context.Context, task *model.Task) 
 		return nil, fmt.Errorf("openaiseedance billing snapshot is missing")
 	}
 	upstreamID := task.GetUpstreamTaskID()
+	if snapshot.BillingUnit == "request" {
+		quota, _, err := quotaFromUsage(0, snapshot)
+		return &service.TaskBillingResolution{ActualQuota: quota}, err
+	}
 	if upstreamID == "" {
 		return nil, fmt.Errorf("upstream task id is empty")
 	}
@@ -534,11 +580,6 @@ func (a *TaskAdaptor) queryTotalTokens(ctx context.Context, upstreamID string) (
 		return 0, err
 	}
 	return int64(resTask.Usage.TotalTokens), nil
-}
-
-func hasVideoInput(c *gin.Context) bool {
-	// OpenAI-format submissions are treated as text-only (without_video tier).
-	return false
 }
 
 // maxReferenceImages is the upper bound on reference images forwarded to a

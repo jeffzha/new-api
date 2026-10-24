@@ -1,0 +1,19 @@
+{
+  "binaries": {
+    "fixture": "d50a2ac1b4ca92a8c896df49c0a2921fa7ba3e775ad0ff42b6cc558ebcecc82b",
+    "operator": "288b5a49ffd929a04b9632b869f207e7cac91571e029929bdfdcce82db0fd5f1"
+  },
+  "gatewayHead": "6f2c68d2939c600d6fe8aa9aba4526c8348b2a4d",
+  "opsHead": "d44cd1b46865766fe0b134cd58497fe8db3ad009",
+  "opsModules": {
+    "cn_integrity_codec.py": "ad63c7903007917c0392c618c5f10658666c72eb0ac00ee6a2f36769de8860aa",
+    "cn_integrity_controls.py": "ad64ac7f52092373a6cdeab66a01a6cd0462e77d57c16ca9f75a3e73fd22f9c6",
+    "cn_integrity_graph.py": "a3a261f7bd10392fe83a3c52b562633fbb55948199ffd140302129d41c909fb0",
+    "cn_integrity_inventory.py": "c12d44e9e34d25aaf81171275774f392f26753cd24b1de7390da165fd78bf8ae",
+    "cn_integrity_values.py": "30c1fd2bf0d52132624053699617dc011c09fa7319d1113c270d2be076a38dda"
+  },
+  "qualificationSources": {
+    "model/cn_integrity_operator_acceptance_test.go": "246b4e9c8a98d8a20e29f25fb266095ec55fcfd86c42bf1a631904171e0775a5",
+    "model/testdata/cn-task/verify_integrity_operator_cli.py": "3db0fe8964ba5db8f6bf329127bde63a69e8844acced6bb3dbad4bf844a85aa6"
+  }
+}

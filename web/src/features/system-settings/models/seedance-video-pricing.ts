@@ -22,6 +22,19 @@ export const SEEDANCE_VIDEO_PRICING_OPTION_KEY =
 export const SEEDANCE_STANDARD_MODEL = 'doubao-seedance-2-0-260128'
 export const SEEDANCE_FAST_MODEL = 'doubao-seedance-2-0-fast-260128'
 export const SEEDANCE_25_MODEL = 'doubao-seedance-2-5-260628'
+export const SEEDANCE_MINI_MODEL = 'doubao-seedance-2.0-mini'
+export const SEEDANCE_REQUEST_PRICING_OPTION_KEY =
+  'seedance_video_pricing.request_prices_cny'
+export const DEFAULT_SEEDANCE_REQUEST_PRICES_CNY_JSON = JSON.stringify({
+  [SEEDANCE_MINI_MODEL]: { without_video: 23, with_video: 14 },
+})
+export const SEEDANCE_REQUEST_PRICE_ROWS = [
+  {
+    model: SEEDANCE_MINI_MODEL,
+    resolution: '480p / 720p',
+    modelLabelKey: 'Seedance 2.0 Mini',
+  },
+] as const
 export const MAX_SEEDANCE_VIDEO_PRICE_CNY = 1_000_000
 
 export type SeedanceVideoPrice = {
@@ -104,9 +117,11 @@ export const DEFAULT_SEEDANCE_VIDEO_PRICES_CNY: SeedanceVideoPrices = {
   },
 }
 
-export const DEFAULT_SEEDANCE_VIDEO_PRICES_CNY_JSON = JSON.stringify(
-  DEFAULT_SEEDANCE_VIDEO_PRICES_CNY
-)
+export const DEFAULT_SEEDANCE_VIDEO_PRICES_CNY_JSON = JSON.stringify({
+  ...DEFAULT_SEEDANCE_VIDEO_PRICES_CNY,
+  'doubao-seedance-2.0': DEFAULT_SEEDANCE_VIDEO_PRICES_CNY[SEEDANCE_STANDARD_MODEL],
+  'doubao-seedance-2.5': DEFAULT_SEEDANCE_VIDEO_PRICES_CNY[SEEDANCE_25_MODEL],
+})
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -130,7 +145,9 @@ function clonePrices(prices: SeedanceVideoPrices): SeedanceVideoPrices {
 }
 
 export function parseSeedanceVideoPrices(raw: string): SeedanceVideoPrices {
-  const prices = clonePrices(DEFAULT_SEEDANCE_VIDEO_PRICES_CNY)
+  const prices: SeedanceVideoPrices = JSON.parse(
+    DEFAULT_SEEDANCE_VIDEO_PRICES_CNY_JSON
+  )
 
   let parsed: unknown
   try {
@@ -141,20 +158,22 @@ export function parseSeedanceVideoPrices(raw: string): SeedanceVideoPrices {
 
   if (!isRecord(parsed)) return prices
 
-  for (const { model, resolution } of SEEDANCE_PRICE_ROWS) {
-    const resolutions = parsed[model]
-    if (!isRecord(resolutions)) continue
+  for (const [model, tiers] of Object.entries(prices)) {
+    for (const resolution of Object.keys(tiers)) {
+      const resolutions = parsed[model]
+      if (!isRecord(resolutions)) continue
 
-    const candidate = resolutions[resolution]
-    if (!isRecord(candidate)) continue
+      const candidate = resolutions[resolution]
+      if (!isRecord(candidate)) continue
 
-    const withoutVideo = candidate.without_video
-    const withVideo = candidate.with_video
-    if (!isValidPrice(withoutVideo) || !isValidPrice(withVideo)) continue
+      const withoutVideo = candidate.without_video
+      const withVideo = candidate.with_video
+      if (!isValidPrice(withoutVideo) || !isValidPrice(withVideo)) continue
 
-    prices[model][resolution] = {
-      without_video: withoutVideo,
-      with_video: withVideo,
+      prices[model][resolution] = {
+        without_video: withoutVideo,
+        with_video: withVideo,
+      }
     }
   }
 
@@ -173,9 +192,10 @@ export function buildSeedancePricingFormValues(
 }
 
 export function applySeedancePricingFormValues(
-  values: SeedancePricingFormValues
+  values: SeedancePricingFormValues,
+  baseline: SeedanceVideoPrices = parseSeedanceVideoPrices('{}')
 ): SeedanceVideoPrices {
-  const prices = clonePrices(DEFAULT_SEEDANCE_VIDEO_PRICES_CNY)
+  const prices = clonePrices(baseline)
 
   SEEDANCE_PRICE_ROWS.forEach(({ model, resolution }, index) => {
     prices[model] ??= {}
@@ -183,4 +203,29 @@ export function applySeedancePricingFormValues(
   })
 
   return prices
+}
+
+export function parseSeedanceRequestPrices(
+  raw: string
+): SeedancePricingFormValues {
+  const defaults = { rows: [{ without_video: 23, with_video: 14 }] }
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!isRecord(parsed)) return defaults
+    const price = parsed[SEEDANCE_MINI_MODEL]
+    if (
+      !isRecord(price) ||
+      !isValidPrice(price.without_video) ||
+      !isValidPrice(price.with_video)
+    ) {
+      return defaults
+    }
+    return {
+      rows: [
+        { without_video: price.without_video, with_video: price.with_video },
+      ],
+    }
+  } catch {
+    return defaults
+  }
 }

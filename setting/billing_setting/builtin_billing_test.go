@@ -3,6 +3,7 @@ package billing_setting_test
 import (
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/controller"
@@ -17,6 +18,118 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLocoPalDeepSeek261017BuiltinBilling(t *testing.T) {
+	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
+	saved := *settings
+	savedRatios, savedPrices := ratio_setting.ModelRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		*settings = saved
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
+	})
+	*settings = billing_setting.BillingSetting{BillingMode: map[string]string{}, BillingExpr: map[string]string{}}
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+
+	const modelName = "deepseek-v4-1-flash-1017"
+	expression, ok := billing_setting.GetBillingExpr(modelName)
+	require.True(t, ok)
+	assert.Equal(t, billing_setting.BillingModeTieredExpr, billing_setting.GetBillingMode(modelName))
+
+	usage := &dto.Usage{
+		PromptTokens: 1_100_000, CompletionTokens: 1_000_000,
+		PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 100_000},
+	}
+	params := service.BuildTieredTokenParams(usage, false, billingexpr.UsedVars(expression))
+	shanghai := time.FixedZone("Asia/Shanghai", 8*60*60)
+
+	for _, tc := range []struct {
+		name  string
+		at    time.Time
+		peak  int
+		quota int
+	}{
+		{"base before morning peak", time.Date(2026, 10, 18, 8, 59, 0, 0, shanghai), -1, 342_603},
+		{"morning peak applies on Sunday", time.Date(2026, 10, 18, 9, 0, 0, 0, shanghai), 0, 685_205},
+		{"base between windows", time.Date(2026, 10, 18, 12, 0, 0, 0, shanghai), -1, 342_603},
+		{"afternoon peak", time.Date(2026, 10, 18, 14, 0, 0, 0, shanghai), 1, 685_205},
+		{"base after afternoon peak", time.Date(2026, 10, 18, 18, 0, 0, 0, shanghai), -1, 342_603},
+		{"peak based on Shanghai rather than UTC", time.Date(2026, 10, 19, 1, 0, 0, 0, time.UTC), 0, 685_205},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := billingexpr.ComputeTieredQuotaWithRequest(&billingexpr.BillingSnapshot{
+				ExprString: expression, ExprHash: billingexpr.ExprHashString(expression),
+				GroupRatio: 1, QuotaPerUnit: 500_000, EvaluationTime: tc.at,
+			}, params, billingexpr.RequestInput{})
+			require.NoError(t, err)
+			assert.Equal(t, "base", result.MatchedTier)
+			assert.Equal(t, tc.quota, result.ActualQuotaAfterGroup)
+			require.Len(t, result.RequestRules, 2)
+			for i, rule := range result.RequestRules {
+				assert.Equal(t, 2.0, rule.Multiplier)
+				assert.Equal(t, i == tc.peak, rule.Matched)
+			}
+		})
+	}
+}
+
+func TestFunASRFlashBuiltinBilling(t *testing.T) {
+	expression, ok := billing_setting.GetBuiltinBillingExpr("fun-asr-flash-2026-06-15")
+	require.True(t, ok)
+	result, err := billingexpr.ComputeTieredQuotaWithRequest(&billingexpr.BillingSnapshot{
+		ExprString: expression, ExprHash: billingexpr.ExprHashString(expression),
+		GroupRatio: 1, QuotaPerUnit: 500_000, ExprVersion: 1, UsageFactsBilling: true,
+	}, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: map[string]any{"seconds": 36_000.0}})
+	require.NoError(t, err)
+	assert.InDelta(t, 542_465.7534246575, result.ActualQuotaBeforeGroup, 1e-7)
+	assert.Equal(t, 542_466, result.ActualQuotaAfterGroup)
+}
+
+func TestShenzhenSeedreamLiteContextBilling(t *testing.T) {
+	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
+	saved := *settings
+	savedRatios, savedPrices := ratio_setting.ModelRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		*settings = saved
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
+	})
+	*settings = billing_setting.BillingSetting{BillingMode: map[string]string{}, BillingExpr: map[string]string{}}
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+	const name = "doubao-seedream-5-0-lite"
+	expression, ok := billing_setting.GetBillingExpr(name)
+	require.True(t, ok)
+	for _, tc := range []struct {
+		name, tier                       string
+		input, cached, output            int
+		inputRate, cacheRate, outputRate float64
+	}{
+		{"observed single 2K image", "base", 0, 0, 16384, 0.6, 0.12, 3.6},
+		{"short boundary with cache", "base", 32000, 16000, 100, 0.6, 0.12, 3.6},
+		{"above short boundary", "medium_context", 32001, 0, 100, 0.9, 0.18, 5.4},
+		{"medium boundary with cache", "medium_context", 128000, 100000, 100, 0.9, 0.18, 5.4},
+		{"above medium boundary with cache", "long_context", 128001, 100000, 100, 1.8, 0.36, 10.8},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			usage := &dto.Usage{PromptTokens: tc.input, CompletionTokens: tc.output,
+				PromptTokensDetails: dto.InputTokenDetails{CachedTokens: tc.cached}}
+			result, err := billingexpr.ComputeTieredQuota(&billingexpr.BillingSnapshot{
+				ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500000,
+			}, service.BuildTieredTokenParams(usage, false, billingexpr.UsedVars(expression)))
+			require.NoError(t, err)
+			assert.Equal(t, tc.tier, result.MatchedTier)
+			cny := (float64(tc.input-tc.cached)*tc.inputRate + float64(tc.cached)*tc.cacheRate + float64(tc.output)*tc.outputRate) / 1e6
+			assert.Equal(t, common.QuotaRound(cny/7.3*500000), result.ActualQuotaAfterGroup)
+		})
+	}
+	settings.BillingMode[name] = "tiered_expr"
+	settings.BillingExpr[name] = `tier("custom", fixed(0.1)) * image_count`
+	actual, ok := billing_setting.GetBillingExpr(name)
+	require.True(t, ok)
+	assert.Equal(t, settings.BillingExpr[name], actual)
+}
 
 func TestGPT6AstraBuiltinBilling(t *testing.T) {
 	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)

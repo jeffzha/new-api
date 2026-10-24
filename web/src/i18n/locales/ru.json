@@ -4804,6 +4804,7 @@
     "Quota unchanged": "Квота не изменилась",
     "Quota update failed": "Не удалось обновить квоту",
     "Quota Warning Threshold": "Порог предупреждения о квоте",
+    "Warning threshold must be greater than zero": "Порог предупреждения должен быть больше нуля",
     "Quota:": "Квота:",
     "Radius": "Радиус",
     "Random": "Случайный",

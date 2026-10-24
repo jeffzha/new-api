@@ -223,15 +223,15 @@ test("disabled channel keeps its name in the filter and shows status only in the
   await page.route("**/agency/api/v1/root/platform-pricing", (route) => route.fulfill({ json: {
     success: true,
     data: { revision: 1, refreshed_at_ms: 1, items: [{
-      origin_model_name: "unavailable-model", channel_names: ["Bridge"],
-      channel_costs: [{ channel_id: 38, channel_name: "Bridge", available: false, platform_cost_bps: 5000 }],
+      origin_model_name: "unavailable-model", channel_names: ["Yunwoke-HappyHorse"],
+      channel_costs: [{ channel_id: 18, channel_name: "Yunwoke-HappyHorse", available: false, platform_cost_bps: 5000 }],
       agency_cost_bps: 7000, default_sales_bps: 8000,
     }] },
   } }));
   await page.getByRole("button", { name: "Pricing", exact: true }).click();
-  await expect(page.locator(".pricing-channel-cell")).toHaveText("Bridge（Currently unavailable）");
+  await expect(page.locator(".pricing-channel-cell")).toHaveText("Yunwoke-HappyHorse（Currently unavailable）");
   await page.getByRole("button", { name: "All channels", exact: true }).click();
-  await expect(page.locator(".filter-menu-option").filter({ hasText: "Bridge" })).toHaveText("Bridge1");
+  await expect(page.locator(".filter-menu-option").filter({ hasText: "Yunwoke-HappyHorse" })).toHaveText("Yunwoke-HappyHorse1");
   await expect(page.locator(".filter-menu-panel")).not.toContainText("Channel unavailable");
 });
 
@@ -280,7 +280,11 @@ for (const width of [1440, 390]) {
     const apply = dialog.getByRole("button", { name: "Apply to selected models", exact: true });
     const dialogBox = await dialog.boundingBox();
     const applyBox = await apply.boundingBox();
-    expect(applyBox!.y).toBeGreaterThan(dialogBox!.y);
+    const headingBox = await dialog.getByRole("heading", { name: "Increase/decrease sales prices" }).boundingBox();
+    const toolbarBox = await dialog.locator(".toolbar").boundingBox();
+    expect(applyBox!.y).toBeGreaterThanOrEqual(toolbarBox!.y);
+    expect(applyBox!.y + applyBox!.height).toBeLessThanOrEqual(toolbarBox!.y + toolbarBox!.height);
+    if (width > 600) expect(applyBox!.x).toBeGreaterThan(headingBox!.x);
     expect(applyBox!.y + applyBox!.height).toBeLessThanOrEqual(Math.min(dialogBox!.y + dialogBox!.height, 900));
     await page.screenshot({
       path: test.info().outputPath(`customer-${width}.png`),
@@ -323,7 +327,10 @@ test("child pricing uses the shared search and provider tabs without dropping un
       request.method() === "POST" && request.url().endsWith("/children/9/pricing/publish"),
   );
   await dialog.getByRole("button", { name: "Publish child pricing", exact: true }).click();
-  await page.getByRole("dialog").last().getByRole("button", { name: "Publish child pricing", exact: true }).click();
+  const confirmDialog = page.getByRole("dialog").last();
+  const confirmButton = confirmDialog.getByRole("button", { name: "Publish child pricing", exact: true });
+  await expect(confirmDialog.locator(".toolbar").getByRole("button", { name: "Publish child pricing", exact: true })).toBeVisible();
+  await confirmButton.click();
   expect((await published).postDataJSON().model_cost_overrides).toEqual([
     { origin_model_name: "unlisted-model", settlement_bps: 7800 },
   ]);

@@ -11,12 +11,10 @@ export function PublishReasonDialog(props: {
 }) {
   const { t } = useTranslation();
   const [reason, setReason] = useState("");
-  return <Dialog title={props.title} onClose={props.onClose} busy={props.busy}>
+  return <Dialog title={props.title} onClose={props.onClose} busy={props.busy} headerActions={
+    <button type="button" disabled={props.busy} onClick={() => props.onConfirm(reason.trim())}>{props.title}</button>
+  }>
     <Field label={t("Change reason (optional)")}><input autoFocus maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} /></Field>
     <ErrorNotice error={props.error} />
-    <div className="actions dialog-actions">
-      <button type="button" className="secondary" disabled={props.busy} onClick={props.onClose}>{t("Cancel")}</button>
-      <button type="button" disabled={props.busy} onClick={() => props.onConfirm(reason.trim())}>{props.title}</button>
-    </div>
   </Dialog>;
 }

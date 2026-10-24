@@ -93,6 +93,7 @@ export function Dialog(props: {
   onClose: () => void;
   busy?: boolean;
   className?: string;
+  headerActions?: ReactNode;
 }) {
   const { t } = useTranslation();
   const ref = useRef<HTMLDialogElement>(null);
@@ -119,10 +120,13 @@ export function Dialog(props: {
     >
       <div className="toolbar">
         <h2 id={titleId}>{props.title}</h2>
-        <button type="button" className="secondary button-icon" disabled={props.busy} onClick={props.onClose}>
-          <ActionIcon name="close" />
-          {t("Close")}
-        </button>
+        <div className="dialog-header-actions">
+          {props.headerActions}
+          <button type="button" className="secondary button-icon" disabled={props.busy} onClick={props.onClose}>
+            <ActionIcon name="close" />
+            {t("Close")}
+          </button>
+        </div>
       </div>
       {props.children}
     </dialog>

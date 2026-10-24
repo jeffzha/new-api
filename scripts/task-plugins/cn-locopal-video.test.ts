@@ -205,6 +205,8 @@ test("H3 accepts documented image_url and rejects nested bare Base64", () => {
   }
   expect(submit({ prompt: "p", metadata: { aspect_ratio: "9:16" } }).body.ratio).toBe("9:16");
   expect(submit({ prompt: "p", video: { ratio: "1:1" } }).body.ratio).toBe("1:1");
+  expect(submit({ prompt: "p", ratio: "9:16", size: "1344x768" }).body.ratio).toBe("9:16");
+  expect(submit({ prompt: "p", aspectRatio: "9:16", size: "111x222" }).body.ratio).toBe("9:16");
   expect(() => submit({ prompt: "p", size: "111x222" })).toThrow("unsupported aspect ratio");
   expect(() => submit({ prompt: "p", resolution: "not2K" })).toThrow("resolution must be");
 });

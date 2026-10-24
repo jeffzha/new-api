@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // This command is host-local only. Neither its credential hash nor a generated
@@ -60,7 +61,7 @@ func ApplyOpsDistributorProvision(db *gorm.DB, input OpsDistributorProvision, co
 	bodyHash := fmt.Sprintf("%x", sha256.Sum256(body))
 	scopeHash := fmt.Sprintf("%x", sha256.Sum256([]byte("tokenops.distributor.provision\n"+input.CommandID)))
 	var result OpsDistributorReceipt
-	err = db.Transaction(func(tx *gorm.DB) error {
+	err = db.Session(&gorm.Session{Logger: db.Logger.LogMode(logger.Silent)}).Transaction(func(tx *gorm.DB) error {
 		var root model.User
 		if err := tx.Select("id,role,status").First(&root, input.RootID).Error; err != nil {
 			return err

@@ -172,6 +172,59 @@ func runOpsPolicyCustomerSnapshotAndReplay(t *testing.T, app *App) {
 	runOpsPayoutSnapshotAndReplay(t, app)
 	runOpsCustomerProvision(t, app)
 	runOpsDistributorProvision(t, app)
+	runOpsCredentials(t, app)
+}
+
+func runOpsCredentials(t *testing.T, app *App) {
+	t.Helper()
+	agency, _, err := app.CreateAgency(1, "Credential sync", "credential-sync-owner", agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultSalesBPS: 10000, SalesCapBPS: 30000})
+	require.NoError(t, err)
+	var operator model.AgencyOperatorAccount
+	require.NoError(t, app.db.Where("agency_id = ?", agency.ID).First(&operator).Error)
+	root := model.User{Username: "credential-root", AffCode: "ops-credential-root", Password: "unused", Role: common.RoleRootUser, Status: common.UserStatusEnabled}
+	require.NoError(t, app.db.Create(&root).Error)
+	session := model.AgencySession{ActorType: ActorTypeOperator, ActorID: operator.ID, TokenHash: "credential-session", CSRFHash: "unused", AuthVersion: operator.AuthVersion}
+	require.NoError(t, app.db.Create(&session).Error)
+	t.Setenv("ACCOUNT_PASSWORD_HASH_ALGORITHM", "argon2id")
+	hash, err := common.HashAccountPassword("new-portable-password-2026")
+	require.NoError(t, err)
+	input := OpsCredentialChange{OperatorID: operator.ID, RootID: int64(root.Id), ExpectedVersion: operator.AuthVersion,
+		ExpectedHash: fmt.Sprintf("%x", sha256.Sum256([]byte(operator.PasswordHash))), PasswordHash: hash, CommandID: "ops-credential-change"}
+	bad := input
+	bad.RootID = int64(root.Id) + 100000
+	_, err = ApplyOpsCredential(app.db, bad)
+	require.Error(t, err)
+	bad = input
+	bad.ExpectedVersion++
+	_, err = ApplyOpsCredential(app.db, bad)
+	require.ErrorContains(t, err, "revision conflict")
+	bad = input
+	bad.PasswordHash = "plaintext"
+	_, err = ApplyOpsCredential(app.db, bad)
+	require.Error(t, err)
+	result, err := ApplyOpsCredential(app.db, input)
+	require.NoError(t, err)
+	assert.Equal(t, operator.AuthVersion+1, result.AuthVersion)
+	require.NoError(t, app.db.First(&operator, operator.ID).Error)
+	assert.True(t, common.ValidatePasswordAndHash("new-portable-password-2026", operator.PasswordHash))
+	assert.False(t, operator.MustChangePassword)
+	require.NoError(t, app.db.First(&session, session.ID).Error)
+	assert.NotNil(t, session.RevokedAt)
+	// A later source change cannot be undone by an old retry.
+	require.NoError(t, app.db.Model(&operator).Updates(map[string]any{"password_hash": "newer-remote-hash", "auth_version": result.AuthVersion + 1}).Error)
+	replay, err := ApplyOpsCredential(app.db, input)
+	require.NoError(t, err)
+	assert.Equal(t, result, replay)
+	require.NoError(t, app.db.First(&operator, operator.ID).Error)
+	assert.Equal(t, "newer-remote-hash", operator.PasswordHash)
+	bad = input
+	bad.MustChange = true
+	_, err = ApplyOpsCredential(app.db, bad)
+	require.ErrorContains(t, err, "identity conflict")
+	var receipt model.AgencyIdempotencyRecord
+	require.NoError(t, app.db.Where("action = ? AND resource_id = ?", "credential.apply", strconv.FormatInt(operator.ID, 10)).First(&receipt).Error)
+	assert.NotContains(t, receipt.ResponseJSON, hash)
+	assert.NotContains(t, receipt.ResponseJSON, "new-portable-password-2026")
 }
 
 func runOpsDistributorProvision(t *testing.T, app *App) {

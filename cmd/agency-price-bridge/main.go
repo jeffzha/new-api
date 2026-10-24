@@ -35,6 +35,7 @@ type request struct {
 	Account          agencyhub.OpsPayoutAccount           `json:"account"`
 	RootUserID       int64                                `json:"rootUserId"`
 	Distributor      agencyhub.OpsDistributorProvision    `json:"distributor"`
+	Credential       agencyhub.OpsCredentialChange        `json:"credential"`
 }
 
 func main() {
@@ -56,8 +57,8 @@ func run() error {
 	if err := common.DecodeJson(io.LimitReader(os.Stdin, 2<<20), &input); err != nil {
 		return err
 	}
-	many := input.Action == "read-many" || input.Action == "directory-read" || input.Action == "customers-read" || input.Action == "payout-read" || input.Action == "distributor-provision"
-	if (input.AgencyID <= 0 && !many) || (input.Action != "read" && input.Action != "read-many" && input.Action != "apply" && input.Action != "directory-read" && input.Action != "directory-apply" && input.Action != "customers-read" && input.Action != "customer-transfer" && input.Action != "payout-read" && input.Action != "payout-apply" && input.Action != "customer-provision" && input.Action != "distributor-provision") || len(input.Customers) > 1000 || len(input.Children) > 1000 {
+	many := input.Action == "read-many" || input.Action == "directory-read" || input.Action == "customers-read" || input.Action == "payout-read" || input.Action == "distributor-provision" || input.Action == "credential-apply"
+	if (input.AgencyID <= 0 && !many) || (input.Action != "read" && input.Action != "read-many" && input.Action != "apply" && input.Action != "directory-read" && input.Action != "directory-apply" && input.Action != "customers-read" && input.Action != "customer-transfer" && input.Action != "payout-read" && input.Action != "payout-apply" && input.Action != "customer-provision" && input.Action != "distributor-provision" && input.Action != "credential-apply") || len(input.Customers) > 1000 || len(input.Children) > 1000 {
 		return fmt.Errorf("invalid bounded bridge request")
 	}
 	if input.Action == "read-many" && (len(input.AgencyIDs) < 1 || len(input.AgencyIDs) > 5) {
@@ -80,7 +81,9 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	var result any
-	if input.Action == "distributor-provision" {
+	if input.Action == "credential-apply" {
+		result, err = agencyhub.ApplyOpsCredential(model.DB.WithContext(ctx), input.Credential)
+	} else if input.Action == "distributor-provision" {
 		result, err = agencyhub.ApplyOpsDistributorProvision(model.DB.WithContext(ctx), input.Distributor, agencyhub.LoadConfig())
 	} else if input.Action == "customer-provision" {
 		result, err = agencyhub.ApplyOpsCustomerProvision(model.DB.WithContext(ctx), input.UserID, input.AgencyID, input.RootUserID, input.CommandID)

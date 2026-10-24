@@ -151,3 +151,7 @@ jobs:
           cache-dependency-path: go.sum
       - name: Verify Ops exports on all three databases
         run: go test ./service/opsexport -run '^TestOpsExport(FinanceRange|BindingHistory)AcrossDatabases$' -count=1 -v
+      - name: Verify distributor durable delivery on all three databases
+        env:
+          GOMAXPROCS: '2'
+        run: go test ./service/agencyopspush -count=1 -v

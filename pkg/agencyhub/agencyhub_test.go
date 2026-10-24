@@ -902,7 +902,7 @@ func TestPlatformPricingPreservesChildCostsAcrossDialects(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, pool.Close()) })
 			// Use an isolated database: publication owns the singleton platform state.
-			require.NoError(t, db.AutoMigrate(&model.Agency{}, &model.AgencyPricePolicyVersion{}, &model.AgencyPricePolicyItem{}, &model.AgencyPlatformPriceState{}, &model.AgencyPlatformPriceVersion{}, &model.AgencyAuditLog{}, &model.AgencyCustomerSalesOverride{}, &model.Channel{}, &model.Ability{}))
+			require.NoError(t, db.AutoMigrate(&model.Agency{}, &model.AgencyPricePolicyVersion{}, &model.AgencyPricePolicyItem{}, &model.AgencyPlatformPriceState{}, &model.AgencyPlatformPriceVersion{}, &model.AgencyAuditLog{}, &model.AgencyCustomerSalesOverride{}, &model.Channel{}, &model.Ability{}, &model.AgencyOpsEvent{}, &model.AgencyOpsObjectRevision{}))
 			db = db.Begin()
 			require.NoError(t, db.Error)
 			t.Cleanup(func() { require.NoError(t, db.Rollback().Error) })
@@ -1115,9 +1115,10 @@ func TestBillingEventIsIdempotent(t *testing.T) {
 	require.NoError(t, app.ProcessBillingEvent(event))
 	require.NoError(t, app.ProcessBillingEvent(event))
 	// Simulate an approved payout that locked the full available balance.
-	require.NoError(t, app.db.Model(&model.AgencyCommissionBalance{}).
-		Where("agency_id = ? AND currency_code = ?", agencyID, "CNY").
-		Updates(map[string]any{"available_micros": 0, "locked_micros": 100}).Error)
+	var lockedBalance model.AgencyCommissionBalance
+	require.NoError(t, app.db.Where("agency_id = ? AND currency_code = ?", agencyID, "CNY").First(&lockedBalance).Error)
+	require.NoError(t, app.db.Model(&lockedBalance).
+		Updates(map[string]any{"available_micros": 0, "locked_micros": 100, "version": lockedBalance.Version + 1}).Error)
 	require.NoError(t, app.db.Create(&model.AgencyWithdrawal{RequestNo: "wd-1", AgencyID: agencyID, CurrencyCode: "CNY", AmountMicros: 100, Status: "approved", Version: 1, CreatedAtMS: 1, UpdatedAtMS: 1}).Error)
 	reversal := event
 	reversal.EventID = "evt-2"

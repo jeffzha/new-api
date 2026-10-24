@@ -501,7 +501,7 @@ func (a *App) createAgency(rootID int64, displayName, operatorUsername string, p
 	now := time.Now().UnixMilli()
 	var agency model.Agency
 	var delivery model.AgencyDeliverySecret
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		depth, err := validateAgencyParentTx(tx, parentAgencyID)
 		if err != nil {
 			return err
@@ -563,7 +563,10 @@ func (a *App) writePolicyItems(tx *gorm.DB, policyID int64, policy agencycontrac
 	if len(items) == 0 {
 		return nil
 	}
-	return tx.Create(&items).Error
+	if err := tx.Create(&items).Error; err != nil {
+		return err
+	}
+	return model.CaptureAgencyOpsPriceItemsTx(tx, items)
 }
 
 func (a *App) listAgencies(c *gin.Context) {
@@ -735,7 +738,7 @@ func (a *App) updateAgency(c *gin.Context) {
 		}
 	}
 	var agency model.Agency
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		if err := model.AgencyLockForUpdate(tx).First(&agency, id).Error; err != nil {
 			return err
 		}
@@ -802,7 +805,7 @@ func (a *App) setAgencyStatus(c *gin.Context, status string) {
 	var agency model.Agency
 	now := time.Now().Unix()
 	var affectedAgencyIDs []int64
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		if err := model.AgencyLockForUpdate(tx).First(&agency, id).Error; err != nil {
 			return err
 		}
@@ -939,7 +942,7 @@ func (a *App) resetPassword(c *gin.Context) {
 	operationID := deliveryOperationID(c, identity)
 	binding := deliveryBindingFromContext(c, identity, c.Request.URL.Path, "agency:"+strconv.FormatInt(id, 10))
 	now := time.Now().UnixMilli()
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		if err := model.AgencyLockForUpdate(tx).Where("agency_id = ?", id).First(&account).Error; err != nil {
 			return err
 		}
@@ -1245,7 +1248,7 @@ func (a *App) transferUser(c *gin.Context) {
 
 func transferCustomer(db *gorm.DB, identity *Identity, userID, targetAgencyID, expectedRevision int64, reason string, c *gin.Context) (model.AgencyActiveUserBinding, error) {
 	var result model.AgencyActiveUserBinding
-	err := db.Transaction(func(tx *gorm.DB) error {
+	err := model.AgencyOpsTransaction(db, func(tx *gorm.DB) error {
 		var current model.AgencyActiveUserBinding
 		if err := tx.Where("user_id = ?", userID).First(&current).Error; err != nil {
 			return err

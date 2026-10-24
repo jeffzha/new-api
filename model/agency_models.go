@@ -1039,7 +1039,7 @@ func AgencyModels() []any {
 		&AgencyUserBinding{}, &AgencyActiveUserBinding{}, &AgencyCustomerSalesOverride{}, &AgencyPricePolicyVersion{}, &AgencyPricePolicyItem{}, &AgencyPlatformPriceState{}, &AgencyPlatformPriceVersion{}, &AgencyIdempotencyRecord{},
 		&AgencyFundingAccount{}, &AgencyFundingLot{}, &AgencyFundingAllocation{}, &AgencyFundingLedger{}, &AgencyFundingDebt{}, &AgencyDebtRepayment{}, &AgencyFundingReversal{}, &AgencyFundingReversalChargeRecord{}, &AgencyCreditTerms{}, &AgencyCreditInvoice{},
 		&AgencyBillingJournal{}, &AgencyBillingOperation{}, &AgencyBillingOutbox{}, &AgencyEventDelivery{}, &AgencyTaskSubmissionAttempt{},
-		&AgencyOpsPublisher{}, &AgencyOpsPublication{}, &AgencyOpsWriterState{}, &AgencyOpsWriterTransition{}, &AgencyOpsSourceManifest{},
+		&AgencyOpsPublisher{}, &AgencyOpsPublication{}, &AgencyOpsEvent{}, &AgencyOpsObjectRevision{}, &AgencyOpsSenderLease{}, &AgencyOpsWriterState{}, &AgencyOpsWriterTransition{}, &AgencyOpsSourceManifest{},
 		&AgencyBillingCorrection{},
 		&AgencyChargeComponent{}, &AgencyComponentFunding{},
 		&AgencySourceEvent{}, &AgencyUsageFact{}, &AgencyTopupFact{}, &AgencyCommissionJob{}, &AgencyCommissionLedger{}, &AgencyCommissionBalance{},

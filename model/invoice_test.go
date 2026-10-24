@@ -168,9 +168,9 @@ func TestInvoiceConsumptionAcrossDialects(t *testing.T) {
 			previousDB := DB
 			DB = db
 			t.Cleanup(func() { DB = previousDB })
-			models := []any{&InvoiceApplicationLine{}, &InvoiceApplicationEvent{}, &InvoiceApplicationDocument{}, &InvoiceApplication{}, &AgencyFundingLot{}, &TopUp{}, &User{}}
+			models := []any{&InvoiceApplicationLine{}, &InvoiceApplicationEvent{}, &InvoiceApplicationDocument{}, &InvoiceApplication{}, &AgencyFundingLot{}, &TopUp{}, &User{}, &AgencyOpsEvent{}, &AgencyOpsObjectRevision{}}
 			require.NoError(t, db.Migrator().DropTable(models...))
-			require.NoError(t, db.AutoMigrate(&User{}, &TopUp{}, &AgencyFundingLot{}, &InvoiceApplication{}, &InvoiceApplicationLine{}, &InvoiceApplicationEvent{}, &InvoiceApplicationDocument{}))
+			require.NoError(t, db.AutoMigrate(&User{}, &TopUp{}, &AgencyFundingLot{}, &InvoiceApplication{}, &InvoiceApplicationLine{}, &InvoiceApplicationEvent{}, &InvoiceApplicationDocument{}, &AgencyOpsEvent{}, &AgencyOpsObjectRevision{}))
 			for i, mode := range []string{"legacy", AgencyDurableBillingMode} {
 				user := User{Username: fmt.Sprintf("invoice-%d", i), AffCode: fmt.Sprintf("invoice-aff-%d", i), BillingMode: mode, Quota: 500000}
 				require.NoError(t, db.Create(&user).Error)

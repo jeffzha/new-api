@@ -253,7 +253,7 @@ func (a *App) putCustomerSalesPricing(c *gin.Context) {
 	identity := currentIdentity(c)
 	now := time.Now().UnixMilli()
 	var row model.AgencyCustomerSalesOverride
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		var locked model.Agency
 		if err := model.AgencyLockForUpdate(tx).First(&locked, agency.ID).Error; err != nil {
 			return err
@@ -349,7 +349,7 @@ func (a *App) putCustomerSalesPricingBatch(c *gin.Context) {
 		return
 	}
 	now := time.Now().UnixMilli()
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		var locked model.Agency
 		if err := model.AgencyLockForUpdate(tx).First(&locked, agency.ID).Error; err != nil {
 			return err
@@ -424,7 +424,7 @@ func (a *App) deleteCustomerSalesPricing(c *gin.Context) {
 		return
 	}
 	var deleted int64
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		result := tx.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, key).Delete(&model.AgencyCustomerSalesOverride{})
 		if result.Error != nil {
 			return result.Error

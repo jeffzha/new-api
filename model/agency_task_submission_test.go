@@ -19,7 +19,7 @@ func TestAgencyTaskSubmissionReceiptTransitionsAreIdempotent(t *testing.T) {
 	previous := DB
 	DB = db
 	t.Cleanup(func() { DB = previous })
-	require.NoError(t, db.AutoMigrate(&AgencyBillingJournal{}, &AgencyTaskSubmissionAttempt{}))
+	require.NoError(t, db.AutoMigrate(&AgencyBillingJournal{}, &AgencyTaskSubmissionAttempt{}, &AgencyOpsEvent{}, &AgencyOpsObjectRevision{}))
 	require.NoError(t, db.Create(&AgencyBillingJournal{
 		ChargeID: "charge-receipt-1", SegmentNo: 0, UserID: 42,
 		Status: "reserved", PricingSnapshot: "{}", BillingBasis: "{}",
@@ -58,7 +58,7 @@ func TestAgencyTaskSubmissionDoesNotPersistProviderError(t *testing.T) {
 	previous := DB
 	DB = db
 	t.Cleanup(func() { DB = previous })
-	require.NoError(t, db.AutoMigrate(&AgencyBillingJournal{}, &AgencyTaskSubmissionAttempt{}))
+	require.NoError(t, db.AutoMigrate(&AgencyBillingJournal{}, &AgencyTaskSubmissionAttempt{}, &AgencyOpsEvent{}, &AgencyOpsObjectRevision{}))
 	require.NoError(t, db.Create(&AgencyBillingJournal{ChargeID: "charge-redact", UserID: 7, Status: "reserved", PricingSnapshot: "{}", BillingBasis: "{}", Version: 1}).Error)
 	require.NoError(t, BeginAgencyTaskSubmission(7, "charge-redact", "public-redact", "hash", "/v1/videos"))
 	require.NoError(t, ResolveAgencyTaskSubmissionFailure("charge-redact", false, "dial tcp 10.0.0.1: secret-api-key"))
@@ -74,7 +74,7 @@ func TestPendingAgencyTaskSettlementRepairWakesAsyncWorker(t *testing.T) {
 	previous := DB
 	DB = db
 	t.Cleanup(func() { DB = previous })
-	require.NoError(t, db.AutoMigrate(&AgencyBillingJournal{}, &AgencyBillingOperation{}))
+	require.NoError(t, db.AutoMigrate(&AgencyBillingJournal{}, &AgencyBillingOperation{}, &AgencyOpsEvent{}, &AgencyOpsObjectRevision{}))
 	require.False(t, HasPendingAgencyTaskSettlementRepairs())
 
 	require.NoError(t, db.Create(&AgencyBillingJournal{

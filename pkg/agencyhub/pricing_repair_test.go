@@ -43,7 +43,7 @@ func TestPricingRepairAcrossDialects(t *testing.T) {
 			pool, err := db.DB()
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, pool.Close()) })
-			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Agency{}, &model.AgencyPricePolicyVersion{}, &model.AgencyPricePolicyItem{}, &model.AgencyPlatformPriceState{}, &model.AgencyPlatformPriceVersion{}, &model.AgencyAuditLog{}, &model.AgencyCustomerSalesOverride{}))
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Agency{}, &model.AgencyPricePolicyVersion{}, &model.AgencyPricePolicyItem{}, &model.AgencyPlatformPriceState{}, &model.AgencyPlatformPriceVersion{}, &model.AgencyAuditLog{}, &model.AgencyCustomerSalesOverride{}, &model.AgencyUserBinding{}, &model.AgencyOpsEvent{}, &model.AgencyOpsObjectRevision{}))
 			db = db.Begin()
 			require.NoError(t, db.Error)
 			t.Cleanup(func() { require.NoError(t, db.Rollback().Error) })

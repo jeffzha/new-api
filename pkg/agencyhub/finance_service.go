@@ -176,7 +176,7 @@ func (a *App) ProcessBillingEvent(event agencycontract.BillingEvent) error {
 	if now == 0 {
 		now = time.Now().UnixMilli()
 	}
-	return a.db.Transaction(func(tx *gorm.DB) error {
+	return model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		// Keep the direct recovery API consistent with the leased consumer:
 		// usage/top-up facts may continue while commission settlement is paused,
 		// but the commission job must remain deferred until its switch is enabled.
@@ -239,7 +239,7 @@ func (a *App) processBillingPayloadWithLease(ctx context.Context, event agencyco
 	if now == 0 {
 		now = time.Now().UnixMilli()
 	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return model.AgencyOpsTransaction(a.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var current model.AgencyEventDelivery
 		if err := model.AgencyLockForUpdate(tx).Where(
 			"id = ? AND status = ? AND lease_owner = ? AND lease_token = ? AND lease_until >= ?",
@@ -862,7 +862,7 @@ func (a *App) correctUsageFact(tx *gorm.DB, event agencycontract.BillingEvent, c
 	if businessStatus == "" {
 		businessStatus = fact.BusinessStatus
 	}
-	return tx.Model(&model.AgencyUsageFact{}).Where("id = ?", fact.ID).Updates(map[string]any{
+	return tx.Model(&fact).Where("id = ?", fact.ID).Updates(map[string]any{
 		"charged_quota": event.ChargedTotalQuota, "paid_quota": event.PaidAllocatedQuota,
 		"nonpaid_quota": event.NonpaidAllocatedQuota, "debt_quota": event.DebtAllocatedQuota,
 		"standard_quota": event.StandardQuota, "sales_bps": event.SalesBPS,
@@ -1456,7 +1456,7 @@ func (a *App) createWithdrawal(c *gin.Context) {
 	identity := currentIdentity(c)
 	now := time.Now().UnixMilli()
 	var withdrawal model.AgencyWithdrawal
-	err := a.db.Transaction(func(tx *gorm.DB) error {
+	err := model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		var account model.AgencyWithdrawalAccount
 		if model.AgencyLockForUpdate(tx).Where("id = ? AND agency_id = ? AND status = ?", accountID, agency.ID, "active").First(&account).Error != nil {
 			return errors.New("withdrawal account is invalid")
@@ -1795,7 +1795,7 @@ func (a *App) cancelOwnWithdrawal(c *gin.Context) {
 	}
 	now := time.Now().UnixMilli()
 	var withdrawal model.AgencyWithdrawal
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		if err := model.AgencyLockForUpdate(tx).
 			Where("id = ? AND agency_id = ?", id, agency.ID).
 			First(&withdrawal).Error; err != nil {
@@ -1962,7 +1962,7 @@ func (a *App) transitionWithdrawal(c *gin.Context, target string) {
 	now := time.Now().UnixMilli()
 	var withdrawal model.AgencyWithdrawal
 	var paymentLeaseToken int64
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		if err := model.AgencyLockForUpdate(tx).First(&withdrawal, id).Error; err != nil {
 			return err
 		}
@@ -2138,7 +2138,7 @@ func (a *App) markWithdrawalPaid(c *gin.Context) {
 	}
 	var withdrawal model.AgencyWithdrawal
 	now := time.Now().UnixMilli()
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		if err := model.AgencyLockForUpdate(tx).First(&withdrawal, id).Error; err != nil {
 			return err
 		}

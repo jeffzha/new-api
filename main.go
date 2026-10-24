@@ -30,6 +30,7 @@ import (
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/agencyopspush"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/service/opsbridge"
 	"github.com/QuantumNous/new-api/service/opsexport"
@@ -158,6 +159,10 @@ func main() {
 	commandWorkerCtx, stopAgencyCommandWorker := context.WithCancel(context.Background())
 	defer stopAgencyCommandWorker()
 	service.StartBalanceReminderTask(commandWorkerCtx)
+	if err := agencyopspush.StartConfigured(commandWorkerCtx, model.DB); err != nil {
+		common.FatalLog("failed to initialize distributor delivery: " + err.Error())
+		return
+	}
 	if err := opsexport.StartConfigured(model.DB); err != nil {
 		common.FatalLog("failed to initialize Ops export: " + err.Error())
 		return

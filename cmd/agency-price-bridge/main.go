@@ -36,6 +36,9 @@ type request struct {
 	RootUserID       int64                                `json:"rootUserId"`
 	Distributor      agencyhub.OpsDistributorProvision    `json:"distributor"`
 	Credential       agencyhub.OpsCredentialChange        `json:"credential"`
+	ReviewBeforeMS   int64                                `json:"reviewBeforeMs"`
+	ReviewAtMS       int64                                `json:"reviewAtMs"`
+	Reviews          []model.AgencyOpsReview              `json:"reviews"`
 }
 
 func main() {
@@ -57,8 +60,9 @@ func run() error {
 	if err := common.DecodeJson(io.LimitReader(os.Stdin, 2<<20), &input); err != nil {
 		return err
 	}
-	many := input.Action == "read-many" || input.Action == "directory-read" || input.Action == "customers-read" || input.Action == "payout-read" || input.Action == "distributor-provision" || input.Action == "credential-apply"
-	if (input.AgencyID <= 0 && !many) || (input.Action != "read" && input.Action != "read-many" && input.Action != "apply" && input.Action != "directory-read" && input.Action != "directory-apply" && input.Action != "customers-read" && input.Action != "customer-transfer" && input.Action != "payout-read" && input.Action != "payout-apply" && input.Action != "customer-provision" && input.Action != "distributor-provision" && input.Action != "credential-apply") || len(input.Customers) > 1000 || len(input.Children) > 1000 {
+	review := input.Action == "events-review" || input.Action == "events-review-ack"
+	many := input.Action == "read-many" || input.Action == "directory-read" || input.Action == "customers-read" || input.Action == "payout-read" || input.Action == "distributor-provision" || input.Action == "credential-apply" || review
+	if (input.AgencyID <= 0 && !many) || (!review && input.Action != "read" && input.Action != "read-many" && input.Action != "apply" && input.Action != "directory-read" && input.Action != "directory-apply" && input.Action != "customers-read" && input.Action != "customer-transfer" && input.Action != "payout-read" && input.Action != "payout-apply" && input.Action != "customer-provision" && input.Action != "distributor-provision" && input.Action != "credential-apply") || len(input.Customers) > 1000 || len(input.Children) > 1000 {
 		return fmt.Errorf("invalid bounded bridge request")
 	}
 	if input.Action == "read-many" && (len(input.AgencyIDs) < 1 || len(input.AgencyIDs) > 5) {
@@ -81,7 +85,18 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	var result any
-	if input.Action == "credential-apply" {
+	if input.Action == "events-review" {
+		var events []model.AgencyOpsEvent
+		events, err = model.ReadAgencyOpsReview(model.DB.WithContext(ctx), input.ReviewBeforeMS)
+		items := make([]map[string]any, 0, len(events))
+		for _, event := range events {
+			items = append(items, map[string]any{"id": event.ID, "hash": event.PayloadHash, "payload": string(event.Payload)})
+		}
+		result = map[string]any{"items": items}
+	} else if input.Action == "events-review-ack" {
+		err = model.AcknowledgeAgencyOpsReview(model.DB.WithContext(ctx), input.Reviews, input.ReviewAtMS)
+		result = map[string]any{"reviewed": len(input.Reviews)}
+	} else if input.Action == "credential-apply" {
 		result, err = agencyhub.ApplyOpsCredential(model.DB.WithContext(ctx), input.Credential)
 	} else if input.Action == "distributor-provision" {
 		result, err = agencyhub.ApplyOpsDistributorProvision(model.DB.WithContext(ctx), input.Distributor, agencyhub.LoadConfig())

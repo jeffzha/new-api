@@ -220,7 +220,7 @@ func (a *App) createWithdrawalAccount(c *gin.Context) {
 	}
 	now := time.Now().UnixMilli()
 	var account model.AgencyWithdrawalAccount
-	err := a.db.Transaction(func(tx *gorm.DB) error {
+	err := model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		var locked model.Agency
 		if err := model.AgencyLockForUpdate(tx).First(&locked, agency.ID).Error; err != nil {
 			return err
@@ -278,7 +278,7 @@ func (a *App) updateWithdrawalAccount(c *gin.Context) {
 	accountPayload := request.withdrawalAccountRequest
 	now := time.Now().UnixMilli()
 	var account model.AgencyWithdrawalAccount
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		var locked model.Agency
 		if err := model.AgencyLockForUpdate(tx).First(&locked, agency.ID).Error; err != nil {
 			return err
@@ -333,13 +333,19 @@ func (a *App) disableWithdrawalAccount(c *gin.Context) {
 		return
 	}
 	var result *gorm.DB
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		var locked model.Agency
 		if err := model.AgencyLockForUpdate(tx).First(&locked, agency.ID).Error; err != nil {
 			return err
 		}
 		result = tx.Model(&model.AgencyWithdrawalAccount{}).Where("id = ? AND agency_id = ? AND status = ? AND version = ?", id, agency.ID, "active", request.ExpectedVersion).Update("status", "disabled")
-		return result.Error
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected > 0 {
+			return model.CaptureAgencyOpsChangeTx(tx, "source_payout", agency.ID)
+		}
+		return nil
 	})
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "database_error", "停用收款账户失败", nil)

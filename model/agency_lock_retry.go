@@ -66,6 +66,6 @@ func retryAgencyTransaction(fn func() error) error {
 // transient InnoDB deadlocks as user-visible failures).
 func runAgencyFundingTransaction(fn func(tx *gorm.DB) error) error {
 	return retryAgencyTransaction(func() error {
-		return DB.Transaction(fn)
+		return AgencyOpsTransaction(DB, fn)
 	})
 }

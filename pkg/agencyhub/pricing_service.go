@@ -825,7 +825,7 @@ func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, po
 	}
 	now := time.Now().UnixMilli()
 	var row model.AgencyPricePolicyVersion
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		// Serialize with parent publication and child creation in parent-first order.
 		if targetAgency.ParentAgencyID != nil {
 			var parent model.Agency

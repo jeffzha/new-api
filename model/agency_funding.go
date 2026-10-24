@@ -118,7 +118,7 @@ func adjustAgencyChargeTxWithRule(tx *gorm.DB, userID, delta int, chargeID strin
 // AdjustAgencyCharge is the transaction wrapper used by asynchronous task
 // billing/refund paths.
 func AdjustAgencyCharge(userID, delta int, chargeID string, targetQuota int64) error {
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := AgencyOpsTransaction(DB, func(tx *gorm.DB) error {
 		return AdjustAgencyChargeTx(tx, userID, delta, chargeID, targetQuota)
 	})
 	if err == nil && common.RedisEnabled {
@@ -147,7 +147,7 @@ func ApplyAgencyQuotaDeltaWithActor(userID, delta int64, sourceKind string, acto
 	if delta == 0 {
 		return nil
 	}
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := AgencyOpsTransaction(DB, func(tx *gorm.DB) error {
 		return ApplyAgencyQuotaDeltaWithActorTx(tx, userID, delta, sourceKind, actorID)
 	})
 	if err == nil && common.RedisEnabled {
@@ -459,7 +459,7 @@ func TryReserveUserQuotaAndAgency(userID int, amount int, chargeID string, fundi
 		return 0, ErrAgencyFundingUnavailable
 	}
 	var paid int64
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := AgencyOpsTransaction(DB, func(tx *gorm.DB) error {
 		var err error
 		paid, err = TryReserveUserQuotaAndAgencyTx(tx, userID, amount, chargeID, fundingTarget)
 		return err
@@ -886,7 +886,7 @@ func ReleaseAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, chargeID
 	}
 	var released int64
 	var releasedTotal int64
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := AgencyOpsTransaction(DB, func(tx *gorm.DB) error {
 		var user User
 		if err := AgencyLockForUpdate(tx).Select("id, billing_mode").First(&user, userID).Error; err != nil {
 			return err
@@ -954,7 +954,7 @@ func ReleaseUserQuotaAndAgency(userID int, amount int, chargeID string) (int64, 
 		return 0, ErrAgencyFundingUnavailable
 	}
 	var released int64
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := AgencyOpsTransaction(DB, func(tx *gorm.DB) error {
 		var err error
 		released, err = ReleaseUserQuotaAndAgencyTx(tx, userID, amount, chargeID)
 		return err
@@ -1029,7 +1029,7 @@ func ReleaseUserQuotaAndAgencyWithToken(userID, tokenID, amount int, tokenKey, c
 	if userID <= 0 || tokenID <= 0 || amount < 0 || strings.TrimSpace(chargeID) == "" {
 		return ErrAgencyFundingUnavailable
 	}
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := AgencyOpsTransaction(DB, func(tx *gorm.DB) error {
 		var user User
 		if err := AgencyLockForUpdate(tx).Select("id, billing_mode").First(&user, userID).Error; err != nil {
 			return err
@@ -2241,7 +2241,7 @@ func ReleaseAgencyFunding(chargeID string, amount int64) (int64, error) {
 		return 0, ErrAgencyFundingUnavailable
 	}
 	var released int64
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := AgencyOpsTransaction(DB, func(tx *gorm.DB) error {
 		var err error
 		released, err = releaseAgencyFundingTx(tx, chargeID, amount)
 		return err

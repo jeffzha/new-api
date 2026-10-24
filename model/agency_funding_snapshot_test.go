@@ -12,7 +12,7 @@ import (
 func TestValidateAgencyPricingSnapshotAllowsPendingStandardSale(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:agency-pricing-snapshot-pending?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&Agency{}, &AgencyPricePolicyVersion{}, &AgencyUserBinding{}, &AgencyActiveUserBinding{}))
+	require.NoError(t, db.AutoMigrate(&Agency{}, &AgencyPricePolicyVersion{}, &AgencyUserBinding{}, &AgencyActiveUserBinding{}, &AgencyOpsEvent{}, &AgencyOpsObjectRevision{}))
 
 	const userID int64 = 901
 	require.NoError(t, db.Create(&Agency{ID: 91, Code: "pending", Status: "active", CurrentPolicyVersionID: 911, StateRevision: 3}).Error)

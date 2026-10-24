@@ -39,6 +39,7 @@ func cnReset(t *testing.T, db *gorm.DB) {
 	require.NoError(t, db.Migrator().DropTable(models...))
 	require.NoError(t, db.Migrator().DropTable(&CNWalletCancellation{}, &CNFinanceReceipt{}, &CNFundingValueAllocation{}, &CNFundingValueLot{}, &CNFundingValueHold{}, &CNSubscriptionLifecycle{}, &CNSubscriptionCancellation{}, &SubscriptionPreConsumeRecord{}, &SubscriptionPlan{}, &CNSubscriptionPeriod{}, &CNDirectWalletSegment{}, &CNDirectWallet{}, &CNMidjourneyBilling{}, &CNMidjourneyEffect{}, &CNMidjourneyLogReceipt{}, &Midjourney{}, &CNWalletBinding{}, &CNTaskBilling{}, &CNTaskEffect{}, &CNTaskRequestOwner{}))
 	require.NoError(t, MigrateCNFinance(db, "test-cn"))
+	require.NoError(t, db.AutoMigrate(&AgencyOpsEvent{}, &AgencyOpsObjectRevision{}))
 }
 
 func TestCNFinanceContractAcrossDialects(t *testing.T) {

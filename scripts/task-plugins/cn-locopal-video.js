@@ -78,7 +78,7 @@ export const meta = {
     en: "LocoPal Seedance and MiniMax H3 video generation",
     zh: "LocoPal Seedance 与 MiniMax H3 视频生成",
   },
-  version: "1.0.6",
+  version: "1.0.7",
   author: { name: "NexusReach" },
   models: [SEEDANCE_MODEL, H3_MODEL],
   fetchMode: "per_task",
@@ -505,7 +505,8 @@ export function buildContentRequest(ctx) {
   if (ctx.artifactKey !== "video") throw new Error("artifact_not_found");
   const url = videoUrlOf(ctx.data);
   if (!url) throw new Error("artifact_not_found");
-  return { url: url, method: ctx.clientRequest.method, credentialless: true };
+  // LocoPal CDN rejects HEAD; the host omits the GET body for HEAD clients.
+  return { url: url, method: "GET", credentialless: true };
 }
 
 export const protocols = {

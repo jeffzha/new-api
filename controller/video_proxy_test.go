@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
@@ -200,6 +201,46 @@ func TestVideoProxyUsesPluginContentRequestDescriptor(t *testing.T) {
 	case <-fallbackCalled:
 		require.FailNow(t, "video proxy used the stale task result URL")
 	default:
+	}
+}
+
+func TestTaskMediaHeadFallsBackOnlyForCredentiallessCDN(t *testing.T) {
+	db := setupVideoProxyControllerTestDB(t)
+	channel := model.Channel{Type: constant.ChannelTypeTaskPlugin, Key: "test-key", Status: common.ChannelStatusEnabled, Name: "head-test"}
+	require.NoError(t, db.Create(&channel).Error)
+	task := &model.Task{TaskID: "task_head_cdn", ChannelId: channel.Id}
+	for _, credentialless := range []bool{true, false} {
+		t.Run(fmt.Sprint(credentialless), func(t *testing.T) {
+			var methods []string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				methods = append(methods, r.Method)
+				if r.Method == http.MethodHead {
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				assert.Equal(t, "bytes=0-3", r.Header.Get("Range"))
+				w.Header().Set("Content-Type", "video/mp4")
+				w.Header().Set("Content-Range", "bytes 0-3/8")
+				w.WriteHeader(http.StatusPartialContent)
+				_, _ = w.Write([]byte("0123"))
+			}))
+			defer upstream.Close()
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodHead, "/v1/videos/task_head_cdn/content", nil)
+			c.Request.Header.Set("Range", "bytes=0-3")
+			err := proxyTaskMedia(c, task, &relaychannel.TaskContentRequest{URL: upstream.URL, Method: http.MethodHead, Credentialless: credentialless})
+			if !credentialless {
+				require.Error(t, err)
+				assert.Equal(t, []string{http.MethodHead}, methods)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, []string{http.MethodHead, http.MethodGet}, methods)
+			assert.Equal(t, http.StatusPartialContent, recorder.Code)
+			assert.Equal(t, "video/mp4", recorder.Header().Get("Content-Type"))
+			assert.Empty(t, recorder.Body.String())
+		})
 	}
 }
 

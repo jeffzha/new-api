@@ -1,13 +1,18 @@
 import { expect, test } from "bun:test";
-import { buildSubmitRequest, extractUsage, extractUsageOnComplete, meta, parseTaskResult, protocols } from "./cn-locopal-video.js";
+import { buildContentRequest, buildSubmitRequest, extractUsage, extractUsageOnComplete, meta, parseTaskResult, protocols } from "./cn-locopal-video.js";
 
 function submit(requestBody: Record<string, unknown>, upstreamModel = "h3-video") {
   return buildSubmitRequest({ baseUrl: "https://locopalai.com", apiKey: "test-only", upstreamModel, requestBody });
 }
 
+test("LocoPal HEAD downloads use CDN-compatible GET without changing the artifact URL", () => {
+  const descriptor = buildContentRequest({ artifactKey: "video", data: { status: "completed", video_url: "https://example.test/result.mp4" }, clientRequest: { method: "HEAD" } });
+  expect(descriptor).toEqual({ url: "https://example.test/result.mp4", method: "GET", credentialless: true });
+});
+
 test("H3 ordinary image input reaches upstream content exactly once", () => {
   expect(meta.key).toBe("cn-locopal-video");
-  expect(meta.version).toBe("1.0.6");
+  expect(meta.version).toBe("1.0.7");
   const requestBody = { model: "MiniMax-H3", prompt: "a city", images: ["https://example.test/frame.png"], seconds: 5, metadata: { ratio: "adaptive" } };
   const request = submit(requestBody);
   expect(request.url).toBe("https://locopalai.com/v1/videos");

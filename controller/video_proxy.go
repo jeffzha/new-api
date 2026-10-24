@@ -411,6 +411,22 @@ func proxyTaskMedia(c *gin.Context, task *model.Task, descriptor *relaychannel.T
 	}
 	defer resp.Body.Close()
 
+	// Some signed media CDNs allow GET but reject HEAD, including with 403.
+	if method == http.MethodHead && descriptor.Credentialless &&
+		(resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNotImplemented) {
+		_ = resp.Body.Close()
+		getRequest := req.Clone(c.Request.Context())
+		getRequest.Method = http.MethodGet
+		resp, err = doTaskMediaRequest(&clientWithoutBodyTimeout, getRequest, taskMediaResponseHeaderTimeout)
+		if err != nil {
+			return &taskMediaProxyError{
+				status: http.StatusBadGateway, code: "artifact_upstream_error",
+				message: "Failed to fetch artifact content headers", err: err,
+			}
+		}
+		defer resp.Body.Close()
+	}
+
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusPartialContent, http.StatusNotModified, http.StatusRequestedRangeNotSatisfiable:
 		copyTaskMediaResponseHeaders(c.Writer.Header(), resp.Header)

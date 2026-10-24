@@ -191,6 +191,7 @@ func TestAgencySourceEventIndexMigrationAcrossDialects(t *testing.T) {
 			require.NoError(t, MigrateAgency(db))
 			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_operation_revision"))
 			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_user_status_seq"))
+			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_status_created"))
 			for _, name := range []string{"uidx_agency_source_event", "idx_agency_source_user", "idx_agency_source_status"} {
 				require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, name), "existing index %s must be preserved", name)
 			}
@@ -198,6 +199,7 @@ func TestAgencySourceEventIndexMigrationAcrossDialects(t *testing.T) {
 			// The released table has the same columns but lacks these indexes.
 			require.NoError(t, db.Migrator().DropIndex(&AgencySourceEvent{}, "idx_agency_source_operation_revision"))
 			require.NoError(t, db.Migrator().DropIndex(&AgencySourceEvent{}, "idx_agency_source_user_status_seq"))
+			require.NoError(t, db.Migrator().DropIndex(&AgencySourceEvent{}, "idx_agency_source_status_created"))
 			history := []AgencySourceEvent{
 				{EventID: "index-original", SourceOperationID: "index-operation", JournalRevision: 1, SchemaVersion: "1", PayloadHash: "original-hash", UserID: 7, MoneySeq: 1, ProcessingStatus: "done", Payload: `{"event":"original"}`, CreatedAtMS: 1000},
 				{EventID: "index-reversal", SourceOperationID: "index-operation", JournalRevision: 1, SchemaVersion: "1", PayloadHash: "reversal-hash", UserID: 7, MoneySeq: 1, ProcessingStatus: "skipped", Payload: `{"event":"reversal"}`, CreatedAtMS: 2000},
@@ -207,6 +209,7 @@ func TestAgencySourceEventIndexMigrationAcrossDialects(t *testing.T) {
 			require.NoError(t, MigrateAgency(db), "upgrading twice must preserve existing financial evidence")
 			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_operation_revision"))
 			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_user_status_seq"))
+			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_status_created"))
 			var preserved []AgencySourceEvent
 			require.NoError(t, db.Order("id ASC").Find(&preserved).Error)
 			assert.Equal(t, history, preserved)

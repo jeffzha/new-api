@@ -127,6 +127,82 @@ func TestVideoProxyUsesPrivateNoStoreAndPreservesRangeResponse(t *testing.T) {
 	assert.Empty(t, recorder.Header().Values("Set-Cookie"))
 }
 
+func TestVideoProxyUsesPluginContentRequestDescriptor(t *testing.T) {
+	db := setupVideoProxyControllerTestDB(t)
+
+	descriptorRequests := make(chan http.Header, 1)
+	descriptorUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		descriptorRequests <- r.Header.Clone()
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("plugin-video"))
+	}))
+	defer descriptorUpstream.Close()
+	fallbackCalled := make(chan struct{}, 1)
+	fallbackUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fallbackCalled <- struct{}{}
+		http.Error(w, "stale fallback", http.StatusBadGateway)
+	}))
+	defer fallbackUpstream.Close()
+	baseURL := descriptorUpstream.URL
+
+	channel := model.Channel{
+		Type:    constant.ChannelTypeGemini,
+		Key:     "plugin-content-key",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+		Name:    "video-plugin-content-test",
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	const userID = 18
+	task := model.Task{
+		TaskID:    "task_video_proxy_plugin_descriptor",
+		Platform:  constant.TaskPlatform("google"),
+		UserId:    userID,
+		ChannelId: channel.Id,
+		Status:    model.TaskStatusSuccess,
+		PrivateData: model.TaskPrivateData{
+			ResultURL: fallbackUpstream.URL,
+			Execution: &model.TaskExecutionSnapshot{TaskPlugin: &model.TaskPluginSnapshot{
+				Key: "google", Name: "Google Veo (Gemini API)", Version: "1.0.0", APIVersion: 1,
+			}},
+		},
+	}
+	task.SetData(map[string]any{
+		"response": map[string]any{
+			"generateVideoResponse": map[string]any{
+				"generatedVideos": []any{map[string]any{
+					"video": map[string]any{"uri": descriptorUpstream.URL},
+				}},
+			},
+		},
+	})
+	require.NoError(t, db.Create(&task).Error)
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/"+task.TaskID+"/content", nil)
+	context.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	context.Set("id", userID)
+
+	VideoProxy(context)
+
+	var forwardedHeaders http.Header
+	select {
+	case forwardedHeaders = <-descriptorRequests:
+	default:
+		require.FailNow(t, "video proxy did not use the plugin content descriptor")
+	}
+	assert.Equal(t, "plugin-content-key", forwardedHeaders.Get("x-goog-api-key"))
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "plugin-video", recorder.Body.String())
+	select {
+	case <-fallbackCalled:
+		require.FailNow(t, "video proxy used the stale task result URL")
+	default:
+	}
+}
+
 func TestWriteVideoDataURLUsesPrivateNoStore(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

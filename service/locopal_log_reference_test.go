@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -182,6 +184,25 @@ func TestLocoPalLogSyncResumesAfterRestart(t *testing.T) {
 	linked, err := model.LinkUpstreamSettlementRequest(context.Background(), 40, "provider_restart", "billing_after_restart")
 	require.NoError(t, err)
 	assert.True(t, linked)
+
+	// Cooldown survives process changes and does not discard the scan cursor.
+	var previous model.SystemTask
+	require.NoError(t, model.DB.Where("type = ?", locoPalLogSyncTaskType).Order("id desc").First(&previous).Error)
+	cooldown := locoPalLogSyncResult{TaskCursor: task.ID, NextSyncAt: time.Now().Add(time.Hour).Unix(), FailedAttempts: 2}
+	encoded, err := common.Marshal(cooldown)
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Model(&previous).Updates(map[string]any{"result": string(encoded), "status": model.SystemTaskStatusFailed}).Error)
+	scheduled, err := model.CreateSystemTask(locoPalLogSyncTaskType, nil, nil)
+	require.NoError(t, err)
+	claimed, ok, err := model.ClaimSystemTask(scheduled.ID, locoPalLogSyncTaskType, "restarted-runner", time.Now().Unix()+60)
+	require.NoError(t, err)
+	require.True(t, ok)
+	locoPalLogSyncHandler{}.Run(context.Background(), claimed, "restarted-runner")
+	finished, err := model.GetSystemTaskByTaskID(scheduled.TaskID)
+	require.NoError(t, err)
+	var result locoPalLogSyncResult
+	require.NoError(t, common.UnmarshalJsonStr(finished.Result, &result))
+	assert.Equal(t, cooldown, result)
 }
 
 func TestFetchLocoPalSettlementReferences(t *testing.T) {
@@ -222,6 +243,23 @@ func TestFetchLocoPalSettlementReferences(t *testing.T) {
 		_, err := fetchLocoPalLogReferences(context.Background(), server.Client(), server.URL, "test-only", 40)
 		require.ErrorContains(t, err, "HTTP 302")
 		assert.False(t, called)
+	})
+	t.Run("rate limit respects retry after", func(t *testing.T) {
+		now := time.Now()
+		for _, header := range []string{"600", now.Add(10 * time.Minute).UTC().Format(http.TimeFormat), "invalid", strconv.FormatInt(1<<62, 10)} {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Retry-After", header)
+				w.WriteHeader(http.StatusTooManyRequests)
+			}))
+			count, err := fetchLocoPalLogReferences(context.Background(), server.Client(), server.URL, "test-only", 40)
+			server.Close()
+			assert.Zero(t, count)
+			var limited *locoPalLogRateLimitError
+			require.True(t, errors.As(err, &limited))
+			assert.GreaterOrEqual(t, limited.retryAt, now.Add(4*time.Minute).Unix())
+			assert.LessOrEqual(t, limited.retryAt, time.Now().Add(24*time.Hour).Unix())
+			assert.NotContains(t, err.Error(), "test-only")
+		}
 	})
 	var refs []model.UpstreamLogReference
 	require.NoError(t, model.DB.Find(&refs).Error)

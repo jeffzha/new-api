@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,8 +22,16 @@ import (
 const locoPalLogSyncTaskType = "locopal_log_reference_sync"
 
 type locoPalLogSyncResult struct {
-	TaskCursor int64 `json:"task_cursor"`
-	Matched    int   `json:"matched"`
+	TaskCursor     int64 `json:"task_cursor"`
+	Matched        int   `json:"matched"`
+	NextSyncAt     int64 `json:"next_sync_at,omitempty"`
+	FailedAttempts int   `json:"failed_attempts,omitempty"`
+}
+
+type locoPalLogRateLimitError struct{ retryAt int64 }
+
+func (e *locoPalLogRateLimitError) Error() string {
+	return "upstream log endpoint returned HTTP 429; synchronization deferred"
 }
 
 type locoPalLogSyncHandler struct{}
@@ -51,6 +60,13 @@ func (locoPalLogSyncHandler) Run(ctx context.Context, task *model.SystemTask, ru
 	} else if err == nil {
 		err = common.UnmarshalJsonStr(previous.Result, &result)
 	}
+	if err == nil && result.NextSyncAt > time.Now().Unix() {
+		result.Matched = 0
+		if finishErr := model.FinishSystemTask(task.TaskID, runner, model.SystemTaskStatusSucceeded, result, ""); finishErr != nil {
+			common.SysError("finish deferred LocoPal log reference sync failed: " + finishErr.Error())
+		}
+		return
+	}
 	if err == nil {
 		result.TaskCursor, err = model.IndexLocoPalTaskReferences(ctx, result.TaskCursor)
 	}
@@ -61,6 +77,14 @@ func (locoPalLogSyncHandler) Run(ctx context.Context, task *model.SystemTask, ru
 	status, message := model.SystemTaskStatusSucceeded, ""
 	if err != nil {
 		status, message = model.SystemTaskStatusFailed, err.Error()
+		result.FailedAttempts = min(result.FailedAttempts+1, 5)
+		result.NextSyncAt = time.Now().Add(min(5*time.Minute*time.Duration(1<<(result.FailedAttempts-1)), time.Hour)).Unix()
+		var rateLimit *locoPalLogRateLimitError
+		if errors.As(err, &rateLimit) {
+			result.NextSyncAt = max(result.NextSyncAt, rateLimit.retryAt)
+		}
+	} else {
+		result.NextSyncAt, result.FailedAttempts = 0, 0
 	}
 	if finishErr := model.FinishSystemTask(task.TaskID, runner, status, result, message); finishErr != nil {
 		common.SysError("finish LocoPal log reference sync failed: " + finishErr.Error())
@@ -110,6 +134,10 @@ func syncLocoPalLogReferences(ctx context.Context) (int, error) {
 			matched += count
 			if fetchErr != nil {
 				failures = append(failures, fmt.Errorf("channel %d: %w", channel.Id, fetchErr))
+				var rateLimit *locoPalLogRateLimitError
+				if errors.As(fetchErr, &rateLimit) {
+					return matched, errors.Join(failures...)
+				}
 			}
 		}
 	}
@@ -133,6 +161,20 @@ func fetchLocoPalLogReferences(ctx context.Context, client *http.Client, endpoin
 		return 0, errors.New("upstream log endpoint unavailable")
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		now := time.Now()
+		retryAt := now.Add(5 * time.Minute)
+		value := strings.TrimSpace(resp.Header.Get("Retry-After"))
+		if seconds, parseErr := strconv.ParseInt(value, 10, 64); parseErr == nil && seconds > 0 {
+			retryAt = now.Add(time.Duration(min(seconds, 24*60*60)) * time.Second)
+		} else if date, parseErr := http.ParseTime(value); parseErr == nil && date.After(now) {
+			retryAt = date
+			if retryAt.After(now.Add(24 * time.Hour)) {
+				retryAt = now.Add(24 * time.Hour)
+			}
+		}
+		return 0, &locoPalLogRateLimitError{retryAt: retryAt.Unix()}
+	}
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("upstream log endpoint returned HTTP %d", resp.StatusCode)
 	}

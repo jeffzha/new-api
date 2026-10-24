@@ -169,7 +169,7 @@ function seedanceRequest(request, model) {
 function h3Resolution(request) {
   const metadata = objectOf(request.metadata);
   const size = trimmed(request.size);
-  const raw = firstString([metadata.resolution, request.resolution, H3_RATIOS.includes(size) || h3PixelRatio(size) ? "" : size]) || "768P";
+  const raw = firstString([metadata.resolution, request.resolution, H3_RATIOS.includes(size) || /^\d{1,5}[xX]\d{1,5}$/.test(size) ? "" : size]) || "768P";
   const upper = raw.toUpperCase();
   if (upper === "2K") return "2K";
   if (upper === "768" || upper === "768P") return "768P";
@@ -287,7 +287,7 @@ function h3Request(request, model) {
   const hasVideo = inputVideos > 0;
   const video = objectOf(request.video);
   const size = trimmed(request.size);
-  const ratio = firstString([metadata.ratio, metadata.aspect_ratio, request.ratio, request.aspect_ratio, video.ratio, video.aspect, H3_RATIOS.includes(size) ? size : h3PixelRatio(size)]) || (inputImages > 0 || hasVideo ? "adaptive" : "16:9");
+  const ratio = firstString([metadata.ratio, metadata.aspect_ratio, request.ratio, request.aspect_ratio, request.aspectRatio, video.ratio, video.aspect]) || (H3_RATIOS.includes(size) ? size : h3PixelRatio(size)) || (inputImages > 0 || hasVideo ? "adaptive" : "16:9");
   if (H3_RATIOS.indexOf(ratio) < 0) throw new Error(H3_MODEL + " ratio must be one of " + H3_RATIOS.join(", "));
   if (ratio === "adaptive" && inputImages === 0 && !hasVideo) throw new Error(H3_MODEL + " ratio adaptive requires an image or video input");
   if (resolution === "2K" && LOCOPAL_H3_2K_RATIOS.indexOf(ratio) < 0) {

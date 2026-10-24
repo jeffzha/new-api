@@ -51,6 +51,8 @@ func TestOpsAgencyPythonHTTPAcceptance(t *testing.T) {
 	})
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}))
 	require.NoError(t, model.MigrateAgency(db))
+	require.NoError(t, db.Model(&model.AgencyOpsWriterState{}).Where("id = ?", 1).
+		Update("mode", model.AgencyWriterOpsSingle).Error)
 	policy := agencycontract.Policy{Revision: 1, DefaultSettlementBPS: 7500, DefaultChildCostBPS: 9000, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
 	encoded, err := common.Marshal(policy)
 	require.NoError(t, err)
@@ -175,6 +177,20 @@ func TestOpsAgencyPolicyRequiresSingleWriter(t *testing.T) {
 	_, err = (OpsAgencyCommandExecutor{}).ExecuteOpsAgencyCommand(t.Context(), command)
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "single-writer mode")
+	policy := agencycontract.Policy{Revision: 1, DefaultSettlementBPS: 7500, DefaultChildCostBPS: 8500,
+		DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
+	encoded, err := common.Marshal(policy)
+	require.NoError(t, err)
+	old := model.AgencyPricePolicyVersion{AgencyID: 7, Revision: 1, PolicyJSON: string(encoded), PolicyHash: "initial-policy"}
+	require.NoError(t, db.Create(&old).Error)
+	require.NoError(t, db.Create(&model.Agency{ID: 7, Code: "ops-writer", InviteCode: "OPSW",
+		Status: agencyhub.AgencyStatusActive, PriceRevision: 1, CurrentPolicyVersionID: old.ID}).Error)
+	result, err := (OpsAgencyCommandExecutor{}).ExecuteOpsAgencyCommand(t.Context(), command)
+	require.NoError(t, err)
+	assert.Equal(t, true, result["published"])
+	var agency model.Agency
+	require.NoError(t, db.First(&agency, 7).Error)
+	assert.EqualValues(t, 2, agency.PriceRevision)
 }
 
 func TestOpsAgencyCustomerCommandsEnforceBindingAndRevokeSessions(t *testing.T) {

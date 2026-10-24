@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -46,6 +47,7 @@ type requestDescriptor struct {
 	RewriteModel   string            `json:"rewriteModel"`
 	BodyType       string            `json:"bodyType"`
 	Parts          []requestPart     `json:"parts"`
+	MediaProbes    []mediaProbe      `json:"mediaProbes"`
 }
 
 type requestPart struct {
@@ -88,6 +90,7 @@ type TaskAdaptor struct {
 	routeRequest   *pluginruntime.RouteRequestContext
 	requestHeaders map[string]string
 	files          []map[string]any
+	mediaDurations map[string]float64
 }
 
 func New(plugin *pluginruntime.LoadedPlugin) *TaskAdaptor { return &TaskAdaptor{plugin: plugin} }
@@ -196,6 +199,10 @@ func (a *TaskAdaptor) ExtractUsageFactsValidated(c *gin.Context, info *relaycomm
 	usageContext["usagePurpose"] = "facts"
 	value, err := a.plugin.Engine.Call(c.Request.Context(), "extractUsage", usageContext)
 	if err != nil {
+		var hookErr *pluginruntime.HookError
+		if errors.As(err, &hookErr) {
+			return nil, fmt.Errorf("plugin usage hook failed: %s", hookErr.Message)
+		}
 		return nil, fmt.Errorf("plugin usage hook failed")
 	}
 	if value == nil {
@@ -1259,6 +1266,16 @@ func (a *TaskAdaptor) buildSubmit(c *gin.Context, info *relaycommon.RelayInfo) (
 	if descriptor.RewriteModel != "" {
 		info.UpstreamModelName = descriptor.RewriteModel
 	}
+	if len(descriptor.MediaProbes) > 0 {
+		if !slices.Contains(a.plugin.Meta.RequiredCapabilities, pluginruntime.CapabilityMediaDuration) {
+			return nil, fmt.Errorf("media probes require media-duration@1")
+		}
+		durations, probeErr := probeMediaDurations(c, descriptor.MediaProbes)
+		if probeErr != nil {
+			return nil, probeErr
+		}
+		a.mediaDurations = durations
+	}
 	a.submit = &descriptor
 	method := strings.ToUpper(strings.TrimSpace(descriptor.Method))
 	if method == "" {
@@ -1346,6 +1363,7 @@ func (a *TaskAdaptor) submitContext(c *gin.Context, info *relaycommon.RelayInfo)
 	ctx["requestBody"] = jsonValue(routeRequest.RequestBody)
 	ctx["requestHeaders"] = requestHeaders
 	ctx["files"] = files
+	ctx["mediaDurations"] = a.mediaDurations
 	ctx["action"] = info.Action
 	ctx["originTaskId"] = info.OriginTaskID
 	if info.TaskRelayInfo != nil && len(info.OriginTasks) > 0 {

@@ -44,13 +44,9 @@ const H3_USAGE_SCHEMA = {
     description: { en: "Video generation unit price", zh: "视频生成单价" },
   },
   resolution: {
-    enum: ["480P", "512P", "768P", "720P", "1080P", "2K"],
+    enum: ["768P", "2K"],
     enumLabels: {
-      "480P": { en: "480P", zh: "480P" },
-      "512P": { en: "512P", zh: "512P" },
       "768P": { en: "768P", zh: "768P" },
-      "720P": { en: "720P", zh: "720P" },
-      "1080P": { en: "1080P", zh: "1080P" },
       "2K": { en: "2K", zh: "2K" },
     },
     description: { en: "Output video resolution", zh: "输出视频分辨率" },
@@ -68,12 +64,6 @@ const H3_USAGE_SCHEMA = {
 };
 
 const H3_USAGE_EXAMPLES = [
-  { label: "2.3/02 768P 6s", facts: { seconds: 6, resolution: "768P", input_images: 0, input_video_seconds: 0 } },
-  { label: "2.3/02 768P 10s", facts: { seconds: 10, resolution: "768P", input_images: 0, input_video_seconds: 0 } },
-  { label: "2.3/02 1080P 6s", facts: { seconds: 6, resolution: "1080P", input_images: 0, input_video_seconds: 0 } },
-  { label: "02 512P 6s", facts: { seconds: 6, resolution: "512P", input_images: 0, input_video_seconds: 0 } },
-  { label: "02 512P 10s", facts: { seconds: 10, resolution: "512P", input_images: 0, input_video_seconds: 0 } },
-  { label: "01-series 720P 6s", facts: { seconds: 6, resolution: "720P", input_images: 0, input_video_seconds: 0 } },
   { label: "H3 768P 5s", facts: { seconds: 5, resolution: "768P", input_images: 0, input_video_seconds: 0 } },
   { label: "H3 2K 5s · 9 images", facts: { seconds: 5, resolution: "2K", input_images: 9, input_video_seconds: 0 } },
   { label: "H3 2K 5s · input video", facts: { seconds: 5, resolution: "2K", input_images: 0, input_video_seconds: 15 } },
@@ -88,7 +78,8 @@ export const meta = {
     en: "LocoPal Seedance and MiniMax H3 video generation",
     zh: "LocoPal Seedance 与 MiniMax H3 视频生成",
   },
-  version: "1.0.5",
+  version: "1.0.8",
+  requiredCapabilities: ["media-duration@1"],
   author: { name: "NexusReach" },
   models: [SEEDANCE_MODEL, H3_MODEL],
   fetchMode: "per_task",
@@ -102,8 +93,11 @@ const H3_MIN_SECONDS = 4;
 const H3_MAX_SECONDS = 15;
 const H3_DEFAULT_SECONDS = 5;
 const H3_MAX_IMAGES = 9;
+const H3_MAX_REFERENCE_VIDEOS = 3;
+const H3_MAX_REFERENCE_AUDIOS = 3;
 const H3_MAX_INPUT_VIDEO_SECONDS = 15;
 const H3_RATIOS = ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
+const LOCOPAL_H3_2K_RATIOS = ["16:9", "9:16", "1:1"];
 
 function trimmed(value) {
   return value === undefined || value === null ? "" : String(value).trim();
@@ -175,64 +169,100 @@ function seedanceRequest(request, model) {
 function h3Resolution(request) {
   const metadata = objectOf(request.metadata);
   const size = trimmed(request.size);
-  const raw = firstString([metadata.resolution, request.resolution, H3_RATIOS.includes(size) ? "" : size]) || "768P";
+  const raw = firstString([metadata.resolution, request.resolution, H3_RATIOS.includes(size) || h3PixelRatio(size) ? "" : size]) || "768P";
   const upper = raw.toUpperCase();
-  if (upper.indexOf("2K") >= 0) return "2K";
-  if (upper.indexOf("768") >= 0) return "768P";
+  if (upper === "2K") return "2K";
+  if (upper === "768" || upper === "768P") return "768P";
   throw new Error(H3_MODEL + " resolution must be 768P or 2K");
 }
 
-function h3MediaURL(value, type) {
-  if (typeof value === "string") return trimmed(value);
-  const item = objectOf(value);
-  return firstString([item.url, objectOf(item[type]).url]);
+function h3PixelRatio(size) {
+  const match = /^(\d{1,5})[xX](\d{1,5})$/.exec(size);
+  if (!match) return "";
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!width || !height) throw new Error(H3_MODEL + " size dimensions must be positive");
+  for (const ratio of H3_RATIOS) {
+    if (ratio === "adaptive") continue;
+    const parts = ratio.split(":");
+    if (width * Number(parts[1]) === height * Number(parts[0])) return ratio;
+  }
+  throw new Error(H3_MODEL + " pixel size has an unsupported aspect ratio; specify ratio explicitly");
 }
 
-function appendH3Media(content, seen, type, role, value) {
+function h3MediaURL(value, type) {
+  const item = objectOf(value);
+  if (trimmed(item.__fileRef)) return item;
+  const candidate = typeof value === "string" ? value : item.url !== undefined ? item.url : objectOf(item[type]).url;
+  if (typeof candidate === "string") {
+    const url = trimmed(candidate);
+    if (type === "image_url" && url.length >= 128 && !url.includes("://") && !url.startsWith("data:") && /^[A-Za-z0-9+/=_-]+$/.test(url)) {
+      throw new Error(H3_MODEL + " image inputs must use a public URL or a data:image/...;base64,... URL; bare Base64 is not supported");
+    }
+    return url;
+  }
+  const placeholder = objectOf(candidate);
+  return trimmed(placeholder.__fileRef) ? placeholder : "";
+}
+
+function h3MediaKey(value) {
+  if (typeof value === "string") return value;
+  const item = objectOf(value);
+  return trimmed(item.__fileRef) ? "file:" + item.__fileRef : "";
+}
+
+function appendH3Media(content, seenRoles, seenURLs, type, role, value, explicit) {
   const values = Array.isArray(value) ? value : value ? [value] : [];
   for (const entry of values) {
     const url = h3MediaURL(entry, type);
     if (!url) continue;
-    const key = type + "|" + role + "|" + url;
-    if (seen[key]) continue;
+    const urlKey = type + "|" + h3MediaKey(url);
+    const roleKey = urlKey + "|" + role;
+    if (explicit ? seenRoles[roleKey] : seenURLs[urlKey]) continue;
     const item = { type: type, role: role };
     item[type] = { url: url };
     content.push(item);
-    seen[key] = true;
+    seenRoles[roleKey] = true;
+    seenURLs[urlKey] = true;
   }
 }
 
 function h3Content(request) {
   const metadata = objectOf(request.metadata);
   const explicit = Array.isArray(metadata.content) ? metadata.content : Array.isArray(request.content) ? request.content : [];
-  const content = explicit.slice();
-  const seen = {};
-  for (const item of content) {
+  const content = [];
+  const seenRoles = {};
+  const seenURLs = {};
+  for (const item of explicit) {
     if (!item || typeof item !== "object") continue;
-    const url = h3MediaURL(item, item.type);
-    if (url) seen[item.type + "|" + trimmed(item.role) + "|" + url] = true;
+    if (item.type === "image_url" || item.type === "video_url" || item.type === "audio_url") {
+      appendH3Media(content, seenRoles, seenURLs, item.type, trimmed(item.role), item, true);
+    }
+    else content.push(item);
   }
-  appendH3Media(content, seen, "image_url", "reference_image", metadata.reference_image);
-  appendH3Media(content, seen, "video_url", "reference_video", metadata.reference_video);
+  appendH3Media(content, seenRoles, seenURLs, "image_url", "reference_image", metadata.reference_image, false);
+  appendH3Media(content, seenRoles, seenURLs, "video_url", "reference_video", metadata.reference_video, false);
+  appendH3Media(content, seenRoles, seenURLs, "audio_url", "reference_audio", metadata.reference_audio, false);
+  const images = Array.isArray(request.images) ? request.images : [];
+  const imageURLs = Array.isArray(request.image_urls) ? request.image_urls : [];
+  const frames = images.concat(imageURLs);
+  for (let index = 0; index < frames.length; index++) {
+    const role = frames.length === 1 ? "first_frame" : frames.length === 2 ? (index === 0 ? "first_frame" : "last_frame") : "reference_image";
+    appendH3Media(content, seenRoles, seenURLs, "image_url", role, frames[index], false);
+  }
+  appendH3Media(content, seenRoles, seenURLs, "image_url", "first_frame", request.image, false);
+  appendH3Media(content, seenRoles, seenURLs, "image_url", "first_frame", request.image_url, false);
+  appendH3Media(content, seenRoles, seenURLs, "image_url", "first_frame", request.input_reference, false);
+  appendH3Media(content, seenRoles, seenURLs, "image_url", "first_frame", metadata.first_frame_image, false);
+  appendH3Media(content, seenRoles, seenURLs, "image_url", "last_frame", metadata.last_frame_image, false);
   return content;
 }
 
 function mediaCount(request, type) {
-  const metadata = objectOf(request.metadata);
   const content = h3Content(request);
-  let count = content.filter(function (item) {
-    return item && typeof item === "object" && item.type === type;
+  return content.filter(function (item) {
+    return item && typeof item === "object" && item.type === type && Boolean(h3MediaKey(h3MediaURL(item, type)));
   }).length;
-  if (type === "image_url") {
-    const images = Array.isArray(request.images) ? request.images : [];
-    count += images.length;
-    const imageUrls = Array.isArray(request.image_urls) ? request.image_urls : [];
-    count += imageUrls.length;
-    if (trimmed(request.image) || trimmed(request.input_reference)) count += 1;
-    if (metadata.first_frame_image) count += 1;
-    if (metadata.last_frame_image) count += 1;
-  }
-  return count;
 }
 
 function h3Request(request, model) {
@@ -250,35 +280,34 @@ function h3Request(request, model) {
   const resolution = h3Resolution(request);
   const inputImages = mediaCount(request, "image_url");
   if (inputImages > H3_MAX_IMAGES) throw new Error(H3_MODEL + " accepts at most " + H3_MAX_IMAGES + " input images");
-  const hasVideo = mediaCount(request, "video_url") > 0;
+  const inputVideos = mediaCount(request, "video_url");
+  if (inputVideos > H3_MAX_REFERENCE_VIDEOS) throw new Error(H3_MODEL + " accepts at most " + H3_MAX_REFERENCE_VIDEOS + " reference videos");
+  const inputAudios = mediaCount(request, "audio_url");
+  if (inputAudios > H3_MAX_REFERENCE_AUDIOS) throw new Error(H3_MODEL + " accepts at most " + H3_MAX_REFERENCE_AUDIOS + " reference audios");
+  const hasVideo = inputVideos > 0;
   const video = objectOf(request.video);
   const size = trimmed(request.size);
-  const ratio = firstString([metadata.ratio, request.ratio, request.aspect_ratio, video.aspect, H3_RATIOS.includes(size) ? size : ""]) || (inputImages > 0 || hasVideo ? "adaptive" : "16:9");
+  const ratio = firstString([metadata.ratio, metadata.aspect_ratio, request.ratio, request.aspect_ratio, video.ratio, video.aspect, H3_RATIOS.includes(size) ? size : h3PixelRatio(size)]) || (inputImages > 0 || hasVideo ? "adaptive" : "16:9");
   if (H3_RATIOS.indexOf(ratio) < 0) throw new Error(H3_MODEL + " ratio must be one of " + H3_RATIOS.join(", "));
   if (ratio === "adaptive" && inputImages === 0 && !hasVideo) throw new Error(H3_MODEL + " ratio adaptive requires an image or video input");
-  let fallback = "";
-  if (ratio === "adaptive" && !content.some(function (item) { return item && (item.type === "image_url" || item.type === "video_url"); })) {
-    const imageFields = [request.images, request.image_urls, request.image, request.input_reference, metadata.first_frame_image, metadata.last_frame_image];
-    if (imageFields.filter(function (value) { return Array.isArray(value) ? value.length > 0 : Boolean(trimmed(value)); }).length === 1) {
-      fallback = Array.isArray(request.images) && request.images.length ? "images"
-        : Array.isArray(request.image_urls) && request.image_urls.length ? "image_urls"
-          : trimmed(request.image) ? "image" : trimmed(request.input_reference) ? "input_reference"
-            : metadata.first_frame_image ? "first_frame_image" : "last_frame_image";
-      const frames = fallback === "images" || fallback === "image_urls" ? request[fallback] : [fallback === "first_frame_image" || fallback === "last_frame_image" ? metadata[fallback] : request[fallback]];
-      const mapped = [];
-      for (let index = 0; index < frames.length; index++) {
-        const role = frames.length > 2 ? "reference_image" : fallback === "last_frame_image" || index === 1 ? "last_frame" : "first_frame";
-        appendH3Media(mapped, {}, "image_url", role, frames[index]);
-      }
-      if (mapped.length === 1 && inputImages === 1) content.push(...mapped);
-      else fallback = "";
+  if (resolution === "2K" && LOCOPAL_H3_2K_RATIOS.indexOf(ratio) < 0) {
+    throw new Error(H3_MODEL + " 2K requires ratio 16:9, 9:16, or 1:1; choose the ratio explicitly");
+  }
+  for (const key of ["callback_url", "aigc_watermark", "generate_audio"]) {
+    if (request[key] === undefined && metadata[key] !== undefined) {
+      request = Object.assign({}, request);
+      request[key] = metadata[key];
     }
+    delete metadata[key];
   }
   metadata.resolution = resolution;
   metadata.ratio = ratio;
   delete metadata.content;
   delete metadata.reference_image;
   delete metadata.reference_video;
+  delete metadata.reference_audio;
+  delete metadata.first_frame_image;
+  delete metadata.last_frame_image;
   const body = Object.assign({}, request, {
     model: model,
     prompt: prompt,
@@ -288,10 +317,15 @@ function h3Request(request, model) {
     ratio: ratio,
     metadata: metadata,
   });
-  if (fallback === "first_frame_image" || fallback === "last_frame_image") delete metadata[fallback];
-  else if (fallback) delete body[fallback];
+  delete body.images;
+  delete body.image_urls;
+  delete body.image;
+  delete body.image_url;
+  delete body.input_reference;
   if (body.aigc_watermark === "true") body.aigc_watermark = true;
   else if (body.aigc_watermark === "false") body.aigc_watermark = false;
+  if (body.generate_audio === "true") body.generate_audio = true;
+  else if (body.generate_audio === "false") body.generate_audio = false;
   if (content.length) body.content = content;
   return {
     body: body,
@@ -323,7 +357,7 @@ function estimateSeedanceTokens(seconds, resolution) {
 export function buildSubmitRequest(ctx) {
   const model = upstreamModel(ctx);
   const normalized = normalizeRequest(ctx.requestBody, model);
-  return {
+  const descriptor = {
     url: ctx.baseUrl + "/v1/videos",
     method: "POST",
     headers: {
@@ -342,17 +376,30 @@ export function buildSubmitRequest(ctx) {
           ? "image_to_video"
           : "text_to_video",
   };
+  if (isH3Model(model)) {
+    const videos = normalized.body.content ? normalized.body.content.filter(function (item) { return item.type === "video_url"; }) : [];
+    if (videos.length) descriptor.mediaProbes = videos.map(function (item, index) {
+      return { key: "reference_video_" + index, source: item.video_url.url };
+    });
+  }
+  return descriptor;
 }
 
 function upstreamTaskId(body) {
   const data = objectOf(body && body.data);
-  return firstString([body && body.id, body && body.task_id, body && body.taskId, data.id, data.task_id, data.taskId]);
+  const task = taskEnvelope(body);
+  return firstString([body && body.id, body && body.task_id, body && body.taskId, data.id, data.task_id, data.taskId, task.id, task.task_id, task.taskId]);
 }
 
 export function parseSubmitResponse(_ctx, response) {
   const body = response && response.body;
   const taskId = upstreamTaskId(body);
-  if (!taskId) throw new Error("LocoPal returned no task id");
+  if (!taskId) {
+    const data = objectOf(body && body.data);
+    const error = objectOf(body && body.error);
+    const message = firstString([error.message, body && body.message, data.message]);
+    throw new Error(message ? "LocoPal did not create a task: " + message : "LocoPal accepted the request without returning a task id");
+  }
   return { taskId: taskId, taskData: body };
 }
 
@@ -361,11 +408,19 @@ export function extractUsage(ctx) {
   const model = upstreamModel(ctx);
   const normalized = normalizeRequest(ctx.requestBody, model);
   if (isH3Model(model)) {
+    let inputSeconds = 0;
+    const probes = buildSubmitRequest(ctx).mediaProbes || [];
+    for (const probe of probes) {
+      const measured = numberInRange(objectOf(ctx.mediaDurations)[probe.key], 0.001, H3_MAX_INPUT_VIDEO_SECONDS);
+      if (measured === null) throw new Error(H3_MODEL + " reference video duration could not be verified; provide a publicly accessible MP4 or upload an MP4 file");
+      inputSeconds += measured;
+    }
+    if (inputSeconds > H3_MAX_INPUT_VIDEO_SECONDS) throw new Error(H3_MODEL + " total reference video duration must not exceed 15 seconds");
     return {
       seconds: normalized.seconds,
       resolution: normalized.resolution,
       input_images: normalized.inputImages,
-      input_video_seconds: normalized.inputVideoSeconds,
+      input_video_seconds: inputSeconds,
     };
   }
   return {
@@ -384,9 +439,15 @@ export function buildQueryRequest(ctx) {
 }
 
 function taskEnvelope(body) {
-  const data = objectOf(body && body.data);
-  const task = objectOf(body && body.task);
-  return Object.keys(task).length ? task : Object.keys(data).length ? data : objectOf(body);
+  let envelope = objectOf(body);
+  for (let depth = 0; depth < 4; depth++) {
+    const task = objectOf(envelope.task);
+    const data = objectOf(envelope.data);
+    if (Object.keys(task).length) envelope = task;
+    else if (Object.keys(data).length && (!envelope.status || data.task || data.status)) envelope = data;
+    else break;
+  }
+  return envelope;
 }
 
 function videoUrlOf(body) {
@@ -410,12 +471,17 @@ function videoUrlOf(body) {
   ]);
 }
 
-export function parseTaskResult(_ctx, body) {
+export function parseTaskResult(ctx, body) {
   const envelope = taskEnvelope(body);
   const status = trimmed(envelope.status || (body && body.status)).toLowerCase();
   if (["completed", "succeeded", "success", "done"].includes(status)) {
     const url = videoUrlOf(body);
-    if (!url) return { status: "IN_PROGRESS", progress: "99%" };
+    if (!url) {
+      const state = objectOf(ctx && ctx.state);
+      const missingResultPolls = Math.max(0, Number(state.missingResultPolls) || 0) + 1;
+      if (missingResultPolls < 20) return { status: "IN_PROGRESS", progress: "99%", state: { missingResultPolls: missingResultPolls } };
+      return { status: "FAILURE", progress: "100%", reason: "LocoPal reported completion but did not return a video URL", state: { missingResultPolls: missingResultPolls } };
+    }
     return { status: "SUCCESS", progress: "100%", url: url };
   }
   if (["failed", "error", "expired", "cancelled", "canceled"].includes(status)) {
@@ -450,7 +516,7 @@ export function extractUsageOnComplete(ctx, result, body) {
   const usage = objectOf(envelope.usage);
   if (isH3Model(model)) {
     const facts = {};
-    const seconds = numberInRange(firstDefined([usage.output_seconds, usage.seconds, envelope.duration]), H3_MIN_SECONDS, H3_MAX_SECONDS);
+    const seconds = numberInRange(firstDefined([usage.output_seconds, usage.seconds, envelope.duration_secs, envelope.duration]), H3_MIN_SECONDS, H3_MAX_SECONDS);
     const images = numberInRange(firstDefined([usage.input_image_count, usage.input_images]), 0, H3_MAX_IMAGES);
     const inputSeconds = numberInRange(firstDefined([usage.input_seconds, usage.input_video_seconds]), 0, H3_MAX_INPUT_VIDEO_SECONDS);
     const resolution = trimmed(firstDefined([envelope.resolution, usage.resolution])).toUpperCase();
@@ -477,14 +543,52 @@ export function buildContentRequest(ctx) {
   if (ctx.artifactKey !== "video") throw new Error("artifact_not_found");
   const url = videoUrlOf(ctx.data);
   if (!url) throw new Error("artifact_not_found");
-  return { url: url, method: ctx.clientRequest.method, credentialless: true };
+  // LocoPal CDN rejects HEAD; the host omits the GET body for HEAD clients.
+  return { url: url, method: "GET", credentialless: true };
 }
 
 export const protocols = {
   openai_video: {
     decodeRequest: function (ctx) {
-      if (!ctx.body || ctx.body.kind !== "json") throw new Error("JSON body required");
-      const request = ctx.body.value;
+      if (!ctx.body || (ctx.body.kind !== "json" && ctx.body.kind !== "multipart")) throw new Error("JSON or multipart body required");
+      let request = ctx.body.kind === "json" ? ctx.body.value : {};
+      if (ctx.body.kind === "multipart") {
+        request = {};
+        const fields = objectOf(ctx.body.fields);
+        for (const key of Object.keys(fields)) {
+          const values = Array.isArray(fields[key]) ? fields[key] : [];
+          if (values.length) request[key] = values[values.length - 1];
+        }
+        if (trimmed(request.metadata)) {
+          try { request.metadata = JSON.parse(request.metadata); } catch (_error) { throw new Error("metadata must be valid JSON"); }
+        }
+        let videoFiles = 0;
+        for (const file of Array.isArray(ctx.body.files) ? ctx.body.files : []) {
+          const mimeType = trimmed(file && file.mimeType).toLowerCase();
+          const placeholder = { __fileRef: file.ref, encoding: "dataUrl", mimeType: mimeType || "application/octet-stream" };
+          if (mimeType.startsWith("video/")) {
+            videoFiles += 1;
+            if (videoFiles > 1) throw new Error("multipart requests accept at most one reference video file");
+            const metadata = Object.assign({}, objectOf(request.metadata));
+            const videos = Array.isArray(metadata.reference_video) ? metadata.reference_video.slice() : metadata.reference_video ? [metadata.reference_video] : [];
+            videos.push(placeholder);
+            metadata.reference_video = videos;
+            request.metadata = metadata;
+          } else if (mimeType.startsWith("audio/")) {
+            const metadata = Object.assign({}, objectOf(request.metadata));
+            const audios = Array.isArray(metadata.reference_audio) ? metadata.reference_audio.slice() : metadata.reference_audio ? [metadata.reference_audio] : [];
+            audios.push(placeholder);
+            metadata.reference_audio = audios;
+            request.metadata = metadata;
+          } else if (mimeType.startsWith("image/")) {
+            const images = Array.isArray(request.images) ? request.images.slice() : [];
+            images.push(placeholder);
+            request.images = images;
+          } else {
+            throw new Error("multipart files must be images, videos, or audio");
+          }
+        }
+      }
       const model = upstreamModel(ctx) || trimmed(request && request.model);
       const normalized = normalizeRequest(request, model);
       return {

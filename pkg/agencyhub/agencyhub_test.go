@@ -80,6 +80,7 @@ func TestOpsPolicyCustomerSnapshotAndReplay(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, pool.Close()) })
 			require.NoError(t, model.MigrateAgency(db))
 			require.NoError(t, model.MigrateAgency(db))
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Task{}))
 			db = db.Begin()
 			require.NoError(t, db.Error)
 			t.Cleanup(func() { require.NoError(t, db.Rollback().Error) })
@@ -169,6 +170,43 @@ func runOpsPolicyCustomerSnapshotAndReplay(t *testing.T, app *App) {
 	require.ErrorContains(t, err, "cost conflicts")
 	runOpsDirectorySnapshotAndReplay(t, app)
 	runOpsPayoutSnapshotAndReplay(t, app)
+	runOpsCustomerProvision(t, app)
+}
+
+func runOpsCustomerProvision(t *testing.T, app *App) {
+	t.Helper()
+	t.Setenv("AGENCY_ONBOARDING_ENABLED", "true")
+	policy := agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultChildCostBPS: 9000, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
+	agency, _, err := app.CreateAgency(1, "Provision target", "provision-target", policy)
+	require.NoError(t, err)
+	root := model.User{Username: "provision-root", AffCode: "ops-root", Password: "unused", Role: common.RoleRootUser, Status: common.UserStatusEnabled}
+	require.NoError(t, app.db.Create(&root).Error)
+	user := model.User{Username: "provision-customer", AffCode: "ops-customer", Password: "unused", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Quota: 42, BillingMode: "legacy"}
+	require.NoError(t, app.db.Create(&user).Error)
+	_, err = ApplyOpsCustomerProvision(app.db, int64(user.Id), agency.ID, int64(user.Id), "ops-provision-denied")
+	require.ErrorContains(t, err, "root is inactive")
+	task := model.Task{TaskID: "ops-provision-drain", UserId: user.Id, Status: model.TaskStatusSubmitted}
+	require.NoError(t, app.db.Create(&task).Error)
+	first, err := ApplyOpsCustomerProvision(app.db, int64(user.Id), agency.ID, int64(root.Id), "ops-provision-first")
+	require.NoError(t, err)
+	assert.Equal(t, provisioningBlocked, first.Status)
+	var count int64
+	require.NoError(t, app.db.Model(&model.AgencyActiveUserBinding{}).Where("user_id = ?", user.Id).Count(&count).Error)
+	assert.Zero(t, count, "no early binding while a task is in flight")
+	require.NoError(t, app.db.Model(&task).Update("status", model.TaskStatusSuccess).Error)
+	completed, err := ApplyOpsCustomerProvision(app.db, int64(user.Id), agency.ID, int64(root.Id), "ops-provision-first")
+	require.NoError(t, err)
+	assert.Equal(t, first.JobID, completed.JobID)
+	assert.Equal(t, provisioningCompleted, completed.Status)
+	replay, err := ApplyOpsCustomerProvision(app.db, int64(user.Id), agency.ID, int64(root.Id), "ops-provision-first")
+	require.NoError(t, err)
+	assert.Equal(t, completed, replay)
+	_, err = ApplyOpsCustomerProvision(app.db, int64(user.Id)+1, agency.ID, int64(root.Id), "ops-provision-first")
+	require.ErrorContains(t, err, "identity conflict")
+	var balance model.AgencyFundingAccount
+	require.NoError(t, app.db.Where("user_id = ?", user.Id).First(&balance).Error)
+	assert.EqualValues(t, 42, balance.NonpaidAvailable)
+	assert.Zero(t, balance.PaidAvailable, "existing quota must not become paid funding")
 }
 
 func runOpsPayoutSnapshotAndReplay(t *testing.T, app *App) {

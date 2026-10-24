@@ -33,6 +33,7 @@ type request struct {
 	UserID           int64                                `json:"userId"`
 	BindingRevision  int64                                `json:"bindingRevision"`
 	Account          agencyhub.OpsPayoutAccount           `json:"account"`
+	RootUserID       int64                                `json:"rootUserId"`
 }
 
 func main() {
@@ -55,7 +56,7 @@ func run() error {
 		return err
 	}
 	many := input.Action == "read-many" || input.Action == "directory-read" || input.Action == "customers-read" || input.Action == "payout-read"
-	if (input.AgencyID <= 0 && !many) || (input.Action != "read" && input.Action != "read-many" && input.Action != "apply" && input.Action != "directory-read" && input.Action != "directory-apply" && input.Action != "customers-read" && input.Action != "customer-transfer" && input.Action != "payout-read" && input.Action != "payout-apply") || len(input.Customers) > 1000 || len(input.Children) > 1000 {
+	if (input.AgencyID <= 0 && !many) || (input.Action != "read" && input.Action != "read-many" && input.Action != "apply" && input.Action != "directory-read" && input.Action != "directory-apply" && input.Action != "customers-read" && input.Action != "customer-transfer" && input.Action != "payout-read" && input.Action != "payout-apply" && input.Action != "customer-provision") || len(input.Customers) > 1000 || len(input.Children) > 1000 {
 		return fmt.Errorf("invalid bounded bridge request")
 	}
 	if input.Action == "read-many" && (len(input.AgencyIDs) < 1 || len(input.AgencyIDs) > 5) {
@@ -78,7 +79,9 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	var result any
-	if input.Action == "payout-read" {
+	if input.Action == "customer-provision" {
+		result, err = agencyhub.ApplyOpsCustomerProvision(model.DB.WithContext(ctx), input.UserID, input.AgencyID, input.RootUserID, input.CommandID)
+	} else if input.Action == "payout-read" {
 		err = model.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			var e error
 			result, e = agencyhub.ReadOpsPayoutSnapshots(tx, input.AgencyIDs)

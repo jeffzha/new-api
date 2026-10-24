@@ -80,6 +80,7 @@ func TestOpsPolicyCustomerSnapshotAndReplay(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, pool.Close()) })
 			require.NoError(t, model.MigrateAgency(db))
 			require.NoError(t, model.MigrateAgency(db))
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Task{}))
 			db = db.Begin()
 			require.NoError(t, db.Error)
 			t.Cleanup(func() { require.NoError(t, db.Rollback().Error) })
@@ -126,6 +127,209 @@ func runOpsPolicyCustomerSnapshotAndReplay(t *testing.T, app *App) {
 	require.ErrorContains(t, err, "outside")
 	_, _, err = ApplyOpsAgencyPolicy(app.db, agency.ID, policy, overrides, nil, "ops-p1")
 	require.ErrorContains(t, err, "identity conflict")
+	snapshot, err := ReadOpsPriceSnapshot(app.db, agency.ID)
+	require.NoError(t, err)
+	overrides[0].UserID = 42
+	_, _, err = ApplyOpsAgencyPolicyAtSnapshot(app.db, agency.ID, policy, overrides, nil, "ops-stale", strings.Repeat("0", 64))
+	require.ErrorIs(t, err, agencycontract.ErrPolicyRevision)
+	// Customer-only edits do not bump agency.price_revision, but must still
+	// invalidate the source fingerprint before an Ops edit can be applied.
+	require.NoError(t, app.db.Model(&model.AgencyCustomerSalesOverride{}).Where("agency_id = ?", agency.ID).Update("sales_bps", 11000).Error)
+	_, _, err = ApplyOpsAgencyPolicyAtSnapshot(app.db, agency.ID, policy, overrides, nil, "ops-stale-customer", snapshot.Fingerprint)
+	require.ErrorIs(t, err, agencycontract.ErrPolicyRevision)
+	snapshot, err = ReadOpsPriceSnapshot(app.db, agency.ID)
+	require.NoError(t, err)
+	revision, created, err = ApplyOpsAgencyPolicyAtSnapshot(app.db, agency.ID, policy, overrides, nil, "ops-cas-publish", snapshot.Fingerprint)
+	require.NoError(t, err)
+	assert.True(t, created)
+	assert.EqualValues(t, 4, revision)
+	revision, created, err = ApplyOpsAgencyPolicyAtSnapshot(app.db, agency.ID, policy, overrides, nil, "ops-cas-publish", snapshot.Fingerprint)
+	require.NoError(t, err)
+	assert.False(t, created)
+	assert.EqualValues(t, 4, revision)
+	// A legacy raw root cost must round-trip when current platform pricing
+	// overlays a different effective cost. Real attempts to change it still fail.
+	seedConfirmedPlatformPricing(t, app, agencycontract.PlatformModelPrice{
+		OriginModelName: "bridge-confirmed", PlatformCostBPS: 6000, AgencyCostBPS: 8000, DefaultSalesBPS: 10000})
+	snapshot, err = ReadOpsPriceSnapshot(app.db, agency.ID)
+	require.NoError(t, err)
+	revision, created, err = ApplyOpsAgencyPolicyAtSnapshot(app.db, agency.ID, snapshot.RawPolicy, overrides, nil, "ops-legacy-root-cost", snapshot.Fingerprint)
+	require.NoError(t, err)
+	assert.True(t, created)
+	assert.EqualValues(t, 5, revision)
+	snapshot, err = ReadOpsPriceSnapshot(app.db, agency.ID)
+	require.NoError(t, err)
+	cost := 7900
+	snapshot.RawPolicy.ModelOverrides = append([]agencycontract.ModelOverride(nil), snapshot.RawPolicy.ModelOverrides...)
+	for i := range snapshot.RawPolicy.ModelOverrides {
+		if snapshot.RawPolicy.ModelOverrides[i].OriginModelName == "bridge-confirmed" {
+			snapshot.RawPolicy.ModelOverrides[i].SettlementBPS = &cost
+		}
+	}
+	_, _, err = ApplyOpsAgencyPolicyAtSnapshot(app.db, agency.ID, snapshot.RawPolicy, overrides, nil, "ops-illegal-root-cost", snapshot.Fingerprint)
+	require.ErrorContains(t, err, "cost conflicts")
+	runOpsDirectorySnapshotAndReplay(t, app)
+	runOpsPayoutSnapshotAndReplay(t, app)
+	runOpsCustomerProvision(t, app)
+}
+
+func runOpsCustomerProvision(t *testing.T, app *App) {
+	t.Helper()
+	t.Setenv("AGENCY_ONBOARDING_ENABLED", "true")
+	policy := agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultChildCostBPS: 9000, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
+	agency, _, err := app.CreateAgency(1, "Provision target", "provision-target", policy)
+	require.NoError(t, err)
+	root := model.User{Username: "provision-root", AffCode: "ops-root", Password: "unused", Role: common.RoleRootUser, Status: common.UserStatusEnabled}
+	require.NoError(t, app.db.Create(&root).Error)
+	user := model.User{Username: "provision-customer", AffCode: "ops-customer", Password: "unused", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Quota: 42, BillingMode: "legacy"}
+	require.NoError(t, app.db.Create(&user).Error)
+	_, err = ApplyOpsCustomerProvision(app.db, int64(user.Id), agency.ID, int64(user.Id), "ops-provision-denied")
+	require.ErrorContains(t, err, "root is inactive")
+	task := model.Task{TaskID: "ops-provision-drain", UserId: user.Id, Status: model.TaskStatusSubmitted}
+	require.NoError(t, app.db.Create(&task).Error)
+	first, err := ApplyOpsCustomerProvision(app.db, int64(user.Id), agency.ID, int64(root.Id), "ops-provision-first")
+	require.NoError(t, err)
+	assert.Equal(t, provisioningBlocked, first.Status)
+	var count int64
+	require.NoError(t, app.db.Model(&model.AgencyActiveUserBinding{}).Where("user_id = ?", user.Id).Count(&count).Error)
+	assert.Zero(t, count, "no early binding while a task is in flight")
+	require.NoError(t, app.db.Model(&task).Update("status", model.TaskStatusSuccess).Error)
+	completed, err := ApplyOpsCustomerProvision(app.db, int64(user.Id), agency.ID, int64(root.Id), "ops-provision-first")
+	require.NoError(t, err)
+	assert.Equal(t, first.JobID, completed.JobID)
+	assert.Equal(t, provisioningCompleted, completed.Status)
+	replay, err := ApplyOpsCustomerProvision(app.db, int64(user.Id), agency.ID, int64(root.Id), "ops-provision-first")
+	require.NoError(t, err)
+	assert.Equal(t, completed, replay)
+	_, err = ApplyOpsCustomerProvision(app.db, int64(user.Id)+1, agency.ID, int64(root.Id), "ops-provision-first")
+	require.ErrorContains(t, err, "identity conflict")
+	var balance model.AgencyFundingAccount
+	require.NoError(t, app.db.Where("user_id = ?", user.Id).First(&balance).Error)
+	assert.EqualValues(t, 42, balance.NonpaidAvailable)
+	assert.Zero(t, balance.PaidAvailable, "existing quota must not become paid funding")
+}
+
+func runOpsPayoutSnapshotAndReplay(t *testing.T, app *App) {
+	t.Helper()
+	t.Setenv("AGENCY_PAYOUT_KEY", strings.Repeat("12", 32))
+	t.Setenv("AGENCY_PAYOUT_KEY_FILE", "")
+	policy := agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultChildCostBPS: 9000, DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
+	agency, _, err := app.CreateAgency(1, "Payout sync", "payout-sync", policy)
+	require.NoError(t, err)
+	items, err := ReadOpsPayoutSnapshots(app.db, []int64{agency.ID})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, "absent", items[0].Status)
+	account := OpsPayoutAccount{AccountType: "bank", AccountName: "Northwind Ltd", AccountNo: "6222000012345678", BankName: "Example Bank"}
+	first, err := ApplyOpsPayout(app.db, agency.ID, account, "active", items[0].Fingerprint, "ops-payout-create")
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, first.Version)
+	assert.NotContains(t, first.Ciphertext, account.AccountNo)
+	replay, err := ApplyOpsPayout(app.db, agency.ID, account, "active", items[0].Fingerprint, "ops-payout-create")
+	require.NoError(t, err)
+	assert.Equal(t, first, replay)
+	_, err = ApplyOpsPayout(app.db, agency.ID, account, "active", items[0].Fingerprint, "ops-payout-stale")
+	require.ErrorContains(t, err, "revision conflict")
+	account.AccountNo = "6222000098765432"
+	_, err = ApplyOpsPayout(app.db, agency.ID, account, "active", items[0].Fingerprint, "ops-payout-create")
+	require.ErrorContains(t, err, "identity conflict")
+	second, err := ApplyOpsPayout(app.db, agency.ID, account, "active", first.Fingerprint, "ops-payout-replace")
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, second.Version)
+	plain, _, err := decryptPayoutAccount(second.Ciphertext, agency.ID, second.Version)
+	require.NoError(t, err)
+	assert.Equal(t, account.AccountNo, plain.AccountNo)
+	var old model.AgencyWithdrawalAccount
+	require.NoError(t, app.db.First(&old, first.AccountID).Error)
+	assert.Equal(t, "superseded", old.Status)
+	assert.Equal(t, first.Ciphertext, old.Ciphertext, "historical recipient is immutable")
+	disabled, err := ApplyOpsPayout(app.db, agency.ID, OpsPayoutAccount{}, "disabled", second.Fingerprint, "ops-payout-disable")
+	require.NoError(t, err)
+	assert.Equal(t, "disabled", disabled.Status)
+	assert.Equal(t, second.AccountID, disabled.AccountID)
+	assert.Equal(t, second.Ciphertext, disabled.Ciphertext)
+	_, err = ReadOpsPayoutSnapshots(app.db, []int64{agency.ID, agency.ID})
+	require.Error(t, err)
+	var audits []model.AgencyAuditLog
+	require.NoError(t, app.db.Where("action = ?", "withdrawal_account.tokenops").Find(&audits).Error)
+	for _, row := range audits {
+		assert.NotContains(t, row.AfterJSON, account.AccountNo)
+		assert.NotContains(t, row.AfterJSON, account.AccountName)
+	}
+	var receipts []model.AgencyIdempotencyRecord
+	require.NoError(t, app.db.Where("action = ?", "payout.apply").Find(&receipts).Error)
+	for _, row := range receipts {
+		assert.NotContains(t, row.ResponseJSON, account.AccountNo)
+		assert.NotContains(t, row.ResponseJSON, account.AccountName)
+	}
+}
+
+func runOpsDirectorySnapshotAndReplay(t *testing.T, app *App) {
+	t.Helper()
+	policy := agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultChildCostBPS: 9000,
+		DefaultSalesBPS: 9000, MinSpreadBPS: 500, SalesCapBPS: 30000}
+	root, _, err := app.CreateAgency(1, "Directory root", "directory-root", policy)
+	require.NoError(t, err)
+	child, _, err := app.CreateAgency(1, "Directory child", "directory-child", policy)
+	require.NoError(t, err)
+	require.NoError(t, app.db.Model(&child).Updates(map[string]any{"parent_agency_id": root.ID, "depth": 2}).Error)
+	items, err := ReadOpsDirectorySnapshots(app.db, []int64{root.ID, child.ID})
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	before := items[0]
+	after, err := ApplyOpsDirectory(app.db, root.ID, "Directory renamed", AgencyStatusActive, before.Fingerprint, "ops-directory-first")
+	require.NoError(t, err)
+	assert.Equal(t, "Directory renamed", after.Name)
+	assert.Equal(t, before.InviteCode, after.InviteCode)
+	replay, err := ApplyOpsDirectory(app.db, root.ID, "Directory renamed", AgencyStatusActive, before.Fingerprint, "ops-directory-first")
+	require.NoError(t, err)
+	assert.Equal(t, after, replay)
+	_, err = ApplyOpsDirectory(app.db, root.ID, "Lost update", AgencyStatusActive, before.Fingerprint, "ops-directory-stale")
+	require.ErrorContains(t, err, "revision conflict")
+	_, err = ApplyOpsDirectory(app.db, root.ID, "Changed payload", AgencyStatusActive, before.Fingerprint, "ops-directory-first")
+	require.ErrorContains(t, err, "identity conflict")
+	require.NoError(t, app.db.Create(&model.AgencySession{AgencyID: &child.ID, TokenHash: "directory-session", ActorType: ActorTypeOperator,
+		ActorID: 1, ExpiresAt: time.Now().Unix() + 3600}).Error)
+	disabled, err := ApplyOpsDirectory(app.db, root.ID, after.Name, AgencyStatusDisabled, after.Fingerprint, "ops-directory-disabled")
+	require.NoError(t, err)
+	assert.Equal(t, AgencyStatusDisabled, disabled.Status)
+	items, err = ReadOpsDirectorySnapshots(app.db, []int64{child.ID})
+	require.NoError(t, err)
+	assert.Equal(t, AgencyStatusDisabled, items[0].Status)
+	_, err = ApplyOpsDirectory(app.db, child.ID, child.DisplayName, AgencyStatusActive, items[0].Fingerprint, "ops-directory-parent-disabled")
+	require.ErrorContains(t, err, "parent is disabled")
+	var session model.AgencySession
+	require.NoError(t, app.db.Where("token_hash = ?", "directory-session").First(&session).Error)
+	assert.NotNil(t, session.RevokedAt)
+	// The same transfer function is used by the normal Hub UI and Ops bridge.
+	userID := int64(987654)
+	binding := model.AgencyUserBinding{UserID: userID, AgencyID: root.ID, Revision: 1, EffectiveAtMS: 1000}
+	require.NoError(t, app.db.Create(&binding).Error)
+	require.NoError(t, app.db.Create(&model.AgencyActiveUserBinding{UserID: userID, AgencyID: root.ID,
+		BindingID: binding.ID, Revision: 1}).Error)
+	require.NoError(t, app.db.Create(&model.AgencyFundingAccount{UserID: userID, PaidAvailable: 42, MoneySeq: 7, Version: 8}).Error)
+	target, _, err := app.CreateAgency(1, "Customer target", "directory-target", policy)
+	require.NoError(t, err)
+	transferred, err := ApplyOpsCustomerTransfer(app.db, userID, target.ID, 1, "ops-customer-transfer")
+	require.NoError(t, err)
+	assert.Equal(t, target.ID, transferred.AgencyID)
+	assert.EqualValues(t, 2, transferred.Revision)
+	replayed, err := ApplyOpsCustomerTransfer(app.db, userID, target.ID, 1, "ops-customer-transfer")
+	require.NoError(t, err)
+	assert.Equal(t, transferred, replayed)
+	_, err = ApplyOpsCustomerTransfer(app.db, userID, target.ID, 1, "ops-customer-stale")
+	require.ErrorContains(t, err, "revision conflict")
+	bindings, err := ReadOpsCustomerBindings(app.db, userID-1, 5)
+	require.NoError(t, err)
+	require.Len(t, bindings, 1)
+	assert.Equal(t, target.ID, bindings[0].AgencyID)
+	var money model.AgencyFundingAccount
+	require.NoError(t, app.db.Where("user_id = ?", userID).First(&money).Error)
+	assert.EqualValues(t, 42, money.PaidAvailable)
+	assert.EqualValues(t, 7, money.MoneySeq)
+	require.NoError(t, app.db.First(&binding, binding.ID).Error)
+	assert.NotNil(t, binding.EndedAtMS)
+	assert.Equal(t, root.ID, binding.AgencyID)
 }
 
 func TestCreateAgencyAndInvitePreview(t *testing.T) {

@@ -432,10 +432,24 @@ func loadPricingBillingPathsTx(tx *gorm.DB) ([]model.Agency, map[int64]agencycon
 		return nil, nil, agencycontract.PlatformPolicy{}, err
 	}
 	policies := make(map[int64]agencycontract.Policy, len(agencies))
+	ids := make([]int64, 0, len(agencies))
 	for _, agency := range agencies {
-		var version model.AgencyPricePolicyVersion
-		if err := tx.First(&version, agency.CurrentPolicyVersionID).Error; err != nil {
+		ids = append(ids, agency.CurrentPolicyVersionID)
+	}
+	var versions []model.AgencyPricePolicyVersion
+	if len(ids) > 0 {
+		if err := tx.Where("id IN ?", ids).Find(&versions).Error; err != nil {
 			return nil, nil, agencycontract.PlatformPolicy{}, err
+		}
+	}
+	byID := make(map[int64]model.AgencyPricePolicyVersion, len(versions))
+	for _, version := range versions {
+		byID[version.ID] = version
+	}
+	for _, agency := range agencies {
+		version, ok := byID[agency.CurrentPolicyVersionID]
+		if !ok || version.AgencyID != agency.ID {
+			return nil, nil, agencycontract.PlatformPolicy{}, errors.New("agency pricing path is incomplete")
 		}
 		var policy agencycontract.Policy
 		if err := common.UnmarshalJsonStr(version.PolicyJSON, &policy); err != nil {

@@ -154,7 +154,9 @@ func run() error {
 	app.SetReady(true)
 	workerCtx, stopWorker := context.WithCancel(context.Background())
 	defer stopWorker()
-	app.StartBackground(workerCtx)
+	if os.Getenv("AGENCY_HUB_BACKGROUND_DISABLED") != "true" {
+		app.StartBackground(workerCtx)
+	}
 	server := &http.Server{Addr: ":" + config.Port, Handler: app.Router(), ReadHeaderTimeout: 30 * time.Second}
 	serverErrors := make(chan error, 1)
 	go func() {

@@ -1186,6 +1186,14 @@ h3 {
 .coefficient-adjust-dialog > .coefficient-adjust-summary,
 .coefficient-adjust-dialog > .dialog-actions { flex: 0 0 auto; }
 .coefficient-adjust-dialog > .dialog-actions { margin-top: 10px; }
+.dialog-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.dialog > .toolbar h2 { min-width: 0; }
+@media (max-width: 600px) {
+  .dialog > .toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+  .dialog-header-actions { display: contents; }
+  .dialog-header-actions > button:last-child { grid-column: 2; grid-row: 1; }
+  .dialog-header-actions > button:first-child:not(:last-child) { grid-column: 1 / -1; grid-row: 2; justify-self: end; }
+}
 @media (max-height: 640px) {
   .dialog.coefficient-adjust-dialog > .muted,
   .dialog.coefficient-adjust-dialog > .coefficient-adjust-summary,

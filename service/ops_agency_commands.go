@@ -186,7 +186,20 @@ func executeOpsAgencyPolicy(ctx context.Context, command opsbridge.OpsAgencyComm
 	if err != nil {
 		return nil, err
 	}
-	revision, created, err := agencyhub.ApplyOpsAgencyPolicy(model.DB.WithContext(ctx), agencyID, policy, customers, children, command.ID)
+	var revision int64
+	var created bool
+	err = model.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var writer model.AgencyOpsWriterState
+		if err := model.AgencyLockForUpdate(tx).First(&writer, 1).Error; err != nil {
+			return fmt.Errorf("agency writer fence unavailable: %w", err)
+		}
+		if writer.Mode != model.AgencyWriterOpsSingle {
+			return errors.New("TokenOps pricing requires the Ops single-writer mode")
+		}
+		var applyErr error
+		revision, created, applyErr = agencyhub.ApplyOpsAgencyPolicy(tx, agencyID, policy, customers, children, command.ID)
+		return applyErr
+	})
 	if err != nil {
 		return nil, err
 	}

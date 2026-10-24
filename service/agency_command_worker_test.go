@@ -148,6 +148,35 @@ func TestOpsAgencyPolicyMapping(t *testing.T) {
 	assert.Equal(t, 11000, *children[0].SalesBPS)
 }
 
+func TestOpsAgencyPolicyRequiresSingleWriter(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:ops-policy-writer-fence?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		pool, err := db.DB()
+		if err == nil {
+			_ = pool.Close()
+		}
+	})
+	command := opsbridge.OpsAgencyCommand{ID: "ops-policy-fence", Kind: "sync_agency_policy",
+		Payload: map[string]any{"externalAgencyId": "7", "version": map[string]any{
+			"effective_from": "2020-01-01", "rules": []any{map[string]any{
+				"modelName": "*", "costMultiplier": "0.75", "saleMultiplier": "0.9", "minSpreadMultiplier": "0.05",
+			}},
+		}}}
+	_, err = (OpsAgencyCommandExecutor{}).ExecuteOpsAgencyCommand(t.Context(), command)
+	require.ErrorContains(t, err, "writer fence unavailable")
+	require.NoError(t, model.MigrateAgency(db))
+	_, err = (OpsAgencyCommandExecutor{}).ExecuteOpsAgencyCommand(t.Context(), command)
+	require.ErrorContains(t, err, "single-writer mode")
+	require.NoError(t, db.Model(&model.AgencyOpsWriterState{}).Where("id = ?", 1).Update("mode", model.AgencyWriterOpsSingle).Error)
+	_, err = (OpsAgencyCommandExecutor{}).ExecuteOpsAgencyCommand(t.Context(), command)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "single-writer mode")
+}
+
 func TestOpsAgencyCustomerCommandsEnforceBindingAndRevokeSessions(t *testing.T) {
 	previousDB := model.DB
 	db, err := gorm.Open(sqlite.Open("file:ops-customer-commands?mode=memory&cache=shared"), &gorm.Config{})

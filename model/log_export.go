@@ -107,8 +107,9 @@ func buildConsumeLogQuery(params LogExportParams) (*gorm.DB, error) {
 	if params.RequestID != "" {
 		tx = tx.Where("logs.request_id = ?", params.RequestID)
 	}
-	if params.UpstreamRequestID != "" {
-		tx = tx.Where("logs.upstream_request_id = ?", params.UpstreamRequestID)
+	var err error
+	if tx, err = applyUpstreamLogFilter(tx, params.UpstreamRequestID); err != nil {
+		return nil, err
 	}
 	if params.StartTimestamp != 0 {
 		tx = tx.Where("logs.created_at >= ?", params.StartTimestamp)

@@ -404,6 +404,7 @@ func migrateDB() error {
 		&SystemTask{},
 		&SystemTaskLock{},
 		&UpstreamEventOutbox{},
+		&UpstreamLogReference{},
 		&TaskPlugin{},
 		&CasbinRule{},
 		&AuthzRole{},
@@ -483,6 +484,7 @@ func migrateDBFast() error {
 		{&SystemTask{}, "SystemTask"},
 		{&SystemTaskLock{}, "SystemTaskLock"},
 		{&UpstreamEventOutbox{}, "UpstreamEventOutbox"},
+		{&UpstreamLogReference{}, "UpstreamLogReference"},
 		{&TaskPlugin{}, "TaskPlugin"},
 		{&MCPAccessCredential{}, "MCPAccessCredential"},
 	}

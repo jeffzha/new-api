@@ -136,6 +136,17 @@ func TestVideoEndpointAlertExplainsClientAction(t *testing.T) {
 	assert.NotContains(t, text, "待核实")
 }
 
+func TestAudioTranscriptionEndpointAlertExplainsClientAction(t *testing.T) {
+	text := formatRelayAlert("req-asr", "/v1/chat/completions", 15, 0,
+		"fun-asr-flash-2026-06-15", "openai", http.StatusBadRequest, "invalid_request", "new_api_error",
+		"model fun-asr-flash-2026-06-15 is an audio transcription model; use POST /v1/audio/transcriptions with multipart/form-data (model and file) instead of /v1/chat/completions", nil, "audio endpoint required")
+	assert.Contains(t, text, "责任归属: 客户端调用方式")
+	assert.Contains(t, text, "POST /v1/audio/transcriptions")
+	assert.Contains(t, text, "model 和 file")
+	assert.NotContains(t, text, "配置模型价格")
+	assert.NotContains(t, text, "视频模型使用")
+}
+
 func TestFeishuRelayAlertSignsMasksAndDeduplicates(t *testing.T) {
 	assert.Equal(t, "wSds2BzzFIIGf/WrhUO+NI1q/9j+FRJd3JNHKAq0NZY=", signFeishuAlert(1599360473, "test-secret"))
 

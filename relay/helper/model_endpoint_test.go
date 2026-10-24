@@ -69,3 +69,27 @@ func TestSeedreamLiteRejectsTextEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestFunASRRejectsTextEndpoints(t *testing.T) {
+	for _, tc := range []struct {
+		path   string
+		format types.RelayFormat
+		body   string
+	}{
+		{"/v1/chat/completions", types.RelayFormatOpenAI, `{"model":"fun-asr-flash-2026-06-15","messages":[{"role":"user","content":"hello"}]}`},
+		{"/v1/completions", types.RelayFormatOpenAI, `{"model":"fun-asr-flash-2026-06-15","prompt":"hello"}`},
+		{"/v1/responses", types.RelayFormatOpenAIResponses, `{"model":"fun-asr-flash-2026-06-15","input":"hello"}`},
+		{"/v1/messages", types.RelayFormatClaude, `{"model":"fun-asr-flash-2026-06-15","messages":[{"role":"user","content":"hello"}],"max_tokens":20}`},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			_, err := GetAndValidateRequest(ctx, tc.format)
+			require.ErrorContains(t, err, "POST /v1/audio/transcriptions")
+			assert.Contains(t, err.Error(), "multipart/form-data")
+			assert.Contains(t, err.Error(), tc.path)
+			assert.NotContains(t, err.Error(), "tiered expr")
+		})
+	}
+}

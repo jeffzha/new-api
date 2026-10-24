@@ -166,6 +166,9 @@ func ExceedsMaxTokensLimit(values ...*uint) bool {
 }
 
 func validateTextModelEndpoint(modelName, path string) error {
+	if IsFunASRModel(modelName) {
+		return fmt.Errorf("model %s is an audio transcription model; use POST /v1/audio/transcriptions with multipart/form-data (model and file) instead of %s (语音识别模型请使用音频转写接口 /v1/audio/transcriptions，上传 file 音频文件)", modelName, path)
+	}
 	if isSeedreamLiteModel(modelName) {
 		return fmt.Errorf("model %s is an image generation model; use POST /v1/images/generations instead of %s (图片模型请使用图片接口 /v1/images/generations，size 使用 2K、3K、4K 或 WIDTHxHEIGHT)", modelName, path)
 	}

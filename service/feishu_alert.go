@@ -90,6 +90,8 @@ func classifyAlert(code, message string, info *relaycommon.RelayInfo) (owner, ev
 	}
 	lower := strings.ToLower(message)
 	switch {
+	case code == "invalid_request" && strings.Contains(lower, "audio transcription model; use post /v1/audio/transcriptions"):
+		owner, evidence, action = "客户端调用方式", "语音识别模型误用了文本接口，平台已在计费和请求上游前拒绝", "请使用 POST /v1/audio/transcriptions，提交 multipart/form-data 的 model 和 file 字段"
 	case code == "invalid_request" && strings.Contains(lower, "video generation model; use post /v1/videos"):
 		owner, evidence, action = "客户端调用方式", "视频模型误用了文本接口，平台已在计费和请求上游前拒绝", "请将视频生成请求改为 POST /v1/videos，并使用视频接口参数"
 	case code == "model_price_error":

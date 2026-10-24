@@ -88,7 +88,7 @@ export const meta = {
     en: "LocoPal Seedance and MiniMax H3 video generation",
     zh: "LocoPal Seedance 与 MiniMax H3 视频生成",
   },
-  version: "1.0.4",
+  version: "1.0.5",
   author: { name: "NexusReach" },
   models: [SEEDANCE_MODEL, H3_MODEL],
   fetchMode: "per_task",
@@ -256,6 +256,24 @@ function h3Request(request, model) {
   const ratio = firstString([metadata.ratio, request.ratio, request.aspect_ratio, video.aspect, H3_RATIOS.includes(size) ? size : ""]) || (inputImages > 0 || hasVideo ? "adaptive" : "16:9");
   if (H3_RATIOS.indexOf(ratio) < 0) throw new Error(H3_MODEL + " ratio must be one of " + H3_RATIOS.join(", "));
   if (ratio === "adaptive" && inputImages === 0 && !hasVideo) throw new Error(H3_MODEL + " ratio adaptive requires an image or video input");
+  let fallback = "";
+  if (ratio === "adaptive" && !content.some(function (item) { return item && (item.type === "image_url" || item.type === "video_url"); })) {
+    const imageFields = [request.images, request.image_urls, request.image, request.input_reference, metadata.first_frame_image, metadata.last_frame_image];
+    if (imageFields.filter(function (value) { return Array.isArray(value) ? value.length > 0 : Boolean(trimmed(value)); }).length === 1) {
+      fallback = Array.isArray(request.images) && request.images.length ? "images"
+        : Array.isArray(request.image_urls) && request.image_urls.length ? "image_urls"
+          : trimmed(request.image) ? "image" : trimmed(request.input_reference) ? "input_reference"
+            : metadata.first_frame_image ? "first_frame_image" : "last_frame_image";
+      const frames = fallback === "images" || fallback === "image_urls" ? request[fallback] : [fallback === "first_frame_image" || fallback === "last_frame_image" ? metadata[fallback] : request[fallback]];
+      const mapped = [];
+      for (let index = 0; index < frames.length; index++) {
+        const role = frames.length > 2 ? "reference_image" : fallback === "last_frame_image" || index === 1 ? "last_frame" : "first_frame";
+        appendH3Media(mapped, {}, "image_url", role, frames[index]);
+      }
+      if (mapped.length === 1 && inputImages === 1) content.push(...mapped);
+      else fallback = "";
+    }
+  }
   metadata.resolution = resolution;
   metadata.ratio = ratio;
   delete metadata.content;
@@ -270,6 +288,10 @@ function h3Request(request, model) {
     ratio: ratio,
     metadata: metadata,
   });
+  if (fallback === "first_frame_image" || fallback === "last_frame_image") delete metadata[fallback];
+  else if (fallback) delete body[fallback];
+  if (body.aigc_watermark === "true") body.aigc_watermark = true;
+  else if (body.aigc_watermark === "false") body.aigc_watermark = false;
   if (content.length) body.content = content;
   return {
     body: body,

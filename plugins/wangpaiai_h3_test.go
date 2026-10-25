@@ -41,6 +41,26 @@ func h3Context(model string, body map[string]any) map[string]any {
 	}
 }
 
+func TestH3BridgeDownloadsThroughAuthenticatedUpstream(t *testing.T) {
+	plugin := loadTaskPlugin(t, "newapi-video")
+	for _, method := range []string{"GET", "HEAD"} {
+		ctx := map[string]any{
+			"artifactKey": "video", "upstreamTaskId": "task_upstream/a",
+			"baseUrl": "https://bridge.example/", "apiKey": "test-key",
+			"data":          map[string]any{"result_url": "http://untrusted.invalid/video"},
+			"clientRequest": map[string]any{"method": method},
+		}
+		descriptor := callTaskPlugin(t, plugin, "buildContentRequest", ctx)
+		assert.Equal(t, "https://bridge.example/v1/videos/task_upstream%2Fa/content", descriptor["url"])
+		assert.Equal(t, method, descriptor["method"])
+		assert.Equal(t, "Bearer test-key", descriptor["headers"].(map[string]any)["Authorization"])
+		assert.NotEqual(t, true, descriptor["credentialless"])
+		delete(ctx, "upstreamTaskId")
+		_, err := plugin.Engine.Call(t.Context(), "buildContentRequest", ctx)
+		require.Error(t, err)
+	}
+}
+
 func TestWangpaiH3CatalogHasAll97PriceTiers(t *testing.T) {
 	plugin := loadTaskPlugin(t, "wangpaiai")
 	images := []any{"https://cdn.example/first.jpg", "https://cdn.example/last.png"}

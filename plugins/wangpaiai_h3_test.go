@@ -227,6 +227,17 @@ func TestH3CompletedResponsesExposeActualCreditsToBridge(t *testing.T) {
 			require.NoError(t, common.Unmarshal(encoded, &rendered))
 			require.Contains(t, rendered, "usage")
 			assert.Equal(t, float64(9), rendered["usage"].(map[string]any)["vendor_credits"])
+			if key == "newapi-video" {
+				for _, usage := range []any{nil, map[string]any{}, map[string]any{"vendor_credits": nil}} {
+					value, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "render"}, map[string]any{}, map[string]any{"status": "SUCCESS", "data": map[string]any{"usage": usage}})
+					require.NoError(t, err)
+					encoded, err := common.Marshal(value)
+					require.NoError(t, err)
+					var missing map[string]any
+					require.NoError(t, common.Unmarshal(encoded, &missing))
+					assert.NotContains(t, missing, "usage")
+				}
+			}
 		})
 	}
 }

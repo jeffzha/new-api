@@ -18,7 +18,7 @@ export const meta = {
     en: "Bridge to another new-api gateway that serves the OpenAI video protocol",
     zh: "桥接到提供 OpenAI 视频协议的 new-api 网关",
   },
-  version: "1.2.3",
+  version: "1.2.4",
   author: { name: "NexusReach" },
   models: ["MiniMax-H3-261013", "MiniMax-H3-2K", "MiniMax-H3-Sensitive"],
   fetchMode: "per_task",
@@ -397,8 +397,8 @@ export const protocols = {
         output.content = { video_url: url };
       }
       const usage = data && typeof data.usage === "object" ? data.usage : null;
-      const actualCost = Number(usage && usage.vendor_credits);
-      if (Number.isFinite(actualCost) && actualCost >= 0) {
+      const actualCost = usage && usage.vendor_credits;
+      if (typeof actualCost === "number" && Number.isFinite(actualCost) && actualCost >= 0) {
         output.usage = { vendor_credits: actualCost };
       }
       if (taskStatus === "FAILURE") {

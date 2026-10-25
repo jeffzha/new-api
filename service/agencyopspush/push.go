@@ -56,6 +56,9 @@ func StartConfigured(ctx context.Context, db *gorm.DB) error {
 	if !db.Migrator().HasTable(&model.AgencyOpsEvent{}) || !db.Migrator().HasTable(&model.AgencyOpsObjectRevision{}) || !db.Migrator().HasTable(&model.AgencyOpsSenderLease{}) {
 		return errors.New("distributor event schema requires migration")
 	}
+	if err := listenForCommits(ctx, os.Getenv("OPS_DISTRIBUTOR_WAKE_SOCKET")); err != nil {
+		return err
+	}
 	go s.Run(ctx)
 	return nil
 }

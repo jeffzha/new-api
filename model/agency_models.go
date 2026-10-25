@@ -460,10 +460,10 @@ type AgencySourceEvent struct {
 	PayloadHash       string `gorm:"size:128;not null"`
 	UserID            int64  `gorm:"not null;index:idx_agency_source_user;index:idx_agency_source_user_status_seq,priority:1"`
 	MoneySeq          int64  `gorm:"not null;index:idx_agency_source_user_status_seq,priority:3"`
-	ProcessingStatus  string `gorm:"size:32;not null;index:idx_agency_source_status;index:idx_agency_source_user_status_seq,priority:2"`
+	ProcessingStatus  string `gorm:"size:32;not null;index:idx_agency_source_status;index:idx_agency_source_user_status_seq,priority:2;index:idx_agency_source_status_created,priority:1"`
 	SkipReason        string `gorm:"type:text"`
 	Payload           string `gorm:"type:text;not null"`
-	CreatedAtMS       int64  `gorm:"not null"`
+	CreatedAtMS       int64  `gorm:"not null;index:idx_agency_source_status_created,priority:2"`
 }
 
 func (AgencySourceEvent) TableName() string { return AgencyTablePrefix + "source_events" }

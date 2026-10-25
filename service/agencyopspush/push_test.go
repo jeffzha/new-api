@@ -1,12 +1,16 @@
 package agencyopspush
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +25,128 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+// Compare local transaction latency with/without event capture. This runs only
+// against explicit disposable test databases; no sender or remote request runs.
+func BenchmarkDistributorCapture(b *testing.B) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		b.Run(dialect, func(b *testing.B) {
+			var driver gorm.Dialector
+			switch dialect {
+			case "sqlite":
+				driver = sqlite.Open(filepath.Join(b.TempDir(), "capture.sqlite3"))
+			case "mysql":
+				dsn := os.Getenv("AGENCY_HUB_TEST_MYSQL_DSN")
+				if dsn == "" || os.Getenv("AGENCY_HUB_RUN_EXTERNAL_DB_TESTS") != "1" {
+					b.Skip("isolated MySQL is not configured")
+				}
+				driver = mysql.Open(dsn)
+			case "postgres":
+				dsn := os.Getenv("AGENCY_HUB_TEST_POSTGRES_DSN")
+				if dsn == "" || os.Getenv("AGENCY_HUB_RUN_EXTERNAL_DB_TESTS") != "1" {
+					b.Skip("isolated PostgreSQL is not configured")
+				}
+				driver = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+			}
+			db, err := gorm.Open(driver, &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+			require.NoError(b, err)
+			pool, err := db.DB()
+			require.NoError(b, err)
+			b.Cleanup(func() { _ = pool.Close() })
+			pool.SetMaxOpenConns(1)
+			if dialect == "sqlite" {
+				require.NoError(b, db.Exec("PRAGMA journal_mode=WAL").Error)
+			}
+			for _, enabled := range []string{"false", "true"} {
+				b.Run("events_"+enabled, func(b *testing.B) {
+					b.StopTimer()
+					b.Setenv("OPS_DISTRIBUTOR_EVENTS_ENABLED", "false")
+					tables := []any{&model.AgencyUsageFact{}, &model.AgencyFundingLedger{}, &model.AgencyBillingJournal{}, &model.AgencyOpsEvent{}, &model.AgencyOpsObjectRevision{}}
+					require.NoError(b, db.Migrator().DropTable(tables...))
+					require.NoError(b, db.AutoMigrate(tables...))
+					// Warm the actual capture schemas, connection and transaction path.
+					write := func(index int) {
+						key := fmt.Sprintf("capture-%d", index)
+						agency := int64(7)
+						require.NoError(b, db.Transaction(func(tx *gorm.DB) error {
+							if err := tx.Create(&model.AgencyUsageFact{EventID: key, UserID: 301, AgencyID: &agency, ComponentID: "default", ModelKey: "model", OriginModelName: "gpt-4o", ChargedQuota: 100}).Error; err != nil {
+								return err
+							}
+							if err := tx.Create(&model.AgencyFundingLedger{OperationID: key, UserID: 301, MoneySeq: int64(index), SourceKind: "consume", PaidDelta: -100, PaidAfter: 1000, CurrencyCode: "CNY"}).Error; err != nil {
+								return err
+							}
+							return tx.Create(&model.AgencyBillingJournal{ChargeID: key, UserID: 301, Status: "settled", BusinessStatus: "succeeded", PricingSnapshot: "{}", BillingBasis: "{}", ChargedTotalQuota: 100, CurrencyCode: "CNY", Revision: 1, Version: 1}).Error
+						}))
+					}
+					b.Setenv("OPS_DISTRIBUTOR_EVENTS_ENABLED", enabled)
+					for index := range 10 {
+						write(-index - 1)
+					}
+					samples := make([]time.Duration, b.N)
+					b.ResetTimer()
+					b.StartTimer()
+					for index := range b.N {
+						started := time.Now()
+						write(index)
+						samples[index] = time.Since(started)
+					}
+					b.StopTimer()
+					slices.Sort(samples)
+					b.ReportMetric(float64(samples[(len(samples)*95+99)/100-1].Nanoseconds())/1e6, "p95-ms")
+					var events int64
+					require.NoError(b, db.Model(&model.AgencyOpsEvent{}).Count(&events).Error)
+					expected := int64(0)
+					if enabled == "true" {
+						expected = int64((b.N + 10) * 3)
+					}
+					require.Equal(b, expected, events)
+				})
+			}
+		})
+	}
+}
+
+func TestBridgeCommitWakesPrivateSender(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("production transport is a Linux container Unix datagram")
+	}
+	directory, err := os.MkdirTemp("", "ops-wake-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	path := filepath.Join(directory, "private", "wake.sock")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	require.NoError(t, listenForCommits(ctx, path))
+	require.Error(t, listenForCommits(ctx, path), "a live listener must not be replaced")
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	for len(model.AgencyOpsCommitted) > 0 {
+		<-model.AgencyOpsCommitted
+	}
+	t.Setenv("OPS_DISTRIBUTOR_EVENTS_ENABLED", "true")
+	t.Setenv("OPS_DISTRIBUTOR_WAKE_SOCKET", path)
+	NotifyConfiguredCommit()
+	select {
+	case <-model.AgencyOpsCommitted:
+	case <-time.After(time.Second):
+		t.Fatal("committed bridge change did not wake sender")
+	}
+	t.Setenv("OPS_DISTRIBUTOR_EVENTS_ENABLED", "false")
+	NotifyConfiguredCommit()
+	assert.Empty(t, model.AgencyOpsCommitted)
+	assert.False(t, notifyCommit(filepath.Join(directory, "missing.sock")), "lost hints are recoverable, not command failures")
+	file := filepath.Join(directory, "private", "ordinary-file")
+	require.NoError(t, os.WriteFile(file, []byte("keep"), 0600))
+	assert.Error(t, listenForCommits(ctx, file))
+	content, err := os.ReadFile(file)
+	require.NoError(t, err)
+	assert.Equal(t, "keep", string(content))
+	public := filepath.Join(directory, "public")
+	require.NoError(t, os.Mkdir(public, 0755))
+	require.NoError(t, os.Chmod(public, 0755))
+	assert.Error(t, listenForCommits(ctx, filepath.Join(public, "wake.sock")))
+}
 
 func TestDistributorEventsAcrossDatabases(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {

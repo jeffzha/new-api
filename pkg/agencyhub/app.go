@@ -408,10 +408,18 @@ func (a *App) agencyBacklogStatus(ctx context.Context) (gin.H, error) {
 		commissionJobs[status] = count
 	}
 	var lastProjected int64
-	if err := a.db.WithContext(ctx).Model(&model.AgencySourceEvent{}).
-		Where("processing_status IN ?", []string{"done", "facts_done", "skipped"}).
-		Select("COALESCE(MAX(created_at_ms), 0)").Scan(&lastProjected).Error; err != nil {
-		return nil, err
+	// One index-backed newest row per status avoids aggregating the full
+	// source history on every readiness probe, including out-of-order times.
+	for _, status := range []string{"done", "facts_done", "skipped"} {
+		var timestamps []int64
+		if err := a.db.WithContext(ctx).Model(&model.AgencySourceEvent{}).
+			Where("processing_status = ?", status).Order("created_at_ms DESC").Limit(1).
+			Pluck("created_at_ms", &timestamps).Error; err != nil {
+			return nil, err
+		}
+		if len(timestamps) > 0 {
+			lastProjected = max(lastProjected, timestamps[0])
+		}
 	}
 	return gin.H{
 		"deliveries":                    deliveries,

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import {
   CircleAlert,
   Gauge,
@@ -115,6 +115,10 @@ function normalizeOpsSnapshot(snapshot: OpsSnapshot): OpsSnapshot {
     average_qps: 0,
     average_tps: 0,
     average_switches: 0,
+    success_rate: 0,
+    failure_rate: 0,
+    average_rpm: 0,
+    average_tpm: 0,
     ...numericRecord(value.overview, [
       'request_count',
       'success_count',
@@ -133,6 +137,10 @@ function normalizeOpsSnapshot(snapshot: OpsSnapshot): OpsSnapshot {
       'average_qps',
       'average_tps',
       'average_switches',
+      'success_rate',
+      'failure_rate',
+      'average_rpm',
+      'average_tpm',
     ]),
   } as OpsSnapshot['overview']
   const realtime = {
@@ -283,6 +291,8 @@ function normalizeOpsSnapshot(snapshot: OpsSnapshot): OpsSnapshot {
       groups: arrayOrEmpty(options.groups),
       endpoint_types: arrayOrEmpty(options.endpoint_types),
       nodes: arrayOrEmpty(options.nodes),
+      users: arrayOrEmpty(options.users),
+      tokens: arrayOrEmpty(options.tokens),
     },
     latency,
   } as OpsSnapshot
@@ -308,6 +318,8 @@ const LOADING_METRIC_IDS = [
 type WindowKey = keyof typeof WINDOW_SECONDS
 
 type FilterState = {
+  userId: number
+  tokenId: number
   model: string
   group: string
   endpoint: string
@@ -316,6 +328,8 @@ type FilterState = {
 }
 
 const emptyFilters: FilterState = {
+  userId: 0,
+  tokenId: 0,
   model: '',
   group: '',
   endpoint: '',
@@ -339,6 +353,8 @@ export function OperationsDashboard() {
         channel_id: filters.channelId || undefined,
         endpoint_type: filters.endpoint || undefined,
         node_name: filters.node || undefined,
+        user_id: filters.userId || undefined,
+        token_id: filters.tokenId || undefined,
       })
       if (!response.success || !response.data) {
         throw new Error(response.message || t('Could not load operations data'))
@@ -346,6 +362,7 @@ export function OperationsDashboard() {
       return normalizeOpsSnapshot(response.data)
     },
     refetchInterval: 30 * 1000,
+    placeholderData: keepPreviousData,
     staleTime: 10 * 1000,
     retry: false,
   })
@@ -387,12 +404,17 @@ export function OperationsDashboard() {
             ? snapshotQuery.error.message
             : t('Please try again later')}
         </AlertDescription>
+        <Button variant='outline' onClick={() => setFilters(emptyFilters)}>
+          {t('Clear filters')}
+        </Button>
       </Alert>
     )
   }
 
   const snapshot = snapshotQuery.data
   const channels = snapshot.concurrency.channels
+  const userOptions = snapshot.options.users ?? []
+  const tokenOptions = snapshot.options.tokens ?? []
 
   return (
     <Card>
@@ -445,9 +467,82 @@ export function OperationsDashboard() {
           </div>
         </div>
       </CardHeader>
-      <CardContent className='flex flex-col gap-4'>
+      <CardContent
+        className='flex min-w-0 flex-col gap-4'
+        aria-busy={snapshotQuery.isFetching}
+      >
+        {snapshotQuery.isError && (
+          <Alert variant='destructive'>
+            <AlertDescription>{snapshotQuery.error.message}</AlertDescription>
+          </Alert>
+        )}
+        {snapshotQuery.isPlaceholderData && (
+          <Alert role='status'>
+            <AlertDescription>
+              {t('Loading results for the selected filters...')}
+            </AlertDescription>
+          </Alert>
+        )}
+        {snapshot.raw_details_complete === false && (
+          <Alert>
+            <AlertDescription>
+              {t(
+                'Detailed performance and task results are limited to retained raw telemetry.'
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
         <div className='flex flex-wrap gap-2'>
           <NativeSelect
+            size='sm'
+            aria-label={t('User')}
+            value={filters.userId}
+            onChange={(event) =>
+              setFilters({
+                ...filters,
+                userId: Number(event.target.value),
+                tokenId: 0,
+              })
+            }
+          >
+            <NativeSelectOption value={0}>{t('All users')}</NativeSelectOption>
+            {filters.userId > 0 &&
+              !userOptions.some((user) => user.id === filters.userId) && (
+                <NativeSelectOption value={filters.userId}>
+                  #{filters.userId}
+                </NativeSelectOption>
+              )}
+            {userOptions.map((user) => (
+              <NativeSelectOption key={user.id} value={user.id}>
+                {user.name} (#{user.id})
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <NativeSelect
+            size='sm'
+            aria-label={t('API Key')}
+            value={filters.tokenId}
+            onChange={(event) =>
+              setFilters({ ...filters, tokenId: Number(event.target.value) })
+            }
+          >
+            <NativeSelectOption value={0}>
+              {t('All API Keys')}
+            </NativeSelectOption>
+            {filters.tokenId > 0 &&
+              !tokenOptions.some((token) => token.id === filters.tokenId) && (
+                <NativeSelectOption value={filters.tokenId}>
+                  #{filters.tokenId}
+                </NativeSelectOption>
+              )}
+            {tokenOptions.map((token) => (
+              <NativeSelectOption key={token.id} value={token.id}>
+                {token.name} (#{token.id})
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <NativeSelect
+            aria-label={t('Model')}
             size='sm'
             value={filters.model}
             onChange={(event) =>
@@ -455,7 +550,11 @@ export function OperationsDashboard() {
             }
           >
             <NativeSelectOption value=''>{t('All models')}</NativeSelectOption>
-            {snapshot.options.models.map((model) => (
+            {[
+              ...new Set(
+                [...snapshot.options.models, filters.model].filter(Boolean)
+              ),
+            ].map((model) => (
               <NativeSelectOption key={model} value={model}>
                 {model}
               </NativeSelectOption>
@@ -464,12 +563,17 @@ export function OperationsDashboard() {
           <NativeSelect
             size='sm'
             value={filters.group}
+            aria-label={t('Group')}
             onChange={(event) =>
               setFilters({ ...filters, group: event.target.value })
             }
           >
             <NativeSelectOption value=''>{t('All groups')}</NativeSelectOption>
-            {snapshot.options.groups.map((group) => (
+            {[
+              ...new Set(
+                [...snapshot.options.groups, filters.group].filter(Boolean)
+              ),
+            ].map((group) => (
               <NativeSelectOption key={group} value={group}>
                 {group}
               </NativeSelectOption>
@@ -478,6 +582,7 @@ export function OperationsDashboard() {
           <NativeSelect
             size='sm'
             value={filters.channelId}
+            aria-label={t('Channel')}
             onChange={(event) =>
               setFilters({ ...filters, channelId: Number(event.target.value) })
             }
@@ -485,6 +590,14 @@ export function OperationsDashboard() {
             <NativeSelectOption value={0}>
               {t('All channels')}
             </NativeSelectOption>
+            {filters.channelId > 0 &&
+              !channels.some(
+                (channel) => channel.channel_id === filters.channelId
+              ) && (
+                <NativeSelectOption value={filters.channelId}>
+                  #{filters.channelId}
+                </NativeSelectOption>
+              )}
             {channels.map((channel) => (
               <NativeSelectOption
                 key={channel.channel_id}
@@ -497,6 +610,7 @@ export function OperationsDashboard() {
           <NativeSelect
             size='sm'
             value={filters.endpoint}
+            aria-label={t('Endpoint')}
             onChange={(event) =>
               setFilters({ ...filters, endpoint: event.target.value })
             }
@@ -504,7 +618,13 @@ export function OperationsDashboard() {
             <NativeSelectOption value=''>
               {t('All endpoints')}
             </NativeSelectOption>
-            {snapshot.options.endpoint_types.map((endpoint) => (
+            {[
+              ...new Set(
+                [...snapshot.options.endpoint_types, filters.endpoint].filter(
+                  Boolean
+                )
+              ),
+            ].map((endpoint) => (
               <NativeSelectOption key={endpoint} value={endpoint}>
                 {endpoint}
               </NativeSelectOption>
@@ -513,12 +633,17 @@ export function OperationsDashboard() {
           <NativeSelect
             size='sm'
             value={filters.node}
+            aria-label={t('Node')}
             onChange={(event) =>
               setFilters({ ...filters, node: event.target.value })
             }
           >
             <NativeSelectOption value=''>{t('All nodes')}</NativeSelectOption>
-            {snapshot.options.nodes.map((node) => (
+            {[
+              ...new Set(
+                [...snapshot.options.nodes, filters.node].filter(Boolean)
+              ),
+            ].map((node) => (
               <NativeSelectOption key={node} value={node}>
                 {node}
               </NativeSelectOption>
@@ -535,46 +660,58 @@ export function OperationsDashboard() {
           )}
         </div>
 
-        <Tabs defaultValue='overview' className='min-w-0 gap-4'>
-          <TabsList className='max-w-full overflow-x-auto'>
-            <TabsTrigger value='overview' icon={<LayoutDashboard />}>
-              {t('Overview')}
-            </TabsTrigger>
-            <TabsTrigger value='infrastructure' icon={<Server />}>
-              {t('Infrastructure')}
-            </TabsTrigger>
-            <TabsTrigger value='concurrency' icon={<Gauge />}>
-              {t('Concurrency')}
-            </TabsTrigger>
-            <TabsTrigger value='tasks' icon={<ListTodo />}>
-              {t('Tasks and jobs')}
-            </TabsTrigger>
-            <TabsTrigger value='errors' icon={<CircleAlert />}>
-              {t('Errors')}
-            </TabsTrigger>
-            <TabsTrigger value='settings' icon={<Settings2 />}>
-              {t('Settings')}
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value='overview'>
-            <OverviewPanel snapshot={snapshot} settings={settingsQuery.data} />
-          </TabsContent>
-          <TabsContent value='infrastructure'>
-            <InfrastructurePanel snapshot={snapshot} />
-          </TabsContent>
-          <TabsContent value='concurrency'>
-            <ConcurrencyPanel snapshot={snapshot} />
-          </TabsContent>
-          <TabsContent value='tasks'>
-            <TaskPanel snapshot={snapshot} settings={settingsQuery.data} />
-          </TabsContent>
-          <TabsContent value='errors'>
-            <ErrorsPanel snapshot={snapshot} settings={settingsQuery.data} />
-          </TabsContent>
-          <TabsContent value='settings'>
-            <SettingsPanel channels={channels} />
-          </TabsContent>
-        </Tabs>
+        {!snapshotQuery.isPlaceholderData && !snapshotQuery.isError && (
+          <Tabs defaultValue='overview' className='min-w-0 gap-4'>
+            <TabsList className='max-w-full overflow-x-auto'>
+              <TabsTrigger value='overview' icon={<LayoutDashboard />}>
+                {t('Overview')}
+              </TabsTrigger>
+              <TabsTrigger value='infrastructure' icon={<Server />}>
+                {t('Infrastructure')}
+              </TabsTrigger>
+              <TabsTrigger value='concurrency' icon={<Gauge />}>
+                {t('Concurrency')}
+              </TabsTrigger>
+              <TabsTrigger value='tasks' icon={<ListTodo />}>
+                {t('Tasks and jobs')}
+              </TabsTrigger>
+              <TabsTrigger value='errors' icon={<CircleAlert />}>
+                {t('Errors')}
+              </TabsTrigger>
+              <TabsTrigger value='settings' icon={<Settings2 />}>
+                {t('Settings')}
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value='overview'>
+              <OverviewPanel
+                snapshot={snapshot}
+                settings={settingsQuery.data}
+              />
+            </TabsContent>
+            <TabsContent value='infrastructure'>
+              <Badge variant='outline'>
+                {t('Node resources · not filtered by user or API Key')}
+              </Badge>
+              <InfrastructurePanel snapshot={snapshot} />
+            </TabsContent>
+            <TabsContent value='concurrency'>
+              <Badge variant='outline'>{t('Live global concurrency')}</Badge>
+              <ConcurrencyPanel snapshot={snapshot} />
+            </TabsContent>
+            <TabsContent value='tasks'>
+              <Badge variant='outline'>
+                {t('Filtered submission cohort · global background jobs')}
+              </Badge>
+              <TaskPanel snapshot={snapshot} settings={settingsQuery.data} />
+            </TabsContent>
+            <TabsContent value='errors'>
+              <ErrorsPanel snapshot={snapshot} settings={settingsQuery.data} />
+            </TabsContent>
+            <TabsContent value='settings'>
+              <SettingsPanel channels={channels} />
+            </TabsContent>
+          </Tabs>
+        )}
       </CardContent>
     </Card>
   )

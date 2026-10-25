@@ -32,15 +32,20 @@ export function ModelConnections(props: { model: Model }) {
     <div className='min-h-0 flex-1 space-y-6 overflow-auto p-4'>
       <p className='text-muted-foreground text-sm'>
         {t(
-          'Channel availability and group access are derived from enabled channels. Importing metadata does not create a callable channel.'
+          'Configured channels include disabled channels. Only enabled channels provide model availability and group access.'
         )}
       </p>
       <ModelSquareStatus model={props.model} detail />
       <section className='space-y-3'>
         <h3 className='font-medium'>{t('Bound Channels')}</h3>
-        {props.model.bound_channels?.length ? (
+        {(props.model.channel_connections ?? props.model.bound_channels)
+          ?.length ? (
           <StaticDataTable
-            data={props.model.bound_channels}
+            data={
+              props.model.channel_connections ??
+              props.model.bound_channels ??
+              []
+            }
             columns={[
               {
                 id: 'name',
@@ -51,6 +56,55 @@ export function ModelConnections(props: { model: Model }) {
                 id: 'type',
                 header: t('Type'),
                 cell: (channel) => channel.type,
+              },
+              {
+                id: 'base_url',
+                header: t('Upstream URL'),
+                cell: (channel) => (
+                  <span className='block max-w-80 font-mono text-xs break-all'>
+                    {'base_url' in channel ? String(channel.base_url) : '-'}
+                  </span>
+                ),
+              },
+              {
+                id: 'masked_key',
+                header: t('API Key (masked)'),
+                cell: (channel) => (
+                  <span className='font-mono text-xs'>
+                    {'masked_key' in channel
+                      ? String(channel.masked_key) || '-'
+                      : '-'}
+                  </span>
+                ),
+              },
+              {
+                id: 'status',
+                header: t('Status'),
+                cell: (channel) => {
+                  if (!('status' in channel)) {
+                    return '-'
+                  }
+                  if (channel.status === 1) {
+                    return (
+                      <StatusBadge
+                        variant='success'
+                        label={t('Enabled')}
+                        copyable={false}
+                      />
+                    )
+                  }
+                  return (
+                    <StatusBadge
+                      variant='danger'
+                      label={
+                        channel.status === 3
+                          ? t('Automatically disabled')
+                          : t('Disabled')
+                      }
+                      copyable={false}
+                    />
+                  )
+                },
               },
             ]}
           />

@@ -1,8 +1,12 @@
 package model
 
 import (
+	"context"
+	"fmt"
+	"strings"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -248,6 +252,7 @@ func UpsertOpsSystemMetric(metric *OpsSystemMetric) error {
 }
 
 type OpsMetricFilter struct {
+	Context      context.Context
 	StartTs      int64
 	EndTs        int64
 	ModelName    string
@@ -255,9 +260,86 @@ type OpsMetricFilter struct {
 	ChannelID    int
 	EndpointType string
 	NodeName     string
+	UserID       int
+	TokenID      int
+}
+
+type OpsIdentityOption struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+func ListOpsIdentityOptions(filter OpsMetricFilter) ([]OpsIdentityOption, []OpsIdentityOption, error) {
+	identityFilter := filter
+	identityFilter.UserID, identityFilter.TokenID = 0, 0
+	users := []OpsIdentityOption{}
+	userIDs := applyOpsEventFilter(DB.Model(&OpsRequestEvent{}), identityFilter).Select("user_id").Where("user_id > 0")
+	if err := DB.Model(&User{}).Select("id, username AS name").Where("id IN (?)", userIDs).Order("id asc").Scan(&users).Error; err != nil {
+		return nil, nil, err
+	}
+	identityFilter.UserID = filter.UserID
+	tokens := []OpsIdentityOption{}
+	tokenIDs := applyOpsEventFilter(DB.Model(&OpsRequestEvent{}), identityFilter).Select("token_id").Where("token_id > 0")
+	err := DB.Model(&Token{}).Select("id, name").Where("id IN (?)", tokenIDs).Order("id asc").Scan(&tokens).Error
+	return users, tokens, err
+}
+
+func ListOpsFilterDimensions(filter OpsMetricFilter) ([]OpsMinuteMetric, error) {
+	var rows []OpsMinuteMetric
+	err := applyOpsEventFilter(DB.Model(&OpsRequestEvent{}), filter).
+		Distinct("model_name, " + commonGroupCol + ", endpoint_type, node_name").Scan(&rows).Error
+	return rows, err
+}
+
+type OpsBillingSummary struct {
+	Available      bool  `json:"available"`
+	ConsumeEntries int64 `json:"consume_entries"`
+	RefundEntries  int64 `json:"refund_entries"`
+	ChargedQuota   int64 `json:"charged_quota"`
+	RefundedQuota  int64 `json:"refunded_quota"`
+	NetQuota       int64 `json:"net_quota"`
+}
+
+// Financial entries use posting time, not submission time. Settlement adjustments
+// and refunds are money movements, never additional API requests or task results.
+func QueryOpsBillingSummary(filter OpsMetricFilter) (OpsBillingSummary, error) {
+	var result OpsBillingSummary
+	if LOG_DB == nil || filter.EndpointType != "" || filter.NodeName != "" {
+		return result, nil // These dimensions are not persisted in the separate log database.
+	}
+	query := LOG_DB.Model(&Log{}).Where("created_at >= ? AND created_at < ? AND type IN ?", filter.StartTs, filter.EndTs, []int{LogTypeConsume, LogTypeRefund})
+	if filter.Context != nil {
+		query = query.WithContext(filter.Context)
+	}
+	if filter.UserID > 0 {
+		query = query.Where("user_id = ?", filter.UserID)
+	}
+	if filter.TokenID > 0 {
+		query = query.Where("token_id = ?", filter.TokenID)
+	}
+	if filter.ChannelID > 0 {
+		query = query.Where("channel_id = ?", filter.ChannelID)
+	}
+	if filter.ModelName != "" {
+		query = query.Where("model_name = ?", filter.ModelName)
+	}
+	if filter.Group != "" {
+		query = query.Where(clause.Eq{Column: clause.Column{Name: "group"}, Value: filter.Group})
+	}
+	err := query.Select(`COALESCE(SUM(CASE WHEN type = ? THEN 1 ELSE 0 END), 0) AS consume_entries,
+	COALESCE(SUM(CASE WHEN type = ? THEN 1 ELSE 0 END), 0) AS refund_entries,
+	COALESCE(SUM(CASE WHEN type = ? THEN quota ELSE 0 END), 0) AS charged_quota,
+	COALESCE(SUM(CASE WHEN type = ? THEN quota ELSE 0 END), 0) AS refunded_quota`,
+		LogTypeConsume, LogTypeRefund, LogTypeConsume, LogTypeRefund).Scan(&result).Error
+	result.Available = err == nil
+	result.NetQuota = result.ChargedQuota - result.RefundedQuota
+	return result, err
 }
 
 func applyOpsMetricFilter(query *gorm.DB, filter OpsMetricFilter) *gorm.DB {
+	if filter.Context != nil {
+		query = query.WithContext(filter.Context)
+	}
 	query = query.Where("bucket_ts >= ? AND bucket_ts < ?", filter.StartTs, filter.EndTs)
 	if filter.ModelName != "" {
 		query = query.Where("model_name = ?", filter.ModelName)
@@ -278,6 +360,9 @@ func applyOpsMetricFilter(query *gorm.DB, filter OpsMetricFilter) *gorm.DB {
 }
 
 func QueryOpsMinuteMetrics(filter OpsMetricFilter) ([]OpsMinuteMetric, error) {
+	if filter.UserID > 0 || filter.TokenID > 0 {
+		return QueryOpsRequestAggregates(filter)
+	}
 	var rows []OpsMinuteMetric
 	query := applyOpsMetricFilter(DB.Model(&OpsMinuteMetric{}), filter)
 	err := query.Order("bucket_ts asc").Find(&rows).Error
@@ -285,7 +370,16 @@ func QueryOpsMinuteMetrics(filter OpsMetricFilter) ([]OpsMinuteMetric, error) {
 }
 
 func applyOpsEventFilter(query *gorm.DB, filter OpsMetricFilter) *gorm.DB {
+	if filter.Context != nil {
+		query = query.WithContext(filter.Context)
+	}
 	query = query.Where("occurred_at_ms >= ? AND occurred_at_ms < ?", filter.StartTs*1000, filter.EndTs*1000)
+	if filter.UserID > 0 {
+		query = query.Where("user_id = ?", filter.UserID)
+	}
+	if filter.TokenID > 0 {
+		query = query.Where("token_id = ?", filter.TokenID)
+	}
 	if filter.ModelName != "" {
 		query = query.Where("model_name = ?", filter.ModelName)
 	}
@@ -312,7 +406,29 @@ func QueryOpsRequestAggregates(filter OpsMetricFilter) ([]OpsMinuteMetric, error
 	query := applyOpsEventFilter(DB.Model(&OpsRequestEvent{}), filter).
 		Where("endpoint_type <> ?", OpsEndpointTypeUnmatchedRoute)
 	statusExpression := "CASE WHEN upstream_status_code > 0 THEN upstream_status_code ELSE status_code END"
-	err := query.Select(statusExpression+` AS status_code, error_owner, business_limited,
+	bucketExpression := "CAST(FLOOR(occurred_at_ms / 60000.0) * 60 AS BIGINT)"
+	if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
+		bucketExpression = "CAST(FLOOR(occurred_at_ms / 60000.0) * 60 AS SIGNED)"
+	}
+	dimensions := bucketExpression + ", node_name, model_name, " + commonGroupCol + ", channel_id, endpoint_type, " + statusExpression + ", error_owner, business_limited"
+	var histograms strings.Builder
+	for _, subject := range []struct{ field, prefix string }{{"duration_ms", "latency"}, {"ttft_ms", "ttft"}} {
+		lower := int64(0)
+		for _, upper := range []int64{100, 200, 500, 1000, 2000, 0} {
+			condition := fmt.Sprintf("%s >= %d", subject.field, lower)
+			alias := subject.prefix + "_gte_2000"
+			if upper > 0 {
+				condition += fmt.Sprintf(" AND %s < %d", subject.field, upper)
+				alias = fmt.Sprintf("%s_lt_%d", subject.prefix, upper)
+			}
+			if subject.field == "ttft_ms" {
+				condition += " AND has_ttft = " + commonTrueVal
+			}
+			fmt.Fprintf(&histograms, ", COALESCE(SUM(CASE WHEN success = %s AND %s THEN 1 ELSE 0 END), 0) AS %s", commonTrueVal, condition, alias)
+			lower = upper
+		}
+	}
+	err := query.Select(bucketExpression+" AS bucket_ts, node_name, model_name, "+commonGroupCol+", channel_id, endpoint_type, "+statusExpression+` AS status_code, error_owner, business_limited,
 		COUNT(*) AS request_count,
 		COALESCE(SUM(CASE WHEN success = ? THEN 1 ELSE 0 END), 0) AS success_count,
 		COALESCE(SUM(CASE WHEN success = ? THEN input_tokens ELSE 0 END), 0) AS input_tokens,
@@ -320,8 +436,13 @@ func QueryOpsRequestAggregates(filter OpsMetricFilter) ([]OpsMinuteMetric, error
 		COALESCE(SUM(CASE WHEN success = ? THEN cache_read_tokens ELSE 0 END), 0) AS cache_read_tokens,
 		COALESCE(SUM(CASE WHEN success = ? THEN cache_creation_tokens ELSE 0 END), 0) AS cache_creation_tokens,
 		COALESCE(SUM(retry_count), 0) AS retry_count,
-		COALESCE(SUM(switch_count), 0) AS switch_count`, true, true, true, true, true).
-		Group(statusExpression + ", error_owner, business_limited").
+		COALESCE(SUM(switch_count), 0) AS switch_count,
+		COALESCE(SUM(CASE WHEN success = ? THEN duration_ms ELSE 0 END), 0) AS total_duration_ms,
+		COALESCE(MAX(CASE WHEN success = ? THEN duration_ms ELSE 0 END), 0) AS max_duration_ms,
+		COALESCE(SUM(CASE WHEN success = ? AND has_ttft = ? THEN ttft_ms ELSE 0 END), 0) AS ttft_sum_ms,
+		COALESCE(SUM(CASE WHEN success = ? AND has_ttft = ? THEN 1 ELSE 0 END), 0) AS ttft_count,
+		COALESCE(MAX(CASE WHEN success = ? AND has_ttft = ? THEN ttft_ms ELSE 0 END), 0) AS max_ttft_ms`+histograms.String(), true, true, true, true, true, true, true, true, true, true, true, true, true).
+		Group(dimensions).Order("bucket_ts asc").
 		Scan(&rows).Error
 	return rows, err
 }
@@ -503,13 +624,52 @@ type OpsTaskLifecycleRow struct {
 	FinishTime int64      `json:"finish_time"`
 }
 
-func ListOpsTaskLifecycleRows(startTs, endTs int64) ([]OpsTaskLifecycleRow, error) {
+func ListOpsTaskLifecycleRows(startTs, endTs int64, filters ...OpsMetricFilter) ([]OpsTaskLifecycleRow, error) {
 	var rows []OpsTaskLifecycleRow
-	err := DB.Model(&Task{}).
+	query := DB.Model(&Task{})
+	if len(filters) > 0 {
+		if filters[0].Context != nil {
+			query = query.WithContext(filters[0].Context)
+		}
+		// Match the submission cohort, never polling requests or completion time.
+		ids := applyOpsEventFilter(DB.Model(&OpsRequestEvent{}), filters[0]).
+			Select("task_id").Where("task_id <> ? AND success = ? AND endpoint_type IN ?", "", true, []string{"video_submit", "async_task"})
+		query = query.Where("task_id IN (?)", ids)
+	}
+	if len(filters) == 0 {
+		query = query.Where("created_at >= ? AND created_at < ?", startTs, endTs)
+	}
+	err := query.
 		Select("task_id, platform, status, created_at, submit_time, start_time, finish_time").
-		Where("created_at >= ? AND created_at < ?", startTs, endTs).
 		Order("created_at asc").Find(&rows).Error
-	return rows, err
+	if err != nil {
+		return nil, err
+	}
+	mjQuery := DB.Model(&Midjourney{}).Where("code IN ?", []int{1, 21, 22})
+	if len(filters) > 0 {
+		if filters[0].Context != nil {
+			mjQuery = mjQuery.WithContext(filters[0].Context)
+		}
+		ids := applyOpsEventFilter(DB.Model(&OpsRequestEvent{}), filters[0]).
+			Select("task_id").Where("task_id <> ? AND success = ? AND endpoint_type = ?", "", true, "async_task")
+		mjQuery = mjQuery.Where("mj_id IN (?)", ids)
+	} else {
+		mjQuery = mjQuery.Where("submit_time >= ? AND submit_time < ?", startTs*1000, endTs*1000)
+	}
+	var mjRows []Midjourney
+	err = mjQuery.Select("mj_id, status, submit_time, start_time, finish_time").Order("id desc").Find(&mjRows).Error
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(mjRows))
+	for _, task := range mjRows {
+		if task.MjId == "" || seen[task.MjId] {
+			continue
+		}
+		seen[task.MjId] = true
+		rows = append(rows, OpsTaskLifecycleRow{TaskID: task.MjId, Platform: "midjourney", Status: TaskStatus(task.Status), SubmitTime: task.SubmitTime, StartTime: task.StartTime, FinishTime: task.FinishTime})
+	}
+	return rows, nil
 }
 
 type OpsModelTokenStat struct {
@@ -523,8 +683,12 @@ type OpsModelTokenStat struct {
 }
 
 func QueryOpsModelTokenStats(startMs, endMs int64, modelPrefix string) ([]OpsModelTokenStat, error) {
-	query := DB.Model(&OpsRequestEvent{}).
-		Where("occurred_at_ms >= ? AND occurred_at_ms < ? AND success = ?", startMs, endMs, true)
+	return QueryFilteredOpsModelTokenStats(OpsMetricFilter{StartTs: startMs / 1000, EndTs: endMs / 1000}, modelPrefix)
+}
+
+func QueryFilteredOpsModelTokenStats(filter OpsMetricFilter, modelPrefix string) ([]OpsModelTokenStat, error) {
+	query := applyOpsEventFilter(DB.Model(&OpsRequestEvent{}), filter).
+		Where("success = ? AND output_tokens > 0 AND endpoint_type NOT IN ?", true, []string{"video_poll", "video_content", "async_poll", OpsEndpointTypeUnmatchedRoute})
 	if modelPrefix != "" {
 		query = query.Where("model_name LIKE ?", modelPrefix+"%")
 	}

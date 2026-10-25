@@ -40,6 +40,9 @@ type request struct {
 	ReviewBeforeMS   int64                                `json:"reviewBeforeMs"`
 	ReviewAtMS       int64                                `json:"reviewAtMs"`
 	Reviews          []model.AgencyOpsReview              `json:"reviews"`
+	Withdrawal       agencyhub.OpsWithdrawalCommand       `json:"withdrawal"`
+	IssueID          int64                                `json:"issueId"`
+	BeforeID         int64                                `json:"beforeId"`
 }
 
 func main() {
@@ -61,7 +64,7 @@ func run() error {
 	if err := common.DecodeJson(io.LimitReader(os.Stdin, 2<<20), &input); err != nil {
 		return err
 	}
-	review := input.Action == "events-review" || input.Action == "events-review-ack"
+	review := input.Action == "events-review" || input.Action == "events-review-ack" || input.Action == "withdrawal-create" || input.Action == "reconciliation-read"
 	many := input.Action == "read-many" || input.Action == "directory-read" || input.Action == "customers-read" || input.Action == "payout-read" || input.Action == "distributor-provision" || input.Action == "credential-apply" || review
 	if (input.AgencyID <= 0 && !many) || (!review && input.Action != "read" && input.Action != "read-many" && input.Action != "apply" && input.Action != "directory-read" && input.Action != "directory-apply" && input.Action != "customers-read" && input.Action != "customer-transfer" && input.Action != "payout-read" && input.Action != "payout-apply" && input.Action != "customer-provision" && input.Action != "distributor-provision" && input.Action != "credential-apply") || len(input.Customers) > 1000 || len(input.Children) > 1000 {
 		return fmt.Errorf("invalid bounded bridge request")
@@ -86,7 +89,15 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	var result any
-	if input.Action == "events-review" {
+	if input.Action == "withdrawal-create" {
+		result, err = agencyhub.ApplyOpsWithdrawal(model.DB.WithContext(ctx), input.Withdrawal, agencyhub.LoadConfig())
+	} else if input.Action == "reconciliation-read" {
+		err = model.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var e error
+			result, e = agencyhub.ReadOpsReconciliation(tx, input.RootUserID, input.IssueID, input.BeforeID)
+			return e
+		}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	} else if input.Action == "events-review" {
 		var events []model.AgencyOpsEvent
 		events, err = model.ReadAgencyOpsReview(model.DB.WithContext(ctx), input.ReviewBeforeMS)
 		items := make([]map[string]any, 0, len(events))
@@ -161,7 +172,7 @@ func run() error {
 	}
 	if input.Action == "apply" || input.Action == "directory-apply" || input.Action == "customer-transfer" ||
 		input.Action == "customer-provision" || input.Action == "distributor-provision" ||
-		input.Action == "payout-apply" || input.Action == "credential-apply" {
+		input.Action == "payout-apply" || input.Action == "credential-apply" || input.Action == "withdrawal-create" {
 		agencyopspush.NotifyConfiguredCommit()
 	}
 	encoded, err := common.Marshal(result)

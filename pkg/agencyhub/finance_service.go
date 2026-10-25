@@ -1454,38 +1454,15 @@ func (a *App) createWithdrawal(c *gin.Context) {
 		return
 	}
 	identity := currentIdentity(c)
-	now := time.Now().UnixMilli()
 	var withdrawal model.AgencyWithdrawal
 	err := model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		var account model.AgencyWithdrawalAccount
 		if model.AgencyLockForUpdate(tx).Where("id = ? AND agency_id = ? AND status = ?", accountID, agency.ID, "active").First(&account).Error != nil {
 			return errors.New("withdrawal account is invalid")
 		}
-		var balance model.AgencyCommissionBalance
-		if err := model.AgencyLockForUpdate(tx).Where("agency_id = ? AND currency_code = ?", agency.ID, currencyCode).First(&balance).Error; err != nil {
-			return err
-		}
-		_, withdrawable := commissionTaxAndWithdrawable(balance)
-		if withdrawable < amountMicros {
-			return errors.New("提现金额超过可提现佣金余额")
-		}
-		locked, err := checkedAdd(balance.LockedMicros, amountMicros)
-		if err != nil {
-			return err
-		}
-		if err := tx.Model(&balance).Updates(map[string]any{"available_micros": balance.AvailableMicros - amountMicros, "locked_micros": locked, "version": balance.Version + 1, "updated_at_ms": now}).Error; err != nil {
-			return err
-		}
-		no, err := randomToken(16)
-		if err != nil {
-			return err
-		}
-		hash := sha256.Sum256([]byte(account.Ciphertext))
-		withdrawal = model.AgencyWithdrawal{RequestNo: no, AgencyID: agency.ID, CurrencyCode: currencyCode, AmountMicros: amountMicros, Status: "submitted", Version: 1, AccountID: account.ID, AccountVersion: account.Version, AccountSnapshotHash: hex.EncodeToString(hash[:]), AccountSnapshot: account.Ciphertext, AccountSnapshotKeyID: account.KeyID, CreatedAtMS: now, UpdatedAtMS: now}
-		if err = tx.Create(&withdrawal).Error; err != nil {
-			return err
-		}
-		return tx.Create(&model.AgencyWithdrawalTransition{WithdrawalID: withdrawal.ID, OperationID: requestID(c), BeforeStatus: "", AfterStatus: "submitted", AmountDeltaMicros: -amountMicros, ActorType: identity.ActorType, ActorID: identity.ActorID, CreatedAtMS: now}).Error
+		var err error
+		withdrawal, err = submitWithdrawal(tx, agency.ID, currencyCode, amountMicros, account, identity, requestID(c))
+		return err
 	})
 	if err != nil {
 		respondError(c, http.StatusUnprocessableEntity, "withdrawal_failed", err.Error(), nil)

@@ -173,6 +173,75 @@ func runOpsPolicyCustomerSnapshotAndReplay(t *testing.T, app *App) {
 	runOpsCustomerProvision(t, app)
 	runOpsDistributorProvision(t, app)
 	runOpsCredentials(t, app)
+	runOpsFinanceCommands(t, app)
+}
+
+func runOpsFinanceCommands(t *testing.T, app *App) {
+	t.Helper()
+	t.Setenv("AGENCY_PAYOUT_KEY", strings.Repeat("12", 32))
+	t.Setenv("AGENCY_PAYOUT_KEY_FILE", "")
+	root := model.User{Username: "ops-finance-root", Password: "fixture-not-a-login", Role: common.RoleRootUser, Status: common.UserStatusEnabled}
+	require.NoError(t, app.db.Create(&root).Error)
+	agency, _, err := app.CreateAgency(1, "Finance bridge", "finance-bridge", agencycontract.Policy{DefaultSettlementBPS: 7500, DefaultSalesBPS: 10000, SalesCapBPS: 30000})
+	require.NoError(t, err)
+	snapshots, err := ReadOpsPayoutSnapshots(app.db, []int64{agency.ID})
+	require.NoError(t, err)
+	account, err := ApplyOpsPayout(app.db, agency.ID, OpsPayoutAccount{AccountType: "bank", AccountName: "Finance Fixture", AccountNo: "622200001234", BankName: "Fixture Bank"}, "active", snapshots[0].Fingerprint, "finance-payout-fixture")
+	require.NoError(t, err)
+	balance := model.AgencyCommissionBalance{AgencyID: agency.ID, CurrencyCode: "CNY", EarnedMicros: 100000000, AvailableMicros: 100000000, Version: 1}
+	require.NoError(t, app.db.Create(&balance).Error)
+	command := OpsWithdrawalCommand{RootID: int64(root.Id), AgencyID: agency.ID, AccountID: account.AccountID, AccountVersion: account.Version, AmountMicros: 10000000, Currency: "CNY", CommandID: "ops-finance-withdrawal"}
+	config := Config{WithdrawalsEnabled: true}
+	first, err := ApplyOpsWithdrawal(app.db, command, config)
+	require.NoError(t, err)
+	assert.Equal(t, "submitted", first["status"])
+	replay, err := ApplyOpsWithdrawal(app.db, command, config)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprint(first["id"]), fmt.Sprint(replay["id"]))
+	require.NoError(t, app.db.Where("agency_id = ? AND currency_code = ?", agency.ID, "CNY").First(&balance).Error)
+	assert.EqualValues(t, 10000000, balance.LockedMicros)
+	assert.EqualValues(t, 90000000, balance.AvailableMicros)
+	assert.EqualValues(t, 2, balance.Version)
+	var count int64
+	require.NoError(t, app.db.Model(&model.AgencyWithdrawal{}).Where("agency_id = ?", agency.ID).Count(&count).Error)
+	assert.EqualValues(t, 1, count, "replaying must never freeze twice")
+	for name, alter := range map[string]func(*OpsWithdrawalCommand){
+		"stale account":     func(c *OpsWithdrawalCommand) { c.AccountVersion++ },
+		"wrong account":     func(c *OpsWithdrawalCommand) { c.AccountID = 99999999 },
+		"invalid authority": func(c *OpsWithdrawalCommand) { c.RootID = 0 },
+		"insufficient":      func(c *OpsWithdrawalCommand) { c.AmountMicros = 100000000 },
+		"fractional fen":    func(c *OpsWithdrawalCommand) { c.AmountMicros = 10000001 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := command
+			candidate.CommandID += name
+			alter(&candidate)
+			_, err := ApplyOpsWithdrawal(app.db, candidate, config)
+			require.Error(t, err)
+		})
+	}
+	conflict := command
+	conflict.AmountMicros += 10000
+	_, err = ApplyOpsWithdrawal(app.db, conflict, config)
+	require.ErrorContains(t, err, "identity conflict")
+	_, err = ApplyOpsWithdrawal(app.db, command, Config{})
+	require.Error(t, err)
+	require.NoError(t, app.db.Model(&model.AgencyOpsWriterState{}).Where("id = ?", 1).Update("mode", model.AgencyWriterDraining).Error)
+	_, err = ApplyOpsWithdrawal(app.db, command, config)
+	require.ErrorContains(t, err, "writer inactive")
+	require.NoError(t, app.db.Model(&model.AgencyOpsWriterState{}).Where("id = ?", 1).Update("mode", model.AgencyWriterSourcePrimary).Error)
+	issue := model.AgencyReconciliationIssue{ObjectType: "commission_balance", ObjectID: fmt.Sprintf("%d:CNY", agency.ID), Status: "open", EvidenceHash: "prior", CreatedAtMS: time.Now().UnixMilli()}
+	require.NoError(t, app.db.Create(&issue).Error)
+	evidence, err := ReadOpsReconciliation(app.db, int64(root.Id), issue.ID, 0)
+	require.NoError(t, err)
+	assert.NotEmpty(t, evidence["verification"].(reconciliationVerification).EvidenceHash)
+	listing, err := ReadOpsReconciliation(app.db, int64(root.Id), 0, 0)
+	require.NoError(t, err)
+	assert.NotEmpty(t, listing["items"])
+	_, err = ReadOpsReconciliation(app.db, 0, 0, 0)
+	require.Error(t, err)
+	require.NoError(t, app.db.First(&issue, issue.ID).Error)
+	assert.Equal(t, "open", issue.Status, "reading evidence cannot close an issue")
 }
 
 func runOpsCredentials(t *testing.T, app *App) {

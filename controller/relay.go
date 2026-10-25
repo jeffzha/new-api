@@ -463,6 +463,7 @@ func RelayMidjourney(c *gin.Context) {
 		return
 	}
 
+	opsmonitor.ObserveRelay(c, relayInfo)
 	var mjErr *taskdto.MidjourneyResponse
 	switch relayInfo.RelayMode {
 	case relayconstant.RelayModeMidjourneyNotify:

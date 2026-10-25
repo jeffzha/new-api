@@ -42,6 +42,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { formatQuota } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { formatCompact, formatMilliseconds, formatPercent } from '../format'
@@ -243,6 +244,40 @@ export function OverviewPanel({
       )}
 
       <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-4'>
+        <MetricCard
+          metric='successAndFailure'
+          value={
+            overview.request_count
+              ? formatPercent(overview.success_rate ?? 0)
+              : '-'
+          }
+          description={`${t('Failure rate')}: ${formatPercent(overview.failure_rate ?? 0)}`}
+          tone='info'
+        />
+        <MetricCard
+          metric='rpmAndTpm'
+          value={`${(overview.average_rpm ?? 0).toFixed(2)} / ${(
+            overview.average_tpm ?? 0
+          ).toFixed(1)}`}
+          description={t('Selected time window and filters')}
+          tone='info'
+        />
+        <MetricCard
+          metric='netConsumption'
+          value={
+            snapshot.billing?.available
+              ? formatQuota(snapshot.billing.net_quota)
+              : '-'
+          }
+          description={
+            snapshot.billing?.available
+              ? `${t('Refunds')}: ${formatQuota(
+                  snapshot.billing.refunded_quota
+                )}`
+              : t('Not available for endpoint or node filters')
+          }
+          tone='info'
+        />
         <MetricCard
           metric='effectiveRequestSuccessRate'
           value={overview.request_count ? formatPercent(overview.sla, 3) : '-'}
@@ -513,9 +548,9 @@ export function OverviewPanel({
 
         <Card>
           <CardHeader>
-            <CardTitle>{t('OpenAI token request statistics')}</CardTitle>
+            <CardTitle>{t('Model performance')}</CardTitle>
             <CardDescription>
-              {t('Models whose names start with gpt, over the last 30 days')}
+              {t('Selected time window and filters')}
             </CardDescription>
           </CardHeader>
           <CardContent className='console-table-frame max-h-72 overflow-auto'>

@@ -1,23 +1,23 @@
 package opsmonitor
 
 import (
+	"context"
+	"errors"
 	"math"
 	"sort"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/ops_monitor_setting"
 )
 
-var modelStatsCache struct {
-	sync.Mutex
-	endMinute int64
-	rows      []ModelTokenStats
-}
-
-func BuildDashboardSnapshot(filter DashboardFilter) (DashboardSnapshot, error) {
+func BuildDashboardSnapshot(filter DashboardFilter, contexts ...context.Context) (DashboardSnapshot, error) {
+	parent := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		parent = contexts[0]
+	}
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+	defer cancel()
 	now := time.Now().Unix()
 	if filter.EndTs <= 0 {
 		filter.EndTs = now
@@ -29,11 +29,24 @@ func BuildDashboardSnapshot(filter DashboardFilter) (DashboardSnapshot, error) {
 		filter.StartTs = filter.EndTs - 31*24*3600
 	}
 	modelFilter := model.OpsMetricFilter{
+		Context: ctx,
 		StartTs: filter.StartTs, EndTs: filter.EndTs, ModelName: filter.ModelName,
 		Group: filter.Group, ChannelID: filter.ChannelID, EndpointType: filter.EndpointType,
 		NodeName: filter.NodeName,
+		UserID:   filter.UserID, TokenID: filter.TokenID,
 	}
-	rows, err := model.QueryOpsMinuteMetrics(modelFilter)
+	settings := ops_monitor_setting.Get()
+	rawAvailable := filter.StartTs >= now-int64(settings.RawRetentionDays)*24*3600
+	if !rawAvailable && (filter.UserID > 0 || filter.TokenID > 0) {
+		return DashboardSnapshot{}, errors.New("user and API Key filters require a time window within raw telemetry retention")
+	}
+	var rows []model.OpsMinuteMetric
+	var err error
+	if rawAvailable {
+		rows, err = model.QueryOpsRequestAggregates(modelFilter)
+	} else {
+		rows, err = model.QueryOpsMinuteMetrics(modelFilter)
+	}
 	if err != nil {
 		return DashboardSnapshot{}, err
 	}
@@ -45,7 +58,16 @@ func BuildDashboardSnapshot(filter DashboardFilter) (DashboardSnapshot, error) {
 	if err != nil {
 		return DashboardSnapshot{}, err
 	}
-	tasks, err := buildTaskLifecycle(filter.StartTs, filter.EndTs, rows)
+	detailFilter := modelFilter
+	detailFilter.StartTs = max(detailFilter.StartTs, now-int64(settings.RawRetentionDays)*24*3600)
+	taskMetrics := rows
+	if !rawAvailable {
+		taskMetrics, err = model.QueryOpsRequestAggregates(detailFilter)
+		if err != nil {
+			return DashboardSnapshot{}, err
+		}
+	}
+	tasks, err := buildTaskLifecycle(detailFilter.StartTs, filter.EndTs, taskMetrics, detailFilter)
 	if err != nil {
 		return DashboardSnapshot{}, err
 	}
@@ -57,20 +79,16 @@ func BuildDashboardSnapshot(filter DashboardFilter) (DashboardSnapshot, error) {
 	if err != nil {
 		return DashboardSnapshot{}, err
 	}
-	modelTokenStats, err := buildCachedModelTokenStats(filter.EndTs)
+	statRows, err := model.QueryFilteredOpsModelTokenStats(detailFilter, "")
 	if err != nil {
 		return DashboardSnapshot{}, err
 	}
-	settings := ops_monitor_setting.Get()
-	rawAvailable := filter.StartTs >= now-int64(settings.RawRetentionDays)*24*3600
-	overviewRows := rows
-	if rawAvailable {
-		overviewRows, err = model.QueryOpsRequestAggregates(modelFilter)
-		if err != nil {
-			return DashboardSnapshot{}, err
-		}
+	modelTokenStats := make([]ModelTokenStats, 0, len(statRows))
+	for _, row := range statRows {
+		modelTokenStats = append(modelTokenStats, ModelTokenStats{ModelName: row.ModelName, RequestCount: row.RequestCount, OutputTokens: row.OutputTokens,
+			AverageTokensPS: row.AverageTokensPS, AverageTTFTMs: int64(math.Round(row.AverageTTFTMs)), AverageDurationMs: int64(math.Round(row.AverageDurationMs)), TTFTSamples: row.TTFTSamples})
 	}
-	overview := buildOverview(overviewRows, filter.EndTs-filter.StartTs)
+	overview := buildOverview(rows, filter.EndTs-filter.StartTs)
 	latency := buildLatency(rows)
 	if rawAvailable {
 		samples, total, sampleErr := model.ListOpsLatencySamples(modelFilter, 50000)
@@ -95,23 +113,41 @@ func BuildDashboardSnapshot(filter DashboardFilter) (DashboardSnapshot, error) {
 		realtimeExact = &realtime
 	}
 	requestDepth, attemptDepth, droppedRequests, droppedAttempts := QueueStats()
+	optionFilter := detailFilter
+	optionFilter.ModelName, optionFilter.Group, optionFilter.EndpointType, optionFilter.NodeName, optionFilter.ChannelID = "", "", "", "", 0
+	optionRows, err := model.ListOpsFilterDimensions(optionFilter)
+	if err != nil {
+		return DashboardSnapshot{}, err
+	}
+	options := buildDashboardOptions(optionRows)
+	options.Users, options.Tokens, err = model.ListOpsIdentityOptions(optionFilter)
+	if err != nil {
+		return DashboardSnapshot{}, err
+	}
+	billing, err := model.QueryOpsBillingSummary(modelFilter)
+	if err != nil {
+		return DashboardSnapshot{}, err
+	}
 	snapshot := DashboardSnapshot{
-		Filter:          filter,
-		Overview:        overview,
-		Realtime:        buildRealtime(rows, filter.EndTs, realtimeExact),
-		ThroughputTrend: buildThroughputTrend(rows, filter.StartTs, filter.EndTs),
-		SwitchTrend:     buildSwitchTrend(rows, filter.StartTs, filter.EndTs),
-		ErrorTrend:      buildErrorTrend(rows, filter.StartTs, filter.EndTs),
-		Latency:         latency,
-		Errors:          buildErrorSummary(rows),
-		System:          buildSystemSummary(systemRows),
-		Jobs:            jobs,
-		Tasks:           tasks,
-		ModelTokenStats: modelTokenStats,
-		Concurrency:     concurrency,
-		RecentErrors:    recentErrors,
-		Telemetry:       TelemetryHealth{RequestQueueDepth: requestDepth, AttemptQueueDepth: attemptDepth, DroppedRequests: droppedRequests, DroppedAttempts: droppedAttempts},
-		Options:         buildDashboardOptions(rows),
+		RawDetailsComplete: rawAvailable,
+		RawDetailsStartTs:  detailFilter.StartTs,
+		Billing:            billing,
+		Filter:             filter,
+		Overview:           overview,
+		Realtime:           buildRealtime(rows, filter.EndTs, realtimeExact),
+		ThroughputTrend:    buildThroughputTrend(rows, filter.StartTs, filter.EndTs),
+		SwitchTrend:        buildSwitchTrend(rows, filter.StartTs, filter.EndTs),
+		ErrorTrend:         buildErrorTrend(rows, filter.StartTs, filter.EndTs),
+		Latency:            latency,
+		Errors:             buildErrorSummary(rows),
+		System:             buildSystemSummary(systemRows),
+		Jobs:               jobs,
+		Tasks:              tasks,
+		ModelTokenStats:    modelTokenStats,
+		Concurrency:        concurrency,
+		RecentErrors:       recentErrors,
+		Telemetry:          TelemetryHealth{RequestQueueDepth: requestDepth, AttemptQueueDepth: attemptDepth, DroppedRequests: droppedRequests, DroppedAttempts: droppedAttempts},
+		Options:            options,
 	}
 	snapshot.Health = computeHealthScore(overview, latency, snapshot.System.LatestByNode, jobs)
 	snapshot.Diagnostics = buildDiagnostics(snapshot, settings)
@@ -150,10 +186,14 @@ func buildOverview(rows []model.OpsMinuteMetric, windowSeconds int64) DashboardO
 	}
 	if result.RequestCount > 0 {
 		result.AverageSwitches /= float64(result.RequestCount)
+		result.SuccessRate = float64(result.SuccessCount) / float64(result.RequestCount)
+		result.FailureRate = float64(result.ErrorCount) / float64(result.RequestCount)
 	}
 	if windowSeconds > 0 {
 		result.AverageQPS = float64(result.RequestCount) / float64(windowSeconds)
 		result.AverageTPS = float64(result.TotalTokens) / float64(windowSeconds)
+		result.AverageRPM = result.AverageQPS * 60
+		result.AverageTPM = result.AverageTPS * 60
 	}
 	return result
 }
@@ -548,14 +588,14 @@ func normalizeTaskTimestamp(value int64) int64 {
 	return value
 }
 
-func buildTaskLifecycle(startTs, endTs int64, metrics []model.OpsMinuteMetric) (TaskLifecycleSummary, error) {
-	rows, err := model.ListOpsTaskLifecycleRows(startTs, endTs)
+func buildTaskLifecycle(startTs, endTs int64, metrics []model.OpsMinuteMetric, filters ...model.OpsMetricFilter) (TaskLifecycleSummary, error) {
+	rows, err := model.ListOpsTaskLifecycleRows(startTs, endTs, filters...)
 	if err != nil {
 		return TaskLifecycleSummary{}, err
 	}
 	result := TaskLifecycleSummary{}
 	for _, metric := range metrics {
-		if metric.EndpointType != "video_submit" {
+		if metric.EndpointType != "video_submit" && metric.EndpointType != "async_task" {
 			continue
 		}
 		result.Submitted += metric.RequestCount
@@ -606,45 +646,6 @@ func buildTaskLifecycle(startTs, endTs int64, metrics []model.OpsMinuteMetric) (
 		result.AverageEndToEndMs = endToEndTotal / endToEndCount
 	}
 	return result, nil
-}
-
-func buildModelTokenStats(startTs, endTs int64) ([]ModelTokenStats, error) {
-	rows, err := model.QueryOpsModelTokenStats(startTs*1000, endTs*1000, "gpt")
-	if err != nil {
-		return nil, err
-	}
-	result := make([]ModelTokenStats, 0, len(rows))
-	for _, row := range rows {
-		if strings.TrimSpace(row.ModelName) == "" {
-			continue
-		}
-		result = append(result, ModelTokenStats{
-			ModelName:         row.ModelName,
-			RequestCount:      row.RequestCount,
-			OutputTokens:      row.OutputTokens,
-			AverageTokensPS:   row.AverageTokensPS,
-			AverageTTFTMs:     int64(math.Round(row.AverageTTFTMs)),
-			AverageDurationMs: int64(math.Round(row.AverageDurationMs)),
-			TTFTSamples:       row.TTFTSamples,
-		})
-	}
-	return result, nil
-}
-
-func buildCachedModelTokenStats(endTs int64) ([]ModelTokenStats, error) {
-	endMinute := endTs - endTs%60
-	modelStatsCache.Lock()
-	defer modelStatsCache.Unlock()
-	if modelStatsCache.endMinute == endMinute && modelStatsCache.rows != nil {
-		return modelStatsCache.rows, nil
-	}
-	rows, err := buildModelTokenStats(endMinute-30*24*3600, endMinute)
-	if err != nil {
-		return nil, err
-	}
-	modelStatsCache.endMinute = endMinute
-	modelStatsCache.rows = rows
-	return rows, nil
 }
 
 func buildDashboardOptions(rows []model.OpsMinuteMetric) DashboardOptions {

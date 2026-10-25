@@ -10,34 +10,41 @@ type DashboardFilter struct {
 	ChannelID    int    `json:"channel_id,omitempty"`
 	EndpointType string `json:"endpoint_type,omitempty"`
 	NodeName     string `json:"node_name,omitempty"`
+	UserID       int    `json:"user_id,omitempty"`
+	TokenID      int    `json:"token_id,omitempty"`
 }
 
 type DashboardSnapshot struct {
-	Filter          DashboardFilter         `json:"filter"`
-	Overview        DashboardOverview       `json:"overview"`
-	Realtime        RealtimeTraffic         `json:"realtime"`
-	ThroughputTrend []ThroughputPoint       `json:"throughput_trend"`
-	SwitchTrend     []SwitchPoint           `json:"switch_trend"`
-	ErrorTrend      []ErrorTrendPoint       `json:"error_trend"`
-	Latency         LatencySummary          `json:"latency"`
-	Errors          ErrorSummary            `json:"errors"`
-	Health          HealthScore             `json:"health"`
-	System          SystemSummary           `json:"system"`
-	Jobs            []JobHealth             `json:"jobs"`
-	Tasks           TaskLifecycleSummary    `json:"tasks"`
-	ModelTokenStats []ModelTokenStats       `json:"model_token_stats"`
-	Concurrency     ConcurrencySnapshot     `json:"concurrency"`
-	RecentErrors    []model.OpsRequestEvent `json:"recent_errors"`
-	Telemetry       TelemetryHealth         `json:"telemetry"`
-	Options         DashboardOptions        `json:"options"`
-	Diagnostics     []Diagnostic            `json:"diagnostics"`
+	RawDetailsComplete bool                    `json:"raw_details_complete"`
+	RawDetailsStartTs  int64                   `json:"raw_details_start_ts"`
+	Billing            model.OpsBillingSummary `json:"billing"`
+	Filter             DashboardFilter         `json:"filter"`
+	Overview           DashboardOverview       `json:"overview"`
+	Realtime           RealtimeTraffic         `json:"realtime"`
+	ThroughputTrend    []ThroughputPoint       `json:"throughput_trend"`
+	SwitchTrend        []SwitchPoint           `json:"switch_trend"`
+	ErrorTrend         []ErrorTrendPoint       `json:"error_trend"`
+	Latency            LatencySummary          `json:"latency"`
+	Errors             ErrorSummary            `json:"errors"`
+	Health             HealthScore             `json:"health"`
+	System             SystemSummary           `json:"system"`
+	Jobs               []JobHealth             `json:"jobs"`
+	Tasks              TaskLifecycleSummary    `json:"tasks"`
+	ModelTokenStats    []ModelTokenStats       `json:"model_token_stats"`
+	Concurrency        ConcurrencySnapshot     `json:"concurrency"`
+	RecentErrors       []model.OpsRequestEvent `json:"recent_errors"`
+	Telemetry          TelemetryHealth         `json:"telemetry"`
+	Options            DashboardOptions        `json:"options"`
+	Diagnostics        []Diagnostic            `json:"diagnostics"`
 }
 
 type DashboardOptions struct {
-	Models        []string `json:"models"`
-	Groups        []string `json:"groups"`
-	EndpointTypes []string `json:"endpoint_types"`
-	Nodes         []string `json:"nodes"`
+	Users         []model.OpsIdentityOption `json:"users"`
+	Tokens        []model.OpsIdentityOption `json:"tokens"`
+	Models        []string                  `json:"models"`
+	Groups        []string                  `json:"groups"`
+	EndpointTypes []string                  `json:"endpoint_types"`
+	Nodes         []string                  `json:"nodes"`
 }
 
 type Diagnostic struct {
@@ -49,6 +56,10 @@ type Diagnostic struct {
 }
 
 type DashboardOverview struct {
+	SuccessRate         float64 `json:"success_rate"`
+	FailureRate         float64 `json:"failure_rate"`
+	AverageRPM          float64 `json:"average_rpm"`
+	AverageTPM          float64 `json:"average_tpm"`
 	RequestCount        int64   `json:"request_count"`
 	SuccessCount        int64   `json:"success_count"`
 	ErrorCount          int64   `json:"error_count"`

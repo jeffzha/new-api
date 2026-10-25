@@ -57,6 +57,7 @@ import {
   useSystemConfigStore,
 } from '@/stores/system-config-store'
 
+import { ModelConnections } from '../components/model-connections'
 import { ModelsDialogs } from '../components/models-dialogs'
 import { ModelsProvider } from '../components/models-provider'
 import { ModelsTable } from '../components/models-table'
@@ -85,6 +86,31 @@ const channel: Model = {
 }
 const clients: QueryClient[] = []
 
+it('shows configured upstream URLs, masked keys and disabled channel status in model details', () => {
+  render(
+    <ModelConnections
+      model={{
+        ...metadata,
+        configured_channel_count: 1,
+        channel_connections: [
+          {
+            id: 42,
+            name: 'Configured upstream',
+            type: 1,
+            status: 3,
+            base_url: 'https://upstream.example/v1',
+            masked_key: 'sk-***1234',
+          },
+        ],
+      }}
+    />
+  )
+  expect(screen.getByText('https://upstream.example/v1')).toBeVisible()
+  expect(screen.getByText('sk-***1234')).toBeVisible()
+  expect(screen.getByText('Automatically disabled')).toBeVisible()
+  expect(screen.getByText('Configured upstream')).toBeVisible()
+})
+
 function Page() {
   return (
     <ModelsProvider>
@@ -96,6 +122,8 @@ function Page() {
 
 function CatalogPrice(props: { model: PricingModel }) {
   const columns = usePricingColumns({ tokenUnit: 'M' })
+  // TanStack Table intentionally returns a mutable table instance.
+  // eslint-disable-next-line react/incompatible-library
   const table = useReactTable({
     data: [props.model],
     columns,
@@ -321,9 +349,16 @@ it('keeps long model names and translated channel labels truncated inside their 
   await act(async () => {
     await i18n.changeLanguage('zhCN')
   })
-  expect(screen.getByText('缺元数据')).toBeVisible()
+  expect(screen.getByText(i18n.t('Missing metadata'))).toBeVisible()
   expect(screen.getByText('已隐藏')).toBeVisible()
-  expect(screen.getAllByText('渠道 0 · 分组 0')).toHaveLength(2)
+  expect(
+    screen.getAllByText(
+      i18n.t('Channels {{channels}} · Groups {{groups}}', {
+        channels: 0,
+        groups: 0,
+      })
+    )
+  ).toHaveLength(2)
 })
 
 it('prefills and creates metadata only when the user explicitly saves it', async () => {
@@ -450,11 +485,11 @@ it('uses backend square states for success, warning, hidden, and partial rows in
   await act(async () => {
     await i18n.changeLanguage('zhCN')
   })
-  expect(screen.getByText('无法展示')).toBeVisible()
-  expect(screen.getByText('部分展示')).toBeVisible()
-  expect(screen.getAllByText('正常展示')).toHaveLength(2)
+  expect(screen.getByText(i18n.t('Unavailable'))).toBeVisible()
+  expect(screen.getByText(i18n.t('Partly shown'))).toBeVisible()
+  expect(screen.getAllByText(i18n.t('Displayed'))).toHaveLength(2)
   expect(screen.getAllByText('已隐藏')).toHaveLength(2)
-  for (const label of ['无法展示', '部分展示']) {
+  for (const label of [i18n.t('Unavailable'), i18n.t('Partly shown')]) {
     expect(screen.getByText(label)).toHaveClass('truncate')
   }
 })

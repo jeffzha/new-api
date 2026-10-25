@@ -14,6 +14,15 @@ import (
 )
 
 func GetOpsDashboardSnapshot(c *gin.Context) {
+	for _, name := range []string{"user_id", "token_id", "channel_id"} {
+		if value := c.Query(name); value != "" {
+			id, err := strconv.Atoi(value)
+			if err != nil || id < 0 {
+				common.ApiErrorMsg(c, "invalid "+name)
+				return
+			}
+		}
+	}
 	filter := opsmonitor.DashboardFilter{
 		StartTs:      parseOpsInt64(c.Query("start")),
 		EndTs:        parseOpsInt64(c.Query("end")),
@@ -22,8 +31,10 @@ func GetOpsDashboardSnapshot(c *gin.Context) {
 		ChannelID:    parseOpsInt(c.Query("channel_id")),
 		EndpointType: strings.TrimSpace(c.Query("endpoint_type")),
 		NodeName:     strings.TrimSpace(c.Query("node_name")),
+		UserID:       parseOpsInt(c.Query("user_id")),
+		TokenID:      parseOpsInt(c.Query("token_id")),
 	}
-	snapshot, err := opsmonitor.BuildDashboardSnapshot(filter)
+	snapshot, err := opsmonitor.BuildDashboardSnapshot(filter, c.Request.Context())
 	if err != nil {
 		common.ApiError(c, err)
 		return

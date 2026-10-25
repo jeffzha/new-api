@@ -119,6 +119,12 @@ func VideoProxy(c *gin.Context) {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com"
 	}
+	if descriptor != nil {
+		if err := proxyTaskMedia(c, task, descriptor); err != nil {
+			writeTaskMediaProxyError(c, err)
+		}
+		return
+	}
 
 	if descriptor == nil {
 		resultURL := strings.TrimSpace(task.GetResultURL())
@@ -356,14 +362,24 @@ func proxyTaskMedia(c *gin.Context, task *model.Task, descriptor *relaychannel.T
 		}
 	}
 	proxy := strings.TrimSpace(channel.GetSetting().Proxy)
-	if err := validateTaskMediaURL(rawURL, proxy); err != nil {
+	baseURL, baseErr := url.Parse(channel.GetBaseURL())
+	channelOrigin := taskHasPluginExecution(task) && baseErr == nil && baseURL.User == nil && baseURL.Fragment == "" &&
+		sameTaskMediaOrigin(baseURL, parsedURL)
+	validationErr := validateTaskMediaURL(rawURL, proxy)
+	trustedProvider := validationErr != nil && channelOrigin
+	if validationErr != nil && !trustedProvider {
 		return &taskMediaProxyError{
 			status: http.StatusBadGateway, code: "artifact_request_rejected",
-			message: "Artifact request was rejected", err: err,
+			message: "Artifact request was rejected", err: validationErr,
 		}
 	}
 
 	client := service.GetSSRFProtectedHTTPClient()
+	if trustedProvider {
+		// Plugin descriptors may use the administrator-configured provider origin.
+		// User-supplied result URLs and redirects retain protected fetch rules.
+		client = service.GetHttpClient()
+	}
 	if proxy != "" {
 		client, err = service.GetHttpClientWithProxy(proxy)
 		if err != nil {
@@ -396,6 +412,11 @@ func proxyTaskMedia(c *gin.Context, task *model.Task, descriptor *relaychannel.T
 	}
 
 	client = taskMediaRedirectClient(client, proxy, c, clientHeaders, descriptor.Credentialless)
+	if trustedProvider {
+		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+			return errTaskMediaRequestRejected
+		}
+	}
 	clientWithoutBodyTimeout := *client
 	clientWithoutBodyTimeout.Timeout = 0
 	resp, err := doTaskMediaRequest(&clientWithoutBodyTimeout, req, taskMediaResponseHeaderTimeout)

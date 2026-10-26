@@ -270,25 +270,54 @@ type OpsIdentityOption struct {
 }
 
 func ListOpsIdentityOptions(filter OpsMetricFilter) ([]OpsIdentityOption, []OpsIdentityOption, error) {
-	identityFilter := filter
-	identityFilter.UserID, identityFilter.TokenID = 0, 0
+	db := DB
+	if filter.Context != nil {
+		db = db.WithContext(filter.Context)
+	}
 	users := []OpsIdentityOption{}
-	userIDs := applyOpsEventFilter(DB.Model(&OpsRequestEvent{}), identityFilter).Select("user_id").Where("user_id > 0")
-	if err := DB.Model(&User{}).Select("id, username AS name").Where("id IN (?)", userIDs).Order("id asc").Scan(&users).Error; err != nil {
+	if err := db.Model(&User{}).Select("id, username AS name").Order("id asc").Scan(&users).Error; err != nil {
 		return nil, nil, err
 	}
-	identityFilter.UserID = filter.UserID
 	tokens := []OpsIdentityOption{}
-	tokenIDs := applyOpsEventFilter(DB.Model(&OpsRequestEvent{}), identityFilter).Select("token_id").Where("token_id > 0")
-	err := DB.Model(&Token{}).Select("id, name").Where("id IN (?)", tokenIDs).Order("id asc").Scan(&tokens).Error
+	tokenQuery := db.Model(&Token{}).Select("id, name")
+	if filter.UserID > 0 {
+		tokenQuery = tokenQuery.Where("user_id = ?", filter.UserID)
+	}
+	err := tokenQuery.Order("id asc").Scan(&tokens).Error
 	return users, tokens, err
 }
 
 func ListOpsFilterDimensions(filter OpsMetricFilter) ([]OpsMinuteMetric, error) {
 	var rows []OpsMinuteMetric
-	err := applyOpsEventFilter(DB.Model(&OpsRequestEvent{}), filter).
-		Distinct("model_name, " + commonGroupCol + ", endpoint_type, node_name").Scan(&rows).Error
-	return rows, err
+	if err := applyOpsEventFilter(DB.Model(&OpsRequestEvent{}), filter).
+		Distinct("model_name, " + commonGroupCol + ", endpoint_type, node_name").Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	db := DB
+	if filter.Context != nil {
+		db = db.WithContext(filter.Context)
+	}
+	var registered []string
+	if err := db.Model(&Model{}).Where("name_rule = ?", NameRuleExact).Pluck("model_name", &registered).Error; err != nil {
+		return nil, err
+	}
+	for _, name := range registered {
+		rows = append(rows, OpsMinuteMetric{ModelName: name})
+	}
+	var channels []Channel
+	if err := db.Select("models", commonGroupCol).Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	// Catalog choices include unused and disabled routes; activity only affects metrics.
+	for _, channel := range channels {
+		for name := range strings.SplitSeq(channel.Models, ",") {
+			rows = append(rows, OpsMinuteMetric{ModelName: strings.TrimSpace(name)})
+		}
+		for group := range strings.SplitSeq(channel.Group, ",") {
+			rows = append(rows, OpsMinuteMetric{Group: strings.TrimSpace(group)})
+		}
+	}
+	return rows, nil
 }
 
 type OpsBillingSummary struct {

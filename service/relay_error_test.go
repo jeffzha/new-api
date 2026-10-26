@@ -214,3 +214,110 @@ func TestFeishuRelayAlertSignsMasksAndDeduplicates(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+func TestFeishuChannelProbeReportsFailuresAndRecoveryWithoutHealthyNoise(t *testing.T) {
+	previousClient := feishuAlertHTTPClient
+	t.Cleanup(func() { feishuAlertHTTPClient = previousClient })
+	var messages []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload feishuAlertPayload
+		require.NoError(t, common.DecodeJson(r.Body, &payload))
+		messages = append(messages, payload.Content.Text)
+		_, _ = io.WriteString(w, `{"code":0}`)
+	}))
+	t.Cleanup(server.Close)
+	feishuAlertHTTPClient = server.Client()
+	t.Setenv("FEISHU_ALERT_WEBHOOK_URL", server.URL)
+	t.Setenv("FEISHU_ALERT_SECRET", "")
+	channel := &model.Channel{Id: 98701, Name: "probe-provider", Status: common.ChannelStatusEnabled}
+	apiErr := types.NewErrorWithStatusCode(errors.New("api_key:must-not-leak upstream unavailable"), types.ErrorCodeBadResponseStatusCode, 503)
+
+	NotifyFeishuChannelProbe(channel, "test-model", 123, nil, nil)
+	require.Empty(t, messages, "healthy checks must not generate notifications")
+	NotifyFeishuChannelProbe(channel, "test-model", 123, nil, apiErr)
+	NotifyFeishuChannelProbe(channel, "test-model", 124, nil, apiErr)
+	require.Len(t, messages, 1, "repeat failures are suppressed for ten minutes")
+	assert.Contains(t, messages[0], "渠道巡检失败")
+	assert.Contains(t, messages[0], "probe-provider（#98701）")
+	assert.Contains(t, messages[0], "test-model")
+	assert.Contains(t, messages[0], "503")
+	assert.NotContains(t, messages[0], "已自动停用")
+	assert.NotContains(t, messages[0], "must-not-leak")
+	NotifyFeishuChannelProbe(channel, "test-model", 40, nil, nil)
+	NotifyFeishuChannelProbe(channel, "test-model", 40, nil, nil)
+	require.Len(t, messages, 2, "recovery is sent once")
+	assert.Contains(t, messages[1], "渠道巡检恢复")
+	NotifyFeishuChannelProbe(channel, "test-model", 124, nil, apiErr)
+	require.Len(t, messages, 3, "a new outage after recovery must alert immediately")
+	NotifyFeishuChannelProbe(channel, "test-model", 40, nil, nil)
+}
+
+func TestFeishuChannelProbeDistinguishesLocalErrorsFromUpstreamFailures(t *testing.T) {
+	previousClient := feishuAlertHTTPClient
+	t.Cleanup(func() { feishuAlertHTTPClient = previousClient })
+	var message string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload feishuAlertPayload
+		require.NoError(t, common.DecodeJson(r.Body, &payload))
+		message = payload.Content.Text
+		_, _ = io.WriteString(w, `{"code":0}`)
+	}))
+	t.Cleanup(server.Close)
+	feishuAlertHTTPClient = server.Client()
+	t.Setenv("FEISHU_ALERT_WEBHOOK_URL", server.URL)
+	channel := &model.Channel{Id: 98702, Name: "unsupported-probe", Status: common.ChannelStatusAutoDisabled}
+	NotifyFeishuChannelProbe(channel, "video-model", 1, errors.New("channel test is not supported"), nil)
+	assert.Contains(t, message, "平台巡检未完成")
+	assert.Contains(t, message, "不能据此判定上游故障")
+	assert.NotContains(t, message, "上游状态码: 200")
+	NotifyFeishuChannelProbe(channel, "video-model", 40, nil, nil)
+	assert.Contains(t, message, "渠道巡检恢复")
+	assert.Contains(t, message, "本次检测成功不等于渠道已重新启用")
+}
+
+func TestFeishuChannelStatusReportsPersistedChannelAndMultiKeyState(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, database.AutoMigrate(&model.Channel{}))
+	connection, err := database.DB()
+	require.NoError(t, err)
+	previousDB, previousClient := model.DB, feishuAlertHTTPClient
+	model.DB = database
+	t.Cleanup(func() {
+		model.DB, feishuAlertHTTPClient = previousDB, previousClient
+		require.NoError(t, connection.Close())
+	})
+	var messages []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload feishuAlertPayload
+		require.NoError(t, common.DecodeJson(r.Body, &payload))
+		messages = append(messages, payload.Content.Text)
+		_, _ = io.WriteString(w, `{"code":0}`)
+	}))
+	t.Cleanup(server.Close)
+	feishuAlertHTTPClient = server.Client()
+	t.Setenv("FEISHU_ALERT_WEBHOOK_URL", server.URL)
+	t.Setenv("FEISHU_ALERT_SECRET", "")
+	channel := &model.Channel{Name: "status-provider", Status: common.ChannelStatusAutoDisabled}
+	require.NoError(t, database.Create(channel).Error)
+	notifyFeishuChannelStatus(channel.Id, channel.Name, "api_key:must-not-leak upstream failed", false)
+	require.Len(t, messages, 1)
+	assert.Contains(t, messages[0], "渠道自动停用已生效")
+	assert.Contains(t, messages[0], "渠道已退出正常请求路由")
+	assert.NotContains(t, messages[0], "must-not-leak")
+	notifyFeishuChannelStatus(channel.Id, channel.Name, "stale enable event", true)
+	require.Len(t, messages, 1, "an enable notification must not contradict the persisted status")
+	require.NoError(t, database.Model(channel).Update("status", common.ChannelStatusEnabled).Error)
+	notifyFeishuChannelStatus(channel.Id, channel.Name, "probe succeeded", true)
+	require.Len(t, messages, 2)
+	assert.Contains(t, messages[1], "渠道已重新参与正常请求路由")
+	channel.ChannelInfo.IsMultiKey = true
+	require.NoError(t, database.Model(channel).Update("channel_info", channel.ChannelInfo).Error)
+	notifyFeishuChannelStatus(channel.Id, channel.Name, "one key failed", false)
+	require.Len(t, messages, 3)
+	assert.Contains(t, messages[2], "渠道密钥自动停用已生效")
+	assert.Contains(t, messages[2], "其他可用密钥仍可承接请求")
+	require.NoError(t, database.Model(channel).Update("status", common.ChannelStatusManuallyDisabled).Error)
+	notifyFeishuChannelStatus(channel.Id, channel.Name, "stale disable event", false)
+	require.Len(t, messages, 3, "manual disables must not be reported as automatic disables")
+}

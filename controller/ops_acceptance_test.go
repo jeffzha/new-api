@@ -1,14 +1,17 @@
 package controller
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service/opsmonitor"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,10 +25,15 @@ func TestOpsAcceptanceDatabaseMatrix(t *testing.T) {
 			db := modelManagementDB(t, dialect.kind, os.Getenv(dialect.env))
 			require.NoError(t, db.AutoMigrate(&model.Token{}, &model.Log{}, &model.Task{}, &model.Midjourney{}, &model.SystemTask{}, &model.OpsRequestEvent{}, &model.OpsUpstreamAttempt{}, &model.OpsMinuteMetric{}, &model.OpsSystemMetric{}, &model.OpsConcurrencyLimit{}))
 			start := time.Now().Unix() - 3600
-			users := []model.User{{Id: 701, Username: "ops-alice", AffCode: "ops-alice"}, {Id: 702, Username: "ops-bob", AffCode: "ops-bob"}}
+			users := []model.User{{Id: 701, Username: "ops-alice", AffCode: "ops-alice"}, {Id: 702, Username: "ops-bob", AffCode: "ops-bob"}, {Id: 703, Username: "ops-no-traffic", AffCode: "ops-no-traffic"}}
 			require.NoError(t, db.Create(&users).Error)
-			tokens := []model.Token{{Id: 801, UserId: 701, Name: "alice-first", Key: "private-alice-first"}, {Id: 802, UserId: 701, Name: "alice-second", Key: "private-alice-second"}, {Id: 803, UserId: 702, Name: "bob-first", Key: "private-bob-first"}}
+			tokens := []model.Token{{Id: 801, UserId: 701, Name: "alice-first", Key: "private-alice-first"}, {Id: 802, UserId: 701, Name: "alice-second", Key: "private-alice-second"}, {Id: 803, UserId: 702, Name: "bob-first", Key: "private-bob-first"}, {Id: 804, UserId: 701, Name: "alice-no-traffic", Key: "private-alice-unused"}, {Id: 805, UserId: 703, Name: "new-user-key", Key: "private-unused-user-key"}}
 			require.NoError(t, db.Create(&tokens).Error)
+			require.NoError(t, db.Create(&model.Model{ModelName: "registered-no-traffic"}).Error)
+			require.NoError(t, db.Create(&model.Channel{Name: "disabled-no-traffic", Status: common.ChannelStatusManuallyDisabled, Models: "channel-no-traffic", Group: "channel-only-group"}).Error)
+			previousGroups := ratio_setting.GroupRatio2JSONString()
+			require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"configured-only-group":1}`))
+			t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(previousGroups)) })
 			events := []model.OpsRequestEvent{
 				{RequestID: "chat-retried", OccurredAtMs: (start + 1) * 1000, UserID: 701, TokenID: 801, ModelName: "deepseek-test", Group: "default", ChannelID: 7, NodeName: "blue", EndpointType: "chat", StatusCode: 200, Success: true, InputTokens: 60, CacheReadTokens: 30, CacheCreationTokens: 10, OutputTokens: 20, DurationMs: 1000, HasTTFT: true, TTFTMs: 200, RetryCount: 1, SwitchCount: 1},
 				{RequestID: "video-submit", OccurredAtMs: (start + 2) * 1000, UserID: 701, TokenID: 801, ModelName: "video-test", Group: "default", ChannelID: 7, NodeName: "blue", EndpointType: "video_submit", StatusCode: 200, Success: true, DurationMs: 200, TaskID: "task-alice"},
@@ -61,8 +69,16 @@ func TestOpsAcceptanceDatabaseMatrix(t *testing.T) {
 			assert.EqualValues(t, 2, snapshot.Billing.ConsumeEntries)
 			assert.EqualValues(t, 1, snapshot.Billing.RefundEntries)
 			assert.EqualValues(t, 160, snapshot.Billing.NetQuota)
-			require.Len(t, snapshot.Options.Users, 2)
-			require.Len(t, snapshot.Options.Tokens, 2, "user selection limits API Key choices")
+			require.Len(t, snapshot.Options.Users, 3, "directory users must include users without recent activity")
+			require.Len(t, snapshot.Options.Tokens, 3, "all of the selected user's keys are listed, including unused keys")
+			assert.Contains(t, snapshot.Options.Models, "registered-no-traffic")
+			assert.Contains(t, snapshot.Options.Models, "channel-no-traffic")
+			assert.Contains(t, snapshot.Options.Groups, "channel-only-group")
+			assert.Contains(t, snapshot.Options.Groups, "configured-only-group")
+			assert.Contains(t, snapshot.Options.EndpointTypes, "audio", "supported endpoints must not disappear when unused")
+			assert.Contains(t, snapshot.Options.EndpointTypes, "video_content")
+			assert.Contains(t, snapshot.Options.Models, "video-test", "the directory is independent of the selected user/key")
+			assert.Len(t, snapshot.Concurrency.Channels, 1, "disabled channels remain selectable")
 			encoded, err := common.Marshal(snapshot)
 			require.NoError(t, err)
 			assert.NotContains(t, string(encoded), "private-alice")
@@ -79,6 +95,12 @@ func TestOpsAcceptanceDatabaseMatrix(t *testing.T) {
 			assert.Zero(t, snapshot.Overview.RequestCount, "cross-user API Key filters must not widen the query")
 			assert.Empty(t, snapshot.RecentErrors)
 			assert.Zero(t, snapshot.Tasks.Terminal)
+			snapshot, err = opsmonitor.BuildDashboardSnapshot(opsmonitor.DashboardFilter{StartTs: start + 30, EndTs: start + 60, UserID: 703})
+			require.NoError(t, err)
+			assert.Zero(t, snapshot.Overview.RequestCount)
+			assert.Len(t, snapshot.Options.Users, 3)
+			assert.Equal(t, []model.OpsIdentityOption{{ID: 805, Name: "new-user-key"}}, snapshot.Options.Tokens)
+			assert.Contains(t, snapshot.Options.Models, "registered-no-traffic", "an empty result window must retain the catalog")
 			require.NoError(t, db.Create(&model.OpsRequestEvent{RequestID: "mj-submit", OccurredAtMs: (start + 5) * 1000, UserID: 701, TokenID: 801, EndpointType: "async_task", Success: true, StatusCode: 200, TaskID: "mj-alice"}).Error)
 			require.NoError(t, db.Create(&[]model.Midjourney{{MjId: "mj-alice", Code: 22, SubmitTime: (start + 5) * 1000}, {MjId: "mj-alice", Code: 1, Status: "SUCCESS", SubmitTime: (start + 5) * 1000, StartTime: (start + 8) * 1000, FinishTime: (start + 20) * 1000}}).Error)
 			snapshot, err = opsmonitor.BuildDashboardSnapshot(opsmonitor.DashboardFilter{StartTs: start, EndTs: start + 60, UserID: 701, TokenID: 801, EndpointType: "async_task"})
@@ -109,6 +131,18 @@ func TestOpsAcceptanceDatabaseMatrix(t *testing.T) {
 			for _, secret := range []string{"password", "private-query", "private-fragment", "secret-middle-content", "never-expose"} {
 				assert.NotContains(t, string(encoded), secret)
 			}
+			t.Setenv("FEISHU_ALERT_WEBHOOK_URL", "")
+			previousDisable, previousEnable := common.AutomaticDisableChannelEnabled, common.AutomaticEnableChannelEnabled
+			common.AutomaticDisableChannelEnabled, common.AutomaticEnableChannelEnabled = true, true
+			t.Cleanup(func() {
+				common.AutomaticDisableChannelEnabled, common.AutomaticEnableChannelEnabled = previousDisable, previousEnable
+			})
+			probe := &model.Channel{Name: "unsupported-video-probe", Type: constant.ChannelTypeTaskPlugin, Models: "video-model", Status: common.ChannelStatusAutoDisabled}
+			require.NoError(t, db.Create(probe).Error)
+			result := testChannelForHealthCheck(context.Background(), probe, 701, true, -1)
+			assert.Equal(t, channelTestSummary{Tested: 1, Failed: 1}, result, "unsupported local probes must not count as successful or enable the channel")
+			require.NoError(t, db.First(probe, probe.Id).Error)
+			assert.Equal(t, common.ChannelStatusAutoDisabled, probe.Status)
 		})
 	}
 }

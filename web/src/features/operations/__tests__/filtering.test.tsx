@@ -9,6 +9,15 @@ import { OperationsDashboard } from '..'
 
 const clients: QueryClient[] = []
 
+async function chooseOption(
+  user: ReturnType<typeof userEvent.setup>,
+  field: string,
+  option: string
+) {
+  await user.click(screen.getByRole('combobox', { name: field }))
+  await user.click(await screen.findByRole('option', { name: option }))
+}
+
 afterEach(() => {
   cleanup()
   clients.splice(0).forEach((client) => client.clear())
@@ -59,10 +68,7 @@ it('links user and API Key filters, retains empty selections and hides stale res
   )
   const user = userEvent.setup()
   await screen.findByRole('combobox', { name: 'User' })
-  await user.selectOptions(
-    screen.getByRole('combobox', { name: 'User' }),
-    '701'
-  )
+  await chooseOption(user, 'User', 'Alice (#701)')
   await waitFor(() =>
     expect(get).toHaveBeenLastCalledWith(
       '/api/ops/dashboard/snapshot',
@@ -72,10 +78,7 @@ it('links user and API Key filters, retains empty selections and hides stale res
     )
   )
   await screen.findByRole('tab', { name: 'Overview' })
-  await user.selectOptions(
-    screen.getByRole('combobox', { name: 'API Key' }),
-    '801'
-  )
+  await chooseOption(user, 'API Key', 'Alice key (#801)')
   await waitFor(() =>
     expect(get).toHaveBeenLastCalledWith(
       '/api/ops/dashboard/snapshot',
@@ -86,11 +89,10 @@ it('links user and API Key filters, retains empty selections and hides stale res
   )
   await screen.findByRole('tab', { name: 'Overview' })
   pending = true
-  await user.selectOptions(
-    screen.getByRole('combobox', { name: 'User' }),
-    '702'
+  await chooseOption(user, 'User', 'Bob (#702)')
+  expect(screen.getByRole('combobox', { name: 'API Key' })).toHaveValue(
+    'All API Keys'
   )
-  expect(screen.getByRole('combobox', { name: 'API Key' })).toHaveValue('0')
   expect(
     await screen.findByText('Loading results for the selected filters...')
   ).toBeVisible()
@@ -100,8 +102,54 @@ it('links user and API Key filters, retains empty selections and hides stale res
   await act(async () =>
     finish({ data: { success: true, data: { options: {} } } })
   )
-  expect(screen.getByRole('combobox', { name: 'User' })).toHaveValue('702')
+  expect(screen.getByRole('combobox', { name: 'User' })).toHaveValue(
+    'Bob (#702)'
+  )
   expect(await screen.findByRole('tab', { name: 'Overview' })).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Clear filters' }))
-  expect(screen.getByRole('combobox', { name: 'User' })).toHaveValue('0')
+  expect(screen.getByRole('combobox', { name: 'User' })).toHaveValue(
+    'All users'
+  )
+})
+
+it('searches the full model directory and shows an empty result without changing the selection', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        options: {
+          users: [],
+          tokens: [],
+          models: ['deepseek-v4-1-flash-1017', 'unused-video-model'],
+          groups: ['default', 'unused-group'],
+          endpoint_types: ['chat', 'video_content'],
+          nodes: [],
+        },
+      },
+    },
+  })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  render(
+    <QueryClientProvider client={client}>
+      <OperationsDashboard />
+    </QueryClientProvider>
+  )
+  const user = userEvent.setup()
+  const input = await screen.findByRole('combobox', { name: 'Model' })
+  await user.click(input)
+  await user.type(input, 'unused')
+  expect(
+    screen.getByRole('option', { name: 'unused-video-model' })
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('option', { name: 'deepseek-v4-1-flash-1017' })
+  ).not.toBeInTheDocument()
+  await user.clear(input)
+  await user.type(input, 'does-not-exist')
+  expect(screen.getByText('No results found')).toBeVisible()
+  await user.keyboard('{Escape}')
+  expect(input).toHaveValue('All models')
 })

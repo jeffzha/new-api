@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/ops_monitor_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
 func BuildDashboardSnapshot(filter DashboardFilter, contexts ...context.Context) (DashboardSnapshot, error) {
@@ -115,12 +116,13 @@ func BuildDashboardSnapshot(filter DashboardFilter, contexts ...context.Context)
 	requestDepth, attemptDepth, droppedRequests, droppedAttempts := QueueStats()
 	optionFilter := detailFilter
 	optionFilter.ModelName, optionFilter.Group, optionFilter.EndpointType, optionFilter.NodeName, optionFilter.ChannelID = "", "", "", "", 0
+	optionFilter.UserID, optionFilter.TokenID = 0, 0
 	optionRows, err := model.ListOpsFilterDimensions(optionFilter)
 	if err != nil {
 		return DashboardSnapshot{}, err
 	}
 	options := buildDashboardOptions(optionRows)
-	options.Users, options.Tokens, err = model.ListOpsIdentityOptions(optionFilter)
+	options.Users, options.Tokens, err = model.ListOpsIdentityOptions(modelFilter)
 	if err != nil {
 		return DashboardSnapshot{}, err
 	}
@@ -653,6 +655,16 @@ func buildDashboardOptions(rows []model.OpsMinuteMetric) DashboardOptions {
 	groups := map[string]struct{}{}
 	endpoints := map[string]struct{}{}
 	nodes := map[string]struct{}{}
+	for group := range ratio_setting.GetGroupRatioCopy() {
+		groups[group] = struct{}{}
+	}
+	for _, endpoint := range []string{
+		"chat", "responses", "messages", "embedding", "rerank", "image_generation", "audio",
+		"video_submit", "video_content", "video_poll", "identity_verification", "asset_management",
+		"async_poll", "async_task", "relay_other", model.OpsEndpointTypeUnmatchedRoute,
+	} {
+		endpoints[endpoint] = struct{}{}
+	}
 	for _, row := range rows {
 		if row.ModelName != "" {
 			models[row.ModelName] = struct{}{}

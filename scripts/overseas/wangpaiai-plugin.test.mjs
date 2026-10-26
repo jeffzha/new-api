@@ -30,7 +30,24 @@ for (const seconds of [0, 3, 16, -1, 1e12, 4.5]) assert.throws(() => plugin.buil
 for (const resolution of ['768P', '4K']) assert.throws(() => plugin.buildSubmitRequest(ctx('MiniMax-H3', { prompt: 'Synthetic verification', images, resolution })));
 assert.throws(() => plugin.buildSubmitRequest(ctx('unknown', { prompt: 'Synthetic verification', images })));
 assert.throws(() => plugin.buildSubmitRequest(ctx('MiniMax-H3', { prompt: 'Synthetic verification', images: Array.from({length:10}, (_,i) => 'https://example.com/' + i + '.png') })));
-assert.throws(() => plugin.buildSubmitRequest(ctx('MiniMax-H3', { prompt: 'Synthetic verification' })));
+const promptOnly = ctx('MiniMax-H3', { prompt: 'Synthetic verification', seconds: 4, resolution: '480P', ratio: '9:16' });
+assert.deepEqual(plugin.buildSubmitRequest(promptOnly).body, {
+  modelId: 'h3-1',
+  inputs: { prompt: 'Synthetic verification', h3_mode: '多模态', duration: '4', quality: 'Pro 480p', aspect_ratio: '9:16' },
+});
+assert.deepEqual(plugin.extractUsage(promptOnly), { output_credits: 3.2, material_credits: 0, input_images: 0, vendor_credits: 3.2, mode: 'reference', seconds: 4, resolution: '480P' });
+for (const media of [
+  { videos: ['https://example.com/video.mp4'] },
+  { audios: ['https://example.com/audio.mp3'] },
+]) {
+  const request = plugin.buildSubmitRequest(ctx('MiniMax-H3', { ...promptOnly.requestBody, ...media }));
+  assert.equal(request.body.modelId, 'h3-1');
+  assert.equal(request.body.inputs.image_url, undefined);
+  if (media.videos) assert.equal(request.body.inputs.video_url, media.videos[0]);
+  if (media.audios) assert.equal(request.body.inputs.audio_url, media.audios[0]);
+}
+assert.throws(() => plugin.buildSubmitRequest(ctx('MiniMax-H3-Sensitive', { prompt: 'Synthetic verification' })), /requires at least one reference image/);
+assert.throws(() => plugin.buildSubmitRequest(ctx('MiniMax-H3', { prompt: '' })), /prompt is required/);
 for (const cost of [0, 27.3]) assert.deepEqual(plugin.extractUsageOnComplete({}, { status: 'SUCCESS' }, { generation: { cost } }), { vendor_credits: cost, output_credits: cost, material_credits: 0 });
 const submitted = plugin.parseSubmitResponse(fixed, { body: { generation: { id: 'synthetic-id', cost: 29 } } });
 assert.deepEqual(plugin.extractUsageOnComplete({ state: submitted.state }, { status: 'SUCCESS' }, { generation: { cost: 29 } }), { vendor_credits: 29, output_credits: 19, material_credits: 10 });

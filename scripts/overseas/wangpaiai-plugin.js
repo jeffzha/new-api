@@ -18,7 +18,7 @@ export const meta = {
     en: "Wangpai AI video generation (MiniMax H3 multimodal reference-to-video)",
     zh: "王牌AI 视频生成（MiniMax H3 多模态参考生视频）",
   },
-  version: "1.0.8",
+  version: "1.0.9",
   author: { name: "NexusReach" },
   baseUrl: "https://wangpaiai.com",
   models: ["MiniMax-H3", "MiniMax-H3-2K", "MiniMax-H3-Sensitive"],
@@ -316,7 +316,7 @@ function upstreamModelId(request, model) {
   const shelf = UPSTREAM_MODEL_ID[name];
   if (!shelf) throw new Error("unsupported Wangpai model");
   const images = (request && request.images) || [];
-  if (shelf !== H3_TEXT_MODEL_ID && !images.length) {
+  if (shelf !== H3_TEXT_MODEL_ID && name !== "MiniMax-H3" && !images.length) {
     throw new Error(
       (name || H3_REFERENCE_MODEL_ID) +
         " requires at least one reference image; use MiniMax-H3-2K for prompt-only requests"

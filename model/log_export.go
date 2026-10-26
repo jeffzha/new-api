@@ -20,6 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 package model
 
 import (
+	"context"
 	"errors"
 	"math"
 	"strings"
@@ -32,7 +33,7 @@ import (
 const LogExportMaxRows = 100000
 const logExportFundingBatchSize = 500
 
-var ErrLogExportTooManyRows = errors.New("导出记录超过上限，请缩小时间范围或增加筛选条件")
+var ErrLogExportTooManyRows = errors.New("PDF/Word 账单超过 10 万条，请选择 Excel/CSV 格式或缩小时间范围")
 
 // LogExportFunding contains the durable source split for one consume log.
 // It is empty when the request predates source allocation tracking or was not
@@ -143,11 +144,93 @@ func GetConsumeLogsForExport(params LogExportParams) ([]*Log, map[LogExportFundi
 	if err := tx.Order(order).Limit(LogExportMaxRows).Find(&logs).Error; err != nil {
 		return nil, nil, nil, err
 	}
+	funding, agencyPricing, err := loadLogExportPricing(context.Background(), logs)
+	return logs, funding, agencyPricing, err
+}
 
+// WalkConsumeLogsForExport bounds both log and settlement snapshots in memory.
+// SQL uses keyset batches so a shared single-connection pool cannot deadlock.
+func WalkConsumeLogsForExport(ctx context.Context, params LogExportParams, visit func([]*Log, map[LogExportFundingKey]LogExportFunding, map[LogExportFundingKey]LogExportAgencyPricing) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if LOG_DB == nil {
+		return errors.New("log database is not initialized")
+	}
+	tx, err := buildConsumeLogQuery(params)
+	if err != nil {
+		return err
+	}
+	visitBatch := func(logs []*Log) error {
+		funds, prices, err := loadLogExportPricing(ctx, logs)
+		if err != nil {
+			return err
+		}
+		return visit(logs, funds, prices)
+	}
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		// ClickHouse has no unique numeric log ID. A cursor retains all split charges.
+		rows, err := tx.WithContext(ctx).Model(&Log{}).Order("logs.created_at asc, logs.request_id asc").Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		batch := make([]*Log, 0, logExportFundingBatchSize)
+		for rows.Next() {
+			log := new(Log)
+			if err := LOG_DB.ScanRows(rows, log); err != nil {
+				return err
+			}
+			batch = append(batch, log)
+			if len(batch) == logExportFundingBatchSize {
+				if err := visitBatch(batch); err != nil {
+					return err
+				}
+				batch = make([]*Log, 0, logExportFundingBatchSize)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(batch) != 0 {
+			return visitBatch(batch)
+		}
+		return ctx.Err()
+	}
+	var boundary Log
+	err = LOG_DB.WithContext(ctx).Select("id").Order("id desc").First(&boundary).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var last *Log
+	for {
+		query := tx.WithContext(ctx).Where("logs.id <= ?", boundary.Id)
+		if last != nil {
+			query = query.Where("logs.created_at >= ?", last.CreatedAt).
+				Where("(logs.created_at > ? OR (logs.created_at = ? AND logs.id > ?))", last.CreatedAt, last.CreatedAt, last.Id)
+		}
+		var batch []*Log
+		if err := query.Order("logs.created_at asc, logs.id asc").Limit(logExportFundingBatchSize).Find(&batch).Error; err != nil {
+			return err
+		}
+		if len(batch) == 0 {
+			return ctx.Err()
+		}
+		if err := visitBatch(batch); err != nil {
+			return err
+		}
+		last = batch[len(batch)-1]
+	}
+}
+
+func loadLogExportPricing(ctx context.Context, logs []*Log) (map[LogExportFundingKey]LogExportFunding, map[LogExportFundingKey]LogExportAgencyPricing, error) {
 	funding := make(map[LogExportFundingKey]LogExportFunding)
 	agencyPricing := make(map[LogExportFundingKey]LogExportAgencyPricing)
 	if DB == nil || len(logs) == 0 {
-		return logs, funding, agencyPricing, nil
+		return funding, agencyPricing, ctx.Err()
 	}
 	chargeIDs := make([]string, 0, len(logs))
 	seen := make(map[string]struct{}, len(logs))
@@ -162,15 +245,16 @@ func GetConsumeLogsForExport(params LogExportParams) ([]*Log, map[LogExportFundi
 		chargeIDs = append(chargeIDs, log.RequestId)
 	}
 	if len(chargeIDs) == 0 {
-		return logs, funding, agencyPricing, nil
+		return funding, agencyPricing, ctx.Err()
 	}
-	if DB.Migrator().HasTable(&AgencyFundingAllocation{}) {
+	db := DB.WithContext(ctx)
+	if db.Migrator().HasTable(&AgencyFundingAllocation{}) {
 		allocations := make([]AgencyFundingAllocation, 0)
 		for start := 0; start < len(chargeIDs); start += logExportFundingBatchSize {
 			end := min(start+logExportFundingBatchSize, len(chargeIDs))
 			var batch []AgencyFundingAllocation
-			if err := DB.Where("charge_id IN ?", chargeIDs[start:end]).Find(&batch).Error; err != nil {
-				return nil, nil, nil, err
+			if err := db.Where("charge_id IN ?", chargeIDs[start:end]).Find(&batch).Error; err != nil {
+				return nil, nil, err
 			}
 			allocations = append(allocations, batch...)
 		}
@@ -194,13 +278,13 @@ func GetConsumeLogsForExport(params LogExportParams) ([]*Log, map[LogExportFundi
 		}
 	}
 
-	if DB.Migrator().HasTable(&AgencyBillingOperation{}) {
+	if db.Migrator().HasTable(&AgencyBillingOperation{}) {
 		invalidPricing := make(map[LogExportFundingKey]struct{})
 		for start := 0; start < len(chargeIDs); start += logExportFundingBatchSize {
 			end := min(start+logExportFundingBatchSize, len(chargeIDs))
 			var operations []AgencyBillingOperation
-			if err := DB.Where("charge_id IN ? AND operation = ?", chargeIDs[start:end], "finalize").Find(&operations).Error; err != nil {
-				return nil, nil, nil, err
+			if err := db.Where("charge_id IN ? AND operation = ?", chargeIDs[start:end], "finalize").Find(&operations).Error; err != nil {
+				return nil, nil, err
 			}
 			for _, operation := range operations {
 				var event agencycontract.BillingEvent
@@ -234,5 +318,5 @@ func GetConsumeLogsForExport(params LogExportParams) ([]*Log, map[LogExportFundi
 			}
 		}
 	}
-	return logs, funding, agencyPricing, nil
+	return funding, agencyPricing, ctx.Err()
 }

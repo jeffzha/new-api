@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -158,6 +159,8 @@ type TaskPrivateData struct {
 	PluginState json.RawMessage `json:"plugin_state,omitempty"`
 	// PollFailures counts consecutive unrecognized or transient poll outcomes.
 	PollFailures int `json:"poll_failures,omitempty"`
+	// SettledTokens is the provider-reported token quantity the task was settled on (0 until then).
+	SettledTokens int64 `json:"settled_tokens,omitempty"`
 }
 
 type TaskExecutionSnapshot struct {
@@ -221,6 +224,63 @@ type TaskProviderBillingSnapshot struct {
 	HasVideoInput               bool    `json:"has_video_input"`
 	EstimatedTokens             int64   `json:"estimated_tokens"`
 	AsyncReconciliationRequired bool    `json:"async_reconciliation_required"`
+}
+
+// BillingLogFacts are the pricing facts a task billing log carries in `other` so a reader can recompute the
+// charge: the billed token quantity (settled tokens once known, the estimate before), the frozen CNY unit
+// price and FX snapshot, resolution, video input and billing unit. A task priced by expression also gets its
+// usage_facts with seconds and resolution filled in when the snapshot lacked them; any other task gets seconds.
+func (task *Task) BillingLogFacts() map[string]any {
+	facts := map[string]any{}
+	if task == nil || task.PrivateData.BillingContext == nil {
+		return facts
+	}
+	bc := task.PrivateData.BillingContext
+	var usage map[string]any
+	if bc.TieredSnapshot != nil && len(bc.TieredSnapshot.UsageFacts) > 0 {
+		usage = maps.Clone(bc.TieredSnapshot.UsageFacts)
+	}
+	if seconds, ok := bc.OtherRatios["seconds"]; ok && seconds > 0 {
+		if usage == nil {
+			facts["seconds"] = seconds
+		} else if _, ok := usage["seconds"]; !ok {
+			usage["seconds"] = seconds
+		}
+	}
+	if snapshot := bc.ProviderBilling; snapshot != nil {
+		tokens := snapshot.EstimatedTokens
+		if task.PrivateData.SettledTokens > 0 {
+			tokens = task.PrivateData.SettledTokens
+		}
+		if tokens > 0 {
+			facts["billed_tokens"] = tokens
+		}
+		unit := snapshot.BillingUnit
+		if unit == "" {
+			unit = "token"
+		}
+		facts["billing_unit"] = unit
+		if snapshot.Currency == "CNY" && snapshot.UnitPricePerMillionTokens != "" {
+			facts["unit_price_cny_per_million"] = snapshot.UnitPricePerMillionTokens
+		}
+		if snapshot.Currency == "CNY" && snapshot.UnitPricePerRequest != "" {
+			facts["unit_price_cny_per_request"] = snapshot.UnitPricePerRequest
+		}
+		if snapshot.CNYPerUSD != "" {
+			facts["cny_per_usd"] = snapshot.CNYPerUSD
+		}
+		if snapshot.Resolution != "" {
+			facts["resolution"] = snapshot.Resolution
+			if _, ok := usage["resolution"]; usage != nil && !ok {
+				usage["resolution"] = snapshot.Resolution
+			}
+		}
+		facts["has_video_input"] = snapshot.HasVideoInput
+	}
+	if usage != nil {
+		facts["usage_facts"] = usage
+	}
+	return facts
 }
 
 // CNYBaseChargeUSD uses the frozen unit, never the model's current pricing.

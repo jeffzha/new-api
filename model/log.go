@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -252,9 +253,94 @@ func RecordOperationAuditLog(logUserId, actorRole int, content string, ip string
 	RecordAuditLog(c, AuditLog{UserId: logUserId, Username: username, ActorRole: actorRole, Category: category, Action: action, Content: content, Ip: ip, Status: status, Success: success, Other: other})
 }
 
-func RecordTopupLog(userId int, content string, callerIp string, paymentMethod string, callbackPaymentMethod string) {
+// Wallet-change logs (types 1, 3 and 4) carry the changed quota in logs.quota, always non-negative, and say in
+// other where it came from (quota_source) and which way it moved (quota_direction), so the OPS push can book
+// them without reading the content text.
+const (
+	LogQuotaCredit = "credit"
+	LogQuotaDebit  = "debit"
+
+	LogQuotaSourceOnlineTopup         = "online_topup"
+	LogQuotaSourceAdminTopup          = "admin_topup" // 管理员补单
+	LogQuotaSourceRedemption          = "redemption"
+	LogQuotaSourceSubscription        = "subscription_purchase"
+	LogQuotaSourceSubscriptionBalance = "subscription_balance_purchase"
+	LogQuotaSourceAdminAdjustment     = "admin_adjustment"
+	LogQuotaSourceRegister            = "register_gift"
+	LogQuotaSourceInvitee             = "invitee_gift"
+	LogQuotaSourceInviter             = "inviter_reward" // credited to the invite balance, not the wallet: quota 0
+	LogQuotaSourceAffiliateTransfer   = "affiliate_transfer"
+	LogQuotaSourceCheckin             = "checkin_gift"
+)
+
+func walletLogFields(source string, debit bool, fields map[string]any) map[string]any {
+	values := map[string]any{"quota_source": source, "quota_direction": LogQuotaCredit}
+	if debit {
+		values["quota_direction"] = LogQuotaDebit
+	}
+	maps.Copy(values, fields)
+	return values
+}
+
+// RecordQuotaLog records a wallet change of quota (non-negative) with its source and direction.
+func RecordQuotaLog(userId int, logType int, content string, quota int, source string, debit bool, fields map[string]any) {
 	username, _ := GetUsernameById(userId, false)
 	other := NewLogOther()
+	other.MergePublic(walletLogFields(source, debit, fields))
+	log := &Log{
+		UserId:    userId,
+		Username:  username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      logType,
+		Content:   content,
+		Quota:     max(quota, 0),
+		Other:     other.JSONString(),
+	}
+	if err := createLog(log); err != nil {
+		common.SysLog("failed to record log: " + err.Error())
+	}
+}
+
+// RecordQuotaLogWithAdminInfo is RecordLogWithAdminInfo for a wallet change made by an operator; it always
+// writes to the logs table (RecordLogWithAdminInfo sends LogTypeManage to the audit table instead).
+func RecordQuotaLogWithAdminInfo(userId int, logType int, content string, quota int, source string, debit bool, adminInfo *AuditAdminInfo, operation *AuditOperation, request ...*gin.Context) {
+	username, _ := GetUsernameById(userId, false)
+	log := &Log{
+		UserId:    userId,
+		Username:  username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      logType,
+		Content:   content,
+		Quota:     max(quota, 0),
+	}
+	if len(request) > 0 && request[0] != nil {
+		log.RequestId = request[0].GetString(common.RequestIdKey)
+	}
+	values := map[string]any{}
+	if data, err := common.Marshal(AuditOther{AdminInfo: adminInfo, Op: operation}); err == nil {
+		_ = common.Unmarshal(data, &values)
+	}
+	maps.Copy(values, walletLogFields(source, debit, nil))
+	data, err := common.Marshal(values)
+	if err != nil {
+		common.SysError("failed to encode log admin info: " + err.Error())
+		return
+	}
+	log.Other = string(data)
+	if err := createLog(log); err != nil {
+		common.SysLog("failed to record log: " + err.Error())
+	}
+}
+
+// RecordTopupLog records a paid top-up of quota; tradeNo links it to its topups row.
+func RecordTopupLog(userId int, content string, callerIp string, paymentMethod string, callbackPaymentMethod string, quota int, tradeNo string) {
+	source := LogQuotaSourceOnlineTopup
+	if callbackPaymentMethod == "admin" {
+		source = LogQuotaSourceAdminTopup
+	}
+	username, _ := GetUsernameById(userId, false)
+	other := NewLogOther()
+	other.MergePublic(walletLogFields(source, false, map[string]any{"trade_no": tradeNo}))
 	other.MergeAdmin(map[string]any{
 		"server_ip":               common.GetIp(),
 		"node_name":               common.NodeName,
@@ -269,6 +355,7 @@ func RecordTopupLog(userId int, content string, callerIp string, paymentMethod s
 		CreatedAt: common.GetTimestamp(),
 		Type:      LogTypeTopup,
 		Content:   content,
+		Quota:     max(quota, 0),
 		Ip:        callerIp,
 		Other:     other.JSONString(),
 	}

@@ -804,6 +804,7 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 			return true
 		}
 		if handled {
+			recordTaskSettledTokens(task, taskResult)
 			RecalculateTaskQuota(ctx, task, actualQuota, "adaptor billing adjustment", clamp)
 			return true
 		}

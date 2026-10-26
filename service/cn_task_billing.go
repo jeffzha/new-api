@@ -159,6 +159,16 @@ func (s *CNTaskSettler) GetPreConsumedQuota() int {
 	return s.reserved
 }
 
+// recordTaskSettledTokens keeps the provider-reported token quantity a frozen provider price was settled on,
+// so the settlement log can show the billed tokens instead of the submission estimate.
+func recordTaskSettledTokens(task *model.Task, result *relaycommon.TaskInfo) {
+	bc := task.PrivateData.BillingContext
+	if result == nil || result.TotalTokens <= 0 || bc == nil || bc.ProviderBilling == nil {
+		return
+	}
+	task.PrivateData.SettledTokens = int64(result.TotalTokens)
+}
+
 // Compute before terminal status CAS; the resulting target (or explicit error)
 // is persisted by the model with that CAS, independently of another provider poll.
 func PrepareCNTaskTerminal(adaptor TaskPollingAdaptor, task *model.Task, result *relaycommon.TaskInfo) {
@@ -195,6 +205,7 @@ func PrepareCNTaskTerminal(adaptor TaskPollingAdaptor, task *model.Task, result 
 				failure, handled = "task_provider_pricing_failed", true
 			} else if yes {
 				target = quota
+				recordTaskSettledTokens(task, result)
 			}
 		}
 		if !handled && adaptor != nil {

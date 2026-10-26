@@ -1,8 +1,10 @@
 package agencycontract
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPendingPlatformModelDoesNotInheritAgencyOverrides(t *testing.T) {
@@ -63,4 +65,37 @@ func TestIncompleteConfirmationDoesNotUnlockPricing(t *testing.T) {
 	price := PlatformModelPrice{OriginModelName: "model", AgencyCostConfirmed: &no}
 	require.False(t, price.IsPricingConfirmed())
 	require.True(t, (PlatformModelPrice{OriginModelName: "legacy"}).IsPricingConfirmed())
+}
+
+func TestTenantAndExclusiveRootCostsPreserveProcurementAndManualSales(t *testing.T) {
+	specificCost, specificSales := 6500, 9500
+	platform := PlatformPolicy{
+		ModelPrices: []PlatformModelPrice{{OriginModelName: "model", AgencyCostBPS: 6000, DefaultSalesBPS: 10000,
+			ChannelCosts: []PlatformChannelCost{{ChannelID: 1, PlatformCostBPS: 2000}, {ChannelID: 2, PlatformCostBPS: 3000}}}},
+		TenantPolicy: &Policy{DefaultSettlementBPS: 5000, DefaultChildCostBPS: 6000, DefaultSalesBPS: 9000,
+			MinSpreadBPS: 100, SalesCapBPS: 30000,
+			ModelOverrides: []ModelOverride{{OriginModelName: "model", ChildCostBPS: &specificCost, SalesBPS: &specificSales}}},
+		RootAgencyCosts: []RootAgencyCost{{AgencyID: 7, OriginModelName: "*", SettlementBPS: 6200},
+			{AgencyID: 7, OriginModelName: "model", SettlementBPS: 6400}},
+	}
+	require.NoError(t, ValidatePlatformPolicy(platform))
+	policy := Policy{DefaultSettlementBPS: 4000, DefaultChildCostBPS: 4500, DefaultSalesBPS: 10000,
+		ChildCostSource: PriceSourceDefault, SalesSource: PriceSourceDefault, SalesCapBPS: 30000}
+	result, err := ApplyPlatformPolicyForAgency(policy, platform, 7)
+	require.NoError(t, err)
+	assert.Equal(t, 6200, result.DefaultSettlementBPS)
+	assert.Equal(t, 6700, result.DefaultChildCostBPS)
+	require.Len(t, result.ModelOverrides, 1)
+	assert.Equal(t, 6400, *result.ModelOverrides[0].SettlementBPS)
+	assert.Equal(t, 9500, *result.ModelOverrides[0].SalesBPS)
+
+	manualSale, manualChild := 11000, 10500
+	policy.ModelOverrides = []ModelOverride{{OriginModelName: "model", SalesBPS: &manualSale, ChildCostBPS: &manualChild}}
+	result, err = ApplyPlatformPolicyForAgency(policy, platform, 8)
+	require.NoError(t, err)
+	assert.Equal(t, 6500, *result.ModelOverrides[0].SettlementBPS)
+	assert.Equal(t, manualSale, *result.ModelOverrides[0].SalesBPS)
+	assert.Equal(t, manualChild, *result.ModelOverrides[0].ChildCostBPS)
+	assert.Equal(t, 2000, platform.ModelPrices[0].ChannelCosts[0].PlatformCostBPS)
+	assert.Equal(t, 4000, policy.DefaultSettlementBPS)
 }

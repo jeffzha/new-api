@@ -125,7 +125,7 @@ func (a *App) RecoverPricingSources(ctx context.Context, expectedHash string, ro
 			}
 			if agency.ParentAgencyID == nil {
 				var skipped []PricingSourceChange
-				after, changes, skipped, err = preserveEffectiveSourcePrices(current, after, platform, changes)
+				after, changes, skipped, err = preserveEffectiveSourcePrices(current, after, platform, changes, agency.ID)
 				if err != nil {
 					return err
 				}
@@ -301,8 +301,12 @@ func recoverAutomaticPriceSources(agency model.Agency, current agencycontract.Po
 
 // A provenance repair must not silently reprice a root policy when the live
 // platform overlay recalculates automatic fields.
-func preserveEffectiveSourcePrices(before, after agencycontract.Policy, platform agencycontract.PlatformPolicy, changes []PricingSourceChange) (agencycontract.Policy, []PricingSourceChange, []PricingSourceChange, error) {
-	previous, err := agencycontract.ApplyPlatformPolicy(before, platform)
+func preserveEffectiveSourcePrices(before, after agencycontract.Policy, platform agencycontract.PlatformPolicy, changes []PricingSourceChange, agencyIDs ...int64) (agencycontract.Policy, []PricingSourceChange, []PricingSourceChange, error) {
+	var agencyID int64
+	if len(agencyIDs) > 0 {
+		agencyID = agencyIDs[0]
+	}
+	previous, err := agencycontract.ApplyPlatformPolicyForAgency(before, platform, agencyID)
 	if err != nil {
 		return before, nil, nil, err
 	}
@@ -326,7 +330,7 @@ func preserveEffectiveSourcePrices(before, after agencycontract.Policy, platform
 		} else {
 			override.ChildCostSource = change.After
 		}
-		candidate, applyErr := agencycontract.ApplyPlatformPolicy(after, platform)
+		candidate, applyErr := agencycontract.ApplyPlatformPolicyForAgency(after, platform, agencyID)
 		oldPrice, oldErr := agencycontract.Resolve(previous, change.Model)
 		newPrice, newErr := agencycontract.Resolve(candidate, change.Model)
 		oldQuote, oldConfigured := directChildCost(previous, change.Model)

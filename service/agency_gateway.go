@@ -319,7 +319,7 @@ func AgencyQuoteForUser(userID, tokenID int, originModelName string, acceptedAtM
 	// policies already contain their immutable inherited cost and must not be
 	// overwritten with the platform cost here.
 	if !pending && agency.ParentAgencyID == nil {
-		policy, err = agencycontract.ApplyPlatformPolicy(policy, platform)
+		policy, err = agencycontract.ApplyPlatformPolicyForAgency(policy, platform, agency.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -448,7 +448,7 @@ func agencyPricingHierarchy(leaf model.Agency, originModelName string, leafSales
 		effective := policy
 		if agency.ParentAgencyID == nil {
 			var applyErr error
-			effective, applyErr = agencycontract.ApplyPlatformPolicy(policy, platform)
+			effective, applyErr = agencycontract.ApplyPlatformPolicyForAgency(policy, platform, agency.ID)
 			if applyErr != nil {
 				return nil, false, "agency_policy_invalid", applyErr
 			}

@@ -149,7 +149,7 @@ var agencyOpsFields = map[string]string{
 	"topups":          "id source_operation_id source_id user_id initiated_by_user_id agency_id binding_id payment_reference actual_money currency_code quota_conversion_snapshot credited_quota paid_quota bonus_quota funding_source completion_source payment_status refunded_quota expired_quota expires_at occurred_at_ms",
 	"commissions":     "id event_id component_id component_key entry_type original_entry_id agency_id binding_id user_id origin_model_name standard_quota settlement_cost_quota theoretical_commission_quota paid_allocated_quota commission_quota amount_micros currency_code quota_per_unit exchange_rate occurred_at_ms hierarchy_depth parent_agency_id",
 	"balances":        "id agency_id currency_code earned_micros reversed_micros available_micros locked_micros paid_micros version updated_at_ms",
-	"withdrawals":     "id request_no agency_id currency_code amount_micros status version account_id account_version account_snapshot_hash payment_channel created_at_ms updated_at_ms",
+	"withdrawals":     "id request_no agency_id currency_code amount_micros status previous_status on_hold_reason version account_id account_version account_snapshot_hash payment_channel created_at_ms updated_at_ms",
 	"audit":           "id event_id actor_type actor_id acting_agency_id action object_type object_id request_id before_json after_json created_at_ms",
 	"wallets":         "user_id paid_available nonpaid_available debt_quota money_seq version opening_snapshot reconcile_blocked reconcile_reason updated_at",
 	"funding":         "id operation_id entry_no user_id money_seq source_kind lot_id paid_delta nonpaid_delta debt_delta paid_after nonpaid_after debt_after agency_id binding_id currency_code created_at_ms",

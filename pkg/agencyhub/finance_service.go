@@ -1936,10 +1936,22 @@ func (a *App) transitionWithdrawal(c *gin.Context, target string) {
 		respondError(c, http.StatusUnprocessableEntity, "expected_version_required", "必须提供当前提现版本", nil)
 		return
 	}
+	response, err := a.transitionWithdrawalState(c, identity, id, request, target, requestID(c))
+	if err != nil {
+		respondError(c, http.StatusConflict, "withdrawal_transition_failed", err.Error(), nil)
+		return
+	}
+	respondOK(c, response)
+}
+
+func (a *App) transitionWithdrawalState(c *gin.Context, identity *Identity, id int64, request withdrawalTransitionRequest, target, operation string) (map[string]any, error) {
+	if request.ExpectedVersion <= 0 {
+		return nil, errors.New("withdrawal version is required")
+	}
 	now := time.Now().UnixMilli()
 	var withdrawal model.AgencyWithdrawal
 	var paymentLeaseToken int64
-	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
+	err := model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		if err := model.AgencyLockForUpdate(tx).First(&withdrawal, id).Error; err != nil {
 			return err
 		}
@@ -2061,7 +2073,7 @@ func (a *App) transitionWithdrawal(c *gin.Context, target string) {
 		if result.RowsAffected != 1 {
 			return errors.New("withdrawal version conflict")
 		}
-		if err := tx.Create(&model.AgencyWithdrawalTransition{WithdrawalID: withdrawal.ID, OperationID: requestID(c), BeforeStatus: before, AfterStatus: target, ActorType: identity.ActorType, ActorID: identity.ActorID, Evidence: evidence, CreatedAtMS: now}).Error; err != nil {
+		if err := tx.Create(&model.AgencyWithdrawalTransition{WithdrawalID: withdrawal.ID, OperationID: operation, BeforeStatus: before, AfterStatus: target, ActorType: identity.ActorType, ActorID: identity.ActorID, Evidence: evidence, CreatedAtMS: now}).Error; err != nil {
 			return err
 		}
 		action := "withdrawal.transition"
@@ -2074,16 +2086,24 @@ func (a *App) transitionWithdrawal(c *gin.Context, target string) {
 			gin.H{"status": before, "version": request.ExpectedVersion}, after)
 	})
 	if err != nil {
-		respondError(c, http.StatusConflict, "withdrawal_transition_failed", err.Error(), nil)
-		return
+		return nil, err
 	}
 	response := gin.H{"status": target}
 	if target == "paying" {
 		response["payment_lease_token"] = strconv.FormatInt(paymentLeaseToken, 10)
 		response["payment_lease_until"] = time.Now().Add(10 * time.Minute).Unix()
 	}
-	respondOK(c, response)
+	response["version"] = request.ExpectedVersion + 1
+	return response, nil
 }
+
+type withdrawalPaidRequest struct {
+	ExpectedVersion   int64        `json:"expected_version"`
+	PaymentChannel    string       `json:"payment_channel"`
+	PaymentLeaseToken decimalInt64 `json:"payment_lease_token"`
+	PaymentReference  string       `json:"payment_reference"`
+}
+
 func (a *App) markWithdrawalPaid(c *gin.Context) {
 	id, err := parseID(c.Param("id"))
 	if err != nil {
@@ -2091,12 +2111,7 @@ func (a *App) markWithdrawalPaid(c *gin.Context) {
 		return
 	}
 	identity := currentIdentity(c)
-	var request struct {
-		ExpectedVersion   int64        `json:"expected_version"`
-		PaymentChannel    string       `json:"payment_channel"`
-		PaymentLeaseToken decimalInt64 `json:"payment_lease_token"`
-		PaymentReference  string       `json:"payment_reference"`
-	}
+	var request withdrawalPaidRequest
 	if err = c.ShouldBindJSON(&request); err != nil || strings.TrimSpace(request.PaymentReference) == "" {
 		respondError(c, http.StatusBadRequest, "invalid_request", "必须提供付款凭证", nil)
 		return
@@ -2113,9 +2128,25 @@ func (a *App) markWithdrawalPaid(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, "invalid_request", "付款渠道或凭证过长", nil)
 		return
 	}
+	response, err := a.markWithdrawalPaidState(identity, id, request, requestID(c))
+	if err != nil {
+		respondError(c, http.StatusConflict, "withdrawal_transition_failed", err.Error(), nil)
+		return
+	}
+	respondOK(c, response)
+}
+
+func (a *App) markWithdrawalPaidState(identity *Identity, id int64, request withdrawalPaidRequest, operation string) (map[string]any, error) {
+	if request.ExpectedVersion <= 0 || strings.TrimSpace(request.PaymentReference) == "" ||
+		len(request.PaymentChannel) > 64 || len(request.PaymentReference) > 191 {
+		return nil, errors.New("withdrawal payment evidence is invalid")
+	}
+	if request.PaymentChannel == "" {
+		request.PaymentChannel = "bank"
+	}
 	var withdrawal model.AgencyWithdrawal
 	now := time.Now().UnixMilli()
-	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
+	err := model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		if err := model.AgencyLockForUpdate(tx).First(&withdrawal, id).Error; err != nil {
 			return err
 		}
@@ -2179,11 +2210,10 @@ func (a *App) markWithdrawalPaid(c *gin.Context) {
 		if err := tx.Model(&balance).Updates(map[string]any{"locked_micros": balance.LockedMicros - withdrawal.AmountMicros, "paid_micros": paidMicros, "version": balance.Version + 1, "updated_at_ms": now}).Error; err != nil {
 			return err
 		}
-		return tx.Create(&model.AgencyWithdrawalTransition{WithdrawalID: withdrawal.ID, OperationID: requestID(c), BeforeStatus: before, AfterStatus: "paid", ActorType: identity.ActorType, ActorID: identity.ActorID, Evidence: request.PaymentChannel + ":" + request.PaymentReference, CreatedAtMS: now}).Error
+		return tx.Create(&model.AgencyWithdrawalTransition{WithdrawalID: withdrawal.ID, OperationID: operation, BeforeStatus: before, AfterStatus: "paid", ActorType: identity.ActorType, ActorID: identity.ActorID, Evidence: request.PaymentChannel + ":" + request.PaymentReference, CreatedAtMS: now}).Error
 	})
 	if err != nil {
-		respondError(c, http.StatusConflict, "withdrawal_transition_failed", err.Error(), nil)
-		return
+		return nil, err
 	}
-	respondOK(c, gin.H{"status": "paid"})
+	return map[string]any{"status": "paid", "version": withdrawal.Version + 1}, nil
 }

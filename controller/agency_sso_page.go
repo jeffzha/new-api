@@ -24,8 +24,8 @@ const agencySSOPageTemplate = `<!doctype html>
 const PAYLOAD = __PAYLOAD__;
 const origin = PAYLOAD.origin;
 let auth=null,requestId='',used=false;
-const target=PAYLOAD.mode==='link'?window.opener:parent;
-function done(message){const source=PAYLOAD.mode==='verify'?'new-api-agency-verification':PAYLOAD.mode==='link'?'new-api-agency-link':'new-api-agency-sso';target?.postMessage(Object.assign({source},message),origin);}
+const target=['link','ops'].includes(PAYLOAD.mode)?window.opener:parent;
+function done(message){const source=PAYLOAD.mode==='verify'?'new-api-agency-verification':PAYLOAD.mode==='link'?'new-api-agency-link':PAYLOAD.mode==='ops'?'new-api-ops-sso':'new-api-agency-sso';target?.postMessage(Object.assign({source},message),origin);}
 async function refresh(){
   const run=async()=>{const response=await fetch('/api/user/auth/refresh',{method:'POST',credentials:'include',cache:'no-store'});const data=await response.json();if(!response.ok||!data.success||!data.data?.access_token)throw Error('请先登录主站账号');return data.data;};
   return navigator.locks?navigator.locks.request('new-api:auth-refresh',run):run();
@@ -70,9 +70,15 @@ if(PAYLOAD.mode==='link'){
   });
   done({ready:true});
 }else{
-  request('/api/agency/sso-ticket',{state_hash:PAYLOAD.state_hash})
+  if(PAYLOAD.mode==='ops')document.getElementById('login').href=signInURL();
+  request('/api/agency/sso-ticket',{state_hash:PAYLOAD.state_hash,...(PAYLOAD.mode==='ops'?{audience:'tokenops-distributor'}:{})})
     .then(data=>done({ok:true,ticket:data.ticket}))
-    .catch(error=>done({ok:false,error:error.message}));
+    .catch(error=>{
+      if(PAYLOAD.mode!=='ops'){done({ok:false,error:error.message});return;}
+      document.getElementById('title').textContent='请登录聚合平台账号';
+      document.getElementById('hint').textContent='请登录已关联分销商的聚合平台账号，完成后会返回此授权窗口。';
+      document.getElementById('error').textContent=error.message;show('error');show('login-actions');
+    });
 }
 </script></body></html>`
 
@@ -81,7 +87,7 @@ if(PAYLOAD.mode==='link'){
 // (comma separated). An empty set disables the bridge.
 func allowedAgencySSOOrigins() map[string]struct{} {
 	allowed := map[string]struct{}{}
-	for _, raw := range strings.Split(os.Getenv("AGENCY_SSO_ALLOWED_ORIGIN"), ",") {
+	for _, raw := range strings.Split(os.Getenv("AGENCY_SSO_ALLOWED_ORIGIN")+","+os.Getenv("AGENCY_OPS_SSO_ALLOWED_ORIGIN"), ",") {
 		if origin := strings.TrimRight(strings.TrimSpace(raw), "/"); origin != "" {
 			allowed[origin] = struct{}{}
 		}
@@ -91,7 +97,7 @@ func allowedAgencySSOOrigins() map[string]struct{} {
 
 func agencySSOCSP(mode string) string {
 	base := "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; "
-	if mode == "link" {
+	if mode == "link" || mode == "ops" {
 		return base + "frame-ancestors 'none'"
 	}
 	origins := allowedAgencySSOOrigins()
@@ -113,7 +119,7 @@ func AgencySSOPage(c *gin.Context) {
 	}
 	stateHash := strings.TrimSpace(c.Query("state_hash"))
 	mode := c.Query("mode")
-	if mode != "" && mode != "verify" && mode != "link" {
+	if mode != "" && mode != "verify" && mode != "link" && mode != "ops" {
 		respondAgencySSOPageError(c, http.StatusBadRequest, "无效的桥接模式")
 		return
 	}

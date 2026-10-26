@@ -112,6 +112,115 @@ func ApplyOpsWithdrawal(db *gorm.DB, input OpsWithdrawalCommand, config Config) 
 	return result, err
 }
 
+// The OPS server authorizes and reauthenticates its actor before queuing this
+// host-local command. ActorKey separates payment leases of different OPS users.
+type OpsWithdrawalAction struct {
+	RootID           int64                     `json:"rootUserId"`
+	AgencyID         int64                     `json:"agencyId"`
+	WithdrawalID     int64                     `json:"withdrawalId"`
+	ActorKey         string                    `json:"actorKey"`
+	CommandID        string                    `json:"commandId"`
+	ExpectedVersion  int64                     `json:"expectedVersion"`
+	Target           string                    `json:"target"`
+	Reason           string                    `json:"reason"`
+	PaymentChannel   string                    `json:"paymentChannel"`
+	PaymentReference string                    `json:"paymentReference"`
+	PaymentLease     decimalInt64              `json:"paymentLease"`
+	UnpaidEvidence   *withdrawalUnpaidEvidence `json:"unpaidEvidence,omitempty"`
+}
+
+func ApplyOpsWithdrawalAction(db *gorm.DB, input OpsWithdrawalAction, config Config) (map[string]any, error) {
+	if !config.WithdrawalsEnabled || input.AgencyID <= 0 || input.WithdrawalID <= 0 ||
+		input.ExpectedVersion <= 0 || input.ActorKey == "" || len(input.ActorKey) > 160 ||
+		len(input.CommandID) < 8 || len(input.CommandID) > 160 || len(input.Reason) > 1000 {
+		return nil, errors.New("withdrawal action is invalid")
+	}
+	body, err := common.Marshal(input)
+	if err != nil {
+		return nil, err
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256(body))
+	scope := fmt.Sprintf("%x", sha256.Sum256([]byte("tokenops.withdrawal-action\n"+input.CommandID)))
+	actorDigest := sha256.Sum256([]byte(input.ActorKey))
+	actor := fmt.Sprintf("tokenops:%x", actorDigest[:11])
+	identity := &Identity{ActorType: actor, ActorID: input.RootID, AgencyID: &input.AgencyID}
+	var result map[string]any
+	err = model.AgencyOpsTransaction(db, func(tx *gorm.DB) error {
+		if err := validateOpsFinanceRoot(tx, input.RootID); err != nil {
+			return err
+		}
+		var withdrawal model.AgencyWithdrawal
+		if err := model.AgencyLockForUpdate(tx).
+			Where("id = ? AND agency_id = ?", input.WithdrawalID, input.AgencyID).First(&withdrawal).Error; err != nil {
+			return err
+		}
+		var prior model.AgencyIdempotencyRecord
+		if err := tx.Where("scope_hash = ?", scope).First(&prior).Error; err == nil {
+			if prior.BodyHash != hash {
+				return errors.New("withdrawal action identity conflict")
+			}
+			return common.UnmarshalJsonStr(prior.ResponseJSON, &result)
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		var writer model.AgencyOpsWriterState
+		if err := tx.First(&writer, 1).Error; err != nil {
+			return err
+		}
+		if writer.Mode != model.AgencyWriterSourcePrimary && writer.Mode != model.AgencyWriterShadow && writer.Mode != model.AgencyWriterRolledBack {
+			return errors.New("source financial writer inactive")
+		}
+		app := &App{db: tx, config: config}
+		var response map[string]any
+		var err error
+		if input.Target == "paid" {
+			response, err = app.markWithdrawalPaidState(identity, input.WithdrawalID,
+				withdrawalPaidRequest{ExpectedVersion: input.ExpectedVersion, PaymentChannel: input.PaymentChannel,
+					PaymentReference: input.PaymentReference, PaymentLeaseToken: input.PaymentLease}, input.CommandID)
+		} else {
+			switch input.Target {
+			case "reviewing", "approved", "paying", "payment_unknown", "on_hold", "rejected", "cancelled":
+			default:
+				return errors.New("withdrawal target is invalid")
+			}
+			if strings.TrimSpace(input.Reason) == "" {
+				return errors.New("withdrawal reason is required")
+			}
+			response, err = app.transitionWithdrawalState(nil, identity, input.WithdrawalID,
+				withdrawalTransitionRequest{ExpectedVersion: input.ExpectedVersion, Reason: input.Reason,
+					UnpaidEvidence: input.UnpaidEvidence}, input.Target, input.CommandID)
+		}
+		if err != nil {
+			return err
+		}
+		if err := tx.First(&withdrawal, input.WithdrawalID).Error; err != nil {
+			return err
+		}
+		// Only the applying actor receives a payment lease. It is never in the
+		// general export or event projection.
+		result = map[string]any{"record": map[string]any{
+			"id": withdrawal.ID, "request_no": withdrawal.RequestNo, "agency_id": withdrawal.AgencyID,
+			"currency_code": withdrawal.CurrencyCode, "amount_micros": withdrawal.AmountMicros,
+			"status": withdrawal.Status, "version": withdrawal.Version, "account_id": withdrawal.AccountID,
+			"account_version": withdrawal.AccountVersion, "account_snapshot_hash": withdrawal.AccountSnapshotHash,
+			"payment_channel": withdrawal.PaymentChannel, "created_at_ms": withdrawal.CreatedAtMS, "updated_at_ms": withdrawal.UpdatedAtMS,
+			"previous_status": withdrawal.PreviousStatus, "on_hold_reason": withdrawal.OnHoldReason,
+		}, "previousStatus": withdrawal.PreviousStatus, "reason": withdrawal.OnHoldReason}
+		if token, ok := response["payment_lease_token"]; ok {
+			result["paymentLease"] = token
+			result["paymentLeaseUntil"] = withdrawal.PaymentLeaseUntil
+		}
+		encoded, err := common.Marshal(result)
+		if err != nil {
+			return err
+		}
+		return tx.Create(&model.AgencyIdempotencyRecord{ScopeHash: scope, ActorType: actor, ActorID: input.RootID,
+			Action: "withdrawal." + input.Target, BodyHash: hash, ResourceID: strconv.FormatInt(withdrawal.ID, 10),
+			ResultCode: 200, ResponseJSON: string(encoded), CreatedAt: time.Now().Unix(), ExpiresAt: 253402300799}).Error
+	})
+	return result, err
+}
+
 // Both the original Hub form and the delegated OPS form use this transaction
 // body, including the same tax, balance lock and immutable recipient snapshot.
 func submitWithdrawal(tx *gorm.DB, agency int64, currency string, amount int64, account model.AgencyWithdrawalAccount, identity *Identity, operation string) (model.AgencyWithdrawal, error) {

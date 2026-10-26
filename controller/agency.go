@@ -22,6 +22,7 @@ import (
 
 type agencySSORequest struct {
 	StateHash string `json:"state_hash"`
+	Audience  string `json:"audience,omitempty"`
 }
 type agencyLinkProofRequest struct {
 	RequestID string `json:"request_id"`
@@ -89,6 +90,13 @@ func IssueAgencySSOTicket(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid state hash"})
 		return
 	}
+	if request.Audience == "" {
+		request.Audience = "agency-hub"
+	}
+	if request.Audience != "agency-hub" && request.Audience != "tokenops-distributor" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid audience"})
+		return
+	}
 	key, kid, err := loadAgencySigningKey()
 	if err != nil {
 		common.SysError(err.Error())
@@ -124,7 +132,7 @@ func IssueAgencySSOTicket(c *gin.Context) {
 	}
 	now := time.Now().Unix()
 	jti := common.NewRequestId()
-	ticket, err := agencyhub.SignSSOTicket(key, agencyhub.SSOTicketClaims{Issuer: "new-api", Audience: "agency-hub", Subject: int64(identity.UserID), SourceSID: identity.SessionID, UserAuthVersion: identity.UserAuthVersion, SessionVersion: identity.SessionVersion, StateHash: request.StateHash, JTI: jti, KeyID: kid, ActorType: actorType, ActorID: actorID, AgencyID: agencyID, IssuedAt: now, NotBefore: now, ExpiresAt: now + 60})
+	ticket, err := agencyhub.SignSSOTicket(key, agencyhub.SSOTicketClaims{Issuer: "new-api", Audience: request.Audience, Subject: int64(identity.UserID), SourceSID: identity.SessionID, UserAuthVersion: identity.UserAuthVersion, SessionVersion: identity.SessionVersion, StateHash: request.StateHash, JTI: jti, KeyID: kid, ActorType: actorType, ActorID: actorID, AgencyID: agencyID, IssuedAt: now, NotBefore: now, ExpiresAt: now + 60})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to sign agency ticket"})
 		return

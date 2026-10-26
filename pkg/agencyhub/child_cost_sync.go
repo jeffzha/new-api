@@ -374,7 +374,7 @@ func validateChangedPricingBillingPaths(agencies []model.Agency, policies map[in
 				policy := policies[agency.ID]
 				if index == 0 {
 					var err error
-					policy, err = agencycontract.ApplyPlatformPolicy(policy, platform)
+					policy, err = agencycontract.ApplyPlatformPolicyForAgency(policy, platform, agency.ID)
 					if err != nil {
 						return err
 					}
@@ -408,11 +408,11 @@ func unchangedBillingPath(chain []model.Agency, name string, policies map[int64]
 		}
 		if index == 0 {
 			var err error
-			before, err = agencycontract.ApplyPlatformPolicy(before, previousPlatform)
+			before, err = agencycontract.ApplyPlatformPolicyForAgency(before, previousPlatform, agency.ID)
 			if err != nil {
 				return false
 			}
-			after, err = agencycontract.ApplyPlatformPolicy(after, platform)
+			after, err = agencycontract.ApplyPlatformPolicyForAgency(after, platform, agency.ID)
 			if err != nil {
 				return false
 			}

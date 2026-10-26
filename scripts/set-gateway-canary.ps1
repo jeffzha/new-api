@@ -23,6 +23,7 @@ param(
     [string]$GreenServiceName = "new-api-green",
     [string]$BlueUpstream = "new-api:3000",
     [string]$GreenUpstream = "new-api-green:3000",
+    [ValidateSet("/healthz", "/api/status")][string]$HealthUri = "/healthz",
     [string]$ExpectedVersion = "",
     [string]$DomainStatusUrl = "https://gateway.nexus-reach.com/api/status",
     [string]$IpStatusUrl = "https://124.174.0.221/api/status",
@@ -87,10 +88,13 @@ reverse_proxy $BlueUpstream $GreenUpstream {
 	lb_policy cookie new_api_slot $cookieSecret {
 		fallback weighted_round_robin $blueWeight $greenWeight
 	}
-	health_uri /api/status
+	health_uri $HealthUri
+	health_body $(if ($HealthUri -eq "/healthz") { '`"status":"ready"`' } else { '`"success":true`' })
 	health_interval 10s
 	health_timeout 5s
 	health_status 200
+	health_fails 3
+	health_passes 2
 	fail_duration 30s
 	max_fails 2
 	lb_try_duration 5s
@@ -323,6 +327,7 @@ ip_status_url="$IpStatusUrl"
 domain_only="$(if ($DomainOnly) { '1' } else { '0' })"
 blue_weight="$blueWeight"
 green_weight="$greenWeight"
+health_uri="$HealthUri"
 expected_hash="$currentHash"
 config_b64="$configBase64"
 lock_file="`$remote_dir/.gateway-blue-green.lock"
@@ -378,6 +383,23 @@ check_release() {
 check_caddy_upstream() {
     upstream="`$1"
     docker exec "`$caddy_container" wget -q -O - "http://`$upstream/api/status" | grep -Eq '"success"[[:space:]]*:[[:space:]]*true'
+    if [ "`$health_uri" = "/healthz" ]; then
+        docker exec "`$caddy_container" wget -q -O - "http://`$upstream/healthz" | grep -Fq '"status":"ready"'
+    fi
+}
+
+wait_caddy_admission() {
+    upstream="`$1"
+    deadline=`$((SECONDS + 90))
+    while [ `$SECONDS -lt `$deadline ]; do
+        if docker exec "`$caddy_container" wget -q -O - http://127.0.0.1:2019/metrics \
+            | grep -Fq "caddy_reverse_proxy_upstreams_healthy{upstream=\"`$upstream\"} 1"; then
+            return 0
+        fi
+        sleep 5
+    done
+    echo "Caddy has not admitted `$upstream; refusing traffic progression." >&2
+    return 1
 }
 
 check_public_status() {
@@ -446,10 +468,12 @@ fi
 if [ "`$blue_weight" -gt 0 ]; then
     check_service "`$blue_service"
     check_caddy_upstream "$BlueUpstream"
+    wait_caddy_admission "$BlueUpstream"
 fi
 if [ "`$green_weight" -gt 0 ]; then
     check_service "`$green_service"
     check_caddy_upstream "$GreenUpstream"
+    wait_caddy_admission "$GreenUpstream"
 fi
 if [ -n "`$validation_slot" ]; then
     check_release "`$validation_slot" "`$validation_service"
@@ -480,6 +504,16 @@ fi
 
 if ! docker exec "`$caddy_container" caddy reload --config /tmp/Caddyfile.canary.load --adapter caddyfile; then
     fail_with_rollback "Caddy reload failed."
+fi
+
+# Allow two active-health intervals plus the metrics refresh before accepting
+# the new policy. A Docker health result alone does not prove Caddy admission.
+sleep 25
+if [ "`$blue_weight" -gt 0 ] && ! wait_caddy_admission "$BlueUpstream"; then
+    fail_with_rollback "Blue Caddy admission failed."
+fi
+if [ "`$green_weight" -gt 0 ] && ! wait_caddy_admission "$GreenUpstream"; then
+    fail_with_rollback "Green Caddy admission failed."
 fi
 
 if ! check_public_status; then

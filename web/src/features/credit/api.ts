@@ -26,10 +26,19 @@ import type {
   CreditTermsPayload,
 } from './types'
 
-export async function listCreditAccounts(): Promise<
-  CreditApiResponse<{ items: CreditAccount[] }>
+export async function listCreditAccounts(params: {
+  query: string
+  p: number
+  page_size: number
+}): Promise<
+  CreditApiResponse<{
+    items: CreditAccount[]
+    total: number
+    page?: number
+    page_size?: number
+  }>
 > {
-  const response = await api.get('/api/credit/terms')
+  const response = await api.get('/api/credit/terms', { params })
   return response.data
 }
 

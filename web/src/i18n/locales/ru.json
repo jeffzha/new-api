@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Customer": "Клиент",
+    "Term": "Срок оплаты",
+    "Due": "Дата оплаты",
+    "Statement email sent": "Выписка отправлена по почте",
+    "Failed to send statement email": "Не удалось отправить выписку по почте",
+    "Collect": "Записать оплату",
+    "Write off": "Списать долг",
+    "Resend": "Отправить повторно",
+    "Add credit line": "Добавить кредитную линию",
+    "Search configured credit accounts": "Поиск настроенных кредитных счетов",
+    "Search users by account, name, email or ID": "Поиск по аккаунту, имени, почте или ID",
+    "This customer already has a credit line. Open the configured account to edit it.": "У этого клиента уже есть кредитная линия. Откройте настроенный счёт для редактирования.",
+    "Load more": "Загрузить ещё",
     "Failure rate": "Доля ошибок",
     "Refunds": "Возвраты",
     "All API Keys": "All API Keys",

@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Customer": "客戶",
+    "Term": "帳期",
+    "Due": "到期時間",
+    "Statement email sent": "帳單郵件已傳送",
+    "Failed to send statement email": "傳送帳單郵件失敗",
+    "Collect": "登記收款",
+    "Write off": "核銷壞帳",
+    "Resend": "重新傳送",
+    "Add credit line": "新增授信",
+    "Search configured credit accounts": "搜尋已設定授信帳戶（帳號、名稱或使用者 ID）",
+    "Search users by account, name, email or ID": "搜尋帳號、名稱、電子郵件或使用者 ID",
+    "This customer already has a credit line. Open the configured account to edit it.": "此客戶已設定授信，請從已設定授信帳戶中開啟並修改。",
+    "Load more": "載入更多",
     "Failure rate": "失敗率",
     "Refunds": "退款",
     "All API Keys": "全部 API Key",

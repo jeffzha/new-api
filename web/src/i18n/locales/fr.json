@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Customer": "Client",
+    "Term": "Délai",
+    "Due": "Échéance",
+    "Statement email sent": "E-mail de relevé envoyé",
+    "Failed to send statement email": "Échec de l’envoi du relevé par e-mail",
+    "Collect": "Enregistrer un paiement",
+    "Write off": "Passer en perte",
+    "Resend": "Renvoyer",
+    "Add credit line": "Ajouter une ligne de crédit",
+    "Search configured credit accounts": "Rechercher les comptes de crédit configurés",
+    "Search users by account, name, email or ID": "Rechercher par compte, nom, e-mail ou ID",
+    "This customer already has a credit line. Open the configured account to edit it.": "Ce client dispose déjà d’une ligne de crédit. Ouvrez son compte configuré pour la modifier.",
+    "Load more": "Charger plus",
     "Failure rate": "Taux d’échec",
     "Refunds": "Remboursements",
     "All API Keys": "All API Keys",

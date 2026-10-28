@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Customer": "Khách hàng",
+    "Term": "Kỳ hạn",
+    "Due": "Đến hạn",
+    "Statement email sent": "Đã gửi email sao kê",
+    "Failed to send statement email": "Không gửi được email sao kê",
+    "Collect": "Ghi nhận thanh toán",
+    "Write off": "Xóa nợ",
+    "Resend": "Gửi lại",
+    "Add credit line": "Thêm hạn mức tín dụng",
+    "Search configured credit accounts": "Tìm tài khoản tín dụng đã cấu hình",
+    "Search users by account, name, email or ID": "Tìm theo tài khoản, tên, email hoặc ID",
+    "This customer already has a credit line. Open the configured account to edit it.": "Khách hàng này đã có hạn mức tín dụng. Mở tài khoản đã cấu hình để chỉnh sửa.",
+    "Load more": "Tải thêm",
     "Failure rate": "Tỷ lệ thất bại",
     "Refunds": "Hoàn tiền",
     "All API Keys": "All API Keys",

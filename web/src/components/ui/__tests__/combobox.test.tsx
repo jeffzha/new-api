@@ -49,6 +49,26 @@ function Fixture() {
 }
 
 describe('searchable single selection', () => {
+  it('opens the native dropdown button with the keyboard without button contract errors', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      render(<Fixture />)
+      const user = userEvent.setup()
+      const trigger = screen.getByRole('button', { name: 'Provider' })
+      expect(trigger.tagName).toBe('BUTTON')
+      trigger.focus()
+      await user.keyboard('{Enter}')
+      expect(screen.getByRole('option', { name: 'Google' })).toBeVisible()
+      expect(
+        error.mock.calls.some((args) =>
+          args.some((value) => String(value).includes('nativeButton'))
+        )
+      ).toBe(false)
+    } finally {
+      error.mockRestore()
+    }
+  })
+
   it.each(['dialog', 'sheet'] as const)(
     'keeps the options closed when a %s autofocuses the input, then opens on click',
     async (container) => {

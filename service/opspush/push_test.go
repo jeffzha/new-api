@@ -238,44 +238,96 @@ func TestEventV11RefundRequestIds(t *testing.T) {
 	}
 }
 
-// A Seedance task log carries its billed tokens and frozen CNY price; they survive the 4 KB cut.
-func TestEventV11TaskFactsSurviveCut(t *testing.T) {
-	task := &model.Task{PrivateData: model.TaskPrivateData{SettledTokens: 108900, BillingContext: &model.TaskBillingContext{
-		OtherRatios: map[string]float64{"seconds": 5},
-		ProviderBilling: &model.TaskProviderBillingSnapshot{Provider: "doubao_video_cny", Currency: "CNY", UnitPricePerMillionTokens: "46",
-			CNYPerUSD: "7.3", Resolution: "1080p", EstimatedTokens: 100000},
-	}}}
+func taskLog(t *testing.T, task *model.Task, added map[string]any) *model.Log {
+	t.Helper()
 	facts := task.BillingLogFacts()
-	maps.Copy(facts, map[string]any{"task_id": "task_abc", "pre_consumed_quota": 315068, "actual_quota": 343150, "settlement_stage": "settle",
-		"admin_info": map[string]any{"padding": strings.Repeat("x", 5000)}})
+	maps.Copy(facts, added)
 	other, err := common.Marshal(facts)
 	require.NoError(t, err)
-	log := &model.Log{Id: 40, UserId: 9, Type: model.LogTypeConsume, ModelName: "doubao-seedance-2.0", Quota: 28082, Other: string(other)}
+	return &model.Log{Id: 40, UserId: 9, Type: model.LogTypeConsume, ModelName: "doubao-seedance-2.0", Quota: 28082, Other: string(other)}
+}
 
-	event := EventV11(log, "", nil, testConversion)
-	extra := extraOfEvent(t, event)
-	assert.NotContains(t, extra, "admin_info")
-	assert.Equal(t, float64(108900), extra["billed_tokens"], "settled tokens replace the estimate")
-	assert.Equal(t, "46", extra["unit_price_cny_per_million"])
+// A settled Seedance task log carries the tokens the provider billed, the generated length, whether it was given a
+// video, the upstream's own charge and the frozen CNY price; under v1 and v1.1 alike they survive the 4 KB cut.
+func TestEventTaskFactsSurviveCut(t *testing.T) {
+	task := &model.Task{Status: model.TaskStatusSuccess, Data: []byte(`{"duration":10,"resolution":"1080p","usage":{"total_tokens":217800,"amount":"3.20"}}`),
+		PrivateData: model.TaskPrivateData{SettledTokens: 217800, BillingContext: &model.TaskBillingContext{
+			OtherRatios: map[string]float64{"seconds": 5},
+			ProviderBilling: &model.TaskProviderBillingSnapshot{Provider: "openai_seedance", Currency: "CNY", UnitPricePerMillionTokens: "31",
+				CNYPerUSD: "7.3", Resolution: "1080p", HasVideoInput: true, EstimatedTokens: 100000},
+		}}}
+	log := taskLog(t, task, map[string]any{"task_id": "task_abc", "pre_consumed_quota": 315068, "actual_quota": 343150, "settlement_stage": "settle",
+		"admin_info": map[string]any{"padding": strings.Repeat("x", 5000)}})
+
+	for name, event := range map[string]map[string]any{"v1": Event(log, ""), "v1.1": EventV11(log, "", nil, testConversion)} {
+		extra := extraOfEvent(t, event)
+		assert.NotContains(t, extra, "admin_info", name)
+		assert.Equal(t, float64(217800), extra["billed_tokens"], name)
+		assert.NotContains(t, extra, "estimated_tokens", "a settled task reports what was billed, not the estimate")
+		assert.Equal(t, "3.20", extra["upstream_amount"], name)
+		assert.Equal(t, "settle", extra["settlement_stage"], name)
+		assert.Equal(t, "task_abc", extra["task_id"], name)
+		assert.Equal(t, float64(10), extra["seconds"], "the generated length replaces the requested one")
+		assert.NotContains(t, extra, "usage_facts", "only an expression-priced task has usage facts")
+		assert.Equal(t, float64(10), event["durationSeconds"], name)
+		assert.Equal(t, map[string]any{"resolution": "1080p", "referenceVideo": true}, event["attributes"], name)
+		raw, err := common.Marshal(event["extra"])
+		require.NoError(t, err)
+		assert.LessOrEqual(t, len(raw), maxExtra-256, name)
+	}
+	extra := extraOfEvent(t, EventV11(log, "", nil, testConversion))
+	assert.Equal(t, "31", extra["unit_price_cny_per_million"])
 	assert.Equal(t, "7.3", extra["cny_per_usd"])
 	assert.Equal(t, "token", extra["billing_unit"])
-	assert.Equal(t, "settle", extra["settlement_stage"])
-	assert.Equal(t, "task_abc", extra["task_id"])
-	assert.Equal(t, float64(5), extra["seconds"])
-	assert.NotContains(t, extra, "usage_facts", "only an expression-priced task has usage facts")
 	assert.Equal(t, "usage", extra["recordKind"])
-	assert.Equal(t, float64(5), event["durationSeconds"])
-	assert.Equal(t, map[string]any{"resolution": "1080p"}, event["attributes"])
-	raw, err := common.Marshal(event["extra"])
-	require.NoError(t, err)
-	assert.LessOrEqual(t, len(raw), maxExtra-256)
 
-	// v1 keeps its own cut list: none of its keys are in this log, so v1 sends no extra at all.
-	assert.Nil(t, Event(log, "")["extra"])
+	// At submission the task has only its estimate and the requested length.
+	task.Status, task.PrivateData.SettledTokens = model.TaskStatusQueued, 0
+	submitted := EventV11(taskLog(t, task, map[string]any{"task_id": "task_abc", "settlement_stage": "preconsume"}), "", nil, testConversion)
+	extra = extraOfEvent(t, submitted)
+	assert.Equal(t, float64(100000), extra["estimated_tokens"])
+	assert.NotContains(t, extra, "billed_tokens", "an estimate is never reported as billed tokens")
+	assert.NotContains(t, extra, "upstream_amount")
+	assert.Equal(t, float64(5), submitted["durationSeconds"])
 
 	// An expression-priced task gets the resolution it lacked filled into its usage facts.
 	task.PrivateData.BillingContext.TieredSnapshot = &billingexpr.BillingSnapshot{UsageFacts: map[string]any{"seconds": 8}}
 	assert.Equal(t, map[string]any{"seconds": 8, "resolution": "1080p"}, task.BillingLogFacts()["usage_facts"])
+}
+
+// The upstream result is read field by field; a value of another type is skipped, not fatal.
+func TestTaskUpstreamFacts(t *testing.T) {
+	for _, c := range []struct {
+		data    string
+		seconds any
+		amount  any
+	}{
+		{`{"duration":"6","usage":{"amount":0.85}}`, float64(6), "0.85"},
+		{`{"duration":-1,"duration_secs":7.5}`, 7.5, nil},
+		{`{"duration":"auto","usage":"n/a"}`, nil, nil},
+		{`{"duration":999999}`, nil, nil},
+		{`[]`, nil, nil},
+	} {
+		task := &model.Task{Status: model.TaskStatusSuccess, Data: []byte(c.data), PrivateData: model.TaskPrivateData{BillingContext: &model.TaskBillingContext{}}}
+		facts := task.BillingLogFacts()
+		assert.Equal(t, c.seconds, facts["seconds"], c.data)
+		assert.Equal(t, c.amount, facts["upstream_amount"], c.data)
+	}
+}
+
+// Seedance plugins report the video input as usage_facts.video_input; MiniMax plugins report reference images and
+// reference video seconds in usage_facts, which v1 keeps when it cuts the log.
+func TestEventPluginVideoFacts(t *testing.T) {
+	other := `{"task_id":"task_p","usage_facts":{"tokens":194400,"resolution":"720p","video_input":"video"},"expr_b64":"` + strings.Repeat("x", 5000) + `"}`
+	event := Event(&model.Log{Id: 41, UserId: 9, Type: model.LogTypeConsume, ModelName: "doubao-seedance-2.0", Other: other}, "")
+	assert.Equal(t, map[string]any{"resolution": "720p", "referenceVideo": true}, event["attributes"])
+
+	other = `{"task_id":"task_m","usage_facts":{"seconds":6,"resolution":"768P","input_images":2,"input_video_seconds":3},"expr_b64":"` + strings.Repeat("x", 5000) + `"}`
+	event = Event(&model.Log{Id: 42, UserId: 9, Type: model.LogTypeConsume, ModelName: "MiniMax-H3", Other: other}, "")
+	facts := extraOfEvent(t, event)["usage_facts"].(map[string]any)
+	assert.Equal(t, float64(2), facts["input_images"])
+	assert.Equal(t, float64(3), facts["input_video_seconds"])
+	assert.Equal(t, float64(6), event["durationSeconds"])
 }
 
 func TestBuildV11LinksTopupsAndKeepsV1Unchanged(t *testing.T) {

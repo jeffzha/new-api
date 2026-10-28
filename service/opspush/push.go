@@ -523,11 +523,8 @@ func Event(log *model.Log, channelName string) map[string]any {
 	if log.UseTime >= 0 && int64(log.UseTime)*1000 <= maxCount {
 		event["latencyMs"] = log.UseTime * 1000
 	}
-	for _, key := range []string{"seconds", "duration"} {
-		if value, ok := number(facts[key]); ok && value >= 0 && value <= maxSeconds {
-			event["durationSeconds"] = value
-			break
-		}
+	if seconds, ok := durationSeconds(other, facts); ok {
+		event["durationSeconds"] = seconds
 	}
 	if attributes := logAttributes(other, facts); len(attributes) > 0 {
 		event["attributes"] = attributes
@@ -595,7 +592,23 @@ func number(raw json.RawMessage) (float64, bool) {
 	return parsed, !math.IsInf(parsed, 0) && !math.IsNaN(parsed)
 }
 
-// logAttributes mirrors collector.LOG_ATTRIBUTES: the first valid value of each name wins.
+// durationSeconds is the billed length of a call: its usage facts' seconds (else duration), and for a task priced
+// without an expression the seconds logged at the top level of other (the generated length once it succeeded).
+func durationSeconds(other, facts map[string]json.RawMessage) (float64, bool) {
+	durations := []json.RawMessage{facts["seconds"], facts["duration"]}
+	if _, task := other["task_id"]; task {
+		durations = append(durations, other["seconds"])
+	}
+	for _, raw := range durations {
+		if value, ok := number(raw); ok && value >= 0 && value <= maxSeconds {
+			return value, true
+		}
+	}
+	return 0, false
+}
+
+// logAttributes mirrors collector.LOG_ATTRIBUTES: the first valid value of each name wins. A Seedance task says
+// whether it was given a video as has_video_input in other, or as usage_facts.video_input "video" / "none".
 func logAttributes(other, facts map[string]json.RawMessage) map[string]any {
 	keys := []struct {
 		name, kind string
@@ -605,10 +618,13 @@ func logAttributes(other, facts map[string]json.RawMessage) map[string]any {
 		{"quality", "text", []string{"quality"}},
 		{"resolution", "text", []string{"resolution"}},
 		{"withAudio", "flag", []string{"withAudio", "with_audio", "generate_audio"}},
-		{"referenceVideo", "flag", []string{"referenceVideo", "reference_video"}},
+		{"referenceVideo", "flag", []string{"referenceVideo", "reference_video", "has_video_input"}},
 		{"characters", "count", []string{"characters", "character_count"}},
 	}
 	found := map[string]any{}
+	if input, ok := textValue(facts["video_input"]); ok && (input == "video" || input == "none") {
+		found["referenceVideo"] = input == "video"
+	}
 	for _, attribute := range keys {
 		for _, source := range []map[string]json.RawMessage{other, facts} {
 			for _, key := range attribute.keys {
@@ -637,15 +653,18 @@ func logAttributes(other, facts map[string]json.RawMessage) map[string]any {
 	return found
 }
 
-// billingKeys are the `other` keys OPS shows in its usage detail; used when the whole object is over 4 KB.
+// billingKeys are the `other` keys OPS shows in its usage detail and needs to price a task (its usage facts, billed or
+// estimated tokens, length, resolution, video input, the upstream's own charge and which settlement step the log is);
+// used when the whole object is over 4 KB.
 var billingKeys = []string{"model_ratio", "group_ratio", "completion_ratio", "cache_ratio", "model_price", "user_group_ratio",
-	"matched_tier", "billing_source", "request_path", "cache_tokens", "cache_creation_tokens", "image_count", "frt"}
+	"matched_tier", "billing_source", "request_path", "cache_tokens", "cache_creation_tokens", "image_count", "frt",
+	"task_id", "usage_facts", "billed_tokens", "estimated_tokens", "seconds", "resolution", "has_video_input", "upstream_amount",
+	"settlement_stage", "pre_consumed_quota", "actual_quota"}
 
-// v11BillingKeys are kept as well under v1.1: what OPS needs to price a task and tie a refund to its charge.
-var v11BillingKeys = append(append([]string{}, billingKeys...), "task_id", "usage_facts", "billed_tokens",
-	"unit_price_cny_per_million", "unit_price_cny_per_request", "cny_per_usd", "billing_unit", "resolution", "has_video_input",
-	"seconds", "pre_consumed_quota", "actual_quota", "settlement_stage", "reason", "request_id", "expr_b64", "billing_mode",
-	"quota_per_unit", "quota_source", "quota_direction", "trade_no", "redemption_id", "root_info")
+// v11BillingKeys are kept as well under v1.1: the frozen task price, refund reasons and the wallet record keys.
+var v11BillingKeys = append(append([]string{}, billingKeys...),
+	"unit_price_cny_per_million", "unit_price_cny_per_request", "cny_per_usd", "billing_unit", "reason", "request_id", "expr_b64",
+	"billing_mode", "quota_per_unit", "quota_source", "quota_direction", "trade_no", "redemption_id", "root_info")
 
 // extraOf is the log `other` as event `extra` (OPS shows it as the Gateway log detail), cut to the billing keys
 // when the whole object is over the 4 KB limit. The margin covers OPS re-serialising it with different spacing.
@@ -858,16 +877,8 @@ func EventV11(log *model.Log, channelName string, topup *model.TopUp, conversion
 		if log.UseTime >= 0 && int64(log.UseTime)*1000 <= maxCount {
 			event["latencyMs"] = log.UseTime * 1000
 		}
-		durations := []json.RawMessage{facts["seconds"], facts["duration"]}
-		if _, task := other["task_id"]; task {
-			// A task priced without an expression logs its seconds at the top level of other.
-			durations = append(durations, other["seconds"])
-		}
-		for _, raw := range durations {
-			if value, ok := number(raw); ok && value >= 0 && value <= maxSeconds {
-				event["durationSeconds"] = value
-				break
-			}
+		if seconds, ok := durationSeconds(other, facts); ok {
+			event["durationSeconds"] = seconds
 		}
 		if attributes := logAttributes(other, facts); len(attributes) > 0 {
 			event["attributes"] = attributes

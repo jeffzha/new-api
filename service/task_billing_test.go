@@ -1962,3 +1962,29 @@ func TestSettle_CheckedAdaptorErrorDoesNotFallBackToLiveRatios(t *testing.T) {
 	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 	assert.Equal(t, int64(0), countLogs(t))
 }
+
+// Settlement logs report the tokens the provider billed: a frozen provider price takes the result's total tokens, a
+// plugin priced by expression its completion facts. Tokens only in the submission facts are an estimate.
+func TestRecordTaskSettledTokens(t *testing.T) {
+	provider := &model.TaskBillingContext{ProviderBilling: &model.TaskProviderBillingSnapshot{Provider: "openai_seedance", EstimatedTokens: 100}}
+	tiered := func() *model.TaskBillingContext {
+		return &model.TaskBillingContext{TieredSnapshot: &billingexpr.BillingSnapshot{UsageFacts: map[string]any{"tokens": float64(100)}}}
+	}
+	for _, c := range []struct {
+		name    string
+		context *model.TaskBillingContext
+		result  *relaycommon.TaskInfo
+		settled int64
+	}{
+		{"provider total tokens", provider, &relaycommon.TaskInfo{TotalTokens: 217_800}, 217_800},
+		{"provider without usage", provider, &relaycommon.TaskInfo{}, 0},
+		{"plugin total_tokens", tiered(), &relaycommon.TaskInfo{UsageFacts: map[string]any{"total_tokens": float64(194_400), "tokens": float64(1)}}, 194_400},
+		{"plugin tokens", tiered(), &relaycommon.TaskInfo{UsageFacts: map[string]any{"tokens": float64(108_000)}}, 108_000},
+		{"plugin credits are not tokens", tiered(), &relaycommon.TaskInfo{TotalTokens: 19, UsageFacts: map[string]any{"vendor_credits": float64(19)}}, 0},
+		{"no billing context", nil, &relaycommon.TaskInfo{TotalTokens: 5}, 0},
+	} {
+		task := &model.Task{PrivateData: model.TaskPrivateData{BillingContext: c.context}}
+		recordTaskSettledTokens(task, c.result)
+		assert.Equal(t, c.settled, task.PrivateData.SettledTokens, c.name)
+	}
+}

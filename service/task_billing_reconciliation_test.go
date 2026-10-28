@@ -270,6 +270,10 @@ END`).Error)
 	assert.Equal(t, 100, record.PreConsumedQuota)
 	assert.Equal(t, 50, record.ActualQuota)
 	assert.Equal(t, -50, record.QuotaDelta)
+	// The settlement log reports the tokens on the provider's bill.
+	settleLog := getLastLog(t)
+	assert.Contains(t, settleLog.Other, `"billed_tokens":15870`)
+	assert.Contains(t, settleLog.Other, `"settlement_stage":"settle"`)
 
 	// Seed a deliberately reopened legacy record to verify settlement replay.
 	require.NoError(t, model.DB.Model(&record).Updates(map[string]any{

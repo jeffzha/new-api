@@ -227,9 +227,11 @@ type TaskProviderBillingSnapshot struct {
 }
 
 // BillingLogFacts are the pricing facts a task billing log carries in `other` so a reader can recompute the
-// charge: the billed token quantity (settled tokens once known, the estimate before), the frozen CNY unit
-// price and FX snapshot, resolution, video input and billing unit. A task priced by expression also gets its
-// usage_facts with seconds and resolution filled in when the snapshot lacked them; any other task gets seconds.
+// charge: the billed token quantity the provider reported at settlement (estimated_tokens before it), the
+// frozen CNY unit price and FX snapshot, resolution, video input and billing unit. Once the task succeeded,
+// its upstream result adds the generated length (seconds) and the upstream's own charge (upstream_amount).
+// A task priced by expression also gets its usage_facts with seconds and resolution filled in when the
+// snapshot lacked them; any other task gets seconds.
 func (task *Task) BillingLogFacts() map[string]any {
 	facts := map[string]any{}
 	if task == nil || task.PrivateData.BillingContext == nil {
@@ -240,20 +242,28 @@ func (task *Task) BillingLogFacts() map[string]any {
 	if bc.TieredSnapshot != nil && len(bc.TieredSnapshot.UsageFacts) > 0 {
 		usage = maps.Clone(bc.TieredSnapshot.UsageFacts)
 	}
-	if seconds, ok := bc.OtherRatios["seconds"]; ok && seconds > 0 {
+	upstream := task.upstreamUsage()
+	seconds := bc.OtherRatios["seconds"]
+	if upstream.Seconds > 0 {
+		seconds = upstream.Seconds
+	}
+	if seconds > 0 {
 		if usage == nil {
 			facts["seconds"] = seconds
 		} else if _, ok := usage["seconds"]; !ok {
 			usage["seconds"] = seconds
 		}
 	}
+	if upstream.Amount != "" {
+		facts["upstream_amount"] = upstream.Amount
+	}
+	if task.PrivateData.SettledTokens > 0 {
+		facts["billed_tokens"] = task.PrivateData.SettledTokens
+	}
 	if snapshot := bc.ProviderBilling; snapshot != nil {
-		tokens := snapshot.EstimatedTokens
-		if task.PrivateData.SettledTokens > 0 {
-			tokens = task.PrivateData.SettledTokens
-		}
-		if tokens > 0 {
-			facts["billed_tokens"] = tokens
+		// The estimate is what was pre-charged; it is never reported as billed tokens.
+		if task.PrivateData.SettledTokens <= 0 && snapshot.EstimatedTokens > 0 {
+			facts["estimated_tokens"] = snapshot.EstimatedTokens
 		}
 		unit := snapshot.BillingUnit
 		if unit == "" {
@@ -281,6 +291,46 @@ func (task *Task) BillingLogFacts() map[string]any {
 		facts["usage_facts"] = usage
 	}
 	return facts
+}
+
+// maxUpstreamSeconds bounds the generated length read back from an upstream result; it is a reported fact, not a
+// billing multiplier, so anything outside (0, a day] is ignored.
+const maxUpstreamSeconds = 86400
+
+type taskUpstreamUsage struct {
+	Seconds float64 // generated length: data.duration, else data.duration_secs
+	Amount  string  // the upstream's own charge for the task: data.usage.amount, as the upstream wrote it
+}
+
+// upstreamUsage reads the final facts a successful task's upstream result (Task.Data) reports. Seedance
+// upstreams return the generated length and, for LocoPal, the amount they charged; other results yield nothing.
+func (task *Task) upstreamUsage() taskUpstreamUsage {
+	var found taskUpstreamUsage
+	if task.Status != TaskStatusSuccess || len(task.Data) == 0 {
+		return found
+	}
+	var data, usage map[string]json.RawMessage
+	if common.Unmarshal(task.Data, &data) != nil {
+		return found
+	}
+	// Each value is read on its own: a number or a numeric string; anything else is skipped.
+	for _, key := range []string{"duration", "duration_secs"} {
+		var value json.Number
+		if common.Unmarshal(data[key], &value) != nil {
+			continue
+		}
+		if seconds, err := value.Float64(); err == nil && seconds > 0 && seconds <= maxUpstreamSeconds {
+			found.Seconds = seconds
+			break
+		}
+	}
+	var amount json.Number
+	if common.Unmarshal(data["usage"], &usage) == nil && common.Unmarshal(usage["amount"], &amount) == nil {
+		if value, err := amount.Float64(); err == nil && value >= 0 {
+			found.Amount = amount.String()
+		}
+	}
+	return found
 }
 
 // CNYBaseChargeUSD uses the frozen unit, never the model's current pricing.

@@ -21,6 +21,12 @@ func cnStageTaskEffectTx(tx *gorm.DB, task *Task, row *CNTaskBilling, delta int,
 		logType, quota = LogTypeRefund, -delta
 	}
 	values := task.BillingLogFacts()
+	// A task settled from the provider's bill reports the tokens on that bill.
+	var bill cnTaskProviderBill
+	if row.ProviderBill != "" && common.UnmarshalJsonStr(row.ProviderBill, &bill) == nil && bill.Settlement.TotalTokens > 0 {
+		values["billed_tokens"] = bill.Settlement.TotalTokens
+		delete(values, "estimated_tokens")
+	}
 	// settle is the final difference of a finished task; refund gives the whole charge back for a failed or cancelled one.
 	stage := "settle"
 	switch {

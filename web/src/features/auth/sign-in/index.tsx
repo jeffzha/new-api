@@ -24,6 +24,7 @@ import { getAgencyCenterUrl } from '@/lib/agency-center'
 
 import { AuthLayout } from '../auth-layout'
 import { TermsFooter } from '../components/terms-footer'
+import { ProjectSignIn } from '../uac/project-sign-in'
 import { UACSignIn } from '../uac/sign-in'
 import { UserAuthForm } from './components/user-auth-form'
 
@@ -34,6 +35,8 @@ export function SignIn() {
   const uacRequired =
     import.meta.env.VITE_UAC_REQUIRED === 'true' ||
     status?.uac_required === true
+
+  if (uacRequired) return <ProjectSignIn />
 
   return (
     <AuthLayout>

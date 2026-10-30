@@ -1,5 +1,8 @@
 {
   "translation": {
+    "Unified sign-in": "統一認證登入",
+    "Continue to the unified authentication center to sign in.": "前往統一認證中心，使用已授權的帳號登入。",
+    "For account access, contact your platform administrator.": "帳號或存取權限問題，請聯絡平台管理員。",
     "Customer": "客戶",
     "Term": "帳期",
     "Due": "到期時間",

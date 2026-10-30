@@ -1,5 +1,8 @@
 {
   "translation": {
+    "Unified sign-in": "統合認証ログイン",
+    "Continue to the unified authentication center to sign in.": "統合認証センターに進み、承認されたアカウントでログインしてください。",
+    "For account access, contact your platform administrator.": "アカウントやアクセス権については、管理者にお問い合わせください。",
     "Customer": "顧客",
     "Term": "支払期限",
     "Due": "期日",

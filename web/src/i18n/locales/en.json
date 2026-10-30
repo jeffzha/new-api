@@ -12,6 +12,9 @@
   "signal.page.marketplace": "Explore capabilities. Compare prices. Find your next model.",
   "signal.page.rankings": "Read the platform’s model demand and provider trends.",
   "translation": {
+    "Unified sign-in": "Unified sign-in",
+    "Continue to the unified authentication center to sign in.": "Continue to the unified authentication center to sign in.",
+    "For account access, contact your platform administrator.": "For account access, contact your platform administrator.",
     "Customer": "Customer",
     "Term": "Term",
     "Due": "Due",

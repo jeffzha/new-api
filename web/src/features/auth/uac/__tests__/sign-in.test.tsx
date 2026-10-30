@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   createMemoryHistory,
   createRootRoute,
@@ -31,15 +32,16 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { ProjectSignIn } from '../project-sign-in'
 import { UACSignIn } from '../sign-in'
 
-function renderSignIn() {
+function renderSignIn(project = false) {
   useAuthStore.getState().auth.reset('complete')
   const root = createRootRoute({ component: Outlet })
   const signIn = createRoute({
     getParentRoute: () => root,
     path: '/sign-in',
-    component: UACSignIn,
+    component: project ? ProjectSignIn : UACSignIn,
   })
   const otp = createRoute({
     getParentRoute: () => root,
@@ -53,7 +55,9 @@ function renderSignIn() {
   })
   render(
     <StrictMode>
-      <RouterProvider router={router} />
+      <QueryClientProvider client={new QueryClient()}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
     </StrictMode>
   )
   return router
@@ -72,6 +76,33 @@ it('offers unified sign-in without asking for a local password', async () => {
     })
   ).toBeEnabled()
   expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument()
+})
+
+it('shows the project platform identity with one keyboard-accessible unified sign-in action', async () => {
+  renderSignIn(true)
+  expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent(
+    'Unified sign-in'
+  )
+  expect(screen.getByRole('main')).toBeVisible()
+  const button = screen.getByRole('button', {
+    name: 'Sign in with unified authentication',
+  })
+  button.focus()
+  expect(button).toHaveFocus()
+  expect(button).toBeEnabled()
+  expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument()
+})
+
+it('keeps the project sign-in action available after an authentication error', async () => {
+  window.history.replaceState({}, '', '/test/sign-in?uac_error=account')
+  renderSignIn(true)
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Contact the platform administrator.'
+  )
+  expect(screen.getByRole('main')).toBeVisible()
+  expect(
+    screen.getByRole('button', { name: 'Sign in with unified authentication' })
+  ).toBeEnabled()
 })
 
 it('shows an actionable message when the local account is unavailable', async () => {

@@ -1,5 +1,8 @@
 {
   "translation": {
+    "Unified sign-in": "Единый вход",
+    "Continue to the unified authentication center to sign in.": "Для входа перейдите в центр единой аутентификации.",
+    "For account access, contact your platform administrator.": "По вопросам доступа обратитесь к администратору платформы.",
     "Customer": "Клиент",
     "Term": "Срок оплаты",
     "Due": "Дата оплаты",

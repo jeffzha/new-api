@@ -61,7 +61,7 @@ export function UACSignIn() {
   }, [handleLoginResult])
   const error = new URLSearchParams(window.location.search).get('uac_error')
   return (
-    <div className='space-y-5'>
+    <div className='flex flex-col gap-5'>
       <p className='text-muted-foreground text-sm'>
         {t('Use your unified authentication account to access this platform.')}
       </p>

@@ -90,6 +90,12 @@ func SetRelayRouter(router *gin.Engine) {
 	{
 		//http router
 		httpRouter := relayV1Router.Group("")
+		businessCaller := middleware.BusinessCaller()
+		httpRouter.Use(func(c *gin.Context) {
+			if c.Request.Method == "POST" && c.FullPath() == "/v1/chat/completions" {
+				businessCaller(c)
+			}
+		})
 		httpRouter.Use(middleware.Distribute(), opsbridge.CallGate())
 
 		// claude related routes

@@ -6,7 +6,10 @@ package billing_setting
 const deepSeekPeakCondition = `!is_holiday("Asia/Shanghai") && weekday("Asia/Shanghai") >= 1 && weekday("Asia/Shanghai") <= 5 && ((hour("Asia/Shanghai") >= 9 && hour("Asia/Shanghai") < 12) || (hour("Asia/Shanghai") >= 14 && hour("Asia/Shanghai") < 18))`
 const deepSeekFlashExpression = deepSeekPeakCondition + ` ? tier("peak", p * 0.273972602739726 + cr * 0.00547945205479452 + c * 1.095890410958904) : tier("off_peak", p * 0.136986301369863 + cr * 0.00273972602739726 + c * 0.547945205479452)`
 const deepSeekProExpression = deepSeekPeakCondition + ` ? tier("peak", p * 1.232876712328767 + cr * 0.0410958904109589 + c * 3.698630136986301) : tier("off_peak", p * 0.6164383561643836 + cr * 0.02054794520547945 + c * 1.849315068493151)`
-const locoPalDeepSeek261017Expression = `(tier("base", p * 0.136986301369863 + cr * 0.00273972602739726 + c * 0.547945205479452)) * (hour("Asia/Shanghai") >= 9 && hour("Asia/Shanghai") < 12 ? 2 : 1) * (hour("Asia/Shanghai") >= 14 && hour("Asia/Shanghai") < 18 ? 2 : 1)`
+
+// The 1030 upstream column lists a flat 2/8/0.04 tariff. Its dollar labels
+// are interpreted as CNY by the owner's explicit confirmation.
+const locoPalDeepSeek261017Expression = `tier("base", p * 0.273972602739726 + cr * 0.00547945205479452 + c * 1.095890410958904)`
 
 // Shenzhen Telecom publishes this image alias with context-tiered token prices.
 // Preserve its exact 32000/128000 boundaries and convert CNY to USD at 7.3.
@@ -24,6 +27,7 @@ var builtinBillingExpr = map[string]string{
 	"doubao-seedream-5-0-lite":     szhtpSeedream50LiteExpression,
 	"fun-asr-flash-2026-06-15":     funASRFlashExpression,
 	"deepseek-flash":               deepSeekFlashExpression,
+	"deepseek-v4.1-flash":          deepSeekFlashExpression,
 	"deepseek-v4-1-flash-1017":     locoPalDeepSeek261017Expression,
 	"deepseek-v4-flash":            deepSeekFlashExpression,
 	"deepseek-v4-flash-none":       deepSeekFlashExpression,
@@ -32,6 +36,12 @@ var builtinBillingExpr = map[string]string{
 	"deepseek-v4-pro":              deepSeekProExpression,
 	"deepseek-v4-pro-none":         deepSeekProExpression,
 	"deepseek-v4-pro-max":          deepSeekProExpression,
+	// Approved yellow rows in the 2026-10-30 workbook, CNY converted at 7.3.
+	// Explicit administrator prices are changed only by the reviewed API patch.
+	// The upstream column omits Mini audio pricing; retain its listed 20.4 CNY
+	// audio rate rather than implicitly charging it at the cheaper text rate.
+	"doubao-seed-2-0-mini-260428": `len <= 32000 ? tier("32K", p * 0.0273972602739726 + c * 0.273972602739726 + cr * 0.00547945205479452 + ai * 2.794520547945205) : len <= 128000 ? tier("128K", p * 0.0547945205479452 + c * 0.547945205479452 + cr * 0.010958904109589 + ai * 2.794520547945205) : tier("256K", p * 0.1095890410958904 + c * 1.095890410958904 + cr * 0.0219178082191781 + ai * 2.794520547945205)`,
+	"doubao-seed-2.1-lite":        `tier("standard", p * 0.1095890410958904 + c * 0.3698630136986301 + cr * 0.0219178082191781 + ai * 1.643835616438356)`,
 	// Yunwoke/Alibaba video task prices are CNY per output second. Billing
 	// expressions use USD units, so divide the published CNY prices by the
 	// gateway's USD exchange rate (7.3) before display conversion.

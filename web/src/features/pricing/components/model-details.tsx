@@ -38,6 +38,7 @@ import { StaticDataTable } from '@/components/data-table'
 import { sideDrawerContentClassName } from '@/components/drawer-layout'
 import { GroupBadge } from '@/components/group-badge'
 import { PublicLayout } from '@/components/layout'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Sheet,
@@ -79,6 +80,7 @@ import {
   type DynamicPriceEntry,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
+import { getModelCatalogMetadata } from '../lib/model-catalog-metadata'
 import {
   getAvailableGroups,
   getEffectiveGroupRatio,
@@ -627,6 +629,7 @@ function ModelBackendDetailsSection(props: { model: PricingModel }) {
 function ModelHeader(props: { model: PricingModel }) {
   const { t } = useTranslation()
   const model = props.model
+  const catalogMetadata = getModelCatalogMetadata(model.model_name)
   const modelIconKey = model.icon || model.vendor_icon
   const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 20) : null
   const description = model.description || model.vendor_description || null
@@ -658,6 +661,36 @@ function ModelHeader(props: { model: PricingModel }) {
         <p className='text-muted-foreground mt-2 text-sm leading-relaxed'>
           {description}
         </p>
+      )}
+      {catalogMetadata && (
+        <div className='bg-muted/20 mt-3 space-y-3 rounded-lg border p-3'>
+          <div>
+            <p className='text-primary text-sm font-semibold'>
+              {catalogMetadata.category}
+            </p>
+            <div className='mt-2 flex flex-wrap gap-1.5'>
+              {catalogMetadata.tags.map((tag) => (
+                <Badge
+                  key={tag}
+                  variant='secondary'
+                  className='h-6 px-2 text-xs'
+                >
+                  {tag}
+                </Badge>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className='text-muted-foreground mb-1 text-xs font-semibold'>
+              {t('Best for')}
+            </p>
+            <ul className='text-muted-foreground list-disc space-y-1 pl-4 text-sm'>
+              {catalogMetadata.strengths.map((strength) => (
+                <li key={strength}>{strength}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
       )}
     </header>
   )

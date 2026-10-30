@@ -20,7 +20,7 @@ import type { BillingUsageSchema } from '../../types'
 import { compileBillingExpression } from './parser'
 import { evaluateBillingCondition } from './runtime'
 import {
-  TIME_FUNCTIONS,
+  TIME_PROBES,
   expressionDependencies,
   type ExpressionNode,
   type CompiledBillingExpression,
@@ -267,7 +267,9 @@ export function readTokenTierChain(
     if (!condition) return null
     const { conditions } = condition
     const tier = tokenTier(remaining.yes, conditions)
-    if (tier && condition.conditionText) tier.conditionText = condition.conditionText
+    if (tier && condition.conditionText) {
+      tier.conditionText = condition.conditionText
+    }
     if (!tier) return null
     tiers.push(tier)
     remaining = remaining.no
@@ -282,10 +284,10 @@ export function isTimeCondition(node: ExpressionNode): boolean {
   return (
     dependencies.variables.size === 0 &&
     [...dependencies.functions].some((name) =>
-      (TIME_FUNCTIONS as readonly string[]).includes(name)
+      (TIME_PROBES as readonly string[]).includes(name)
     ) &&
     [...dependencies.functions].every((name) =>
-      [...TIME_FUNCTIONS, 'min', 'max', 'abs', 'ceil', 'floor'].includes(name)
+      [...TIME_PROBES, 'min', 'max', 'abs', 'ceil', 'floor'].includes(name)
     )
   )
 }

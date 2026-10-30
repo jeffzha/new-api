@@ -152,7 +152,7 @@ function describeRequestCondition(
   return {
     text: `${t(source)} ${node.left.args[0].value} ${node.operator === '==' ? '=' : '≠'} ${value}`,
     kind: 'combined',
-    timezone: ''
+    timezone: '',
   }
 }
 
@@ -161,6 +161,23 @@ function describeBillingCondition(
   t: Translate,
   locale: string
 ): Description | null {
+  const holiday =
+    node.kind === 'unary' && node.operator === '!' ? node.operand : node
+  if (
+    holiday.kind === 'call' &&
+    holiday.name === 'is_holiday' &&
+    holiday.args[0]?.kind === 'literal' &&
+    typeof holiday.args[0].value === 'string'
+  ) {
+    return {
+      text:
+        node === holiday
+          ? t('China public holidays')
+          : t('Excluding China public holidays'),
+      kind: 'calendar',
+      timezone: holiday.args[0].value.trim() || 'UTC',
+    }
+  }
   const requestDescription = describeRequestCondition(node, t)
   if (requestDescription) return requestDescription
   if (node.kind === 'unary' && node.operator === '!') {

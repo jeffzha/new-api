@@ -47,15 +47,14 @@ func TestLocoPalDeepSeek261017BuiltinBilling(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		at    time.Time
-		peak  int
 		quota int
 	}{
-		{"base before morning peak", time.Date(2026, 10, 18, 8, 59, 0, 0, shanghai), -1, 342_603},
-		{"morning peak applies on Sunday", time.Date(2026, 10, 18, 9, 0, 0, 0, shanghai), 0, 685_205},
-		{"base between windows", time.Date(2026, 10, 18, 12, 0, 0, 0, shanghai), -1, 342_603},
-		{"afternoon peak", time.Date(2026, 10, 18, 14, 0, 0, 0, shanghai), 1, 685_205},
-		{"base after afternoon peak", time.Date(2026, 10, 18, 18, 0, 0, 0, shanghai), -1, 342_603},
-		{"peak based on Shanghai rather than UTC", time.Date(2026, 10, 19, 1, 0, 0, 0, time.UTC), 0, 685_205},
+		{"flat tariff before morning window", time.Date(2026, 10, 18, 8, 59, 0, 0, shanghai), 685_205},
+		{"flat tariff on Sunday morning", time.Date(2026, 10, 18, 9, 0, 0, 0, shanghai), 685_205},
+		{"flat tariff between windows", time.Date(2026, 10, 18, 12, 0, 0, 0, shanghai), 685_205},
+		{"flat tariff in afternoon window", time.Date(2026, 10, 18, 14, 0, 0, 0, shanghai), 685_205},
+		{"flat tariff after afternoon window", time.Date(2026, 10, 18, 18, 0, 0, 0, shanghai), 685_205},
+		{"flat tariff with UTC clock", time.Date(2026, 10, 19, 1, 0, 0, 0, time.UTC), 685_205},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := billingexpr.ComputeTieredQuotaWithRequest(&billingexpr.BillingSnapshot{
@@ -65,12 +64,66 @@ func TestLocoPalDeepSeek261017BuiltinBilling(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "base", result.MatchedTier)
 			assert.Equal(t, tc.quota, result.ActualQuotaAfterGroup)
-			require.Len(t, result.RequestRules, 2)
-			for i, rule := range result.RequestRules {
-				assert.Equal(t, 2.0, rule.Multiplier)
-				assert.Equal(t, i == tc.peak, rule.Matched)
-			}
+			assert.Empty(t, result.RequestRules)
 		})
+	}
+}
+
+func TestOctober30YellowRowTariffs(t *testing.T) {
+	for _, tc := range []struct {
+		name, model, tier string
+		params            billingexpr.TokenParams
+		cny               float64
+	}{
+		{"mini short boundary", "doubao-seed-2-0-mini-260428", "32K", billingexpr.TokenParams{Len: 32000, P: 1000, C: 1000, CR: 1000}, 0.00224},
+		{"mini above short boundary", "doubao-seed-2-0-mini-260428", "128K", billingexpr.TokenParams{Len: 32001, P: 1000, C: 1000, CR: 1000}, 0.00448},
+		{"mini middle boundary", "doubao-seed-2-0-mini-260428", "128K", billingexpr.TokenParams{Len: 128000, P: 1000, C: 1000, CR: 1000}, 0.00448},
+		{"mini long context", "doubao-seed-2-0-mini-260428", "256K", billingexpr.TokenParams{Len: 128001, P: 1000, C: 1000, CR: 1000}, 0.00896},
+		{"lite standard", "doubao-seed-2.1-lite", "standard", billingexpr.TokenParams{P: 1000, C: 1000, CR: 1000}, 0.00366},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			expression, ok := billing_setting.GetBuiltinBillingExpr(tc.model)
+			require.True(t, ok)
+			require.NoError(t, billing_setting.SmokeTestExpr(expression))
+			result, err := billingexpr.ComputeTieredQuota(&billingexpr.BillingSnapshot{
+				ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500000,
+			}, tc.params)
+			require.NoError(t, err)
+			assert.Equal(t, tc.tier, result.MatchedTier)
+			assert.Equal(t, common.QuotaRound(tc.cny/7.3*500000), result.ActualQuotaAfterGroup)
+		})
+	}
+	shanghai := time.FixedZone("Asia/Shanghai", 8*60*60)
+	for _, tc := range []struct {
+		model         string
+		peak, offPeak float64
+	}{
+		{"deepseek-v4.1-flash", 10.04, 5.02},
+		{"deepseek-v4-pro", 36.3, 18.15},
+	} {
+		for _, hour := range []int{8, 9, 12, 14, 18} {
+			expression, ok := billing_setting.GetBuiltinBillingExpr(tc.model)
+			require.True(t, ok)
+			rate := tc.offPeak
+			if hour == 9 || hour == 14 {
+				rate = tc.peak
+			}
+			result, err := billingexpr.ComputeTieredQuotaWithRequest(&billingexpr.BillingSnapshot{
+				ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500000,
+				EvaluationTime: time.Date(2026, 10, 30, hour, 0, 0, 0, shanghai),
+			}, billingexpr.TokenParams{P: 1e6, C: 1e6, CR: 1e6}, billingexpr.RequestInput{})
+			require.NoError(t, err)
+			assert.Equal(t, common.QuotaRound(rate/7.3*500000), result.ActualQuotaAfterGroup, "%s hour %d", tc.model, hour)
+		}
+	}
+	expression, ok := billing_setting.GetBuiltinBillingExpr("HappyHorse1.1")
+	require.True(t, ok)
+	for resolution, cny := range map[string]float64{"480P": 0.45, "720P": 0.9, "1080P": 1.2} {
+		result, err := billingexpr.ComputeTieredQuotaWithRequest(&billingexpr.BillingSnapshot{
+			ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500000, UsageFactsBilling: true,
+		}, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: map[string]any{"kind": "video", "resolution": resolution, "seconds": 1.0}})
+		require.NoError(t, err)
+		assert.Equal(t, common.QuotaRound(cny/7.3*500000), result.ActualQuotaAfterGroup)
 	}
 }
 
@@ -167,7 +220,7 @@ func TestGPT6AstraBuiltinBilling(t *testing.T) {
 			}
 			params := service.BuildTieredTokenParams(usage, false, billingexpr.UsedVars(expression))
 			result, err := billingexpr.ComputeTieredQuotaWithRequest(&billingexpr.BillingSnapshot{
-				ExprString: expression, GroupRatio: 1, QuotaPerUnit: 500000,
+				ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500000,
 			}, params, billingexpr.RequestInput{Body: []byte(tc.request)})
 			require.NoError(t, err)
 			assert.Equal(t, tc.quota, result.ActualQuotaAfterGroup)

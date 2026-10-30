@@ -102,6 +102,36 @@ export const deepSeekExpression = `${peakCondition} ? tier("peak", p * 3 + cr * 
 afterEach(() => vi.useRealTimers())
 
 describe('local billing expression evaluation', () => {
+  test.each([
+    ['2026-10-30T08:59:59+08:00', 'off_peak'],
+    ['2026-10-30T09:00:00+08:00', 'peak'],
+    ['2026-10-30T12:00:00+08:00', 'off_peak'],
+    ['2026-10-30T14:00:00+08:00', 'peak'],
+    ['2026-10-30T18:00:00+08:00', 'off_peak'],
+    ['2026-10-31T10:00:00+08:00', 'off_peak'],
+    ['2026-10-01T10:00:00+08:00', 'off_peak'],
+    ['2026-10-08T10:00:00+08:00', 'peak'],
+  ])('recognizes holiday-aware time pricing at %s', (now, matchedTier) => {
+    const expression = `!is_holiday("Asia/Shanghai") && ${deepSeekExpression}`
+    expect(
+      evaluateBillingExpression(expression, {
+        now: new Date(now),
+        tokens: { p: 1000, c: 100, cr: 100 },
+      })
+    ).toMatchObject({ status: 'success', matchedTier })
+  })
+  test('localizes holiday conditions without exposing their function source', async () => {
+    const translations = createInstance()
+    await translations.init({ lng: 'zh', resources: { zh } })
+    const label = formatBillingCondition(
+      `!is_holiday("Asia/Shanghai") && ${peakCondition}`,
+      translations.t,
+      'zh'
+    )
+    expect(label).toContain('非中国法定节假日')
+    expect(label).toContain('09:00')
+    expect(label).not.toMatch(/is_holiday|weekday|&&/)
+  })
   test('evaluates request prices without token inputs and retains an explicit zero price', () => {
     expect(
       evaluateBillingExpression('tier("request", fixed(0.01))')

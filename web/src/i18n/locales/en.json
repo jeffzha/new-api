@@ -2922,7 +2922,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Related Projects",
     "footer.defaultCopyright": "All rights reserved.",
-    "footer.new\u0061pi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
+    "footer.newapi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment",
     "For example, alipay": "For example, alipay",
     "For private deployments, format: https://fastgpt.run/api/openapi": "For private deployments, format: https://fastgpt.run/api/openapi",
@@ -7236,6 +7236,9 @@
     "Use your unified authentication account to access this platform.": "Use your unified authentication account to access this platform.",
     "Your local administrator account is unavailable. Contact the platform administrator.": "Your local administrator account is unavailable. Contact the platform administrator.",
     "Unified sign-in failed. Try again or contact the platform administrator.": "Unified sign-in failed. Try again or contact the platform administrator.",
-    "Sign in with unified authentication": "Sign in with unified authentication"
+    "Sign in with unified authentication": "Sign in with unified authentication",
+    "Best for": "Best for",
+    "China public holidays": "China public holidays",
+    "Excluding China public holidays": "Excluding China public holidays"
   }
 }

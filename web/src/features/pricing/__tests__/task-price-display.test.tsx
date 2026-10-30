@@ -76,6 +76,25 @@ it('renders weekday and hour conditions as time windows instead of expression so
   expect(screen.queryByText(/weekday\(/)).not.toBeInTheDocument()
 })
 
+it('renders holiday-aware peak and off-peak prices as a structured table', () => {
+  const condition =
+    '!is_holiday("Asia/Shanghai") && weekday("Asia/Shanghai") >= 1 && weekday("Asia/Shanghai") <= 5 && hour("Asia/Shanghai") >= 9 && hour("Asia/Shanghai") < 12'
+  render(
+    <DynamicPricingBreakdown
+      billingExpr={`${condition} ? tier("peak", p * 3 + c * 9 + cr * 0.1) : tier("off_peak", p * 1.5 + c * 4.5 + cr * 0.05)`}
+    />
+  )
+  expect(screen.getByRole('table')).toBeVisible()
+  expect(
+    screen.getAllByText(/Excluding China public holidays/).length
+  ).toBeGreaterThan(0)
+  expect(screen.getAllByText(/09:00/).length).toBeGreaterThan(0)
+  expect(screen.queryByText(/is_holiday|weekday\(/)).not.toBeInTheDocument()
+  expect(
+    screen.queryByText('Special billing expression')
+  ).not.toBeInTheDocument()
+})
+
 const model: PricingModel = {
   id: 1,
   model_name: 'incho_music',
@@ -220,7 +239,9 @@ it('replaces the raw billing expression with a friendly price line for qwen-imag
   expect(screen.getByTestId('cell')).toHaveTextContent(friendly)
   expect(screen.getByTestId('card')).toHaveTextContent(friendly)
   expect(screen.queryByText(/reference_image_count/)).not.toBeInTheDocument()
-  expect(screen.queryByText(/Special billing expression/)).not.toBeInTheDocument()
+  expect(
+    screen.queryByText(/Special billing expression/)
+  ).not.toBeInTheDocument()
 })
 
 it('shows only the friendly CNY note in the qwen-image-3.0 detail drawer, not the raw expression breakdown', async () => {
@@ -260,7 +281,9 @@ it('shows only the friendly CNY note in the qwen-image-3.0 detail drawer, not th
   // The raw billing expression / per-variable breakdown must not render.
   expect(screen.queryByText(/reference_image_count/)).not.toBeInTheDocument()
   expect(screen.queryByText(/Raw expression/)).not.toBeInTheDocument()
-  expect(screen.queryByText(/Special billing expression/)).not.toBeInTheDocument()
+  expect(
+    screen.queryByText(/Special billing expression/)
+  ).not.toBeInTheDocument()
 })
 
 afterEach(async () => {

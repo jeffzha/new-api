@@ -47,7 +47,7 @@ func NewLogOther() *LogOther {
 
 func isReservedLogOtherKey(key string) bool {
 	switch key {
-	case logOtherAdminInfoKey, logOtherRootInfoKey, logOtherAuditInfoKey:
+	case logOtherAdminInfoKey, logOtherRootInfoKey, logOtherAuditInfoKey, logOtherCallerContextKey:
 		return true
 	default:
 		return slices.Contains(legacySensitiveLogOtherKeys, key)
@@ -226,6 +226,10 @@ func formatLogOtherJSON(value string, visibility logOtherVisibility) string {
 	}
 
 	changed := false
+	if _, exists := values[logOtherCallerContextKey]; exists {
+		delete(values, logOtherCallerContextKey)
+		changed = true
+	}
 	if visibility == logOtherVisibilityUser {
 		for _, key := range []string{logOtherAdminInfoKey, logOtherRootInfoKey, logOtherAuditInfoKey} {
 			if _, exists := values[key]; exists {
@@ -240,7 +244,7 @@ func formatLogOtherJSON(value string, visibility logOtherVisibility) string {
 			}
 		}
 	} else {
-		changed = normalizeLegacyRejectReason(values)
+		changed = normalizeLegacyRejectReason(values) || changed
 		if visibility == logOtherVisibilityAdmin {
 			if _, exists := values[logOtherRootInfoKey]; exists {
 				delete(values, logOtherRootInfoKey)

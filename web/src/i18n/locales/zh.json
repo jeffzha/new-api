@@ -2922,7 +2922,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相关项目",
     "footer.defaultCopyright": "版权所有。",
-    "footer.new\u0061pi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
+    "footer.newapi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "对于 2025 年 5 月 10 日之后添加的渠道，在部署时无需从模型名称中移除 \".\"",
     "For example, alipay": "例如 alipay",
     "For private deployments, format: https://fastgpt.run/api/openapi": "对于私有部署，格式为：https://fastgpt.run/api/openapi",
@@ -7236,6 +7236,9 @@
     "Use your unified authentication account to access this platform.": "请使用统一认证账号登录本平台。",
     "Your local administrator account is unavailable. Contact the platform administrator.": "本平台账号暂不可用，请联系平台管理员。",
     "Unified sign-in failed. Try again or contact the platform administrator.": "统一认证登录未成功，请重试或联系平台管理员。",
-    "Sign in with unified authentication": "统一认证登录"
+    "Sign in with unified authentication": "统一认证登录",
+    "Best for": "擅长",
+    "China public holidays": "中国法定节假日",
+    "Excluding China public holidays": "非中国法定节假日"
   }
 }

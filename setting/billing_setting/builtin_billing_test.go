@@ -86,7 +86,7 @@ func TestOctober30YellowRowTariffs(t *testing.T) {
 			require.True(t, ok)
 			require.NoError(t, billing_setting.SmokeTestExpr(expression))
 			result, err := billingexpr.ComputeTieredQuota(&billingexpr.BillingSnapshot{
-				ExprString: expression, GroupRatio: 1, QuotaPerUnit: 500000,
+				ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500000,
 			}, tc.params)
 			require.NoError(t, err)
 			assert.Equal(t, tc.tier, result.MatchedTier)
@@ -109,7 +109,7 @@ func TestOctober30YellowRowTariffs(t *testing.T) {
 				rate = tc.peak
 			}
 			result, err := billingexpr.ComputeTieredQuotaWithRequest(&billingexpr.BillingSnapshot{
-				ExprString: expression, GroupRatio: 1, QuotaPerUnit: 500000,
+				ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500000,
 				EvaluationTime: time.Date(2026, 10, 30, hour, 0, 0, 0, shanghai),
 			}, billingexpr.TokenParams{P: 1e6, C: 1e6, CR: 1e6}, billingexpr.RequestInput{})
 			require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestOctober30YellowRowTariffs(t *testing.T) {
 	require.True(t, ok)
 	for resolution, cny := range map[string]float64{"480P": 0.45, "720P": 0.9, "1080P": 1.2} {
 		result, err := billingexpr.ComputeTieredQuotaWithRequest(&billingexpr.BillingSnapshot{
-			ExprString: expression, GroupRatio: 1, QuotaPerUnit: 500000, UsageFactsBilling: true,
+			ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500000, UsageFactsBilling: true,
 		}, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: map[string]any{"kind": "video", "resolution": resolution, "seconds": 1.0}})
 		require.NoError(t, err)
 		assert.Equal(t, common.QuotaRound(cny/7.3*500000), result.ActualQuotaAfterGroup)
@@ -220,7 +220,7 @@ func TestGPT6AstraBuiltinBilling(t *testing.T) {
 			}
 			params := service.BuildTieredTokenParams(usage, false, billingexpr.UsedVars(expression))
 			result, err := billingexpr.ComputeTieredQuotaWithRequest(&billingexpr.BillingSnapshot{
-				ExprString: expression, GroupRatio: 1, QuotaPerUnit: 500000,
+				ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500000,
 			}, params, billingexpr.RequestInput{Body: []byte(tc.request)})
 			require.NoError(t, err)
 			assert.Equal(t, tc.quota, result.ActualQuotaAfterGroup)

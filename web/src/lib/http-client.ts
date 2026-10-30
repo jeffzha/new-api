@@ -31,6 +31,7 @@ import {
   safeServerErrorMessage,
 } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
+import { instanceBase, instancePath } from '@/features/auth/uac/instance'
 
 declare module 'axios' {
   export interface AxiosRequestConfig {
@@ -47,7 +48,7 @@ declare module 'axios' {
 export type ApiRequestConfig = AxiosRequestConfig
 
 export const api = axios.create({
-  baseURL: '',
+  baseURL: instanceBase,
   withCredentials: true,
   headers: {
     // no-store forbids storage; no-cache also revalidates any older cached response.
@@ -77,9 +78,9 @@ api.get = ((url: string, config: ApiRequestConfig = {}) => {
 function redirectToSignIn(): void {
   if (
     typeof window !== 'undefined' &&
-    window.location.pathname !== '/sign-in'
+    window.location.pathname !== instancePath('/sign-in')
   ) {
-    window.location.replace('/sign-in')
+    window.location.replace(instancePath('/sign-in'))
   }
 }
 

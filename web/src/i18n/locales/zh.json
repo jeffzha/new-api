@@ -7229,6 +7229,10 @@
     "The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.": "该渠道仅返回素材总费用，不提供图片按张或视频按秒的分项单价；供应商未收取素材费时，平台不额外收费。",
     "Video material": "视频素材",
     "Video material pricing": "视频素材定价",
-    "Video output pricing": "视频输出定价"
+    "Video output pricing": "视频输出定价",
+    "Use your unified authentication account to access this platform.": "请使用统一认证账号登录本平台。",
+    "Your local administrator account is unavailable. Contact the platform administrator.": "本平台账号暂不可用，请联系平台管理员。",
+    "Unified sign-in failed. Try again or contact the platform administrator.": "统一认证登录未成功，请重试或联系平台管理员。",
+    "Sign in with unified authentication": "统一认证登录"
   }
 }

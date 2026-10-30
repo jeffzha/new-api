@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { queryOptions, type QueryClient } from '@tanstack/react-query'
 
 import { getStatus } from '@/lib/api'
+import { instanceNamespace } from '@/features/auth/uac/instance'
 import { DEFAULT_SYSTEM_NAME, DEFAULT_LOGO } from '@/lib/constants'
 import {
   useSystemConfigStore,
@@ -42,7 +43,7 @@ import {
  */
 export const STATUS_QUERY_KEY = ['status'] as const
 
-export const STATUS_STORAGE_KEY = 'status'
+export const STATUS_STORAGE_KEY = `${instanceNamespace}status`
 
 /** Status payload shape — loose on purpose; the backend map is open-ended. */
 export type StatusData = Record<string, unknown>

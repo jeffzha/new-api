@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { instanceNamespace } from '@/features/auth/uac/instance'
+
 export type AuthSessionSyncEvent = {
   kind: 'authenticated' | 'signed_out'
   sid: string
@@ -24,8 +26,8 @@ export type AuthSessionSyncEvent = {
   timestamp: number
 }
 
-const AUTH_SYNC_CHANNEL = 'new-api:auth-session'
-const AUTH_SYNC_STORAGE_KEY = 'new-api:auth-session:event'
+const AUTH_SYNC_CHANNEL = `${instanceNamespace}new-api:auth-session`
+const AUTH_SYNC_STORAGE_KEY = `${instanceNamespace}new-api:auth-session:event`
 
 function randomIdentifier(): string {
   if (typeof globalThis.crypto?.randomUUID === 'function') {

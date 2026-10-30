@@ -7070,6 +7070,10 @@
     "The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.": "Nhà cung cấp chỉ trả về tổng phí tư liệu, không có đơn giá riêng theo ảnh hoặc theo giây. Nền tảng không thu thêm phí tư liệu khi nhà cung cấp không tính phí.",
     "Video material": "Chất liệu video",
     "Video material pricing": "Giá chất liệu video",
-    "Video output pricing": "Giá đầu ra video"
+    "Video output pricing": "Giá đầu ra video",
+    "Use your unified authentication account to access this platform.": "Sử dụng tài khoản xác thực thống nhất để đăng nhập nền tảng.",
+    "Your local administrator account is unavailable. Contact the platform administrator.": "Tài khoản quản trị viên cục bộ không khả dụng. Vui lòng liên hệ quản trị viên nền tảng.",
+    "Unified sign-in failed. Try again or contact the platform administrator.": "Đăng nhập thống nhất không thành công. Hãy thử lại hoặc liên hệ quản trị viên nền tảng.",
+    "Sign in with unified authentication": "Đăng nhập bằng xác thực thống nhất"
   }
 }

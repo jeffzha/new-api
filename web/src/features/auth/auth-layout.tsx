@@ -20,6 +20,7 @@ import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
 import { Skeleton } from '@/components/ui/skeleton'
+import { instanceAsset } from '@/features/auth/uac/instance'
 import { useSystemConfig } from '@/hooks/use-system-config'
 
 type AuthLayoutProps = {
@@ -41,7 +42,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
             <Skeleton className='absolute inset-0 rounded-full' />
           ) : (
             <img
-              src={logo}
+              src={instanceAsset(logo)}
               alt={t('Logo')}
               className='h-8 w-8 rounded-full object-cover'
             />

@@ -7070,6 +7070,10 @@
     "The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.": "Le fournisseur retourne uniquement le montant total des médias, sans tarif distinct par image ou par seconde. Aucun frais de média n'est ajouté si le fournisseur n'en facture pas.",
     "Video material": "Matériau vidéo",
     "Video material pricing": "Tarification des matériaux vidéo",
-    "Video output pricing": "Tarification de la sortie vidéo"
+    "Video output pricing": "Tarification de la sortie vidéo",
+    "Use your unified authentication account to access this platform.": "Utilisez votre compte d’authentification unifiée pour accéder à cette plateforme.",
+    "Your local administrator account is unavailable. Contact the platform administrator.": "Votre compte administrateur local est indisponible. Contactez l’administrateur de la plateforme.",
+    "Unified sign-in failed. Try again or contact the platform administrator.": "La connexion unifiée a échoué. Réessayez ou contactez l’administrateur de la plateforme.",
+    "Sign in with unified authentication": "Connexion par authentification unifiée"
   }
 }

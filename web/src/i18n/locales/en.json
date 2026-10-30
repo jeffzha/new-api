@@ -7229,6 +7229,10 @@
     "The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.": "The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.",
     "Video material": "Video material",
     "Video material pricing": "Video material pricing",
-    "Video output pricing": "Video output pricing"
+    "Video output pricing": "Video output pricing",
+    "Use your unified authentication account to access this platform.": "Use your unified authentication account to access this platform.",
+    "Your local administrator account is unavailable. Contact the platform administrator.": "Your local administrator account is unavailable. Contact the platform administrator.",
+    "Unified sign-in failed. Try again or contact the platform administrator.": "Unified sign-in failed. Try again or contact the platform administrator.",
+    "Sign in with unified authentication": "Sign in with unified authentication"
   }
 }

@@ -49,6 +49,7 @@ const queryClient = createAppQueryClient(() => {
 
 // Create a new router instance
 const router = createRouter({
+  basepath: (import.meta.env.VITE_INSTANCE_BASE_PATH ?? '') || '/',
   routeTree,
   context: { queryClient },
   defaultPreload: 'intent',

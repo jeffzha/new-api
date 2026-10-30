@@ -89,6 +89,8 @@ export interface ApiResponse<T = unknown> {
 // ============================================================================
 
 export interface SystemStatus {
+  uac_enabled?: boolean
+  uac_required?: boolean
   success?: boolean
   message?: string
   data?: {

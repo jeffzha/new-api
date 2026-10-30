@@ -36,6 +36,7 @@ import (
 	"github.com/QuantumNous/new-api/service/opsexport"
 	"github.com/QuantumNous/new-api/service/opsmonitor"
 	"github.com/QuantumNous/new-api/service/opspush"
+	"github.com/QuantumNous/new-api/service/uac"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -66,6 +67,10 @@ func main() {
 	err := InitResources()
 	if err != nil {
 		common.FatalLog("failed to initialize resources: " + err.Error())
+		return
+	}
+	if err := uac.ConfigureFromEnv(); err != nil {
+		common.FatalLog("invalid project authentication configuration: " + err.Error())
 		return
 	}
 
@@ -270,7 +275,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:    ":" + port,
-		Handler: server,
+		Handler: router.ProjectHTTPHandler(server),
 	}
 
 	go func() {

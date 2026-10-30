@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { QueryClient } from '@tanstack/react-query'
 import axios from 'axios'
+import { instanceBase, instanceNamespace } from '@/features/auth/uac/instance'
 import { t } from 'i18next'
 
 import { publishAuthSessionEvent } from '@/lib/auth-session-sync'
@@ -68,7 +69,7 @@ export class AuthRotationError extends Error {
 }
 
 const authClient = axios.create({
-  baseURL: '',
+  baseURL: instanceBase,
   withCredentials: true,
   headers: {
     // no-store forbids storage; no-cache also revalidates any older cached response.
@@ -322,7 +323,7 @@ async function performRefreshWithBrowserLock(
       return runRefresh(refreshEpoch)
     }
     return navigator.locks.request(
-      'new-api:auth-refresh',
+      `${instanceNamespace}new-api:auth-refresh`,
       { mode: 'exclusive' },
       () => runRefresh(refreshEpoch)
     )

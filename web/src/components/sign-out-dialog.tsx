@@ -48,6 +48,11 @@ export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
       }
 
       clearAuthenticatedClientState(queryClient)
+      const data = response.data as { logout_url?: string } | undefined
+      if (data?.logout_url) {
+        window.location.assign(data.logout_url)
+        return
+      }
       toast.success(t('Signed out'))
       void navigate({ to: '/sign-in', replace: true })
     } catch (error: unknown) {

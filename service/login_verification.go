@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service/uac"
 )
 
 const LoginVerificationTTL = 5 * time.Minute
@@ -144,6 +145,10 @@ func CompleteLoginVerification(token string, verification *LoginVerification, me
 	if err != nil {
 		_, _ = model.RevokeUserSession(session.UserID, session.SID, "token_issue_failed")
 		return nil, err
+	}
+	if session.LoginMethod == "uac" && (uac.Default == nil || uac.Default.FinishChallenge(token, session.SID) != nil) {
+		_, _ = model.RevokeUserSession(session.UserID, session.SID, "uac_challenge_expired")
+		return nil, ErrLoginSessionRevoked
 	}
 	return bundle, nil
 }

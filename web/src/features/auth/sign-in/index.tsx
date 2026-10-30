@@ -24,12 +24,16 @@ import { getAgencyCenterUrl } from '@/lib/agency-center'
 
 import { AuthLayout } from '../auth-layout'
 import { TermsFooter } from '../components/terms-footer'
+import { UACSignIn } from '../uac/sign-in'
 import { UserAuthForm } from './components/user-auth-form'
 
 export function SignIn() {
   const { t } = useTranslation()
   const { redirect, mode } = useSearch({ from: '/(auth)/sign-in' })
   const { status } = useStatus()
+  const uacRequired =
+    import.meta.env.VITE_UAC_REQUIRED === 'true' ||
+    status?.uac_required === true
 
   return (
     <AuthLayout>
@@ -38,7 +42,8 @@ export function SignIn() {
           <h2 className='text-center text-2xl font-semibold tracking-tight sm:text-left'>
             {mode === 'agency' ? t('Agency Center') : t('Sign in')}
           </h2>
-          {mode !== 'agency' &&
+          {!uacRequired &&
+            mode !== 'agency' &&
             !status?.self_use_mode_enabled &&
             status?.register_enabled !== false && (
               <p className='text-muted-foreground text-left text-sm sm:text-base'>
@@ -54,10 +59,15 @@ export function SignIn() {
             )}
         </div>
 
-        <UserAuthForm
-          loginMode={mode === 'agency' ? 'agency' : 'platform'}
-          redirectTo={mode === 'agency' ? getAgencyCenterUrl() : redirect}
-        />
+        {uacRequired ? (
+          <UACSignIn />
+        ) : (
+          <UserAuthForm
+            loginMode={mode === 'agency' ? 'agency' : 'platform'}
+            redirectTo={mode === 'agency' ? getAgencyCenterUrl() : redirect}
+          />
+        )}
+        {status?.uac_enabled && !uacRequired && <UACSignIn />}
 
         {mode !== 'agency' && (
           <TermsFooter

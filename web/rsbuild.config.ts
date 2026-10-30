@@ -65,6 +65,16 @@ export default defineConfig(({ envMode }) => {
       },
     },
     source: {
+      define: Object.fromEntries(
+        [
+          'VITE_INSTANCE_BASE_PATH',
+          'VITE_UAC_INSTANCE',
+          'VITE_UAC_REQUIRED',
+        ].map((key) => [
+          `import.meta.env.${key}`,
+          JSON.stringify(process.env[key] || env.rawPublicVars[key] || ''),
+        ])
+      ),
       entry: {
         index: './src/main.tsx',
       },
@@ -83,6 +93,7 @@ export default defineConfig(({ envMode }) => {
       proxy: devProxy,
     },
     output: {
+      assetPrefix: `${process.env.VITE_INSTANCE_BASE_PATH || env.rawPublicVars.VITE_INSTANCE_BASE_PATH || ''}/`,
       // Production optimizations
       minify: isProd,
       target: 'web',

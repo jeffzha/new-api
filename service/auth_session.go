@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service/uac"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -102,6 +103,9 @@ func createLoginSession(userID int, expectedAuthVersion int64, loginMethod, ip, 
 }
 
 func newLoginSession(userID int, authVersion int64, loginMethod, ip, userAgent string) (*model.UserSession, string, error) {
+	if uac.Required() && loginMethod != "uac" {
+		return nil, "", ErrLoginSessionInvalid
+	}
 	refreshSecret, err := common.GenerateRandomCharsKey(64)
 	if err != nil {
 		return nil, "", err
@@ -145,6 +149,9 @@ func ValidateLoginSession(identity AuthIdentity) (*model.UserSession, *model.Use
 	}
 	if user.Status != common.UserStatusEnabled || user.AuthVersion != identity.UserAuthVersion {
 		return nil, nil, ErrLoginSessionRevoked
+	}
+	if err := validateProjectSession(session); err != nil {
+		return nil, nil, err
 	}
 	return session, user, nil
 }
@@ -232,6 +239,9 @@ func RefreshLoginSession(rawRefreshToken, expectedSID, ip, userAgent string) (*A
 	if session.Status != model.UserSessionStatusActive || session.RevokedAt != 0 || session.ExpiresAt <= time.Now().Unix() {
 		return nil, nil, ErrLoginSessionRevoked
 	}
+	if err := validateProjectSession(session); err != nil {
+		return nil, nil, err
+	}
 	userCache, err := model.GetUserCache(session.UserID)
 	if err != nil {
 		return nil, nil, err
@@ -314,9 +324,9 @@ func WriteRefreshCookie(c *gin.Context, rawToken string) {
 	}
 	maxAge := max(int(time.Until(expiresAt)/time.Second), 1)
 	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     RefreshCookieName,
+		Name:     uac.RefreshCookie(),
 		Value:    rawToken,
-		Path:     "/api/user/auth",
+		Path:     uac.Prefix() + "/api/user/auth",
 		MaxAge:   maxAge,
 		Expires:  expiresAt,
 		HttpOnly: true,
@@ -328,9 +338,9 @@ func WriteRefreshCookie(c *gin.Context, rawToken string) {
 
 func ClearRefreshCookie(c *gin.Context) {
 	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     RefreshCookieName,
+		Name:     uac.RefreshCookie(),
 		Value:    "",
-		Path:     "/api/user/auth",
+		Path:     uac.Prefix() + "/api/user/auth",
 		MaxAge:   -1,
 		Expires:  time.Unix(1, 0),
 		HttpOnly: true,
@@ -359,9 +369,9 @@ func ClearRefreshCookie(c *gin.Context) {
 // can set one without the other.
 func writeSessionHintCookie(c *gin.Context, maxAge int, expiresAt time.Time) {
 	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     SessionHintCookieName,
+		Name:     uac.HintCookie(),
 		Value:    SessionHintCookieValue,
-		Path:     "/",
+		Path:     uac.Prefix() + "/",
 		MaxAge:   maxAge,
 		Expires:  expiresAt,
 		HttpOnly: false,
@@ -372,9 +382,9 @@ func writeSessionHintCookie(c *gin.Context, maxAge int, expiresAt time.Time) {
 
 func clearSessionHintCookie(c *gin.Context) {
 	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     SessionHintCookieName,
+		Name:     uac.HintCookie(),
 		Value:    "",
-		Path:     "/",
+		Path:     uac.Prefix() + "/",
 		MaxAge:   -1,
 		Expires:  time.Unix(1, 0),
 		HttpOnly: false,

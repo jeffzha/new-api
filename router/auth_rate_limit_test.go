@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/uac"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -23,6 +24,38 @@ import (
 )
 
 var authRateLimitFixtureSequence atomic.Int64
+
+func TestProjectInstanceEnforcesUACWithoutChangingRelayPaths(t *testing.T) {
+	previous := uac.Default
+	t.Cleanup(func() { uac.Default = previous })
+	uac.Default = &uac.Client{Config: uac.Config{Enabled: true, Required: true, PublicURL: "https://gateway.example/test"}}
+	handler := ProjectHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Matched-Path", r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for _, path := range []string{"/test/api/user/login", "/test/api/user/register", "/test/api/user/passkey/login/begin", "/test/api/oauth/github", "/test/api/setup"} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, nil))
+			assert.Equal(t, http.StatusForbidden, response.Code)
+		})
+	}
+	for _, path := range []string{"/api/user/login/verify", "/api/user/login/passkey/begin", "/api/oauth/uac/callback", "/v1/chat/completions"} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/test"+path, nil))
+			assert.Equal(t, http.StatusNoContent, response.Code)
+			assert.Equal(t, path, response.Header().Get("Matched-Path"))
+		})
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/user/login", nil))
+	assert.Equal(t, http.StatusNotFound, response.Code)
+	uac.Default = nil
+	response = httptest.NewRecorder()
+	ProjectHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/user/login", nil))
+	assert.Equal(t, http.StatusNoContent, response.Code)
+}
 
 type authRateLimitFixture struct {
 	router     *gin.Engine
@@ -204,6 +237,62 @@ func TestAuthSessionRoutesHaveIndependentLimitsFromCredentialAttempts(t *testing
 			response = fixture.post(logoutPath, "", "", fixture.remoteAddr, nil)
 			assert.Equal(t, http.StatusTooManyRequests, response.Code)
 			assert.Equal(t, "60", response.Header().Get("Retry-After"))
+		})
+	}
+}
+
+func TestUACRoutesHaveIndependentLimitsFromEachOtherAndPasswordAttempts(t *testing.T) {
+	for _, useRedis := range []bool{false, true} {
+		t.Run(fmt.Sprintf("redis=%t", useRedis), func(t *testing.T) {
+			fixture := newAuthRateLimitFixture(t, useRedis)
+			previous := uac.Default
+			t.Cleanup(func() { uac.Default = previous })
+			issuer := ""
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"issuer":%q,"authorization_endpoint":%q,"token_endpoint":%q,"userinfo_endpoint":%q,"jwks_uri":%q,"end_session_endpoint":%q}`, issuer, issuer+"/authorize", issuer+"/token", issuer+"/userinfo", issuer+"/jwks", issuer+"/logout")
+			}))
+			t.Cleanup(server.Close)
+			issuer = server.URL
+			client, err := uac.New(uac.Config{Enabled: true, Issuer: issuer, ClientID: "test-client", ClientSecret: "test-secret", PublicURL: "https://gateway.example/test", InitialRole: common.RoleAdminUser})
+			require.NoError(t, err)
+			client.HTTP = server.Client()
+			uac.Default = client
+			registerUACRoutes(fixture.router)
+
+			for range common.CriticalRateLimitNum {
+				response := fixture.post("/api/user/login", "{}", "", fixture.remoteAddr, nil)
+				require.NotEqual(t, http.StatusTooManyRequests, response.Code)
+			}
+			require.Equal(t, http.StatusTooManyRequests, fixture.post("/api/user/login", "{}", "", fixture.remoteAddr, nil).Code)
+
+			for _, step := range []struct {
+				method, path string
+				status       int
+			}{
+				{http.MethodGet, "/api/oauth/uac/start", http.StatusFound},
+				{http.MethodGet, "/api/oauth/uac/callback", http.StatusFound},
+				{http.MethodPost, "/api/oauth/uac/complete", http.StatusUnauthorized},
+				{http.MethodGet, "/api/oauth/uac/logout/callback", http.StatusFound},
+			} {
+				for attempt := 0; attempt <= common.AuthSessionRateLimitNum; attempt++ {
+					request := httptest.NewRequest(step.method, "https://gateway.example"+step.path, nil)
+					request.RemoteAddr = fixture.remoteAddr
+					request.Header.Set("Origin", "https://gateway.example")
+					response := httptest.NewRecorder()
+					fixture.router.ServeHTTP(response, request)
+					if attempt < common.AuthSessionRateLimitNum {
+						require.Equal(t, step.status, response.Code, step.path)
+						if step.path == "/api/oauth/uac/start" {
+							assert.Contains(t, response.Header().Get("Location"), issuer+"/authorize?")
+							assert.Contains(t, response.Header().Get("Location"), "code_challenge_method=S256")
+						}
+						continue
+					}
+					assert.Equal(t, http.StatusTooManyRequests, response.Code, step.path)
+					assert.Equal(t, "60", response.Header().Get("Retry-After"), step.path)
+				}
+			}
 		})
 	}
 }

@@ -7070,6 +7070,10 @@
     "The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.": "Поставщик возвращает только общую стоимость материалов без отдельных тарифов за изображение или секунду. Если поставщик не взимает плату, платформа её не добавляет.",
     "Video material": "Материал: видео",
     "Video material pricing": "Цены на материалы для видео",
-    "Video output pricing": "Цены на вывод видео"
+    "Video output pricing": "Цены на вывод видео",
+    "Use your unified authentication account to access this platform.": "Для входа на платформу используйте учётную запись единой аутентификации.",
+    "Your local administrator account is unavailable. Contact the platform administrator.": "Локальная учётная запись администратора недоступна. Обратитесь к администратору платформы.",
+    "Unified sign-in failed. Try again or contact the platform administrator.": "Ошибка единого входа. Повторите попытку или обратитесь к администратору платформы.",
+    "Sign in with unified authentication": "Вход через единую аутентификацию"
   }
 }

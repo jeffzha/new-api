@@ -21,6 +21,7 @@ import { memo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
@@ -37,6 +38,7 @@ import {
   formatTaskUsageUnitPrice,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
+import { getModelCatalogMetadata } from '../lib/model-catalog-metadata'
 import { getDisplayGroupRatio, isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import { getVideoTokenMatrixPricing } from '../lib/provider-pricing'
@@ -68,6 +70,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const isTokenBased = isTokenBasedModel(props.model)
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const tags = parseTags(props.model.tags)
+  const catalogMetadata = getModelCatalogMetadata(props.model.model_name)
   const groups = props.model.enable_groups || []
   const endpoints = props.model.supported_endpoint_types || []
   const modelIconKey = props.model.icon || props.model.vendor_icon
@@ -314,9 +317,32 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
       </div>
 
       {/* Description */}
-      <p className='text-muted-foreground mt-2 line-clamp-1 flex-1 text-[13px] leading-relaxed sm:mt-4 sm:line-clamp-2 sm:min-h-[2.5rem]'>
-        {props.model.description || t('No description available.')}
-      </p>
+      {(props.model.description || !catalogMetadata) && (
+        <p className='text-muted-foreground mt-2 line-clamp-1 flex-1 text-[13px] leading-relaxed sm:mt-4 sm:line-clamp-2 sm:min-h-[2.5rem]'>
+          {props.model.description || t('No description available.')}
+        </p>
+      )}
+      {catalogMetadata && (
+        <div className='mt-2 space-y-1.5 sm:mt-4'>
+          <p className='text-primary/80 text-xs font-semibold'>
+            {catalogMetadata.category}
+          </p>
+          <div className='flex flex-wrap gap-1'>
+            {catalogMetadata.tags.map((tag) => (
+              <Badge
+                key={tag}
+                variant='secondary'
+                className='h-5 px-1.5 text-xs'
+              >
+                {tag}
+              </Badge>
+            ))}
+          </div>
+          <p className='text-muted-foreground line-clamp-1 text-xs'>
+            {t('Best for')}: {catalogMetadata.strengths.join(' · ')}
+          </p>
+        </div>
+      )}
 
       {/* Footer: left metadata and right performance summary share row alignment */}
       <div className='mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-1 sm:mt-4'>

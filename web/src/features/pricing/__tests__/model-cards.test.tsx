@@ -88,6 +88,25 @@ afterEach(() => {
 })
 
 describe('model cards', () => {
+  it('keeps catalog strengths and custom descriptions without stale reference prices', () => {
+    render(
+      <ModelCard
+        model={pricingModel({
+          model_name: 'wan3.0-video',
+          description: 'Administrator model description',
+        })}
+        onClick={vi.fn()}
+      />
+    )
+    expect(screen.getByText('视频生成 · 文生/图生视频')).toBeVisible()
+    expect(screen.getByText('T2V/I2V')).toBeVisible()
+    expect(screen.getByText(/图片生成短视频/)).toBeVisible()
+    expect(screen.getByText('Administrator model description')).toBeVisible()
+    expect(
+      screen.queryByText(/0.0822|Reference billing/)
+    ).not.toBeInTheDocument()
+  })
+
   it('shows separate generic and image cache prices including a free image cache', () => {
     render(
       <CachedPriceCell

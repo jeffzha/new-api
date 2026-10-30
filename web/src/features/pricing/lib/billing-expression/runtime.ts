@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { isChinaPublicHoliday } from './china-holidays'
 import { compileBillingExpression } from './parser'
 import {
   BillingExpressionError,
@@ -422,6 +423,16 @@ class BillingRuntime {
   private call(node: Extract<ExpressionNode, { kind: 'call' }>): RuntimeValue {
     const args = node.args
     switch (node.name) {
+      case 'is_holiday': {
+        this.string(args[0])
+        if (!Number.isFinite(this.now.getTime())) {
+          throw new BillingExpressionError({
+            code: 'type',
+            detail: 'simulation time',
+          })
+        }
+        return { value: isChinaPublicHoliday(this.now) }
+      }
       case 'fixed': {
         const amount = this.numeric(args[0]).value
         this.billingUnit = 'request'

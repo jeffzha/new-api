@@ -77,7 +77,7 @@ def main():
                 try:
                     raw = command(["docker", "exec", "-i", args.database_container, "psql", "-X", "-qAt",
                                    "-v", "ON_ERROR_STOP=1", "-U", args.database_user, "-d", args.database_name], input=LOCK_SQL)
-                    row["lockChain"] = next(json.loads(line) for line in raw.splitlines() if line.startswith("["))
+                    row["lockChain"] = json.loads(raw)
                 except Exception as error:
                     row["databaseError"] = type(error).__name__
                 line = json.dumps(row)

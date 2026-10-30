@@ -244,6 +244,10 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 }
 
 func ListModels(c *gin.Context, modelType int) {
+	if include := c.Query("include"); include != "" && (include != "pricing" || modelType != constant.ChannelTypeOpenAI) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "code": "invalid_include", "param": "include", "message": "Use include=pricing with the OpenAI-compatible model list"}})
+		return
+	}
 	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
 	if !acceptUnsetRatioModel {
 		userId := c.GetInt("id")
@@ -359,6 +363,10 @@ func ListModels(c *gin.Context, modelType int) {
 			"nextPageToken": nil,
 		})
 	default:
+		if c.Query("include") == "pricing" {
+			writeBusinessModels(c, userOpenAiModels)
+			return
+		}
 		c.JSON(200, gin.H{
 			"success": true,
 			"data":    userOpenAiModels,

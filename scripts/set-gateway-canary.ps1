@@ -100,6 +100,11 @@ reverse_proxy $BlueUpstream $GreenUpstream {
 	lb_try_duration 5s
 	lb_try_interval 250ms
 	stream_close_delay 5m
+	# A flushed response may finish before the Gateway's billing tail returns.
+	# Do not queue the next request or health probe on that same connection.
+	transport http {
+		keepalive off
+	}
 }
 # END NEW-API BLUE-GREEN
 "@.Trim()

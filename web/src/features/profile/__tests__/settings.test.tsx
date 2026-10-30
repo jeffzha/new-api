@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { updateUserSettings } from '../api'
 import { NotificationTab } from '../components/tabs/notification-tab'
@@ -156,7 +157,36 @@ describe('user settings saves across profile and security', () => {
     })
   })
 
+  it.each(['', '0', '-1'])(
+    'an invalid reminder amount %s prevents saving',
+    (amount) => {
+      const put = vi.spyOn(api, 'put')
+      render(<NotificationTab profile={profile} onUpdate={vi.fn()} />)
+      fireEvent.change(
+        screen.getByRole('spinbutton', { name: /Quota Warning Threshold/ }),
+        {
+          target: { value: amount },
+        }
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
+      expect(put).not.toHaveBeenCalled()
+    }
+  )
+
   it('saving a stale notification form keeps the current IP setting and the notification edits', async () => {
+    const previousConfig = useSystemConfigStore.getState().config
+    onTestFinished(() =>
+      useSystemConfigStore.getState().setConfig(previousConfig)
+    )
+    useSystemConfigStore
+      .getState()
+      .setConfig({
+        currency: {
+          ...previousConfig.currency,
+          quotaDisplayType: 'CNY',
+          usdExchangeRate: 7.3,
+        },
+      })
     const onUpdate = vi.fn()
     vi.spyOn(api, 'get').mockResolvedValue({
       data: {
@@ -180,14 +210,14 @@ describe('user settings saves across profile and security', () => {
       screen.queryByRole('switch', { name: 'Record IP Address' })
     ).not.toBeInTheDocument()
     fireEvent.change(
-      screen.getByRole('spinbutton', { name: 'Quota Warning Threshold' }),
-      { target: { value: '2700' } }
+      screen.getByRole('spinbutton', { name: /Quota Warning Threshold/ }),
+      { target: { value: '10' } }
     )
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
     await waitFor(() => expect(onUpdate).toHaveBeenCalled())
     expect(put).toHaveBeenCalledWith('/api/user/setting', {
       ...settings,
-      quota_warning_threshold: 2700,
+      quota_warning_threshold: 684932,
       record_ip_log: false,
     })
   })

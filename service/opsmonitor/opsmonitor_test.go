@@ -2,22 +2,66 @@ package opsmonitor
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/ops_monitor_setting"
 
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
+
+func TestRetryTelemetryKeepsOneRequestAndTwoOrderedAttempts(t *testing.T) {
+	previousRequests, previousAttempts := requestQueue, attemptQueue
+	requestQueue = make(chan model.OpsRequestEvent, 1)
+	attemptQueue = make(chan model.OpsUpstreamAttempt, 2)
+	t.Cleanup(func() { requestQueue, attemptQueue = previousRequests, previousAttempts })
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(common.RequestIdKey, "retry-telemetry") }, Middleware())
+	router.POST("/v1/chat/completions", func(c *gin.Context) {
+		info := &relaycommon.RelayInfo{RequestId: "retry-telemetry", UserId: 701, TokenId: 801, OriginModelName: "test-model", UsingGroup: "default"}
+		first, err := BeginAttempt(c, info, &model.Channel{Id: 10, Type: 1})
+		require.Nil(t, err)
+		first.FinishRelay(types.NewOpenAIError(errors.New("controlled outage"), types.ErrorCodeBadResponseStatusCode, 503))
+		info.RetryIndex = 1
+		second, err := BeginAttempt(c, info, &model.Channel{Id: 11, Type: 1})
+		require.Nil(t, err)
+		second.FinishRelay(nil)
+		ObserveUsage(c, info, &dto.Usage{PromptTokens: 10, CompletionTokens: 2})
+		c.Status(http.StatusOK)
+	})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil))
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Len(t, requestQueue, 1)
+	event := <-requestQueue
+	assert.True(t, event.Success)
+	assert.Equal(t, 1, event.RetryCount)
+	assert.Equal(t, 1, event.SwitchCount)
+	assert.EqualValues(t, 10, event.InputTokens)
+	assert.EqualValues(t, 2, event.OutputTokens)
+	require.Len(t, attemptQueue, 2)
+	first, second := <-attemptQueue, <-attemptQueue
+	assert.Equal(t, event.RequestID, first.RequestID)
+	assert.Equal(t, event.RequestID, second.RequestID)
+	assert.Equal(t, 0, first.AttemptIndex)
+	assert.Equal(t, 1, second.AttemptIndex)
+	assert.Equal(t, 503, first.StatusCode)
+	assert.False(t, first.Success)
+	assert.True(t, second.Success)
+	assert.True(t, second.SwitchedChannel)
+}
 
 func TestObserveGatewayRejectionAddsOverloadDetailsToEvent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -80,6 +124,10 @@ func TestClassifyEndpointSeparatesVideoLifecycleAndMobileAssets(t *testing.T) {
 		{method: http.MethodGet, path: "/v1/video/generations", expected: "relay_other"},
 		{method: http.MethodGet, path: "/v1/video/generations/task-1", expected: "video_poll"},
 		{method: http.MethodGet, path: "/v1/videos/task-1/content", expected: "video_content"},
+		{method: http.MethodPost, path: "/mj/submit/imagine", expected: "async_task"},
+		{method: http.MethodPost, path: "/mj/task/list-by-condition", expected: "async_poll"},
+		{method: http.MethodGet, path: "/mj/task/task-1/fetch", expected: "async_poll"},
+		{method: http.MethodPost, path: "/mj/submit/upload-discord-images", expected: "asset_management"},
 		{method: http.MethodPost, path: "/api/openapi-maas/exp/aicc/v2/asset/query", expected: "asset_management"},
 		{method: http.MethodPost, path: "/api/openapi-maas/exp/aicc/v2/real-person-auth/asset-group/by-byted-token", expected: "identity_verification"},
 	}
@@ -128,13 +176,22 @@ func TestMiddlewarePreservesUnmatchedRelayLikePathsForErrorDetails(t *testing.T)
 
 func TestPersistRequestBatchKeepsUnmatchedDetailsOutOfMetrics(t *testing.T) {
 	originalDB := model.DB
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.OpsRequestEvent{}, &model.OpsMinuteMetric{}))
-	model.DB = db
+	originalPath, originalMaster := common.SQLitePath, common.IsMasterNode
+	originalMain, originalLog := common.MainDatabaseType(), common.LogDatabaseType()
+	common.SQLitePath, common.IsMasterNode = filepath.Join(t.TempDir(), "ops.db"), false
+	t.Setenv("SQL_DSN", "local")
+	t.Setenv("LOG_SQL_DSN", "")
+	require.NoError(t, model.InitDB())
+	db := model.DB
 	t.Cleanup(func() {
+		sqlDB, err := db.DB()
+		require.NoError(t, err)
+		require.NoError(t, sqlDB.Close())
 		model.DB = originalDB
+		common.SQLitePath, common.IsMasterNode = originalPath, originalMaster
+		common.SetDatabaseTypes(originalMain, originalLog)
 	})
+	require.NoError(t, db.AutoMigrate(&model.OpsRequestEvent{}, &model.OpsMinuteMetric{}))
 
 	events := []model.OpsRequestEvent{
 		{

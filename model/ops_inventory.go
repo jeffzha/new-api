@@ -20,7 +20,7 @@ func ReadOpsInventory(ctx context.Context, db *gorm.DB, gateway string) ([]byte,
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		const limit = 10000
 		var users []User
-		if err := tx.Select("id", "display_name").Order("id").Limit(limit + 1).Find(&users).Error; err != nil {
+		if err := tx.Select("id", "username", "display_name", "status").Order("id").Limit(limit + 1).Find(&users).Error; err != nil {
 			return err
 		}
 		if len(users) > limit {
@@ -29,7 +29,11 @@ func ReadOpsInventory(ctx context.Context, db *gorm.DB, gateway string) ([]byte,
 		objects := make([]map[string]any, 0, len(users))
 		for _, user := range users {
 			id := strconv.Itoa(user.Id)
-			objects = append(objects, map[string]any{"object_type": "user", "external_id": id, "gateway_user_id": id, "gateway_customer_id": id, "display_name": user.DisplayName})
+			status := "disabled"
+			if user.Status == common.UserStatusEnabled {
+				status = "active"
+			}
+			objects = append(objects, map[string]any{"object_type": "user", "external_id": id, "gateway_user_id": id, "gateway_customer_id": id, "username": user.Username, "display_name": user.DisplayName, "object_status": status})
 		}
 		var tokens []Token
 		activeUsers := tx.Model(&User{}).Select("id")

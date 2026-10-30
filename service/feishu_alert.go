@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	taskdto "github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
@@ -43,6 +44,82 @@ var feishuAlertState = struct {
 }{seen: make(map[string]time.Time)}
 
 var feishuAlertHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
+var feishuChannelProbeState = struct {
+	sync.Mutex
+	failed map[int]bool
+}{failed: make(map[int]bool)}
+
+// NotifyFeishuChannelProbe is called outside the probe worker so webhook delays
+// cannot hold up channel tests or recovery.
+func NotifyFeishuChannelProbe(channel *model.Channel, modelName string, milliseconds int64, localErr error, apiErr *types.NewAPIError) {
+	if channel == nil || strings.TrimSpace(os.Getenv("FEISHU_ALERT_WEBHOOK_URL")) == "" {
+		return
+	}
+	failed := localErr != nil || apiErr != nil
+	feishuChannelProbeState.Lock()
+	wasFailed := feishuChannelProbeState.failed[channel.Id]
+	if failed {
+		feishuChannelProbeState.failed[channel.Id] = true
+	} else {
+		delete(feishuChannelProbeState.failed, channel.Id)
+	}
+	feishuChannelProbeState.Unlock()
+	if !failed && !wasFailed {
+		return
+	}
+	failureKey := fmt.Sprintf("channel-probe-failure:%d", channel.Id)
+	recoveryKey := fmt.Sprintf("channel-probe-recovery:%d", channel.Id)
+	title, detail, action, key := "渠道巡检恢复", "本次上游检测成功", "本次检测成功不等于渠道已重新启用；渠道启停以生效通知和后台状态为准", recoveryKey
+	if failed {
+		title, key = "渠道巡检失败", failureKey
+		action = "请在渠道管理查看测试结果及上游服务；是否停用以自动禁用配置和实际状态为准"
+		if apiErr != nil {
+			detail = fmt.Sprintf("上游状态码: %d\n错误码: %s\n摘要: %s", apiErr.StatusCode, apiErr.GetErrorCode(), common.LocalLogPreview(apiErr.MaskSensitiveError()))
+		} else {
+			detail = "平台巡检未完成，不能据此判定上游故障\n摘要: " + common.LocalLogPreview(common.MaskSensitiveInfo(localErr.Error()))
+			action = "请核对平台巡检支持范围、测试模型和配置；本地检测错误不触发自动恢复"
+		}
+	}
+	if failed != wasFailed {
+		feishuAlertState.Lock()
+		delete(feishuAlertState.seen, failureKey)
+		delete(feishuAlertState.seen, recoveryKey)
+		feishuAlertState.Unlock()
+	}
+	now := time.Now().In(time.FixedZone("Asia/Shanghai", 8*3600))
+	text := fmt.Sprintf("[new-api] %s\n渠道: %s（#%d）\n测试模型: %s\n耗时: %.3f 秒\n%s\n处理建议: %s\n时间: %s（北京时间）", title, common.LocalLogPreview(channel.Name), channel.Id, modelName, float64(milliseconds)/1000, detail, action, now.Format("2006-01-02 15:04:05"))
+	sendFeishuAlert(key, text)
+}
+
+func notifyFeishuChannelStatus(channelID int, channelName, reason string, enabling bool) {
+	if strings.TrimSpace(os.Getenv("FEISHU_ALERT_WEBHOOK_URL")) == "" {
+		return
+	}
+	channel, err := model.GetChannelById(channelID, false)
+	if err != nil {
+		common.SysError(fmt.Sprintf("failed to verify channel status for Feishu notification: channel_id=%d", channelID))
+		return
+	}
+	title := "渠道自动停用已生效"
+	detail := "渠道已退出正常请求路由"
+	if enabling {
+		if channel.Status != common.ChannelStatusEnabled {
+			return
+		}
+		title, detail = "渠道自动恢复已生效", "渠道已重新参与正常请求路由"
+	} else if channel.Status == common.ChannelStatusEnabled {
+		if !channel.ChannelInfo.IsMultiKey {
+			return
+		}
+		title, detail = "渠道密钥自动停用已生效", "多密钥渠道中的异常密钥已停用，其他可用密钥仍可承接请求"
+	} else if channel.Status != common.ChannelStatusAutoDisabled {
+		return
+	}
+	now := time.Now().In(time.FixedZone("Asia/Shanghai", 8*3600))
+	text := fmt.Sprintf("[new-api] %s\n渠道: %s（#%d）\n状态说明: %s\n原因: %s\n时间: %s（北京时间）", title, common.LocalLogPreview(channelName), channelID, detail, common.LocalLogPreview(common.MaskSensitiveInfo(reason)), now.Format("2006-01-02 15:04:05"))
+	sendFeishuAlert(fmt.Sprintf("channel-status:%d:%t:%d", channelID, enabling, now.UnixNano()), text)
+}
 
 func NotifyFeishuRelayError(c *gin.Context, info *relaycommon.RelayInfo, relayFormat types.RelayFormat, err *types.NewAPIError) {
 	if err == nil {
@@ -90,6 +167,8 @@ func classifyAlert(code, message string, info *relaycommon.RelayInfo) (owner, ev
 	}
 	lower := strings.ToLower(message)
 	switch {
+	case code == "invalid_request" && strings.Contains(lower, "audio transcription model; use post /v1/audio/transcriptions"):
+		owner, evidence, action = "客户端调用方式", "语音识别模型误用了文本接口，平台已在计费和请求上游前拒绝", "请使用 POST /v1/audio/transcriptions，提交 multipart/form-data 的 model 和 file 字段"
 	case code == "invalid_request" && strings.Contains(lower, "video generation model; use post /v1/videos"):
 		owner, evidence, action = "客户端调用方式", "视频模型误用了文本接口，平台已在计费和请求上游前拒绝", "请将视频生成请求改为 POST /v1/videos，并使用视频接口参数"
 	case code == "model_price_error":
@@ -157,13 +236,14 @@ func sendFeishuAlert(key, text string) {
 	}
 	request, err := http.NewRequest(http.MethodPost, parsed.String(), strings.NewReader(string(body)))
 	if err != nil {
-		common.SysError("failed to create Feishu alert request: " + err.Error())
+		common.SysError("failed to create Feishu alert request")
 		return
 	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := feishuAlertHTTPClient.Do(request)
 	if err != nil {
-		common.SysError("failed to send Feishu alert: " + err.Error())
+		// HTTP client errors can contain the complete secret webhook URL.
+		common.SysError("failed to send Feishu alert: transport error")
 		return
 	}
 	defer response.Body.Close()

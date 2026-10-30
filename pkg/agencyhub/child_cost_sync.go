@@ -374,7 +374,7 @@ func validateChangedPricingBillingPaths(agencies []model.Agency, policies map[in
 				policy := policies[agency.ID]
 				if index == 0 {
 					var err error
-					policy, err = agencycontract.ApplyPlatformPolicy(policy, platform)
+					policy, err = agencycontract.ApplyPlatformPolicyForAgency(policy, platform, agency.ID)
 					if err != nil {
 						return err
 					}
@@ -408,11 +408,11 @@ func unchangedBillingPath(chain []model.Agency, name string, policies map[int64]
 		}
 		if index == 0 {
 			var err error
-			before, err = agencycontract.ApplyPlatformPolicy(before, previousPlatform)
+			before, err = agencycontract.ApplyPlatformPolicyForAgency(before, previousPlatform, agency.ID)
 			if err != nil {
 				return false
 			}
-			after, err = agencycontract.ApplyPlatformPolicy(after, platform)
+			after, err = agencycontract.ApplyPlatformPolicyForAgency(after, platform, agency.ID)
 			if err != nil {
 				return false
 			}
@@ -432,10 +432,24 @@ func loadPricingBillingPathsTx(tx *gorm.DB) ([]model.Agency, map[int64]agencycon
 		return nil, nil, agencycontract.PlatformPolicy{}, err
 	}
 	policies := make(map[int64]agencycontract.Policy, len(agencies))
+	ids := make([]int64, 0, len(agencies))
 	for _, agency := range agencies {
-		var version model.AgencyPricePolicyVersion
-		if err := tx.First(&version, agency.CurrentPolicyVersionID).Error; err != nil {
+		ids = append(ids, agency.CurrentPolicyVersionID)
+	}
+	var versions []model.AgencyPricePolicyVersion
+	if len(ids) > 0 {
+		if err := tx.Where("id IN ?", ids).Find(&versions).Error; err != nil {
 			return nil, nil, agencycontract.PlatformPolicy{}, err
+		}
+	}
+	byID := make(map[int64]model.AgencyPricePolicyVersion, len(versions))
+	for _, version := range versions {
+		byID[version.ID] = version
+	}
+	for _, agency := range agencies {
+		version, ok := byID[agency.CurrentPolicyVersionID]
+		if !ok || version.AgencyID != agency.ID {
+			return nil, nil, agencycontract.PlatformPolicy{}, errors.New("agency pricing path is incomplete")
 		}
 		var policy agencycontract.Policy
 		if err := common.UnmarshalJsonStr(version.PolicyJSON, &policy); err != nil {

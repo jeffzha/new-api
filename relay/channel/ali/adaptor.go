@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
+	relayhelper "github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -94,6 +95,12 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	var fullRequestURL string
+	if info.RelayMode == constant.RelayModeAudioTranscription && relayhelper.IsFunASRModel(info.GetUpstreamModelName()) {
+		baseURL := strings.TrimRight(info.ChannelBaseUrl, "/")
+		baseURL = strings.TrimSuffix(baseURL, "/compatible-mode/v1")
+		fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/multimodal-generation/generation", baseURL)
+		return fullRequestURL, nil
+	}
 	switch info.RelayFormat {
 	case types.RelayFormatClaude:
 		if supportsAliAnthropicMessages(info.UpstreamModelName) {
@@ -136,7 +143,11 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
 	req.Set("Authorization", "Bearer "+info.ApiKey)
-	if info.IsStream {
+	if info.RelayMode == constant.RelayModeAudioTranscription && relayhelper.IsFunASRModel(info.GetUpstreamModelName()) {
+		req.Set("Content-Type", "application/json")
+		req.Set("Accept", "text/event-stream")
+		req.Set("X-DashScope-SSE", "enable")
+	} else if info.IsStream {
 		req.Set("X-DashScope-SSE", "enable")
 	}
 	if c.GetString("plugin") != "" {
@@ -230,8 +241,17 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
-	//TODO implement me
-	return nil, errors.New("not implemented")
+	if info.RelayMode == constant.RelayModeAudioTranscription && relayhelper.IsFunASRModel(info.GetUpstreamModelName()) {
+		if !relayhelper.IsFunASRContentType(c.Request.Header.Get("Content-Type")) {
+			return nil, errors.New("Fun-ASR-Flash requires a multipart/form-data request containing one file")
+		}
+		responseFormat := strings.ToLower(strings.TrimSpace(request.ResponseFormat))
+		if responseFormat != "" && responseFormat != "json" && responseFormat != "text" {
+			return nil, fmt.Errorf("Fun-ASR-Flash supports response_format json or text, got %q", responseFormat)
+		}
+		return relayhelper.NewFunASRRequestBody(c, info.GetUpstreamModelName())
+	}
+	return nil, errors.New("Alibaba Cloud audio transcription currently supports Fun-ASR-Flash only")
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
@@ -254,6 +274,11 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		return adaptor.DoResponse(c, resp, info)
 	default:
 		switch info.RelayMode {
+		case constant.RelayModeAudioTranscription:
+			if relayhelper.IsFunASRModel(info.GetUpstreamModelName()) {
+				return aliFunASRHandler(c, resp, info)
+			}
+			return nil, types.NewError(errors.New("Alibaba Cloud audio transcription currently supports Fun-ASR-Flash only"), types.ErrorCodeInvalidRequest)
 		case constant.RelayModeImagesGenerations:
 			err, usage = aliImageHandler(a, c, resp, info)
 		case constant.RelayModeImagesEdits:

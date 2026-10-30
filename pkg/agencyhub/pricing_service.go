@@ -569,7 +569,7 @@ func (a *App) publishRootPricing(c *gin.Context) {
 	if policy.SalesCapBPS == 0 {
 		policy.SalesCapBPS = a.config.SalesCapBPS
 	}
-	if err = a.publishPolicy(c, id, request.ExpectedRevision, policy, request.Reason, ActorTypeRoot, true); err != nil {
+	if err = a.publishPolicy(c, id, request.ExpectedRevision, policy, request.Reason, ActorTypeRoot, true, true); err != nil {
 		return
 	}
 }
@@ -625,7 +625,11 @@ func (a *App) effectiveAgencyPolicy(agency model.Agency, policy agencycontract.P
 		}
 		return policy, nil
 	}
-	return a.effectivePolicy(policy)
+	platform, err := model.LoadAgencyPlatformPolicy(a.db)
+	if err != nil {
+		return agencycontract.Policy{}, err
+	}
+	return agencycontract.ApplyPlatformPolicyForAgency(policy, platform, agency.ID)
 }
 
 func (a *App) mergePublishedSalesPolicy(base agencycontract.Policy, request salesPricingRequest) (agencycontract.Policy, error) {
@@ -793,7 +797,7 @@ func updateManualCoefficient(current **int, source *string, requested *int) {
 	}
 }
 
-func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, policy agencycontract.Policy, reason, actorType string, syncChildren bool) error {
+func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, policy agencycontract.Policy, reason, actorType string, syncChildren bool, editRootCosts ...bool) error {
 	reason = strings.TrimSpace(reason)
 	if len(reason) > 2000 {
 		respondError(c, http.StatusUnprocessableEntity, "invalid_reason", "价格调整原因不能超过2000字节", nil)
@@ -812,12 +816,7 @@ func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, po
 		respondError(c, http.StatusNotFound, "not_found", "代理商不存在", nil)
 		return err
 	}
-	effective, err := a.effectiveAgencyPolicy(targetAgency, policy)
-	if err != nil {
-		respondError(c, http.StatusUnprocessableEntity, "invalid_pricing", pricingErrorMessage(err), nil)
-		return err
-	}
-	policy = effective
+	rootCostEdit := len(editRootCosts) > 0 && editRootCosts[0] && targetAgency.ParentAgencyID == nil && actorType == ActorTypeRoot
 	identity := currentIdentity(c)
 	if identity == nil {
 		respondError(c, http.StatusUnauthorized, "unauthorized", "请先登录", nil)
@@ -825,7 +824,14 @@ func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, po
 	}
 	now := time.Now().UnixMilli()
 	var row model.AgencyPricePolicyVersion
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err := model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
+		if rootCostEdit {
+			// Match global publication's lock order before updating its overlay.
+			var agencies []model.Agency
+			if err := model.AgencyLockForUpdate(tx).Order("id ASC").Find(&agencies).Error; err != nil {
+				return err
+			}
+		}
 		// Serialize with parent publication and child creation in parent-first order.
 		if targetAgency.ParentAgencyID != nil {
 			var parent model.Agency
@@ -850,12 +856,22 @@ func (a *App) publishPolicy(c *gin.Context, agencyID, expectedRevision int64, po
 		if err := tx.Where("id = ? AND agency_id = ?", agency.CurrentPolicyVersionID, agency.ID).First(&currentVersion).Error; err != nil {
 			return err
 		}
-		if err := validateCustomerSalesPolicyTx(tx, agency.ID, policy); err != nil {
-			return &childPricingPropagationError{AgencyPath: agency.DisplayName, Cause: err}
-		}
 		_, previousPolicies, previousPlatform, err := loadPricingBillingPathsTx(tx)
 		if err != nil {
 			return err
+		}
+		if rootCostEdit {
+			if err := publishRootAgencyCostsTx(tx, identity, agency.ID, policy, previousPlatform, reason); err != nil {
+				return err
+			}
+		}
+		effective, err := (&App{db: tx}).effectiveAgencyPolicy(agency, policy)
+		if err != nil {
+			return &childPricingPropagationError{AgencyPath: agency.DisplayName, Cause: err}
+		}
+		policy = effective
+		if err := validateCustomerSalesPolicyTx(tx, agency.ID, policy); err != nil {
+			return &childPricingPropagationError{AgencyPath: agency.DisplayName, Cause: err}
 		}
 		{
 			if err := a.syncDirectChildPoliciesTx(tx, c, identity, agency, policy, reason, actorType); err != nil {

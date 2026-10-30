@@ -43,10 +43,6 @@ func TestDefaultPricesCNYAreComplete(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			price, ok := GetUnitPriceCNY(tt.model, tt.resolution, tt.hasVideo)
-			if IsPerRequest(tt.model) {
-				assert.False(t, ok, "Mini must not expose a token unit price")
-				price, ok = GetRequestPriceCNY(tt.model, tt.resolution, tt.hasVideo)
-			}
 			require.True(t, ok)
 			assert.Equal(t, tt.want, price.InexactFloat64())
 		})
@@ -66,7 +62,7 @@ func TestSeedance25RejectsUnsupportedResolutionWithoutChangingSeedance20Fallback
 
 func TestMiniSeedanceRejectsUnsupportedResolutions(t *testing.T) {
 	for _, res := range []string{"1080p", "4k", "4K", "future-resolution"} {
-		_, ok := GetRequestPriceCNY(MiniSeedanceModel, res, false)
+		_, ok := GetUnitPriceCNY(MiniSeedanceModel, res, false)
 		assert.False(t, ok, "resolution %q should be unsupported for mini", res)
 	}
 }
@@ -106,7 +102,7 @@ func TestRebuildPriceIndexMigratesLegacySeedanceMatrix(t *testing.T) {
 		MiniSeedanceModel: {WithoutVideoKey: 24, WithVideoKey: 15},
 	}
 	require.NoError(t, RebuildPriceIndex())
-	customMiniPrice, ok := GetRequestPriceCNY(MiniSeedanceModel, "720p", true)
+	customMiniPrice, ok := GetUnitPriceCNY(MiniSeedanceModel, "720p", true)
 	require.True(t, ok)
 	assert.Equal(t, 15.0, customMiniPrice.InexactFloat64())
 }

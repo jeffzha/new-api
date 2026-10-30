@@ -103,7 +103,7 @@ func SetRelayRouter(router *gin.Engine) {
 		httpRouter.POST("/completions", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAI)
 		})
-		httpRouter.POST("/chat/completions", func(c *gin.Context) {
+		httpRouter.POST("/chat/completions", middleware.RelayUserConcurrency(), func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAI)
 		})
 

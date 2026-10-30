@@ -501,7 +501,7 @@ func (a *App) createAgency(rootID int64, displayName, operatorUsername string, p
 	now := time.Now().UnixMilli()
 	var agency model.Agency
 	var delivery model.AgencyDeliverySecret
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		depth, err := validateAgencyParentTx(tx, parentAgencyID)
 		if err != nil {
 			return err
@@ -563,7 +563,10 @@ func (a *App) writePolicyItems(tx *gorm.DB, policyID int64, policy agencycontrac
 	if len(items) == 0 {
 		return nil
 	}
-	return tx.Create(&items).Error
+	if err := tx.Create(&items).Error; err != nil {
+		return err
+	}
+	return model.CaptureAgencyOpsPriceItemsTx(tx, items)
 }
 
 func (a *App) listAgencies(c *gin.Context) {
@@ -735,7 +738,7 @@ func (a *App) updateAgency(c *gin.Context) {
 		}
 	}
 	var agency model.Agency
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		if err := model.AgencyLockForUpdate(tx).First(&agency, id).Error; err != nil {
 			return err
 		}
@@ -802,7 +805,7 @@ func (a *App) setAgencyStatus(c *gin.Context, status string) {
 	var agency model.Agency
 	now := time.Now().Unix()
 	var affectedAgencyIDs []int64
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		if err := model.AgencyLockForUpdate(tx).First(&agency, id).Error; err != nil {
 			return err
 		}
@@ -832,11 +835,9 @@ func (a *App) setAgencyStatus(c *gin.Context, status string) {
 				return descendantErr
 			}
 			affectedAgencyIDs = ids
-			for _, descendantID := range ids {
-				if descendantID == agency.ID {
-					continue
-				}
-				if err := tx.Model(&model.Agency{}).Where("id = ? AND status = ?", descendantID, AgencyStatusActive).Updates(map[string]any{
+			for start := 0; start < len(ids); start += 100 {
+				batch := ids[start:min(start+100, len(ids))]
+				if err := tx.Model(&model.Agency{}).Where("id IN ? AND id <> ? AND status = ?", batch, agency.ID, AgencyStatusActive).Updates(map[string]any{
 					"status": AgencyStatusDisabled, "state_revision": gorm.Expr("state_revision + 1"), "version": gorm.Expr("version + 1"), "disabled_reason": "ancestor_disabled", "disabled_at": now, "updated_at": now,
 				}).Error; err != nil {
 					return err
@@ -939,7 +940,7 @@ func (a *App) resetPassword(c *gin.Context) {
 	operationID := deliveryOperationID(c, identity)
 	binding := deliveryBindingFromContext(c, identity, c.Request.URL.Path, "agency:"+strconv.FormatInt(id, 10))
 	now := time.Now().UnixMilli()
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		if err := model.AgencyLockForUpdate(tx).Where("agency_id = ?", id).First(&account).Error; err != nil {
 			return err
 		}
@@ -1235,13 +1236,22 @@ func (a *App) transferUser(c *gin.Context) {
 		return
 	}
 	targetAgencyID := int64(request.TargetAgencyID)
+	result, err := transferCustomer(a.db, identity, userID, targetAgencyID, int64(request.ExpectedBindingRevision), request.Reason, c)
+	if err != nil {
+		respondError(c, http.StatusConflict, "transfer_failed", err.Error(), nil)
+		return
+	}
+	respondOK(c, gin.H{"user_id": strconv.FormatInt(result.UserID, 10), "agency_id": strconv.FormatInt(result.AgencyID, 10), "binding_id": strconv.FormatInt(result.BindingID, 10), "revision": strconv.FormatInt(result.Revision, 10)})
+}
+
+func transferCustomer(db *gorm.DB, identity *Identity, userID, targetAgencyID, expectedRevision int64, reason string, c *gin.Context) (model.AgencyActiveUserBinding, error) {
 	var result model.AgencyActiveUserBinding
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err := model.AgencyOpsTransaction(db, func(tx *gorm.DB) error {
 		var current model.AgencyActiveUserBinding
 		if err := tx.Where("user_id = ?", userID).First(&current).Error; err != nil {
 			return err
 		}
-		if int64(request.ExpectedBindingRevision) != current.Revision {
+		if expectedRevision != current.Revision {
 			return errors.New("binding revision conflict")
 		}
 		if targetAgencyID == current.AgencyID {
@@ -1306,7 +1316,7 @@ func (a *App) transferUser(c *gin.Context) {
 		if err := tx.Model(&model.AgencyUserBinding{}).Where("id = ? AND ended_at_ms IS NULL", current.BindingID).Updates(map[string]any{"ended_at_ms": ended}).Error; err != nil {
 			return err
 		}
-		binding := &model.AgencyUserBinding{UserID: userID, AgencyID: target.ID, Revision: current.Revision + 1, InviteSnapshot: target.InviteCode, CreatedSource: "root_transfer", EffectiveAtMS: now, RootActorID: identity.ActorID, Reason: request.Reason, CreatedAt: now / 1000}
+		binding := &model.AgencyUserBinding{UserID: userID, AgencyID: target.ID, Revision: current.Revision + 1, InviteSnapshot: target.InviteCode, CreatedSource: "root_transfer", EffectiveAtMS: now, RootActorID: identity.ActorID, Reason: reason, CreatedAt: now / 1000}
 		if err := tx.Create(binding).Error; err != nil {
 			return err
 		}
@@ -1314,15 +1324,11 @@ func (a *App) transferUser(c *gin.Context) {
 		if err := tx.Model(&model.AgencyActiveUserBinding{}).Where("user_id = ?", userID).Updates(map[string]any{"binding_id": binding.ID, "revision": binding.Revision, "agency_id": target.ID, "updated_at": now / 1000}).Error; err != nil {
 			return err
 		}
-		return recordAuditTx(tx, c, identity, "user.transfer", "user_binding", strconv.FormatInt(userID, 10), request.Reason,
+		return recordAuditTx(tx, c, identity, "user.transfer", "user_binding", strconv.FormatInt(userID, 10), reason,
 			map[string]any{"agency_id": oldBinding.AgencyID, "binding_id": current.BindingID, "revision": current.Revision},
 			map[string]any{"agency_id": target.ID, "binding_id": binding.ID, "revision": binding.Revision})
 	})
-	if err != nil {
-		respondError(c, http.StatusConflict, "transfer_failed", err.Error(), nil)
-		return
-	}
-	respondOK(c, gin.H{"user_id": strconv.FormatInt(result.UserID, 10), "agency_id": strconv.FormatInt(result.AgencyID, 10), "binding_id": strconv.FormatInt(result.BindingID, 10), "revision": strconv.FormatInt(result.Revision, 10)})
+	return result, err
 }
 
 func (a *App) enterAgency(c *gin.Context) {

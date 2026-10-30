@@ -23,6 +23,31 @@ func setupChannelStatusTest(t *testing.T) {
 	})
 }
 
+func TestRestoredChannelImmediatelyRejoinsCachedRouting(t *testing.T) {
+	setupChannelStatusTest(t)
+	common.MemoryCacheEnabled = true
+	high := Channel{Name: "recovery-primary", Models: "recovery-model", Group: "default", Status: common.ChannelStatusEnabled, Priority: common.GetPointer(int64(10))}
+	low := Channel{Name: "recovery-fallback", Models: "recovery-model", Group: "default", Status: common.ChannelStatusEnabled, Priority: common.GetPointer(int64(0))}
+	require.NoError(t, high.Insert())
+	require.NoError(t, low.Insert())
+	InitChannelCache()
+	t.Cleanup(InitChannelCache)
+	selected, err := GetRandomSatisfiedChannel("default", "recovery-model", 0, nil)
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, high.Id, selected.Id)
+	require.True(t, UpdateChannelStatus(high.Id, "", common.ChannelStatusAutoDisabled, "controlled fault"))
+	selected, err = GetRandomSatisfiedChannel("default", "recovery-model", 0, nil)
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, low.Id, selected.Id)
+	require.True(t, UpdateChannelStatus(high.Id, "", common.ChannelStatusEnabled, "controlled recovery"))
+	selected, err = GetRandomSatisfiedChannel("default", "recovery-model", 0, nil)
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, high.Id, selected.Id, "recovery cannot depend on a later full cache sync")
+}
+
 func TestUpdateChannelStatusPersistsMultiKeyState(t *testing.T) {
 	setupChannelStatusTest(t)
 

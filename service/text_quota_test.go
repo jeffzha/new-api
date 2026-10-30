@@ -140,22 +140,24 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 	operation_setting.SetToolPriceForTest("fixed_billing_tool", 4)
 	t.Cleanup(func() { operation_setting.DeleteToolPriceForTest("fixed_billing_tool") })
 	for index, tc := range []struct {
-		name, expression                          string
-		estimate                                  int
-		usage                                     *dto.Usage
-		audio, stream, refund, insufficient, tool bool
-		realtime, reserveInsufficient             bool
-		wallet, outboundImages                    int
-		groupRatio                                float64
-		want                                      int
-		unit                                      billingexpr.BillingUnit
-		requestedImages, actualImages             int
+		name, expression                                string
+		estimate                                        int
+		usage                                           *dto.Usage
+		usageFacts                                      map[string]any
+		audio, stream, refund, insufficient, tool       bool
+		realtime, reserveInsufficient, usageFactBilling bool
+		wallet, outboundImages                          int
+		groupRatio                                      float64
+		want                                            int
+		unit                                            billingexpr.BillingUnit
+		requestedImages, actualImages                   int
 	}{
 		{name: "missing usage charges once", expression: flat, want: 5000, unit: billingexpr.BillingUnitRequest},
 		{name: "zero usage charges once", expression: flat, usage: &dto.Usage{}, want: 5000, unit: billingexpr.BillingUnitRequest},
 		{name: "stream charges once", expression: flat, stream: true, usage: &dto.Usage{PromptTokens: 100, CompletionTokens: 20, TotalTokens: 120}, want: 5000, unit: billingexpr.BillingUnitRequest},
 		{name: "audio zero usage charges once", expression: flat, audio: true, usage: &dto.Usage{}, want: 5000, unit: billingexpr.BillingUnitRequest},
 		{name: "audio missing usage charges once", expression: flat, audio: true, want: 5000, unit: billingexpr.BillingUnitRequest},
+		{name: "usage facts bill audio seconds without tokens", expression: `tier("base", u("seconds") * 0.00003013698630136986)`, usageFacts: map[string]any{"seconds": 36000.0}, usageFactBilling: true, want: 542466, unit: billingexpr.BillingUnitToken},
 		{name: "token reservation refunds to fixed price", expression: mixed, estimate: 50000, usage: &dto.Usage{PromptTokens: 100, TotalTokens: 100}, want: 5000, unit: billingexpr.BillingUnitRequest},
 		{name: "fixed reservation settles token fallback", expression: mixed, estimate: 100, usage: &dto.Usage{PromptTokens: 50000, TotalTokens: 50000}, want: 50000, unit: billingexpr.BillingUnitToken},
 		{name: "missing usage uses estimated token fallback", expression: mixed, estimate: 50000, want: 50000, unit: billingexpr.BillingUnitToken},
@@ -201,14 +203,21 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 				group = 1
 			}
 			request := &billingexpr.RequestInput{Body: []byte(`{"fast":true}`)}
+			if len(tc.usageFacts) > 0 {
+				request.Usage = tc.usageFacts
+			}
 			if tc.requestedImages > 0 {
 				request.ImageCount = &tc.requestedImages
 			}
 			cost, trace, err := billingexpr.RunExprWithRequest(tc.expression, billingexpr.TokenParams{P: float64(tc.estimate), Len: float64(tc.estimate)}, *request)
 			require.NoError(t, err)
-			reservation, err := billingexpr.QuotaRoundStrict(cost / 1_000_000 * common.QuotaPerUnit * group)
+			quotaCost := cost / 1_000_000
+			if tc.usageFactBilling {
+				quotaCost = cost
+			}
+			reservation, err := billingexpr.QuotaRoundStrict(quotaCost * common.QuotaPerUnit * group)
 			require.NoError(t, err)
-			snapshot := &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: tc.expression, ExprHash: billingexpr.ExprHashString(tc.expression), QuotaPerUnit: common.QuotaPerUnit, GroupRatio: group, EstimatedTier: trace.MatchedTier, EstimatedBillingUnit: trace.BillingUnit, EstimatedFixedPrice: trace.FixedPrice, EstimatedQuotaAfterGroup: reservation}
+			snapshot := &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: tc.expression, ExprHash: billingexpr.ExprHashString(tc.expression), QuotaPerUnit: common.QuotaPerUnit, GroupRatio: group, EstimatedTier: trace.MatchedTier, EstimatedBillingUnit: trace.BillingUnit, EstimatedFixedPrice: trace.FixedPrice, EstimatedQuotaAfterGroup: reservation, UsageFactsBilling: tc.usageFactBilling}
 			snapshot.EstimatedImageCount = trace.ImageCount
 			info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}, OriginModelName: "fixed-test", UsingGroup: "default", UserGroup: "default", UserSetting: dto.UserSetting{BillingPreference: "wallet_only"}, ForcePreConsume: true, StartTime: time.Now(), IsStream: tc.stream, RelayFormat: types.RelayFormatOpenAI, PriceData: hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: group}}, TieredBillingSnapshot: snapshot, BillingRequestInput: request}
 			info.SetEstimatePromptTokens(tc.estimate)
@@ -280,6 +289,9 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 					var other map[string]any
 					require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
 					assert.Equal(t, string(tc.unit), other["billing_unit"])
+					if tc.usageFactBilling {
+						assert.Equal(t, tc.usageFacts, other["usage_facts"])
+					}
 					if tc.requestedImages > 0 {
 						count := tc.actualImages
 						if count == 0 {

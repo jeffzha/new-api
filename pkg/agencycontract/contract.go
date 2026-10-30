@@ -140,11 +140,46 @@ func ConfirmedModelPolicy(policy Policy, platform PlatformPolicy) Policy {
 }
 
 type PlatformPolicy struct {
-	Revision    int64                `json:"revision"`
-	ModelPrices []PlatformModelPrice `json:"model_prices"`
+	Revision        int64                `json:"revision"`
+	ModelPrices     []PlatformModelPrice `json:"model_prices"`
+	TenantPolicy    *Policy              `json:"tenant_policy,omitempty"`
+	RootAgencyCosts []RootAgencyCost     `json:"root_agency_costs,omitempty"`
+}
+
+// RootAgencyCost is platform-owned, never editable by the receiving agency.
+// "*" applies to the agency's confirmed models unless an exact rule exists.
+type RootAgencyCost struct {
+	AgencyID        int64  `json:"agency_id"`
+	OriginModelName string `json:"origin_model_name"`
+	SettlementBPS   int    `json:"settlement_bps"`
 }
 
 func ValidatePlatformPolicy(policy PlatformPolicy) error {
+	if policy.TenantPolicy != nil {
+		if err := ValidatePolicy(*policy.TenantPolicy); err != nil {
+			return err
+		}
+	}
+	if len(policy.RootAgencyCosts) > 5000 {
+		return errors.New("too many root agency costs")
+	}
+	rootScopes := make(map[string]struct{}, len(policy.RootAgencyCosts))
+	for _, rule := range policy.RootAgencyCosts {
+		if rule.AgencyID <= 0 {
+			return ErrInvalidPolicy
+		}
+		if _, err := ModelKey(rule.OriginModelName); err != nil {
+			return err
+		}
+		if err := ValidateCoefficient(rule.SettlementBPS, MaxCoefficientBPS); err != nil {
+			return err
+		}
+		key := fmt.Sprintf("%d:%s", rule.AgencyID, rule.OriginModelName)
+		if _, found := rootScopes[key]; found {
+			return ErrInvalidPolicy
+		}
+		rootScopes[key] = struct{}{}
+	}
 	if len(policy.ModelPrices) > 1000 {
 		return errors.New("too many platform model prices")
 	}
@@ -201,6 +236,43 @@ func ValidatePlatformPolicy(policy PlatformPolicy) error {
 			return fmt.Errorf("model %s child cost coefficient must cover agency cost", price.OriginModelName)
 		}
 	}
+	for _, rule := range policy.RootAgencyCosts {
+		if rule.OriginModelName != "*" {
+			price, err := ResolvePlatform(policy, rule.OriginModelName)
+			if err != nil || price == nil || !price.IsPricingConfirmed() {
+				return errors.New("root agency cost requires a confirmed platform model")
+			}
+		}
+	}
+	for _, price := range policy.ModelPrices {
+		if !price.IsPricingConfirmed() {
+			continue
+		}
+		floor := price.PlatformCostBPS
+		for _, route := range price.ChannelCosts {
+			floor = max(floor, route.PlatformCostBPS)
+		}
+		if policy.TenantPolicy != nil {
+			quote, err := Resolve(*policy.TenantPolicy, price.OriginModelName)
+			if err != nil {
+				return err
+			}
+			if quote.SettlementBPS < floor {
+				return fmt.Errorf("model %s tenant price is below channel procurement cost", price.OriginModelName)
+			}
+			floor = quote.SettlementBPS
+		}
+		for _, rule := range policy.RootAgencyCosts {
+			if rule.OriginModelName == "*" {
+				if _, exact := rootScopes[fmt.Sprintf("%d:%s", rule.AgencyID, price.OriginModelName)]; exact {
+					continue
+				}
+			}
+			if (rule.OriginModelName == "*" || rule.OriginModelName == price.OriginModelName) && rule.SettlementBPS < floor {
+				return fmt.Errorf("model %s root agency cost is below tenant cost", price.OriginModelName)
+			}
+		}
+	}
 	return nil
 }
 
@@ -223,7 +295,53 @@ func ResolvePlatform(policy PlatformPolicy, originModelName string) (*PlatformMo
 // sale onto an agency policy without mutating either input. An explicit agency
 // sales override wins; platform cost always remains administrator-owned.
 func ApplyPlatformPolicy(policy Policy, platform PlatformPolicy) (Policy, error) {
+	return ApplyPlatformPolicyForAgency(policy, platform, 0)
+}
+
+func ApplyPlatformPolicyForAgency(policy Policy, platform PlatformPolicy, agencyID int64) (Policy, error) {
 	result := ConfirmedModelPolicy(policy, platform)
+	tenantModels := make(map[string]ModelOverride)
+	if tenant := platform.TenantPolicy; tenant != nil {
+		if err := ValidatePolicy(*tenant); err != nil {
+			return Policy{}, err
+		}
+		for _, override := range tenant.ModelOverrides {
+			tenantModels[override.OriginModelName] = override
+		}
+		result.DefaultSettlementBPS = tenant.DefaultChildCostBPS
+		result.SettlementSource = PriceSourceInherited
+		result.MinSpreadBPS = max(result.MinSpreadBPS, tenant.MinSpreadBPS)
+		if tenant.SalesCapBPS > 0 {
+			if result.SalesCapBPS == 0 {
+				result.SalesCapBPS = DefaultSalesCapBPS
+			}
+			result.SalesCapBPS = min(result.SalesCapBPS, tenant.SalesCapBPS)
+		}
+	}
+	rootCosts := make(map[string]int)
+	for _, rule := range platform.RootAgencyCosts {
+		if agencyID > 0 && rule.AgencyID == agencyID {
+			rootCosts[rule.OriginModelName] = rule.SettlementBPS
+		}
+	}
+	wildcardCost, hasWildcard := rootCosts["*"]
+	if hasWildcard {
+		result.DefaultSettlementBPS = wildcardCost
+		result.SettlementSource = PriceSourceInherited
+	}
+	if platform.TenantPolicy != nil || hasWildcard {
+		if result.DefaultChildCostBPS == 0 || result.ChildCostSource == PriceSourceDefault || result.ChildCostSource == PriceSourceInherited {
+			result.DefaultChildCostBPS = result.DefaultSettlementBPS + max(DefaultChildMarkupBPS, result.MinSpreadBPS)
+			result.ChildCostSource = PriceSourceDefault
+		}
+		if result.SalesSource == PriceSourceDefault || result.SalesSource == PriceSourceInherited {
+			sale := result.DefaultSalesBPS
+			if platform.TenantPolicy != nil {
+				sale = platform.TenantPolicy.DefaultSalesBPS
+			}
+			result.DefaultSalesBPS = max(sale, result.DefaultSettlementBPS+result.MinSpreadBPS)
+		}
+	}
 	positions := make(map[string]int, len(result.ModelOverrides))
 	for i, override := range result.ModelOverrides {
 		key, err := ModelKey(override.OriginModelName)
@@ -241,6 +359,23 @@ func ApplyPlatformPolicy(policy Policy, platform PlatformPolicy) (Policy, error)
 			return Policy{}, err
 		}
 		agencyCost := price.AgencyCostBPS
+		defaultSale := price.DefaultSalesBPS
+		if tenant := platform.TenantPolicy; tenant != nil {
+			agencyCost, defaultSale = tenant.DefaultChildCostBPS, tenant.DefaultSalesBPS
+			override := tenantModels[price.OriginModelName]
+			if override.ChildCostBPS != nil {
+				agencyCost = *override.ChildCostBPS
+			}
+			if override.SalesBPS != nil {
+				defaultSale = *override.SalesBPS
+			}
+		}
+		if hasWildcard {
+			agencyCost = wildcardCost
+		}
+		if cost, exists := rootCosts[price.OriginModelName]; exists {
+			agencyCost = cost
+		}
 		if position, exists := positions[key]; exists {
 			override := result.ModelOverrides[position]
 			// The first-level agency cost is owned by the platform administrator.
@@ -249,20 +384,20 @@ func ApplyPlatformPolicy(policy Policy, platform PlatformPolicy) (Policy, error)
 			override.SettlementBPS = &agencyCost
 			override.SettlementSource = PriceSourceInherited
 			if override.ChildCostBPS == nil || override.ChildCostSource == PriceSourceDefault || override.ChildCostSource == PriceSourceInherited {
-				childCost := agencyCost + DefaultChildMarkupBPS
+				childCost := agencyCost + max(DefaultChildMarkupBPS, result.MinSpreadBPS)
 				override.ChildCostBPS = &childCost
 				override.ChildCostSource = PriceSourceDefault
 			}
 			if override.SalesBPS == nil || override.SalesSource == PriceSourceDefault || override.SalesSource == PriceSourceInherited {
-				defaultSales := max(price.DefaultSalesBPS, agencyCost+result.MinSpreadBPS)
+				defaultSales := max(defaultSale, agencyCost+result.MinSpreadBPS)
 				override.SalesBPS = &defaultSales
 				override.SalesSource = PriceSourceDefault
 			}
 			result.ModelOverrides[position] = override
 			continue
 		}
-		defaultSales := max(price.DefaultSalesBPS, agencyCost+result.MinSpreadBPS)
-		childCost := agencyCost + DefaultChildMarkupBPS
+		defaultSales := max(defaultSale, agencyCost+result.MinSpreadBPS)
+		childCost := agencyCost + max(DefaultChildMarkupBPS, result.MinSpreadBPS)
 		modelOverride := ModelOverride{OriginModelName: price.OriginModelName, SettlementBPS: &agencyCost, ChildCostBPS: &childCost, SalesBPS: &defaultSales, SettlementSource: PriceSourceInherited, ChildCostSource: PriceSourceDefault, SalesSource: PriceSourceDefault}
 		result.ModelOverrides = append(result.ModelOverrides, modelOverride)
 		positions[key] = len(result.ModelOverrides) - 1

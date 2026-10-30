@@ -74,6 +74,9 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
 }
 
 func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+	if relayconstant.Path2RelayMode(c.Request.URL.Path) == relayconstant.RelayModeAudioTranscription {
+		defer helper.ReleaseFunASRUpload(c)
+	}
 
 	requestId := c.GetString(common.RequestIdKey)
 	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
@@ -460,6 +463,7 @@ func RelayMidjourney(c *gin.Context) {
 		return
 	}
 
+	opsmonitor.ObserveRelay(c, relayInfo)
 	var mjErr *taskdto.MidjourneyResponse
 	switch relayInfo.RelayMode {
 	case relayconstant.RelayModeMidjourneyNotify:

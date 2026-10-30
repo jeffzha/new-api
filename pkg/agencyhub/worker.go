@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
+	"github.com/QuantumNous/new-api/service/agencyopspush"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -21,6 +22,9 @@ const deliveryLeaseName = "agency-billing-consumer"
 func (a *App) StartBackground(ctx context.Context) {
 	if a.db == nil {
 		return
+	}
+	if err := agencyopspush.StartConfigured(ctx, a.db); err != nil {
+		common.SysError("distributor event sender not started: " + err.Error())
 	}
 	interval := 2 * time.Second
 	nextReconcile := time.Now().Add(a.config.ReconcileInterval)
@@ -194,7 +198,7 @@ func (a *App) claimCommissionJob(id int64, now int64) (bool, error) {
 }
 
 func (a *App) processClaimedCommissionJob(ctx context.Context, id int64) error {
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return model.AgencyOpsTransaction(a.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var job model.AgencyCommissionJob
 		if err := model.AgencyLockForUpdate(tx).Where("id = ? AND status = ? AND lease_owner = ?", id, "claimed", a.config.InstanceID).First(&job).Error; err != nil {
 			return err

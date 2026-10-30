@@ -68,6 +68,18 @@ func Register(group *gin.RouterGroup) {
 	group.GET("/daily", func(c *gin.Context) { Default.Daily(c) })
 	group.GET("/catalog", func(c *gin.Context) { Default.Catalog(c) })
 	group.GET("/inventory", func(c *gin.Context) { Default.Inventory(c) })
+	group.GET("/distributors", func(c *gin.Context) { Default.Distributors(c) })
+	group.GET("/binding-history", func(c *gin.Context) { Default.BindingHistory(c) })
+	group.GET("/agency-identities", func(c *gin.Context) { Default.AgencyIdentityMetadata(c) })
+	group.GET("/price-versions", func(c *gin.Context) { Default.PriceVersions(c) })
+	group.GET("/wallet-history", func(c *gin.Context) { Default.WalletHistory(c) })
+	group.GET("/debt-history", func(c *gin.Context) { Default.DebtHistory(c) })
+	group.GET("/commission-history", func(c *gin.Context) { Default.CommissionHistory(c) })
+	group.GET("/withdrawals", func(c *gin.Context) { Default.Withdrawals(c) })
+	group.GET("/finance-ranges/:domain/:resource", func(c *gin.Context) { Default.FinanceRange(c) })
+	group.GET("/audit-history", func(c *gin.Context) { Default.AuditHistory(c) })
+	group.GET("/capabilities", func(c *gin.Context) { Default.Capabilities(c) })
+	group.GET("/writer-fence", func(c *gin.Context) { Default.WriterFence(c) })
 }
 
 func useExportAuth(group *gin.RouterGroup, structured bool) {

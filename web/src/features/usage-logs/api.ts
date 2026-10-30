@@ -16,7 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { isAxiosError } from 'axios'
+import { t } from 'i18next'
+
 import { api, type ApiRequestConfig } from '@/lib/api'
+import { createServerError } from '@/lib/server-error-message'
 
 import { buildQueryParams } from './lib/query-params'
 import { parseTaskArtifactsResponse } from './lib/task-artifacts'
@@ -41,11 +45,35 @@ export async function downloadUsageBill(
     format,
   } as unknown as Record<string, unknown>)
   const endpoint = isAdmin ? '/api/log/export' : '/api/log/self/export'
-  const response = await api.get(`${endpoint}?${queryParams.toString()}`, {
-    responseType: 'blob',
-    skipErrorHandler: true,
-  })
-  return response.data as Blob
+  let response
+  try {
+    response = await api.get<Blob>(`${endpoint}?${queryParams.toString()}`, {
+      responseType: 'blob',
+      skipErrorHandler: true,
+    })
+  } catch (error) {
+    if (
+      isAxiosError<Blob>(error) &&
+      error.response?.data?.type?.includes('json')
+    ) {
+      try {
+        error.response.data = JSON.parse(await error.response.data.text())
+      } catch {
+        // Preserve the original HTTP error if the proxy returned invalid JSON.
+      }
+    }
+    throw error
+  }
+  if (response.data.type.includes('json')) {
+    let payload: unknown
+    try {
+      payload = JSON.parse(await response.data.text())
+    } catch {
+      throw new Error(t('Failed to download usage bill'))
+    }
+    throw createServerError(payload, t('Failed to download usage bill'))
+  }
+  return response.data
 }
 
 // ============================================================================

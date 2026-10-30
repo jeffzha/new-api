@@ -5,6 +5,7 @@ import { ErrorNotice, Field, Loading, Pager } from "../../components/ui";
 import { useQuery } from "../../lib/client";
 import { useMutation } from "../../lib/mutations";
 import { CoefficientAdjustDialog, type AdjustmentOutcome } from "./AdjustDialog";
+import { PublishReasonDialog } from "./PublishReasonDialog";
 import { ChannelPricingRows, type ChannelFilterOption } from "./ChannelFilter";
 import { ChannelFilterMenu, VendorMark, VendorTabs } from "./VendorFilter";
 import {
@@ -49,7 +50,7 @@ function AgencySalesForm(props: {
 }) {
   const { t } = useTranslation();
   const mutation = useMutation();
-  const [reason, setReason] = useState("");
+  const [publishOpen, setPublishOpen] = useState(false);
   const [minSpread, setMinSpread] = useState(() => formatCoefficient(props.data.min_spread_bps));
   const [error, setError] = useState<unknown>(null);
   const [search, setSearch] = useState("");
@@ -202,7 +203,7 @@ function AgencySalesForm(props: {
     return t("The current coefficient is invalid. Enter a valid coefficient before adjusting it.");
   }
 
-  async function publish() {
+  async function publish(reason: string) {
     setError(null);
     try {
       await mutation.mutate(
@@ -233,6 +234,7 @@ function AgencySalesForm(props: {
         },
         { action: "pricing.sales.publish", objectId: `agency:${props.data.agency_id}` },
       );
+      setPublishOpen(false);
       props.reload();
     } catch (cause) {
       setError(cause);
@@ -254,6 +256,7 @@ function AgencySalesForm(props: {
           <ActionIcon name="refresh" />
           {t("Refresh")}
         </button>
+        <button className="button-icon" type="button" disabled={mutation.pending || props.data.items.length === 0} onClick={() => { setError(null); setPublishOpen(true); }}><ActionIcon name="save" />{t("Publish sales coefficients")}</button>
       </div>
       <div className="pricing-defaults-grid">
         <Field label={t("Minimum spread")}>
@@ -501,24 +504,7 @@ function AgencySalesForm(props: {
       {props.data.items.length > 0 && visible.length === 0 && (
         <p className="empty">{t("No models match the current filters.")}</p>
       )}
-      <div className="pricing-publish-row">
-        <Field label={t("Change reason (optional)")}>
-          <input
-            value={reason}
-            maxLength={2000}
-            onChange={(event) => setReason(event.target.value)}
-          />
-        </Field>
-        <button
-          className="button-icon"
-          type="button"
-          disabled={mutation.pending || props.data.items.length === 0}
-          onClick={() => void publish()}
-        >
-          <ActionIcon name="save" />
-          {t("Publish sales coefficients")}
-        </button>
-      </div>
+      {publishOpen && <PublishReasonDialog title={t("Publish sales coefficients")} busy={mutation.pending} error={error} onClose={() => setPublishOpen(false)} onConfirm={(reason) => void publish(reason)} />}
       <ErrorNotice error={error} />
       {adjustTarget && (
         <CoefficientAdjustDialog

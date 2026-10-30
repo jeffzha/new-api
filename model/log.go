@@ -484,8 +484,8 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if requestId != "" {
 		tx = tx.Where("logs.request_id = ?", requestId)
 	}
-	if upstreamRequestId != "" {
-		tx = tx.Where("logs.upstream_request_id = ?", upstreamRequestId)
+	if tx, err = applyUpstreamLogFilter(tx, upstreamRequestId); err != nil {
+		return nil, 0, err
 	}
 	if startTimestamp != 0 {
 		tx = tx.Where("logs.created_at >= ?", startTimestamp)
@@ -577,8 +577,8 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	if requestId != "" {
 		tx = tx.Where("logs.request_id = ?", requestId)
 	}
-	if upstreamRequestId != "" {
-		tx = tx.Where("logs.upstream_request_id = ?", upstreamRequestId)
+	if tx, err = applyUpstreamLogFilter(tx, upstreamRequestId); err != nil {
+		return nil, 0, err
 	}
 	if startTimestamp != 0 {
 		tx = tx.Where("logs.created_at >= ?", startTimestamp)

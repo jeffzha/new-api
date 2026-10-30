@@ -7,12 +7,12 @@ package model
 const AgencyTablePrefix = "agency_hub_"
 
 type Agency struct {
-	ID int64 `gorm:"primaryKey" json:"id"`
+	ID int64 `gorm:"primaryKey;index:idx_agency_depth_id,priority:2" json:"id"`
 	// ParentAgencyID is nil for legacy/root-managed agencies. Existing rows are
 	// therefore depth 1 and remain fully compatible with the single-level
 	// pricing path.
 	ParentAgencyID         *int64 `gorm:"index:idx_agency_parent_status" json:"parent_agency_id,omitempty"`
-	Depth                  int    `gorm:"not null;default:1;index:idx_agency_depth" json:"depth"`
+	Depth                  int    `gorm:"not null;default:1;index:idx_agency_depth;index:idx_agency_depth_id,priority:1" json:"depth"`
 	Code                   string `gorm:"size:64;not null;uniqueIndex:uidx_agency_code" json:"code"`
 	DisplayName            string `gorm:"size:191;not null" json:"display_name"`
 	Status                 string `gorm:"size:32;not null;index:idx_agency_status" json:"status"`
@@ -460,10 +460,10 @@ type AgencySourceEvent struct {
 	PayloadHash       string `gorm:"size:128;not null"`
 	UserID            int64  `gorm:"not null;index:idx_agency_source_user;index:idx_agency_source_user_status_seq,priority:1"`
 	MoneySeq          int64  `gorm:"not null;index:idx_agency_source_user_status_seq,priority:3"`
-	ProcessingStatus  string `gorm:"size:32;not null;index:idx_agency_source_status;index:idx_agency_source_user_status_seq,priority:2"`
+	ProcessingStatus  string `gorm:"size:32;not null;index:idx_agency_source_status;index:idx_agency_source_user_status_seq,priority:2;index:idx_agency_source_status_created,priority:1"`
 	SkipReason        string `gorm:"type:text"`
 	Payload           string `gorm:"type:text;not null"`
-	CreatedAtMS       int64  `gorm:"not null"`
+	CreatedAtMS       int64  `gorm:"not null;index:idx_agency_source_status_created,priority:2"`
 }
 
 func (AgencySourceEvent) TableName() string { return AgencyTablePrefix + "source_events" }
@@ -1039,7 +1039,7 @@ func AgencyModels() []any {
 		&AgencyUserBinding{}, &AgencyActiveUserBinding{}, &AgencyCustomerSalesOverride{}, &AgencyPricePolicyVersion{}, &AgencyPricePolicyItem{}, &AgencyPlatformPriceState{}, &AgencyPlatformPriceVersion{}, &AgencyIdempotencyRecord{},
 		&AgencyFundingAccount{}, &AgencyFundingLot{}, &AgencyFundingAllocation{}, &AgencyFundingLedger{}, &AgencyFundingDebt{}, &AgencyDebtRepayment{}, &AgencyFundingReversal{}, &AgencyFundingReversalChargeRecord{}, &AgencyCreditTerms{}, &AgencyCreditInvoice{},
 		&AgencyBillingJournal{}, &AgencyBillingOperation{}, &AgencyBillingOutbox{}, &AgencyEventDelivery{}, &AgencyTaskSubmissionAttempt{},
-		&AgencyOpsPublisher{}, &AgencyOpsPublication{}, &AgencyOpsWriterState{}, &AgencyOpsWriterTransition{}, &AgencyOpsSourceManifest{},
+		&AgencyOpsPublisher{}, &AgencyOpsPublication{}, &AgencyOpsEvent{}, &AgencyOpsObjectRevision{}, &AgencyOpsSenderLease{}, &AgencyOpsWriterState{}, &AgencyOpsWriterTransition{}, &AgencyOpsSourceManifest{},
 		&AgencyBillingCorrection{},
 		&AgencyChargeComponent{}, &AgencyComponentFunding{},
 		&AgencySourceEvent{}, &AgencyUsageFact{}, &AgencyTopupFact{}, &AgencyCommissionJob{}, &AgencyCommissionLedger{}, &AgencyCommissionBalance{},

@@ -458,6 +458,24 @@ func repairAgencyPricePolicy(agency model.Agency, stored agencycontract.Policy, 
 		change("", "default_sales_bps", &before, result.DefaultSalesBPS, "默认售价低于自身成本与最低价差之和")
 	}
 	prices := append([]agencycontract.PlatformModelPrice(nil), platform.ModelPrices...)
+	// The tenant's negotiated root cost also owns the repair boundary.
+	rootCosts := make(map[string]int)
+	if parent == nil {
+		costPolicy := stored
+		costPolicy.DefaultSalesBPS = agencycontract.MaxCoefficientBPS
+		costPolicy.DefaultChildCostBPS = 0
+		costPolicy.SalesCapBPS = agencycontract.MaxCoefficientBPS
+		costPolicy.ModelOverrides = nil
+		effective, err := agencycontract.ApplyPlatformPolicyForAgency(costPolicy, platform, agency.ID)
+		if err != nil {
+			return result, nil, err
+		}
+		for _, override := range effective.ModelOverrides {
+			if override.SettlementBPS != nil {
+				rootCosts[override.OriginModelName] = *override.SettlementBPS
+			}
+		}
+	}
 	sort.Slice(prices, func(i, j int) bool { return prices[i].OriginModelName < prices[j].OriginModelName })
 	for _, price := range prices {
 		if !price.IsPricingConfirmed() {
@@ -474,7 +492,7 @@ func repairAgencyPricePolicy(agency model.Agency, stored agencycontract.Policy, 
 			cost = *current.SettlementBPS
 		}
 		if parent == nil {
-			cost = price.AgencyCostBPS
+			cost = rootCosts[name]
 			if current.SettlementBPS == nil || *current.SettlementBPS != cost {
 				set(name, "settlement_bps", &current.SettlementBPS, cost, "一级代理商成本对齐平台已确认的下级系数（不自动加0.05）")
 			}
@@ -540,7 +558,7 @@ func repairAgencyPricePolicy(agency model.Agency, stored agencycontract.Policy, 
 			return result, nil, err
 		}
 	} else {
-		effective, err := agencycontract.ApplyPlatformPolicy(result, platform)
+		effective, err := agencycontract.ApplyPlatformPolicyForAgency(result, platform, agency.ID)
 		if err != nil {
 			return result, nil, err
 		}

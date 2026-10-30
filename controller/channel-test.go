@@ -938,7 +938,7 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 		shouldBanChannel = service.ShouldDisableChannel(result.newAPIError)
 	}
 
-	if common.AutomaticDisableChannelEnabled && !shouldBanChannel {
+	if result.localErr == nil && common.AutomaticDisableChannelEnabled && !shouldBanChannel {
 		if milliseconds > disableThreshold {
 			err := fmt.Errorf("响应时间 %.2fs 超过阈值 %.2fs", float64(milliseconds)/1000.0, float64(disableThreshold)/1000.0)
 			newAPIError = types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusRequestTimeout)
@@ -946,21 +946,37 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 		}
 	}
 
-	if newAPIError == nil {
+	if newAPIError == nil && result.localErr == nil {
 		summary.Succeeded++
 	} else {
 		summary.Failed++
 	}
 
+	usingKey, testModel := "", ""
+	if result.context != nil {
+		usingKey = common.GetContextKeyString(result.context, constant.ContextKeyChannelKey)
+		testModel = common.GetContextKeyString(result.context, constant.ContextKeyOriginalModel)
+	}
 	if allowDisable && isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
-		processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, nil)
+		processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, usingKey, channel.GetAutoBan()), newAPIError, nil)
 		summary.Disabled++
 	}
 
 	if result.localErr == nil && !isChannelEnabled && service.ShouldEnableChannel(newAPIError, channel.Status) {
-		service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
+		service.EnableChannel(channel.Id, usingKey, channel.Name)
 		summary.Enabled++
 	}
+
+	if testModel == "" {
+		if channel.TestModel != nil {
+			testModel = strings.TrimSpace(*channel.TestModel)
+		}
+		if testModel == "" {
+			testModel, _, _ = strings.Cut(channel.Models, ",")
+			testModel = strings.TrimSpace(testModel)
+		}
+	}
+	go service.NotifyFeishuChannelProbe(channel, testModel, milliseconds, result.localErr, newAPIError)
 
 	channel.UpdateResponseTime(milliseconds)
 	return summary

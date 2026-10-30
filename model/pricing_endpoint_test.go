@@ -109,15 +109,41 @@ func TestPricingAdvancedCustomUsesConfiguredEndpointTypes(t *testing.T) {
 
 func TestDefaultVendorsUseOfficialModelPublishers(t *testing.T) {
 	resetPricingEndpointTestTables(t)
+	require.NoError(t, DB.Create(&Model{
+		ModelName: "fun-asr-flash-2026-06-15",
+		Status:    1,
+		NameRule:  NameRuleExact,
+	}).Error)
 	resolved, err := ResolveModelVendors(DB, []string{
 		"MiniMax-H3",
 		"MiniMax-H3-261013",
 		"doubao-seedance-2-0-fast-260128",
+		"fun-asr-flash-2026-06-15",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "MiniMax", resolved["MiniMax-H3"].Name)
 	assert.Equal(t, "MiniMax", resolved["MiniMax-H3-261013"].Name)
 	assert.Equal(t, "字节跳动", resolved["doubao-seedance-2-0-fast-260128"].Name)
+	assert.Equal(t, "阿里巴巴", resolved["fun-asr-flash-2026-06-15"].Name)
+}
+
+func TestPricingPublishesNativeFunASRAudioUsageSchema(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	insertPricingEndpointChannel(t, 105, constant.ChannelTypeAli, dto.ChannelOtherSettings{})
+	insertPricingEndpointAbility(t, 105, "fun-asr-flash-2026-06-15")
+
+	var found *Pricing
+	for _, pricing := range GetPricing() {
+		if pricing.ModelName == "fun-asr-flash-2026-06-15" {
+			found = &pricing
+			break
+		}
+	}
+	require.NotNil(t, found)
+	assert.Equal(t, "tiered_expr", found.BillingMode)
+	assert.Contains(t, found.BillingExpr, `u("seconds")`)
+	assert.Equal(t, "number", found.BillingUsageSchema["seconds"].Type)
+	assert.Equal(t, "second", found.BillingUsageSchema["seconds"].Unit)
 }
 
 func TestPricingModelMetadataEndpointsMergeWithAdvancedCustomInference(t *testing.T) {

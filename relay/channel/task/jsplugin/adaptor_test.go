@@ -4,13 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
+	"image"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"math"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"os"
 	"strings"
 	"testing"
 
@@ -25,6 +31,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/abema/go-mp4"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,6 +68,262 @@ export const protocols = {openai_video: {
   render: function(ctx, task) { return {id: task.task_id, status: "completed"}; }
 }};
 `
+
+func testMediaProbeMP4(t *testing.T) []byte {
+	t.Helper()
+	var payload bytes.Buffer
+	_, err := mp4.Marshal(&payload, &mp4.Mvhd{Timescale: 1000, DurationV0: 3250}, mp4.Context{})
+	require.NoError(t, err)
+	data := make([]byte, payload.Len()+16)
+	binary.BigEndian.PutUint32(data, uint32(len(data)))
+	copy(data[4:], "moov")
+	binary.BigEndian.PutUint32(data[8:], uint32(len(data)-8))
+	copy(data[12:], "mvhd")
+	copy(data[16:], payload.Bytes())
+	return data
+}
+
+func TestTaskAdaptorMeasuresReferenceVideoBeforeBilling(t *testing.T) {
+	data := testMediaProbeMP4(t)
+
+	for _, tc := range []struct {
+		name, capability string
+		source           any
+		wantError        string
+	}{
+		{name: "data URL", capability: `requiredCapabilities:["media-duration@1"],`, source: "data:video/mp4;base64," + base64.StdEncoding.EncodeToString(data)},
+		{name: "multipart file", capability: `requiredCapabilities:["media-duration@1"],`, source: map[string]any{"__fileRef": "request_file:clip", "encoding": "dataUrl"}},
+		{name: "missing capability", source: "unused", wantError: "media-duration@1"},
+		{name: "unreadable media", capability: `requiredCapabilities:["media-duration@1"],`, source: "data:video/mp4;base64,YmFk", wantError: "no valid MP4 duration"},
+		{name: "URL credentials", capability: `requiredCapabilities:["media-duration@1"],`, source: "https://user:secret@example.test/file.mp4", wantError: "public HTTP(S) video"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := strings.Replace(mockPlugin, `apiVersion: 1,`, `apiVersion: 1,`+tc.capability, 1)
+			source = strings.Replace(source, `body: {prompt: ctx.requestBody.prompt},`, `body: {prompt: ctx.requestBody.prompt}, mediaProbes:[{key:"reference",source:ctx.requestBody.video}],`, 1)
+			source = strings.Replace(source, `return {seconds: 5, mode: "pro"};`, `return {seconds:ctx.mediaDurations.reference,mode:"pro"};`, 1)
+			plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
+			require.NoError(t, err)
+			adaptor := New(plugin)
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://provider.example"}, TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+			adaptor.Init(info)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+			if tc.name == "multipart file" {
+				c = newMultipartFileContext(t, "clip", "clip.mp4", "video/mp4", data)
+			}
+			c.Set("task_request", map[string]any{"prompt": "p", "video": tc.source})
+			taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+			if tc.wantError != "" {
+				require.NotNil(t, taskErr)
+				assert.Contains(t, taskErr.Error.Error(), tc.wantError)
+				return
+			}
+			require.Nil(t, taskErr)
+			facts, err := adaptor.ExtractUsageFactsValidated(c, info)
+			require.NoError(t, err)
+			assert.Equal(t, 3.25, facts["seconds"])
+		})
+	}
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "truncated", data: data[:20]},
+		{name: "no movie header", data: []byte{0, 0, 0, 8, 'f', 'r', 'e', 'e'}},
+		{name: "invalid box size", data: []byte{0, 0, 0, 1, 'm', 'o', 'o', 'v', 255, 255, 255, 255, 255, 255, 255, 255}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { _, err := mp4MediaDuration(t.Context(), tc.data); assert.Error(t, err) })
+	}
+}
+
+func TestDomesticLocoPalImageDimensionsBeforeSubmission(t *testing.T) {
+	source, err := os.ReadFile("../../../../scripts/task-plugins/cn-locopal-video.js")
+	require.NoError(t, err)
+	plugin, err := pluginruntime.NewRegistry().Register(string(source), pluginruntime.Options{})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, format, ratio string
+		width, height       int
+		upload              bool
+		referenceVideo      bool
+	}{
+		{name: "portrait PNG", format: "png", width: 36, height: 64, ratio: "9:16"},
+		{name: "landscape JPEG", format: "jpeg", width: 64, height: 36, ratio: "16:9"},
+		{name: "square GIF", format: "gif", width: 32, height: 32, ratio: "1:1"},
+		{name: "uploaded portrait", format: "png", width: 36, height: 64, ratio: "9:16", upload: true},
+		{name: "square WebP", format: "webp", ratio: "1:1"},
+		{name: "image with reference video", format: "png", width: 36, height: 64, ratio: "9:16", referenceVideo: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var data bytes.Buffer
+			img := image.NewRGBA(image.Rect(0, 0, tc.width, tc.height))
+			switch tc.format {
+			case "png":
+				require.NoError(t, png.Encode(&data, img))
+			case "jpeg":
+				require.NoError(t, jpeg.Encode(&data, img, nil))
+			case "gif":
+				require.NoError(t, gif.Encode(&data, img, nil))
+			case "webp":
+				decoded, err := base64.StdEncoding.DecodeString("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA")
+				require.NoError(t, err)
+				data.Write(decoded)
+			}
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+			var imageSource any = "data:image/" + tc.format + ";base64," + base64.StdEncoding.EncodeToString(data.Bytes())
+			if tc.upload {
+				c = newMultipartFileContext(t, "frame", "frame.png", "image/png", data.Bytes())
+				imageSource = map[string]any{"__fileRef": "request_file:frame", "encoding": "dataUrl", "mimeType": "image/png"}
+			}
+			request := map[string]any{"prompt": "p", "model": "MiniMax-H3", "images": []any{imageSource}, "resolution": "2K", "ratio": "adaptive", "size": "adaptive", "metadata": map[string]any{"aspect_ratio": "adaptive"}}
+			if tc.referenceVideo {
+				request["metadata"].(map[string]any)["reference_video"] = "data:video/mp4;base64," + base64.StdEncoding.EncodeToString(testMediaProbeMP4(t))
+			}
+			// Exercise the same repeated decoder boundary as channel selection.
+			for range 2 {
+				intent, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"}, map[string]any{"model": "MiniMax-H3", "body": map[string]any{"kind": "json", "value": request}})
+				require.NoError(t, err)
+				var decoded struct {
+					RequestBody map[string]any `json:"requestBody"`
+				}
+				require.NoError(t, convert(intent, &decoded))
+				request = decoded.RequestBody
+			}
+			c.Set("task_request", request)
+			info := &relaycommon.RelayInfo{OriginModelName: "MiniMax-H3", ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://provider.example", UpstreamModelName: "h3-video"}, TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+			adaptor := New(plugin)
+			adaptor.Init(info)
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+			body, err := adaptor.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			var actual map[string]any
+			require.NoError(t, common.DecodeJson(body, &actual))
+			assert.Equal(t, tc.ratio, actual["ratio"])
+			assert.Equal(t, tc.ratio, actual["metadata"].(map[string]any)["ratio"])
+			encoded, err := common.Marshal(actual)
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded), "adaptive")
+			facts, err := adaptor.ExtractUsageFactsValidated(c, info)
+			require.NoError(t, err)
+			assert.EqualValues(t, 1, facts["input_images"])
+			inputSeconds := 0.0
+			if tc.referenceVideo {
+				inputSeconds = 3.25
+			}
+			assert.EqualValues(t, inputSeconds, facts["input_video_seconds"])
+		})
+	}
+}
+
+type mediaProbeTestTransport func(*http.Request) (*http.Response, error)
+
+func (f mediaProbeTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestTaskAdaptorImageProbeHTTP(t *testing.T) {
+	var data bytes.Buffer
+	require.NoError(t, png.Encode(&data, image.NewRGBA(image.Rect(0, 0, 36, 64))))
+	service.InitHttpClient()
+	client := service.GetSSRFProtectedHTTPClient()
+	require.NotNil(t, client)
+	original := client.Transport
+	t.Cleanup(func() { client.Transport = original })
+	for _, tc := range []struct {
+		name      string
+		status    int
+		length    int64
+		redirect  string
+		wantError string
+	}{
+		{name: "public image", status: http.StatusOK, length: int64(data.Len())},
+		{name: "not found", status: http.StatusNotFound, wantError: "HTTP 404"},
+		{name: "oversized", status: http.StatusOK, length: maxMediaProbeBytes + 1, wantError: "16 MiB"},
+		{name: "private redirect blocked", status: http.StatusFound, redirect: "http://127.0.0.1/private", wantError: "download failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			client.Transport = mediaProbeTestTransport(func(r *http.Request) (*http.Response, error) {
+				calls++
+				assert.Empty(t, r.Header.Get("Authorization"))
+				assert.Empty(t, r.Header.Get("Cookie"))
+				_, hasDeadline := r.Context().Deadline()
+				assert.True(t, hasDeadline)
+				return &http.Response{StatusCode: tc.status, Header: http.Header{"Location": []string{tc.redirect}}, ContentLength: tc.length, Body: io.NopCloser(bytes.NewReader(data.Bytes())), Request: r}, nil
+			})
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+			_, dimensions, err := probeMedia(c, nil, []mediaProbe{{Key: "frame", Source: "https://8.8.8.8/frame.png"}})
+			if tc.wantError != "" {
+				require.ErrorContains(t, err, tc.wantError)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, imageDimensions{Width: 36, Height: 64}, dimensions["frame"])
+			}
+			assert.Equal(t, 1, calls)
+		})
+	}
+}
+
+func TestTaskAdaptorImageProbeGuards(t *testing.T) {
+	var imageData bytes.Buffer
+	require.NoError(t, png.Encode(&imageData, image.NewRGBA(image.Rect(0, 0, 36, 64))))
+	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(imageData.Bytes())
+	for _, tc := range []struct {
+		name, source, capability, final, wantError string
+	}{
+		{name: "missing capability", source: dataURL, wantError: "image-dimensions@1"},
+		{name: "unreadable image", source: "data:image/png;base64,YmFk", capability: `requiredCapabilities:["image-dimensions@1"],`, wantError: "dimensions could not be verified"},
+		{name: "URL credentials", source: "https://user:secret@example.test/frame.png", capability: `requiredCapabilities:["image-dimensions@1"],`, wantError: "public HTTP(S) image"},
+		{name: "private URL", source: "http://127.0.0.1/frame.png", capability: `requiredCapabilities:["image-dimensions@1"],`, wantError: "fetch policy"},
+		{name: "SVG rejected", source: "data:image/svg+xml;base64,PHN2Zy8+", capability: `requiredCapabilities:["image-dimensions@1"],`, wantError: "supported image Base64"},
+		{name: "oversized data", source: "data:image/png;base64," + strings.Repeat("A", ((maxMediaProbeBytes/3)+2)*4), capability: `requiredCapabilities:["image-dimensions@1"],`, wantError: "16 MiB"},
+		{name: "final URL revalidated", source: dataURL, capability: `requiredCapabilities:["image-dimensions@1"],`, final: `return {url:"https://other.example/submit"};`, wantError: "not allowed"},
+		{name: "final response type revalidated", source: dataURL, capability: `requiredCapabilities:["image-dimensions@1"],`, final: `return {url:ctx.baseUrl+"/submit",responseType:"sse"};`, wantError: "response type"},
+		{name: "unresolved probes", source: dataURL, capability: `requiredCapabilities:["image-dimensions@1"],`, final: `return {url:ctx.baseUrl+"/submit",imageProbes:[{key:"frame",source:ctx.requestBody.image}]};`, wantError: "must resolve image probes"},
+		{name: "new duration probes", source: dataURL, capability: `requiredCapabilities:["image-dimensions@1"],`, final: `return {url:ctx.baseUrl+"/submit",mediaProbes:[{key:"video",source:"https://example.test/v.mp4"}]};`, wantError: "changing media probes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := strings.Replace(mockPlugin, `apiVersion: 1,`, `apiVersion: 1,`+tc.capability, 1)
+			source = strings.Replace(source, `body: {prompt: ctx.requestBody.prompt},`, `body: {prompt: ctx.requestBody.prompt},imageProbes:[{key:"frame",source:ctx.requestBody.image}],`, 1)
+			if tc.final != "" {
+				source = strings.Replace(source, `if (!ctx.requestBody.prompt)`, `if (ctx.mediaDimensions && ctx.mediaDimensions.frame) {`+tc.final+`} if (!ctx.requestBody.prompt)`, 1)
+			}
+			plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
+			require.NoError(t, err)
+			adaptor := New(plugin)
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://provider.example"}, TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+			adaptor.Init(info)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+			c.Set("task_request", map[string]any{"prompt": "p", "image": tc.source})
+			taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+			assert.Contains(t, taskErr.Error.Error(), tc.wantError)
+			assert.Nil(t, adaptor.submit)
+		})
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	for _, probes := range [][]mediaProbe{
+		{{Key: "a", Source: dataURL}, {Key: "a", Source: dataURL}},
+		{{Key: "../invalid", Source: dataURL}},
+		make([]mediaProbe, 5),
+	} {
+		_, _, err := probeMedia(c, nil, probes)
+		assert.Error(t, err)
+	}
+}
+
+func TestDomesticLocoPalContractFixtures(t *testing.T) {
+	source, err := os.ReadFile("../../../../scripts/task-plugins/cn-locopal-video.js")
+	require.NoError(t, err)
+	fixtures, err := os.ReadFile("../../../../scripts/task-plugins/cn-locopal-video.fixtures.json")
+	require.NoError(t, err)
+	report, err := pluginruntime.ReplayFixture(t.Context(), string(source), fixtures)
+	require.NoError(t, err)
+	assert.Equal(t, report.Total, report.Passed)
+}
 
 func TestTaskAdaptorRejectsDeprecatedClientResponse(t *testing.T) {
 	source := strings.Replace(mockPlugin, `taskData: {accepted: true, status: resp.statusCode},`, `taskData: {}, clientResponse: {id: ctx.publicTaskId},`, 1)

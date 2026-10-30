@@ -234,7 +234,7 @@ export function SeedanceVideoPricingCard(props: Props) {
               <CardTitle>{t('Seedance CNY Pricing')}</CardTitle>
               <CardDescription>
                 {t(
-                  'Set base prices by model and resolution. Seedance 2.0 Mini is billed per generation; other models are billed per million video tokens.'
+                  'Set the customer base price per million video tokens for each model and resolution.'
                 )}
               </CardDescription>
             </CardHeader>
@@ -259,7 +259,7 @@ export function SeedanceVideoPricingCard(props: Props) {
                             {model}
                           </code>
                           <span className='text-muted-foreground text-xs font-normal'>
-                            {perRequest ? t('CNY / request') : t('CNY / 1M video tokens')}
+                            {t('CNY / 1M video tokens')}
                           </span>
                         </span>
                       </FieldLegend>

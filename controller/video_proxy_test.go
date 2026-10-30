@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
@@ -125,6 +126,122 @@ func TestVideoProxyUsesPrivateNoStoreAndPreservesRangeResponse(t *testing.T) {
 	assert.Equal(t, "bytes 0-3/8", recorder.Header().Get("Content-Range"))
 	assert.Empty(t, recorder.Header().Values("Server"))
 	assert.Empty(t, recorder.Header().Values("Set-Cookie"))
+}
+
+func TestVideoProxyUsesPluginContentRequestDescriptor(t *testing.T) {
+	db := setupVideoProxyControllerTestDB(t)
+
+	descriptorRequests := make(chan http.Header, 1)
+	descriptorUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		descriptorRequests <- r.Header.Clone()
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("plugin-video"))
+	}))
+	defer descriptorUpstream.Close()
+	fallbackCalled := make(chan struct{}, 1)
+	fallbackUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fallbackCalled <- struct{}{}
+		http.Error(w, "stale fallback", http.StatusBadGateway)
+	}))
+	defer fallbackUpstream.Close()
+	baseURL := descriptorUpstream.URL
+
+	channel := model.Channel{
+		Type:    constant.ChannelTypeGemini,
+		Key:     "plugin-content-key",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+		Name:    "video-plugin-content-test",
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	const userID = 18
+	task := model.Task{
+		TaskID:    "task_video_proxy_plugin_descriptor",
+		Platform:  constant.TaskPlatform("google"),
+		UserId:    userID,
+		ChannelId: channel.Id,
+		Status:    model.TaskStatusSuccess,
+		PrivateData: model.TaskPrivateData{
+			ResultURL: fallbackUpstream.URL,
+			Execution: &model.TaskExecutionSnapshot{TaskPlugin: &model.TaskPluginSnapshot{
+				Key: "google", Name: "Google Veo (Gemini API)", Version: "1.0.0", APIVersion: 1,
+			}},
+		},
+	}
+	task.SetData(map[string]any{
+		"response": map[string]any{
+			"generateVideoResponse": map[string]any{
+				"generatedVideos": []any{map[string]any{
+					"video": map[string]any{"uri": descriptorUpstream.URL},
+				}},
+			},
+		},
+	})
+	require.NoError(t, db.Create(&task).Error)
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/"+task.TaskID+"/content", nil)
+	context.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	context.Set("id", userID)
+
+	VideoProxy(context)
+
+	var forwardedHeaders http.Header
+	select {
+	case forwardedHeaders = <-descriptorRequests:
+	default:
+		require.FailNow(t, "video proxy did not use the plugin content descriptor")
+	}
+	assert.Equal(t, "plugin-content-key", forwardedHeaders.Get("x-goog-api-key"))
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "plugin-video", recorder.Body.String())
+	select {
+	case <-fallbackCalled:
+		require.FailNow(t, "video proxy used the stale task result URL")
+	default:
+	}
+}
+
+func TestTaskMediaHeadFallsBackOnlyForCredentiallessCDN(t *testing.T) {
+	db := setupVideoProxyControllerTestDB(t)
+	channel := model.Channel{Type: constant.ChannelTypeTaskPlugin, Key: "test-key", Status: common.ChannelStatusEnabled, Name: "head-test"}
+	require.NoError(t, db.Create(&channel).Error)
+	task := &model.Task{TaskID: "task_head_cdn", ChannelId: channel.Id}
+	for _, credentialless := range []bool{true, false} {
+		t.Run(fmt.Sprint(credentialless), func(t *testing.T) {
+			var methods []string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				methods = append(methods, r.Method)
+				if r.Method == http.MethodHead {
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				assert.Equal(t, "bytes=0-3", r.Header.Get("Range"))
+				w.Header().Set("Content-Type", "video/mp4")
+				w.Header().Set("Content-Range", "bytes 0-3/8")
+				w.WriteHeader(http.StatusPartialContent)
+				_, _ = w.Write([]byte("0123"))
+			}))
+			defer upstream.Close()
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodHead, "/v1/videos/task_head_cdn/content", nil)
+			c.Request.Header.Set("Range", "bytes=0-3")
+			err := proxyTaskMedia(c, task, &relaychannel.TaskContentRequest{URL: upstream.URL, Method: http.MethodHead, Credentialless: credentialless})
+			if !credentialless {
+				require.Error(t, err)
+				assert.Equal(t, []string{http.MethodHead}, methods)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, []string{http.MethodHead, http.MethodGet}, methods)
+			assert.Equal(t, http.StatusPartialContent, recorder.Code)
+			assert.Equal(t, "video/mp4", recorder.Header().Get("Content-Type"))
+			assert.Empty(t, recorder.Body.String())
+		})
+	}
 }
 
 func TestWriteVideoDataURLUsesPrivateNoStore(t *testing.T) {

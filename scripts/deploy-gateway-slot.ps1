@@ -4,8 +4,7 @@ Deploy the current checkout to the inactive Gateway Blue or Green slot.
 
 .DESCRIPTION
 The script reads the Caddy-managed blue/green weights, refuses to replace a
-slot that receives traffic, builds an immutable image on the Gateway server
-(or verifies an explicitly prebuilt image), and starts only the inactive
+slot that receives traffic, verifies an explicitly prebuilt image, and starts only the inactive
 new-api service. It does not change traffic and does not recreate Caddy,
 PostgreSQL, Redis, API docs, or hwdrama-proxy.
 
@@ -54,6 +53,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not $PreflightOnly -and -not $UseExistingImage) {
+    throw "Production builds are disabled. Build outside production and supply -UseExistingImage, -ImageTag, and -ImageCommit."
+}
 
 if (-not (Test-Path -LiteralPath $SshKeyPath -PathType Leaf)) {
     throw "SSH key not found: $SshKeyPath"

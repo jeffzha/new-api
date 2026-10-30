@@ -32,8 +32,34 @@ func TestMigrateAgencySQLiteIsIdempotentAndIndexesReportingFacts(t *testing.T) {
 	require.True(t, db.Migrator().HasIndex(&AgencyTopupFact{}, "idx_agency_topup_user_time"))
 	require.True(t, db.Migrator().HasIndex(&AgencyOperatorIdentityBinding{}, "uidx_agency_operator_identity_operator"))
 	require.True(t, db.Migrator().HasIndex(&AgencyOperatorIdentityBinding{}, "uidx_agency_operator_identity_user"))
+	require.True(t, db.Migrator().HasIndex(&Agency{}, "idx_agency_depth_id"))
 	require.True(t, db.Migrator().HasTable(&AgencyReconciliationRun{}))
 	require.True(t, db.Migrator().HasTable(&AgencyArchiveManifest{}))
+}
+
+func TestMigrateAgencyWriterFenceUpgradesWithoutResettingState(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:agency-writer-upgrade?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Agency{})) // Representative released schema without writer tables.
+	require.False(t, db.Migrator().HasTable(&AgencyOpsWriterState{}))
+	require.NoError(t, MigrateAgencyWriterFence(db))
+	require.NoError(t, MigrateAgencyWriterFence(db))
+	for _, table := range []any{&AgencyOpsWriterState{}, &AgencyOpsWriterTransition{}, &AgencyOpsSourceManifest{}} {
+		assert.True(t, db.Migrator().HasTable(table))
+	}
+	require.False(t, db.Migrator().HasTable(&AgencyTopupFact{}), "narrow migration must not migrate unrelated agency data")
+	var state AgencyOpsWriterState
+	require.NoError(t, db.First(&state, 1).Error)
+	assert.Equal(t, AgencyWriterSourcePrimary, state.Mode)
+	assert.EqualValues(t, 1, state.FenceVersion)
+	require.NoError(t, db.Model(&state).Updates(map[string]any{"mode": AgencyWriterOpsSingle, "fence_version": 7}).Error)
+	require.NoError(t, MigrateAgencyWriterFence(db))
+	require.NoError(t, db.First(&state, 1).Error)
+	assert.Equal(t, AgencyWriterOpsSingle, state.Mode)
+	assert.EqualValues(t, 7, state.FenceVersion)
+	var count int64
+	require.NoError(t, db.Model(&AgencyOpsWriterState{}).Count(&count).Error)
+	assert.EqualValues(t, 1, count)
 }
 
 func TestMigrateAgencyAddsOperatorIdentityBindingsToReleasedSchema(t *testing.T) {
@@ -53,6 +79,31 @@ func TestMigrateAgencyAddsOperatorIdentityBindingsToReleasedSchema(t *testing.T)
 	require.NoError(t, db.Create(&first).Error)
 	require.Error(t, db.Create(&AgencyOperatorIdentityBinding{OperatorAccountID: 1, AgencyID: 2, PlatformUserID: 11, CreatedAt: 1, UpdatedAt: 1}).Error)
 	require.Error(t, db.Create(&AgencyOperatorIdentityBinding{OperatorAccountID: 2, AgencyID: 2, PlatformUserID: 10, CreatedAt: 1, UpdatedAt: 1}).Error)
+}
+
+func TestMigrateAgencyAddsDirectoryPagingIndexToReleasedSchema(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:agency-directory-index-upgrade?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, MigrateAgency(db))
+
+	parent := Agency{ID: 101, Depth: 1, Code: "legacy-parent", DisplayName: "Legacy parent", Status: "active", InviteCode: "legacy-parent-invite"}
+	child := Agency{ID: 102, Depth: 2, ParentAgencyID: &parent.ID, Code: "legacy-child", DisplayName: "Legacy child", Status: "active", InviteCode: "legacy-child-invite"}
+	require.NoError(t, db.Create(&parent).Error)
+	require.NoError(t, db.Create(&child).Error)
+	require.NoError(t, db.Migrator().DropIndex(&Agency{}, "idx_agency_depth_id"))
+	require.False(t, db.Migrator().HasIndex(&Agency{}, "idx_agency_depth_id"))
+
+	// Released databases already contain agencies; the upgrade must add only
+	// the paging index and preserve their identity and hierarchy.
+	require.NoError(t, MigrateAgency(db))
+	require.NoError(t, MigrateAgency(db))
+	require.True(t, db.Migrator().HasIndex(&Agency{}, "idx_agency_depth_id"))
+	var rows []Agency
+	require.NoError(t, db.Order("depth ASC, id ASC").Find(&rows).Error)
+	require.Len(t, rows, 2)
+	assert.Equal(t, parent.ID, rows[0].ID)
+	assert.Equal(t, child.ID, rows[1].ID)
+	assert.Equal(t, parent.ID, *rows[1].ParentAgencyID)
 }
 
 func TestMigrateAgencyExternalDatabaseCompatibility(t *testing.T) {
@@ -88,11 +139,14 @@ func TestMigrateAgencyExternalDatabaseCompatibility(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, MigrateAgency(db))
 			require.NoError(t, MigrateAgency(db))
+			require.NoError(t, MigrateAgencyWriterFence(db))
+			require.NoError(t, MigrateAgencyWriterFence(db))
 			require.True(t, db.Migrator().HasTable(&Agency{}))
 			require.True(t, db.Migrator().HasIndex(&AgencyTopupFact{}, "idx_agency_topup_agency_time"))
 			require.True(t, db.Migrator().HasIndex(&AgencyTopupFact{}, "idx_agency_topup_user_time"))
 			require.True(t, db.Migrator().HasIndex(&AgencyOperatorIdentityBinding{}, "uidx_agency_operator_identity_operator"))
 			require.True(t, db.Migrator().HasIndex(&AgencyOperatorIdentityBinding{}, "uidx_agency_operator_identity_user"))
+			require.True(t, db.Migrator().HasIndex(&Agency{}, "idx_agency_depth_id"))
 		})
 	}
 }
@@ -137,6 +191,7 @@ func TestAgencySourceEventIndexMigrationAcrossDialects(t *testing.T) {
 			require.NoError(t, MigrateAgency(db))
 			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_operation_revision"))
 			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_user_status_seq"))
+			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_status_created"))
 			for _, name := range []string{"uidx_agency_source_event", "idx_agency_source_user", "idx_agency_source_status"} {
 				require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, name), "existing index %s must be preserved", name)
 			}
@@ -144,6 +199,7 @@ func TestAgencySourceEventIndexMigrationAcrossDialects(t *testing.T) {
 			// The released table has the same columns but lacks these indexes.
 			require.NoError(t, db.Migrator().DropIndex(&AgencySourceEvent{}, "idx_agency_source_operation_revision"))
 			require.NoError(t, db.Migrator().DropIndex(&AgencySourceEvent{}, "idx_agency_source_user_status_seq"))
+			require.NoError(t, db.Migrator().DropIndex(&AgencySourceEvent{}, "idx_agency_source_status_created"))
 			history := []AgencySourceEvent{
 				{EventID: "index-original", SourceOperationID: "index-operation", JournalRevision: 1, SchemaVersion: "1", PayloadHash: "original-hash", UserID: 7, MoneySeq: 1, ProcessingStatus: "done", Payload: `{"event":"original"}`, CreatedAtMS: 1000},
 				{EventID: "index-reversal", SourceOperationID: "index-operation", JournalRevision: 1, SchemaVersion: "1", PayloadHash: "reversal-hash", UserID: 7, MoneySeq: 1, ProcessingStatus: "skipped", Payload: `{"event":"reversal"}`, CreatedAtMS: 2000},
@@ -153,6 +209,7 @@ func TestAgencySourceEventIndexMigrationAcrossDialects(t *testing.T) {
 			require.NoError(t, MigrateAgency(db), "upgrading twice must preserve existing financial evidence")
 			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_operation_revision"))
 			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_user_status_seq"))
+			require.True(t, db.Migrator().HasIndex(&AgencySourceEvent{}, "idx_agency_source_status_created"))
 			var preserved []AgencySourceEvent
 			require.NoError(t, db.Order("id ASC").Find(&preserved).Error)
 			assert.Equal(t, history, preserved)

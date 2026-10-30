@@ -252,6 +252,10 @@ func enrichModels(models []*model.Model) error {
 	if err != nil {
 		return err
 	}
+	configuredConnections, err := model.GetConfiguredModelConnections()
+	if err != nil {
+		return err
+	}
 	for _, metadata := range models {
 		if metadata == nil {
 			continue
@@ -266,6 +270,20 @@ func enrichModels(models []*model.Model) error {
 			}
 		}
 		metadata.ConfiguredChannelCount = len(channelIDs)
+		metadata.ChannelConnections = nil
+		seen := map[int]bool{}
+		for name, summaries := range configuredConnections {
+			if !metadata.MatchesName(name) {
+				continue
+			}
+			for _, summary := range summaries {
+				if !seen[summary.ID] {
+					metadata.ChannelConnections = append(metadata.ChannelConnections, summary)
+					seen[summary.ID] = true
+				}
+			}
+		}
+		sort.Slice(metadata.ChannelConnections, func(i, j int) bool { return metadata.ChannelConnections[i].ID < metadata.ChannelConnections[j].ID })
 	}
 	connections, err := model.GetModelConnections()
 	if err != nil {

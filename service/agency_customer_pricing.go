@@ -59,7 +59,7 @@ func AgencyCustomerSales(userID int, modelNames []string) (map[string]int, error
 	}
 	policy = agencycontract.ConfirmedModelPolicy(policy, platform)
 	if agency.ParentAgencyID == nil {
-		policy, err = agencycontract.ApplyPlatformPolicy(policy, platform)
+		policy, err = agencycontract.ApplyPlatformPolicyForAgency(policy, platform, agency.ID)
 		if err != nil {
 			return nil, err
 		}

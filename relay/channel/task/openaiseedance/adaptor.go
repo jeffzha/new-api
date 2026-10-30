@@ -58,8 +58,7 @@ func (a *TaskAdaptor) GetChannelName() string { return channelName }
 func (a *TaskAdaptor) GetModelList() []string { return ModelList }
 
 // SupportsTaskBilling reports whether this channel type provides its own price
-// for the model using the shared seedance_video_pricing.prices_cny table —
-// the same pricing source as "Seedance Domestic".
+// for the model using the shared Seedance pricing configuration.
 func (a *TaskAdaptor) SupportsTaskBilling(_ int, modelName string) bool {
 	return seedancepricing.SupportsModel(modelName)
 }
@@ -251,10 +250,6 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("USD exchange rate must be positive"), "model_price_error", http.StatusInternalServerError)
 	}
 	unitPrice, ok := seedancepricing.GetUnitPriceCNY(info.OriginModelName, request.Resolution, hasVideo)
-	perRequest := seedancepricing.IsPerRequest(info.OriginModelName)
-	if perRequest {
-		unitPrice, ok = seedancepricing.GetRequestPriceCNY(info.OriginModelName, request.Resolution, hasVideo)
-	}
 	if !ok {
 		return nil, service.TaskErrorWrapperLocal(
 			fmt.Errorf("CNY price is not configured for model %s at resolution %s", info.OriginModelName, request.Resolution),
@@ -271,13 +266,6 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 		HasVideoInput:               hasVideo,
 		EstimatedTokens:             tokens,
 		AsyncReconciliationRequired: info.PriceData.GroupRatioInfo.GroupRatio > 0,
-	}
-	if perRequest {
-		snapshot.BillingUnit = "request"
-		snapshot.UnitPricePerRequest = unitPrice.String()
-		snapshot.UnitPricePerMillionTokens = ""
-		snapshot.EstimatedTokens = 0
-		snapshot.AsyncReconciliationRequired = false
 	}
 	quota, clamp, err := quotaFromUsage(tokens, snapshot)
 	if err != nil {

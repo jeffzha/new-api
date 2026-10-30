@@ -1,6 +1,7 @@
 package opsmonitor
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -121,6 +122,12 @@ func classifyEndpoint(method, path string) string {
 		return "identity_verification"
 	case (strings.HasPrefix(normalized, "/api/v3/open/") || strings.HasPrefix(normalized, "/api/openapi-maas/")) && strings.Contains(normalized, "asset"):
 		return "asset_management"
+	case strings.HasPrefix(normalized, "/mj/") && (strings.Contains(normalized, "/task/") || method == http.MethodGet):
+		return "async_poll"
+	case normalized == "/mj/submit/upload-discord-images":
+		return "asset_management"
+	case strings.HasPrefix(normalized, "/suno/") && (method == http.MethodGet || strings.Contains(normalized, "/fetch")):
+		return "async_poll"
 	case strings.HasPrefix(normalized, "/mj/") || strings.HasPrefix(normalized, "/suno/"):
 		return "async_task"
 	case strings.HasPrefix(normalized, "/v1/"), strings.HasPrefix(normalized, "/v1beta/"), strings.HasPrefix(normalized, "/v1beta1/"):
@@ -228,6 +235,24 @@ func ObserveRelay(c *gin.Context, info *relaycommon.RelayInfo) {
 			observation.ttftMs = 0
 		}
 		observation.hasTTFT = info.IsStream
+	}
+}
+
+// Midjourney has a separate task store instead of TaskRelayInfo.
+func ObserveMidjourneyTask(c *gin.Context, task *model.Midjourney, modelName string) {
+	observation := getObservation(c)
+	if observation == nil || task == nil {
+		return
+	}
+	observation.mu.Lock()
+	defer observation.mu.Unlock()
+	observation.taskID = task.MjId
+	observation.modelName = modelName
+	if task.Code != 1 && task.Code != 21 && task.Code != 22 {
+		observation.errorCode = fmt.Sprint(task.Code)
+		observation.errorType = "task_error"
+		observation.errorOwner = "provider"
+		observation.errorSummary = common.LocalLogPreview(task.Description)
 	}
 }
 

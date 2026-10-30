@@ -3,6 +3,7 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, closed]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,9 +13,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  manual-billing:
+    name: Manual Seedance billing verification
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOWORK: 'off'
+      GOPROXY: https://goproxy.cn,direct
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Create frontend embed placeholder
+        run: |
+          mkdir -p web/dist
+          touch web/dist/index.html
+      - name: Test Seedance pricing and task adaptors
+        run: go test ./setting/seedance_video_pricing ./model ./relay/channel/task/doubao ./relay/channel/task/openaiseedance ./relay/channel/task/taskcommon -count=1
+      - name: Build gateway
+        run: go build .
+
   backend:
     name: Backend vet, build, and test
-    if: github.event.action != 'closed' || github.event.pull_request.merged == true
+    if: github.event_name == 'pull_request' && (github.event.action != 'closed' || github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -59,7 +85,7 @@ jobs:
 
   frontend:
     name: Frontend typecheck and test
-    if: github.event.action != 'closed' || github.event.pull_request.merged == true
+    if: github.event_name == 'pull_request' && (github.event.action != 'closed' || github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -86,3 +112,46 @@ jobs:
 
       - name: Test
         run: bun run test
+
+  ops-finance-export:
+    name: Ops finance export three databases
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: ops_finance_export_test
+          MYSQL_ROOT_PASSWORD: rootpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -prootpass"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ops_finance_export_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d ops_finance_export_test"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    env:
+      AGENCY_HUB_RUN_EXTERNAL_DB_TESTS: "1"
+      AGENCY_HUB_TEST_MYSQL_DSN: root:rootpass@tcp(127.0.0.1:3306)/ops_finance_export_test?charset=utf8mb4&parseTime=True&loc=UTC
+      AGENCY_HUB_TEST_POSTGRES_DSN: host=127.0.0.1 user=postgres password=postgres dbname=ops_finance_export_test port=5432 sslmode=disable TimeZone=UTC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Verify Ops exports on all three databases
+        run: go test ./service/opsexport -run '^TestOpsExport(FinanceRange|BindingHistory)AcrossDatabases$' -count=1 -v
+      - name: Verify distributor durable delivery on all three databases
+        env:
+          GOMAXPROCS: '2'
+        run: go test ./service/agencyopspush -count=1 -v

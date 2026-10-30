@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,20 +33,68 @@ type BoundChannel struct {
 	Type int    `json:"type"`
 }
 
+type ModelChannelConnection struct {
+	ID        int    `json:"id"`
+	Name      string `json:"name"`
+	Type      int    `json:"type"`
+	Status    int    `json:"status"`
+	BaseURL   string `json:"base_url"`
+	MaskedKey string `json:"masked_key"`
+}
+
+// Only sanitized summaries leave this boundary; structured/multi-key credentials
+// are fully hidden rather than accidentally exposing a JSON or private-key fragment.
+func GetConfiguredModelConnections() (map[string][]ModelChannelConnection, error) {
+	var channels []Channel
+	if err := DB.Select("id", "name", "type", "status", "base_url", "key", "models").Order("id asc").Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	result := map[string][]ModelChannelConnection{}
+	for _, channel := range channels {
+		base := ""
+		if parsed, err := url.Parse(channel.GetBaseURL()); err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" {
+			parsed.User, parsed.RawQuery, parsed.Fragment = nil, "", ""
+			base = parsed.String()
+		}
+		masked := ""
+		if channel.Key != "" {
+			masked = "********"
+			plain := true
+			for _, r := range channel.Key {
+				if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
+					plain = false
+					break
+				}
+			}
+			if plain && len(channel.Key) > 12 {
+				masked = MaskTokenKey(channel.Key)
+			}
+		}
+		summary := ModelChannelConnection{ID: channel.Id, Name: channel.Name, Type: channel.Type, Status: channel.Status, BaseURL: base, MaskedKey: masked}
+		for name := range strings.SplitSeq(channel.Models, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				result[name] = append(result[name], summary)
+			}
+		}
+	}
+	return result, nil
+}
+
 type Model struct {
-	Id                 int            `json:"id"`
-	ModelName          string         `json:"model_name" gorm:"size:128;not null;uniqueIndex:uk_model_name_delete_at,priority:1"`
-	Description        string         `json:"description,omitempty" gorm:"type:text"`
-	Icon               string         `json:"icon,omitempty" gorm:"type:varchar(128)"`
-	Tags               string         `json:"tags,omitempty" gorm:"type:varchar(255)"`
-	VendorID           int            `json:"vendor_id,omitempty" gorm:"index"`
-	Endpoints          string         `json:"endpoints,omitempty" gorm:"type:text"`
-	SupportedEndpoints []string       `json:"supported_endpoints,omitempty" gorm:"-"`
-	Status             int            `json:"status" gorm:"default:1"`
-	SyncOfficial       int            `json:"sync_official" gorm:"default:1"`
-	CreatedTime        int64          `json:"created_time" gorm:"bigint"`
-	UpdatedTime        int64          `json:"updated_time" gorm:"bigint"`
-	DeletedAt          gorm.DeletedAt `json:"-" gorm:"index;uniqueIndex:uk_model_name_delete_at,priority:2"`
+	ChannelConnections []ModelChannelConnection `json:"channel_connections" gorm:"-"`
+	Id                 int                      `json:"id"`
+	ModelName          string                   `json:"model_name" gorm:"size:128;not null;uniqueIndex:uk_model_name_delete_at,priority:1"`
+	Description        string                   `json:"description,omitempty" gorm:"type:text"`
+	Icon               string                   `json:"icon,omitempty" gorm:"type:varchar(128)"`
+	Tags               string                   `json:"tags,omitempty" gorm:"type:varchar(255)"`
+	VendorID           int                      `json:"vendor_id,omitempty" gorm:"index"`
+	Endpoints          string                   `json:"endpoints,omitempty" gorm:"type:text"`
+	SupportedEndpoints []string                 `json:"supported_endpoints,omitempty" gorm:"-"`
+	Status             int                      `json:"status" gorm:"default:1"`
+	SyncOfficial       int                      `json:"sync_official" gorm:"default:1"`
+	CreatedTime        int64                    `json:"created_time" gorm:"bigint"`
+	UpdatedTime        int64                    `json:"updated_time" gorm:"bigint"`
+	DeletedAt          gorm.DeletedAt           `json:"-" gorm:"index;uniqueIndex:uk_model_name_delete_at,priority:2"`
 
 	BoundChannels []BoundChannel `json:"bound_channels,omitempty" gorm:"-"`
 	EnableGroups  []string       `json:"enable_groups,omitempty" gorm:"-"`

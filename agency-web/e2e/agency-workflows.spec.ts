@@ -360,11 +360,12 @@ test("root publishes platform pricing and an operator manages direct-child and c
     .fill("0.75");
   await page.getByLabel("My downstream channel price (coefficient): browser-chat-model", { exact: true }).fill("0.80");
   await page.getByLabel("Sales price (coefficient): browser-chat-model", { exact: true }).fill("0.90");
+  await page.getByRole("button", { name: "Publish platform pricing", exact: true }).click();
   await page.getByLabel("Change reason (optional)", { exact: true }).first().fill("Browser platform pricing");
   const platformPublished = page.waitForResponse((response) =>
     response.url().endsWith("/root/platform-pricing/publish"),
   );
-  await page.getByRole("button", { name: "Publish platform pricing", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Publish platform pricing", exact: true }).click();
   const platformResponse = await platformPublished;
   expect(platformResponse.status()).toBe(200);
   expect(platformResponse.request().postDataJSON()).toMatchObject({
@@ -394,11 +395,12 @@ test("root publishes platform pricing and an operator manages direct-child and c
     const childCost = operator.getByLabel("My downstream channel price (coefficient): browser-chat-model", { exact: true });
     await expect(childCost).toHaveAttribute("placeholder", "Not configured");
     await childCost.fill("0.85");
+    await operator.getByRole("button", { name: "Publish sales coefficients", exact: true }).click();
     await operator.getByLabel("Change reason (optional)", { exact: true }).fill("Browser agency sales override");
     const published = operator.waitForResponse((response) =>
       response.url().endsWith("/pricing/sales/publish"),
     );
-    await operator.getByRole("button", { name: "Publish sales coefficients", exact: true }).click();
+    await operator.getByRole("dialog").getByRole("button", { name: "Publish sales coefficients", exact: true }).click();
     const publishResponse = await published;
     expect(publishResponse.status()).toBe(200);
     expect(publishResponse.request().postDataJSON()).toMatchObject({
@@ -462,13 +464,15 @@ test("root publishes platform pricing and an operator manages direct-child and c
     const customerModelPrice = customerPricing.getByLabel("Sales price (coefficient): browser-chat-model", { exact: true });
     await expect(customerModelPrice).toHaveAttribute("placeholder", "0.9500");
     await customerPricing.getByRole("button", { name: "Set all models to cost", exact: true }).click();
+    await operator.getByRole("dialog").getByRole("button", { name: "Set all models to cost", exact: true }).click();
     await expect(customerModelPrice).toHaveValue("0.8000");
+    await customerPricing.getByRole("button", { name: "Save customer pricing", exact: true }).click();
     await customerPricing.getByLabel("Change reason (optional)", { exact: true }).fill("Approved zero-margin customer");
     const fixtureState = await (await operator.request.get("/__fixture/state")).json();
     const customerPublished = operator.waitForResponse((response) =>
       response.request().method() === "PUT" && response.url().endsWith(`/customers/${fixtureState.managed_user_id}/pricing/batch`),
     );
-    await customerPricing.getByRole("button", { name: "Save customer pricing", exact: true }).click();
+    await operator.getByRole("dialog").getByRole("button", { name: "Save customer pricing", exact: true }).click();
     const customerResponse = await customerPublished;
     expect(customerResponse.status()).toBe(200);
     expect(customerResponse.request().postDataJSON()).toMatchObject({

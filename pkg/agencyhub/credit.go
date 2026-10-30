@@ -108,8 +108,30 @@ type creditAccountItem struct {
 func (a *App) listCreditTerms(c *gin.Context) {
 	// Platform-wide by design: the super administrator owns the credit book,
 	// so an acting-agency session does not narrow it.
+	query := a.db.WithContext(c.Request.Context()).Model(&model.AgencyCreditTerms{})
+	if keyword := strings.TrimSpace(c.Query("query")); keyword != "" {
+		users := a.db.Model(&model.User{}).Select("id")
+		like := "%" + strings.ToLower(keyword) + "%"
+		if userID, err := strconv.ParseInt(keyword, 10, 64); err == nil && userID > 0 {
+			users = users.Where("id = ? OR LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?", userID, like, like)
+		} else {
+			users = users.Where("LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?", like, like)
+		}
+		query = query.Where("user_id IN (?)", users)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "database_error", "读取授信账户数量失败", nil)
+		return
+	}
+	// Legacy Agency Hub callers still receive their unpaged (bounded) list.
+	page, pageSize := 1, 500
+	if c.Query("p") != "" || c.Query("page_size") != "" {
+		pageInfo := common.GetPageQuery(c)
+		page, pageSize = max(1, min(pageInfo.Page, 1000000)), max(1, pageInfo.PageSize)
+	}
 	var terms []model.AgencyCreditTerms
-	if err := a.db.Model(&model.AgencyCreditTerms{}).Order("user_id ASC").Limit(500).Find(&terms).Error; err != nil {
+	if err := query.Order("user_id ASC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&terms).Error; err != nil {
 		respondError(c, http.StatusInternalServerError, "database_error", "读取授信条款失败", nil)
 		return
 	}
@@ -153,7 +175,7 @@ func (a *App) listCreditTerms(c *gin.Context) {
 			UpdatedAtMS:       term.UpdatedAtMS,
 		})
 	}
-	respondOK(c, gin.H{"items": items})
+	respondOK(c, gin.H{"items": items, "total": total, "page": page, "page_size": pageSize})
 }
 
 func (a *App) resolveCreditUser(c *gin.Context) {

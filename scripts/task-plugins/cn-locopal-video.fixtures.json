@@ -1,0 +1,503 @@
+{
+  "cases": [
+    {
+      "name": "seedance 480p usage",
+      "hook": "extractUsage",
+      "args": [
+        {
+          "model": "doubao-seedance-2-0-fast-260128",
+          "upstreamModel": "doubao-seedance-2-0-fast-260128",
+          "requestBody": {
+            "prompt": "A red ball on a white table",
+            "seconds": 4,
+            "resolution": "480p"
+          }
+        }
+      ],
+      "expected": {
+        "tokens": 38430,
+        "resolution": "480p",
+        "video_input": "none"
+      }
+    },
+    {
+      "name": "seedance reference video usage",
+      "hook": "extractUsage",
+      "args": [
+        {
+          "model": "doubao-seedance-2-0-fast-260128",
+          "upstreamModel": "doubao-seedance-2-0-fast-260128",
+          "requestBody": {
+            "prompt": "Continue the motion",
+            "seconds": 4,
+            "resolution": "720p",
+            "metadata": {
+              "content": [
+                {
+                  "type": "video_url",
+                  "video_url": { "url": "https://example.com/input.mp4" }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "expected": {
+        "tokens": 86400,
+        "resolution": "720p",
+        "video_input": "video"
+      }
+    },
+    {
+      "name": "seedance rejects unsupported resolution",
+      "hook": "extractUsage",
+      "args": [
+        {
+          "model": "doubao-seedance-2-0-fast-260128",
+          "upstreamModel": "doubao-seedance-2-0-fast-260128",
+          "requestBody": {
+            "prompt": "A red ball",
+            "seconds": 4,
+            "resolution": "1080p"
+          }
+        }
+      ],
+      "expectedError": "supports only 480p and 720p"
+    },
+    {
+      "name": "h3 mapped usage",
+      "hook": "extractUsage",
+      "args": [
+        {
+          "model": "MiniMax-H3",
+          "upstreamModel": "h3-video",
+          "requestBody": {
+            "prompt": "A red ball on a white table",
+            "seconds": 5,
+            "resolution": "768P",
+            "ratio": "16:9"
+          }
+        }
+      ],
+      "expected": {
+        "seconds": 5,
+        "resolution": "768P",
+        "input_images": 0,
+        "input_video_seconds": 0
+      }
+    },
+    {
+      "name": "h3 rejects bare base64 image input",
+      "hook": "buildSubmitRequest",
+      "args": [
+        {
+          "model": "MiniMax-H3",
+          "upstreamModel": "h3-video",
+          "requestBody": {
+            "prompt": "A red ball",
+            "image_urls": ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]
+          }
+        }
+      ],
+      "expectedError": "bare Base64 is not supported"
+    },
+    {
+      "name": "h3 image to video honors nested portrait aspect",
+      "hook": "buildSubmitRequest",
+      "args": [
+        {
+          "model": "MiniMax-H3",
+          "upstreamModel": "h3-video",
+          "baseUrl": "https://example.com",
+          "apiKey": "fixture-only",
+          "requestBody": {
+            "prompt": "A red ball",
+            "seconds": 4,
+            "images": ["https://example.com/input.png"],
+            "video": { "aspect": "9:16" }
+          }
+        }
+      ],
+      "expected": {
+        "url": "https://example.com/v1/videos",
+        "method": "POST",
+        "headers": { "Content-Type": "application/json", "Accept": "application/json", "Authorization": "Bearer fixture-only" },
+        "body": {
+          "prompt": "A red ball",
+          "seconds": 4,
+          "video": { "aspect": "9:16" },
+          "model": "h3-video",
+          "duration": 4,
+          "resolution": "768P",
+          "ratio": "9:16",
+          "metadata": { "resolution": "768P", "ratio": "9:16" },
+          "content": [
+            { "type": "image_url", "role": "first_frame", "image_url": { "url": "https://example.com/input.png" } }
+          ]
+        },
+        "action": "image_to_video"
+      }
+    },
+    {
+      "name": "h3 explicit ratio wins over nested aspect",
+      "hook": "buildSubmitRequest",
+      "args": [
+        {
+          "model": "MiniMax-H3",
+          "upstreamModel": "h3-video",
+          "baseUrl": "https://example.com",
+          "apiKey": "fixture-only",
+          "requestBody": {
+            "prompt": "A red ball",
+            "seconds": 4,
+            "images": ["https://example.com/input.png"],
+            "ratio": "3:4",
+            "video": { "aspect": "9:16" }
+          }
+        }
+      ],
+      "expected": {
+        "url": "https://example.com/v1/videos",
+        "method": "POST",
+        "headers": { "Content-Type": "application/json", "Accept": "application/json", "Authorization": "Bearer fixture-only" },
+        "body": {
+          "prompt": "A red ball",
+          "seconds": 4,
+          "ratio": "3:4",
+          "video": { "aspect": "9:16" },
+          "model": "h3-video",
+          "duration": 4,
+          "resolution": "768P",
+          "metadata": { "resolution": "768P", "ratio": "3:4" },
+          "content": [
+            { "type": "image_url", "role": "first_frame", "image_url": { "url": "https://example.com/input.png" } }
+          ]
+        },
+        "action": "image_to_video"
+      }
+    },
+    {
+      "name": "h3 image to video forwards explicit portrait ratio",
+      "hook": "buildSubmitRequest",
+      "args": [
+        {
+          "model": "MiniMax-H3",
+          "upstreamModel": "h3-video",
+          "baseUrl": "https://example.com",
+          "apiKey": "fixture-only",
+          "requestBody": {
+            "prompt": "A red ball",
+            "seconds": 4,
+            "images": ["https://example.com/input.png"],
+            "ratio": "9:16"
+          }
+        }
+      ],
+      "expected": {
+        "url": "https://example.com/v1/videos",
+        "method": "POST",
+        "headers": { "Content-Type": "application/json", "Accept": "application/json", "Authorization": "Bearer fixture-only" },
+        "body": {
+          "prompt": "A red ball",
+          "seconds": 4,
+          "ratio": "9:16",
+          "model": "h3-video",
+          "duration": 4,
+          "resolution": "768P",
+          "metadata": { "resolution": "768P", "ratio": "9:16" },
+          "content": [
+            { "type": "image_url", "role": "first_frame", "image_url": { "url": "https://example.com/input.png" } }
+          ]
+        },
+        "action": "image_to_video"
+      }
+    },
+    {
+      "name": "h3 legacy size ratio and image_urls select image to video",
+      "hook": "buildSubmitRequest",
+      "args": [
+        {
+          "model": "MiniMax-H3",
+          "upstreamModel": "h3-video",
+          "baseUrl": "https://example.com",
+          "apiKey": "fixture-only",
+          "requestBody": {
+            "prompt": "A red ball",
+            "seconds": 4,
+            "size": "9:16",
+            "image_urls": ["https://example.com/input.png"]
+          }
+        }
+      ],
+      "expected": {
+        "url": "https://example.com/v1/videos",
+        "method": "POST",
+        "headers": { "Content-Type": "application/json", "Accept": "application/json", "Authorization": "Bearer fixture-only" },
+        "body": {
+          "prompt": "A red ball",
+          "seconds": 4,
+          "size": "9:16",
+          "model": "h3-video",
+          "duration": 4,
+          "resolution": "768P",
+          "ratio": "9:16",
+          "metadata": { "resolution": "768P", "ratio": "9:16" },
+          "content": [
+            { "type": "image_url", "role": "first_frame", "image_url": { "url": "https://example.com/input.png" } }
+          ]
+        },
+        "action": "image_to_video"
+      }
+    },
+    {
+      "name": "h3 rejects unsupported nested aspect",
+      "hook": "buildSubmitRequest",
+      "args": [
+        {
+          "model": "MiniMax-H3",
+          "upstreamModel": "h3-video",
+          "requestBody": {
+            "prompt": "A red ball",
+            "images": ["https://example.com/input.png"],
+            "video": { "aspect": "2:3" }
+          }
+        }
+      ],
+      "expectedError": "ratio must be one of"
+    },
+    {
+      "name": "h3 uses verified reference video duration",
+      "hook": "extractUsage",
+      "args": [
+        {
+          "model": "MiniMax-H3",
+          "upstreamModel": "h3-video",
+          "mediaDurations": {"reference_video_0": 4},
+          "requestBody": {
+            "prompt": "Use all references",
+            "seconds": 5,
+            "resolution": "2K",
+            "ratio": "16:9",
+            "metadata": {
+              "content": [
+                { "type": "image_url", "role": "reference_image", "image_url": { "url": "https://example.com/a.png" } },
+                { "type": "video_url", "role": "reference_video", "video_url": { "url": "https://example.com/a.mp4" } }
+              ]
+            }
+          }
+        }
+      ],
+      "expected": {
+        "seconds": 5,
+        "resolution": "2K",
+        "input_images": 1,
+        "input_video_seconds": 4
+      }
+    },
+    {
+      "name": "h3 normalizes separate reference media for LocoPal",
+      "hook": "buildSubmitRequest",
+      "args": [
+        {
+          "model": "MiniMax-H3",
+          "upstreamModel": "h3-video",
+          "baseUrl": "https://example.com",
+          "apiKey": "fixture-only",
+          "mediaDimensions": {"first_frame": {"width": 360, "height": 640}},
+          "requestBody": {
+            "prompt": "Follow the reference motion",
+            "seconds": 8,
+            "resolution": "768P",
+            "metadata": {
+              "reference_image": "https://example.com/character.png",
+              "reference_video": "https://example.com/motion.mp4"
+            }
+          }
+        }
+      ],
+      "expected": {
+        "url": "https://example.com/v1/videos",
+        "method": "POST",
+        "headers": { "Content-Type": "application/json", "Accept": "application/json", "Authorization": "Bearer fixture-only" },
+        "body": {
+          "prompt": "Follow the reference motion",
+          "seconds": 8,
+          "resolution": "768P",
+          "metadata": {
+            "resolution": "768P",
+            "ratio": "9:16"
+          },
+          "model": "h3-video",
+          "duration": 8,
+          "ratio": "9:16",
+          "content": [
+            { "type": "image_url", "role": "reference_image", "image_url": { "url": "https://example.com/character.png" } },
+            { "type": "video_url", "role": "reference_video", "video_url": { "url": "https://example.com/motion.mp4" } }
+          ]
+        },
+        "action": "image_to_video",
+        "mediaProbes": [{ "key": "reference_video_0", "source": "https://example.com/motion.mp4" }]
+      }
+    },
+    {
+      "name": "h3 normalizes reference audio for LocoPal",
+      "hook": "buildSubmitRequest",
+      "args": [
+        {
+          "model": "MiniMax-H3",
+          "upstreamModel": "h3-video",
+          "baseUrl": "https://example.com",
+          "apiKey": "fixture-only",
+          "requestBody": {
+            "prompt": "Follow the voice",
+            "seconds": 5,
+            "ratio": "16:9",
+            "metadata": {
+              "reference_audio": "https://example.com/voice.mp3"
+            }
+          }
+        }
+      ],
+      "expected": {
+        "url": "https://example.com/v1/videos",
+        "method": "POST",
+        "headers": { "Content-Type": "application/json", "Accept": "application/json", "Authorization": "Bearer fixture-only" },
+        "body": {
+          "prompt": "Follow the voice",
+          "seconds": 5,
+          "ratio": "16:9",
+          "metadata": {
+            "resolution": "768P",
+            "ratio": "16:9"
+          },
+          "model": "h3-video",
+          "duration": 5,
+          "resolution": "768P",
+          "content": [
+            { "type": "audio_url", "role": "reference_audio", "audio_url": { "url": "https://example.com/voice.mp3" } }
+          ]
+        },
+        "action": "text_to_video"
+      }
+    },
+    {
+      "name": "h3 rejects non-operational display resolution",
+      "hook": "extractUsage",
+      "args": [
+        {
+          "model": "MiniMax-H3",
+          "upstreamModel": "h3-video",
+          "requestBody": {
+            "prompt": "A red ball",
+            "seconds": 5,
+            "resolution": "720P"
+          }
+        }
+      ],
+      "expectedError": "resolution must be 768P or 2K"
+    },
+    {
+      "name": "submit response task id",
+      "hook": "parseSubmitResponse",
+      "args": [
+        {},
+        {
+          "status": 200,
+          "body": { "id": "video-task-1", "status": "queued" }
+        }
+      ],
+      "expected": {
+        "taskId": "video-task-1",
+        "taskData": { "id": "video-task-1", "status": "queued" }
+      }
+    },
+    {
+      "name": "poll running",
+      "hook": "parseTaskResult",
+      "args": [{}, { "id": "video-task-1", "status": "running" }],
+      "expected": { "status": "IN_PROGRESS", "progress": "50%" }
+    },
+    {
+      "name": "poll success",
+      "hook": "parseTaskResult",
+      "args": [
+        {},
+        {
+          "id": "video-task-1",
+          "status": "succeeded",
+          "content": { "video_url": "https://example.com/result.mp4" }
+        }
+      ],
+      "expected": {
+        "status": "SUCCESS",
+        "progress": "100%",
+        "url": "https://example.com/result.mp4"
+      }
+    },
+    {
+      "name": "poll success metadata url",
+      "hook": "parseTaskResult",
+      "args": [
+        {},
+        {
+          "id": "video-task-2",
+          "status": "completed",
+          "metadata": { "url": "https://example.com/h3-result.mp4" }
+        }
+      ],
+      "expected": {
+        "status": "SUCCESS",
+        "progress": "100%",
+        "url": "https://example.com/h3-result.mp4"
+      }
+    },
+    {
+      "name": "h3 terminal usage overlay",
+      "hook": "extractUsageOnComplete",
+      "args": [
+        { "model": "MiniMax-H3", "upstreamModel": "h3-video" },
+        { "status": "SUCCESS" },
+        {
+          "status": "succeeded",
+          "resolution": "2K",
+          "duration": 5,
+          "usage": {
+            "output_seconds": 5,
+            "input_image_count": 2,
+            "input_seconds": 3
+          }
+        }
+      ],
+      "expected": {
+        "seconds": 5,
+        "input_images": 2,
+        "input_video_seconds": 3,
+        "resolution": "2K"
+      }
+    },
+    {
+      "name": "h3 terminal usage preserves explicit zero input video seconds",
+      "hook": "extractUsageOnComplete",
+      "args": [
+        { "model": "MiniMax-H3", "upstreamModel": "h3-video" },
+        { "status": "SUCCESS" },
+        {
+          "status": "succeeded",
+          "resolution": "768P",
+          "duration": 8,
+          "usage": {
+            "output_seconds": 8,
+            "input_image_count": 1,
+            "input_video_seconds": 0
+          }
+        }
+      ],
+      "expected": {
+        "seconds": 8,
+        "input_images": 1,
+        "input_video_seconds": 0,
+        "resolution": "768P"
+      }
+    }
+  ]
+}

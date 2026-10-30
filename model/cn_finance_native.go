@@ -335,10 +335,14 @@ func cnCaptureAgencyPurchase(tx *gorm.DB, lot AgencyFundingLot, purchase AgencyT
 	return nil
 }
 
-func cnCaptureNativeSources(tx *gorm.DB) error {
+func cnCaptureNativeSources(tx *gorm.DB, since time.Time) error {
 	if tx.Migrator().HasTable(&AgencyTopupFact{}) && tx.Migrator().HasTable(&AgencyFundingLot{}) {
 		var lots []AgencyFundingLot
-		if err := tx.Where("paid_initial > 0 OR bonus_initial > 0").Order("id").Find(&lots).Error; err != nil {
+		query := tx.Where("paid_initial > 0 OR bonus_initial > 0")
+		if !since.IsZero() {
+			query = query.Where("created_at >= ?", since.Unix())
+		}
+		if err := query.Order("id").Find(&lots).Error; err != nil {
 			return err
 		}
 		for _, lot := range lots {
@@ -357,7 +361,11 @@ func cnCaptureNativeSources(tx *gorm.DB) error {
 	}
 	if tx.Migrator().HasTable(&AgencyCommissionLedger{}) {
 		var rows []AgencyCommissionLedger
-		if err := tx.Order("id").Find(&rows).Error; err != nil {
+		query := tx.Order("id")
+		if !since.IsZero() {
+			query = query.Where("occurred_at_ms >= ?", since.UnixMilli())
+		}
+		if err := query.Find(&rows).Error; err != nil {
 			return err
 		}
 		for _, row := range rows {

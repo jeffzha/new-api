@@ -48,6 +48,13 @@ func run() error {
 		common.SysLog("Agency Hub migration completed")
 		return nil
 	}
+	if command == "migrate-writer-fence" {
+		if err := model.MigrateAgencyWriterFence(model.DB); err != nil {
+			return err
+		}
+		common.SysLog("Agency Hub writer fence migration completed")
+		return nil
+	}
 	if command == "reconcile" {
 		app := agencyhub.New(model.DB, nil, config)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -104,7 +111,7 @@ func run() error {
 			fmt.Println(string(encoded))
 			return nil
 		}
-		return fmt.Errorf("unknown command %q; expected serve, migrate, reconcile, recover-pricing-sources, repair-pricing, restore-negotiated-pricing, or rollback-pricing", command)
+		return fmt.Errorf("unknown command %q; expected serve, migrate, migrate-writer-fence, reconcile, recover-pricing-sources, repair-pricing, restore-negotiated-pricing, or rollback-pricing", command)
 	}
 	if config.AutoMigrate {
 		if err := model.MigrateAgency(model.DB); err != nil {
@@ -147,7 +154,9 @@ func run() error {
 	app.SetReady(true)
 	workerCtx, stopWorker := context.WithCancel(context.Background())
 	defer stopWorker()
-	app.StartBackground(workerCtx)
+	if os.Getenv("AGENCY_HUB_BACKGROUND_DISABLED") != "true" {
+		app.StartBackground(workerCtx)
+	}
 	server := &http.Server{Addr: ":" + config.Port, Handler: app.Router(), ReadHeaderTimeout: 30 * time.Second}
 	serverErrors := make(chan error, 1)
 	go func() {

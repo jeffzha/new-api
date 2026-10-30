@@ -30,7 +30,7 @@ import {
 } from '../seedance-video-pricing'
 
 describe('Seedance video pricing upgrades', () => {
-  test('keeps Mini per-request list prices separate from legacy token rates', () => {
+  test('keeps the configured Mini numbers while billing them per million tokens', () => {
     const legacy = JSON.stringify({
       [SEEDANCE_MINI_MODEL]: { '720p': { without_video: 9.2, with_video: 5.6 } },
     })

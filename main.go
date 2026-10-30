@@ -30,10 +30,12 @@ import (
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/agencyopspush"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/service/opsbridge"
 	"github.com/QuantumNous/new-api/service/opsexport"
 	"github.com/QuantumNous/new-api/service/opsmonitor"
+	"github.com/QuantumNous/new-api/service/opspush"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -156,6 +158,11 @@ func main() {
 	}
 	commandWorkerCtx, stopAgencyCommandWorker := context.WithCancel(context.Background())
 	defer stopAgencyCommandWorker()
+	service.StartBalanceReminderTask(commandWorkerCtx)
+	if err := agencyopspush.StartConfigured(commandWorkerCtx, model.DB); err != nil {
+		common.FatalLog("failed to initialize distributor delivery: " + err.Error())
+		return
+	}
 	if err := opsexport.StartConfigured(model.DB); err != nil {
 		common.FatalLog("failed to initialize Ops export: " + err.Error())
 		return
@@ -169,6 +176,10 @@ func main() {
 	}
 	if opsbridge.Default != nil {
 		defer opsbridge.Default.Close()
+	}
+	if err := opspush.StartConfigured(commandWorkerCtx); err != nil {
+		common.FatalLog("failed to initialize Ops push: " + err.Error())
+		return
 	}
 	commandServer, err := service.StartConfiguredAgencyCommandServer()
 	if err != nil {
@@ -223,6 +234,7 @@ func main() {
 
 	// Initialize HTTP server
 	server := gin.New()
+	middleware.RegisterHealthCheck(server)
 	if err := middleware.ConfigureTrustedProxies(server); err != nil {
 		common.FatalLog("failed to configure trusted proxies: " + err.Error())
 		return

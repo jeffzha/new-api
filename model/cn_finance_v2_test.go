@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -39,6 +40,7 @@ func cnReset(t *testing.T, db *gorm.DB) {
 	require.NoError(t, db.Migrator().DropTable(models...))
 	require.NoError(t, db.Migrator().DropTable(&CNWalletCancellation{}, &CNFinanceReceipt{}, &CNFundingValueAllocation{}, &CNFundingValueLot{}, &CNFundingValueHold{}, &CNSubscriptionLifecycle{}, &CNSubscriptionCancellation{}, &SubscriptionPreConsumeRecord{}, &SubscriptionPlan{}, &CNSubscriptionPeriod{}, &CNDirectWalletSegment{}, &CNDirectWallet{}, &CNMidjourneyBilling{}, &CNMidjourneyEffect{}, &CNMidjourneyLogReceipt{}, &Midjourney{}, &CNWalletBinding{}, &CNTaskBilling{}, &CNTaskEffect{}, &CNTaskRequestOwner{}))
 	require.NoError(t, MigrateCNFinance(db, "test-cn"))
+	require.NoError(t, db.AutoMigrate(&AgencyOpsEvent{}, &AgencyOpsObjectRevision{}))
 }
 
 func TestCNFinanceContractAcrossDialects(t *testing.T) {
@@ -874,6 +876,8 @@ func TestCNOpsInventoryAcrossDialects(t *testing.T) {
 			}
 			require.NoError(t, common.Unmarshal(encoded, &snapshot))
 			require.Len(t, snapshot.Objects, 3)
+			assert.Equal(t, "inventory-user", snapshot.Objects[0]["username"])
+			assert.Equal(t, "active", snapshot.Objects[0]["object_status"])
 			assert.Equal(t, []string{"user", "api_key", "channel"}, snapshot.Types)
 			assert.Equal(t, "disabled", snapshot.Objects[2]["object_status"])
 			repeated, err := ReadOpsInventory(context.Background(), db, "inventory-g1")
@@ -1070,6 +1074,65 @@ func TestCNFundingValueHoldAcrossDialects(t *testing.T) {
 			require.NoError(t, withLocks(func(tx *gorm.DB) error {
 				return ReserveCNFundingValueTx(tx, lot.ID, "exact-quote", 4, "0.666666666666666666")
 			}))
+		})
+	}
+}
+
+func TestCNFundingValueValidationAcrossDialects(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := agencyDialectDB(t, dialect)
+			if db == nil {
+				t.Skip("disposable external database not configured")
+			}
+			pool, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = pool.Close() })
+			previous := common.MainDatabaseType()
+			common.SetMainDatabaseType(common.DatabaseType(dialect))
+			t.Cleanup(func() { common.SetMainDatabaseType(previous) })
+			require.NoError(t, db.Migrator().DropTable(&CNFundingValueAllocation{}))
+			require.NoError(t, db.AutoMigrate(&CNFundingValueAllocation{}))
+			for _, tc := range []struct {
+				name   string
+				quotas []int64
+				values []string
+				paid   string
+				valid  bool
+			}{
+				{"exact attounits", []int64{1, 1, 1}, []string{"0.333333333333333333", "0.333333333333333333", "0.333333333333333334"}, "1", true},
+				{"empty pool", nil, nil, "0", true},
+				{"negative quota in group", []int64{-1, 4}, []string{"0.5", "0.5"}, "1", false},
+				{"negative money", []int64{1, 2}, []string{"-0.5", "1.5"}, "1", false},
+				{"noncanonical money", []int64{3}, []string{"1.0"}, "1", false},
+				{"collation trailing space", []int64{1, 2}, []string{"0.5", "0.5 "}, "1", false},
+				{"quota mismatch", []int64{2}, []string{"1"}, "1", false},
+				{"money mismatch", []int64{3}, []string{"0.999999999999999999"}, "1", false},
+				{"quota overflow", []int64{math.MaxInt64, 1}, []string{"0", "0"}, "0", false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					lotID := CNIdentity("validation", tc.name)
+					for i := range tc.quotas {
+						require.NoError(t, db.Create(&CNFundingValueAllocation{
+							AllocationID: CNIdentity(lotID, fmt.Sprint(i)), LotID: lotID,
+							Quota: tc.quotas[i], Value: tc.values[i],
+						}).Error)
+					}
+					balance := CNFundingValueLot{LotID: lotID, InitialQuota: 3, PaidValue: tc.paid,
+						RemainingValue: "0", HeldValue: "0", RetiredValue: "0"}
+					if len(tc.quotas) == 0 {
+						balance.InitialQuota = 0
+					}
+					err := db.Transaction(func(tx *gorm.DB) error {
+						return cnValidateFundingValueTx(tx, &balance)
+					})
+					if tc.valid {
+						require.NoError(t, err)
+					} else {
+						require.Error(t, err)
+					}
+				})
+			}
 		})
 	}
 }

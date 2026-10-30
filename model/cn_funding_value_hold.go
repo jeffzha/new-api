@@ -212,17 +212,33 @@ func cnValidateFundingValueTx(tx *gorm.DB, balance *CNFundingValueLot) error {
 		quota += bucket.quota
 		value = value.Add(amount)
 	}
-	var allocations []CNFundingValueAllocation
-	if err := lockForUpdate(tx).Where("lot_id = ?", balance.LotID).Find(&allocations).Error; err != nil {
+	// Group identical exact decimal strings in the database. Keep a locking
+	// current read inside the subquery, including under MySQL REPEATABLE READ.
+	// Do not SUM the money column: SQLite would convert it to floating point.
+	var allocations []struct {
+		Value     string
+		Count     int64
+		MinQuota  int64
+		Quota     int64
+		MinLength int64
+		MaxLength int64
+	}
+	locked := lockForUpdate(tx).Model(&CNFundingValueAllocation{}).
+		Select("value, quota").Where("lot_id = ?", balance.LotID)
+	if err := tx.Table("(?) AS pool_allocations", locked).
+		Select("value, COUNT(*) AS count, MIN(quota) AS min_quota, SUM(quota) AS quota, MIN(LENGTH(value)) AS min_length, MAX(LENGTH(value)) AS max_length").
+		Group("value").Scan(&allocations).Error; err != nil {
 		return err
 	}
 	for _, allocation := range allocations {
 		amount, err := cnDecimal(allocation.Value)
-		if err != nil || amount.IsNegative() || allocation.Quota < 0 || allocation.Quota > balance.InitialQuota-quota {
+		if err != nil || amount.IsNegative() || allocation.Count <= 0 || allocation.MinQuota < 0 ||
+			allocation.MinLength != int64(len(allocation.Value)) || allocation.MaxLength != int64(len(allocation.Value)) ||
+			allocation.Quota < 0 || allocation.Quota > balance.InitialQuota-quota {
 			return ErrCNConflict
 		}
 		quota += allocation.Quota
-		value = value.Add(amount)
+		value = value.Add(amount.Mul(decimal.NewFromInt(allocation.Count)))
 	}
 	paid, err := cnDecimal(balance.PaidValue)
 	if err != nil || quota != balance.InitialQuota || !value.Equal(paid) {

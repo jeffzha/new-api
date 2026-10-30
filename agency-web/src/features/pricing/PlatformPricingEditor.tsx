@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ActionIcon } from "../../components/Heading";
-import { ErrorNotice, Field, Loading, Pager } from "../../components/ui";
+import { ErrorNotice, Loading, Pager } from "../../components/ui";
 import { useQuery } from "../../lib/client";
 import { useMutation } from "../../lib/mutations";
 import { CoefficientAdjustDialog, type AdjustmentOutcome } from "./AdjustDialog";
+import { PublishReasonDialog } from "./PublishReasonDialog";
 import { ChannelPricingRows, type ChannelFilterOption } from "./ChannelFilter";
 import { ChannelFilterMenu, VendorMark, VendorTabs } from "./VendorFilter";
 import {
@@ -58,7 +59,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
   const mutation = useMutation();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
-  const [reason, setReason] = useState("");
+  const [publishOpen, setPublishOpen] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [channels, setChannels] = useState<string[]>([]);
   const [vendorFilter, setVendorFilter] = useState("all");
@@ -216,7 +217,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
     setSelected([]);
   }
 
-  async function publish() {
+  async function publish(reason: string) {
     setError(null);
     try {
       const modelPrices: PublishedPlatformModelPrice[] =
@@ -282,6 +283,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
         { expected_revision: props.data.revision, model_prices: modelPrices, reason },
         { action: "pricing.platform.publish", objectId: "platform_pricing:current" },
       );
+      setPublishOpen(false);
       props.reload();
     } catch (cause) {
       setError(cause);
@@ -303,6 +305,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
           <ActionIcon name="refresh" />
           {t("Refresh")}
         </button>
+        <button className="button-icon" type="button" disabled={mutation.pending} onClick={() => { setError(null); setPublishOpen(true); }}><ActionIcon name="save" />{t("Publish platform pricing")}</button>
       </div>
       <div className="pricing-search">
         <label className="search-field">
@@ -425,24 +428,7 @@ function PlatformPricingForm(props: { data: PlatformPricing; reload: () => void 
       {props.data.items.length > 0 && visible.length === 0 && (
         <p className="empty">{t("No models match the current filters.")}</p>
       )}
-      <div className="pricing-publish-row">
-        <Field label={t("Change reason (optional)")}>
-          <input
-            value={reason}
-            maxLength={2000}
-            onChange={(event) => setReason(event.target.value)}
-          />
-        </Field>
-        <button
-          className="button-icon"
-          type="button"
-          disabled={mutation.pending}
-          onClick={() => void publish()}
-        >
-          <ActionIcon name="save" />
-          {t("Publish platform pricing")}
-        </button>
-      </div>
+      {publishOpen && <PublishReasonDialog title={t("Publish platform pricing")} busy={mutation.pending} error={error} onClose={() => setPublishOpen(false)} onConfirm={(reason) => void publish(reason)} />}
       <ErrorNotice error={error} />
       {adjustTarget && (
         <CoefficientAdjustDialog
@@ -510,7 +496,7 @@ function PlatformPricingRow(props: {
       ]}
       channels={props.row.channel_costs.map((channel) => ({
         id: channel.channel_id,
-        name: channel.channel_name,
+        name: channel.available !== false ? channel.channel_name : `${channel.channel_name}（${t("Currently unavailable")}）`,
         cost: (
           <input
             aria-label={`${t("My cost (coefficient)")}: ${props.row.origin_model_name} / ${channel.channel_name}`}

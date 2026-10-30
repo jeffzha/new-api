@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { getCoreRowModel, useReactTable } from '@tanstack/react-table'
 import {
   CalendarDays,
   Check,
   Mail,
+  Plus,
   RefreshCw,
   Search,
   ShieldAlert,
@@ -12,28 +14,15 @@ import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { DataTablePagination, StaticDataTable } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
 import { EmptyState } from '@/components/empty-state'
+import { ErrorState } from '@/components/error-state'
 import { SectionPageLayout } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -52,14 +41,13 @@ import {
   listCreditStatements,
   registerCreditPayment,
   resendCreditStatementEmail,
-  resolveCreditAccount,
-  saveCreditAccount,
   writeOffCreditStatement,
 } from './api'
+import { AddCreditDialog } from './components/add-credit-dialog'
+import { CreditTermsFields } from './components/credit-terms-form'
+import { useCreditTerms } from './hooks/use-credit-terms'
 import {
-  CREDIT_REPAYMENT_DAY,
   creditLimitFromInput,
-  creditLimitToInput,
   formatCreditAmount,
   isStatementOpen,
   isStatementOverdue,
@@ -89,16 +77,36 @@ export function CreditBook() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState('')
+  const [page, setPage] = useState(1)
+  const [adding, setAdding] = useState(false)
   const [selected, setSelected] = useState<CreditAccount | null>(null)
   const [collection, setCollection] = useState<CreditStatement | null>(null)
   const [badDebt, setBadDebt] = useState<CreditStatement | null>(null)
 
   const accounts = useQuery({
-    queryKey: ['credit', 'accounts'],
+    queryKey: ['credit', 'accounts', filter, page],
     queryFn: async () =>
-      requireServerSuccess(await listCreditAccounts()).data ?? { items: [] },
+      requireServerSuccess(
+        await listCreditAccounts({ query: filter, p: page, page_size: 20 })
+      ).data ?? { items: [], total: 0 },
   })
   const accountItems = accounts.data?.items ?? []
+  const accountTable = useReactTable({
+    data: accountItems,
+    columns: [],
+    getCoreRowModel: getCoreRowModel(),
+    manualPagination: true,
+    rowCount: accounts.data?.total ?? 0,
+    state: { pagination: { pageIndex: page - 1, pageSize: 20 } },
+    onPaginationChange: (updater) => {
+      const next =
+        typeof updater === 'function'
+          ? updater({ pageIndex: page - 1, pageSize: 20 })
+          : updater
+      setPage(next.pageIndex + 1)
+    },
+  })
   const statements = useQuery({
     queryKey: ['credit', 'statements', selected?.user_id],
     enabled: Boolean(selected),
@@ -117,17 +125,11 @@ export function CreditBook() {
     void queryClient.invalidateQueries({ queryKey: ['credit'] })
   }
 
-  async function searchAccount(event: React.FormEvent<HTMLFormElement>) {
+  function searchAccount(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const value = search.trim()
-    if (!value) return
-    try {
-      const result = requireServerSuccess(await resolveCreditAccount(value))
-      if (!result.data) throw new Error(t('Customer not found'))
-      setSelected(result.data)
-    } catch (error) {
-      handleServerError(error, t('Customer lookup failed'))
-    }
+    setFilter(search.trim())
+    setPage(1)
+    setSelected(null)
   }
 
   async function selectAccount(userId: string) {
@@ -140,28 +142,34 @@ export function CreditBook() {
   }
 
   return (
-    <SectionPageLayout fixedContent>
-      <SectionPageLayout.Title>
-        {t('Credit & statements')}
-      </SectionPageLayout.Title>
-      <SectionPageLayout.Actions>
-        <Button variant='outline' size='sm' onClick={refresh}>
-          <RefreshCw />
-          {t('Refresh')}
-        </Button>
-      </SectionPageLayout.Actions>
-      <SectionPageLayout.Content>
-        <div className='flex min-h-0 flex-col gap-4 overflow-auto pr-1'>
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('Platform credit book')}</CardTitle>
-              <CardDescription>
-                {t(
-                  'Credit is managed by the super administrator and is independent of agency ownership.'
-                )}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
+    <>
+      <SectionPageLayout fixedContent>
+        <SectionPageLayout.Title>
+          {t('Credit & statements')}
+        </SectionPageLayout.Title>
+        <SectionPageLayout.Actions>
+          <Button size='sm' onClick={() => setAdding(true)}>
+            <Plus />
+            {t('Add credit line')}
+          </Button>
+          <Button variant='outline' size='sm' onClick={refresh}>
+            <RefreshCw />
+            {t('Refresh')}
+          </Button>
+        </SectionPageLayout.Actions>
+        <SectionPageLayout.Content>
+          <div className='flex h-full min-h-0 flex-col gap-4 overflow-auto pr-1'>
+            <section className='space-y-4 border-b pb-4'>
+              <div>
+                <h3 className='text-base font-semibold'>
+                  {t('Platform credit book')}
+                </h3>
+                <p className='text-muted-foreground mt-1 text-sm'>
+                  {t(
+                    'Credit is managed by the super administrator and is independent of agency ownership.'
+                  )}
+                </p>
+              </div>
               <form
                 className='flex flex-col gap-2 sm:flex-row'
                 onSubmit={searchAccount}
@@ -169,11 +177,18 @@ export function CreditBook() {
                 <div className='relative min-w-0 flex-1'>
                   <Search className='text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2' />
                   <Input
-                    aria-label={t('Customer account or user ID')}
+                    aria-label={t('Search configured credit accounts')}
                     className='pl-8'
                     value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder={t('Customer account or user ID')}
+                    onChange={(event) => {
+                      setSearch(event.target.value)
+                      if (!event.target.value.trim()) {
+                        setFilter('')
+                        setPage(1)
+                        setSelected(null)
+                      }
+                    }}
+                    placeholder={t('Search configured credit accounts')}
                   />
                 </div>
                 <Button type='submit'>
@@ -181,50 +196,52 @@ export function CreditBook() {
                   {t('Search')}
                 </Button>
               </form>
-            </CardContent>
-          </Card>
+            </section>
 
-          {selected ? (
-            <CreditAccountPanel
-              key={selected.user_id}
-              account={selected}
-              statements={statements.data?.items ?? []}
-              statementsLoading={statements.isPending}
-              onSaved={(account) => {
-                setSelected(account)
-                refresh()
-              }}
-              onCollect={setCollection}
-              onBadDebt={setBadDebt}
-            />
-          ) : null}
+            {selected ? (
+              <CreditAccountPanel
+                key={selected.user_id}
+                account={selected}
+                statements={statements.data?.items ?? []}
+                statementsLoading={statements.isPending}
+                onSaved={(account) => {
+                  setSelected(account)
+                  refresh()
+                }}
+                onCollect={setCollection}
+                onBadDebt={setBadDebt}
+              />
+            ) : null}
 
-          <Card className='min-h-0'>
-            <CardHeader>
-              <CardTitle>{t('Configured credit lines')}</CardTitle>
-              <CardDescription>
-                {t('Select a customer to view settings and statements.')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className='min-h-0'>
-              {accounts.isPending && (
-                <p className='text-muted-foreground py-8 text-center'>
-                  {t('Loading...')}
-                </p>
-              )}
-              {!accounts.isPending && accountItems.length === 0 && (
-                <EmptyState
-                  className='min-h-48'
-                  icon={WalletCards}
-                  title={t('No credit terms yet')}
-                  description={t(
-                    'Search for a customer to set the first credit line.'
+            <section className='min-h-0 space-y-3'>
+              <h3 className='font-semibold'>{t('Configured credit lines')}</h3>
+              <div className='min-h-0'>
+                {accounts.isPending && (
+                  <p className='text-muted-foreground py-8 text-center'>
+                    {t('Loading...')}
+                  </p>
+                )}
+                {accounts.isError && (
+                  <ErrorState
+                    title={t('Failed to load credit account')}
+                    onRetry={() => void accounts.refetch()}
+                  />
+                )}
+                {!accounts.isPending &&
+                  !accounts.isError &&
+                  accountItems.length === 0 && (
+                    <EmptyState
+                      className='min-h-48'
+                      icon={WalletCards}
+                      title={
+                        filter
+                          ? t('No results found')
+                          : t('No credit terms yet')
+                      }
+                    />
                   )}
-                />
-              )}
-              {!accounts.isPending && accountItems.length > 0 && (
-                <div className='overflow-x-auto'>
-                  <Table>
+                {!accounts.isPending && accountItems.length > 0 && (
+                  <StaticDataTable>
                     <TableHeader>
                       <TableRow>
                         <TableHead>{t('Customer')}</TableHead>
@@ -290,13 +307,32 @@ export function CreditBook() {
                         </TableRow>
                       ))}
                     </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </SectionPageLayout.Content>
+                  </StaticDataTable>
+                )}
+                {!accounts.isError && (
+                  <div className='border-t pt-3'>
+                    <DataTablePagination table={accountTable} compact />
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+        </SectionPageLayout.Content>
+      </SectionPageLayout>
+
+      {adding && (
+        <AddCreditDialog
+          onClose={() => setAdding(false)}
+          onSaved={() => {
+            setAdding(false)
+            setSelected(null)
+            setSearch('')
+            setFilter('')
+            setPage(1)
+            refresh()
+          }}
+        />
+      )}
 
       <CollectionDialog
         statement={collection}
@@ -316,7 +352,7 @@ export function CreditBook() {
           toast.success(t('Bad debt written off'))
         }}
       />
-    </SectionPageLayout>
+    </>
   )
 }
 
@@ -329,46 +365,7 @@ function CreditAccountPanel(props: {
   onBadDebt: (statement: CreditStatement) => void
 }) {
   const { t } = useTranslation()
-  const [limit, setLimit] = useState(
-    creditLimitToInput(props.account.credit_limit)
-  )
-  const [termDays, setTermDays] = useState(
-    String(props.account.payment_term_days ?? 0)
-  )
-  const [status, setStatus] = useState(
-    props.account.status === 'suspended' ? 'suspended' : 'active'
-  )
-  const [emailEnabled, setEmailEnabled] = useState(
-    Boolean(props.account.email_enabled)
-  )
-  const mutation = useMutation({
-    mutationFn: async () => {
-      const creditLimit = creditLimitFromInput(limit)
-      const paymentTermDays = Number(termDays)
-      if (
-        creditLimit === null ||
-        !Number.isInteger(paymentTermDays) ||
-        paymentTermDays < 0 ||
-        paymentTermDays > 365
-      ) {
-        throw new Error(t('Enter a valid credit limit and payment term.'))
-      }
-      return requireServerSuccess(
-        await saveCreditAccount(props.account.user_id, {
-          credit_limit: creditLimit,
-          payment_term_days: paymentTermDays,
-          status,
-          email_enabled: emailEnabled,
-        })
-      )
-    },
-    onSuccess: (response) => {
-      if (response.data) props.onSaved(response.data)
-      toast.success(t('Credit terms saved'))
-    },
-    onError: (error) =>
-      handleServerError(error, t('Failed to save credit terms')),
-  })
+  const editor = useCreditTerms(props.account, props.onSaved)
 
   let statementsContent: ReactNode
   if (props.statementsLoading) {
@@ -416,97 +413,45 @@ function CreditAccountPanel(props: {
   }
 
   return (
-    <div className='grid gap-4 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]'>
-      <Card>
-        <CardHeader>
-          <CardTitle>{props.account.username}</CardTitle>
-          <CardDescription>
+    <div className='grid gap-6 border-y py-4 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]'>
+      <section className='min-w-0 space-y-4'>
+        <header>
+          <h3 className='font-semibold break-all'>{props.account.username}</h3>
+          <p className='text-muted-foreground text-sm'>
             {t('User ID')}: {props.account.user_id}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form
-            className='grid gap-3 sm:grid-cols-2'
-            onSubmit={(event) => {
-              event.preventDefault()
-              mutation.mutate()
-            }}
-          >
-            <div className='space-y-1.5'>
-              <Label htmlFor='credit-limit'>{t('Credit limit (CNY)')}</Label>
-              <Input
-                id='credit-limit'
-                inputMode='decimal'
-                value={limit}
-                onChange={(event) => setLimit(event.target.value)}
-              />
+          </p>
+        </header>
+        <form className='grid gap-3 sm:grid-cols-2' onSubmit={editor.submit}>
+          <div className='sm:col-span-2'>
+            <CreditTermsFields
+              form={editor.form}
+              id='edit-credit'
+              disabled={editor.mutation.isPending}
+            />
+          </div>
+          <div className='flex items-center justify-between gap-3 sm:col-span-2'>
+            <div className='text-muted-foreground text-xs'>
+              {t('Used')}: {formatCreditAmount(props.account.used_quota)} ·{' '}
+              {t('Available')}:{' '}
+              {formatCreditAmount(props.account.available_quota)}
             </div>
-            <div className='space-y-1.5'>
-              <Label htmlFor='credit-term'>{t('Payment term (days)')}</Label>
-              <Input
-                id='credit-term'
-                type='number'
-                min={0}
-                max={365}
-                value={termDays}
-                onChange={(event) => setTermDays(event.target.value)}
-              />
-            </div>
-            <div className='space-y-1.5'>
-              <Label>{t('Repayment day')}</Label>
-              <div className='border-input bg-muted/40 text-muted-foreground flex h-8 items-center gap-2 rounded-lg border px-2.5 text-sm'>
-                <CalendarDays className='size-4' />
-                {t('Every month on day {{day}}', { day: CREDIT_REPAYMENT_DAY })}
-              </div>
-            </div>
-            <div className='space-y-1.5'>
-              <Label>{t('Credit status')}</Label>
-              <Select
-                value={status}
-                onValueChange={(value) => setStatus(String(value))}
-              >
-                <SelectTrigger className='w-full'>
-                  <SelectValue>
-                    {t(status === 'active' ? 'Active' : 'Suspended')}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value='active'>{t('Active')}</SelectItem>
-                  <SelectItem value='suspended'>{t('Suspended')}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <label className='flex items-center gap-2 sm:col-span-2'>
-              <Checkbox
-                checked={emailEnabled}
-                onCheckedChange={(checked) => setEmailEnabled(checked === true)}
-              />
-              <span className='text-sm'>{t('Send statement emails')}</span>
-            </label>
-            <div className='flex items-center justify-between gap-3 sm:col-span-2'>
-              <div className='text-muted-foreground text-xs'>
-                {t('Used')}: {formatCreditAmount(props.account.used_quota)} ·{' '}
-                {t('Available')}:{' '}
-                {formatCreditAmount(props.account.available_quota)}
-              </div>
-              <Button type='submit' disabled={mutation.isPending}>
-                <Check />
-                {t('Save')}
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+            <Button type='submit' disabled={editor.mutation.isPending}>
+              <Check />
+              {t('Save')}
+            </Button>
+          </div>
+        </form>
+      </section>
 
-      <Card className='min-w-0'>
-        <CardHeader>
-          <CardTitle>{t('Credit statements')}</CardTitle>
-          <CardDescription>
+      <section className='min-w-0 space-y-4'>
+        <header>
+          <h3 className='font-semibold'>{t('Credit statements')}</h3>
+          <p className='text-muted-foreground text-sm'>
             {t('Statements are issued on the first day of each month.')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>{statementsContent}</CardContent>
-      </Card>
+          </p>
+        </header>
+        {statementsContent}
+      </section>
     </div>
   )
 }

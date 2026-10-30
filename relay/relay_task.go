@@ -396,18 +396,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		if factsErr != nil {
 			return nil, service.TaskErrorWrapperLocal(factsErr, "plugin_usage_invalid", http.StatusBadRequest)
 		}
-		cost, trace, runErr := billingexpr.RunExprWithRequest(exprStr, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: facts})
-		if runErr != nil || cost < 0 {
-			if runErr == nil {
-				runErr = errors.New("negative task expression result")
-			}
-			return nil, service.TaskErrorWrapper(runErr, "model_price_error", http.StatusBadRequest)
+		if err := priceTaskUsageExpression(c, info, snapshot, modelName, exprStr, facts); err != nil {
+			return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
 		}
-		groupRatioInfo := helper.HandleGroupRatio(c, info)
-		quota, clamp := common.QuotaRoundChecked(cost * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
-		noteTaskQuotaClamp(info, clamp)
-		info.PriceData = hosttypes.PriceData{Quota: quota, QuotaToPreConsume: quota, GroupRatioInfo: groupRatioInfo}
-		info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: billing_setting.BillingModeTieredExpr, ModelName: modelName, ExprString: exprStr, ExprHash: billingexpr.ExprHashString(exprStr), GroupRatio: groupRatioInfo.GroupRatio, EstimatedQuotaBeforeGroup: cost * common.QuotaPerUnit, EstimatedQuotaAfterGroup: quota, EstimatedTier: trace.MatchedTier, QuotaPerUnit: common.QuotaPerUnit, ExprVersion: billingexpr.ExprVersion(exprStr), TaskUsageBilling: true, UsageFacts: facts}
 	}
 	var standardTaskPrice *channel.TaskBillingEstimate
 	var standardPriceData hosttypes.PriceData
@@ -477,7 +468,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.PriceData.Quota = quota
 		noteTaskQuotaClamp(info, clamp)
 	}
-	if managed && !hasProviderBilling {
+	if managed && !hasProviderBilling && !useTiered {
 		standardQuotaWithRatios, clamp := common.QuotaFromFloatChecked(standardPriceData.ApplyOtherRatiosToFloat(float64(standardPriceData.Quota)))
 		if clamp != nil {
 			noteTaskQuotaClamp(info, clamp)
@@ -688,6 +679,35 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Endpoint:        endpoint,
 		ProviderBilling: providerBilling,
 	}, nil
+}
+
+func priceTaskUsageExpression(c *gin.Context, info *relaycommon.RelayInfo, agency *agencycontract.PricingSnapshot, modelName, exprStr string, facts map[string]any) error {
+	cost, trace, err := billingexpr.RunExprWithRequest(exprStr, billingexpr.TokenParams{}, billingexpr.RequestInput{Usage: facts})
+	if err != nil {
+		return err
+	}
+	if cost < 0 {
+		return errors.New("negative task expression result")
+	}
+
+	quotaBeforeGroup := cost * common.QuotaPerUnit
+	if agency != nil {
+		c.Set(helper.AgencyRatioOverrideContextKey, float64(1))
+		standardGroup := helper.HandleGroupRatio(c, info)
+		standardQuota, clamp := common.QuotaRoundChecked(quotaBeforeGroup * standardGroup.GroupRatio)
+		noteTaskQuotaClamp(info, clamp)
+		if err := service.AttachAgencyQuote(info, agency, int64(standardQuota)); err != nil {
+			return err
+		}
+		c.Set(helper.AgencyRatioOverrideContextKey, float64(agency.SalesBPS)/10000)
+	}
+
+	groupRatioInfo := helper.HandleGroupRatio(c, info)
+	quota, clamp := common.QuotaRoundChecked(quotaBeforeGroup * groupRatioInfo.GroupRatio)
+	noteTaskQuotaClamp(info, clamp)
+	info.PriceData = hosttypes.PriceData{Quota: quota, QuotaToPreConsume: quota, GroupRatioInfo: groupRatioInfo}
+	info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: billing_setting.BillingModeTieredExpr, ModelName: modelName, ExprString: exprStr, ExprHash: billingexpr.ExprHashString(exprStr), GroupRatio: groupRatioInfo.GroupRatio, EstimatedQuotaBeforeGroup: quotaBeforeGroup, EstimatedQuotaAfterGroup: quota, EstimatedTier: trace.MatchedTier, QuotaPerUnit: common.QuotaPerUnit, ExprVersion: billingexpr.ExprVersion(exprStr), TaskUsageBilling: true, UsageFacts: facts}
+	return nil
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。

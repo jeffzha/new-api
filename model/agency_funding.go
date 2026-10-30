@@ -851,7 +851,9 @@ func ValidateAgencyPricingSnapshotTx(tx *gorm.DB, userID int64, snapshot *agency
 		return errors.New("agency pricing snapshot binding revision conflict")
 	}
 	var agency Agency
-	if err := AgencyLockForUpdate(tx).Where("id = ?", snapshot.AgencyID).First(&agency).Error; err != nil {
+	// Different customers may accept the same agency price concurrently, but
+	// publication and disablement must still wait for accepted quotes to commit.
+	if err := lockForShare(tx).Where("id = ?", snapshot.AgencyID).First(&agency).Error; err != nil {
 		return err
 	}
 	if (agency.Status != "active" && agency.Status != "disabled") || agency.StateRevision != snapshot.AgencyStateRevision ||

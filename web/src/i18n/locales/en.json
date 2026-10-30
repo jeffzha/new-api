@@ -7229,6 +7229,7 @@
     "The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.": "The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.",
     "Video material": "Video material",
     "Video material pricing": "Video material pricing",
-    "Video output pricing": "Video output pricing"
+    "Video output pricing": "Video output pricing",
+    "Best for": "Best for"
   }
 }

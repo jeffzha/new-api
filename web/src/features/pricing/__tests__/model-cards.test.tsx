@@ -88,6 +88,72 @@ afterEach(() => {
 })
 
 describe('model cards', () => {
+  it.each([
+    [
+      'deepseek-v4-pro',
+      '1.232876712328767',
+      '3.698630136986301',
+      '0.0410958904109589',
+      '0.6164383561643836',
+      '1.849315068493151',
+      '0.02054794520547945',
+      '¥9',
+      '¥27',
+    ],
+    [
+      'deepseek-v4.1-flash',
+      '0.273972602739726',
+      '1.095890410958904',
+      '0.00547945205479452',
+      '0.136986301369863',
+      '0.547945205479452',
+      '0.00273972602739726',
+      '¥2',
+      '¥8',
+    ],
+  ])(
+    'shows readable CNY prices instead of holiday source for %s',
+    (
+      name,
+      input,
+      output,
+      cache,
+      offInput,
+      offOutput,
+      offCache,
+      inputLabel,
+      outputLabel
+    ) => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-10-30T10:00:00+08:00'))
+      useSystemConfigStore.getState().setConfig({
+        currency: {
+          ...DEFAULT_CURRENCY_CONFIG,
+          quotaDisplayType: 'CNY',
+          usdExchangeRate: 7.3,
+        },
+      })
+      const expression = `!is_holiday("Asia/Shanghai") && weekday("Asia/Shanghai") >= 1 && weekday("Asia/Shanghai") <= 5 && ((hour("Asia/Shanghai") >= 9 && hour("Asia/Shanghai") < 12) || (hour("Asia/Shanghai") >= 14 && hour("Asia/Shanghai") < 18)) ? tier("peak", p * ${input} + cr * ${cache} + c * ${output}) : tier("off_peak", p * ${offInput} + cr * ${offCache} + c * ${offOutput})`
+      render(
+        <ModelCard
+          model={pricingModel({
+            model_name: name,
+            billing_mode: 'tiered_expr',
+            billing_expr: expression,
+          })}
+          onClick={vi.fn()}
+          tokenUnit='M'
+        />
+      )
+      expect(screen.getByText(inputLabel)).toBeVisible()
+      expect(screen.getByText(outputLabel)).toBeVisible()
+      expect(screen.getByText('Current period price')).toBeVisible()
+      expect(
+        screen.queryByText('Special billing expression')
+      ).not.toBeInTheDocument()
+      expect(screen.queryByText(expression)).not.toBeInTheDocument()
+    }
+  )
   it('keeps catalog strengths and custom descriptions without stale reference prices', () => {
     render(
       <ModelCard

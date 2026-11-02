@@ -46,7 +46,6 @@ func PrepareImageBillingForRequest(c *gin.Context, info *relaycommon.RelayInfo, 
 		if info.BillingRequestInput == nil {
 			info.BillingRequestInput = &billingexpr.RequestInput{}
 		}
-		info.BillingRequestInput.ImageCount = &count
 		info.BillingRequestInput.ReferenceImageCount = &refCount
 		cost, trace, runErr := billingexpr.RunExprByHashWithRequest(snap.ExprString, snap.ExprHash, billingexpr.TokenParams{
 			P: float64(snap.EstimatedPromptTokens), C: float64(snap.EstimatedCompletionTokens), Len: float64(snap.EstimatedPromptTokens),

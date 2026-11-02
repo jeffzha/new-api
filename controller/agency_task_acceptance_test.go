@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -24,6 +25,7 @@ import (
 // HTTP acceptance. A successful provider submission is not financial success.
 func TestAgencyTaskControllerAcceptanceRetainsReservationUntilTerminal(t *testing.T) {
 	db, app := setupAgencyInviteControllerTest(t)
+	seedControllerPlatformPricing(t, db, agencycontract.PlatformModelPrice{OriginModelName: "sora-2", AgencyCostBPS: 7500, DefaultSalesBPS: 9000})
 	t.Setenv("AGENCY_COMPONENT_BILLING_ENABLED", "true")
 	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.Channel{}, &model.TaskBillingReconciliation{}))
 	priorQuotaPerUnit, priorBatch := common.QuotaPerUnit, common.BatchUpdateEnabled

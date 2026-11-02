@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -88,6 +89,11 @@ func TestAssistedPaymentQuoteUsesExactDecimalMoney(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "12.34", money.String())
 	assert.Equal(t, 6170000, quota)
+	_, quota, err = assistedPaymentQuote("4295.00", "default")
+	require.NoError(t, err)
+	assert.Equal(t, 2_147_500_000, quota)
+	_, _, err = assistedPaymentQuote("18014398509.49", "default")
+	require.Error(t, err)
 
 	_, _, err = assistedPaymentQuote("12.345", "default")
 	assert.Error(t, err)
@@ -219,4 +225,33 @@ func TestStripeCreditedQuotaIncludesGroupRatio(t *testing.T) {
 
 	require.NoError(t, common.UpdateTopupGroupRatioByJSONString(`{"free":0}`))
 	assert.True(t, decimal.NewFromInt(500000).Equal(getStripeCreditedQuota(1, "free")))
+}
+
+func TestTopUpLargeWalletCapacityAcrossDatabases(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			dsn := os.Getenv("TEST_" + strings.ToUpper(dialect) + "_DSN")
+			if dialect != "sqlite" && dsn == "" {
+				t.Skip("isolated external database not configured")
+			}
+			db, _ := newAuditTestDatabase(t, dialect, dsn)
+			previousDB, previousQuota := model.DB, common.QuotaPerUnit
+			previousDisplay := operation_setting.GetGeneralSetting().QuotaDisplayType
+			model.DB, common.QuotaPerUnit = db, 500000
+			operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeUSD
+			t.Cleanup(func() {
+				model.DB, common.QuotaPerUnit = previousDB, previousQuota
+				operation_setting.GetGeneralSetting().QuotaDisplayType = previousDisplay
+			})
+			require.NoError(t, db.AutoMigrate(&model.User{}))
+			quota, err := validateTopUpQuota(4295)
+			require.NoError(t, err)
+			assert.Equal(t, 2_147_500_000, quota)
+			user := model.User{Username: "large-topup", AffCode: "large-topup", Status: common.UserStatusEnabled, Quota: common.MaxWalletQuota - quota}
+			require.NoError(t, db.Create(&user).Error)
+			require.NoError(t, model.ValidateTopUpQuotaCapacity(user.Id, quota))
+			require.NoError(t, db.Model(&user).Update("quota", common.MaxWalletQuota-quota+1).Error)
+			assert.ErrorIs(t, model.ValidateTopUpQuotaCapacity(user.Id, quota), model.ErrTopUpQuotaLimitExceeded)
+		})
+	}
 }

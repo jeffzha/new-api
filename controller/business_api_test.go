@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,11 +17,13 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/QuantumNous/new-api/pkg/businessapi"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	businessservice "github.com/QuantumNous/new-api/service/businessapi"
 	"github.com/QuantumNous/new-api/service/opsbridge"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -29,6 +32,146 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+type businessFailedSettlement struct{}
+
+func (businessFailedSettlement) GetPreConsumedQuota() int { return 0 }
+func (businessFailedSettlement) Reserve(int) error        { return nil }
+func (businessFailedSettlement) Settle(int) error         { return errors.New("settlement unavailable") }
+func (businessFailedSettlement) Refund(*gin.Context)      {}
+func (businessFailedSettlement) NeedsRefund() bool        { return false }
+
+func TestBusinessBillingSettlementReceiptHandlesFreeDiscountAndFailure(t *testing.T) {
+	db := businessDatabaseFixture(t)
+	require.NoError(t, model.MigrateAgency(db))
+	for _, tc := range []struct {
+		name  string
+		quota int
+		fails bool
+	}{
+		{"free", 0, false}, {"discounted", 4000, false}, {"failed", 4000, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := gin.New()
+			router.POST("/v1/chat/completions", middleware.RequestId(), middleware.BusinessBilling(), func(c *gin.Context) {
+				info := &relaycommon.RelayInfo{UserId: 1, TokenId: 123, RequestId: c.GetString(common.RequestIdKey), FinalPreConsumedQuota: tc.quota,
+					AgencyStandardQuota: 5000, AgencyPricing: &agencycontract.PricingSnapshot{AgencyID: 1, BindingID: 1, OriginModelName: "hy3", ModelKey: "hy3", SalesBPS: 8000, SettlementBPS: 5000, CurrencyCode: "CNY", QuotaPerUnit: "500000", ExchangeRate: "7.3"}}
+				if tc.quota == 0 {
+					info.AgencyStandardQuota = 0
+				}
+				if tc.fails {
+					info.Billing = businessFailedSettlement{}
+				}
+				err := service.SettleBilling(c, info, tc.quota)
+				if tc.fails {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+				}
+				c.JSON(200, gin.H{"id": "upstream-id", "choices": []any{}})
+			})
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest("POST", "/v1/chat/completions?include=billing", nil))
+			var response struct {
+				Billing businessapi.Billing `json:"billing"`
+			}
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+			if tc.fails {
+				assert.Equal(t, "unavailable", response.Billing.Status)
+				assert.Nil(t, response.Billing.Amount)
+				assert.Nil(t, response.Billing.Quota)
+			} else {
+				assert.Equal(t, "settled", response.Billing.Status)
+				require.NotNil(t, response.Billing.Amount)
+				expected := "0"
+				if tc.quota > 0 {
+					expected = "0.0584"
+				}
+				assert.Equal(t, expected, *response.Billing.Amount)
+				assert.Equal(t, "CNY", response.Billing.Currency)
+			}
+		})
+	}
+}
+
+func TestBusinessRequestDetailEnforcesKeyOwnershipAndExistingTokenRestrictions(t *testing.T) {
+	initModelListColumnNames(t)
+	db := businessDatabaseFixture(t)
+	model.LOG_DB = db
+	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.Log{}))
+	ipLimit := "10.20.30.40"
+	for _, token := range []model.Token{
+		{Id: 123, UserId: 1, Key: "businessdetailkey", Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true},
+		{Id: 124, UserId: 1, Key: "otherdetailkey", Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true},
+		{Id: 125, UserId: 2, Key: "foreignkey", Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true},
+		{Id: 126, UserId: 1, Key: "disabledkey", Status: common.TokenStatusDisabled, ExpiredTime: -1, UnlimitedQuota: true},
+		{Id: 127, UserId: 1, Key: "expiredkey", Status: common.TokenStatusEnabled, ExpiredTime: 1, UnlimitedQuota: true},
+		{Id: 128, UserId: 1, Key: "restrictedkey", Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true, AllowIps: &ipLimit},
+	} {
+		require.NoError(t, db.Create(&token).Error)
+	}
+	for _, log := range []model.Log{
+		{UserId: 1, TokenId: 123, RequestId: "history-id", Type: model.LogTypeConsume, Quota: 888, Other: "{}"},
+		{UserId: 1, TokenId: 123, RequestId: "failed-id", Type: model.LogTypeError, Other: "{}"},
+		{UserId: 1, TokenId: 123, RequestId: "private-id", Type: model.LogTypeConsume, Other: `{"channel_secret":"must-not-leak","settlement_cost":123,"billing":{"status":"settled","amount":"0.008","currency":"USD","quota":4000,"source":"gateway"}}`},
+	} {
+		require.NoError(t, db.Create(&log).Error)
+	}
+	router := gin.New()
+	router.GET("/v1/requests/:request_id", middleware.TokenAuth(), BusinessRequestDetail)
+	for _, tc := range []struct {
+		key, id string
+		status  int
+	}{
+		{"businessdetailkey", "private-id", 200}, {"otherdetailkey", "private-id", 404}, {"foreignkey", "private-id", 404},
+		{"", "private-id", 401}, {"disabledkey", "private-id", 401}, {"expiredkey", "private-id", 401}, {"restrictedkey", "private-id", 403},
+		{"businessdetailkey", "missing-id", 404}, {"businessdetailkey", strings.Repeat("a", 65), 400},
+		{"businessdetailkey", "history-id", 200}, {"businessdetailkey", "failed-id", 200},
+	} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest("GET", "/v1/requests/"+tc.id, nil)
+		request.Header.Set("Authorization", "Bearer "+tc.key)
+		router.ServeHTTP(recorder, request)
+		require.Equal(t, tc.status, recorder.Code, recorder.Body.String())
+		assert.NotContains(t, recorder.Body.String(), "must-not-leak")
+		assert.NotContains(t, recorder.Body.String(), "settlement_cost")
+		if tc.status == 200 {
+			assert.Equal(t, "private, no-store", recorder.Header().Get("Cache-Control"))
+			if tc.id != "private-id" {
+				assert.Contains(t, recorder.Body.String(), `"amount":null`)
+				assert.Contains(t, recorder.Body.String(), `"status":"unavailable"`)
+			}
+			if tc.id == "failed-id" {
+				assert.Contains(t, recorder.Body.String(), `"status":"failed"`)
+			}
+		}
+	}
+}
+
+func TestBusinessBillingResponsePreservesErrorsPrecisionAndLargeBodies(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		status     int
+	}{
+		{"error", `{"error":{"message":"upstream rejected"}}`, 429},
+		{"precise", `{"choices":[],"sentinel":9007199254740993}`, 200},
+		{"large", `{"choices":[],"content":"` + strings.Repeat("a", 8<<20) + `"}`, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := gin.New()
+			engine.POST("/chat", middleware.RequestId(), middleware.BusinessBilling(), func(c *gin.Context) { c.Data(tc.status, "application/json", []byte(tc.body)) })
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, httptest.NewRequest("POST", "/chat?include=billing", nil))
+			assert.Equal(t, tc.status, recorder.Code)
+			if tc.name == "precise" {
+				assert.Contains(t, recorder.Body.String(), "9007199254740993")
+				assert.Contains(t, recorder.Body.String(), `"amount":null`)
+			} else {
+				assert.Equal(t, tc.body, recorder.Body.String())
+			}
+		})
+	}
+}
 
 func businessDatabaseFixture(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -282,6 +425,10 @@ func TestBusinessCallerPersistenceAcrossDatabases(t *testing.T) {
 			c.Set("username", "business-test")
 			c.Set(businessapi.CallerKey, businessapi.Caller{SourceSystem: "agent_dev", TenantID: "001", CallerID: "0086", CallerName: "张三"})
 			for _, stream := range []bool{false, true} {
+				c.Set(common.RequestIdKey, fmt.Sprintf("billing-matrix-%t", stream))
+				receipt, err := businessapi.SettledBilling(4000, businessapi.Conversion{Currency: "CNY", QuotaPerUnit: "500000", ExchangeRate: "7.3"})
+				require.NoError(t, err)
+				c.Set(businessapi.BillingKey, receipt)
 				other := model.NewLogOther()
 				other.SetPublic("group_ratio", 1)
 				other.SetRoot("retained_diagnostic", true)
@@ -307,6 +454,17 @@ func TestBusinessCallerPersistenceAcrossDatabases(t *testing.T) {
 			for _, log := range visible {
 				assert.NotContains(t, fmt.Sprint(log.Other), "caller_context")
 			}
+			for _, stream := range []bool{false, true} {
+				id := fmt.Sprintf("billing-matrix-%t", stream)
+				log, err := model.GetBusinessRequestLog(1, 123, id)
+				require.NoError(t, err)
+				assert.Equal(t, model.LogTypeConsume, log.Type, "consume receipt takes precedence over retry errors")
+				assert.Contains(t, log.Other, `"amount":"0.0584"`)
+				_, err = model.GetBusinessRequestLog(2, 123, id)
+				assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+				_, err = model.GetBusinessRequestLog(1, 124, id)
+				assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+			}
 		})
 	}
 }
@@ -328,7 +486,10 @@ func TestBusinessChatRouteStripsCallerBeforeUpstreamAndPersistsAttribution(t *te
 	oldPass := model_setting.GetGlobalSettings().PassThroughRequestEnabled
 	common.BatchUpdateEnabled, common.MemoryCacheEnabled, common.LogConsumeEnabled = false, false, true
 	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"business-chat":0.01}`))
-	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":0.8}`))
+	oldCurrency := operation_setting.GetGeneralSetting().QuotaDisplayType
+	operation_setting.GetGeneralSetting().QuotaDisplayType = "USD"
+	t.Cleanup(func() { operation_setting.GetGeneralSetting().QuotaDisplayType = oldCurrency })
 	common.OptionMapRWMutex.Lock()
 	oldSources := common.OptionMap[businessapi.SourcesOption]
 	if common.OptionMap == nil {
@@ -378,33 +539,85 @@ func TestBusinessChatRouteStripsCallerBeforeUpstreamAndPersistsAttribution(t *te
 	require.NoError(t, channel.Insert())
 	service.InitHttpClient()
 	engine := gin.New()
-	engine.Use(middleware.BodyStorageCleanup())
-	engine.POST("/v1/chat/completions", middleware.TokenAuth(), middleware.BusinessCaller(), middleware.Distribute(), opsbridge.CallGate(), middleware.RelayUserConcurrency(), func(c *gin.Context) { Relay(c, types.RelayFormatOpenAI) })
+	engine.Use(middleware.RequestId(), middleware.BodyStorageCleanup())
+	engine.POST("/v1/chat/completions", middleware.TokenAuth(), middleware.BusinessBilling(), middleware.BusinessCaller(), middleware.Distribute(), opsbridge.CallGate(), middleware.RelayUserConcurrency(), func(c *gin.Context) { Relay(c, types.RelayFormatOpenAI) })
+	engine.GET("/v1/requests/:request_id", middleware.TokenAuth(), BusinessRequestDetail)
 	for _, pass := range []bool{false, true} {
 		for _, stream := range []bool{false, true} {
-			model_setting.GetGlobalSettings().PassThroughRequestEnabled = pass
-			request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(fmt.Sprintf(`{"model":"business-chat","messages":[{"role":"user","content":"OK"}],"stream":%t,"caller_context":{"tenant_id":"tenant_1","caller_id":"private-caller"}}`, stream)))
-			request.Header.Set("Content-Type", "application/json")
-			request.Header.Set("Authorization", "Bearer businessroutekey")
-			recorder := httptest.NewRecorder()
-			engine.ServeHTTP(recorder, request)
-			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
-			assert.NotContains(t, recorder.Body.String(), "caller_context")
-			if stream {
-				assert.Contains(t, recorder.Body.String(), "[DONE]")
-			} else {
-				assert.Contains(t, recorder.Body.String(), `"chat.completion"`)
+			for _, enriched := range []bool{false, true} {
+				model_setting.GetGlobalSettings().PassThroughRequestEnabled = pass
+				path := "/v1/chat/completions"
+				if enriched {
+					path += "?include=billing"
+				}
+				var before model.User
+				require.NoError(t, db.First(&before, 123).Error)
+				request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(fmt.Sprintf(`{"model":"business-chat","messages":[{"role":"user","content":"OK"}],"stream":%t,"caller_context":{"tenant_id":"tenant_1","caller_id":"private-caller"}}`, stream)))
+				request.Header.Set("Content-Type", "application/json")
+				request.Header.Set("Authorization", "Bearer businessroutekey")
+				recorder := httptest.NewRecorder()
+				engine.ServeHTTP(recorder, request)
+				require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+				assert.NotContains(t, recorder.Body.String(), "caller_context")
+				if stream {
+					assert.Equal(t, 1, strings.Count(recorder.Body.String(), "data: [DONE]"))
+				} else {
+					assert.Contains(t, recorder.Body.String(), `"chat.completion"`)
+				}
+				id := recorder.Header().Get(common.RequestIdKey)
+				require.NotEmpty(t, id)
+				var after model.User
+				require.NoError(t, db.First(&after, 123).Error)
+				assert.Equal(t, 4000, before.Quota-after.Quota, "customer discount must be applied once")
+				lookup := httptest.NewRequest(http.MethodGet, "/v1/requests/"+id, nil)
+				lookup.Header.Set("Authorization", "Bearer businessroutekey")
+				detail := httptest.NewRecorder()
+				engine.ServeHTTP(detail, lookup)
+				require.Equal(t, 200, detail.Code, detail.Body.String())
+				var result struct {
+					Data struct {
+						Billing   businessapi.Billing `json:"billing"`
+						RequestID string              `json:"request_id"`
+					} `json:"data"`
+				}
+				require.NoError(t, common.Unmarshal(detail.Body.Bytes(), &result))
+				assert.Equal(t, id, result.Data.RequestID)
+				require.NotNil(t, result.Data.Billing.Amount)
+				assert.Equal(t, "0.008", *result.Data.Billing.Amount)
+				assert.EqualValues(t, before.Quota-after.Quota, *result.Data.Billing.Quota)
+				assert.Equal(t, "settled", result.Data.Billing.Status)
+				assert.NotContains(t, detail.Body.String(), "caller_context")
+				if enriched {
+					var receipt struct {
+						Billing   businessapi.Billing `json:"billing"`
+						RequestID string              `json:"request_id"`
+					}
+					if stream {
+						for _, line := range strings.Split(recorder.Body.String(), "\n") {
+							if strings.HasPrefix(line, "data: ") && strings.Contains(line, `"billing"`) {
+								require.NoError(t, common.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &receipt))
+							}
+						}
+						assert.Less(t, strings.Index(recorder.Body.String(), `"billing"`), strings.Index(recorder.Body.String(), "data: [DONE]"))
+					} else {
+						require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &receipt))
+					}
+					assert.Equal(t, id, receipt.RequestID)
+					assert.Equal(t, result.Data.Billing, receipt.Billing)
+				} else {
+					assert.NotContains(t, recorder.Body.String(), `"billing"`)
+				}
 			}
 		}
 	}
 	var logs []*model.Log
 	require.NoError(t, db.Where("token_id = ? AND type = ?", 123, model.LogTypeConsume).Find(&logs).Error)
-	require.Len(t, logs, 4)
+	require.Len(t, logs, 8)
 	for _, log := range logs {
 		assert.Contains(t, log.Other, `"source_system":"agent_dev"`)
 		assert.Contains(t, log.Other, `"caller_id":"private-caller"`)
 	}
-	assert.EqualValues(t, 5, upstreamCalls.Load(), "one retry must use the same sanitized request")
+	assert.EqualValues(t, 9, upstreamCalls.Load(), "one retry must use the same sanitized request")
 	// This must fail at ingress, even when no usable model/channel exists.
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"missing","caller_context":{"source_system":"agent_ops"}}`))
 	request.Header.Set("Authorization", "Bearer businessroutekey")

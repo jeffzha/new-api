@@ -44,6 +44,10 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 	}
 
+	requestRouter := router.Group("/v1/requests")
+	requestRouter.Use(middleware.RouteTag("relay"), middleware.TokenAuth())
+	requestRouter.GET("/:request_id", controller.BusinessRequestDetail)
+
 	geminiRouter := router.Group("/v1beta/models")
 	geminiRouter.Use(middleware.RouteTag("relay"))
 	geminiRouter.Use(middleware.TokenAuth())
@@ -91,6 +95,12 @@ func SetRelayRouter(router *gin.Engine) {
 		//http router
 		httpRouter := relayV1Router.Group("")
 		businessCaller := middleware.BusinessCaller()
+		businessBilling := middleware.BusinessBilling()
+		httpRouter.Use(func(c *gin.Context) {
+			if c.Request.Method == "POST" && c.FullPath() == "/v1/chat/completions" {
+				businessBilling(c)
+			}
+		})
 		httpRouter.Use(func(c *gin.Context) {
 			if c.Request.Method == "POST" && c.FullPath() == "/v1/chat/completions" {
 				businessCaller(c)

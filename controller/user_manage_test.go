@@ -279,6 +279,169 @@ func TestManageUserQuotaRecordsTopupAndAudit(t *testing.T) {
 	}
 }
 
+func TestManageUserQuotaDurableFunding(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode, source, billingMode, failureReason string
+		value, wantQuota                               int
+		paid, bonus, reserved                          int64
+		failDelivery                                   bool
+	}{
+		{name: "add", mode: "add", value: 500, bonus: 1000, wantQuota: 1500},
+		{name: "subtract", mode: "subtract", value: 500, bonus: 1000, wantQuota: 500},
+		{name: "override_up", mode: "override", value: 1500, bonus: 1000, wantQuota: 1500},
+		{name: "override_down", mode: "override", value: 500, bonus: 1000, wantQuota: 500},
+		{name: "override_zero", mode: "override", bonus: 1000},
+		{name: "unchanged", mode: "override", value: 1000, bonus: 1000, wantQuota: 1000},
+		{name: "provisioning_bonus", mode: "override", source: "provisioning_opening", bonus: 1000},
+		{name: "mixed_provisioning_protects_paid", mode: "override", source: "provisioning_opening", paid: 700, bonus: 300, value: 700, wantQuota: 700},
+		{name: "mixed_paid_below_floor", mode: "override", source: "provisioning_opening", paid: 700, bonus: 300, value: 699, wantQuota: 1000, failureReason: "grant_reversal_unavailable"},
+		{name: "paid_cannot_be_confiscated", mode: "override", source: "stripe", paid: 1000, wantQuota: 1000, failureReason: "grant_reversal_unavailable"},
+		{name: "redemption_not_admin_grant", mode: "override", source: "redemption", bonus: 1000, wantQuota: 1000, failureReason: "grant_reversal_unavailable"},
+		{name: "cannot_create_debt", mode: "override", value: -1, bonus: 1000, wantQuota: 1000, failureReason: "grant_reversal_unavailable"},
+		{name: "reserved_bonus_preserved", mode: "override", source: "provisioning_opening", bonus: 1000, reserved: 200},
+		{name: "provisioning_blocked", mode: "add", billingMode: model.AgencyProvisioningBillingMode, value: 500, bonus: 1000, wantQuota: 1000, failureReason: "funding_provisioning"},
+		{name: "delivery_failure_rolls_back_all", mode: "override", bonus: 1000, wantQuota: 1000, failDelivery: true, failureReason: "database_error"},
+		{name: "grant_delivery_failure_rolls_back_all", mode: "add", value: 500, bonus: 1000, wantQuota: 1000, failDelivery: true, failureReason: "database_error"},
+		{name: "wallet_above_charge_limit", mode: "override", value: common.MaxQuota + 100, bonus: 1000, wantQuota: common.MaxQuota + 100},
+		{name: "wallet_at_supported_limit", mode: "override", value: common.MaxWalletQuota, bonus: 1000, wantQuota: common.MaxWalletQuota},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupManageUserTestDB(t)
+			// The adjustment uses the existing schema, including after a repeated startup.
+			for range 2 {
+				require.NoError(t, db.AutoMigrate(&model.AgencyFundingAccount{}, &model.AgencyFundingLot{},
+					&model.AgencyFundingLedger{}, &model.AgencyActiveUserBinding{}, &model.AgencyBillingOutbox{},
+					&model.AgencyTopupFact{}, &model.AgencyEventDelivery{}))
+			}
+			createQuotaTestOperator(t, db, common.RoleRootUser)
+			mode := tc.billingMode
+			if mode == "" {
+				mode = model.AgencyDurableBillingMode
+			}
+			user := model.User{Username: "durable-quota", Role: common.RoleCommonUser, Quota: 1000, UsedQuota: 17, BillingMode: mode}
+			require.NoError(t, db.Create(&user).Error)
+			account := model.AgencyFundingAccount{UserID: int64(user.Id), PaidAvailable: tc.paid, NonpaidAvailable: tc.bonus, MoneySeq: 1, Version: 1}
+			require.NoError(t, db.Create(&account).Error)
+			source := tc.source
+			if source == "" {
+				source = "admin_grant"
+			}
+			lot := model.AgencyFundingLot{UserID: int64(user.Id), SourceKind: source, SourceID: "existing-source",
+				PaidInitial: tc.paid, PaidAvailable: tc.paid, BonusInitial: tc.bonus + tc.reserved,
+				BonusAvailable: tc.bonus, BonusReserved: tc.reserved, MoneySeq: 1, Version: 1}
+			require.NoError(t, db.Create(&lot).Error)
+			binding := model.AgencyActiveUserBinding{UserID: int64(user.Id), AgencyID: 71, BindingID: 49, Revision: 1}
+			require.NoError(t, db.Create(&binding).Error)
+			server := miniredis.RunT(t)
+			oldRDB := common.RDB
+			common.RDB = redis.NewClient(&redis.Options{Addr: server.Addr(), MaxRetries: -1})
+			common.RedisEnabled = true
+			t.Cleanup(func() { _ = common.RDB.Close(); common.RDB = oldRDB })
+			_, err := model.GetUserCache(user.Id)
+			require.NoError(t, err)
+			var quotaKey string
+			for _, key := range server.Keys() {
+				if server.HGet(key, "Id") == strconv.Itoa(user.Id) {
+					quotaKey = key
+					break
+				}
+			}
+			require.NotEmpty(t, quotaKey)
+			server.HSet(quotaKey, "Quota", "800")
+			assert.Contains(t, i18n.Translate("zh-CN", i18n.MsgUserQuotaGrantUnavailable), "实付余额请走退款流程")
+			if tc.failDelivery {
+				require.NoError(t, db.Callback().Create().Before("gorm:create").Register("test:funding_delivery_failure", func(tx *gorm.DB) {
+					if tx.Statement.Table == (model.AgencyEventDelivery{}).TableName() {
+						tx.AddError(errors.New("delivery unavailable"))
+					}
+				}))
+			}
+			recorder := performManageUserRequest(t, fmt.Sprintf(`{"id":%d,"action":"add_quota","mode":%q,"value":%d}`, user.Id, tc.mode, tc.value))
+			assert.Equal(t, http.StatusOK, recorder.Code)
+			failed := tc.failureReason != ""
+			require.Contains(t, recorder.Body.String(), fmt.Sprintf(`"success":%t`, !failed))
+			if tc.failureReason == "grant_reversal_unavailable" {
+				assert.Contains(t, recorder.Body.String(), "refund")
+			}
+			if tc.failureReason == "funding_provisioning" {
+				assert.Contains(t, recorder.Body.String(), "migrated")
+			}
+			require.NoError(t, db.First(&user, user.Id).Error)
+			assert.Equal(t, tc.wantQuota, user.Quota)
+			assert.Equal(t, 17, user.UsedQuota, "manual adjustment must not rewrite consumption")
+			require.NoError(t, db.First(&account, "user_id = ?", user.Id).Error)
+			assert.Equal(t, tc.paid, account.PaidAvailable)
+			assert.Equal(t, int64(tc.wantQuota)-tc.paid, account.NonpaidAvailable)
+			assert.Zero(t, account.DebtQuota)
+			delta := int64(tc.wantQuota) - 1000
+			cached, err := model.GetUserCache(user.Id)
+			require.NoError(t, err)
+			if delta != 0 {
+				assert.Equal(t, tc.wantQuota, cached.Quota, "committed durable adjustments must invalidate stale snapshots")
+			} else {
+				assert.Equal(t, 800, cached.Quota, "failed and unchanged adjustments must not mutate the cache")
+			}
+			changes := int64(0)
+			if !failed && delta != 0 {
+				changes = 1
+			}
+			assert.Equal(t, 1+changes, account.MoneySeq)
+			assert.Equal(t, 1+changes, account.Version)
+			require.NoError(t, db.First(&lot, lot.ID).Error)
+			assert.Equal(t, tc.paid, lot.PaidAvailable)
+			assert.Equal(t, tc.reserved, lot.BonusReserved)
+			assert.Zero(t, lot.BonusConsumed)
+			assert.Equal(t, tc.bonus+min(delta, 0), lot.BonusAvailable)
+			assert.Equal(t, -min(delta, 0), lot.BonusRevoked)
+			var ledgers []model.AgencyFundingLedger
+			require.NoError(t, db.Where("user_id = ?", user.Id).Find(&ledgers).Error)
+			require.Len(t, ledgers, int(changes))
+			if changes == 1 {
+				assert.Equal(t, delta, ledgers[0].NonpaidDelta)
+				assert.Zero(t, ledgers[0].PaidDelta)
+				assert.Zero(t, ledgers[0].DebtDelta)
+			}
+			for _, record := range []any{&model.AgencyBillingOutbox{}, &model.AgencyEventDelivery{}} {
+				var count int64
+				require.NoError(t, db.Model(record).Count(&count).Error)
+				assert.Equal(t, changes, count)
+			}
+			var facts []model.AgencyTopupFact
+			require.NoError(t, db.Where("user_id = ?", user.Id).Find(&facts).Error)
+			if delta > 0 {
+				require.Len(t, facts, 1)
+				assert.EqualValues(t, 9999, facts[0].InitiatedByUserID)
+				assert.Equal(t, delta, facts[0].BonusQuota)
+				assert.Zero(t, facts[0].PaidQuota)
+				var grant model.AgencyFundingLot
+				require.NoError(t, db.Where("user_id = ? AND id <> ?", user.Id, lot.ID).First(&grant).Error)
+				assert.EqualValues(t, 9999, grant.ActorUserID)
+				assert.Equal(t, delta, grant.BonusAvailable)
+			} else {
+				assert.Empty(t, facts)
+			}
+			var storedBinding model.AgencyActiveUserBinding
+			require.NoError(t, db.First(&storedBinding, "user_id = ?", user.Id).Error)
+			assert.Equal(t, binding, storedBinding)
+			var audit model.AuditLog
+			require.NoError(t, model.LOG_DB.First(&audit).Error)
+			assert.Equal(t, !failed, audit.Success)
+			if failed {
+				params, err := common.Marshal(audit.Other.Op.Params)
+				require.NoError(t, err)
+				assert.Contains(t, string(params), fmt.Sprintf("%q:%q", "failure_reason", tc.failureReason))
+			}
+			var logs int64
+			require.NoError(t, model.LOG_DB.Model(&model.Log{}).Count(&logs).Error)
+			if failed {
+				assert.Zero(t, logs)
+			} else {
+				assert.EqualValues(t, 1, logs)
+			}
+		})
+	}
+}
+
 func TestManageUserQuotaFailuresDoNotRecordTopup(t *testing.T) {
 	for _, tc := range []struct {
 		name, mode string

@@ -131,8 +131,8 @@ func AdjustAgencyCharge(userID, delta int, chargeID string, targetQuota int64) e
 
 // ApplyAgencyQuotaDelta applies a non-charge wallet adjustment and its typed
 // funding projection in one transaction. Positive deltas are non-paid grants;
-// negative administrative adjustments consume paid first, then non-paid lots,
-// and finally create debt. Legacy users retain the original quota-only path.
+// negative administrative adjustments revoke only unused administrative grants
+// and non-paid provisioning balances. Legacy users retain the quota-only path.
 func ApplyAgencyQuotaDelta(userID, delta int64, sourceKind string) error {
 	return ApplyAgencyQuotaDeltaWithActor(userID, delta, sourceKind, 0)
 }
@@ -236,11 +236,8 @@ func applyAgencyQuotaDeltaTx(tx *gorm.DB, userID, delta int64, sourceKind, sourc
 		return errors.New("agency user quota arithmetic overflow")
 	}
 	targetQuota := int64(user.Quota) + delta
-	if targetQuota > int64(common.MaxQuota) {
-		return errors.New("agency user quota overflow")
-	}
-	if targetQuota < -int64(common.MaxQuota)-1 {
-		return errors.New("agency user quota underflow")
+	if targetQuota > int64(common.MaxWalletQuota) || targetQuota < -int64(common.MaxWalletQuota) {
+		return ErrWalletQuotaLimitExceeded
 	}
 	if err := EnsureAgencyFundingAccount(tx, userID); err != nil {
 		return err
@@ -266,8 +263,8 @@ func applyAgencyQuotaDeltaTx(tx *gorm.DB, userID, delta int64, sourceKind, sourc
 		remaining := -delta
 		if isAdministrativeQuotaAdjustment(sourceKind) {
 			// An administrator decrease is a revocation of an unused
-			// administrator grant. It must never confiscate verified paid
-			// funding or manufacture debt when the grant is exhausted.
+			// administrator grant or non-paid provisioning balance. It must
+			// never confiscate paid funding or manufacture debt.
 			var lots []AgencyFundingLot
 			if err := AgencyLockForUpdate(tx).Where("user_id = ? AND bonus_available > 0", userID).Order("money_seq ASC, id ASC").Find(&lots).Error; err != nil {
 				return err
@@ -409,7 +406,7 @@ func isAdministrativeQuotaAdjustment(sourceKind string) bool {
 
 func isAdministrativeGrantSource(sourceKind string) bool {
 	switch strings.ToLower(strings.TrimSpace(sourceKind)) {
-	case "admin", "admin_grant", "admin_adjustment", "admin_override", "quota_grant", "quota_debit":
+	case "admin", "admin_grant", "admin_adjustment", "admin_override", "quota_grant", "quota_debit", "provisioning_opening":
 		return true
 	default:
 		return false
@@ -423,8 +420,11 @@ func SetAgencyQuotaAbsolute(userID int64, target int, sourceKind string) error {
 }
 
 func SetAgencyQuotaAbsoluteWithActor(userID int64, target int, sourceKind string, actorID int64) error {
-	if userID <= 0 || strings.TrimSpace(sourceKind) == "" || target > common.MaxQuota {
+	if userID <= 0 || strings.TrimSpace(sourceKind) == "" {
 		return ErrAgencyFundingUnavailable
+	}
+	if target > common.MaxWalletQuota || target < -common.MaxWalletQuota {
+		return ErrWalletQuotaLimitExceeded
 	}
 	var delta int64
 	err := runAgencyFundingTransaction(func(tx *gorm.DB) error {

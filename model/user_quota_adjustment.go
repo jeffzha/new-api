@@ -24,6 +24,10 @@ type UserQuotaAdjustment struct {
 }
 
 func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuotaAdjustment, error) {
+	return AdjustUserQuotaWithActor(userID, operatorRole, mode, value, 0)
+}
+
+func AdjustUserQuotaWithActor(userID, operatorRole int, mode string, value int, actorID int64) (*UserQuotaAdjustment, error) {
 	if userID <= 0 || (mode != "add" && mode != "subtract" && mode != "override") {
 		return nil, ErrInvalidUserQuotaAdjustment
 	}
@@ -35,7 +39,8 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuo
 	}
 
 	var adjustment UserQuotaAdjustment
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	var durable bool
+	err := AgencyOpsTransaction(DB, func(tx *gorm.DB) error {
 		var user User
 		if err := lockForUpdate(tx).First(&user, userID).Error; err != nil {
 			return err
@@ -59,16 +64,27 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuo
 		}
 		// An unchanged override is a successful operation, including on MySQL
 		// configurations that count only changed rows in RowsAffected.
+		durable = user.BillingMode == AgencyDurableBillingMode
 		if after != user.Quota {
-			if user.BillingMode == AgencyDurableBillingMode || user.BillingMode == AgencyProvisioningBillingMode {
-				return ErrAgencyFundingUnavailable
+			if user.BillingMode == AgencyProvisioningBillingMode {
+				return ErrAgencyProvisioning
 			}
-			result := tx.Model(&User{}).Where("id = ?", userID).Update("quota", after)
-			if result.Error != nil {
-				return result.Error
-			}
-			if result.RowsAffected != 1 {
-				return gorm.ErrRecordNotFound
+			if durable {
+				source := "admin_adjustment"
+				if mode == "override" {
+					source = "admin_override"
+				}
+				if err := ApplyAgencyQuotaDeltaWithActorTx(tx, int64(userID), int64(after)-int64(user.Quota), source, actorID); err != nil {
+					return err
+				}
+			} else {
+				result := tx.Model(&User{}).Where("id = ?", userID).Update("quota", after)
+				if result.Error != nil {
+					return result.Error
+				}
+				if result.RowsAffected != 1 {
+					return gorm.ErrRecordNotFound
+				}
 			}
 		}
 		adjustment = UserQuotaAdjustment{UserID: user.Id, Username: user.Username, Before: user.Quota, After: after}
@@ -78,10 +94,16 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuo
 		return nil, err
 	}
 
-	// Apply only the committed difference, preserving outstanding reservations.
-	// Both balances are bounded above, so their difference fits in int64.
+	// Durable reservations are in the database; invalidate their cached snapshot.
+	// Legacy reservations live in Redis, so preserve them using only the difference.
 	delta := int64(adjustment.After) - int64(adjustment.Before)
 	if delta != 0 {
+		if durable {
+			if err := InvalidateUserCache(userID); err != nil {
+				common.SysError(fmt.Sprintf("failed to invalidate manual quota adjustment for user %d: %s", userID, err))
+			}
+			return &adjustment, nil
+		}
 		if err := cacheIncrUserQuota(userID, delta); err != nil {
 			common.SysError(fmt.Sprintf("failed to sync manual quota adjustment for user %d: %s", userID, err))
 		}

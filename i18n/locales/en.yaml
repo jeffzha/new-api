@@ -111,6 +111,10 @@ user.telegram_id_empty: "Telegram ID is empty!"
 user.telegram_not_bound: "This Telegram account is not bound"
 user.linux_do_id_empty: "Linux DO ID is empty!"
 user.quota_change_zero: "Quota change amount cannot be zero"
+user.quota_provisioning: "This account's funding ledger is being migrated. Please retry the balance adjustment later."
+user.quota_grant_unavailable: "The decrease or override exceeds unused revocable grants. Only administrator grants and non-paid provisioning balances can be revoked here. Use the refund workflow for paid funds and the source-specific reversal workflow for redemption or other credits. The balance was not changed."
+user.quota_balance_reserved: "This adjustment affects held or reserved funds. Complete the relevant refund or settlement first. The balance was not changed."
+user.quota_funding_unavailable: "The funding ledger is unavailable. The balance was not changed to prevent accounting inconsistencies. Contact an administrator."
 
 # Quota messages
 quota.negative: "Quota cannot be negative!"

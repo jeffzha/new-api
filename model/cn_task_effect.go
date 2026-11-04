@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"maps"
 	"strconv"
 	"time"
 
@@ -19,7 +20,39 @@ func cnStageTaskEffectTx(tx *gorm.DB, task *Task, row *CNTaskBilling, delta int,
 	if delta < 0 {
 		logType, quota = LogTypeRefund, -delta
 	}
-	other, err := common.Marshal(map[string]any{"task_id": row.PublicTaskID, "request_id": row.RequestID, "token_refund_status": row.TokenRefundStatus, "token_disposed_quota": row.TokenDisposedQuota})
+	values := task.BillingLogFacts()
+	// A task settled from the provider's bill reports the tokens on that bill.
+	var bill cnTaskProviderBill
+	if row.ProviderBill != "" && common.UnmarshalJsonStr(row.ProviderBill, &bill) == nil && bill.Settlement.TotalTokens > 0 {
+		values["billed_tokens"] = bill.Settlement.TotalTokens
+		delete(values, "estimated_tokens")
+	}
+	// settle is the final difference of a finished task; refund gives the whole charge back for a failed or cancelled one.
+	stage := "settle"
+	switch {
+	case row.FactID == "":
+		stage = "preconsume"
+	case task == nil || task.Status == TaskStatusFailure:
+		stage = "refund"
+	}
+	maps.Copy(values, map[string]any{"task_id": row.PublicTaskID, "request_id": row.RequestID, "token_refund_status": row.TokenRefundStatus,
+		"token_disposed_quota": row.TokenDisposedQuota, "pre_consumed_quota": row.Actual, "actual_quota": row.Actual + delta, "settlement_stage": stage})
+	if row.QuotaPerUnit != "" {
+		values["quota_per_unit"] = row.QuotaPerUnit
+	}
+	if row.Currency != "" && row.ExchangeRate != "" {
+		values["settlement_currency"], values["exchange_rate"] = row.Currency, row.ExchangeRate
+	}
+	if row.UpstreamID != "" {
+		values["root_info"] = map[string]any{"upstream_task_id": row.UpstreamID}
+	}
+	if row.FinalError != "" {
+		values["reason"] = row.FinalError
+	}
+	if task != nil && task.Status == TaskStatusFailure && task.FailReason != "" {
+		values["reason"] = task.FailReason
+	}
+	other, err := common.Marshal(values)
 	if err != nil {
 		return err
 	}

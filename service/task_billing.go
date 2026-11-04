@@ -75,6 +75,10 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 			other.SetPublic("usage_facts", snap.UsageFacts)
 		}
 	}
+	for key, value := range task.BillingLogFacts() {
+		other.SetPublic(key, value)
+	}
+	other.SetPublic("settlement_stage", "preconsume")
 	appendTaskLogInfo(task, other)
 	attachQuotaSaturation(c, info, other)
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
@@ -209,6 +213,9 @@ func taskBillingOther(task *model.Task) *model.LogOther {
 			other.SetPublic("agency_paid_allocated_quota", bc.AgencyPaidAllocatedQuota)
 		}
 	}
+	for key, value := range task.BillingLogFacts() {
+		other.SetPublic(key, value)
+	}
 	props := task.Properties
 	if props.UpstreamModelName != "" && props.UpstreamModelName != props.OriginModelName {
 		other.SetPublic("is_model_mapped", true)
@@ -307,6 +314,9 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 	other := taskBillingOther(task)
 	other.SetPublic("task_id", task.TaskID)
 	other.SetPublic("reason", reason)
+	other.SetPublic("pre_consumed_quota", quota)
+	other.SetPublic("actual_quota", quota+adjustment.QuotaDelta)
+	other.SetPublic("settlement_stage", "refund")
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   model.LogTypeRefund,
@@ -389,6 +399,8 @@ func recordTaskQuotaAdjustment(ctx context.Context, task *model.Task, preConsume
 	other.SetPublic("task_id", task.TaskID)
 	other.SetPublic("pre_consumed_quota", preConsumedQuota)
 	other.SetPublic("actual_quota", actualQuota)
+	other.SetPublic("reason", reason)
+	other.SetPublic("settlement_stage", "settle")
 	for _, clamp := range clamps {
 		attachQuotaSaturationToOther(other, clamp)
 	}

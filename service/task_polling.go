@@ -787,6 +787,7 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		}
 		bc.TieredSnapshot.UsageFacts = usageFacts
 		bc.TieredSnapshot.EstimatedTier = result.MatchedTier
+		recordTaskSettledTokens(task, taskResult)
 		RecalculateTaskQuota(ctx, task, result.ActualQuotaAfterGroup, "任务用量表达式结算", result.Clamp)
 		return true
 	}
@@ -804,6 +805,7 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 			return true
 		}
 		if handled {
+			recordTaskSettledTokens(task, taskResult)
 			RecalculateTaskQuota(ctx, task, actualQuota, "adaptor billing adjustment", clamp)
 			return true
 		}

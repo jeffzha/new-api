@@ -513,6 +513,7 @@ func TransferAffQuota(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserTransferFailed, map[string]any{"Error": err.Error()})
 		return
 	}
+	model.RecordQuotaLog(user.Id, model.LogTypeSystem, fmt.Sprintf("邀请额度转入余额 %s", logger.LogQuota(tran.Quota)), tran.Quota, model.LogQuotaSourceAffiliateTransfer, false, nil)
 	common.ApiSuccessI18n(c, i18n.MsgUserTransferSuccess, nil)
 }
 

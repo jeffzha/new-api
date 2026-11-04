@@ -159,6 +159,30 @@ func (s *CNTaskSettler) GetPreConsumedQuota() int {
 	return s.reserved
 }
 
+// recordTaskSettledTokens keeps the token quantity the provider reported at completion, so the settlement log
+// can show the billed tokens instead of the submission estimate: the result's total tokens for a frozen provider
+// price, and for a task priced by expression the completion usage facts total_tokens, else tokens (the Seedance
+// plugins). Facts the plugin did not report at completion are estimates and never count.
+func recordTaskSettledTokens(task *model.Task, result *relaycommon.TaskInfo) {
+	bc := task.PrivateData.BillingContext
+	if result == nil || bc == nil {
+		return
+	}
+	if bc.ProviderBilling != nil && result.TotalTokens > 0 {
+		task.PrivateData.SettledTokens = int64(result.TotalTokens)
+		return
+	}
+	if bc.TieredSnapshot == nil {
+		return
+	}
+	for _, key := range []string{"total_tokens", "tokens"} {
+		if tokens, ok := result.UsageFacts[key].(float64); ok && tokens > 0 && tokens <= float64(common.MaxQuota) {
+			task.PrivateData.SettledTokens = int64(tokens)
+			return
+		}
+	}
+}
+
 // Compute before terminal status CAS; the resulting target (or explicit error)
 // is persisted by the model with that CAS, independently of another provider poll.
 func PrepareCNTaskTerminal(adaptor TaskPollingAdaptor, task *model.Task, result *relaycommon.TaskInfo) {
@@ -184,6 +208,7 @@ func PrepareCNTaskTerminal(adaptor TaskPollingAdaptor, task *model.Task, result 
 			failure = "task_completion_quota_clamped"
 		} else {
 			target = settled.ActualQuotaAfterGroup
+			recordTaskSettledTokens(task, result)
 		}
 	case bc.PerCallBilling:
 	default:
@@ -195,6 +220,7 @@ func PrepareCNTaskTerminal(adaptor TaskPollingAdaptor, task *model.Task, result 
 				failure, handled = "task_provider_pricing_failed", true
 			} else if yes {
 				target = quota
+				recordTaskSettledTokens(task, result)
 			}
 		}
 		if !handled && adaptor != nil {

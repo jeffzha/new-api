@@ -217,6 +217,8 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 				}
 			}
 			settlement.Task.Quota = settlement.PreConsumedQuota + settlement.QuotaDelta
+			// The settlement log reports the tokens the provider billed, not the submission estimate.
+			settlement.Task.PrivateData.SettledTokens = resolution.TotalTokens
 			recordTaskQuotaAdjustment(
 				ctx,
 				settlement.Task,

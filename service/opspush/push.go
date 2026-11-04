@@ -1,6 +1,10 @@
 // Package opspush delivers usage logs to TokenOps under the station push spec v1
 // (TokenOps docs/contracts/STATION_INTEGRATION_SPEC_v1.md).
 //
+// OPS_PUSH_SPEC=v1.1 also delivers the wallet records (top-ups, adjustments, gifts, refunds) and the
+// facts needed to price them, under schemaVersion "1.1": every new field sits inside `extra`, so a v1
+// receiver rejects the whole batch (unsupported_schema_version) instead of booking a refund as a charge.
+//
 // The logs table is the outbox. The cursor is the highest delivered log id; a
 // batch body is persisted before it is sent and resent byte for byte until OPS
 // answers 200, so a retry always carries the same batchId and events. Event
@@ -19,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	mrand "math/rand/v2"
 	"net/http"
@@ -32,6 +37,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -72,9 +78,15 @@ type State struct {
 
 func (State) TableName() string { return "ops_push_states" }
 
+const (
+	SpecV1  = "v1"
+	SpecV11 = "v1.1"
+)
+
 type Config struct {
 	URL, KeyID, Secret string
-	Since              int64 // first run only: start after the last log older than this; 0 = start at the newest log
+	Since              int64  // first run only: start after the last log older than this; 0 = start at the newest log
+	Spec               string // SpecV1 (default) or SpecV11
 }
 
 type Pusher struct {
@@ -95,6 +107,13 @@ func StartConfigured(ctx context.Context) error {
 	if err := config.validate(); err != nil {
 		return err
 	}
+	switch config.Spec = os.Getenv("OPS_PUSH_SPEC"); config.Spec {
+	case "", SpecV1:
+		config.Spec = SpecV1
+	case SpecV11:
+	default:
+		return errors.New("OPS_PUSH_SPEC must be v1 or v1.1")
+	}
 	if raw := os.Getenv("OPS_PUSH_SINCE"); raw != "" {
 		since, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || since < 0 {
@@ -110,7 +129,7 @@ func StartConfigured(ctx context.Context) error {
 		return err
 	}
 	go pusher.Run(ctx)
-	common.SysLog("Ops push enabled: " + base + pushPath)
+	common.SysLog("Ops push enabled (" + config.Spec + "): " + base + pushPath)
 	return nil
 }
 
@@ -236,18 +255,32 @@ type batch struct {
 
 // build persists the next batch after the cursor. It returns false when there is nothing to send.
 func (p *Pusher) build(state *State) (bool, error) {
+	v11 := p.Config.Spec == SpecV11
+	types, schema := []int{model.LogTypeConsume, model.LogTypeError}, "1"
+	if v11 {
+		types, schema = v11Types, "1.1"
+	}
 	var logs []*model.Log
 	err := p.LogDB.Where("id > ? AND type IN ? AND created_at <= ?", state.Cursor,
-		[]int{model.LogTypeConsume, model.LogTypeError}, p.Now().Unix()-settleSeconds).
+		types, p.Now().Unix()-settleSeconds).
 		Order("id").Limit(maxEvents).Find(&logs).Error
 	if err != nil || len(logs) == 0 {
 		return false, err
 	}
 	names := p.channelNames(logs)
+	var topups map[int]*model.TopUp
+	conversion := CurrentConversion()
+	if v11 {
+		topups = p.topups(logs)
+	}
 	for len(logs) > 0 {
 		events, skipped := make([]map[string]any, 0, len(logs)), 0
 		for _, log := range logs {
-			if event := Event(log, names[log.ChannelId]); event != nil {
+			event := Event(log, names[log.ChannelId])
+			if v11 {
+				event = EventV11(log, names[log.ChannelId], topups[log.Id], conversion)
+			}
+			if event != nil {
 				events = append(events, event)
 			} else {
 				skipped++
@@ -262,7 +295,7 @@ func (p *Pusher) build(state *State) (bool, error) {
 			return false, p.save(map[string]any{"cursor": last})
 		}
 		id := fmt.Sprintf("gw-%d-%d", state.Cursor+1, last)
-		body, err := common.Marshal(batch{SchemaVersion: "1", BatchId: id, Events: events})
+		body, err := common.Marshal(batch{SchemaVersion: schema, BatchId: id, Events: events})
 		if err != nil {
 			return false, err
 		}
@@ -490,11 +523,8 @@ func Event(log *model.Log, channelName string) map[string]any {
 	if log.UseTime >= 0 && int64(log.UseTime)*1000 <= maxCount {
 		event["latencyMs"] = log.UseTime * 1000
 	}
-	for _, key := range []string{"seconds", "duration"} {
-		if value, ok := number(facts[key]); ok && value >= 0 && value <= maxSeconds {
-			event["durationSeconds"] = value
-			break
-		}
+	if seconds, ok := durationSeconds(other, facts); ok {
+		event["durationSeconds"] = seconds
 	}
 	if attributes := logAttributes(other, facts); len(attributes) > 0 {
 		event["attributes"] = attributes
@@ -562,7 +592,23 @@ func number(raw json.RawMessage) (float64, bool) {
 	return parsed, !math.IsInf(parsed, 0) && !math.IsNaN(parsed)
 }
 
-// logAttributes mirrors collector.LOG_ATTRIBUTES: the first valid value of each name wins.
+// durationSeconds is the billed length of a call: its usage facts' seconds (else duration), and for a task priced
+// without an expression the seconds logged at the top level of other (the generated length once it succeeded).
+func durationSeconds(other, facts map[string]json.RawMessage) (float64, bool) {
+	durations := []json.RawMessage{facts["seconds"], facts["duration"]}
+	if _, task := other["task_id"]; task {
+		durations = append(durations, other["seconds"])
+	}
+	for _, raw := range durations {
+		if value, ok := number(raw); ok && value >= 0 && value <= maxSeconds {
+			return value, true
+		}
+	}
+	return 0, false
+}
+
+// logAttributes mirrors collector.LOG_ATTRIBUTES: the first valid value of each name wins. A Seedance task says
+// whether it was given a video as has_video_input in other, or as usage_facts.video_input "video" / "none".
 func logAttributes(other, facts map[string]json.RawMessage) map[string]any {
 	keys := []struct {
 		name, kind string
@@ -572,10 +618,13 @@ func logAttributes(other, facts map[string]json.RawMessage) map[string]any {
 		{"quality", "text", []string{"quality"}},
 		{"resolution", "text", []string{"resolution"}},
 		{"withAudio", "flag", []string{"withAudio", "with_audio", "generate_audio"}},
-		{"referenceVideo", "flag", []string{"referenceVideo", "reference_video"}},
+		{"referenceVideo", "flag", []string{"referenceVideo", "reference_video", "has_video_input"}},
 		{"characters", "count", []string{"characters", "character_count"}},
 	}
 	found := map[string]any{}
+	if input, ok := textValue(facts["video_input"]); ok && (input == "video" || input == "none") {
+		found["referenceVideo"] = input == "video"
+	}
 	for _, attribute := range keys {
 		for _, source := range []map[string]json.RawMessage{other, facts} {
 			for _, key := range attribute.keys {
@@ -604,27 +653,274 @@ func logAttributes(other, facts map[string]json.RawMessage) map[string]any {
 	return found
 }
 
-// billingKeys are the `other` keys OPS shows in its usage detail; used when the whole object is over 4 KB.
+// billingKeys are the `other` keys OPS shows in its usage detail and needs to price a task (its usage facts, billed or
+// estimated tokens, length, resolution, video input, the upstream's own charge and which settlement step the log is);
+// used when the whole object is over 4 KB.
 var billingKeys = []string{"model_ratio", "group_ratio", "completion_ratio", "cache_ratio", "model_price", "user_group_ratio",
-	"matched_tier", "billing_source", "request_path", "cache_tokens", "cache_creation_tokens", "image_count", "frt"}
+	"matched_tier", "billing_source", "request_path", "cache_tokens", "cache_creation_tokens", "image_count", "frt",
+	"task_id", "usage_facts", "billed_tokens", "estimated_tokens", "seconds", "resolution", "has_video_input", "upstream_amount",
+	"settlement_stage", "pre_consumed_quota", "actual_quota"}
+
+// v11BillingKeys are kept as well under v1.1: the frozen task price, refund reasons and the wallet record keys.
+var v11BillingKeys = append(append([]string{}, billingKeys...),
+	"unit_price_cny_per_million", "unit_price_cny_per_request", "cny_per_usd", "billing_unit", "reason", "request_id", "expr_b64",
+	"billing_mode", "quota_per_unit", "quota_source", "quota_direction", "trade_no", "redemption_id", "root_info")
 
 // extraOf is the log `other` as event `extra` (OPS shows it as the Gateway log detail), cut to the billing keys
 // when the whole object is over the 4 KB limit. The margin covers OPS re-serialising it with different spacing.
 func extraOf(other map[string]json.RawMessage) map[string]json.RawMessage {
+	return extraWithin(other, billingKeys, maxExtra-256)
+}
+
+func extraWithin(other map[string]json.RawMessage, keys []string, limit int) map[string]json.RawMessage {
 	if len(other) == 0 {
 		return nil
 	}
-	if raw, err := common.Marshal(other); err == nil && len(raw) <= maxExtra-256 {
+	if raw, err := common.Marshal(other); err == nil && len(raw) <= limit {
 		return other
 	}
 	subset := map[string]json.RawMessage{}
-	for _, key := range billingKeys {
+	for _, key := range keys {
 		if value, ok := other[key]; ok {
 			subset[key] = value
 		}
 	}
-	if raw, err := common.Marshal(subset); err != nil || len(subset) == 0 || len(raw) > maxExtra-256 {
+	if raw, err := common.Marshal(subset); err != nil || len(subset) == 0 || len(raw) > limit {
 		return nil
 	}
 	return subset
+}
+
+// v11Types are the log types pushed under v1.1: every wallet change plus failed calls. Logins (7) are not.
+var v11Types = []int{model.LogTypeTopup, model.LogTypeConsume, model.LogTypeManage, model.LogTypeSystem, model.LogTypeError, model.LogTypeRefund}
+
+// Conversion is the quota conversion snapshot sent on every v1.1 event (the values current when the batch is built).
+type Conversion struct {
+	QuotaPerUnit    float64
+	USDExchangeRate float64
+	TopupPrice      float64
+}
+
+func CurrentConversion() Conversion {
+	return Conversion{QuotaPerUnit: common.QuotaPerUnit, USDExchangeRate: operation_setting.USDExchangeRate, TopupPrice: operation_setting.Price}
+}
+
+// recordKind names what a log did to the customer's wallet, and which way the quota moved.
+func recordKind(log *model.Log, other map[string]json.RawMessage) (kind, direction string) {
+	source, _ := textValue(other["quota_source"])
+	moved, _ := textValue(other["quota_direction"])
+	if moved != model.LogQuotaDebit {
+		moved = model.LogQuotaCredit
+	}
+	switch log.Type {
+	case model.LogTypeConsume:
+		return "usage", model.LogQuotaDebit
+	case model.LogTypeError:
+		return "error", model.LogQuotaDebit
+	case model.LogTypeRefund:
+		return "refund", model.LogQuotaCredit
+	case model.LogTypeTopup:
+		// The Gateway logs operator adjustments and subscriptions bought from the balance as top-ups too.
+		if source == model.LogQuotaSourceAdminAdjustment || source == model.LogQuotaSourceSubscriptionBalance {
+			return "adjustment", moved
+		}
+		return "topup", moved
+	case model.LogTypeManage:
+		return "adjustment", moved
+	case model.LogTypeSystem:
+		return "gift", moved
+	}
+	return "", ""
+}
+
+func textValue(raw json.RawMessage) (string, bool) {
+	var value string
+	if len(raw) == 0 || common.Unmarshal(raw, &value) != nil {
+		return "", false
+	}
+	return value, true
+}
+
+// topupWindow bounds the time match for top-up logs written before they carried a trade number.
+const topupWindow = 5
+
+// topups finds the topups row behind each online top-up log: by the trade number the log carries, or, for older
+// logs, the user's only successful top-up completed within topupWindow seconds of the log.
+func (p *Pusher) topups(logs []*model.Log) map[int]*model.TopUp {
+	found := map[int]*model.TopUp{}
+	byTrade := map[string][]int{}
+	for _, log := range logs {
+		if log.Type != model.LogTypeTopup {
+			continue
+		}
+		other := object(json.RawMessage(log.Other))
+		source, _ := textValue(other["quota_source"])
+		if trade, _ := textValue(other["trade_no"]); trade != "" && (source == model.LogQuotaSourceOnlineTopup || source == model.LogQuotaSourceAdminTopup) {
+			byTrade[trade] = append(byTrade[trade], log.Id)
+			continue
+		}
+		if _, legacy := object(other["admin_info"])["payment_method"]; source != "" || !legacy {
+			continue
+		}
+		var rows []model.TopUp
+		p.DB.Where("user_id = ? AND status = ? AND complete_time BETWEEN ? AND ?", log.UserId, common.TopUpStatusSuccess,
+			log.CreatedAt-topupWindow, log.CreatedAt+topupWindow).Limit(2).Find(&rows)
+		if len(rows) == 1 {
+			found[log.Id] = &rows[0]
+		}
+	}
+	if len(byTrade) == 0 {
+		return found
+	}
+	trades := make([]string, 0, len(byTrade))
+	for trade := range byTrade {
+		trades = append(trades, trade)
+	}
+	var rows []model.TopUp
+	p.DB.Where("trade_no IN ?", trades).Find(&rows)
+	for index := range rows {
+		for _, id := range byTrade[rows[index].TradeNo] {
+			found[id] = &rows[index]
+		}
+	}
+	return found
+}
+
+// topupFacts is extra.topup: the payment behind a top-up log.
+func topupFacts(topup *model.TopUp, log *model.Log, recorded bool, price float64) map[string]any {
+	money := strings.TrimSpace(topup.MoneyDecimal)
+	if money == "" {
+		money = strconv.FormatFloat(topup.Money, 'f', -1, 64)
+	}
+	facts := map[string]any{"tradeNo": topup.TradeNo, "paymentMethod": topup.PaymentMethod, "moneyCny": money,
+		"amount": topup.Amount, "topupPrice": price}
+	if topup.CreditedQuota > 0 {
+		facts["creditedQuota"] = topup.CreditedQuota
+	} else if recorded {
+		facts["creditedQuota"] = log.Quota
+	}
+	if topup.CompleteTime > 0 {
+		facts["completedAt"] = time.Unix(topup.CompleteTime, 0).UTC().Format(time.RFC3339)
+	}
+	var payment model.TopupPaymentSnapshot
+	if topup.PaymentSnapshot != "" && common.UnmarshalJsonStr(topup.PaymentSnapshot, &payment) == nil && payment.ActualMoney != "" && payment.CurrencyCode != "" {
+		facts["paidMoney"], facts["paidCurrency"] = payment.ActualMoney, payment.CurrencyCode
+	}
+	return facts
+}
+
+// EventV11 maps any wallet-changing or failed-call log to a v1.1 event, or nil when OPS would reject it. Calls and
+// failures keep the v1 shape; top-ups, adjustments and gifts carry no model. Every new field is inside extra.
+func EventV11(log *model.Log, channelName string, topup *model.TopUp, conversion Conversion) map[string]any {
+	other := object(json.RawMessage(log.Other))
+	kind, direction := recordKind(log, other)
+	if kind == "" || log.UserId <= 0 {
+		return nil
+	}
+	wallet := kind == "topup" || kind == "adjustment" || kind == "gift"
+	requestId := log.RequestId
+	switch {
+	case wallet:
+		requestId = kind + "-" + strconv.Itoa(log.Id)
+	case kind == "refund":
+		base := log.RequestId
+		if base == "" {
+			base, _ = textValue(other["task_id"])
+		}
+		requestId = base + "-r" + strconv.Itoa(log.Id)
+		if base == "" || !idPattern.MatchString(requestId) {
+			requestId = "refund-" + strconv.Itoa(log.Id)
+		}
+	case requestId == "":
+		requestId = "log-" + strconv.Itoa(log.Id)
+	case kind == "error":
+		requestId += "-e" + strconv.Itoa(log.Id)
+	}
+	if !idPattern.MatchString(requestId) || !text(log.ModelName) || (!wallet && log.ModelName == "") {
+		return nil
+	}
+	status := "success"
+	if kind == "error" {
+		status = "error"
+	}
+	facts := object(other["usage_facts"])
+	event := map[string]any{
+		"requestId":  requestId,
+		"occurredAt": time.Unix(log.CreatedAt, 0).UTC().Format(time.RFC3339),
+		"userId":     strconv.Itoa(log.UserId),
+		"status":     status,
+	}
+	optionalText(event, "model", log.ModelName)
+	optionalText(event, "username", log.Username)
+	if log.Quota >= 0 && int64(log.Quota) <= maxQuota {
+		event["gatewayQuota"] = log.Quota
+	}
+	if !wallet {
+		maps.Copy(event, map[string]any{
+			"promptTokens":     clamp(int64(log.PromptTokens)),
+			"completionTokens": clamp(int64(log.CompletionTokens)),
+			"cacheReadTokens":  count(other["cache_tokens"]),
+			"cacheWriteTokens": count(other["cache_creation_tokens"]),
+			"imageCount":       count(other["image_count"]),
+			"isStream":         log.IsStream,
+		})
+		optionalText(event, "upstreamRequestId", log.UpstreamRequestId)
+		optionalText(event, "tokenName", log.TokenName)
+		optionalText(event, "group", log.Group)
+		optionalText(event, "channelName", channelName)
+		if log.TokenId > 0 {
+			event["tokenId"] = strconv.Itoa(log.TokenId)
+		}
+		if log.ChannelId > 0 {
+			event["channelId"] = strconv.Itoa(log.ChannelId)
+		}
+		if log.UseTime >= 0 && int64(log.UseTime)*1000 <= maxCount {
+			event["latencyMs"] = log.UseTime * 1000
+		}
+		if seconds, ok := durationSeconds(other, facts); ok {
+			event["durationSeconds"] = seconds
+		}
+		if attributes := logAttributes(other, facts); len(attributes) > 0 {
+			event["attributes"] = attributes
+		}
+	}
+
+	added := map[string]any{"recordKind": kind, "direction": direction, "quotaPerUnit": conversion.QuotaPerUnit,
+		"usdExchangeRate": conversion.USDExchangeRate, "topupPrice": conversion.TopupPrice}
+	if value, ok := number(other["quota_per_unit"]); ok && value > 0 {
+		added["quotaPerUnit"] = value
+	} else if raw, ok := textValue(other["quota_per_unit"]); ok {
+		if value, err := strconv.ParseFloat(raw, 64); err == nil && value > 0 {
+			added["quotaPerUnit"] = value
+		}
+	}
+	if wallet {
+		source, recorded := textValue(other["quota_source"])
+		if recorded {
+			added["source"] = source
+		} else {
+			// Written before the Gateway recorded wallet quotas: gatewayQuota 0 means unknown, the amount is only in the text.
+			added["quotaRecorded"] = false
+		}
+		if content := strings.TrimSpace(log.Content); content != "" {
+			if runes := []rune(content); len(runes) > 500 {
+				content = string(runes[:500])
+			}
+			added["content"] = content
+		}
+		if topup != nil && kind == "topup" {
+			added["topup"] = topupFacts(topup, log, recorded, conversion.TopupPrice)
+		}
+	}
+	reserved, _ := common.Marshal(added)
+	extra := map[string]any{}
+	for key, value := range extraWithin(other, v11BillingKeys, maxExtra-256-len(reserved)) {
+		extra[key] = value
+	}
+	maps.Copy(extra, added)
+	if raw, err := common.Marshal(extra); err != nil || len(raw) > maxExtra-256 {
+		extra = added
+	}
+	event["extra"] = extra
+	return event
 }

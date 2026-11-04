@@ -641,7 +641,7 @@ func cnUpdateTask(task *Task, fromStatus *TaskStatus) (bool, error) {
 			return ErrCNConflict
 		}
 		private := current.PrivateData
-		private.PluginState, private.ResultURL, private.PollFailures, private.OpsUsage = task.PrivateData.PluginState, task.PrivateData.ResultURL, task.PrivateData.PollFailures, task.PrivateData.OpsUsage
+		private.PluginState, private.ResultURL, private.PollFailures, private.OpsUsage, private.SettledTokens = task.PrivateData.PluginState, task.PrivateData.ResultURL, task.PrivateData.PollFailures, task.PrivateData.OpsUsage, task.PrivateData.SettledTokens
 		updates := map[string]any{"status": task.Status, "progress": task.Progress, "start_time": task.StartTime, "finish_time": task.FinishTime, "fail_reason": task.FailReason, "data": task.Data, "private_data": private, "ops_usage_pending": task.OpsUsagePending}
 		if err := tx.Model(current).Updates(updates).Error; err != nil {
 			return err

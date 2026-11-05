@@ -436,6 +436,11 @@ func SetAgencyQuotaAbsoluteWithActor(userID int64, target int, sourceKind string
 		if delta == 0 {
 			return nil
 		}
+		if user.BillingMode == AgencyDurableBillingMode {
+			if err := cnRefundCheckBalanceOverrideTx(tx, userID); err != nil {
+				return err
+			}
+		}
 		return ApplyAgencyQuotaDeltaWithActorTx(tx, userID, delta, sourceKind, actorID)
 	})
 	if err == nil && delta != 0 && common.RedisEnabled {

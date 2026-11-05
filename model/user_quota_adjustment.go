@@ -70,6 +70,11 @@ func AdjustUserQuotaWithActor(userID, operatorRole int, mode string, value int, 
 				return ErrAgencyProvisioning
 			}
 			if durable {
+				if mode == "override" {
+					if err := cnRefundCheckBalanceOverrideTx(tx, int64(userID)); err != nil {
+						return err
+					}
+				}
 				source := "admin_adjustment"
 				if mode == "override" {
 					source = "admin_override"

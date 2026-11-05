@@ -193,6 +193,11 @@ func TestCNRefundAtomicWorkflowAcrossDialects(t *testing.T) {
 			assert.ErrorIs(t, err, ErrInsufficientAgencyWalletQuota)
 			_, err = AdjustUserQuota(int(r.UserID), common.RoleRootUser, "override", 100)
 			assert.ErrorIs(t, err, ErrAgencyFundingUnavailable)
+			err = SetAgencyQuotaAbsoluteWithActor(r.UserID, 100, "admin_override", 1)
+			assert.ErrorIs(t, err, ErrAgencyFundingUnavailable, "absolute balance entry points must both preserve refund holds")
+			var heldUser User
+			require.NoError(t, s.DB.First(&heldUser, r.UserID).Error)
+			assert.Zero(t, heldUser.Quota, "rejected override cannot create spendable funding")
 			err = s.DB.Transaction(func(tx *gorm.DB) error { return cnRefundCheckNativeReversalTx(tx, r.UserID, r.OperationID) })
 			assert.ErrorIs(t, err, ErrCNRefundConflict)
 			command := CNRefundCommand{AttemptID: "execute-1", TenantID: r.TenantID, GatewayID: r.GatewayID, OperationID: r.OperationID, ApprovalID: r.ApprovalID, ApprovalHash: r.ApprovalHash, ExpectedVersion: reserve.Version}

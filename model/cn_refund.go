@@ -529,6 +529,23 @@ func cnRefundCheckSpendTx(tx *gorm.DB, userID, amount, available int64) error {
 	return nil
 }
 
+// An absolute available-balance edit cannot account for money held by an
+// in-flight refund. Require its outcome before accepting a replacement value.
+// Explicit credits remain additive and keep their own funding provenance.
+func cnRefundCheckBalanceOverrideTx(tx *gorm.DB, userID int64) error {
+	if !tx.Migrator().HasTable(&CNRefundReservation{}) {
+		return nil
+	}
+	var count int64
+	if err := tx.Model(&CNRefundReservation{}).Where("user_id = ? AND held_quota > 0", userID).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrAgencyFundingUnavailable
+	}
+	return nil
+}
+
 func cnRefundCommandKey(key, action, attempt string) string {
 	return CNIdentity(key, action, attempt)
 }

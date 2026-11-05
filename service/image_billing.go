@@ -28,6 +28,12 @@ func PrepareImageBillingForRequest(c *gin.Context, info *relaycommon.RelayInfo, 
 		return types.NewErrorWithStatusCode(fmt.Errorf("reference_image_count must be between 0 and %d", dto.MaxReferenceImageN), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
 	info.ImageRequestCount = count
+	// Keep the validated billing quantity for both live push and log backfill,
+	// including legacy/token-only pricing and explicit zero-reference requests.
+	if info.BillingRequestInput == nil {
+		info.BillingRequestInput = &billingexpr.RequestInput{}
+	}
+	info.BillingRequestInput.ReferenceImageCount = &refCount
 	var quota int
 	var err error
 	if snap := info.TieredBillingSnapshot; snap != nil && snap.BillingMode == "tiered_expr" {
@@ -41,12 +47,6 @@ func PrepareImageBillingForRequest(c *gin.Context, info *relaycommon.RelayInfo, 
 		}
 		request.ImageCount = &count
 		request.ReferenceImageCount = &refCount
-		// Persist the authoritative reference-image quantity so settlement
-		// (TryTieredSettle) replays the same surcharge instead of defaulting to 0.
-		if info.BillingRequestInput == nil {
-			info.BillingRequestInput = &billingexpr.RequestInput{}
-		}
-		info.BillingRequestInput.ReferenceImageCount = &refCount
 		cost, trace, runErr := billingexpr.RunExprByHashWithRequest(snap.ExprString, snap.ExprHash, billingexpr.TokenParams{
 			P: float64(snap.EstimatedPromptTokens), C: float64(snap.EstimatedCompletionTokens), Len: float64(snap.EstimatedPromptTokens),
 		}, request)

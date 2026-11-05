@@ -16,6 +16,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
 
@@ -135,6 +136,8 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 	const flat = `tier("request", fixed(0.01))`
 	const startingQuota = 2_000_000
 	const imageExpression = `tier("standard", p * 5 + cr * 1.25 + img * 8 + img_cr * 2 + c * 30)`
+	qwenImageExpression, ok := billing_setting.GetBuiltinBillingExpr("qwen-image-3.0")
+	require.True(t, ok)
 	imageUsage := &dto.Usage{PromptTokens: 1000, CompletionTokens: 100, TotalTokens: 1100,
 		PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 300, ImageTokens: 600, CachedTokensDetails: &dto.CachedTokenDetails{ImageTokens: common.GetPointer(200)}}}
 	operation_setting.SetToolPriceForTest("fixed_billing_tool", 4)
@@ -151,6 +154,7 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 		want                                            int
 		unit                                            billingexpr.BillingUnit
 		requestedImages, actualImages                   int
+		referenceImages                                 int
 	}{
 		{name: "missing usage charges once", expression: flat, want: 5000, unit: billingexpr.BillingUnitRequest},
 		{name: "zero usage charges once", expression: flat, usage: &dto.Usage{}, want: 5000, unit: billingexpr.BillingUnitRequest},
@@ -171,6 +175,8 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 		{name: "realtime records actual expression inputs", expression: imageExpression, estimate: 10000, usage: imageUsage, realtime: true, want: 4000, unit: billingexpr.BillingUnitToken},
 		{name: "image cache insufficient wallet never reserves tokens", expression: imageExpression, estimate: 10000, insufficient: true},
 		{name: "image quantity refunds missing images", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 3, actualImages: 2, want: 40000, unit: billingexpr.BillingUnitRequest},
+		{name: "qwen reference images reach push and backfill log", expression: qwenImageExpression, usage: &dto.Usage{PromptTokens: 1, TotalTokens: 1}, requestedImages: 2, actualImages: 2, referenceImages: 3, want: 28767, unit: billingexpr.BillingUnitToken},
+		{name: "qwen missing output retains all reference images", expression: qwenImageExpression, usage: &dto.Usage{PromptTokens: 1, TotalTokens: 1}, requestedImages: 3, actualImages: 2, referenceImages: 3, want: 28767, unit: billingexpr.BillingUnitToken},
 		{name: "image quantity keeps request when actual missing", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 3, want: 60000, unit: billingexpr.BillingUnitRequest},
 		{name: "image quantity zero price stays free", expression: `tier("image", fixed(0)) * image_count`, requestedImages: 3, actualImages: 2, unit: billingexpr.BillingUnitRequest},
 		{name: "image quantity failure refunds reservation", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 3, refund: true},
@@ -208,6 +214,7 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 			}
 			if tc.requestedImages > 0 {
 				request.ImageCount = &tc.requestedImages
+				request.ReferenceImageCount = &tc.referenceImages
 			}
 			cost, trace, err := billingexpr.RunExprWithRequest(tc.expression, billingexpr.TokenParams{P: float64(tc.estimate), Len: float64(tc.estimate)}, *request)
 			require.NoError(t, err)
@@ -236,6 +243,9 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 				held, err := model.GetUserQuota(user.Id, true)
 				require.NoError(t, err)
 				assert.Equal(t, quota-reservation, held)
+				if tc.requestedImages > 0 {
+					require.Nil(t, PrepareImageBillingForRequest(ctx, info, tc.requestedImages, tc.referenceImages, false))
+				}
 				if tc.outboundImages > 0 {
 					reserveErr := PrepareImageBillingForRequest(ctx, info, tc.outboundImages, 0, false)
 					if tc.reserveInsufficient {
@@ -301,6 +311,9 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 							}
 						}
 						assert.Equal(t, float64(count), other["image_count"])
+						facts, ok := other["usage_facts"].(map[string]any)
+						require.True(t, ok)
+						assert.Equal(t, float64(tc.referenceImages), facts["input_images"], "reference count must survive log storage, including explicit zero")
 						assert.Equal(t, tc.requestedImages, *request.ImageCount, "actual count must not mutate the frozen request")
 					}
 					if tc.expression == imageExpression {

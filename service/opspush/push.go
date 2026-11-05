@@ -685,6 +685,11 @@ func extraWithin(other map[string]json.RawMessage, keys []string, limit int) map
 			subset[key] = value
 		}
 	}
+	if raw, err := common.Marshal(subset); err == nil && len(raw) > limit {
+		// A long pricing expression must not discard the actual image/video
+		// quantities OPS needs to calculate the charge.
+		delete(subset, "expr_b64")
+	}
 	if raw, err := common.Marshal(subset); err != nil || len(subset) == 0 || len(raw) > limit {
 		return nil
 	}

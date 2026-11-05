@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"sort"
 	"strings"
@@ -614,6 +615,16 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 	if snap != nil && snap.UsageFactsBilling && relayInfo.BillingRequestInput != nil && len(relayInfo.BillingRequestInput.Usage) > 0 {
 		other.SetPublic("usage_facts", relayInfo.BillingRequestInput.Usage)
+	}
+	if input := relayInfo.BillingRequestInput; relayInfo.ImageRequestCount > 0 && input != nil && input.ReferenceImageCount != nil {
+		// Report the count used by reference_image_count, never an output count
+		// or a caller-supplied extra. Keep existing provider usage facts intact.
+		facts := maps.Clone(input.Usage)
+		if facts == nil {
+			facts = make(map[string]any)
+		}
+		facts["input_images"] = *input.ReferenceImageCount
+		other.SetPublic("usage_facts", facts)
 	}
 
 	attachQuotaSaturation(ctx, relayInfo, other)

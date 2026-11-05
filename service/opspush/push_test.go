@@ -1,6 +1,7 @@
 package opspush
 
 import (
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -381,4 +382,40 @@ func TestBuildV11LinksTopupsAndKeepsV1Unchanged(t *testing.T) {
 	assert.Equal(t, "7.3", legacy["topup"].(map[string]any)["moneyCny"])
 	assert.Equal(t, false, legacy["quotaRecorded"])
 	assert.Contains(t, byId, "task_1-r7")
+}
+
+func TestImageReferenceFactsSurvivePushAndLogBackfill(t *testing.T) {
+	for _, references := range []int{0, 3} {
+		for _, oversized := range []bool{false, true} {
+			name := fmt.Sprintf("references_%d_oversized_%t", references, oversized)
+			t.Run(name, func(t *testing.T) {
+				stub := &opsStub{responses: []func(http.ResponseWriter){reply(200, `{"data":{"accepted":4,"duplicates":0,"rejected":[]}}`)}}
+				pusher, db := pusherFixture(t, stub)
+				other := map[string]any{"image_count": 2, "usage_facts": map[string]any{"input_images": references, "seconds": 6}}
+				if oversized {
+					other["expr_b64"] = strings.Repeat("x", 5000)
+				}
+				raw, err := common.Marshal(other)
+				require.NoError(t, err)
+				log := model.Log{Type: model.LogTypeConsume, UserId: 1, ModelName: "qwen-image-3.0", CreatedAt: 300, RequestId: "image-reference", Other: string(raw)}
+				require.NoError(t, db.Create(&log).Error)
+				pusher.Step()
+				require.Len(t, stub.bodies, 1)
+				var body struct {
+					Events []map[string]any `json:"events"`
+				}
+				require.NoError(t, common.UnmarshalJsonStr(stub.bodies[0], &body))
+				require.Len(t, body.Events, 4)
+				extra := body.Events[3]["extra"].(map[string]any)
+				assert.Equal(t, float64(2), extra["image_count"])
+				assert.Equal(t, float64(references), extra["usage_facts"].(map[string]any)["input_images"])
+				require.NoError(t, db.First(&log, log.Id).Error)
+				var stored map[string]any
+				require.NoError(t, common.UnmarshalJsonStr(log.Other, &stored))
+				assert.Equal(t, stored["usage_facts"], extra["usage_facts"], "push and pull must carry the same billing facts")
+				v11 := extraOfEvent(t, EventV11(&log, "", nil, testConversion))
+				assert.Equal(t, stored["usage_facts"], v11["usage_facts"], "v1.1 must preserve reference counts even with a large expression")
+			})
+		}
+	}
 }

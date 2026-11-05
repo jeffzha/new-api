@@ -229,6 +229,9 @@ func appendTaskLogInfo(task *model.Task, other *model.LogOther) {
 	if task == nil || other == nil {
 		return
 	}
+	if task.PrivateData.UpstreamBaseURL != "" {
+		model.CaptureUpstreamLogReference(other, task.PrivateData.UpstreamBaseURL)
+	}
 	if task.TaskID != "" {
 		other.SetPublic("task_id", task.TaskID)
 	}

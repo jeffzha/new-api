@@ -36,6 +36,7 @@ import (
 	"github.com/QuantumNous/new-api/service/opsexport"
 	"github.com/QuantumNous/new-api/service/opsmonitor"
 	"github.com/QuantumNous/new-api/service/opspush"
+	"github.com/QuantumNous/new-api/service/opsupstreams"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -159,6 +160,9 @@ func main() {
 	commandWorkerCtx, stopAgencyCommandWorker := context.WithCancel(context.Background())
 	defer stopAgencyCommandWorker()
 	service.StartBalanceReminderTask(commandWorkerCtx)
+	if err := opsupstreams.Start(commandWorkerCtx); err != nil {
+		common.FatalLog(err.Error())
+	}
 	if err := agencyopspush.StartConfigured(commandWorkerCtx, model.DB); err != nil {
 		common.FatalLog("failed to initialize distributor delivery: " + err.Error())
 		return

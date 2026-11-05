@@ -7070,6 +7070,8 @@
     "The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.": "この経路では素材料金の合計のみが返され、画像1枚ごとや動画1秒ごとの内訳単価は提供されません。供給元が素材料金を請求しない場合、プラットフォームも追加請求しません。",
     "Video material": "動画素材",
     "Video material pricing": "動画素材の料金",
-    "Video output pricing": "動画出力の料金"
+    "Video output pricing": "動画出力の料金",
+    "Register upstreams with OPS": "OPSに接続先を登録",
+    "Upstream registration will run in the background": "バックグラウンドで新しい接続先を確認して登録します"
   }
 }

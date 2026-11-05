@@ -7070,6 +7070,8 @@
     "The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.": "Le fournisseur retourne uniquement le montant total des médias, sans tarif distinct par image ou par seconde. Aucun frais de média n'est ajouté si le fournisseur n'en facture pas.",
     "Video material": "Matériau vidéo",
     "Video material pricing": "Tarification des matériaux vidéo",
-    "Video output pricing": "Tarification de la sortie vidéo"
+    "Video output pricing": "Tarification de la sortie vidéo",
+    "Register upstreams with OPS": "Enregistrer les fournisseurs dans OPS",
+    "Upstream registration will run in the background": "Les nouveaux fournisseurs seront enregistrés en arrière-plan"
   }
 }

@@ -7232,6 +7232,8 @@
     "Video output pricing": "Video output pricing",
     "Best for": "Best for",
     "China public holidays": "China public holidays",
-    "Excluding China public holidays": "Excluding China public holidays"
+    "Excluding China public holidays": "Excluding China public holidays",
+    "Register upstreams with OPS": "Register upstreams with OPS",
+    "Upstream registration will run in the background": "Upstream registration will run in the background"
   }
 }

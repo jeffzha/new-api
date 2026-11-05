@@ -65,6 +65,7 @@ import {
   handleUpdateAllBalances,
 } from '../lib'
 import { useChannels } from './channels-provider'
+import { UpstreamSyncMenuItem } from './upstream-sync-menu-item'
 
 export function ChannelsPrimaryButtons() {
   const { t } = useTranslation()
@@ -177,6 +178,16 @@ export function ChannelsPrimaryButtons() {
             <MoreHorizontal className='h-4 w-4' />
           </DropdownMenuTrigger>
           <DropdownMenuContent align='end' className='w-56'>
+            <UpstreamSyncMenuItem
+              disabled={
+                !hasPermission(
+                  currentUser,
+                  ADMIN_PERMISSION_RESOURCES.CHANNEL,
+                  ADMIN_PERMISSION_ACTIONS.OPERATE
+                )
+              }
+            />
+            <DropdownMenuSeparator />
             {/* Mobile-only: toggle switches */}
             <DropdownMenuCheckboxItem
               className='sm:hidden'

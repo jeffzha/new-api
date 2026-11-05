@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/upstreammap"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/clickhouse"
@@ -357,6 +358,8 @@ func migrateDB() error {
 	}
 
 	err := DB.AutoMigrate(
+		&upstreammap.Mapping{},
+		&upstreammap.Binding{},
 		&Channel{},
 		&Token{},
 		&User{},
@@ -443,6 +446,8 @@ func migrateDBFast() error {
 		name  string
 	}{
 		{&Channel{}, "Channel"},
+		{&upstreammap.Mapping{}, "OpsUpstreamMapping"},
+		{&upstreammap.Binding{}, "OpsUpstreamBinding"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
 		{&UserSession{}, "UserSession"},

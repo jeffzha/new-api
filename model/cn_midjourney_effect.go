@@ -33,7 +33,13 @@ func cnStageMidjourneyEffectTx(tx *gorm.DB, receipt *CNMidjourneyBilling, state 
 		logType, quota = LogTypeRefund, -delta
 	}
 	id := CNIdentity("midjourney-log", receipt.Key, state)
-	other, err := common.Marshal(map[string]any{"task_id": receipt.MjID, "terminal_state": state, "reason": receipt.RefundReason, "token_refund_status": receipt.TokenRefundStatus, "token_disposed_quota": receipt.TokenDisposedQuota})
+	values := map[string]any{"task_id": receipt.MjID, "terminal_state": state, "reason": receipt.RefundReason, "token_refund_status": receipt.TokenRefundStatus, "token_disposed_quota": receipt.TokenDisposedQuota}
+	ref := NewLogOther()
+	CaptureUpstreamLogReference(ref, receipt.UpstreamBaseURL)
+	if admin, ok := ref.Snapshot()["admin_info"]; ok {
+		values["admin_info"] = admin
+	}
+	other, err := common.Marshal(values)
 	if err != nil {
 		return err
 	}

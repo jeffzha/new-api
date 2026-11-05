@@ -7232,6 +7232,8 @@
     "Video output pricing": "视频输出定价",
     "Best for": "擅长",
     "China public holidays": "中国法定节假日",
-    "Excluding China public holidays": "非中国法定节假日"
+    "Excluding China public holidays": "非中国法定节假日",
+    "Register upstreams with OPS": "登记上游到运营平台",
+    "Upstream registration will run in the background": "已提交，后台将检查并登记新上游"
   }
 }

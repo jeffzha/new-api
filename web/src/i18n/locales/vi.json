@@ -7070,6 +7070,8 @@
     "The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.": "Nhà cung cấp chỉ trả về tổng phí tư liệu, không có đơn giá riêng theo ảnh hoặc theo giây. Nền tảng không thu thêm phí tư liệu khi nhà cung cấp không tính phí.",
     "Video material": "Chất liệu video",
     "Video material pricing": "Giá chất liệu video",
-    "Video output pricing": "Giá đầu ra video"
+    "Video output pricing": "Giá đầu ra video",
+    "Register upstreams with OPS": "Đăng ký nhà cung cấp với OPS",
+    "Upstream registration will run in the background": "Các nhà cung cấp mới sẽ được đăng ký ở chế độ nền"
   }
 }

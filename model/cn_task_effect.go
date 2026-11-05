@@ -21,6 +21,13 @@ func cnStageTaskEffectTx(tx *gorm.DB, task *Task, row *CNTaskBilling, delta int,
 		logType, quota = LogTypeRefund, -delta
 	}
 	values := task.BillingLogFacts()
+	if task != nil && task.PrivateData.UpstreamBaseURL != "" {
+		ref := NewLogOther()
+		CaptureUpstreamLogReference(ref, task.PrivateData.UpstreamBaseURL)
+		if admin, ok := ref.Snapshot()["admin_info"]; ok {
+			values["admin_info"] = admin
+		}
+	}
 	// A task settled from the provider's bill reports the tokens on that bill.
 	var bill cnTaskProviderBill
 	if row.ProviderBill != "" && common.UnmarshalJsonStr(row.ProviderBill, &bill) == nil && bill.Settlement.TotalTokens > 0 {

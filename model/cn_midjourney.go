@@ -33,6 +33,7 @@ func cnMigrateMidjourney(db *gorm.DB) error {
 // This receipt is retained independently of task retention. Prepared means no
 // debit has committed. Refund intent and retry metadata survive process loss.
 type CNMidjourneyBilling struct {
+	UpstreamBaseURL    string `gorm:"type:text"`
 	Key                string `gorm:"size:64;primaryKey"`
 	TaskID             int    `gorm:"not null;uniqueIndex"`
 	UserID             int    `gorm:"not null;index"`
@@ -61,7 +62,7 @@ type CNMidjourneyBilling struct {
 	LastErrorCode      string `gorm:"size:64"`
 }
 
-func PrepareCNMidjourney(task *Midjourney, token int, unlimited, playground bool) error {
+func PrepareCNMidjourney(task *Midjourney, token int, unlimited, playground bool, baseURL ...string) error {
 	if !CNDurableMidjourneyAvailable() || task.UserId <= 0 || task.MjId == "" || len(task.MjId) > 191 || task.Quota < 0 || task.Quota > common.MaxQuota || (!playground && token <= 0) || task.GetBillingChannelId() <= 0 || task.AgencyChargeID != "" {
 		return ErrCNConflict
 	}
@@ -74,6 +75,9 @@ func PrepareCNMidjourney(task *Midjourney, token int, unlimited, playground bool
 	key := CNIdentity("midjourney", strconv.Itoa(task.UserId), task.MjId)
 	task.CNBillingKey = key
 	task.cnBilling = &CNMidjourneyBilling{Key: key, UserID: task.UserId, MjID: task.MjId, TokenID: token, TokenUnlimited: unlimited, Playground: playground, ChannelID: task.GetBillingChannelId(), Quota: task.Quota, Action: task.Action, State: "prepared", Currency: currency, QuotaPerUnit: unit, ExchangeRate: rate, ConversionVersion: CNIdentity("gateway-operation-settings-v1", unit, currency, rate), CreatedAt: time.Now().UTC().Format(CNTimeLayout)}
+	if len(baseURL) > 0 {
+		task.cnBilling.UpstreamBaseURL = baseURL[0]
+	}
 	return nil
 }
 

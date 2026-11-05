@@ -205,6 +205,9 @@ func (p *Pusher) Step() time.Duration {
 		built, err := p.build(state)
 		if err != nil {
 			p.fail(state, "build: "+err.Error())
+			if errors.Is(err, ErrUpstreamPending) {
+				return idleWait
+			}
 			return stalledWait
 		}
 		if !built {
@@ -281,6 +284,9 @@ func (p *Pusher) build(state *State) (bool, error) {
 				event = EventV11(log, names[log.ChannelId], topups[log.Id], conversion)
 			}
 			if event != nil {
+				if err := p.attachUpstream(log, event); err != nil {
+					return false, err
+				}
 				events = append(events, event)
 			} else {
 				skipped++

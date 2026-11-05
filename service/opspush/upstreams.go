@@ -68,7 +68,7 @@ func (p *Pusher) attachUpstream(log *model.Log, event map[string]any) error {
 	}
 	if raw, err := common.Marshal(extra); err == nil && len(raw)+len(required) > maxExtra {
 		keys := billingKeys
-		if p.Config.Spec == SpecV11 {
+		if p.Config.Spec == SpecV11 || extra["recordKind"] != nil || extra["project_task_terminal"] != nil {
 			keys = append(append([]string{}, v11BillingKeys...), "recordKind", "direction", "quotaPerUnit", "usdExchangeRate", "topupPrice", "project_task_terminal", "project_original_request", "project_task_row", "billing_scope")
 		}
 		extra = extraWithin(extra, keys, maxExtra-len(required)-64)

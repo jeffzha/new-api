@@ -439,6 +439,9 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 	privateData := TaskPrivateData{}
 	if relayInfo != nil && relayInfo.ChannelMeta != nil {
 		privateData.UpstreamBaseURL = relayInfo.ChannelBaseUrl
+		if privateData.UpstreamBaseURL == "" {
+			privateData.UpstreamBaseURL = constant.GetChannelBaseURL(relayInfo.ChannelType)
+		}
 		if relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeGemini ||
 			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi ||
 			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeSeedanceDomestic ||

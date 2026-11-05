@@ -67,7 +67,11 @@ func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.
 		if relayInfo.AgencyPricing != nil || model.IsAgencyDurableUser(relayInfo.UserId) {
 			return false, model.ErrAgencyFundingUnavailable
 		}
-		if err := model.PrepareCNMidjourney(task, relayInfo.TokenId, relayInfo.TokenUnlimited, relayInfo.IsPlayground, relayInfo.ChannelBaseUrl); err != nil {
+		baseURL := relayInfo.ChannelBaseUrl
+		if baseURL == "" {
+			baseURL = constant.GetChannelBaseURL(relayInfo.ChannelType)
+		}
+		if err := model.PrepareCNMidjourney(task, relayInfo.TokenId, relayInfo.TokenUnlimited, relayInfo.IsPlayground, baseURL); err != nil {
 			return false, err
 		}
 	}

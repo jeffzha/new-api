@@ -25,6 +25,7 @@ import { useSystemConfigStore } from '@/stores/system-config-store'
 import { DEFAULT_TOKEN_UNIT } from '../constants'
 import { useBillingTime } from '../hooks/use-billing-time'
 import {
+  formatTaskUsageUnitPrice,
   getDynamicDisplayGroupRatio,
   getDynamicPriceUnitLabelKey,
   getDynamicPricingSummary,
@@ -35,6 +36,10 @@ import { isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import { getVideoTokenMatrixPricing } from '../lib/provider-pricing'
 import { taskUsageUnitLabel } from '../lib/task-price-display'
+import {
+  getVideoPricingTable,
+  videoPriceRowConditions,
+} from '../lib/video-pricing-table'
 import type { PricingModel, TokenUnit } from '../types'
 import { VideoTokenMatrixPricing } from './video-token-matrix-pricing'
 
@@ -92,9 +97,45 @@ export function ModelPriceCell(props: {
     return (
       <VideoTokenMatrixPricing
         pricing={providerVideoPricing}
-        groupRatio={getDynamicDisplayGroupRatio(props.model, options.selectedGroup)}
+        groupRatio={getDynamicDisplayGroupRatio(
+          props.model,
+          options.selectedGroup
+        )}
         variant='summary'
       />
+    )
+  }
+  const videoPricing = getVideoPricingTable(props.model)
+  if (videoPricing?.outputRows.some((row) => row.durationBasis)) {
+    return (
+      <span className='block space-y-1 whitespace-normal'>
+        {videoPricing.outputRows.map((row) => (
+          <span key={row.key} className='block whitespace-normal'>
+            <span className='text-muted-foreground'>
+              {videoPriceRowConditions(
+                row,
+                videoPricing.usageSchema,
+                i18n.language,
+                t
+              )}
+            </span>{' '}
+            {row.resolution}{' '}
+            <span className='font-mono tabular-nums'>
+              {formatTaskUsageUnitPrice(row.amountUSD, {
+                tokenUnit,
+                priceRate: options.priceRate,
+                usdExchangeRate: options.usdExchangeRate,
+                showRechargePrice: options.showRechargePrice,
+                groupRatioMultiplier: getDynamicDisplayGroupRatio(
+                  props.model,
+                  options.selectedGroup
+                ),
+              })}
+            </span>{' '}
+            / {row.rule === 'second' ? t('s') : t('request')}
+          </span>
+        ))}
+      </span>
     )
   }
   const providerCaption = dynamic?.providerCount

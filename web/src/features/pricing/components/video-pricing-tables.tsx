@@ -27,10 +27,11 @@ import {
   type DynamicPriceOptions,
 } from '../lib/dynamic-price'
 import { taskPriceLabel, taskUsageUnitLabel } from '../lib/task-price-display'
-import type {
-  VideoMaterialFieldRow,
-  VideoMaterialPricing,
-  VideoPricingTable,
+import {
+  videoPriceRowConditions,
+  type VideoMaterialFieldRow,
+  type VideoMaterialPricing,
+  type VideoPricingTable,
 } from '../lib/video-pricing-table'
 import type {
   BillingUsageFieldSchema,
@@ -130,6 +131,9 @@ export function VideoPricingTables(props: VideoPricingTablesProps) {
   const thClass =
     'text-muted-foreground py-2 text-[10px] font-medium tracking-wider uppercase'
   const cellClass = 'py-2.5 align-top whitespace-normal break-words'
+  const hasConditions = props.table.outputRows.some(
+    (row) => row.conditions?.length
+  )
 
   const materialRuleOf = (row: MaterialTableRow): string => {
     if (row.pricing.kind === 'catalog' && row.item) {
@@ -189,22 +193,47 @@ export function VideoPricingTables(props: VideoPricingTablesProps) {
               cellClassName: `${cellClass} font-medium`,
               cell: (row) => row.resolution,
             },
+            ...(hasConditions
+              ? [
+                  {
+                    id: 'conditions',
+                    header: t('Applicable conditions'),
+                    className: thClass,
+                    cellClassName: cellClass,
+                    cell: (row: VideoPricingTable['outputRows'][number]) =>
+                      videoPriceRowConditions(
+                        row,
+                        props.table.usageSchema,
+                        i18n.language,
+                        t
+                      ),
+                  },
+                ]
+              : []),
             {
               id: 'rule',
               header: t('Billing rule'),
               className: thClass,
               cellClassName: `${cellClass} text-muted-foreground`,
-              cell: (row) =>
-                row.rule === 'second'
-                  ? t('Per second')
-                  : [
-                      t('Per request'),
-                      row.seconds
-                        ? t('Fixed {{seconds}}s', { seconds: row.seconds })
-                        : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' · '),
+              cell: (row) => {
+                if (row.rule === 'second') {
+                  if (row.durationBasis === 'input_output') {
+                    return t('Per second (input + output duration)')
+                  }
+                  if (row.durationBasis === 'output') {
+                    return t('Per second (output duration)')
+                  }
+                  return t('Per second')
+                }
+                return [
+                  t('Per request'),
+                  row.seconds
+                    ? t('Fixed {{seconds}}s', { seconds: row.seconds })
+                    : '',
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
+              },
             },
             {
               id: 'price',

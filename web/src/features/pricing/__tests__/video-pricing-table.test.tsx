@@ -17,12 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
-import { expect, it, vi } from 'vitest'
+import { render, screen, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import {
+  DEFAULT_CURRENCY_CONFIG,
+  useSystemConfigStore,
+} from '@/stores/system-config-store'
 
+import { ModelCard } from '../components/model-card'
 import { ModelDetailsContent } from '../components/model-details'
+import { ModelPriceCell } from '../components/model-price-cell'
 import { VideoPricingTables } from '../components/video-pricing-tables'
 import { withPluginPricing } from '../lib/plugin-pricing'
 import { getVideoPricingTable } from '../lib/video-pricing-table'
@@ -229,6 +235,163 @@ const h3SensitiveModel: PricingModel = {
   id: 13,
   model_name: 'MiniMax-H3-Sensitive',
 }
+
+const happyHorseModel: PricingModel = {
+  id: 33,
+  model_name: 'HappyHorse1.1',
+  quota_type: 1,
+  model_ratio: 1,
+  completion_ratio: 1,
+  enable_groups: ['default'],
+  billing_mode: 'tiered_expr',
+  billing_expr:
+    'u("kind") == "edit" && u("resolution") == "720P" ? tier("720P-edit", u("seconds") * 0.1232876712328767) : u("kind") == "edit" && u("resolution") == "1080P" ? tier("1080P-edit", u("seconds") * 0.2191780821917808) : u("resolution") == "480P" ? tier("480P", u("seconds") * 0.06164383561643836) : u("resolution") == "1080P" ? tier("1080P", u("seconds") * 0.1643835616438356) : tier("720P", u("seconds") * 0.1232876712328767)',
+  billing_usage_schema: {
+    kind: {
+      enum: ['video', 'edit'],
+      description: { en: 'Video operation type', zh: '视频操作类型' },
+    },
+    resolution: {
+      enum: ['480P', '720P', '1080P'],
+      description: { en: 'Output video resolution', zh: '输出视频分辨率' },
+    },
+    seconds: usageNumber(
+      'second',
+      'Video generation unit price',
+      '视频生成单价'
+    ),
+  },
+}
+
+describe('HappyHorse operation pricing', () => {
+  let previousCurrency = useSystemConfigStore.getState().config.currency
+  beforeEach(() => {
+    previousCurrency = useSystemConfigStore.getState().config.currency
+    useSystemConfigStore.getState().setConfig({
+      currency: {
+        ...DEFAULT_CURRENCY_CONFIG,
+        quotaDisplayType: 'CNY',
+        usdExchangeRate: 7.3,
+      },
+    })
+  })
+  afterEach(() => {
+    useSystemConfigStore.getState().setConfig({ currency: previousCurrency })
+  })
+
+  it.each(['HappyHorse1.1', 'happyhorse-1.1'])(
+    'keeps %s generation and editing prices separate at the same resolution',
+    (modelName) => {
+      const table = getVideoPricingTable({
+        ...happyHorseModel,
+        model_name: modelName,
+      })
+      expect(table?.outputRows).toHaveLength(5)
+      expect(table?.outputRows.map((row) => row.resolution)).toEqual([
+        '480P',
+        '720P',
+        '1080P',
+        '720P',
+        '1080P',
+      ])
+      const expected = [0.45, 0.9, 1.2, 0.9, 1.6]
+      table?.outputRows.forEach((row, index) => {
+        expect(row.amountUSD * 7.3).toBeCloseTo(expected[index], 10)
+      })
+      expect(new Set(table?.outputRows.map((row) => row.key)).size).toBe(5)
+    }
+  )
+
+  it('labels HappyHorse generation and editing rows with their distinct duration rules', () => {
+    const table = getVideoPricingTable(happyHorseModel)
+    if (!table) throw new Error('Expected a video pricing table')
+    render(
+      <VideoPricingTables
+        table={table}
+        tokenUnit='M'
+        priceRate={1}
+        usdExchangeRate={7.3}
+      />
+    )
+    const rows = screen.getAllByRole('row')
+    const generation = rows.find(
+      (row) =>
+        row.textContent?.includes('1080P') &&
+        row.textContent.includes('Video generation')
+    )
+    const editing = rows.find(
+      (row) =>
+        row.textContent?.includes('1080P') &&
+        row.textContent.includes('Video editing')
+    )
+    expect(generation).toBeDefined()
+    expect(editing).toBeDefined()
+    if (!generation || !editing) throw new Error('Expected both operation rows')
+    expect(
+      within(generation).getByText('Per second (output duration)')
+    ).toBeInTheDocument()
+    expect(generation).toHaveTextContent('¥1.2')
+    expect(
+      within(editing).getByText('Per second (input + output duration)')
+    ).toBeInTheDocument()
+    expect(editing).toHaveTextContent('¥1.6')
+  })
+
+  it('shows the HappyHorse 1080P generation price in the catalogue card', () => {
+    render(
+      <ModelCard
+        model={happyHorseModel}
+        onClick={() => undefined}
+        priceRate={1}
+        usdExchangeRate={7.3}
+      />
+    )
+    expect(screen.getByText(/1\.2(?:0)?$/)).toBeInTheDocument()
+    expect(screen.getByText(/1\.6(?:0)?$/)).toBeInTheDocument()
+    expect(screen.getAllByText(/Video generation/).length).toBeGreaterThan(0)
+  })
+
+  it('separates HappyHorse generation and editing prices in the catalogue table view', () => {
+    render(
+      <ModelPriceCell
+        model={happyHorseModel}
+        options={{ usdExchangeRate: 7.3 }}
+      />
+    )
+    expect(screen.getAllByText('Video generation')).toHaveLength(3)
+    expect(screen.getAllByText('Video editing')).toHaveLength(2)
+    expect(screen.getByText('¥1.2')).toBeInTheDocument()
+    expect(screen.getByText('¥1.6')).toBeInTheDocument()
+  })
+
+  it('uses administrator prices and the selected group multiplier without changing generation to editing', () => {
+    const table = getVideoPricingTable({
+      ...happyHorseModel,
+      billing_expr: happyHorseModel.billing_expr?.replace(
+        '0.1643835616438356',
+        '0.1'
+      ),
+    })
+    if (!table) throw new Error('Expected a video pricing table')
+    render(
+      <VideoPricingTables
+        table={table}
+        tokenUnit='M'
+        priceRate={1}
+        usdExchangeRate={7.3}
+        groupRatio={0.5}
+      />
+    )
+    const row = screen
+      .getAllByRole('row')
+      .find(
+        (candidate) =>
+          candidate.textContent?.includes('1080P') &&
+          candidate.textContent.includes('Video generation')
+      )
+    expect(row).toHaveTextContent('¥0.365')
+  })
+})
 
 it('expands the H3 output list from the configured expression, not the sampled resolutions', () => {
   const table = getVideoPricingTable(bridgeH3Model)

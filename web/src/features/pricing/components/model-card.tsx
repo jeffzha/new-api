@@ -43,7 +43,10 @@ import { getDisplayGroupRatio, isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import { getVideoTokenMatrixPricing } from '../lib/provider-pricing'
 import { taskPriceLabel, taskUsageUnitLabel } from '../lib/task-price-display'
-import { getVideoPricingTable } from '../lib/video-pricing-table'
+import {
+  getVideoPricingTable,
+  videoPriceRowConditions,
+} from '../lib/video-pricing-table'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
@@ -110,20 +113,37 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   } else if (videoPricingTable) {
     priceSummary = (
       <>
-        {videoPricingTable.outputRows.slice(0, 4).map((row) => (
-          <span
-            key={row.key}
-            className='text-muted-foreground whitespace-nowrap'
-          >
-            <span>{row.resolution}</span>{' '}
-            <span className='text-foreground font-mono font-semibold'>
-              {formatTaskUsageUnitPrice(row.amountUSD, priceOptions)}
-            </span>{' '}
-            <span className='text-xs'>
-              / {row.rule === 'second' ? t('s') : t('request')}
+        {videoPricingTable.outputRows
+          .slice(
+            0,
+            videoPricingTable.outputRows.some((row) => row.durationBasis)
+              ? undefined
+              : 4
+          )
+          .map((row) => (
+            <span
+              key={row.key}
+              className='text-muted-foreground whitespace-normal'
+            >
+              {row.conditions?.length ? (
+                <span>
+                  {videoPriceRowConditions(
+                    row,
+                    videoPricingTable.usageSchema,
+                    i18n.language,
+                    t
+                  )}{' '}
+                </span>
+              ) : null}
+              <span>{row.resolution}</span>{' '}
+              <span className='text-foreground font-mono font-semibold'>
+                {formatTaskUsageUnitPrice(row.amountUSD, priceOptions)}
+              </span>{' '}
+              <span className='text-xs'>
+                / {row.rule === 'second' ? t('s') : t('request')}
+              </span>
             </span>
-          </span>
-        ))}
+          ))}
       </>
     )
   } else if (dynamicSummary) {

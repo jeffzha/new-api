@@ -27,6 +27,7 @@ param(
     [string]$ExpectedVersion = "",
     [string]$DomainStatusUrl = "https://gateway.nexus-reach.com/api/status",
     [string]$IpStatusUrl = "https://124.174.0.221/api/status",
+    [string]$StaticArchiveRoot = "/opt/new-api/deploy/api-docs/gateway-assets",
     # Use when only the domain is a supported public HTTPS entry point.
     [switch]$DomainOnly,
     [ValidateRange(0, 120)][int]$SshConnectionCooldownSeconds = 30,
@@ -40,6 +41,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$staticPublicUrl = ([Uri]$DomainStatusUrl).GetLeftPart([System.UriPartial]::Authority)
 
 if ([string]::IsNullOrWhiteSpace($DomainStatusUrl)) {
     throw "DomainStatusUrl is required; public domain validation cannot be disabled."
@@ -382,6 +384,14 @@ check_release() {
     if [ "`$runtime_version" != "`$manifest_version" ] || [ "`$container_image" != "`$manifest_image" ]; then
         echo "Slot `$release_slot does not match its release manifest." >&2
         return 1
+    fi
+    # A healthy API does not prove that the browser can load its JavaScript.
+    # Refuse positive candidate traffic without an image-bound asset manifest
+    # and public MIME/checksum checks, including every async chunk.
+    if [ '$(if ($Rollback) { '1' } else { '0' })' != '1' ]; then
+        python3 "`$remote_dir/releases/gateway-static-assets.py" verify \
+            --root '$StaticArchiveRoot' --container "`$release_id" \
+            --public-url '$staticPublicUrl'
     fi
 }
 

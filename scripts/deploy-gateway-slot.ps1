@@ -32,6 +32,11 @@ param(
     [string]$ImageTag = "",
     [string]$ImageCommit = "",
     [string]$VersionNamespace = "gateway",
+    # Pack the exact dist embedded in the image with gateway-static-assets.py pack.
+    [string]$StaticAssetsBundle = "",
+    [string]$StaticArchiveRoot = "/opt/new-api/deploy/api-docs/gateway-assets",
+    [string]$DomainUrl = "https://gateway.nexus-reach.com",
+    [string]$CaddyContainerName = "new-api-seedance-caddy-1",
     [string]$Platform = "linux/amd64",
     [string]$DockerfilePath = "Dockerfile",
     [string]$BunRegistry = "https://registry.npmmirror.com",
@@ -56,6 +61,9 @@ $ErrorActionPreference = "Stop"
 
 if (-not $PreflightOnly -and -not $UseExistingImage) {
     throw "Production builds are disabled. Build outside production and supply -UseExistingImage, -ImageTag, and -ImageCommit."
+}
+if (-not $PreflightOnly -and -not (Test-Path -LiteralPath $StaticAssetsBundle -PathType Leaf)) {
+    throw "StaticAssetsBundle is required: pack the exact image build's web/dist before deployment."
 }
 
 if (-not (Test-Path -LiteralPath $SshKeyPath -PathType Leaf)) {
@@ -373,6 +381,10 @@ printf '\n'
     $remoteSourceTar = "$RemoteDir/releases/$safeTag-source.tar"
     $remoteBuildDir = "$RemoteDir/builds/$slotName-$safeTag"
     $overrideFile = "$RemoteDir/compose.$slotName.override.yml"
+    $remoteAssetsBundle = "$RemoteDir/releases/$safeTag-static.tar.gz"
+    $remoteAssetsHelper = "$RemoteDir/releases/gateway-static-assets.py"
+    Invoke-Scp -Source $StaticAssetsBundle -Destination "${RemoteHost}:$remoteAssetsBundle"
+    Invoke-Scp -Source (Join-Path $PSScriptRoot "gateway-static-assets.py") -Destination "${RemoteHost}:$remoteAssetsHelper"
 
     if (-not $UseExistingImage) {
         if (Test-Path -LiteralPath $localSourceTar) {
@@ -632,6 +644,16 @@ exit 1
 
     Wait-ForNextSshConnection
     Invoke-RemoteScript $remoteScript
+
+    # Publish/verify all entry and async files before the separate traffic step.
+    # The replacement script has released the shared lock at this point.
+    Invoke-RemoteScript @"
+set -Eeuo pipefail
+umask 022
+target_id="`$(docker ps --filter 'label=com.docker.compose.project=$ComposeProject' --filter 'label=com.docker.compose.service=$targetService' --format '{{.ID}}')"
+test -n "`$target_id"
+python3 '$remoteAssetsHelper' publish --bundle '$remoteAssetsBundle' --root '$StaticArchiveRoot' --container "`$target_id" --caddyfile '$Caddyfile' --caddy-container '$CaddyContainerName' --public-url '$DomainUrl'
+"@
 
     if (-not $KeepLocalSourceTar -and (Test-Path -LiteralPath $localSourceTar)) {
         Remove-Item -LiteralPath $localSourceTar -Force

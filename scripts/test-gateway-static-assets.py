@@ -127,8 +127,8 @@ suffix backend unchanged
                     return html.encode()
                 return b''
 
-            with patch.dict('sys.modules', {'fcntl': locks}), patch.object(assets, 'run', side_effect=docker) as commands:
-                with patch.object(assets, 'verify', side_effect=[None, ValueError('public MIME check failed')]):
+            with patch.dict('sys.modules', {'fcntl': locks}), patch.object(assets, 'run', side_effect=docker) as commands, patch.object(assets, 'get_asset'):
+                with patch.object(assets, 'verify', side_effect=ValueError('public MIME check failed')):
                     with self.assertRaisesRegex(ValueError, 'MIME'):
                         assets.publish(args)
                 self.assertEqual(caddyfile.read_bytes(), original)

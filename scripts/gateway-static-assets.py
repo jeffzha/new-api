@@ -180,11 +180,13 @@ def publish(args):
             if entries(html) != manifest['entries']:
                 raise ValueError('Bundle does not match the running candidate')
             image = run('docker', 'inspect', '-f', '{{.Image}}', args.container).decode().strip()
-            # Verify the bytes actually embedded in the image, not a separately
-            # rebuilt dist that merely happens to have the same entry names.
+            # Compare entry bytes with the running image. Full public checks
+            # below include every async file. Do not flood the application's
+            # shared web rate limiter with hundreds of direct asset requests.
             networks = json.loads(run('docker', 'inspect', '-f', '{{json .NetworkSettings.Networks}}', args.container))
             address = next(network['IPAddress'] for network in networks.values() if network.get('IPAddress'))
-            verify(manifest, 'http://' + address + ':3000')
+            for name in manifest['entries']:
+                get_asset('http://' + address + ':3000' + name, manifest['files'][name])
             for name in manifest['files']:
                 destination = args.root / asset_path(name)
                 destination.parent.mkdir(parents=True, exist_ok=True)

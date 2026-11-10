@@ -230,14 +230,23 @@ if ($managedMatch) {
     $currentProxyMatches = [regex]::Matches($currentManagedBlock, $currentProxyPattern)
     $currentCookieMatches = [regex]::Matches($currentManagedBlock, '(?m)^[\t ]*lb_policy[\t ]+cookie[\t ]+new_api_slot[\t ]+[0-9a-f]{64}[\t ]*\{[\t ]*\r?$')
     $currentFallbackMatches = [regex]::Matches($currentManagedBlock, '(?m)^[\t ]*fallback[\t ]+weighted_round_robin[\t ]+(\d+)[\t ]+(\d+)[\t ]*\r?$')
-    if ($currentWeightMatches.Count -ne 1 -or $currentProxyMatches.Count -ne 1 -or $currentCookieMatches.Count -ne 1 -or $currentFallbackMatches.Count -ne 1) {
+    $currentDirectMatches = [regex]::Matches($currentManagedBlock, '(?m)^[\t ]*lb_policy[\t ]+weighted_round_robin[\t ]+(\d+)[\t ]+(\d+)[\t ]*\r?$')
+    $cookiePolicy = $currentCookieMatches.Count -eq 1 -and $currentFallbackMatches.Count -eq 1 -and $currentDirectMatches.Count -eq 0
+    $directPolicy = $currentDirectMatches.Count -eq 1 -and $currentCookieMatches.Count -eq 0 -and $currentFallbackMatches.Count -eq 0
+    if ($currentWeightMatches.Count -ne 1 -or $currentProxyMatches.Count -ne 1 -or -not ($cookiePolicy -or $directPolicy)) {
         throw "The existing managed Gateway block is malformed or uses an unexpected load-balancing policy."
     }
+    $policyWeights = if ($directPolicy) { $currentDirectMatches[0] } else { $currentFallbackMatches[0] }
     $currentBlueWeight = [int]$currentWeightMatches[0].Groups[1].Value
     $currentGreenWeight = [int]$currentWeightMatches[0].Groups[2].Value
-    if ($currentBlueWeight -ne [int]$currentFallbackMatches[0].Groups[1].Value -or $currentGreenWeight -ne [int]$currentFallbackMatches[0].Groups[2].Value -or ($currentBlueWeight + $currentGreenWeight) -ne 100) {
+    if ($currentBlueWeight -ne [int]$policyWeights.Groups[1].Value -or $currentGreenWeight -ne [int]$policyWeights.Groups[2].Value -or ($currentBlueWeight + $currentGreenWeight) -ne 100) {
         throw "The existing Gateway weight comment and fallback weights are inconsistent."
     }
+    # Change weights only; preserve release fallback scope and live health policy.
+    $managedBlock = [regex]::Replace($currentManagedBlock, '(?m)(# weights blue=)\d+( green=)\d+', "`${1}$blueWeight`${2}$greenWeight")
+    $weightPattern = if ($directPolicy) { '(?m)(lb_policy[\t ]+weighted_round_robin[\t ]+)\d+[\t ]+\d+' } else { '(?m)(fallback[\t ]+weighted_round_robin[\t ]+)\d+[\t ]+\d+' }
+    $managedBlock = [regex]::Replace($managedBlock, $weightPattern, "`${1}$blueWeight $greenWeight")
+    $managedBlock = (($managedBlock -split "`n" | ForEach-Object { $_ -replace ("^" + [regex]::Escape($managedMatch.Groups["indent"].Value)), '' }) -join "`n").Trim()
 
     $newlyEnabledSlot = ""
     if ($currentBlueWeight -eq 0 -and $blueWeight -gt 0) {

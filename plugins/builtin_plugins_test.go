@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var expectedKeys = []string{"alibaba", "doubao", "google", "hailuo", "jimeng", "kling", "newapi-video", "sora", "sunoapi", "vertex-ai", "vidu", "wangpaiai"}
+var expectedKeys = []string{"alibaba", "doubao", "google", "hailuo", "jimeng", "kling", "newapi-video", "oiioii", "sora", "sunoapi", "vertex-ai", "vidu", "wangpaiai"}
 
 var responsesPluginKeys = []string{"alibaba", "doubao", "google", "hailuo", "jimeng", "kling", "sora", "sunoapi", "vertex-ai", "vidu"}
 

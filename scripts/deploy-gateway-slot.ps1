@@ -202,13 +202,17 @@ function Get-GatewayCanaryState {
     $proxyMatches = [regex]::Matches($managedBlock, $proxyPattern)
     $fallbackMatches = [regex]::Matches($managedBlock, '(?m)^[\t ]*fallback[\t ]+weighted_round_robin[\t ]+(\d+)[\t ]+(\d+)[\t ]*\r?$')
     $cookieMatches = [regex]::Matches($managedBlock, '(?m)^[\t ]*lb_policy[\t ]+cookie[\t ]+new_api_slot[\t ]+[0-9a-f]{64}[\t ]*\{[\t ]*\r?$')
-    if ($weightMatches.Count -ne 1 -or $proxyMatches.Count -ne 1 -or $fallbackMatches.Count -ne 1 -or $cookieMatches.Count -ne 1) {
+    $directMatches = [regex]::Matches($managedBlock, '(?m)^[\t ]*lb_policy[\t ]+weighted_round_robin[\t ]+(\d+)[\t ]+(\d+)[\t ]*\r?$')
+    $cookiePolicy = $cookieMatches.Count -eq 1 -and $fallbackMatches.Count -eq 1 -and $directMatches.Count -eq 0
+    $directPolicy = $directMatches.Count -eq 1 -and $cookieMatches.Count -eq 0 -and $fallbackMatches.Count -eq 0
+    if ($weightMatches.Count -ne 1 -or $proxyMatches.Count -ne 1 -or -not ($cookiePolicy -or $directPolicy)) {
         throw "The managed Gateway blue/green block does not match the expected upstream and weight structure."
     }
+    $policyWeights = if ($directPolicy) { $directMatches[0] } else { $fallbackMatches[0] }
 
     $blueWeight = [int]$weightMatches[0].Groups[1].Value
     $greenWeight = [int]$weightMatches[0].Groups[2].Value
-    if ($blueWeight -ne [int]$fallbackMatches[0].Groups[1].Value -or $greenWeight -ne [int]$fallbackMatches[0].Groups[2].Value) {
+    if ($blueWeight -ne [int]$policyWeights.Groups[1].Value -or $greenWeight -ne [int]$policyWeights.Groups[2].Value) {
         throw "The Gateway weight comment and Caddy fallback weights are inconsistent."
     }
     if ($blueWeight -lt 0 -or $greenWeight -lt 0 -or ($blueWeight + $greenWeight) -ne 100) {
@@ -447,15 +451,15 @@ read_canary_weights() {
     end_count="`$(grep -Ec '^[[:space:]]*# END NEW-API BLUE-GREEN[[:space:]]*`$' "`$caddyfile" || true)"
     weight_count="`$(grep -Ec '^[[:space:]]*# weights blue=[0-9]+ green=[0-9]+[[:space:]]*`$' "`$caddyfile" || true)"
     proxy_count="`$(grep -Fxc "reverse_proxy `$blue_upstream `$green_upstream {" < <(sed -E 's/^[[:space:]]+//; s/\r`$//' "`$caddyfile") || true)"
-    fallback_count="`$(grep -Ec '^[[:space:]]*fallback[[:space:]]+weighted_round_robin[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]*`$' "`$caddyfile" || true)"
+    fallback_count="`$(grep -Ec '^[[:space:]]*(fallback|lb_policy)[[:space:]]+weighted_round_robin[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]*`$' "`$caddyfile" || true)"
     cookie_count="`$(grep -Ec '^[[:space:]]*lb_policy[[:space:]]+cookie[[:space:]]+new_api_slot[[:space:]]+[0-9a-f]{64}[[:space:]]*\{[[:space:]]*`$' "`$caddyfile" || true)"
-    if [ "`$begin_count" -ne 1 ] || [ "`$end_count" -ne 1 ] || [ "`$weight_count" -ne 1 ] || [ "`$proxy_count" -ne 1 ] || [ "`$fallback_count" -ne 1 ] || [ "`$cookie_count" -ne 1 ]; then
+    if [ "`$begin_count" -ne 1 ] || [ "`$end_count" -ne 1 ] || [ "`$weight_count" -ne 1 ] || [ "`$proxy_count" -ne 1 ] || [ "`$fallback_count" -ne 1 ] || [ "`$cookie_count" -gt 1 ]; then
         echo "The managed Gateway block is missing, duplicated, or malformed." >&2
         return 1
     fi
 
     weight_line="`$(grep -E '^[[:space:]]*# weights blue=[0-9]+ green=[0-9]+[[:space:]]*`$' "`$caddyfile")"
-    fallback_line="`$(grep -E '^[[:space:]]*fallback[[:space:]]+weighted_round_robin[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]*`$' "`$caddyfile")"
+    fallback_line="`$(grep -E '^[[:space:]]*(fallback|lb_policy)[[:space:]]+weighted_round_robin[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]*`$' "`$caddyfile")"
     blue_weight="`$(printf '%s' "`$weight_line" | sed -E 's/.*blue=([0-9]+).*/\1/')"
     green_weight="`$(printf '%s' "`$weight_line" | sed -E 's/.*green=([0-9]+).*/\1/')"
     fallback_blue="`$(printf '%s' "`$fallback_line" | sed -E 's/.*weighted_round_robin[[:space:]]+([0-9]+)[[:space:]]+([0-9]+).*/\1/')"

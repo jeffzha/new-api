@@ -563,7 +563,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapperLocal(errors.New("upstream returned an empty response"), "fail_to_fetch_task", http.StatusBadGateway)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		if cnTaskKey != "" {
 			definitive := resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusRequestTimeout && resp.StatusCode != http.StatusConflict && !c.GetBool("ops_task_ambiguous")
 			_ = model.ResolveCNTaskSubmission(cnTaskKey, definitive)
@@ -596,6 +596,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// task ID receipt has been committed.
 	parsed, taskErr := adaptor.ParseResponse(c, resp, info)
 	if taskErr != nil {
+		// A successful HTTP response may already have created billable work.
+		// Parsing it again must not submit another task to another channel.
+		taskErr.NoRetry = true
 		if cnTaskKey != "" {
 			_ = model.ResolveCNTaskSubmission(cnTaskKey, false)
 		}
@@ -610,7 +613,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		if cnTaskKey != "" {
 			_ = model.ResolveCNTaskSubmission(cnTaskKey, false)
 		}
-		return nil, service.TaskErrorWrapperLocal(errors.New("task adaptor returned an empty response"), "plugin_submit_response_invalid", http.StatusBadGateway)
+		failure := service.TaskErrorWrapperLocal(errors.New("task adaptor returned an empty response"), "plugin_submit_response_invalid", http.StatusBadGateway)
+		failure.NoRetry = true
+		return nil, failure
 	}
 	if cnTaskKey != "" {
 		if parsed.UpstreamTaskID == "" && (parsed.Immediate == nil || (parsed.Immediate.Status != model.TaskStatusSuccess && parsed.Immediate.Status != model.TaskStatusFailure)) {

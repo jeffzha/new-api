@@ -24,6 +24,66 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestRelayTaskSubmitAcceptsAsyncSuccessWithoutTreatingErrorsAsTasks(t *testing.T) {
+	service.InitHttpClient()
+	for _, tc := range []struct {
+		name, body, wantCode string
+		status               int
+	}{
+		{name: "OK", status: http.StatusOK, body: `{"id":"upstream-1"}`},
+		{name: "created", status: http.StatusCreated, body: `{"id":"upstream-1"}`},
+		{name: "accepted", status: http.StatusAccepted, body: `{"id":"upstream-1"}`},
+		{name: "accepted without task identity", status: http.StatusAccepted, body: `{}`, wantCode: "plugin_submit_response_failed"},
+		{name: "empty success", status: http.StatusNoContent, wantCode: "plugin_submit_response_failed"},
+		{name: "rate limited", status: http.StatusTooManyRequests, body: `{"id":"must-not-be-accepted"}`, wantCode: "fail_to_fetch_task"},
+		{name: "upstream failure", status: http.StatusBadGateway, body: `{"id":"must-not-be-accepted"}`, wantCode: "fail_to_fetch_task"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			saveBillingConfig(t)
+			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+				"billing_setting.billing_mode": `{"declared-model":"tiered_expr"}`,
+				"billing_setting.billing_expr": `{"declared-model":"tier(\"test\", 0)"}`,
+			}))
+			calls := 0
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				assert.Equal(t, "/submit", r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer upstream.Close()
+			source := strings.Replace(billingFallbackPlugin, `return {taskId:"1"};`, `if (!arguments[1].body.id) throw new Error("missing upstream task id"); return {taskId:arguments[1].body.id,taskData:arguments[1].body};`, 1)
+			source += `export function extractUsage(){return {};}`
+			c, info := newTaskSubmitContext(t, "declared-model", "")
+			pinMappingOrderPlugin(t, c, source)
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
+			c.Set("group", "default")
+			info.UserGroup = "default"
+			info.UsingGroup = "default"
+			info.OriginModelName = "declared-model"
+			info.Billing = &imageReservation{}
+			result, taskErr := RelayTaskSubmit(c, info)
+			assert.Equal(t, 1, calls, "an accepted operation must not be submitted twice")
+			if tc.wantCode != "" {
+				require.NotNil(t, taskErr)
+				assert.Equal(t, tc.wantCode, taskErr.Code)
+				assert.Nil(t, result)
+				if tc.status >= 200 && tc.status < 300 {
+					assert.True(t, taskErr.NoRetry, "an accepted but unparseable task must not be submitted again")
+				}
+				return
+			}
+			require.Nil(t, taskErr)
+			require.NotNil(t, result)
+			assert.Equal(t, "upstream-1", result.UpstreamTaskID)
+			assert.JSONEq(t, tc.body, string(result.TaskData))
+			assert.False(t, c.GetBool("ops_task_ambiguous"))
+			assert.Zero(t, result.Quota)
+		})
+	}
+}
+
 func setupRelayChannelDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	previousDB := model.DB

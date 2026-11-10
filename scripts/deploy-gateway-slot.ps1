@@ -575,30 +575,23 @@ if [ -z "`$source_id" ]; then
 fi
 docker exec "`$source_id" wget -q -O - http://127.0.0.1:3000/api/status | grep -Eq '"success"[[:space:]]*:[[:space:]]*true'
 
-if [ "`$target_slot" = "green" ]; then
-cat > "`$override_file" <<EOF
-services:
-  `$target_service:
-    extends:
-      file: $ComposeFile
-      service: $BlueServiceName
-    image: `$image
-    environment:
-      BATCH_UPDATE_ENABLED: "`$batch_update_enabled"
-      BATCH_UPDATE_INTERVAL: "`$batch_update_interval"
-      NODE_NAME: "`$node_name"
-EOF
-else
-cat > "`$override_file" <<EOF
-services:
-  `$target_service:
-    image: `$image
-    environment:
-      BATCH_UPDATE_ENABLED: "`$batch_update_enabled"
-      BATCH_UPDATE_INTERVAL: "`$batch_update_interval"
-      NODE_NAME: "`$node_name"
-EOF
-fi
+# Preserve env_file, integration flags and resource limits from the live slot.
+python3 - "`$override_file" "`$target_service" "`$target_slot" "`$image" "`$batch_update_enabled" "`$batch_update_interval" "`$node_name" <<'PY'
+import pathlib, shutil, sys, yaml
+path = pathlib.Path(sys.argv[1])
+config = yaml.safe_load(path.read_text()) if path.exists() else {"services": {}}
+if path.exists():
+    shutil.copy2(path, str(path) + ".before-" + sys.argv[4].split(":")[-1])
+service = config.setdefault("services", {}).setdefault(sys.argv[2], {})
+if sys.argv[3] == "green" and "extends" not in service:
+    service["extends"] = {"file": "$ComposeFile", "service": "$BlueServiceName"}
+service["image"] = sys.argv[4]
+environment = service.setdefault("environment", {})
+if not isinstance(environment, dict):
+    raise ValueError("Expected mapping-style environment; refusing to discard live settings")
+environment.update(BATCH_UPDATE_ENABLED=sys.argv[5], BATCH_UPDATE_INTERVAL=sys.argv[6], NODE_NAME=sys.argv[7])
+path.write_text(yaml.safe_dump(config, sort_keys=False))
+PY
 
 docker compose -p "`$compose_project" -f "`$compose_file" -f "`$override_file" config --quiet
 docker compose -p "`$compose_project" -f "`$compose_file" -f "`$override_file" up -d --no-deps "`$target_service"

@@ -4,7 +4,7 @@ export const meta = {
   name: "OiiOii Seedance",
   icon: "Doubao.Color",
   description: { en: "Seedance video generation through OiiOii Super2", zh: "通过 OiiOii Super2 生成 Seedance 视频" },
-  version: "1.0.0",
+  version: "1.0.1",
   author: { name: "QuantumNous" },
   baseUrl: "https://api.oiioii.tv",
   models: ["doubao-seedance-2-0-260128", "doubao-seedance-2-5-260628"],

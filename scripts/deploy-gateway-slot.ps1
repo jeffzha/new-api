@@ -447,19 +447,20 @@ service_container() {
 }
 
 read_canary_weights() {
+    managed_config="`$(sed -n '/^[[:space:]]*# BEGIN NEW-API BLUE-GREEN[[:space:]]*`$/,/^[[:space:]]*# END NEW-API BLUE-GREEN[[:space:]]*`$/p' "`$caddyfile")"
     begin_count="`$(grep -Ec '^[[:space:]]*# BEGIN NEW-API BLUE-GREEN[[:space:]]*`$' "`$caddyfile" || true)"
     end_count="`$(grep -Ec '^[[:space:]]*# END NEW-API BLUE-GREEN[[:space:]]*`$' "`$caddyfile" || true)"
-    weight_count="`$(grep -Ec '^[[:space:]]*# weights blue=[0-9]+ green=[0-9]+[[:space:]]*`$' "`$caddyfile" || true)"
-    proxy_count="`$(grep -Fxc "reverse_proxy `$blue_upstream `$green_upstream {" < <(sed -E 's/^[[:space:]]+//; s/\r`$//' "`$caddyfile") || true)"
-    fallback_count="`$(grep -Ec '^[[:space:]]*(fallback|lb_policy)[[:space:]]+weighted_round_robin[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]*`$' "`$caddyfile" || true)"
-    cookie_count="`$(grep -Ec '^[[:space:]]*lb_policy[[:space:]]+cookie[[:space:]]+new_api_slot[[:space:]]+[0-9a-f]{64}[[:space:]]*\{[[:space:]]*`$' "`$caddyfile" || true)"
+    weight_count="`$(grep -Ec '^[[:space:]]*# weights blue=[0-9]+ green=[0-9]+[[:space:]]*`$' <<< "`$managed_config" || true)"
+    proxy_count="`$(grep -Fxc "reverse_proxy `$blue_upstream `$green_upstream {" < <(sed -E 's/^[[:space:]]+//; s/\r`$//' <<< "`$managed_config") || true)"
+    fallback_count="`$(grep -Ec '^[[:space:]]*(fallback|lb_policy)[[:space:]]+weighted_round_robin[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]*`$' <<< "`$managed_config" || true)"
+    cookie_count="`$(grep -Ec '^[[:space:]]*lb_policy[[:space:]]+cookie[[:space:]]+new_api_slot[[:space:]]+[0-9a-f]{64}[[:space:]]*\{[[:space:]]*`$' <<< "`$managed_config" || true)"
     if [ "`$begin_count" -ne 1 ] || [ "`$end_count" -ne 1 ] || [ "`$weight_count" -ne 1 ] || [ "`$proxy_count" -ne 1 ] || [ "`$fallback_count" -ne 1 ] || [ "`$cookie_count" -gt 1 ]; then
         echo "The managed Gateway block is missing, duplicated, or malformed." >&2
         return 1
     fi
 
-    weight_line="`$(grep -E '^[[:space:]]*# weights blue=[0-9]+ green=[0-9]+[[:space:]]*`$' "`$caddyfile")"
-    fallback_line="`$(grep -E '^[[:space:]]*(fallback|lb_policy)[[:space:]]+weighted_round_robin[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]*`$' "`$caddyfile")"
+    weight_line="`$(grep -E '^[[:space:]]*# weights blue=[0-9]+ green=[0-9]+[[:space:]]*`$' <<< "`$managed_config")"
+    fallback_line="`$(grep -E '^[[:space:]]*(fallback|lb_policy)[[:space:]]+weighted_round_robin[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]*`$' <<< "`$managed_config")"
     blue_weight="`$(printf '%s' "`$weight_line" | sed -E 's/.*blue=([0-9]+).*/\1/')"
     green_weight="`$(printf '%s' "`$weight_line" | sed -E 's/.*green=([0-9]+).*/\1/')"
     fallback_blue="`$(printf '%s' "`$fallback_line" | sed -E 's/.*weighted_round_robin[[:space:]]+([0-9]+)[[:space:]]+([0-9]+).*/\1/')"

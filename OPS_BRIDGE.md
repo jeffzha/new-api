@@ -1,5 +1,44 @@
 # TokenOps B integration
 
+## 2026-11-11: upstream balance rejection events
+
+The product Gateway now classifies explicit provider financial rejections and
+reports them through the existing signed `POST /api/v1/ingest/v1/usage-events`.
+This is a reactive notification, separate from OPS's low-balance thresholds.
+No new database table, endpoint, email sender, or price/debit rule is introduced.
+
+- `status` remains `error`, with zero usage charge. Each failed attempt keeps
+  its existing unique `requestId` (`<original>-e<log id>`). A later successful
+  fallback does not erase the failed upstream's event. Retries resend the same
+  persisted batch; OPS must deduplicate push/pull deliveries before notifying.
+- Existing `extra.base_url`, `extra.gateway_upstream_id`, `extra.ops_upstream_id`
+  identify the execution-time upstream. The OPS numeric identity belongs to
+  `core_upstream_addresses.id`, scoped to the receiving OPS connection. Resolve
+  its name and notification recipients on OPS; channel names are not upstream names.
+- New `extra.upstream_alert` contains `type=upstream_balance_insufficient`,
+  `request_id` (original request), `channel_id`, `error_code`, `status_code`,
+  a fixed safe `error_summary`, `balance=null`, `currency=null`, and
+  `balance_source=unavailable`. A terminal asynchronous task has
+  `error_code=task_failed` and `status_code=0` (no HTTP failure status available).
+- The administrator log stores the same object at
+  `logs.other.admin_info.upstream_alert` for collection recovery. Ordinary user
+  log projections do not expose the administrator field.
+- Only actual provider errors with financial evidence qualify. Local wallet
+  failures, generic quota/rate limits, concurrency and HTTP status alone do not.
+  Unknown provider codes/messages may require adding a recognition rule.
+- General error-log disabling does not discard confirmed balance alerts. Task
+  terminal alerts are emitted by the status-transition winner, separately from refunds.
+- Existing OPS push scheduling remains unchanged: new logs wait its 10-second
+  commit window and are picked up on its 3-second idle cycle when healthy;
+  registration, retries, backlog or OPS outages can extend this delay.
+
+OPS receiver work is owned by the OPS colleague: consume the marker from push
+and administrator log collection, use the authenticated tenant plus upstream
+identity and channel/account clues, add a separate notification switch, merge
+repeated failures, and enqueue mail using existing recipient settings. Never
+infer recovery from silence or one successful account at the same base URL.
+Missing balances must be displayed as unknown rather than zero.
+
 Owner: Zhong Qiuyuan (B1-B12). Worktree: `new-api-ops-b`, branch
 `codex/ops-b-integration`, base `837b7fef1`. This is local development; it has not
 been pushed or deployed. The existing `new-api` checkout is unchanged.

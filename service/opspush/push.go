@@ -538,6 +538,7 @@ func Event(log *model.Log, channelName string) map[string]any {
 	if extra := extraOf(other); extra != nil {
 		event["extra"] = extra
 	}
+	attachUpstreamAlert(other, event)
 	return event
 }
 
@@ -665,7 +666,7 @@ func logAttributes(other, facts map[string]json.RawMessage) map[string]any {
 var billingKeys = []string{"model_ratio", "group_ratio", "completion_ratio", "cache_ratio", "model_price", "user_group_ratio",
 	"matched_tier", "billing_source", "request_path", "cache_tokens", "cache_creation_tokens", "image_count", "frt",
 	"task_id", "usage_facts", "billed_tokens", "estimated_tokens", "seconds", "resolution", "has_video_input", "upstream_amount",
-	"settlement_stage", "pre_consumed_quota", "actual_quota"}
+	"settlement_stage", "pre_consumed_quota", "actual_quota", "upstream_alert"}
 
 // v11BillingKeys are kept as well under v1.1: the frozen task price, refund reasons and the wallet record keys.
 var v11BillingKeys = append(append([]string{}, billingKeys...),
@@ -933,5 +934,6 @@ func EventV11(log *model.Log, channelName string, topup *model.TopUp, conversion
 		extra = added
 	}
 	event["extra"] = extra
+	attachUpstreamAlert(other, event)
 	return event
 }

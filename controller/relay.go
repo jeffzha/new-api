@@ -27,6 +27,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/opsbridge"
 	"github.com/QuantumNous/new-api/service/opsmonitor"
+	"github.com/QuantumNous/new-api/service/upstreamalerts"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
@@ -425,14 +426,15 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		})
 	}
 
-	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
+	other := model.NewLogOther()
+	balanceAlert := upstreamalerts.AppendRelayError(other, err, c.GetString(common.RequestIdKey), channelError.ChannelId)
+	if balanceAlert || constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
 		// 保存错误日志到mysql中
 		userId := c.GetInt("id")
 		tokenName := c.GetString("token_name")
 		modelName := c.GetString("original_model")
 		tokenId := c.GetInt("token_id")
 		userGroup := c.GetString("group")
-		other := model.NewLogOther()
 		if c.Request != nil && c.Request.URL != nil {
 			other.SetPublic("request_path", c.Request.URL.Path)
 		}
@@ -716,6 +718,16 @@ func executeTaskSubmissionWith(
 			diagnostics.attemptSucceeded(retryParam.GetRetry()+1, result)
 			break
 		}
+		// Record a financial provider rejection before task ownership guards
+		// stop retries. Those guards must not hide the failed upstream.
+		taskAPIError := types.WithOpenAIError(types.OpenAIError{Code: taskErr.Code, Message: taskErr.Message}, taskErr.StatusCode)
+		balanceFailure := !taskErr.LocalError && upstreamalerts.FromRelayError(taskAPIError) != nil
+		if balanceFailure {
+			processChannelError(c,
+				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
+					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
+				taskAPIError, relayInfo)
+		}
 		if c.GetBool("cn_task_attempted") {
 			break
 		}
@@ -736,7 +748,7 @@ func executeTaskSubmissionWith(
 			break
 		}
 
-		if !taskErr.LocalError {
+		if !taskErr.LocalError && !balanceFailure {
 			processChannelError(c,
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),

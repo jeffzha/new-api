@@ -411,6 +411,7 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 			continue
 		}
 		if terminalTransition {
+			recordTaskUpstreamBalanceFailure(task)
 			finalizeOpsTaskReservation(task)
 			billingSettled := settleTaskBillingOnComplete(ctx, adaptor, task, &responseItem.TaskInfo)
 			if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
@@ -699,6 +700,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			logger.LogWarn(ctx, fmt.Sprintf("Task %s CAS lost or no-op update, skip billing", task.TaskID))
 			shouldFinalizeBilling = false
 		} else {
+			recordTaskUpstreamBalanceFailure(task)
 			finalizeOpsTaskReservation(task)
 		}
 	} else if !snap.Equal(task.Snapshot()) {

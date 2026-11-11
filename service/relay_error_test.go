@@ -126,6 +126,58 @@ func TestProcessChannelErrorMasksDisableReasonAndNotification(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, apiErr.StatusCode)
 }
 
+func TestUpstreamBalanceFailurePersistsWithoutGeneralErrorLogging(t *testing.T) {
+	truncate(t)
+	user := &model.User{Username: "alert-fixture", AffCode: "alert-fixture", Quota: 10000, Role: common.RoleCommonUser}
+	require.NoError(t, model.DB.Create(user).Error)
+	old := constant.ErrorLogEnabled
+	constant.ErrorLogEnabled = false
+	t.Cleanup(func() { constant.ErrorLogEnabled = old })
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	c.Set("id", user.Id)
+	c.Set("original_model", "example-model")
+	c.Set(common.RequestIdKey, "balance-rejected")
+	c.Set(string(constant.ContextKeyChannelBaseUrl), "https://upstream.example/v1")
+	err := types.WithOpenAIError(types.OpenAIError{Code: "insufficient_balance", Message: "余额不足"}, 403)
+	ProcessChannelError(c, types.ChannelError{ChannelId: 32}, err, nil)
+	var rows []model.Log
+	require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeError).Find(&rows).Error)
+	require.Len(t, rows, 1)
+	assert.Equal(t, 0, rows[0].Quota)
+	var stored map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(rows[0].Other, &stored))
+	admin := stored["admin_info"].(map[string]any)
+	assert.Equal(t, "upstream_balance_insufficient", admin["upstream_alert"].(map[string]any)["type"])
+	assert.Equal(t, "https://upstream.example/v1", admin["upstream"].(map[string]any)["base_url"])
+	local := types.NewErrorWithStatusCode(errors.New("余额不足"), types.ErrorCodeInsufficientUserQuota, 403)
+	ProcessChannelError(c, types.ChannelError{ChannelId: 32}, local, nil)
+	var count int64
+	require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("type = ?", model.LogTypeError).Count(&count).Error)
+	assert.EqualValues(t, 1, count)
+}
+
+func TestUpstreamBalanceFailureFromTerminalTask(t *testing.T) {
+	truncate(t)
+	seedUser(t, 1, 10000)
+	task := &model.Task{UserId: 1, ChannelId: 32, TaskID: "task-provider-rejected",
+		Status: model.TaskStatusFailure, FailReason: "账户余额不足",
+		Properties: model.Properties{OriginModelName: "example-video"},
+		PrivateData: model.TaskPrivateData{UpstreamBaseURL: "https://upstream.example/v1",
+			Execution: &model.TaskExecutionSnapshot{RequestID: "submit-request"}}}
+	recordTaskUpstreamBalanceFailure(task)
+	var rows []model.Log
+	require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeError).Find(&rows).Error)
+	require.Len(t, rows, 1)
+	assert.Equal(t, 0, rows[0].Quota)
+	var stored map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(rows[0].Other, &stored))
+	alert := stored["admin_info"].(map[string]any)["upstream_alert"].(map[string]any)
+	assert.Equal(t, "submit-request", alert["request_id"])
+	assert.EqualValues(t, 0, alert["status_code"])
+	assert.Nil(t, alert["balance"])
+}
+
 func TestVideoEndpointAlertExplainsClientAction(t *testing.T) {
 	text := formatRelayAlert("req-video", "/v1/chat/completions", 208, 0,
 		"doubao-seedance-2-0-fast-260128", "openai", http.StatusBadRequest, "invalid_request", "new_api_error",

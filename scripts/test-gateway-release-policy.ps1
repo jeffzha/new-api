@@ -38,6 +38,10 @@ foreach ($policy in @('lb_policy weighted_round_robin 50 50', ('lb_policy cookie
 }
 (unrelated_routes) {
     reverse_proxy new-api-pricing-reserve:3000
+    # weights blue=20 green=80
+    reverse_proxy tokenops:3000 tokenops-green:3000 {
+        lb_policy weighted_round_robin 20 80
+    }
 }
 "@
     $state = Get-GatewayCanaryState $currentCaddyfile
@@ -46,7 +50,7 @@ foreach ($policy in @('lb_policy weighted_round_robin 50 50', ('lb_policy cookie
     $state = Get-GatewayCanaryState $updatedCaddyfile
     if ($state.Blue -ne 100 -or $state.Green -ne 0) { throw 'Incorrect traffic update' }
     $expected = $currentCaddyfile.Replace('# weights blue=50 green=50', '# weights blue=100 green=0').Replace('weighted_round_robin 50 50', 'weighted_round_robin 100 0')
-    if ($updatedCaddyfile.TrimEnd() -cne $expected.TrimEnd()) { throw 'Traffic update changed unrelated configuration' }
+    if ($updatedCaddyfile.Replace("`r`n", "`n").TrimEnd() -cne $expected.Replace("`r`n", "`n").TrimEnd()) { throw 'Traffic update changed unrelated configuration' }
     $rejected = $false
     try { Get-GatewayCanaryState ($updatedCaddyfile.Replace('# weights blue=100 green=0', '# weights blue=50 green=50')) | Out-Null } catch { $rejected = $true }
     if (-not $rejected) { throw 'Inconsistent weights were accepted' }

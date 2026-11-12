@@ -277,6 +277,100 @@ func TestBusinessModelPricingIsOptInAndUsesPlatformDefaults(t *testing.T) {
 	assert.Equal(t, "43", *prices["hy3"].Version)
 }
 
+func TestBusinessModelTypesAndFilteringPreserveKeyScope(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	withSelfUseModeEnabled(t)
+	require.NoError(t, db.AutoMigrate(&model.AgencyPlatformPriceState{}, &model.AgencyPlatformPriceVersion{}))
+	defer model.InvalidatePricingCache()
+	cases := []struct{ name, kind string }{
+		{"qwen3.8-flash", "llm"}, {"qwen3-rerank", "rerank"},
+		{"qwen3.7-text-embedding-flash", "embedding"}, {"qwen-image-3.0", "image"},
+		{"doubao-seedance-2-0", "video"}, {"whisper-1", "speech2text"},
+		{"tts-1", "tts"}, {"suno-v4", "audio"},
+		{"custom-search", "rerank"}, {"custom-vector", "embedding"},
+		{"gemini-2.5-pro", "llm"},
+	}
+	require.NoError(t, db.Create(&model.Channel{Id: 2001, Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Key: "fixture"}).Error)
+	for _, tc := range cases {
+		require.NoError(t, db.Create(&model.Ability{Group: "default", Model: tc.name, ChannelId: 2001, Enabled: true}).Error)
+	}
+	require.NoError(t, db.Create(&model.Ability{Group: "private", Model: "private-rerank", ChannelId: 2001, Enabled: true}).Error)
+	require.NoError(t, db.Create(&model.Model{ModelName: "custom-search", Endpoints: `{"jina-rerank":"/v1/rerank"}`}).Error)
+	require.NoError(t, db.Create(&model.Model{ModelName: "custom-vector", Endpoints: `{"embeddings":"/v1/embeddings"}`}).Error)
+	model.InvalidatePricingCache()
+	for _, tc := range []struct {
+		query  string
+		status int
+		want   string
+		count  int
+		limit  bool
+	}{
+		{"?include=pricing", 200, "", len(cases), false},
+		{"?include=pricing&model_type=rerank", 200, "rerank", 2, false},
+		{"?include=pricing&model_type=embedding", 200, "embedding", 2, false},
+		{"?include=pricing&model_type=LLM", 200, "llm", 2, false},
+		{"?include=pricing&model_type=image", 200, "image", 1, false},
+		{"?include=pricing&model_type=video", 200, "video", 1, false},
+		{"?include=pricing&model_type=speech2text", 200, "speech2text", 1, false},
+		{"?include=pricing&model_type=tts", 200, "tts", 1, false},
+		{"?include=pricing&model_type=audio", 200, "audio", 1, false},
+		{"?include=pricing&model_type=rerank", 200, "rerank", 0, true},
+		{"?model_type=embedding", 200, "", 2, false},
+		{"", 200, "", len(cases), false},
+		{"?model_type=", 400, "", 0, false},
+		{"?model_type=unknown", 400, "", 0, false},
+		{"?model_type=llm&model_type=rerank", 400, "", 0, false},
+		{"?model_type=llm,rerank", 400, "", 0, false},
+	} {
+		t.Run(fmt.Sprintf("%s/limited=%t", tc.query, tc.limit), func(t *testing.T) {
+			r := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(r)
+			c.Request = httptest.NewRequest("GET", "/v1/models"+tc.query, nil)
+			common.SetContextKey(c, constant.ContextKeyTokenGroup, "default")
+			if tc.limit {
+				common.SetContextKey(c, constant.ContextKeyTokenModelLimitEnabled, true)
+				common.SetContextKey(c, constant.ContextKeyTokenModelLimit, map[string]bool{"qwen3.8-flash": true})
+			}
+			ListModels(c, constant.ChannelTypeOpenAI)
+			require.Equal(t, tc.status, r.Code, r.Body.String())
+			if tc.status != 200 {
+				assert.Contains(t, r.Body.String(), "invalid_model_type")
+				return
+			}
+			var payload struct {
+				Data []map[string]any `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(r.Body.Bytes(), &payload))
+			require.Len(t, payload.Data, tc.count)
+			for _, row := range payload.Data {
+				assert.NotEqual(t, "private-rerank", row["id"])
+				if strings.Contains(tc.query, "include=pricing") {
+					assert.True(t, businessservice.ValidModelType(row["model_type"].(string)))
+					if tc.want != "" {
+						assert.Equal(t, tc.want, row["model_type"])
+					}
+				} else {
+					assert.NotContains(t, row, "model_type")
+					assert.NotContains(t, row, "pricing")
+				}
+			}
+		})
+	}
+	// Model families and custom endpoints must agree, without classifying a
+	// multimodal LLM as an image generator just because it accepts images.
+	for _, tc := range cases {
+		assert.Equal(t, tc.kind, businessservice.ModelType(tc.name, model.GetModelSupportEndpointTypes(tc.name)), tc.name)
+	}
+	assert.Equal(t, "video", businessservice.ModelType("custom", []constant.EndpointType{constant.EndpointTypeOpenAIVideo}))
+	assert.Equal(t, "image", businessservice.ModelType("custom", []constant.EndpointType{constant.EndpointTypeImageGeneration}))
+	// Reject the filter on other protocol lists instead of silently ignoring it.
+	r := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(r)
+	c.Request = httptest.NewRequest("GET", "/v1/models?model_type=llm", nil)
+	ListModels(c, constant.ChannelTypeAnthropic)
+	assert.Equal(t, 400, r.Code)
+}
+
 func TestBusinessCallerValidationAndReplay(t *testing.T) {
 	businessSourcesFixture(t)
 	for _, tc := range []struct {

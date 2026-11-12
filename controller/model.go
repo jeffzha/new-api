@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	businessapi "github.com/QuantumNous/new-api/service/businessapi"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -244,6 +245,15 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 }
 
 func ListModels(c *gin.Context, modelType int) {
+	filters, hasFilter := c.Request.URL.Query()["model_type"]
+	filter := ""
+	if hasFilter {
+		if len(filters) != 1 || modelType != constant.ChannelTypeOpenAI || !businessapi.ValidModelType(strings.ToLower(filters[0])) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "code": "invalid_model_type", "param": "model_type", "message": "Use one model_type: llm, rerank, embedding, image, video, speech2text, tts or audio"}})
+			return
+		}
+		filter = strings.ToLower(filters[0])
+	}
 	if include := c.Query("include"); include != "" && (include != "pricing" || modelType != constant.ChannelTypeOpenAI) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "code": "invalid_include", "param": "include", "message": "Use include=pricing with the OpenAI-compatible model list"}})
 		return
@@ -323,8 +333,17 @@ func ListModels(c *gin.Context, modelType int) {
 		ownerByModel = getPreferredModelOwners(userModelNames, ownerGroups)
 	}
 	userOpenAiModels := make([]dto.OpenAIModels, 0, len(userModelNames))
+	if hasFilter || c.Query("include") == "pricing" {
+		// Refresh the existing catalog cache so explicitly configured endpoints are
+		// available even before anyone has opened the model square.
+		model.GetPricing()
+	}
 	for _, modelName := range userModelNames {
-		userOpenAiModels = append(userOpenAiModels, buildOpenAIModel(modelName, ownerByModel))
+		item := buildOpenAIModel(modelName, ownerByModel)
+		if filter != "" && businessapi.ModelType(item.Id, item.SupportedEndpointTypes) != filter {
+			continue
+		}
+		userOpenAiModels = append(userOpenAiModels, item)
 	}
 
 	switch modelType {

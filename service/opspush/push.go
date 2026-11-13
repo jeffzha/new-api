@@ -937,3 +937,9 @@ func EventV11(log *model.Log, channelName string, topup *model.TopUp, conversion
 	attachUpstreamAlert(other, event)
 	return event
 }
+
+// Backoff is the spec 4 retry wait shared by every OPS client in this gateway (pushes, registrations and reads).
+func Backoff(attempts int, floor time.Duration) time.Duration { return backoff(attempts, floor) }
+
+// Validate checks an OPS origin and key the same way the usage pusher does.
+func (c Config) Validate() error { return c.validate() }

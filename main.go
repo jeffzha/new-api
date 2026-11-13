@@ -33,6 +33,7 @@ import (
 	"github.com/QuantumNous/new-api/service/agencyopspush"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/service/opsbridge"
+	"github.com/QuantumNous/new-api/service/opscatalog"
 	"github.com/QuantumNous/new-api/service/opsexport"
 	"github.com/QuantumNous/new-api/service/opsmonitor"
 	"github.com/QuantumNous/new-api/service/opspush"
@@ -188,6 +189,10 @@ func main() {
 	}
 	if err := opsusers.StartConfigured(commandWorkerCtx); err != nil {
 		common.FatalLog("failed to initialize Ops user profile push: " + err.Error())
+		return
+	}
+	if err := opscatalog.StartConfigured(commandWorkerCtx); err != nil {
+		common.FatalLog("failed to initialize Ops catalog read: " + err.Error())
 		return
 	}
 	commandServer, err := service.StartConfiguredAgencyCommandServer()

@@ -29,6 +29,8 @@ type Binding struct {
 	MappingID     int64  `json:"mapping_id" gorm:"not null;uniqueIndex:idx_ops_upstream_binding,priority:1"`
 	Target        string `json:"-" gorm:"type:varchar(64);not null;uniqueIndex:idx_ops_upstream_binding,priority:2"`
 	OpsUpstreamID *int64 `json:"ops_upstream_id"`
+	// ModelsHash is the model list OPS last accepted for this address (spec 10.2); empty until one is sent.
+	ModelsHash string `json:"-" gorm:"type:varchar(64);not null;default:''"`
 }
 
 func (Binding) TableName() string { return "ops_upstream_bindings" }

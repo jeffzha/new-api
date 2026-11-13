@@ -203,3 +203,61 @@ func TestNormalizeUpstreamURL(t *testing.T) {
 		assert.Equal(t, want, got)
 	}
 }
+
+func TestModelListsFollowEnabledChannels(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "models.sqlite3")), &gorm.Config{})
+	require.NoError(t, err)
+	pool, err := db.DB()
+	require.NoError(t, err)
+	pool.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = pool.Close() })
+	require.NoError(t, db.AutoMigrate(&model.Channel{}))
+	require.NoError(t, upstreammap.Migrate(db))
+	base, other := "https://models.example/v1", "https://other.example/v1"
+	ten, five := int64(10), int64(5)
+	require.NoError(t, db.Create(&model.Channel{Id: 1, Type: 1, BaseURL: &base, Name: "a", Key: "k", Models: "Hy3,Deepseek4,Hy3", Priority: &ten, Status: common.ChannelStatusEnabled}).Error)
+	require.NoError(t, db.Create(&model.Channel{Id: 2, Type: 1, BaseURL: &base, Name: "b", Key: "k", Models: "Hy3", Priority: &five, Status: common.ChannelStatusEnabled}).Error)
+	require.NoError(t, db.Create(&model.Channel{Id: 3, Type: 1, BaseURL: &other, Name: "c", Key: "k", Models: "Old", Status: common.ChannelStatusManuallyDisabled}).Error)
+	var mu sync.Mutex
+	bodies := map[string][]map[string]any{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		require.NoError(t, common.Unmarshal(raw, &body))
+		mu.Lock()
+		bodies[body["base_url"].(string)] = append(bodies[body["base_url"].(string)], body)
+		mu.Unlock()
+		_, _ = w.Write([]byte(`{"data":{"gateway_upstream_id":1,"ops_upstream_id":` + map[string]string{base: "41", other: "42"}[body["base_url"].(string)] + `,"base_url":"` + body["base_url"].(string) + `","created":true}}`))
+	}))
+	defer server.Close()
+	c := Config{URL: server.URL, KeyID: "gateway-test", Secret: "test-secret-at-least-sixteen", Enabled: true}
+
+	// Without OPS_UPSTREAM_MODELS_ENABLED the registration is unchanged: address only.
+	s := New(db, c)
+	require.NoError(t, s.Discover(context.Background()))
+	require.NoError(t, s.SyncPending(context.Background()))
+	require.Len(t, bodies[base], 1)
+	assert.NotContains(t, bodies[base][0], "models")
+
+	c.Models = true
+	s = New(db, c)
+	require.NoError(t, s.Discover(context.Background()))
+	require.NoError(t, s.SyncPending(context.Background()))
+	require.Len(t, bodies[base], 2)
+	assert.Equal(t, []any{
+		map[string]any{"model": "Deepseek4", "priority": float64(10)},
+		map[string]any{"model": "Hy3", "priority": float64(5)},
+		map[string]any{"model": "Hy3", "priority": float64(10)},
+	}, bodies[base][1]["models"], "each channel lists its models once")
+	assert.Equal(t, []any{}, bodies[other][1]["models"], "an address without enabled channels reports []")
+
+	// Unchanged lists are not sent again; a channel change resends only its address.
+	require.NoError(t, s.SyncPending(context.Background()))
+	assert.Len(t, bodies[base], 2)
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = 3").Update("status", common.ChannelStatusEnabled).Error)
+	require.NoError(t, s.Discover(context.Background()))
+	require.NoError(t, s.SyncPending(context.Background()))
+	assert.Len(t, bodies[base], 2)
+	require.Len(t, bodies[other], 3)
+	assert.Equal(t, []any{map[string]any{"model": "Old", "priority": float64(0)}}, bodies[other][2]["models"])
+}

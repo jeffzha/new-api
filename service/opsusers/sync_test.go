@@ -112,7 +112,7 @@ func TestFirstPassPushesEveryUserThenOnlyChanges(t *testing.T) {
 	require.Equal(t, 1, stub.count())
 	first := stub.last()
 	assert.Equal(t, "1.1", first.SchemaVersion)
-	assert.Equal(t, "users-20261113-000001", first.BatchId)
+	assert.Regexp(t, `^users-20261113-000001-[0-9a-f]{6}$`, first.BatchId)
 	users := usersOf(first)
 	require.Len(t, users, 3)
 	assert.Equal(t, map[string]any{"userId": "1", "username": "alice", "displayName": "Alice", "group": "vip", "status": "active",
@@ -166,12 +166,12 @@ func TestRejectedAndThrottledBatches(t *testing.T) {
 	wait := syncer.Step()
 	require.Equal(t, 2, stub.count())
 	resent := stub.last()
-	assert.Equal(t, "users-20261113-000001", resent.BatchId)
+	assert.Equal(t, stub.batches[0].BatchId, resent.BatchId)
 	assert.Len(t, resent.Users, 2)
 	assert.GreaterOrEqual(t, wait, 7*time.Second, "429 waits at least Retry-After")
 	var state State
 	require.NoError(t, db.First(&state, 1).Error)
-	assert.Equal(t, "users-20261113-000001", state.BatchId, "a throttled batch is kept for the retry")
+	assert.Equal(t, resent.BatchId, state.BatchId, "a throttled batch is kept for the retry")
 
 	stub.reply = nil
 	syncer.Step()

@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -313,7 +314,10 @@ func (s *Syncer) build(state *State) (built, more bool, err error) {
 	}
 	for {
 		state.Seq++
-		id := fmt.Sprintf("users-%s-%06d", now.UTC().Format("20060102"), state.Seq)
+		// The random tail keeps ids unique if this table is ever recreated: OPS remembers every batchId (409 batch_conflict).
+		tail := make([]byte, 3)
+		_, _ = rand.Read(tail)
+		id := fmt.Sprintf("users-%s-%06d-%s", now.UTC().Format("20060102"), state.Seq, hex.EncodeToString(tail))
 		body, meta, err := encode(id, changed, now)
 		if err != nil {
 			return false, false, err

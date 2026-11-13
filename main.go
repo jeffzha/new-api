@@ -37,6 +37,7 @@ import (
 	"github.com/QuantumNous/new-api/service/opsmonitor"
 	"github.com/QuantumNous/new-api/service/opspush"
 	"github.com/QuantumNous/new-api/service/opsupstreams"
+	"github.com/QuantumNous/new-api/service/opsusers"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -183,6 +184,10 @@ func main() {
 	}
 	if err := opspush.StartConfigured(commandWorkerCtx); err != nil {
 		common.FatalLog("failed to initialize Ops push: " + err.Error())
+		return
+	}
+	if err := opsusers.StartConfigured(commandWorkerCtx); err != nil {
+		common.FatalLog("failed to initialize Ops user profile push: " + err.Error())
 		return
 	}
 	commandServer, err := service.StartConfiguredAgencyCommandServer()

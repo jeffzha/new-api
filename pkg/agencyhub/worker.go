@@ -145,20 +145,18 @@ func agencyDailyReconciliationSchedule(now time.Time, lastDate string) (string, 
 	return "daily-" + local.Format("20060102"), midnight.Add(-time.Millisecond).UnixMilli(), true
 }
 
-// drainConsumerBudget keeps the sidecar consumer ahead of a sustained 60 RPS
-// / 120 peak billing stream. A single RunConsumerOnce(100) per 2s tick caps
-// sustainable drain at 50 events/s, below the design target, so a backlog
-// would grow unboundedly. Per tick we drain bounded batches until the pending
-// queue is empty (or the budget is spent); the budget only saturates under a
-// real backlog and leaves completed deliveries untouched.
+// drainConsumerBudget processes bounded batches and yields between batches
+// once its elapsed-time budget is spent. A started financial transaction is
+// allowed to finish; completed deliveries are never replayed to fill a batch.
 func (a *App) drainConsumerBudget(ctx context.Context) error {
 	const maxBatchesPerTick = 20
+	started := time.Now()
 	for i := 0; i < maxBatchesPerTick; i++ {
-		completed, err := a.runConsumerBatch(ctx, 500)
+		completed, err := a.runConsumerBatch(ctx, 100)
 		if err != nil {
 			return err
 		}
-		if completed == 0 {
+		if completed == 0 || time.Since(started) >= 500*time.Millisecond {
 			return nil
 		}
 	}
@@ -406,6 +404,9 @@ func (a *App) markDeliveryTx(tx *gorm.DB, delivery model.AgencyEventDelivery, st
 		updates["next_retry_at"] = 0
 	} else {
 		updates["next_retry_at"] = now + retryDelay(delivery.Attempts+1)
+		if errors.Is(deliveryErr, errConsumerPrefixWarming) {
+			updates["next_retry_at"] = now + 1
+		}
 		if deliveryErr != nil {
 			updates["last_error"] = deliveryErr.Error()
 		}

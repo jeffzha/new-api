@@ -1042,7 +1042,7 @@ func AgencyModels() []any {
 		&AgencyOpsPublisher{}, &AgencyOpsPublication{}, &AgencyOpsEvent{}, &AgencyOpsObjectRevision{}, &AgencyOpsSenderLease{}, &AgencyOpsWriterState{}, &AgencyOpsWriterTransition{}, &AgencyOpsSourceManifest{},
 		&AgencyBillingCorrection{},
 		&AgencyChargeComponent{}, &AgencyComponentFunding{},
-		&AgencySourceEvent{}, &AgencyUsageFact{}, &AgencyTopupFact{}, &AgencyCommissionJob{}, &AgencyCommissionLedger{}, &AgencyCommissionBalance{},
+		&AgencySourceEvent{}, &AgencyConsumerPrefix{}, &AgencyUsageFact{}, &AgencyTopupFact{}, &AgencyCommissionJob{}, &AgencyCommissionLedger{}, &AgencyCommissionBalance{},
 		&AgencyWithdrawalAccount{}, &AgencyWithdrawal{}, &AgencyWithdrawalPaymentReference{}, &AgencyWithdrawalTransition{}, &AgencyAuditLog{}, &AgencyDailyStat{},
 		&AgencyExportJob{}, &AgencyArchiveManifest{}, &AgencyWorkerLease{}, &AgencyReconciliationIssue{}, &AgencyReconciliationRun{}, &AgencyProvisioningJob{},
 		&AgencyCommand{},

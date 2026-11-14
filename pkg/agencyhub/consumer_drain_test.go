@@ -12,11 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestDrainConsumerBudgetSustainsAbove60RPS guards the §22.4 invariant that a
-// single scheduler tick must be able to drain more than 120 events (the 2s
-// peak window). The previous single RunConsumerOnce(100) per tick capped
-// sustained drain at 50/s, below the 60 RPS steady target.
-func TestDrainConsumerBudgetSustainsAbove60RPS(t *testing.T) {
+// A tick can yield before the queue is empty. Subsequent ticks must keep
+// advancing the durable queue without duplicating completed commissions.
+func TestDrainConsumerBudgetResumesWithoutDuplicateCommission(t *testing.T) {
 	app := newAgencyTestApp(t)
 	app.config.CommissionEnabled = true
 	now := time.Now().UnixMilli()
@@ -44,12 +42,21 @@ func TestDrainConsumerBudgetSustainsAbove60RPS(t *testing.T) {
 	require.NoError(t, app.db.Create(&outboxes).Error)
 	require.NoError(t, app.db.Create(&deliveries).Error)
 
-	require.NoError(t, app.drainConsumerBudget(context.Background()))
-
-	var pending int64
-	require.NoError(t, app.db.Model(&model.AgencyEventDelivery{}).Where("status <> ?", "done").Count(&pending).Error)
-	require.Zero(t, pending, "one tick must drain a backlog larger than the 2s peak window")
+	pending := int64(700)
+	for range 7 {
+		before := pending
+		require.NoError(t, app.drainConsumerBudget(context.Background()))
+		require.NoError(t, app.db.Model(&model.AgencyEventDelivery{}).Where("status <> ?", "done").Count(&pending).Error)
+		require.Less(t, pending, before)
+		if pending == 0 {
+			break
+		}
+	}
+	require.Zero(t, pending)
 
 	// An empty queue must return immediately without erroring.
 	require.NoError(t, app.drainConsumerBudget(context.Background()))
+	var balance model.AgencyCommissionBalance
+	require.NoError(t, app.db.Where("agency_id=?", agencyID).First(&balance).Error)
+	require.EqualValues(t, 7000, balance.AvailableMicros)
 }

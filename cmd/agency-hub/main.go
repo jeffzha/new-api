@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencyhub"
 	"github.com/joho/godotenv"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -54,6 +55,25 @@ func run() error {
 		}
 		common.SysLog("Agency Hub writer fence migration completed")
 		return nil
+	}
+	if command == "migrate-consumer-prefix" {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		db := model.DB.WithContext(ctx)
+		if db.Dialector.Name() == "postgres" {
+			return db.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Exec("SET LOCAL lock_timeout = '2s'").Error; err != nil {
+					return err
+				}
+				return model.MigrateAgencyConsumerPrefix(tx)
+			})
+		}
+		return model.MigrateAgencyConsumerPrefix(db)
+	}
+	if command == "warm-consumer-prefix" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		return agencyhub.New(model.DB, nil, config).WarmConsumerPrefixes(ctx)
 	}
 	if command == "reconcile" {
 		app := agencyhub.New(model.DB, nil, config)

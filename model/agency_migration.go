@@ -36,6 +36,9 @@ func MigrateAgency(db *gorm.DB) error {
 	if err := db.AutoMigrate(models...); err != nil {
 		return fmt.Errorf("agency migration: %w", err)
 	}
+	if err := MigrateAgencyConsumerPrefix(db); err != nil {
+		return err
+	}
 	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&AgencyOpsPublisher{ID: 1}).Error; err != nil {
 		return fmt.Errorf("agency migration: Ops publisher: %w", err)
 	}

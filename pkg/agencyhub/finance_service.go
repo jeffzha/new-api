@@ -164,6 +164,9 @@ func (a *App) ProcessBillingEvent(event agencycontract.BillingEvent) error {
 	if err := validateBillingEvent(event); err != nil {
 		return err
 	}
+	if err := a.prepareConsumerPrefix(context.Background(), event); err != nil {
+		return err
+	}
 	payload, err := common.Marshal(event)
 	if err != nil {
 		return err
@@ -235,6 +238,9 @@ func (a *App) processBillingEventWithLease(ctx context.Context, event agencycont
 // add newly introduced zero-value fields and must not make a valid historical
 // event look tampered.
 func (a *App) processBillingPayloadWithLease(ctx context.Context, event agencycontract.BillingEvent, payload, payloadHash string, delivery model.AgencyEventDelivery) error {
+	if err := a.prepareConsumerPrefix(ctx, event); err != nil {
+		return err
+	}
 	now := event.OccurredAtMS
 	if now == 0 {
 		now = time.Now().UnixMilli()
@@ -311,30 +317,6 @@ func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEve
 			}
 		}
 	}
-	// Funding events for one user form a strict money_seq chain. A late
-	// delivery must wait for every earlier outbox event for that user, while
-	// events for other users continue independently. If an earlier event is
-	// already poison, the dependency remains visible as an open reconciliation
-	// issue and is deliberately retried only after root resolves it.
-	if event.MoneySeq > 1 {
-		var priorOutboxCount int64
-		if err := tx.Model(&model.AgencyBillingOutbox{}).
-			Where("user_id = ? AND money_seq > 0 AND money_seq < ?", event.UserID, event.MoneySeq).
-			Count(&priorOutboxCount).Error; err != nil {
-			return err
-		}
-		if priorOutboxCount > 0 {
-			var priorCompletedCount int64
-			if err := tx.Model(&model.AgencySourceEvent{}).
-				Where("user_id = ? AND money_seq > 0 AND money_seq < ? AND processing_status IN ?", event.UserID, event.MoneySeq, []string{"done", "skipped"}).
-				Count(&priorCompletedCount).Error; err != nil {
-				return err
-			}
-			if priorCompletedCount < priorOutboxCount {
-				return errors.New("agency event waiting for prior user money sequence")
-			}
-		}
-	}
 	isReversal := event.EventType == "agency.billing_reversed"
 	isCorrection := event.EventType == agencycontract.BillingEventCorrected
 	isFundingReversal := event.EventType == "agency.funding_reversed"
@@ -350,6 +332,12 @@ func (a *App) processBillingEventTx(tx *gorm.DB, event agencycontract.BillingEve
 		if err := verifyAuthoritativeBillingEvent(tx, event, payloadHash); err != nil {
 			return err
 		}
+	}
+	// Gateway writers lock their journal before inserting the outbox (whose
+	// trigger locks the prefix). Keep the same order to avoid blocking a
+	// live settlement behind a consumer that is waiting for that journal.
+	if err := requireConsumerPrefix(tx, event); err != nil {
+		return err
 	}
 	if isCorrection && len(event.Components) > 1 {
 		return errors.New("multi component billing corrections are not supported")

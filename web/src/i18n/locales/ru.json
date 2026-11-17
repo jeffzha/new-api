@@ -1,5 +1,8 @@
 {
   "translation": {
+    "No operations fee for this call": "Этот вызов не учитывается в списании OPS",
+    "Awaiting operations fee": "Ожидание расчёта оператора",
+    "Operations fee unconfirmed": "Стоимость оператора не подтверждена",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

@@ -39,6 +39,7 @@ import {
   isTimingLogType,
 } from '../lib/utils'
 import { ModelBadge } from './model-badge'
+import { OpsFeeCell } from './ops-fee-cell'
 import { StreamTpsCell, TimingMetricsCell } from './timing-metrics-cell'
 import { useUsageLogsContext } from './usage-logs-provider'
 
@@ -215,6 +216,12 @@ export function CommonLogMobileCard<TData>(props: {
             </div>
           )}
       </div>
+      {props.cells.has('ops_fee') && log.ops_fee && (
+        <div className='flex items-center justify-between gap-3'>
+          <span className='text-muted-foreground text-xs'>{t('Cost')}</span>
+          <OpsFeeCell fee={log.ops_fee} />
+        </div>
+      )}
       {visibleMetadata.length > 0 && (
         <div className='grid min-w-0 grid-cols-2 gap-x-4 gap-y-0.5'>
           {visibleMetadata.map((id) => {

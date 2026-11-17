@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { useNavigate, getRouteApi } from '@tanstack/react-router'
-import { type Table } from '@tanstack/react-table'
+import type { Table } from '@tanstack/react-table'
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -31,7 +31,11 @@ import {
   LogsFilterInput,
   LogsFilterToolbar,
 } from './logs-filter-toolbar'
-import { useLogsViewScope } from './usage-logs-provider'
+import {
+  useLogsSearchParams,
+  useLogsViewScope,
+  useUsageLogsContext,
+} from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
 
@@ -68,17 +72,18 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const searchParams = route.useSearch()
+  const searchParams = useLogsSearchParams(route.useSearch())
+  const { defaultTimeRange } = useUsageLogsContext()
   const { isAdminView: isAdmin } = useLogsViewScope()
   const fetchingLogs = useIsFetching({ queryKey: ['logs'] })
 
   const [filters, setFilters] = useState<TaskLogsFilters>(() => {
-    const { start, end } = getDefaultTimeRange()
+    const { start, end } = defaultTimeRange
     return { startTime: start, endTime: end }
   })
 
   useEffect(() => {
-    const { start, end } = getDefaultTimeRange()
+    const { start, end } = defaultTimeRange
     const baseFilters = {
       startTime: searchParams.startTime
         ? new Date(searchParams.startTime)
@@ -101,6 +106,7 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
 
     setFilters(next)
   }, [
+    defaultTimeRange,
     props.logCategory,
     searchParams.startTime,
     searchParams.endTime,

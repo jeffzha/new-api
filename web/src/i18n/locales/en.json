@@ -1,4 +1,7 @@
 {
+  "No operations fee for this call": "No operations fee for this call",
+  "Awaiting operations fee": "Awaiting operations fee",
+  "Operations fee unconfirmed": "Operations fee unconfirmed",
   "Warning threshold must be greater than zero": "Warning threshold must be greater than zero",
   "signal.page.analytics": "Understand consumption, model demand and traffic in one analytical workspace.",
   "signal.page.keys": "Manage access credentials, limits and validity for your integrations.",

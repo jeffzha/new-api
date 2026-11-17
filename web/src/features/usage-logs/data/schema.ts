@@ -46,6 +46,18 @@ export const usageLogSchema = z.object({
   other: z.string().default(''),
   request_id: z.string().default(''),
   upstream_request_id: z.string().default(''),
+  ops_fee: z
+    .object({
+      status: z.enum(['waiting', 'available', 'unconfirmed']),
+      amount: z.string().nullable(),
+      currency: z.string(),
+      station_amount: z.string().nullable().optional(),
+      refund_amount: z.string().nullable().optional(),
+      difference: z.string().nullable().optional(),
+      charged_at: z.string().optional(),
+      fetched_at: z.number().optional(),
+    })
+    .nullish(),
 })
 
 export type UsageLog = z.infer<typeof usageLogSchema>

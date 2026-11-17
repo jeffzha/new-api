@@ -35,6 +35,7 @@ import (
 	"github.com/QuantumNous/new-api/service/opsbridge"
 	"github.com/QuantumNous/new-api/service/opscatalog"
 	"github.com/QuantumNous/new-api/service/opsexport"
+	"github.com/QuantumNous/new-api/service/opsfees"
 	"github.com/QuantumNous/new-api/service/opsmonitor"
 	"github.com/QuantumNous/new-api/service/opspush"
 	"github.com/QuantumNous/new-api/service/opsupstreams"
@@ -182,6 +183,10 @@ func main() {
 	}
 	if opsbridge.Default != nil {
 		defer opsbridge.Default.Close()
+	}
+	if err := opsfees.StartConfigured(commandWorkerCtx); err != nil {
+		common.FatalLog("failed to initialize OPS fee comparison: " + err.Error())
+		return
 	}
 	if err := opspush.StartConfigured(commandWorkerCtx); err != nil {
 		common.FatalLog("failed to initialize Ops push: " + err.Error())

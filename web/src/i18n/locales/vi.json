@@ -1,5 +1,8 @@
 {
   "translation": {
+    "No operations fee for this call": "Lượt gọi này không thuộc phạm vi tính phí OPS",
+    "Awaiting operations fee": "Đang chờ tính phí vận hành",
+    "Operations fee unconfirmed": "Phí vận hành chưa xác nhận",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

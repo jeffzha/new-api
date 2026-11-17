@@ -55,7 +55,11 @@ import {
   LogsFilterInput,
   LogsFilterToolbar,
 } from './logs-filter-toolbar'
-import { useLogsViewScope, useUsageLogsContext } from './usage-logs-provider'
+import {
+  useLogsSearchParams,
+  useLogsViewScope,
+  useUsageLogsContext,
+} from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
 
@@ -122,9 +126,10 @@ export function CommonLogsFilterBar<TData>(
   const isMobile = useMediaQuery('(max-width: 640px)')
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const searchParams = route.useSearch()
+  const searchParams = useLogsSearchParams(route.useSearch())
   const { isAdminView: isAdmin } = useLogsViewScope()
-  const { sensitiveVisible, setSensitiveVisible } = useUsageLogsContext()
+  const { sensitiveVisible, setSensitiveVisible, defaultTimeRange } =
+    useUsageLogsContext()
   const fetchingLogs = useIsFetching({ queryKey: ['logs'] })
   const { data: adminGroups } = useQuery({
     queryKey: ['groups'],
@@ -146,7 +151,7 @@ export function CommonLogsFilterBar<TData>(
   }, [isAdmin, adminGroups, userGroups])
 
   const searchState = useMemo<CommonLogDraft>(() => {
-    const { start, end } = getDefaultTimeRange()
+    const { start, end } = defaultTimeRange
     const sourceValues = {
       startTime: searchParams.startTime,
       endTime: searchParams.endTime,
@@ -178,6 +183,7 @@ export function CommonLogsFilterBar<TData>(
       logType: getLogTypeValue(searchParams.type),
     }
   }, [
+    defaultTimeRange,
     searchParams.startTime,
     searchParams.endTime,
     searchParams.channel,

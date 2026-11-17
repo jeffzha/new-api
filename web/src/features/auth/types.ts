@@ -92,6 +92,7 @@ export interface SystemStatus {
   success?: boolean
   message?: string
   data?: {
+    ops_fees_enabled?: boolean
     version?: string
     system_name?: string
     logo?: string

@@ -28,7 +28,11 @@ import { cn } from '@/lib/utils'
 import { getLogStats, getUserLogStats } from '../api'
 import { DEFAULT_LOG_STATS } from '../constants'
 import { buildApiParams } from '../lib/utils'
-import { useLogsViewScope, useUsageLogsContext } from './usage-logs-provider'
+import {
+  useLogsSearchParams,
+  useLogsViewScope,
+  useUsageLogsContext,
+} from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
 
@@ -51,7 +55,7 @@ function StatBadge(props: {
 export function CommonLogsStats() {
   const { t } = useTranslation()
   const { isAdminView: isAdmin } = useLogsViewScope()
-  const searchParams = route.useSearch()
+  const searchParams = useLogsSearchParams(route.useSearch())
   const { sensitiveVisible } = useUsageLogsContext()
 
   const { data: stats, isLoading } = useQuery({
@@ -74,6 +78,9 @@ export function CommonLogsStats() {
         : DEFAULT_LOG_STATS
     },
     placeholderData: (previousData) => previousData,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
   })
 
   if (isLoading) {

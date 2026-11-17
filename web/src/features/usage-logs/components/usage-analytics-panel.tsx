@@ -13,13 +13,17 @@ import { useAuthStore } from '@/stores/auth-store'
 import { fetchUsageAnalytics } from '../lib/usage-analytics'
 import { buildApiParams } from '../lib/utils'
 import { UsageAnalyticsView } from './usage-analytics-view'
-import { useLogsViewScope, useUsageLogsContext } from './usage-logs-provider'
+import {
+  useLogsSearchParams,
+  useLogsViewScope,
+  useUsageLogsContext,
+} from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
 
 export function UsageAnalyticsPanel() {
   const { t } = useTranslation()
-  const search = route.useSearch()
+  const search = useLogsSearchParams(route.useSearch())
   const navigate = route.useNavigate()
   const { isAdminView, viewAccess } = useLogsViewScope()
   const { sensitiveVisible } = useUsageLogsContext()

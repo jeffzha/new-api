@@ -1,5 +1,8 @@
 {
   "translation": {
+    "No operations fee for this call": "この呼び出しは運用側の課金対象外です",
+    "Awaiting operations fee": "運営側の料金計算待ち",
+    "Operations fee unconfirmed": "運営側の料金は未確定",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

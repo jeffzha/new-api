@@ -1,5 +1,8 @@
 {
   "translation": {
+    "No operations fee for this call": "Cet appel ne relève pas de la facturation OPS",
+    "Awaiting operations fee": "Calcul des frais en attente",
+    "Operations fee unconfirmed": "Frais des opérations à confirmer",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

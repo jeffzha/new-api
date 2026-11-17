@@ -79,17 +79,24 @@ function ToolSurchargeMarker() {
   )
 }
 
-function QuotaBadge(props: { quota: number }) {
-  const quotaDisplay = splitQuotaDisplay(formatLogQuota(props.quota))
+export function LogCostBadge(props: { value: string }) {
+  const quotaDisplay = splitQuotaDisplay(props.value)
 
   return (
-    <span className='border-border/80 bg-muted/60 inline-flex h-6 w-fit items-center rounded-md border px-2 [font-family:var(--font-body)] text-sm leading-none font-semibold tabular-nums'>
+    <span
+      aria-label={props.value}
+      className='border-border/80 bg-muted/60 inline-flex h-6 w-fit items-center rounded-md border px-2 [font-family:var(--font-body)] text-sm leading-none font-semibold tabular-nums'
+    >
       {quotaDisplay.prefix ? (
         <span className='mr-1'>{quotaDisplay.prefix}</span>
       ) : null}
       <span>{quotaDisplay.amount}</span>
     </span>
   )
+}
+
+function QuotaBadge(props: { quota: number }) {
+  return <LogCostBadge value={formatLogQuota(props.quota)} />
 }
 
 function SubscriptionBadge(props: { quota: number }) {

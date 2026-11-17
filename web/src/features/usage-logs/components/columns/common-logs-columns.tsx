@@ -48,6 +48,7 @@ import {
 import { pluginUsageSchema } from '@/features/pricing/lib/plugin-pricing'
 import { taskUsageUnitLabel } from '@/features/pricing/lib/task-price-display'
 import type { BillingUsageSchema } from '@/features/pricing/types'
+import { useStatus } from '@/hooks/use-status'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
@@ -74,6 +75,7 @@ import type { LogOtherData } from '../../types'
 import { DetailsDialog } from '../dialogs/details-dialog'
 import { LogCostDisplay } from '../log-cost-display'
 import { ModelBadge } from '../model-badge'
+import { OpsFeeCell } from '../ops-fee-cell'
 import { TimingMetricsCell, StreamTpsCell } from '../timing-metrics-cell'
 import { useUsageLogsContext } from '../usage-logs-provider'
 
@@ -343,6 +345,7 @@ export function useCommonLogsColumns(
   isRoot: boolean
 ): ColumnDef<UsageLog>[] {
   const { t } = useTranslation()
+  const { status } = useStatus()
   const columns: ColumnDef<UsageLog>[] = [
     {
       accessorKey: 'created_at',
@@ -879,5 +882,19 @@ export function useCommonLogsColumns(
     }
   )
 
+  if (status?.ops_fees_enabled) {
+    const costIndex = columns.findIndex(
+      (column) => 'accessorKey' in column && column.accessorKey === 'quota'
+    )
+    columns.splice(costIndex, 1, {
+      id: 'ops_fee',
+      header: t('Cost'),
+      cell: ({ row }) =>
+        row.original.type === 2 ? (
+          <OpsFeeCell fee={row.original.ops_fee} />
+        ) : null,
+      size: 140,
+    })
+  }
   return columns
 }

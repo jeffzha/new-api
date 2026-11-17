@@ -17,11 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react'
 
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { getDefaultTimeRange } from '../lib/utils'
 import type { ChannelAffinityInfo } from '../types'
 
 export type LogsViewScope = 'all' | 'self'
@@ -36,6 +43,7 @@ export function resolveLogsViewAccess(
 }
 
 interface UsageLogsContextValue {
+  defaultTimeRange: { start: Date; end: Date }
   selectedUserId: number | null
   setSelectedUserId: (userId: number | null) => void
   userInfoDialogOpen: boolean
@@ -55,6 +63,7 @@ const UsageLogsContext = createContext<UsageLogsContextValue | undefined>(
 )
 
 export function UsageLogsProvider({ children }: { children: ReactNode }) {
+  const [defaultTimeRange] = useState(getDefaultTimeRange)
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
   const [userInfoDialogOpen, setUserInfoDialogOpen] = useState(false)
   const [affinityTarget, setAffinityTarget] =
@@ -66,6 +75,7 @@ export function UsageLogsProvider({ children }: { children: ReactNode }) {
   return (
     <UsageLogsContext.Provider
       value={{
+        defaultTimeRange,
         selectedUserId,
         setSelectedUserId,
         userInfoDialogOpen,
@@ -91,6 +101,24 @@ export function useUsageLogsContext() {
     throw new Error('useUsageLogsContext must be used within UsageLogsProvider')
   }
   return context
+}
+
+// One snapshot per page visit, shared by the filters, list, statistics and charts.
+export function useLogsSearchParams<
+  T extends { startTime?: number; endTime?: number },
+>(search: T): T {
+  const { defaultTimeRange } = useUsageLogsContext()
+  return useMemo(
+    () =>
+      search.startTime != null || search.endTime != null
+        ? search
+        : {
+            ...search,
+            startTime: defaultTimeRange.start.getTime(),
+            endTime: defaultTimeRange.end.getTime(),
+          },
+    [search, defaultTimeRange]
+  )
 }
 
 /**

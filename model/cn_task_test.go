@@ -20,6 +20,27 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestCNTaskSubmissionProbeWithoutDurableSchema(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := agencyDialectDB(t, dialect)
+			if db == nil {
+				t.Skip("disposable external database not configured")
+			}
+			pool, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = pool.Close() })
+			previous := DB
+			DB = db
+			t.Cleanup(func() { DB = previous })
+			require.NoError(t, db.Migrator().DropTable(&CNTaskBilling{}))
+			keys, err := ClaimCNTaskSubmissionProbes(context.Background(), 25)
+			require.NoError(t, err)
+			assert.Empty(t, keys)
+		})
+	}
+}
+
 func TestCNTaskAcrossDialects(t *testing.T) {
 	t.Setenv("OPS_CN_FINANCE_V2_ENABLED", "true")
 	t.Setenv("OPS_CN_DURABLE_TASK_ENABLED", "true")

@@ -726,6 +726,9 @@ func HasDueCNTaskSubmissions() bool {
 }
 
 func ClaimCNTaskSubmissionProbes(ctx context.Context, limit int) ([]string, error) {
+	if !DB.WithContext(ctx).Migrator().HasTable(&CNTaskBilling{}) {
+		return nil, nil
+	}
 	var candidates []CNTaskBilling
 	if err := DB.WithContext(ctx).Where("task_id = 0 AND pending = ? AND state IN ? AND upstream_id <> ? AND next_attempt_at <= ?", false, []string{"accepted", "unknown"}, "", time.Now().Unix()).Order("next_attempt_at, created_at").Limit(min(max(limit, 1), 100)).Find(&candidates).Error; err != nil {
 		return nil, err

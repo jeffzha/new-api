@@ -32,6 +32,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -90,11 +91,13 @@ type Config struct {
 }
 
 type Pusher struct {
-	DB, LogDB *gorm.DB
-	Config    Config
-	Client    *http.Client
-	Owner     string
-	Now       func() time.Time
+	DB, LogDB     *gorm.DB
+	Config        Config
+	Client        *http.Client
+	Owner         string
+	Now           func() time.Time
+	fastMu        sync.Mutex
+	fastDelivered map[int]time.Time
 }
 
 // StartConfigured starts the pusher when OPS_PUSH_URL is set.
@@ -128,6 +131,7 @@ func StartConfigured(ctx context.Context) error {
 	if err := pusher.Migrate(); err != nil {
 		return err
 	}
+	go pusher.runCommitted(ctx)
 	go pusher.Run(ctx)
 	common.SysLog("Ops push enabled (" + config.Spec + "): " + base + pushPath)
 	return nil
@@ -279,6 +283,9 @@ func (p *Pusher) build(state *State) (bool, error) {
 	for len(logs) > 0 {
 		events, skipped := make([]map[string]any, 0, len(logs)), 0
 		for _, log := range logs {
+			if !p.ownsLog(log) || p.deliveredFast(log.Id) {
+				continue
+			}
 			event := Event(log, names[log.ChannelId])
 			if v11 {
 				event = EventV11(log, names[log.ChannelId], topups[log.Id], conversion)

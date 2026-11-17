@@ -1,6 +1,9 @@
 package model
 
 import (
+	"github.com/QuantumNous/new-api/pkg/opsnotify"
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -241,4 +244,42 @@ func TestLogFormattingPreservesLargeIntegerLexemes(t *testing.T) {
 		FormatAdminLogs(adminLogs)
 		assert.Equal(t, unprivileged, adminLogs[0].Other)
 	})
+}
+
+func TestCommittedLogHintOnlyAfterSuccessfulInsert(t *testing.T) {
+	t.Setenv("OPS_WALLET_AUTHORITY", "")
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	pool, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, pool.Close()) })
+	require.NoError(t, db.AutoMigrate(&Log{}))
+	previous := LOG_DB
+	LOG_DB = db
+	t.Cleanup(func() { LOG_DB = previous })
+	for len(opsnotify.Committed()) > 0 {
+		<-opsnotify.Committed()
+	}
+	log := &Log{Type: LogTypeConsume, UserId: 1, ModelName: "m"}
+	require.NoError(t, createLog(log))
+	select {
+	case id := <-opsnotify.Committed():
+		var stored Log
+		require.NoError(t, db.First(&stored, id).Error, "the hinted row must already be committed")
+		require.Equal(t, log.RequestId, stored.RequestId)
+	default:
+		t.Fatal("successful usage insert did not notify the sender")
+	}
+	require.Error(t, createLog(log), "duplicate insert fails")
+	select {
+	case <-opsnotify.Committed():
+		t.Fatal("failed insert must not notify")
+	default:
+	}
+	require.NoError(t, createLog(&Log{Type: LogTypeTopup, UserId: 1}))
+	select {
+	case <-opsnotify.Committed():
+		t.Fatal("wallet records remain on the durable scanner")
+	default:
+	}
 }

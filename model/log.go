@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/pkg/businessapi"
+	"github.com/QuantumNous/new-api/pkg/opsnotify"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -106,7 +107,11 @@ func createLog(log *Log) error {
 	if LOG_DB == nil {
 		return errors.New("log database is not initialized")
 	}
-	return LOG_DB.Create(log).Error
+	err := LOG_DB.Create(log).Error
+	if err == nil && (log.Type == LogTypeConsume || log.Type == LogTypeError) {
+		opsnotify.UsageCommitted(log.Id)
+	}
+	return err
 }
 
 func clickHouseLogOrder(prefix string) string {

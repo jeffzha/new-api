@@ -14,8 +14,78 @@ spec = importlib.util.spec_from_file_location('assets', Path(__file__).with_name
 assets = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(assets)
 
+spec = importlib.util.spec_from_file_location('overseas_assets', Path(__file__).parent / 'overseas/publish-gateway-assets.py')
+overseas_assets = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(overseas_assets)
+
 
 class StaticAssetsTests(unittest.TestCase):
+    def test_overseas_nginx_preserves_routes_and_has_no_spa_asset_fallback(self):
+        original = '''server {
+    server_name llm.ai.nexus-reach.com;
+    location ^~ /static/llm-brand/ { alias /var/www/brand/; }
+    include /etc/nginx/snippets/agency-model-mock.conf;
+    location / { proxy_pass http://new_api_backend; }
+}
+'''
+        updated = overseas_assets.static_block(original, '/var/www/llm-static/gateway-archive')
+        self.assertIn('try_files $uri =404;', updated)
+        self.assertIn('location ^~ /static/llm-brand/ { alias /var/www/brand/; }', updated)
+        self.assertIn('include /etc/nginx/snippets/agency-model-mock.conf;', updated)
+        self.assertIn('location / { proxy_pass http://new_api_backend; }', updated)
+        self.assertEqual(updated, overseas_assets.static_block(updated, '/var/www/llm-static/gateway-archive'))
+        for config in [original + original, original.replace('/static/llm-brand/', '/other/')]:
+            with self.assertRaises(ValueError):
+                overseas_assets.static_block(config, '/var/www/archive')
+        with self.assertRaises(ValueError):
+            overseas_assets.static_block(original, '/var/www/../private')
+
+    def test_overseas_publication_rolls_back_and_retains_immutable_assets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dist = root / 'dist'
+            (dist / 'static/js').mkdir(parents=True)
+            html = '<script src="/static/js/index.new.js"></script>'
+            (dist / 'index.html').write_text(html)
+            (dist / 'static/js/index.new.js').write_text('new()')
+            bundle = root / 'assets.tar.gz'
+            assets.pack(dist, bundle, 'new')
+            config = root / 'site.conf'
+            original = b'server { location / { proxy_pass http://old; } }'
+            config.write_bytes(original)
+            archive = root / 'archive'
+            (archive / 'static/js').mkdir(parents=True)
+            (archive / 'static/js/index.old.js').write_text('old()')
+            args = SimpleNamespace(root=archive, bundle=[(bundle, 'candidate')], config=config,
+                                   backup=root / 'backups', public_url='https://example.test')
+            locks = SimpleNamespace(LOCK_EX=1, LOCK_NB=2, flock=lambda *args: None)
+
+            def run(*command, input=None):
+                if 'wget' in command:
+                    return html.encode()
+                if command[:2] == ('docker', 'inspect'):
+                    if '.NetworkSettings.Networks' in command[3]:
+                        return b'{"network":{"IPAddress":"127.0.0.1"}}'
+                    return b'sha256:image'
+                return b''
+
+            with patch.dict('sys.modules', {'fcntl': locks}), patch.object(overseas_assets, 'static_block', return_value='candidate'), patch.object(overseas_assets.assets, 'run', side_effect=run) as commands, patch.object(overseas_assets.assets, 'get_asset'):
+                with patch.object(overseas_assets.assets, 'verify', side_effect=ValueError('public checksum failed')):
+                    with self.assertRaisesRegex(ValueError, 'checksum'):
+                        overseas_assets.publish(args)
+                self.assertEqual(config.read_bytes(), original)
+                self.assertEqual(sum(call.args == ('systemctl', 'reload', 'nginx') for call in commands.call_args_list), 2)
+                with patch.object(overseas_assets.assets, 'verify'):
+                    overseas_assets.publish(args)
+                self.assertEqual(config.read_text(), 'candidate')
+                self.assertEqual((archive / 'static/js/index.old.js').read_text(), 'old()')
+                (dist / 'static/js/index.new.js').write_text('different()')
+                assets.pack(dist, bundle, 'collision')
+                with self.assertRaisesRegex(ValueError, 'overwrite'):
+                    overseas_assets.publish(args)
+                self.assertEqual((archive / 'static/js/index.new.js').read_text(), 'new()')
+                self.assertEqual(config.read_text(), 'candidate')
+
     def test_new_hash_and_async_chunks_are_packed_with_old_build_independent(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

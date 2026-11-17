@@ -52,6 +52,7 @@ func GetStatus(c *gin.Context) {
 	legalSetting := system_setting.GetLegalSettings()
 
 	data := gin.H{
+		"ops_fees_enabled":            model.OpsFeesEnabled(),
 		"version":                     common.Version,
 		"start_time":                  common.StartTime,
 		"email_verification":          common.EmailVerificationRequired(),

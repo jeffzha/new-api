@@ -7238,6 +7238,12 @@
     "China public holidays": "中国法定节假日",
     "Excluding China public holidays": "非中国法定节假日",
     "Register upstreams with OPS": "登记上游到运营平台",
-    "Upstream registration will run in the background": "已提交，后台将检查并登记新上游"
+    "Upstream registration will run in the background": "已提交，后台将检查并登记新上游",
+    "Operations calculated fee (CNY)": "运营计算费用（人民币）",
+    "Operations fee (CNY)": "运营计算费用（人民币）",
+    "Awaiting operations fee": "等待运营计算",
+    "Operations fee unconfirmed": "运营费用待确认",
+    "Operations fee received": "已取得运营费用",
+    "No operations fee for this call": "该调用未纳入运营扣费"
   }
 }

@@ -7238,6 +7238,12 @@
     "China public holidays": "China public holidays",
     "Excluding China public holidays": "Excluding China public holidays",
     "Register upstreams with OPS": "Register upstreams with OPS",
-    "Upstream registration will run in the background": "Upstream registration will run in the background"
+    "Upstream registration will run in the background": "Upstream registration will run in the background",
+    "Operations calculated fee (CNY)": "Operations calculated fee (CNY)",
+    "Operations fee (CNY)": "Operations fee (CNY)",
+    "Awaiting operations fee": "Awaiting operations fee",
+    "Operations fee unconfirmed": "Operations fee unconfirmed",
+    "Operations fee received": "Operations fee received",
+    "No operations fee for this call": "No operations fee for this call"
   }
 }

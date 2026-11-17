@@ -7076,6 +7076,12 @@
     "Video material pricing": "Tarification des matériaux vidéo",
     "Video output pricing": "Tarification de la sortie vidéo",
     "Register upstreams with OPS": "Enregistrer les fournisseurs dans OPS",
-    "Upstream registration will run in the background": "Les nouveaux fournisseurs seront enregistrés en arrière-plan"
+    "Upstream registration will run in the background": "Les nouveaux fournisseurs seront enregistrés en arrière-plan",
+    "Operations calculated fee (CNY)": "Frais calculés par les opérations (CNY)",
+    "Operations fee (CNY)": "Frais des opérations (CNY)",
+    "Awaiting operations fee": "Calcul des frais en attente",
+    "Operations fee unconfirmed": "Frais des opérations à confirmer",
+    "Operations fee received": "Frais des opérations reçus",
+    "No operations fee for this call": "Cet appel ne relève pas de la facturation OPS"
   }
 }

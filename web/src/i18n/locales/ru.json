@@ -7076,6 +7076,12 @@
     "Video material pricing": "Цены на материалы для видео",
     "Video output pricing": "Цены на вывод видео",
     "Register upstreams with OPS": "Зарегистрировать поставщиков в OPS",
-    "Upstream registration will run in the background": "Новые поставщики будут зарегистрированы в фоновом режиме"
+    "Upstream registration will run in the background": "Новые поставщики будут зарегистрированы в фоновом режиме",
+    "Operations calculated fee (CNY)": "Стоимость по расчёту оператора (CNY)",
+    "Operations fee (CNY)": "Стоимость оператора (CNY)",
+    "Awaiting operations fee": "Ожидание расчёта оператора",
+    "Operations fee unconfirmed": "Стоимость оператора не подтверждена",
+    "Operations fee received": "Стоимость оператора получена",
+    "No operations fee for this call": "Этот вызов не учитывается в списании OPS"
   }
 }

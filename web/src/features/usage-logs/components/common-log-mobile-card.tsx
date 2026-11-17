@@ -76,6 +76,10 @@ export function CommonLogMobileCard<TData>(props: {
     other?.user_group_ratio != null && other.user_group_ratio !== -1
       ? other.user_group_ratio
       : other?.group_ratio
+  let costValue = formatLogQuota(log.quota)
+  if (props.cells.has('ops_fee')) {
+    costValue = log.ops_fee?.amount == null ? '—' : `¥${log.ops_fee.amount}`
+  }
   const fields: Record<FieldName, LogField> = {
     model: {
       label: t('Model'),
@@ -84,8 +88,9 @@ export function CommonLogMobileCard<TData>(props: {
     },
     cost: {
       label: t('Cost'),
-      value: formatLogQuota(log.quota),
-      visible: displayable && props.cells.has('quota'),
+      value: costValue,
+      visible:
+        displayable && (props.cells.has('quota') || props.cells.has('ops_fee')),
     },
     time: {
       label: t('Time'),
@@ -124,7 +129,7 @@ export function CommonLogMobileCard<TData>(props: {
       : undefined
   const metadata: FieldName[] = ['user', 'channel', 'token', 'group']
   const visibleMetadata = metadata.filter((id) => fields[id].visible)
-  const costCell = props.cells.get('quota')
+  const costCell = props.cells.get('ops_fee') ?? props.cells.get('quota')
   const contentCell = props.cells.get('content')
   const channelCell = props.cells.get('channel')
   const cacheRead = other?.cache_tokens || 0

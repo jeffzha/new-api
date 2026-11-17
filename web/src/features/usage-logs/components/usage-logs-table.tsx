@@ -38,12 +38,17 @@ import {
 } from '../constants'
 import { useColumnsByCategory } from '../lib/columns'
 import { parseLogOther } from '../lib/format'
+import { useLogFees } from '../lib/use-log-fees'
 import { fetchLogsByCategory } from '../lib/utils'
 import type { LogCategory } from '../types'
 import { CommonLogsFilterBar } from './common-logs-filter-bar'
 import { TaskLogsFilterBar } from './task-logs-filter-bar'
 import { UsageLogsMobileList } from './usage-logs-mobile-card'
-import { useLogsViewScope, type LogsViewAccess } from './usage-logs-provider'
+import {
+  useLogsSearchParams,
+  useLogsViewScope,
+  type LogsViewAccess,
+} from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
 
@@ -85,7 +90,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     viewAccess,
   } = useLogsViewScope()
   const isMobile = useMediaQuery('(max-width: 640px)')
-  const searchParams = route.useSearch()
+  const searchParams = useLogsSearchParams(route.useSearch())
 
   const {
     columnFilters,
@@ -125,7 +130,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     ],
   })
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, isPlaceholderData } = useQuery({
     queryKey: [
       'logs',
       logCategory,
@@ -165,9 +170,17 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       }
       return undefined
     },
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
+    refetchIntervalInBackground: false,
   })
 
-  const logs = data?.items || []
+  const logs = useLogFees<object>(
+    data?.items || [],
+    isAdmin,
+    logCategory === 'common' && !isPlaceholderData
+  )
   const columns = useColumnsByCategory(logCategory, isAdmin, isRoot)
   const isLoadingData = isLoading || (isFetching && !data)
 

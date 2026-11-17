@@ -297,3 +297,16 @@ git diff --check
 - 修复（`controller/agency_sso_page.go`）：桥接页 JS 先读 `window.localStorage.getItem('new_api_access_token')`（前端请求拦截器在 `web/src/lib/http-client.ts:150` 已把 in-memory token 镜像到该 key，按 origin 隔离，:3000 iframe 可读），取不到则 postMessage `{ok:false,error:'主平台未登录，请先打开主平台登录，再重试进入代理商中心'}`；取到则以 `Authorization: Bearer <token>` 携带同源 POST 签票。
 - 回归：`TestAgencySSOPageOriginAllowlistAndPayload` 增断言 JS 含 `new_api_access_token` 与 `'Authorization':'Bearer '+token`；`go test ./controller -run TestAgencySSOPage` 通过。`./dev-backend-rebuild.sh` 重建 `new-api` 并重启 `new-api-dev-run`（200），`curl` 桥接页确认 JS 已带令牌逻辑（hub 无需重编）。
 - 注意：重启平台后内存 `SessionSecret` 变化，用户需先在 :3000 重新登录刷新 `new_api_access_token`，再开 :3201/agency。
+
+
+## 2026-11-17 产品使用日志接入 OPS 计算费用（待部署）
+
+产品分支 codex/seedance-cn-adapter 增加可选费用读取：后台 GET /api/v1/catalog/v1/fees?since=cursor，沿用项目分支同名 ops_fee 模型、游标/租约/请求节流及 OPS 签名客户端。仅使用日志费用列展示 OPS opsAmount（人民币）；请求ID、用户及模型必须匹配。未知费用显示等待/待确认，真实零金额显示零；后续退款/费用更正由增量更新处理。管理员及本人费用接口只读已授权的当前请求，100条/16KiB/2秒预算，页面独立静默刷新费用，不重新检索列表。
+
+默认不开启；部署时为产品实例设置 OPS_FEES_ENABLED=true、OPS_FEES_URL=配对的OPS产品地址，以及该租户的费用读取凭证。配置示例见 .env.example。共享数据库实例使用相同URL/KeyID/namespace时共用游标、租约与请求间隔；不同OPS/租户必须使用不同连接配置。产品不绑定项目钱包回执；不启用余额/价格/扣款切换，不改变现有本地钱包、消费日志quota、统计和对外调用费用口径。OPS服务无业务代码修改；不导入/重算历史资金。
+
+通用生产文件与项目分支保持一致；项目专用scope和内存回执绑定放在main启动处。后台默认活跃5秒、空闲300秒，最小HTTP间隔3秒；日志待计算2秒静默刷新，最终/异常30秒，隐藏标签页暂停。此阶段是费用展示接入，不是约1秒实时回执的完成承诺。异步视频终态沿用既有上报路径。
+
+验证：使用日志25文件378项通过，最终费用相关4文件20项通过，typecheck、改动文件oxlint、前端生产构建通过。Go主应用构建、service/relay/opspush/router及日志格式/业务费用权限回归通过；费用读取及controller race通过。真实SQLite3.50.4、MySQL8.4.6、PostgreSQL16.10矩阵验证两次迁移、已有日志保留、租约/游标/去重、更正回滚、主日志分库和用户隔离；6个专用临时库已删除。证据和复现脚本 D:/DevCache/gateway-product-fees-20261117。全仓库lint有既有无关错误；go build ./...扫入既有data/release目录触发历史工具依赖下载失败，因此主应用使用go build -o <scratch>/gateway-check .完成。
+
+本轮不部署国内产品、/test、联通或OPS，不重启本地8765；线上未开启产品费用开关，未执行真实付费调用。

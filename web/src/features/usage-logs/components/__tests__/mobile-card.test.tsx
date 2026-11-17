@@ -26,6 +26,9 @@ import { render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 
+import { formatLogQuota } from '@/lib/format'
+import { STATUS_QUERY_KEY } from '@/lib/status-query'
+
 import { usageLogSchema, type UsageLog } from '../../data/schema'
 import { useCommonLogsColumns } from '../columns/common-logs-columns'
 import { UsageLogsMobileList } from '../usage-logs-mobile-card'
@@ -63,8 +66,8 @@ function Fixture(props: {
 }) {
   const columns = useCommonLogsColumns(props.admin ?? true, false)
   const context = useUsageLogsContext()
-  // TanStack Table intentionally returns a mutable table instance.
-  // eslint-disable-next-line react/incompatible-library
+  // TanStack Table owns mutable row models; this fixture is deliberately not compiled.
+  // oxlint-disable-next-line react/incompatible-library
   const table = useReactTable({
     data: props.logs ?? [log],
     columns,
@@ -85,19 +88,42 @@ function Fixture(props: {
   )
 }
 
-function renderLogs(props: Parameters<typeof Fixture>[0] = {}) {
+function renderLogs(
+  props: Parameters<typeof Fixture>[0] = {},
+  externalFees = false
+) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  client.setQueryData(STATUS_QUERY_KEY, { ops_fees_enabled: externalFees })
   return render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
+    <QueryClientProvider client={client}>
       <UsageLogsProvider>
         <Fixture {...props} />
       </UsageLogsProvider>
     </QueryClientProvider>
   )
 }
+
+it('shows a single OPS cost badge on mobile without exposing the local charge', () => {
+  renderLogs(
+    {
+      logs: [
+        {
+          ...log,
+          ops_fee: { status: 'available', amount: '0.012345', currency: 'CNY' },
+        },
+      ],
+    },
+    true
+  )
+  expect(screen.getAllByLabelText('¥0.012345')).toHaveLength(1)
+  expect(screen.queryByText('Operations fee (CNY)')).not.toBeInTheDocument()
+  expect(screen.queryByText('Operations fee received')).not.toBeInTheDocument()
+  expect(
+    screen.queryByLabelText(formatLogQuota(log.quota))
+  ).not.toBeInTheDocument()
+})
 
 it('opens long channel text on tap and copies the complete value', async () => {
   const user = userEvent.setup()

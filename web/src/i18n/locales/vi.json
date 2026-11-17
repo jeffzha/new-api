@@ -7076,6 +7076,12 @@
     "Video material pricing": "Giá chất liệu video",
     "Video output pricing": "Giá đầu ra video",
     "Register upstreams with OPS": "Đăng ký nhà cung cấp với OPS",
-    "Upstream registration will run in the background": "Các nhà cung cấp mới sẽ được đăng ký ở chế độ nền"
+    "Upstream registration will run in the background": "Các nhà cung cấp mới sẽ được đăng ký ở chế độ nền",
+    "Operations calculated fee (CNY)": "Phí do vận hành tính (CNY)",
+    "Operations fee (CNY)": "Phí vận hành (CNY)",
+    "Awaiting operations fee": "Đang chờ tính phí vận hành",
+    "Operations fee unconfirmed": "Phí vận hành chưa xác nhận",
+    "Operations fee received": "Đã nhận phí vận hành",
+    "No operations fee for this call": "Lượt gọi này không thuộc phạm vi tính phí OPS"
   }
 }

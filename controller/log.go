@@ -241,6 +241,9 @@ func GetAllLogs(c *gin.Context) {
 		model.FormatRootLogs(logs)
 	}
 	pageInfo.SetTotal(int(total))
+	if err := model.AttachOpsFees(c.Request.Context(), logs); err != nil {
+		common.SysError("OPS fee page enrichment unavailable")
+	}
 	pageInfo.SetItems(logs)
 	common.ApiSuccess(c, pageInfo)
 	return
@@ -263,6 +266,9 @@ func GetUserLogs(c *gin.Context) {
 		return
 	}
 	pageInfo.SetTotal(int(total))
+	if err := model.AttachOpsFees(c.Request.Context(), logs); err != nil {
+		common.SysError("OPS fee page enrichment unavailable")
+	}
 	pageInfo.SetItems(logs)
 	common.ApiSuccess(c, pageInfo)
 	return

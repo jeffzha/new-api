@@ -80,14 +80,25 @@ function ToolSurchargeMarker() {
 }
 
 function QuotaBadge(props: { quota: number }) {
-  const quotaDisplay = splitQuotaDisplay(formatLogQuota(props.quota))
+  return <LogCostBadge value={formatLogQuota(props.quota)} />
+}
+
+// OPS amounts already include their currency conversion; format the same badge
+// without converting the amount through the local quota settings again.
+export function LogCostBadge(props: { value: string }) {
+  const quotaDisplay = splitQuotaDisplay(props.value)
 
   return (
-    <span className='border-border/80 bg-muted/60 inline-flex h-6 w-fit items-center rounded-md border px-2 [font-family:var(--font-body)] text-sm leading-none font-semibold tabular-nums'>
+    <span
+      aria-label={props.value}
+      className='border-border/80 bg-muted/60 inline-flex h-6 w-fit items-center rounded-md border px-2 [font-family:var(--font-body)] text-sm leading-none font-semibold tabular-nums'
+    >
       {quotaDisplay.prefix ? (
-        <span className='mr-1'>{quotaDisplay.prefix}</span>
+        <span className='mr-1' aria-hidden='true'>
+          {quotaDisplay.prefix}
+        </span>
       ) : null}
-      <span>{quotaDisplay.amount}</span>
+      <span aria-hidden='true'>{quotaDisplay.amount}</span>
     </span>
   )
 }

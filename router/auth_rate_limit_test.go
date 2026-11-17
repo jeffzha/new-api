@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/alicebob/miniredis/v2"
@@ -23,6 +24,26 @@ import (
 )
 
 var authRateLimitFixtureSequence atomic.Int64
+
+func TestPasswordResetRouteLimitsUnknownEmailWithoutGeneralLimits(t *testing.T) {
+	f := newAuthRateLimitFixture(t, true)
+	require.NoError(t, i18n.Init())
+	common.CriticalRateLimitEnable = false
+	for i := range 2 {
+		r := httptest.NewRequest(http.MethodGet, "/api/reset_password?email=unregistered%40example.com&turnstile=", nil)
+		r.RemoteAddr = f.remoteAddr
+		w := httptest.NewRecorder()
+		f.router.ServeHTTP(w, r)
+		if i == 0 {
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Contains(t, w.Body.String(), `"success":true`)
+		} else {
+			assert.Equal(t, http.StatusTooManyRequests, w.Code)
+			assert.Equal(t, "60", w.Header().Get("Retry-After"))
+		}
+		assert.Contains(t, w.Header().Get("Cache-Control"), "no-store")
+	}
+}
 
 type authRateLimitFixture struct {
 	router     *gin.Engine

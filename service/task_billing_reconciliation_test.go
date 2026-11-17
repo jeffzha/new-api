@@ -162,6 +162,27 @@ func TestCNTaskReconciliationRecoveryFencesStaleWorkers(t *testing.T) {
 			retryTaskBillingReconciliation(&successor, errors.New("late owner retry"))
 			require.NoError(t, db.First(&current, legacy.ID).Error)
 			require.Equal(t, model.TaskBillingReconciliationNotNeeded, current.Status)
+
+			held := model.TaskBillingReconciliation{TaskID: 10000, Status: "manual_review"}
+			require.NoError(t, db.Create(&held).Error)
+			assert.False(t, model.HasPendingTaskBillingReconciliations())
+			due, err := model.GetDueTaskBillingReconciliations(10)
+			require.NoError(t, err)
+			assert.Empty(t, due)
+			claimed, err = held.Claim()
+			require.NoError(t, err)
+			assert.False(t, claimed, "manual review must not be claimed by a scheduler")
+			require.NoError(t, model.UpdateTaskBillingReconciliation(held.ID, map[string]any{"status": model.TaskBillingReconciliationPending}))
+			var heldAfter model.TaskBillingReconciliation
+			require.NoError(t, db.First(&heldAfter, held.ID).Error)
+			assert.Equal(t, held, heldAfter, "an automatic retry must not reopen a manual review")
+			fresh := model.TaskBillingReconciliation{TaskID: 10001, Status: model.TaskBillingReconciliationPending}
+			require.NoError(t, db.Create(&fresh).Error)
+			assert.True(t, model.HasPendingTaskBillingReconciliations())
+			due, err = model.GetDueTaskBillingReconciliations(10)
+			require.NoError(t, err)
+			require.Len(t, due, 1)
+			assert.Equal(t, fresh.ID, due[0].ID, "new tasks remain schedulable beside held history")
 		})
 	}
 }

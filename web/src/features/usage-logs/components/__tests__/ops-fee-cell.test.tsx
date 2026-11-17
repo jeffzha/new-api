@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { describe, expect, test } from 'vitest'
 
@@ -26,6 +27,19 @@ import { usageLogSchema } from '../../data/schema'
 import { OpsFeeCell } from '../ops-fee-cell'
 
 describe('operations fee display', () => {
+  test('shows the OPS amount exactly and explains the separately reported customer deduction', async () => {
+    const user = userEvent.setup()
+    render(<OpsFeeCell fee={{
+      status: 'available', amount: '0.004054', currency: 'CNY',
+      station_amount: '0.004059', difference: '0.000005',
+    }} />)
+    expect(screen.getByLabelText('¥0.004054')).toBeVisible()
+    await user.tab()
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip).toHaveTextContent('Operations calculated fee (CNY): ¥0.004054')
+    expect(tooltip).toHaveTextContent('Actual customer deduction (CNY): ¥0.004059')
+    expect(tooltip).toHaveTextContent('Deduction minus calculated fee (CNY): ¥0.000005')
+  })
   test('Chinese users see translated fee labels and calculation states', async () => {
     const i18n = createInstance()
     await i18n.init({ lng: 'zh', resources: { zh } })

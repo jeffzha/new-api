@@ -7082,6 +7082,8 @@
     "Awaiting operations fee": "運営側の料金計算待ち",
     "Operations fee unconfirmed": "運営側の料金は未確定",
     "Operations fee received": "運営側の料金を取得済み",
-    "No operations fee for this call": "この呼び出しは運用側の課金対象外です"
+    "No operations fee for this call": "この呼び出しは運用側の課金対象外です",
+    "Actual customer deduction (CNY)": "ユーザーの実際の引き落とし額（人民元）",
+    "Deduction minus calculated fee (CNY)": "引き落とし額と計算料金の差額（人民元）"
   }
 }

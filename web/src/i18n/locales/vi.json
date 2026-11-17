@@ -7082,6 +7082,8 @@
     "Awaiting operations fee": "Đang chờ tính phí vận hành",
     "Operations fee unconfirmed": "Phí vận hành chưa xác nhận",
     "Operations fee received": "Đã nhận phí vận hành",
-    "No operations fee for this call": "Lượt gọi này không thuộc phạm vi tính phí OPS"
+    "No operations fee for this call": "Lượt gọi này không thuộc phạm vi tính phí OPS",
+    "Actual customer deduction (CNY)": "Số tiền thực trừ của khách hàng (CNY)",
+    "Deduction minus calculated fee (CNY)": "Chênh lệch tiền thực trừ và phí tính toán (CNY)"
   }
 }

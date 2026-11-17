@@ -130,7 +130,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     ],
   })
 
-  const { data, isLoading, isFetching, isPlaceholderData } = useQuery({
+  const { data, dataUpdatedAt, isLoading, isFetching, isPlaceholderData } = useQuery({
     queryKey: [
       'logs',
       logCategory,
@@ -179,7 +179,8 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const logs = useLogFees<object>(
     data?.items || [],
     isAdmin,
-    logCategory === 'common' && !isPlaceholderData
+    logCategory === 'common' && !isPlaceholderData,
+    dataUpdatedAt
   )
   const columns = useColumnsByCategory(logCategory, isAdmin, isRoot)
   const isLoadingData = isLoading || (isFetching && !data)

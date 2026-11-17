@@ -7082,6 +7082,8 @@
     "Awaiting operations fee": "Calcul des frais en attente",
     "Operations fee unconfirmed": "Frais des opérations à confirmer",
     "Operations fee received": "Frais des opérations reçus",
-    "No operations fee for this call": "Cet appel ne relève pas de la facturation OPS"
+    "No operations fee for this call": "Cet appel ne relève pas de la facturation OPS",
+    "Actual customer deduction (CNY)": "Débit réel du client (CNY)",
+    "Deduction minus calculated fee (CNY)": "Débit moins frais calculés (CNY)"
   }
 }

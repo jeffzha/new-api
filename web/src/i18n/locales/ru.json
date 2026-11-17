@@ -7082,6 +7082,8 @@
     "Awaiting operations fee": "Ожидание расчёта оператора",
     "Operations fee unconfirmed": "Стоимость оператора не подтверждена",
     "Operations fee received": "Стоимость оператора получена",
-    "No operations fee for this call": "Этот вызов не учитывается в списании OPS"
+    "No operations fee for this call": "Этот вызов не учитывается в списании OPS",
+    "Actual customer deduction (CNY)": "Фактическое списание клиента (CNY)",
+    "Deduction minus calculated fee (CNY)": "Разница списания и расчётной стоимости (CNY)"
   }
 }

@@ -13,7 +13,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { api } from "@/lib/api";
@@ -21,10 +21,63 @@ import { STATUS_QUERY_KEY } from "@/lib/status-query";
 import { useAuthStore } from "@/stores/auth-store";
 
 import { usageLogSchema } from "../../data/schema";
+import { useLogFees } from "../../lib/use-log-fees";
 import { UsageLogsProvider } from "../usage-logs-provider";
 import { UsageLogsTable } from "../usage-logs-table";
 
 let client: QueryClient;
+it("keeps missing fees pending and starts a fresh short refresh window after retrieving the same requests again", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  useAuthStore.getState().auth.setUser({ id: 1, username: "preview", role: 1 });
+  const rows = [usageLogSchema.parse({
+    id: 1, user_id: 1, created_at: 1, type: 2, content: "",
+    request_id: "same-request", model_name: "sample",
+    ops_fee: { status: "waiting", amount: null, currency: "CNY" },
+  })];
+  const post = vi.spyOn(api, "post").mockResolvedValue({ data: { success: true, data: [] } });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = renderHook(({ snapshot }) => useLogFees(rows, false, true, snapshot), {
+    initialProps: { snapshot: 1 },
+    wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+  });
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+  expect(view.result.current[0].ops_fee?.status).toBe("waiting");
+  await act(async () => { await vi.advanceTimersByTimeAsync(31_000); });
+  const oldCalls = post.mock.calls.length;
+  post.mockResolvedValue({ data: { success: true, data: [{
+    request_id: "same-request",
+    ops_fee: { status: "available", amount: "0.004054", station_amount: "0.004059", currency: "CNY" },
+  }] } });
+  await act(async () => { view.rerender({ snapshot: 2 }); });
+  await waitFor(() => expect(post.mock.calls.length).toBeGreaterThan(oldCalls));
+  await waitFor(() => expect(view.result.current[0].ops_fee?.amount).toBe("0.004054"));
+  expect(view.result.current[0].ops_fee?.station_amount).toBe("0.004059");
+});
+it("gives a newly waiting row a fast refresh even after another row has waited for a long time", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  useAuthStore.getState().auth.setUser({ id: 1, username: "preview", role: 1 });
+  const ready = usageLogSchema.parse({
+    id: 1, user_id: 1, created_at: 1, type: 2, content: "", request_id: "ready",
+    ops_fee: { status: "available", amount: "0.1", currency: "CNY" },
+  });
+  const waiting = { ...ready, id: 2, request_id: "old-pending", ops_fee: { currency: "CNY" as const, status: "waiting" as const, amount: null } };
+  let newPending = false;
+  const post = vi.spyOn(api, "post").mockImplementation(async () => ({ data: { success: true, data: [
+    { request_id: ready.request_id, ops_fee: newPending ? waiting.ops_fee : ready.ops_fee },
+    { request_id: waiting.request_id, ops_fee: waiting.ops_fee },
+  ] } }));
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderHook(() => useLogFees([ready, waiting], false, true), { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  await act(async () => { await vi.advanceTimersByTimeAsync(31_000); });
+  newPending = true;
+  await act(async () => { await client.invalidateQueries({ queryKey: ["usage-log-fees"] }); });
+  const calls = post.mock.calls.length;
+  await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(calls + 1));
+});
 afterEach(() => {
   cleanup();
   client?.clear();

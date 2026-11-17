@@ -7244,6 +7244,8 @@
     "Awaiting operations fee": "Awaiting operations fee",
     "Operations fee unconfirmed": "Operations fee unconfirmed",
     "Operations fee received": "Operations fee received",
-    "No operations fee for this call": "No operations fee for this call"
+    "No operations fee for this call": "No operations fee for this call",
+    "Actual customer deduction (CNY)": "Actual customer deduction (CNY)",
+    "Deduction minus calculated fee (CNY)": "Deduction minus calculated fee (CNY)"
   }
 }

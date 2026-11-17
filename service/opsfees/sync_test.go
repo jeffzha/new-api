@@ -90,7 +90,7 @@ func TestPushLogFeeMemoryAndCorrection(t *testing.T) {
 	log := &model.Log{RequestId: "fast", UserId: 15, TokenId: 10, ModelName: "sample", Type: model.LogTypeConsume, Other: "{}", CreatedAt: time.Now().Unix()}
 	model.RememberOpsFeePending(log)
 	sent := []byte(`{"events":[{"requestId":"fast","userId":"15","model":"sample"}]}`)
-	response := []byte(`{"data":{"charges":[{"requestId":"fast","userId":"15","status":"station_billed","logFee":{"requestId":"fast","userId":"15","model":"sample","opsAmount":"0.000006","refundAmount":"0","chargedAt":"2026-11-17T01:00:00Z"}}]}}`)
+	response := []byte(`{"data":{"charges":[{"requestId":"fast","userId":"15","status":"station_billed","logFee":{"requestId":"fast","userId":"15","model":"sample","opsAmount":"0.000006","stationAmount":"0.000011","difference":"0.000005","refundAmount":"0","chargedAt":"2026-11-17T01:00:00Z"}}]}}`)
 	AcceptPushReceipts(c.BaseURL, "unbound", c.Secret, sent, response, time.Now())
 	assert.Equal(t, "waiting", model.WaitOpsFee(context.Background(), log, 0).Status)
 	AcceptPushReceipts(c.BaseURL, "push", c.Secret, sent, []byte(strings.ReplaceAll(string(response), "station_billed", "pending")), time.Now())
@@ -100,6 +100,15 @@ func TestPushLogFeeMemoryAndCorrection(t *testing.T) {
 	require.NotNil(t, got)
 	require.NotNil(t, got.Amount)
 	assert.Equal(t, "0.000006", *got.Amount)
+	// The two transports must retain the same OPS calculation, even when the
+	// station's actual wallet deduction differs by quota rounding.
+	feed, _, _, err := decodePage([]byte(`{"data":{"items":[{"requestId":"fast","userId":"15","model":"sample","opsAmount":"0.000006","stationAmount":"0.000011","difference":"0.000005","refundAmount":"0","chargedAt":"2026-11-17T01:00:00Z"}],"nextCursor":"cursor","hasMore":false}}`), c.Connection, time.Now().Unix())
+	require.NoError(t, err)
+	require.Len(t, feed, 1)
+	assert.Equal(t, feed[0].Amount, got.Amount)
+	assert.Equal(t, feed[0].StationAmount, got.StationAmount)
+	assert.Equal(t, feed[0].Difference, got.Difference)
+	assert.NotEqual(t, *got.Amount, *got.StationAmount, "a local deduction must not replace the OPS calculation")
 	reads := 0
 	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("count_fee_reads", func(*gorm.DB) { reads++ }))
 	for range 3 {

@@ -7244,6 +7244,8 @@
     "Awaiting operations fee": "等待运营计算",
     "Operations fee unconfirmed": "运营费用待确认",
     "Operations fee received": "已取得运营费用",
-    "No operations fee for this call": "该调用未纳入运营扣费"
+    "No operations fee for this call": "该调用未纳入运营扣费",
+    "Actual customer deduction (CNY)": "用户实际扣款（人民币）",
+    "Deduction minus calculated fee (CNY)": "实扣与计算费用差额（人民币）"
   }
 }

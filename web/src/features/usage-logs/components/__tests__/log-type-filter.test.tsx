@@ -37,10 +37,14 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
+import { getAllLogs, getUserLogs } from '../../api'
+import { buildApiParams } from '../../lib/utils'
 import { CommonLogsFilterBar } from '../common-logs-filter-bar'
 import { UsageLogsProvider } from '../usage-logs-provider'
 
 function FilterFixture() {
+  // TanStack Table intentionally returns a mutable table instance.
+  // eslint-disable-next-line react/incompatible-library
   const table = useReactTable({
     data: [],
     columns: [],
@@ -102,6 +106,7 @@ it('marks only retired log types as deprecated while keeping historical filters 
   for (const label of [
     'All Types',
     'Top-up',
+    'Quota Adjustment',
     'Consume',
     'System',
     'Error',
@@ -127,4 +132,28 @@ it('marks only retired log types as deprecated while keeping historical filters 
   await waitFor(() =>
     expect(router.state.location.search).toMatchObject({ type: ['7'], page: 1 })
   )
+})
+
+it('queries quota adjustments independently of paid top-ups', async () => {
+  const router = await renderFilter()
+  await userEvent.click(screen.getByRole('combobox', { name: 'Type' }))
+  await userEvent.click(screen.getByRole('option', { name: 'Quota Adjustment' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Search' }))
+  await waitFor(() =>
+    expect(router.state.location.search).toMatchObject({ type: ['8'], page: 1 })
+  )
+  const params = buildApiParams({
+    page: 1,
+    pageSize: 20,
+    searchParams: router.state.location.search,
+    isAdmin: true,
+  })
+  await getAllLogs(params)
+  await getUserLogs(params)
+  const urls = vi.mocked(api.get).mock.calls.map(([url]) => url)
+  for (const path of ['/api/log?', '/api/log/self?']) {
+    const url = urls.find((url) => url.startsWith(path))
+    if (!url) throw new Error('Missing usage log request')
+    expect(new URL(url, 'http://localhost').searchParams.get('type')).toBe('8')
+  }
 })

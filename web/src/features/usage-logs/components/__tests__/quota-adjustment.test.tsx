@@ -63,6 +63,8 @@ vi.hoisted(() => {
 afterAll(() => vi.unstubAllGlobals())
 
 function QuotaLogPreview(props: { log: UsageLog }) {
+  // TanStack Table intentionally returns a mutable table instance.
+  // eslint-disable-next-line react/incompatible-library
   const table = useReactTable({
     data: [props.log],
     columns: useCommonLogsColumns(false, false),
@@ -73,9 +75,11 @@ function QuotaLogPreview(props: { log: UsageLog }) {
     .rows[0].getAllCells()
     .find((item) => item.column.id === 'content')
   if (!cell) throw new Error('The quota log must have a content column')
+  const timeCell = table.getRowModel().rows[0].getAllCells()[0]
 
   return (
     <>
+      {flexRender(timeCell.column.columnDef.cell, timeCell.getContext())}
       {flexRender(cell.column.columnDef.cell, cell.getContext())}
       <DetailsDialog
         log={props.log}
@@ -102,28 +106,28 @@ const cases = [
     },
     english:
       'Increase quota for user “quota-owner” (ID: 42) · Requested quota: $1 · $1 → $2',
-    chinese: '增加用户「quota-owner」的额度（ID: 42） · 请求数额：$1 · $1 → $2',
+    chinese: '增加使用者「quota-owner」的额度（ID: 42） · 请求金额：$1 · $1 → $2',
   },
   {
     action: 'user.quota_add',
     params: { quota: 500000 },
     english:
       'Increase user quota · Target not recorded · Requested quota: $1 · Not recorded → Not recorded',
-    chinese: '增加用户额度 · 目标未记录 · 请求数额：$1 · 未记录 → 未记录',
+    chinese: '增加使用者额度 · 未记录目标 · 请求金额：$1 · 未记录 → 未记录',
   },
   {
     action: 'user.quota_subtract',
     params: { quota: 500000 },
     english:
       'Decrease user quota · Target not recorded · Requested quota: $1 · Not recorded → Not recorded',
-    chinese: '减少用户额度 · 目标未记录 · 请求数额：$1 · 未记录 → 未记录',
+    chinese: '减少使用者额度 · 未记录目标 · 请求金额：$1 · 未记录 → 未记录',
   },
   {
     action: 'user.quota_override',
     params: { from: 500000, to: 0 },
     english:
       'Override user quota · Target not recorded · Requested quota: $0 · $1 → $0',
-    chinese: '覆盖用户额度 · 目标未记录 · 请求数额：$0 · $1 → $0',
+    chinese: '覆写使用者额度 · 未记录目标 · 请求金额：$0 · $1 → $0',
   },
 ]
 
@@ -161,6 +165,7 @@ describe('quota adjustment log localization', () => {
         user_id: 1,
         created_at: 1,
         type: 1,
+        display_type: 8,
         content: 'English export fallback',
         username: 'quota-user',
         token_name: '',
@@ -191,14 +196,22 @@ describe('quota adjustment log localization', () => {
 
       // The modal makes the table preview inert, but both remain rendered.
       expect(screen.getAllByText(scenario.english)).toHaveLength(2)
+      expect(screen.getAllByText('Quota Adjustment')).toHaveLength(2)
       expect(
         within(screen.getByRole('dialog')).getByText(scenario.english)
       ).toBeInTheDocument()
+      expect(
+        within(screen.getByRole('dialog')).getByText('Quota Adjustment')
+      ).toBeVisible()
       await act(() => i18n.changeLanguage('zh'))
       expect(screen.getAllByText(scenario.chinese)).toHaveLength(2)
+      expect(screen.getAllByText('额度调整')).toHaveLength(2)
       expect(
         within(screen.getByRole('dialog')).getByText(scenario.chinese)
       ).toBeInTheDocument()
+      expect(
+        within(screen.getByRole('dialog')).getByText('额度调整')
+      ).toBeVisible()
       expect(screen.queryByText('English export fallback')).toBeNull()
       if ('target_user_id' in scenario.params) {
         const dialog = within(screen.getByRole('dialog'))

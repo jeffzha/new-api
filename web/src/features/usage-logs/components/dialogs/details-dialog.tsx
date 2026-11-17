@@ -553,7 +553,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const { t } = useTranslation()
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
   const other = parseLogOther(props.log.other)
-  const typeConfig = getLogTypeConfig(props.log.type)
+  const typeConfig = getLogTypeConfig(props.log.display_type ?? props.log.type)
 
   const isViolation = isViolationFeeLog(other)
   const isRefund = props.log.type === 6

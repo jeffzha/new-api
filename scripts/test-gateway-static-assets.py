@@ -18,8 +18,60 @@ spec = importlib.util.spec_from_file_location('overseas_assets', Path(__file__).
 overseas_assets = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(overseas_assets)
 
+spec = importlib.util.spec_from_file_location('agency_assets', Path(__file__).parent / 'overseas/publish-agency-assets.py')
+agency_assets = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(agency_assets)
+
 
 class StaticAssetsTests(unittest.TestCase):
+    def test_agency_archive_preserves_proxy_mock_and_missing_asset_404(self):
+        original = '''location = /agency { return 301 /agency/; }
+location ^~ /agency/ { proxy_pass http://127.0.0.1:3201; }
+location ^~ /model-mock/ { proxy_pass http://127.0.0.1:4180/; }
+'''
+        updated = agency_assets.static_block(original, '/var/www/llm-static/agency-archive')
+        self.assertIn('try_files $uri =404;', updated)
+        self.assertIn('root /var/www/llm-static/agency-archive;', updated)
+        self.assertTrue(updated.endswith(original[original.index('location ^~ /agency/ {'):]))
+        self.assertEqual(updated, agency_assets.static_block(updated, '/var/www/llm-static/agency-archive'))
+        for config in [original + original, original.replace('/agency/ {', '/other/ {')]:
+            with self.assertRaises(ValueError):
+                agency_assets.static_block(config, '/var/www/archive')
+        with self.assertRaises(ValueError):
+            agency_assets.static_block(original, '/var/www/../secret')
+
+    def test_agency_publication_retains_assets_and_rolls_back_on_corruption(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / 'agency.conf'
+            original = b'location ^~ /agency/ { proxy_pass http://127.0.0.1:3201; }'
+            config.write_bytes(original)
+            archive = root / 'archive'
+            old = archive / 'agency/assets/index-old.js'
+            old.parent.mkdir(parents=True)
+            old.write_bytes(b'old()')
+            path, body = '/agency/assets/index-new.js', b'new()'
+            manifest = {'image': 'sha256:image', 'entries': [path], 'files': {path: assets.digest(body)}}
+            args = SimpleNamespace(root=archive, config=config, backup=root / 'backups',
+                                   slot=[('candidate', 'http://candidate')], public_url='https://example.test')
+            locks = SimpleNamespace(LOCK_EX=1, LOCK_NB=2, flock=lambda *args: None)
+            with patch.dict('sys.modules', {'fcntl': locks}), patch.object(agency_assets, 'static_block', return_value='updated'), patch.object(agency_assets, 'image_assets', return_value=(manifest, {path: body})), patch.object(agency_assets.subprocess, 'run') as commands, patch.object(agency_assets.subprocess, 'check_output', return_value='sha256:image'):
+                with patch.object(agency_assets, 'verify', side_effect=ValueError('checksum')):
+                    with self.assertRaisesRegex(ValueError, 'checksum'):
+                        agency_assets.publish(args)
+                self.assertEqual(config.read_bytes(), original)
+                self.assertEqual(sum(call.args[0] == ['systemctl', 'reload', 'nginx'] for call in commands.call_args_list), 2)
+                missing = agency_assets.urllib.error.HTTPError('missing', 404, 'missing', {}, None)
+                with patch.object(agency_assets, 'verify'), patch.object(agency_assets, 'get', side_effect=missing):
+                    agency_assets.publish(args)
+                self.assertEqual(config.read_text(), 'updated')
+                self.assertEqual(old.read_bytes(), b'old()')
+                self.assertEqual((archive / path.lstrip('/')).read_bytes(), body)
+                manifest['files'][path] = assets.digest(b'changed()')
+                with self.assertRaisesRegex(ValueError, 'overwrite'):
+                    agency_assets.publish(args)
+                self.assertEqual(config.read_text(), 'updated')
+
     def test_overseas_nginx_preserves_routes_and_has_no_spa_asset_fallback(self):
         original = '''server {
     server_name llm.ai.nexus-reach.com;

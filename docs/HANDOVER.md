@@ -328,3 +328,18 @@ git diff --check
 上线前必须核实配对OPS的上报响应是否实际返回logFee（OPS产品现有开关可能不返回），并核实推送Key与费用读取Key的同租户绑定；缺少logFee只能等原增量接口，不能只改聚合保证1秒。延迟从最终用量确定后开始计算，不包含模型生成时间。OPS计算/网络/凭证限流、积压和缓存未命中均可能超过1秒；未做在用服务器容量压测，不能保证任意高并发CPU不升高。
 
 用户约定的后续国内产品发布：先查现网权重，将一个健康旧实例切100%、另一实例0%，等待正在处理的请求/长连接排空；只更新0%实例。新实例/API/前端静态资源及Caddy主动探测均通过后，渐进转流至新实例100%；排空另一个旧实例并更新，确认后恢复50/50。每步观察502/503及模型调用，出现异常即停止推进并回退健康实例；不承诺绝对无故障。不能同时停两个实例，不能Docker healthy后立即假定Caddy已恢复。按参考会话与技能发布手册执行静态资源归档验证、灰度和优雅退出。项目/test允许直接更新。本轮不执行任何发布。
+
+## 2026-11-17 国内产品费用代码蓝绿发布完成
+
+## 51. 2026-11-17 国内产品聚合费用读取及回执代码蓝绿发布
+
+- 用户授权参考AAB-梳理四大平台服务部署后部署国内产品聚合。实际发布codex/seedance-cn-adapter已推送提交a7bba74c5cea13e33963d5f27fd9325d239a63a4，镜像new-api-seedance:a7bba74c5。只从git archive固定提交构建，不包含现场工作树插件或其他会话未提交改动。北京时间23:03:01—23:13:08切流，最终Blue/Green均healthy、Caddy准入，两个产品域名入口均50/50；公网50次版本样本全部a7bba74c5。
+- 产品Gateway改动来自314558cba/9e69f9abe/ce0f08d09/a7bba74c5等已提交代码：model/ops_fee*.go、service/opsfees/、service/opspush/、controller/log_ops_fees.go、业务费用回执路径和web/src/features/usage-logs/。开通产品配对OPS费用读取、内存费用和有界跨实例结果共享、已落库用量快速上报、只刷新费用、默认费用来源OPS及显式gateway兼容。产品本地钱包仍负责预占和扣款，没有切换OPS资金归属；价格、余额、代理商报价和模型配置不作发布调整。
+- 只增加两产品槽的OPS_FEES配置：enabled=true、URL=https://ops.nexus-reach.com、现有gateway-production上报凭证、独立namespace=product-fees-20261117、活跃5秒/空闲300秒、首次since=1794841381（发布前约24小时）。不复制密钥到文档。两槽通过数据库租约限制后台增量读取；快回执通过现有Redis有界通知，热HTTP费用读取不等OPS。约73万历史记录未作全量回扫，24小时前的历史费用不能承诺补齐。
+- OPS本轮无源码、迁移、配置、推送或部署变更。当前OPS产品运行c5bcdaaa系列镜像尚未包含main的c1875993（station_billed也返回logFee），因此费用增量接口可用，但本次不能宣布产品已实现约1秒即时回执。Gateway已具备接受合法回执能力，需同事部署匹配OPS产品补丁后再验收端到端时延。项目/test运行版本f207446e0、本地8765、联通及海外均未由本轮替换；43个其他运行容器ID和StartedAt保持。
+- 数据库：发布前newapi PostgreSQL一致性备份3531461102字节，pg_restore --list通过，SHA256=79a8dacf7ee8c08aa73fb3c3e74d201e47623b6f1a6308758a1368bcbe8fdce8，服务器/opt/new-api/deploy/backups/newapi-before-product-a7bba74c5-20261117.dump。费用独立表ops_fees/ops_fee_syncs按现有可重复加法迁移启用；未改消费日志/用户资金。备份与旧镜像a6faf41a2、旧静态资源全部保留。
+- 蓝绿：旧Blue100%→Green0%，排空至少120秒并确认0连接→更新Green→Docker健康和两轮Caddy探测→251项静态资源公网MIME/SHA256与镜像绑定验证→1/5/25%灰度；25%阶段30次小样本未见候选，脚本按门禁暂停，健康Green接管100%，复核30次均新版本后继续→Blue0%排空至少120秒/0连接→更新Blue→健康/资源验证→1/99→50/50。首次代理定位断言发现两产品域名代理、实际并非单一路由，未修改流量或容器就中止；随后按两处共同权重校正。没有绕过真实502/503门禁。
+- 发布窗口累计1076次四平台公网探测全部200；Caddy新增HTTP502=0、HTTP503=0、no upstreams=0、在用上游拒绝连接=0。替换零流量实例期间主动健康探测拒绝连接4条单独记录；未将其声称为零日志。两槽无panic/fatal或费用读取错误，5个配套二进制SHA256逐一保持。主机268段CPU平均18.96%、最高73.0%，包括其他工作负载，不能解读为本功能独占或容量保证；当前Gateway采样低于单核1%。
+- 只读验收：费用游标追上当前，36761条中36760条available、1条unconfirmed，last_error为空、failures=0；最近三笔与OPS fees接口金额精确相同。23:11的两槽直接授权费用API各3笔及公网200/3笔匹配；后续重复验证遭原有429，尊重限流未调整配置，等待后公网再次200/3笔精确匹配37.08ms。匿名首次401、后续遇限流429，不绕过鉴权。未新建付费调用、充值或客户资金调整，未重新完成真人登录、代理商资金全链路、浏览器视觉或持续容量压测。
+- 本机验证：固定提交前端typecheck、费用相关3文件6项及生产构建、Linux主应用构建、opsfees/opspush/router全包通过；沿用此前SQLite3.50.4/MySQL8.4.6/PostgreSQL16.10费用/用量/授权分库矩阵和race记录（第48节与D:/DevCache/gateway-product-fees-20261117），没有把单元测试模拟503当成线上错误。新构建准确dist仅构建一次，251项静态归档publish/verify两槽与公网通过。
+- 脱敏证据和复现脚本：D:/DevCache/gateway-product-release-20261117-a7bba74c5/server-final.json、server-postcheck.json、server-api-final.json及构建/测试日志；服务器/tmp/gateway-product-a7bba74c5-20261117。私有环境快照仅留服务器0700/0600目录，不下载、不输出。三份台账同步；文档提交不重启任何业务服务。

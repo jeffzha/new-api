@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -15,17 +16,70 @@ import (
 	"github.com/QuantumNous/new-api/types"
 )
 
+func activeTaskPluginKeysByModel(abilities []AbilityWithChannel, generation *jsplugin.RoutingGeneration) map[string]map[string]struct{} {
+	result := make(map[string]map[string]struct{})
+	for _, ability := range abilities {
+		if ability.ChannelStatus != common.ChannelStatusEnabled {
+			continue
+		}
+		pluginKey := ""
+		if ability.ChannelType == constant.ChannelTypeTaskPlugin {
+			var settings dto.ChannelSettings
+			if err := common.Unmarshal([]byte(ability.ChannelSetting), &settings); err == nil {
+				pluginKey = strings.TrimSpace(settings.TaskPluginKey)
+			}
+		} else if plugin, ok := generation.GetByChannelType(ability.ChannelType); ok {
+			pluginKey = plugin.Meta.Key
+		}
+		if pluginKey == "" {
+			continue
+		}
+		keys := result[ability.Model]
+		if keys == nil {
+			keys = make(map[string]struct{})
+			result[ability.Model] = keys
+		}
+		keys[pluginKey] = struct{}{}
+	}
+	return result
+}
+
+func activePricingProviders(model string, abilities map[string]map[string]struct{}, generation *jsplugin.RoutingGeneration) []*jsplugin.LoadedPlugin {
+	providers := generation.PluginsByModel(model)
+	active := abilities[model]
+	if len(active) == 0 {
+		return providers
+	}
+	filtered := providers[:0]
+	for _, provider := range providers {
+		if _, ok := active[provider.Meta.Key]; ok {
+			filtered = append(filtered, provider)
+		}
+	}
+	return filtered
+}
+
+func samePricingPluginVariant(a, b PricingPluginVariant) bool {
+	return a.BillingMode == b.BillingMode &&
+		a.BillingExpr == b.BillingExpr &&
+		reflect.DeepEqual(a.BillingUsageSchema, b.BillingUsageSchema) &&
+		reflect.DeepEqual(a.BillingUsageExamples, b.BillingUsageExamples) &&
+		reflect.DeepEqual(a.BillingMaterialPricing, b.BillingMaterialPricing)
+}
+
 type PricingPluginVariant struct {
-	PluginKey            string                               `json:"plugin_key"`
-	PluginName           string                               `json:"plugin_name"`
-	Icon                 string                               `json:"icon,omitempty"`
-	BillingExpr          string                               `json:"billing_expr"`
-	BillingMode          string                               `json:"billing_mode"`
-	BillingUsageSchema   map[string]jsplugin.UsageFieldSchema `json:"billing_usage_schema"`
-	BillingUsageExamples []jsplugin.UsageExample              `json:"billing_usage_examples,omitempty"`
+	BillingMaterialPricing *jsplugin.MaterialPricingCatalog     `json:"billing_material_pricing,omitempty"`
+	PluginKey              string                               `json:"plugin_key"`
+	PluginName             string                               `json:"plugin_name"`
+	Icon                   string                               `json:"icon,omitempty"`
+	BillingExpr            string                               `json:"billing_expr"`
+	BillingMode            string                               `json:"billing_mode"`
+	BillingUsageSchema     map[string]jsplugin.UsageFieldSchema `json:"billing_usage_schema"`
+	BillingUsageExamples   []jsplugin.UsageExample              `json:"billing_usage_examples,omitempty"`
 }
 
 type Pricing struct {
+	BillingMaterialPricing *jsplugin.MaterialPricingCatalog     `json:"billing_material_pricing,omitempty"`
 	BillingPluginVariants  []PricingPluginVariant               `json:"billing_plugin_variants,omitempty"`
 	ModelName              string                               `json:"model_name"`
 	Description            string                               `json:"description,omitempty"`
@@ -327,6 +381,7 @@ func updatePricing() {
 
 	pricingMap = make([]Pricing, 0)
 	pluginGeneration := jsplugin.DefaultRegistry.Generation()
+	activePluginKeys := activeTaskPluginKeysByModel(enableAbilities, pluginGeneration)
 	for model, groups := range modelGroupsMap {
 		pricing := Pricing{
 			ModelName:              model,
@@ -397,11 +452,15 @@ func updatePricing() {
 			usageSchema, usageExamples := plugin.Meta.UsageForModel(usageModel)
 			pricing.BillingUsageSchema = jsplugin.CloneUsageSchema(usageSchema)
 			pricing.BillingUsageExamples = jsplugin.CloneUsageExamples(usageExamples)
+			pricing.BillingMaterialPricing = jsplugin.CloneMaterialPricing(plugin.Meta.MaterialPricingForModel(usageModel))
 		}
 		if pricing.BillingUsageSchema == nil {
 			pricing.BillingUsageSchema = nativeTaskUsageSchema(model)
 		}
-		providers := pluginGeneration.PluginsByModel(model)
+		if pricing.BillingUsageSchema == nil {
+			pricing.BillingUsageSchema = nativeAudioUsageSchema(model)
+		}
+		providers := activePricingProviders(model, activePluginKeys, pluginGeneration)
 		hasProviderOverride := false
 		for _, provider := range providers {
 			if _, configured := billing_setting.GetPluginBillingExpr(provider.Meta.Key, model); configured {
@@ -410,6 +469,7 @@ func updatePricing() {
 			}
 		}
 		if hasProviderOverride || (len(providers) >= 2 && pricing.BillingMode == billing_setting.BillingModeTieredExpr) {
+			variants := make([]PricingPluginVariant, 0, len(providers))
 			for _, provider := range providers {
 				schema, examples := provider.Meta.UsageForModel(model)
 				if schema == nil {
@@ -423,11 +483,28 @@ func updatePricing() {
 				if mode == billing_setting.BillingModeTieredExpr && !billing_setting.TaskExprCompatible(expression, schema) {
 					expression = ""
 				}
-				pricing.BillingPluginVariants = append(pricing.BillingPluginVariants, PricingPluginVariant{
+				variants = append(variants, PricingPluginVariant{
 					PluginKey: provider.Meta.Key, PluginName: provider.Meta.Name, Icon: provider.Meta.Icon,
 					BillingExpr: expression, BillingMode: mode,
 					BillingUsageSchema: jsplugin.CloneUsageSchema(schema), BillingUsageExamples: jsplugin.CloneUsageExamples(examples),
+					BillingMaterialPricing: jsplugin.CloneMaterialPricing(provider.Meta.MaterialPricingForModel(model)),
 				})
+			}
+			allSame := len(variants) > 0
+			for i := 1; i < len(variants); i++ {
+				if !samePricingPluginVariant(variants[0], variants[i]) {
+					allSame = false
+					break
+				}
+			}
+			if len(variants) == 1 || allSame {
+				pricing.BillingMode = variants[0].BillingMode
+				pricing.BillingExpr = variants[0].BillingExpr
+				pricing.BillingUsageSchema = variants[0].BillingUsageSchema
+				pricing.BillingUsageExamples = variants[0].BillingUsageExamples
+				pricing.BillingMaterialPricing = variants[0].BillingMaterialPricing
+			} else {
+				pricing.BillingPluginVariants = variants
 			}
 		}
 		pricing.ProviderPricing = getProviderPricing(model)

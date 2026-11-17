@@ -110,6 +110,12 @@ func VideoProxy(c *gin.Context) {
 			logger.LogWarn(c.Request.Context(), fmt.Sprintf("Failed to project plugin video for task %s", taskID))
 		}
 	}
+	if descriptor != nil {
+		if err := proxyTaskMedia(c, task, descriptor); err != nil {
+			writeTaskMediaProxyError(c, err)
+		}
+		return
+	}
 	channel, err := model.CacheGetChannel(task.ChannelId)
 	if err != nil {
 		videoProxyError(c, http.StatusServiceUnavailable, "server_error", "Failed to retrieve channel information")
@@ -356,14 +362,24 @@ func proxyTaskMedia(c *gin.Context, task *model.Task, descriptor *relaychannel.T
 		}
 	}
 	proxy := strings.TrimSpace(channel.GetSetting().Proxy)
-	if err := validateTaskMediaURL(rawURL, proxy); err != nil {
+	baseURL, baseErr := url.Parse(channel.GetBaseURL())
+	channelOrigin := taskHasPluginExecution(task) && baseErr == nil && baseURL.User == nil && baseURL.Fragment == "" &&
+		sameTaskMediaOrigin(baseURL, parsedURL)
+	validationErr := validateTaskMediaURL(rawURL, proxy)
+	trustedProvider := validationErr != nil && channelOrigin
+	if validationErr != nil && !trustedProvider {
 		return &taskMediaProxyError{
 			status: http.StatusBadGateway, code: "artifact_request_rejected",
-			message: "Artifact request was rejected", err: err,
+			message: "Artifact request was rejected", err: validationErr,
 		}
 	}
 
 	client := service.GetSSRFProtectedHTTPClient()
+	if trustedProvider {
+		// Plugin descriptors may use the administrator-configured provider origin.
+		// User-supplied result URLs and redirects retain protected fetch rules.
+		client = service.GetHttpClient()
+	}
 	if proxy != "" {
 		client, err = service.GetHttpClientWithProxy(proxy)
 		if err != nil {
@@ -396,6 +412,11 @@ func proxyTaskMedia(c *gin.Context, task *model.Task, descriptor *relaychannel.T
 	}
 
 	client = taskMediaRedirectClient(client, proxy, c, clientHeaders, descriptor.Credentialless)
+	if trustedProvider {
+		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+			return errTaskMediaRequestRejected
+		}
+	}
 	clientWithoutBodyTimeout := *client
 	clientWithoutBodyTimeout.Timeout = 0
 	resp, err := doTaskMediaRequest(&clientWithoutBodyTimeout, req, taskMediaResponseHeaderTimeout)
@@ -419,6 +440,22 @@ func proxyTaskMedia(c *gin.Context, task *model.Task, descriptor *relaychannel.T
 		}
 	}
 	defer resp.Body.Close()
+
+	// Some signed media CDNs allow GET but reject HEAD, including with 403.
+	if method == http.MethodHead && descriptor.Credentialless &&
+		(resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNotImplemented) {
+		_ = resp.Body.Close()
+		getRequest := req.Clone(c.Request.Context())
+		getRequest.Method = http.MethodGet
+		resp, err = doTaskMediaRequest(&clientWithoutBodyTimeout, getRequest, taskMediaResponseHeaderTimeout)
+		if err != nil {
+			return &taskMediaProxyError{
+				status: http.StatusBadGateway, code: "artifact_upstream_error",
+				message: "Failed to fetch artifact content headers", err: err,
+			}
+		}
+		defer resp.Body.Close()
+	}
 
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusPartialContent, http.StatusNotModified, http.StatusRequestedRangeNotSatisfiable:

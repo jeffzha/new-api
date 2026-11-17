@@ -105,14 +105,16 @@ type Meta struct {
 	UsageSchema          map[string]UsageFieldSchema `json:"usageSchema,omitempty"`
 	UsageExamples        []UsageExample              `json:"usageExamples,omitempty"`
 	UsageProfiles        []UsageProfile              `json:"usageProfiles,omitempty"`
+	MaterialPricing      *MaterialPricingCatalog     `json:"materialPricing,omitempty"`
 	Auth                 AuthMeta                    `json:"auth"`
 }
 
 // UsageProfile replaces the plugin's default usage metadata for its models.
 type UsageProfile struct {
-	Models   []string                    `json:"models"`
-	Schema   map[string]UsageFieldSchema `json:"schema"`
-	Examples []UsageExample              `json:"examples,omitempty"`
+	Models          []string                    `json:"models"`
+	Schema          map[string]UsageFieldSchema `json:"schema"`
+	Examples        []UsageExample              `json:"examples,omitempty"`
+	MaterialPricing *MaterialPricingCatalog     `json:"materialPricing,omitempty"`
 }
 
 // UsageForModel returns read-only usage metadata for a declared model. Aliases
@@ -130,6 +132,21 @@ func (m Meta) UsageForModel(model string) (map[string]UsageFieldSchema, []UsageE
 	return m.UsageSchema, m.UsageExamples
 }
 
+// MaterialPricingForModel returns display-only official input-material prices.
+// They never participate in settlement; billing remains driven by usage facts
+// and the configured expression.
+func (m Meta) MaterialPricingForModel(model string) *MaterialPricingCatalog {
+	folded := asciiFold(model)
+	for _, profile := range m.UsageProfiles {
+		for _, declared := range profile.Models {
+			if asciiFold(declared) == folded && profile.MaterialPricing != nil {
+				return profile.MaterialPricing
+			}
+		}
+	}
+	return m.MaterialPricing
+}
+
 // ProtocolSupports reports whether the named protocol claim includes mode.
 func (m Meta) ProtocolSupports(protocol, mode string) bool {
 	for _, claim := range m.Protocols {
@@ -145,6 +162,23 @@ func (m Meta) ProtocolSupports(protocol, mode string) bool {
 type UsageExample struct {
 	Label string         `json:"label"`
 	Facts map[string]any `json:"facts"`
+}
+
+type MaterialPricingCatalog struct {
+	Currency string                `json:"currency"`
+	Items    []MaterialPricingItem `json:"items"`
+}
+
+type MaterialPricingItem struct {
+	Material  string                `json:"material"`
+	Unit      string                `json:"unit"`
+	FreeUnits float64               `json:"freeUnits,omitempty"`
+	Rates     []MaterialPricingRate `json:"rates,omitempty"`
+}
+
+type MaterialPricingRate struct {
+	Label  LocalizedText `json:"label,omitempty"`
+	Amount float64       `json:"amount"`
 }
 
 type AuthorMeta struct {
@@ -848,14 +882,32 @@ func cloneMeta(meta Meta) Meta {
 	}
 	meta.UsageSchema = CloneUsageSchema(meta.UsageSchema)
 	meta.UsageExamples = CloneUsageExamples(meta.UsageExamples)
+	meta.MaterialPricing = CloneMaterialPricing(meta.MaterialPricing)
 	meta.UsageProfiles = append([]UsageProfile(nil), meta.UsageProfiles...)
 	for index := range meta.UsageProfiles {
 		profile := &meta.UsageProfiles[index]
 		profile.Models = append([]string(nil), profile.Models...)
 		profile.Schema = CloneUsageSchema(profile.Schema)
 		profile.Examples = CloneUsageExamples(profile.Examples)
+		profile.MaterialPricing = CloneMaterialPricing(profile.MaterialPricing)
 	}
 	return meta
+}
+
+func CloneMaterialPricing(catalog *MaterialPricingCatalog) *MaterialPricingCatalog {
+	if catalog == nil {
+		return nil
+	}
+	cloned := &MaterialPricingCatalog{Currency: catalog.Currency, Items: make([]MaterialPricingItem, len(catalog.Items))}
+	for index, item := range catalog.Items {
+		cloned.Items[index] = item
+		cloned.Items[index].Rates = make([]MaterialPricingRate, len(item.Rates))
+		for rateIndex, rate := range item.Rates {
+			cloned.Items[index].Rates[rateIndex] = rate
+			cloned.Items[index].Rates[rateIndex].Label = maps.Clone(rate.Label)
+		}
+	}
+	return cloned
 }
 
 // CloneUsageSchema copies schema fields and localized metadata for independent readers.
@@ -975,7 +1027,7 @@ func decodeMeta(value any) (Meta, error) {
 	}
 	for field := range object {
 		switch field {
-		case "requiredCapabilities", "submitResponseTypes", "sortPriority", "website", "apiVersion", "key", "name", "icon", "description", "version", "author", "baseUrl", "channelTypes", "channelType", "compatibleChannelTypes", "models", "fetchMode", "allowedHosts", "routes", "protocols", "usageSchema", "usageExamples", "usageProfiles", "auth", "endpoints", "submitPaths", "actions":
+		case "requiredCapabilities", "submitResponseTypes", "sortPriority", "website", "apiVersion", "key", "name", "icon", "description", "version", "author", "baseUrl", "channelTypes", "channelType", "compatibleChannelTypes", "models", "fetchMode", "allowedHosts", "routes", "protocols", "usageSchema", "usageExamples", "usageProfiles", "materialPricing", "auth", "endpoints", "submitPaths", "actions":
 		default:
 			return Meta{}, &UnknownMetaFieldError{Field: field}
 		}
@@ -1096,6 +1148,12 @@ func decodeMeta(value any) (Meta, error) {
 	}
 	if usageProfiles, exists := object["usageProfiles"]; exists {
 		meta.UsageProfiles, err = decodeUsageProfiles(usageProfiles)
+		if err != nil {
+			return Meta{}, err
+		}
+	}
+	if materialPricing, exists := object["materialPricing"]; exists {
+		meta.MaterialPricing, err = decodeMaterialPricing(materialPricing)
 		if err != nil {
 			return Meta{}, err
 		}
@@ -1365,6 +1423,9 @@ func normalizeV1Meta(meta *Meta) error {
 	if err := validateUsageExamples(meta.UsageSchema, meta.UsageExamples); err != nil {
 		return err
 	}
+	if err := validateMaterialPricing(meta.MaterialPricing); err != nil {
+		return err
+	}
 	profileModels := make(map[string]struct{})
 	for index, profile := range meta.UsageProfiles {
 		if len(profile.Models) == 0 {
@@ -1391,8 +1452,146 @@ func normalizeV1Meta(meta *Meta) error {
 		if err := validateUsageExamples(profile.Schema, profile.Examples); err != nil {
 			return fmt.Errorf("plugin meta usageProfiles[%d]: %w", index, err)
 		}
+		if err := validateMaterialPricing(profile.MaterialPricing); err != nil {
+			return fmt.Errorf("plugin meta usageProfiles[%d]: %w", index, err)
+		}
 	}
 	return nil
+}
+
+func validateMaterialPricing(catalog *MaterialPricingCatalog) error {
+	if catalog == nil {
+		return nil
+	}
+	if catalog.Currency != "CNY" {
+		return fmt.Errorf("plugin meta materialPricing currency must be CNY")
+	}
+	if len(catalog.Items) == 0 {
+		return fmt.Errorf("plugin meta materialPricing items must contain at least one item")
+	}
+	materials := make(map[string]struct{}, len(catalog.Items))
+	for index := range catalog.Items {
+		item := &catalog.Items[index]
+		if !slices.Contains([]string{"audio", "image", "video"}, item.Material) {
+			return fmt.Errorf("plugin meta materialPricing items[%d] material must be audio, image or video", index)
+		}
+		if _, duplicate := materials[item.Material]; duplicate {
+			return fmt.Errorf("plugin meta materialPricing material %q must be unique", item.Material)
+		}
+		materials[item.Material] = struct{}{}
+		if !slices.Contains([]string{"free", "count", "second"}, item.Unit) {
+			return fmt.Errorf("plugin meta materialPricing items[%d] unit must be free, count or second", index)
+		}
+		if math.IsNaN(item.FreeUnits) || math.IsInf(item.FreeUnits, 0) || item.FreeUnits < 0 {
+			return fmt.Errorf("plugin meta materialPricing items[%d] freeUnits must be a finite non-negative number", index)
+		}
+		if item.Unit == "free" {
+			if item.FreeUnits != 0 || len(item.Rates) != 0 {
+				return fmt.Errorf("plugin meta materialPricing items[%d] free items cannot declare freeUnits or rates", index)
+			}
+			continue
+		}
+		if len(item.Rates) == 0 {
+			return fmt.Errorf("plugin meta materialPricing items[%d] rates must contain at least one rate", index)
+		}
+		labels := make(map[string]struct{}, len(item.Rates))
+		for rateIndex := range item.Rates {
+			rate := &item.Rates[rateIndex]
+			if math.IsNaN(rate.Amount) || math.IsInf(rate.Amount, 0) || rate.Amount <= 0 {
+				return fmt.Errorf("plugin meta materialPricing items[%d] rates[%d] amount must be a finite positive number", index, rateIndex)
+			}
+			if err := validateLocalizedText(rate.Label, fmt.Sprintf("materialPricing items[%d] rates[%d] label", index, rateIndex), maxUsageFieldDescriptionRunes); err != nil {
+				return err
+			}
+			label := asciiFold(rate.Label["en"])
+			if label == "" {
+				continue
+			}
+			if _, duplicate := labels[label]; duplicate {
+				return fmt.Errorf("plugin meta materialPricing items[%d] rate labels must be unique", index)
+			}
+			labels[label] = struct{}{}
+		}
+	}
+	return nil
+}
+
+func decodeMaterialPricing(value any) (*MaterialPricingCatalog, error) {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("plugin meta materialPricing must be an object")
+	}
+	for key := range object {
+		if key != "currency" && key != "items" {
+			return nil, fmt.Errorf("plugin meta materialPricing has unknown field %q", key)
+		}
+	}
+	currency, err := stringMetaField(object, "currency")
+	if err != nil {
+		return nil, err
+	}
+	rawItems, ok := object["items"].([]any)
+	if !ok {
+		return nil, fmt.Errorf("plugin meta materialPricing items must be an array")
+	}
+	catalog := &MaterialPricingCatalog{Currency: currency, Items: make([]MaterialPricingItem, 0, len(rawItems))}
+	for index, rawItem := range rawItems {
+		itemObject, ok := rawItem.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("plugin meta materialPricing items[%d] must be an object", index)
+		}
+		for key := range itemObject {
+			if key != "material" && key != "unit" && key != "freeUnits" && key != "rates" {
+				return nil, fmt.Errorf("plugin meta materialPricing items[%d] has unknown field %q", index, key)
+			}
+		}
+		item := MaterialPricingItem{}
+		if item.Material, err = stringMetaField(itemObject, "material"); err != nil {
+			return nil, err
+		}
+		if item.Unit, err = stringMetaField(itemObject, "unit"); err != nil {
+			return nil, err
+		}
+		if rawFreeUnits, exists := itemObject["freeUnits"]; exists {
+			var valid bool
+			item.FreeUnits, valid = usageExampleNumber(rawFreeUnits)
+			if !valid {
+				return nil, fmt.Errorf("plugin meta materialPricing items[%d] freeUnits must be a number", index)
+			}
+		}
+		if rawRates, exists := itemObject["rates"]; exists {
+			rates, ok := rawRates.([]any)
+			if !ok {
+				return nil, fmt.Errorf("plugin meta materialPricing items[%d] rates must be an array", index)
+			}
+			item.Rates = make([]MaterialPricingRate, 0, len(rates))
+			for rateIndex, rawRate := range rates {
+				rateObject, ok := rawRate.(map[string]any)
+				if !ok {
+					return nil, fmt.Errorf("plugin meta materialPricing items[%d] rates[%d] must be an object", index, rateIndex)
+				}
+				for key := range rateObject {
+					if key != "label" && key != "amount" {
+						return nil, fmt.Errorf("plugin meta materialPricing items[%d] rates[%d] has unknown field %q", index, rateIndex, key)
+					}
+				}
+				rate := MaterialPricingRate{}
+				if rate.Label, err = localizedTextMetaField(rateObject, "label", maxUsageFieldDescriptionRunes); err != nil {
+					return nil, err
+				}
+				rate.Amount, ok = usageExampleNumber(rateObject["amount"])
+				if !ok {
+					return nil, fmt.Errorf("plugin meta materialPricing items[%d] rates[%d] amount must be a number", index, rateIndex)
+				}
+				item.Rates = append(item.Rates, rate)
+			}
+		}
+		catalog.Items = append(catalog.Items, item)
+	}
+	if err := validateMaterialPricing(catalog); err != nil {
+		return nil, err
+	}
+	return catalog, nil
 }
 
 func validateUsageSchema(schema map[string]UsageFieldSchema) error {
@@ -1419,7 +1618,7 @@ func decodeUsageProfiles(value any) ([]UsageProfile, error) {
 			return nil, fmt.Errorf("plugin meta usageProfiles[%d] must be an object", index)
 		}
 		for key := range object {
-			if key != "models" && key != "schema" && key != "examples" {
+			if key != "models" && key != "schema" && key != "examples" && key != "materialPricing" {
 				return nil, fmt.Errorf("plugin meta usageProfiles[%d] has unknown field %q", index, key)
 			}
 		}
@@ -1434,6 +1633,12 @@ func decodeUsageProfiles(value any) ([]UsageProfile, error) {
 		profile := UsageProfile{Models: models, Schema: schema}
 		if examples, exists := object["examples"]; exists {
 			profile.Examples, err = decodeUsageExamples(examples)
+			if err != nil {
+				return nil, fmt.Errorf("plugin meta usageProfiles[%d]: %w", index, err)
+			}
+		}
+		if materialPricing, exists := object["materialPricing"]; exists {
+			profile.MaterialPricing, err = decodeMaterialPricing(materialPricing)
 			if err != nil {
 				return nil, fmt.Errorf("plugin meta usageProfiles[%d]: %w", index, err)
 			}

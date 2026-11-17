@@ -220,7 +220,13 @@ func TestAgencyRoutesLimitAuthenticatedUsersWithoutConsumingLoginAttempts(t *tes
 			const commandPath = "/api/agency/command-proof"
 			for _, path := range []string{ssoPath, verifyPath, commandPath} {
 				assert.Equal(t, http.StatusUnauthorized, fixture.post(path, "{}", "", fixture.remoteAddr, nil).Code)
-				assert.Equal(t, http.StatusForbidden, fixture.post(path, "{}", userSession.AccessToken, fixture.remoteAddr, nil).Code)
+				wantStatus := http.StatusForbidden
+				if path == ssoPath {
+					// Linked distributor operators may use browser SSO; an empty
+					// state is rejected before looking up their operator binding.
+					wantStatus = http.StatusBadRequest
+				}
+				assert.Equal(t, wantStatus, fixture.post(path, "{}", userSession.AccessToken, fixture.remoteAddr, nil).Code)
 			}
 
 			proofBody := `{"password":"incorrect-password","command_id":"command-1","action":"agency.update","object_id":"agency-1","body_hash":"` + strings.Repeat("a", 64) + `"}`

@@ -1,0 +1,24 @@
+=== RUN   TestFixedPriceBillingDatabaseMatrix
+=== RUN   TestFixedPriceBillingDatabaseMatrix/sqlite
+    text_quota_test.go:126: database: 3.50.4
+=== RUN   TestFixedPriceBillingDatabaseMatrix/sqlite/image_override_reserves_extra_quantity
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[INFO] 2026/10/15 - 18:23:38 | SYSTEM | 用户 1 需要预扣费 ＄0.040000 (funding=wallet) 
+[INFO] 2026/10/15 - 18:23:38 | SYSTEM | 预扣费与实际消耗一致，无需调整：＄0.160000（按次计费） 
+[INFO] 2026/10/15 - 18:23:38 | SYSTEM | record consume log: userId=1, params={"channel_id":1,"prompt_tokens":0,"completion_tokens":0,"model_name":"fixed-test","token_name":"","quota":80000,"content":"上游无计费信息","token_id":1,"use_time_seconds":0,"is_stream":false,"group":"default","other":{"admin_info":{"usage_billing_path":"upstream","use_channel":null},"audio_completion_ratio":0,"audio_ratio":0,"billing_mode":"tiered_expr","billing_preference":"wallet_only","billing_source":"wallet","billing_unit":"request","cache_creation_pricing_configured":false,"cache_creation_tokens":0,"cache_creation_tokens_1h":0,"cache_creation_tokens_5m":0,"cache_ratio":0,"cache_tokens":0,"cache_write_tokens":0,"completion_ratio":0,"expr_b64":"dGllcigiaW1hZ2UiLCBmaXhlZCgwLjA0KSkgKiBpbWFnZV9jb3VudA==","fixed_price":0.04,"frt":-63927656618312,"group_ratio":1,"image_count":4,"image_ratio":0,"input_tokens_total":0,"matched_tier":"image","model_price":0,"model_ratio":0,"quota_per_unit":500000,"request_path":"/v1/chat/completions","usage_semantic":"openai","user_group_ratio":0}} 
+    text_quota_test.go:292: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/.testtmp/s4-task-baseline/service/text_quota_test.go:292
+        	Error:      	Not equal: 
+        	            	expected: 1
+        	            	actual  : 4
+        	Test:       	TestFixedPriceBillingDatabaseMatrix/sqlite/image_override_reserves_extra_quantity
+        	Messages:   	actual count must not mutate the frozen request
+--- FAIL: TestFixedPriceBillingDatabaseMatrix (0.04s)
+    --- FAIL: TestFixedPriceBillingDatabaseMatrix/sqlite (0.04s)
+        --- FAIL: TestFixedPriceBillingDatabaseMatrix/sqlite/image_override_reserves_extra_quantity (0.03s)
+FAIL
+FAIL	github.com/QuantumNous/new-api/service	0.376s
+FAIL

@@ -17,3 +17,15 @@ func TestTaskUsageExpressionUsesFactsAndTaskQuotaConversion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 4_000_000, result.ActualQuotaAfterGroup)
 }
+
+func TestUsageFactBillingUsesUnitQuotaConversion(t *testing.T) {
+	expression := `tier("base", u("seconds") * 0.00003013698630136986)`
+	snapshot := &BillingSnapshot{
+		ExprString: expression, ExprHash: ExprHashString(expression), GroupRatio: 1,
+		QuotaPerUnit: 500_000, ExprVersion: 1, UsageFactsBilling: true,
+	}
+	result, err := ComputeTieredQuotaWithRequest(snapshot, TokenParams{}, RequestInput{Usage: map[string]any{"seconds": 10.0}})
+	require.NoError(t, err)
+	assert.InDelta(t, 150.6849315068493, result.ActualQuotaBeforeGroup, 1e-9)
+	assert.Equal(t, 151, result.ActualQuotaAfterGroup)
+}

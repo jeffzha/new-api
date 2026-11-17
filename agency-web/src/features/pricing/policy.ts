@@ -10,8 +10,33 @@ export const initialPolicy: Policy = {
   model_overrides: [],
 };
 
+export function suggestedPlatformCoefficients(
+  channelCosts: Array<number | null>,
+  agencyCostBPS: number | null,
+  salesBPS: number | null,
+): { agencyCostBPS: number | null; salesBPS: number } {
+  return {
+    // A missing cost is a real pending state. Showing 1.0000 made an
+    // unconfirmed model look configured and could lead to accidental pricing.
+    agencyCostBPS,
+    salesBPS: salesBPS ?? 10000,
+  };
+}
+
 export function formatCoefficient(bps: number): string {
   return (bps / 10000).toFixed(4);
+}
+
+export function changedCoefficientOverrides<K extends string>(
+  rows: Array<{ origin_model_name: string } & Record<K, number | null>>,
+  values: Record<string, string>,
+  key: K,
+) {
+  return rows.flatMap((row) => {
+    const value = values[row.origin_model_name]?.trim() ?? "";
+    const bps = value === "" ? null : parseCoefficient(value);
+    return bps === row[key] ? [] : [{ origin_model_name: row.origin_model_name, bps }];
+  });
 }
 
 export function parseCoefficient(value: string): number {
@@ -33,6 +58,23 @@ export function parseSignedCoefficient(value: string): number {
   const sign = value.startsWith("-") ? -1 : 1;
   const unsigned = value.replace(/^[+-]/, "");
   return sign * parseCoefficient(unsigned);
+}
+
+// Steps a signed adjustment amount by a fixed delta so repeated clicks of the
+// +/- shortcuts accumulate instead of re-setting the same value. Empty or
+// invalid input starts from zero, and the result stays inside the signed
+// coefficient range that parseSignedCoefficient accepts.
+export function stepSignedCoefficient(current: string, stepBPS: number): string {
+  let base = 0;
+  const trimmed = current.trim();
+  if (trimmed) {
+    try {
+      base = parseSignedCoefficient(trimmed);
+    } catch {
+      base = 0;
+    }
+  }
+  return formatCoefficient(Math.max(-100000, Math.min(100000, base + stepBPS)));
 }
 
 export type CustomerSalesAdjustmentError =
@@ -79,6 +121,92 @@ export function adjustCustomerSalesValues(
     } else if (nextBPS > salesCapBPS) {
       errors[row.model] = "above_cap";
     } else if (nextBPS !== row.agencyCostBPS && nextBPS < row.agencyCostBPS + minSpreadBPS) {
+      errors[row.model] = "below_spread";
+    } else {
+      nextValues[row.model] = formatCoefficient(nextBPS);
+      updated++;
+    }
+  }
+
+  return { values: nextValues, errors, updated };
+}
+
+export type CoefficientAdjustmentError =
+  | "missing_cost"
+  | "invalid_current"
+  | "below_cost"
+  | "below_spread"
+  | "above_cap";
+
+export type CoefficientAdjustmentRow = {
+  model: string;
+  costBPS: number | null;
+  inheritedBPS: number | null;
+  minimumBPS?: number;
+};
+
+export type CoefficientAdjustmentOptions = {
+  anchor: "cost" | "current";
+  minSpreadBPS?: number;
+  capBPS?: number;
+};
+
+// Bulk-adjusts coefficients for the selected rows. The anchor decides whether
+// the delta applies to the row cost or to the drafted value (falling back to the
+// inherited value). Rows that would break the cost, spread or cap rules are
+// reported instead of written.
+export function adjustCoefficientValues(
+  rows: CoefficientAdjustmentRow[],
+  values: Record<string, string>,
+  selectedModels: Iterable<string>,
+  deltaBPS: number,
+  options: CoefficientAdjustmentOptions,
+) {
+  const selected = new Set(selectedModels);
+  const capBPS = options.capBPS ?? 100000;
+  const minSpreadBPS = options.minSpreadBPS ?? 0;
+  const nextValues = { ...values };
+  const errors: Record<string, CoefficientAdjustmentError> = {};
+  let updated = 0;
+
+  for (const row of rows) {
+    if (!selected.has(row.model)) continue;
+    let baseBPS: number;
+    if (options.anchor === "cost") {
+      if (row.costBPS == null) {
+        errors[row.model] = "missing_cost";
+        continue;
+      }
+      baseBPS = row.costBPS;
+    } else {
+      const raw = values[row.model]?.trim() ?? "";
+      if (raw) {
+        try {
+          baseBPS = parseCoefficient(raw);
+        } catch {
+          errors[row.model] = "invalid_current";
+          continue;
+        }
+      } else if (row.inheritedBPS != null) {
+        baseBPS = row.inheritedBPS;
+      } else {
+        errors[row.model] = "invalid_current";
+        continue;
+      }
+    }
+    const nextBPS = baseBPS + deltaBPS;
+    if (!Number.isSafeInteger(nextBPS) || nextBPS < 0) {
+      errors[row.model] = "below_cost";
+    } else if (nextBPS < Math.max(row.minimumBPS ?? 0, row.costBPS ?? 0)) {
+      errors[row.model] = "below_cost";
+    } else if (nextBPS > capBPS) {
+      errors[row.model] = "above_cap";
+    } else if (
+      row.costBPS != null &&
+      minSpreadBPS > 0 &&
+      nextBPS !== row.costBPS &&
+      nextBPS < row.costBPS + minSpreadBPS
+    ) {
       errors[row.model] = "below_spread";
     } else {
       nextValues[row.model] = formatCoefficient(nextBPS);

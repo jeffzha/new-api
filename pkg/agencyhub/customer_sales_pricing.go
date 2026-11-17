@@ -40,6 +40,17 @@ type customerSalesPolicyError struct {
 func (e *customerSalesPolicyError) Error() string { return e.Cause.Error() }
 func (e *customerSalesPolicyError) Unwrap() error { return e.Cause }
 
+type customerSalesCoefficientError struct {
+	SalesBPS     int
+	CostBPS      int
+	MinSpreadBPS int
+	MinimumBPS   int
+}
+
+func (e *customerSalesCoefficientError) Error() string {
+	return "customer sales coefficient does not cover the agency cost"
+}
+
 func customerSalesKey(modelName string) (string, string, error) {
 	modelName = strings.TrimSpace(modelName)
 	if modelName == "" {
@@ -50,6 +61,15 @@ func customerSalesKey(modelName string) (string, string, error) {
 }
 
 func (a *App) validateCustomerSales(agencyID int64, modelName string, sales int) error {
+	if modelName != "" {
+		platform, err := model.LoadAgencyPlatformPolicy(a.db)
+		if err != nil {
+			return err
+		}
+		if !agencycontract.ModelPricingConfirmed(platform, modelName) {
+			return errors.New("model pricing is pending platform confirmation")
+		}
+	}
 	agency, policy, err := a.loadAgencyPolicy(agencyID)
 	if err != nil {
 		return err
@@ -92,23 +112,35 @@ func validateCustomerSalesPolicy(effective agencycontract.Policy, modelName stri
 
 func validateCustomerSalesAgainstCost(cost, minSpread, sales int) error {
 	if sales < cost {
-		return errors.New("customer sales coefficient is below agency cost")
+		return &customerSalesCoefficientError{SalesBPS: sales, CostBPS: cost, MinSpreadBPS: minSpread, MinimumBPS: cost}
 	}
 	// Selling at the exact agency cost is an explicit zero-margin exception.
 	// Any price above cost must still preserve the complete minimum spread.
 	if sales != cost && sales < cost+minSpread {
-		return errors.New("customer sales coefficient is above cost but below the minimum spread")
+		return &customerSalesCoefficientError{SalesBPS: sales, CostBPS: cost, MinSpreadBPS: minSpread, MinimumBPS: cost + minSpread}
 	}
 	return nil
 }
 
 // validateCustomerSalesPolicyTx protects negotiated prices when agency costs change.
 func validateCustomerSalesPolicyTx(tx *gorm.DB, agencyID int64, policy agencycontract.Policy) error {
+	platform, err := model.LoadAgencyPlatformPolicy(tx)
+	if err != nil {
+		return err
+	}
+	return validateCustomerSalesForPlatformTx(tx, agencyID, policy, platform)
+}
+
+func validateCustomerSalesForPlatformTx(tx *gorm.DB, agencyID int64, policy agencycontract.Policy, platform agencycontract.PlatformPolicy) error {
+	policy = agencycontract.ConfirmedModelPolicy(policy, platform)
 	var overrides []model.AgencyCustomerSalesOverride
 	if err := tx.Where("agency_id = ?", agencyID).Find(&overrides).Error; err != nil {
 		return err
 	}
 	for _, override := range overrides {
+		if override.OriginModelName != "" && !agencycontract.ModelPricingConfirmed(platform, override.OriginModelName) {
+			continue
+		}
 		if err := validateCustomerSalesPolicy(policy, override.OriginModelName, override.SalesBPS); err != nil {
 			return &customerSalesPolicyError{UserID: override.UserID, ModelName: override.OriginModelName, Cause: err}
 		}
@@ -221,7 +253,7 @@ func (a *App) putCustomerSalesPricing(c *gin.Context) {
 	identity := currentIdentity(c)
 	now := time.Now().UnixMilli()
 	var row model.AgencyCustomerSalesOverride
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		var locked model.Agency
 		if err := model.AgencyLockForUpdate(tx).First(&locked, agency.ID).Error; err != nil {
 			return err
@@ -317,7 +349,7 @@ func (a *App) putCustomerSalesPricingBatch(c *gin.Context) {
 		return
 	}
 	now := time.Now().UnixMilli()
-	err = a.db.Transaction(func(tx *gorm.DB) error {
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
 		var locked model.Agency
 		if err := model.AgencyLockForUpdate(tx).First(&locked, agency.ID).Error; err != nil {
 			return err
@@ -345,7 +377,7 @@ func (a *App) putCustomerSalesPricingBatch(c *gin.Context) {
 				if errors.Is(lookup, gorm.ErrRecordNotFound) {
 					return nil
 				}
-				return tx.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, key).Delete(&model.AgencyCustomerSalesOverride{}).Error
+				return model.DeleteAgencyCustomerSalesOverridesTx(tx.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, key))
 			}
 			if errors.Is(lookup, gorm.ErrRecordNotFound) {
 				return tx.Create(&model.AgencyCustomerSalesOverride{AgencyID: agency.ID, UserID: userID, ModelKey: key, OriginModelName: name, SalesBPS: *sales, Revision: 1, CreatedByType: identity.ActorType, CreatedByID: identity.ActorID, CreatedAtMS: now, UpdatedAtMS: now}).Error
@@ -392,12 +424,14 @@ func (a *App) deleteCustomerSalesPricing(c *gin.Context) {
 		return
 	}
 	var deleted int64
-	err = a.db.Transaction(func(tx *gorm.DB) error {
-		result := tx.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, key).Delete(&model.AgencyCustomerSalesOverride{})
-		if result.Error != nil {
-			return result.Error
+	err = model.AgencyOpsTransaction(a.db, func(tx *gorm.DB) error {
+		query := tx.Model(&model.AgencyCustomerSalesOverride{}).Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, key)
+		if err := query.Count(&deleted).Error; err != nil {
+			return err
 		}
-		deleted = result.RowsAffected
+		if err := model.DeleteAgencyCustomerSalesOverridesTx(tx.Where("agency_id = ? AND user_id = ? AND model_key = ?", agency.ID, userID, key)); err != nil {
+			return err
+		}
 		if deleted == 0 {
 			return nil
 		}

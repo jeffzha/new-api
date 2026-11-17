@@ -2,7 +2,6 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
 
 const operatorPassword = "Browser-operator-2026!";
-const rootPassword = "Browser-root-2026!";
 
 async function rootLogin(page: Page) {
   const response = await page.request.post("/__fixture/root");
@@ -11,23 +10,102 @@ async function rootLogin(page: Page) {
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
 }
 
-async function operatorLogin(page: Page, username = "browser-operator") {
+async function operatorLogin(
+  page: Page,
+  username = "browser-operator",
+  password = operatorPassword,
+) {
+  // The center signs operators in through the platform, so the browser test
+  // authenticates against the same nonce-protected API the SSO handoff uses.
+  const nonceResponse = await page.request.get("/agency/api/v1/auth/nonce");
+  expect(nonceResponse.ok()).toBeTruthy();
+  const nonce = ((await nonceResponse.json()) as { data?: { nonce?: string } }).data?.nonce;
+  expect(nonce).toBeTruthy();
+  const login = await page.request.post("/agency/api/v1/auth/login", {
+    data: { username, password, nonce },
+  });
+  expect(login.ok()).toBeTruthy();
   await page.goto("/agency/");
-  await page.getByLabel("Username", { exact: true }).fill(username);
-  await page.getByLabel("Password", { exact: true }).fill(operatorPassword);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
 }
 
-async function confirm(page: Page, password: string) {
-  const dialog = page.getByRole("dialog", {
-    name: "Confirm this action",
-    exact: true,
+test("operator links its own platform account for scoped passwordless sign-in and can unlink it", async ({
+  page,
+  browser,
+}) => {
+  await operatorLogin(page);
+  await page.getByRole("button", { name: "Account security", exact: true }).click();
+  await expect(
+    page.getByText(
+      "Platform and agency usernames may differ. Choose and confirm the platform account in the authorization window.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+
+  const agencyPassword = page.getByLabel("Current agency password", { exact: true });
+  await agencyPassword.fill("wrong-password");
+  const rejectedAuthorizationWindowPromise = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Link platform account", exact: true }).click();
+  const rejectedAuthorizationWindow = await rejectedAuthorizationWindowPromise;
+  await rejectedAuthorizationWindow
+    .getByRole("button", { name: "确认关联此账号", exact: true })
+    .click();
+  await expect(page.getByText("代理商密码错误", { exact: true })).toBeVisible();
+
+  await agencyPassword.fill(operatorPassword);
+  const authorizationWindowPromise = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Link platform account", exact: true }).click();
+  const authorizationWindow = await authorizationWindowPromise;
+  await authorizationWindow
+    .getByRole("button", { name: "确认关联此账号", exact: true })
+    .click();
+  await expect(
+    page.getByText("Linked platform account: browser-platform-operator", { exact: true }),
+  ).toBeVisible();
+
+  const passwordlessContext = await browser.newContext({ baseURL: new URL(page.url()).origin });
+  try {
+    const passwordlessPage = await passwordlessContext.newPage();
+    await passwordlessPage.goto("/agency/?platform_login=1");
+    await expect(
+      passwordlessPage.getByRole("button", { name: "Sign out", exact: true }),
+    ).toBeVisible();
+    await expect(passwordlessPage.getByText("browser-operator", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Account security", exact: true }).click();
+    await page.getByLabel("Current agency password", { exact: true }).fill(operatorPassword);
+    await page.getByRole("button", { name: "Unlink platform account", exact: true }).click();
+    await expect(
+      page.getByText(
+        "Platform and agency usernames may differ. Choose and confirm the platform account in the authorization window.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
+
+    await passwordlessPage.goto("/agency/?platform_login=1");
+    await expect(
+      passwordlessPage.getByText("Platform account is not linked.", { exact: true }),
+    ).toBeVisible();
+    const manualSignIn = passwordlessPage.getByRole("button", { name: "Sign in", exact: true });
+    await expect(manualSignIn).toBeVisible();
+    await manualSignIn.click();
+    await expect(passwordlessPage).toHaveURL(
+      /\/sign-in\?mode=agency&agency_signed_out=true$/,
+    );
+  } finally {
+    await passwordlessContext.close();
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({
+    path: test.info().outputPath("platform-account-link-mobile.png"),
+    fullPage: true,
   });
-  await expect(dialog).toBeVisible();
-  await dialog.getByLabel("Current password", { exact: true }).fill(password);
-  await dialog.getByRole("button", { name: "Verify and continue", exact: true }).click();
-}
+});
 
 test("operator copies its invitation and downloads the QR code after a recoverable image error", async ({
   page,
@@ -194,7 +272,6 @@ test("root creates an agency, acknowledges delivery and the operator must change
       response.request().method() === "POST" && response.url().endsWith("/api/v1/root/agencies"),
   );
   await page.locator("form").getByRole("button", { name: "Create agency", exact: true }).click();
-  await confirm(page, rootPassword);
   expect((await createResponse).status()).toBe(201);
   const password = page.getByLabel("Temporary password", { exact: true });
   await expect(password).not.toHaveValue("");
@@ -209,7 +286,6 @@ test("root creates an agency, acknowledges delivery and the operator must change
       /\/root\/deliveries\/\d+\/ack$/.test(response.url()),
   );
   await page.getByRole("button", { name: "Confirm receipt", exact: true }).click();
-  await confirm(page, rootPassword);
   expect((await acknowledgement).status()).toBe(200);
   await expect(page.getByRole("status")).toContainText("Receipt confirmed");
   await page.getByRole("button", { name: "Close", exact: true }).click();
@@ -238,10 +314,7 @@ test("root creates an agency, acknowledges delivery and the operator must change
   });
   const operator = await operatorContext.newPage();
   try {
-    await operator.goto("/agency/");
-    await operator.getByLabel("Username", { exact: true }).fill("browser-created-operator");
-    await operator.getByLabel("Password", { exact: true }).fill(temporaryPassword);
-    await operator.getByRole("button", { name: "Sign in", exact: true }).click();
+    await operatorLogin(operator, "browser-created-operator", temporaryPassword);
     await expect(
       operator.getByText("Change your temporary password before continuing.", {
         exact: true,
@@ -266,18 +339,33 @@ test("root publishes platform pricing and an operator manages direct-child and c
 }) => {
   await rootLogin(page);
   await page.getByRole("button", { name: "Pricing", exact: true }).click();
-  await expect(page.getByRole("cell", { name: "browser-chat-model", exact: true })).toBeVisible();
+  await expect(page.getByRole("cell").getByText("browser-chat-model", { exact: true })).toBeVisible();
   await expect(page.getByText("Browser model channel", { exact: true })).toBeVisible();
+  // Provider tabs mirror the model square and search filters the matrix.
+  const providerTab = page.getByRole("tab", { name: /DeepSeek/ }).first();
+  await expect(providerTab).toBeVisible();
+  await providerTab.click();
+  await expect(page.getByRole("cell").getByText("browser-chat-model", { exact: true })).toBeVisible();
+  const providerSearch = page
+    .getByLabel("Search models, providers, or channels", { exact: true })
+    .first();
+  await providerSearch.fill("deepseek");
+  await expect(page.getByRole("cell").getByText("browser-chat-model", { exact: true })).toBeVisible();
+  await providerSearch.fill("missing-provider");
+  await expect(page.getByText("No models match the current filters.", { exact: true }).first()).toBeVisible();
+  await providerSearch.fill("");
+  await page.getByRole("tab", { name: /^All/ }).first().click();
   await page
     .getByLabel("My cost (coefficient): browser-chat-model / Browser model channel", { exact: true })
     .fill("0.75");
   await page.getByLabel("My downstream channel price (coefficient): browser-chat-model", { exact: true }).fill("0.80");
   await page.getByLabel("Sales price (coefficient): browser-chat-model", { exact: true }).fill("0.90");
+  await page.getByRole("button", { name: "Publish platform pricing", exact: true }).click();
   await page.getByLabel("Change reason (optional)", { exact: true }).first().fill("Browser platform pricing");
   const platformPublished = page.waitForResponse((response) =>
     response.url().endsWith("/root/platform-pricing/publish"),
   );
-  await page.getByRole("button", { name: "Publish platform pricing", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Publish platform pricing", exact: true }).click();
   const platformResponse = await platformPublished;
   expect(platformResponse.status()).toBe(200);
   expect(platformResponse.request().postDataJSON()).toMatchObject({
@@ -298,6 +386,7 @@ test("root publishes platform pricing and an operator manages direct-child and c
   try {
     await operatorLogin(operator);
     await operator.getByRole("button", { name: "Pricing", exact: true }).click();
+    const beforePricing = await (await operator.request.get("/agency/api/v1/pricing/model-sales")).json();
     const row = operator.getByRole("row").filter({ hasText: "browser-chat-model" });
     await expect(row.getByText("0.8000", { exact: true })).toBeVisible();
     const sales = operator.getByLabel("Sales price (coefficient): browser-chat-model", { exact: true });
@@ -305,38 +394,40 @@ test("root publishes platform pricing and an operator manages direct-child and c
     await expect(sales).toHaveAttribute("placeholder", "0.9000");
     await sales.fill("0.95");
     const childCost = operator.getByLabel("My downstream channel price (coefficient): browser-chat-model", { exact: true });
-    await expect(childCost).toHaveAttribute("placeholder", "Not configured");
-    await childCost.fill("0.85");
+    await expect(childCost).toHaveValue("");
+    await expect(childCost).toHaveAttribute("placeholder", "0.8500");
+    await childCost.fill("0.86");
+    await operator.getByRole("button", { name: "Publish sales coefficients", exact: true }).click();
     await operator.getByLabel("Change reason (optional)", { exact: true }).fill("Browser agency sales override");
     const published = operator.waitForResponse((response) =>
       response.url().endsWith("/pricing/sales/publish"),
     );
-    await operator.getByRole("button", { name: "Publish sales coefficients", exact: true }).click();
+    await operator.getByRole("dialog").getByRole("button", { name: "Publish sales coefficients", exact: true }).click();
     const publishResponse = await published;
     expect(publishResponse.status()).toBe(200);
     expect(publishResponse.request().postDataJSON()).toMatchObject({
-      expected_revision: 1,
+      expected_revision: beforePricing.data.revision,
       model_sales_overrides: [{
         origin_model_name: "browser-chat-model",
         sales_bps: 9500,
       }],
       model_child_cost_overrides: [{
         origin_model_name: "browser-chat-model",
-        child_cost_bps: 8500,
+        child_cost_bps: 8600,
       }],
     });
     expect(publishResponse.request().postDataJSON()).not.toHaveProperty("default_settlement_bps");
     const current = await (await operator.request.get("/agency/api/v1/pricing/model-sales")).json();
     expect(current.data).toMatchObject({
-      revision: 2,
+      revision: beforePricing.data.revision + 1,
       items: [{
         origin_model_name: "browser-chat-model",
         agency_cost_bps: 8000,
         platform_default_sales_bps: 9000,
         sales_bps: 9500,
         override_sales_bps: 9500,
-        child_cost_bps: 8500,
-        override_child_cost_bps: 8500,
+        child_cost_bps: 8600,
+        override_child_cost_bps: 8600,
       }],
     });
     await operator.getByRole("button", { name: "Agencies", exact: true }).click();
@@ -375,13 +466,15 @@ test("root publishes platform pricing and an operator manages direct-child and c
     const customerModelPrice = customerPricing.getByLabel("Sales price (coefficient): browser-chat-model", { exact: true });
     await expect(customerModelPrice).toHaveAttribute("placeholder", "0.9500");
     await customerPricing.getByRole("button", { name: "Set all models to cost", exact: true }).click();
+    await operator.getByRole("dialog").getByRole("button", { name: "Set all models to cost", exact: true }).click();
     await expect(customerModelPrice).toHaveValue("0.8000");
+    await customerPricing.getByRole("button", { name: "Save customer pricing", exact: true }).click();
     await customerPricing.getByLabel("Change reason (optional)", { exact: true }).fill("Approved zero-margin customer");
     const fixtureState = await (await operator.request.get("/__fixture/state")).json();
     const customerPublished = operator.waitForResponse((response) =>
       response.request().method() === "PUT" && response.url().endsWith(`/customers/${fixtureState.managed_user_id}/pricing/batch`),
     );
-    await customerPricing.getByRole("button", { name: "Save customer pricing", exact: true }).click();
+    await operator.getByRole("dialog").getByRole("button", { name: "Save customer pricing", exact: true }).click();
     const customerResponse = await customerPublished;
     expect(customerResponse.status()).toBe(200);
     expect(customerResponse.request().postDataJSON()).toMatchObject({
@@ -412,7 +505,6 @@ test("withdrawal uses a real account and exact decimal lease through review and 
       response.request().method() === "POST" && response.url().endsWith("/withdrawal-accounts"),
   );
   await accountDialog.getByRole("button", { name: "Save account version", exact: true }).click();
-  await confirm(page, operatorPassword);
   expect((await accountResponse).status()).toBe(201);
   await expect(accountDialog).toHaveCount(0);
   await expect(page.getByRole("row").filter({ hasText: "1234" })).toBeVisible();
@@ -434,7 +526,6 @@ test("withdrawal uses a real account and exact decimal lease through review and 
   await withdrawalDialog
     .getByRole("button", { name: "Confirm withdrawal request", exact: true })
     .click();
-  await confirm(page, operatorPassword);
   const createdResponse = await created;
   expect(createdResponse.status()).toBe(201);
   expect(createdResponse.request().postDataJSON()).toMatchObject({
@@ -491,15 +582,15 @@ test("withdrawal uses a real account and exact decimal lease through review and 
           "Record unknown result",
           "Confirm unpaid and restore approval",
         ].includes(action)
-      )
+      ) {
         await dialog.getByRole("checkbox").check();
+      }
       const response = root.waitForResponse(
         (result) =>
           result.request().method() === "POST" &&
           /\/root\/withdrawals\/\d+\/(review|transition)$/.test(result.url()),
       );
       await dialog.getByRole("button", { name: action, exact: true }).click();
-      await confirm(root, rootPassword);
       expect((await response).status()).toBe(200);
       await expect(dialog).toHaveCount(0);
       if (action === "Confirm unpaid and restore approval") {
@@ -534,7 +625,6 @@ test("withdrawal uses a real account and exact decimal lease through review and 
       /\/root\/withdrawals\/\d+\/mark-paid$/.test(response.url()),
     );
     await paidDialog.getByRole("button", { name: "Record confirmed payment", exact: true }).click();
-    await confirm(root, rootPassword);
     const paidResponse = await paid;
     expect(paidResponse.request().postDataJSON().payment_lease_token).toBe(lease);
     expect(paidResponse.status()).toBe(200);
@@ -668,7 +758,9 @@ test("root can inspect and cancel a blocked binding, then transfer a managed cus
     .fill("browser-target");
   await dialog.getByRole("button", { name: "Check target agency", exact: true }).click();
   await expect(dialog.getByText(/Transfer Target/)).toBeVisible();
-  await dialog.getByLabel("Transfer reason (optional)", { exact: true }).fill("Verified customer move");
+  await dialog
+    .getByLabel("Transfer reason (optional)", { exact: true })
+    .fill("Verified customer move");
   await dialog.getByRole("checkbox").check();
   const transferred = page.waitForResponse(
     (response) =>

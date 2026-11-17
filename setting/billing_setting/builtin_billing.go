@@ -6,12 +6,29 @@ package billing_setting
 const deepSeekPeakCondition = `!is_holiday("Asia/Shanghai") && weekday("Asia/Shanghai") >= 1 && weekday("Asia/Shanghai") <= 5 && ((hour("Asia/Shanghai") >= 9 && hour("Asia/Shanghai") < 12) || (hour("Asia/Shanghai") >= 14 && hour("Asia/Shanghai") < 18))`
 const deepSeekFlashExpression = deepSeekPeakCondition + ` ? tier("peak", p * 0.273972602739726 + cr * 0.00547945205479452 + c * 1.095890410958904) : tier("off_peak", p * 0.136986301369863 + cr * 0.00273972602739726 + c * 0.547945205479452)`
 const deepSeekProExpression = deepSeekPeakCondition + ` ? tier("peak", p * 1.232876712328767 + cr * 0.0410958904109589 + c * 3.698630136986301) : tier("off_peak", p * 0.6164383561643836 + cr * 0.02054794520547945 + c * 1.849315068493151)`
+
+// The 1030 upstream column lists a flat 2/8/0.04 tariff. Its dollar labels
+// are interpreted as CNY by the owner's explicit confirmation.
+const locoPalDeepSeek261017Expression = `tier("base", p * 0.273972602739726 + cr * 0.00547945205479452 + c * 1.095890410958904)`
+
+// Shenzhen Telecom publishes this image alias with context-tiered token prices.
+// Preserve its exact 32000/128000 boundaries and convert CNY to USD at 7.3.
+const szhtpSeedream50LiteExpression = `len <= 32000 ? tier("base", p * 0.0821917808219178 + c * 0.4931506849315068 + cr * 0.01643835616438356) : len > 128000 ? tier("long_context", p * 0.2465753424657534 + c * 1.4794520547945205 + cr * 0.04931506849315068) : tier("medium_context", p * 0.1232876712328767 + c * 0.7397260273972602 + cr * 0.02465753424657534)`
 const happyHorseExpression = `u("kind") == "edit" && u("resolution") == "720P" ? tier("720P-edit", u("seconds") * 0.1232876712328767) : u("kind") == "edit" && u("resolution") == "1080P" ? tier("1080P-edit", u("seconds") * 0.2191780821917808) : u("resolution") == "480P" ? tier("480P", u("seconds") * 0.06164383561643836) : u("resolution") == "1080P" ? tier("1080P", u("seconds") * 0.1643835616438356) : tier("720P", u("seconds") * 0.1232876712328767)`
+const wangpaiH3Expression = `tier("upstream", u("output_credits") * 0.0136986301369863 + u("material_credits") * 0.0136986301369863)`
+
+// Fun-ASR-Flash charges CNY per audio second. Convert to USD at 7.3 CNY/USD;
+// usage-fact billing converts this per-second amount directly into quota.
+const funASRFlashExpression = `tier("base", u("seconds") * 0.00003013698630136986)`
 
 // Built-in token prices use actual USD per million tokens. Keep new model
 // defaults here instead of splitting them across the legacy ratio tables.
 var builtinBillingExpr = map[string]string{
+	"doubao-seedream-5-0-lite":     szhtpSeedream50LiteExpression,
+	"fun-asr-flash-2026-06-15":     funASRFlashExpression,
 	"deepseek-flash":               deepSeekFlashExpression,
+	"deepseek-v4.1-flash":          deepSeekFlashExpression,
+	"deepseek-v4-1-flash-1017":     locoPalDeepSeek261017Expression,
 	"deepseek-v4-flash":            deepSeekFlashExpression,
 	"deepseek-v4-flash-none":       deepSeekFlashExpression,
 	"deepseek-v4-flash-max":        deepSeekFlashExpression,
@@ -19,6 +36,12 @@ var builtinBillingExpr = map[string]string{
 	"deepseek-v4-pro":              deepSeekProExpression,
 	"deepseek-v4-pro-none":         deepSeekProExpression,
 	"deepseek-v4-pro-max":          deepSeekProExpression,
+	// Approved yellow rows in the 2026-10-30 workbook, CNY converted at 7.3.
+	// Explicit administrator prices are changed only by the reviewed API patch.
+	// The upstream column omits Mini audio pricing; retain its listed 20.4 CNY
+	// audio rate rather than implicitly charging it at the cheaper text rate.
+	"doubao-seed-2-0-mini-260428": `len <= 32000 ? tier("32K", p * 0.0273972602739726 + c * 0.273972602739726 + cr * 0.00547945205479452 + ai * 2.794520547945205) : len <= 128000 ? tier("128K", p * 0.0547945205479452 + c * 0.547945205479452 + cr * 0.010958904109589 + ai * 2.794520547945205) : tier("256K", p * 0.1095890410958904 + c * 1.095890410958904 + cr * 0.0219178082191781 + ai * 2.794520547945205)`,
+	"doubao-seed-2.1-lite":        `tier("standard", p * 0.1095890410958904 + c * 0.3698630136986301 + cr * 0.0219178082191781 + ai * 1.643835616438356)`,
 	// Yunwoke/Alibaba video task prices are CNY per output second. Billing
 	// expressions use USD units, so divide the published CNY prices by the
 	// gateway's USD exchange rate (7.3) before display conversion.
@@ -43,4 +66,18 @@ var builtinBillingExpr = map[string]string{
 	// two leaves. The whole request cost is folded into one tier and scaled by
 	// 1_000_000 to recover the per-1M-unit v1 encoding used by equity conversion.
 	"qwen-image-3.0": `tier("image", (0.0246575342465753 * image_count + 0.0027397260273972603 * reference_image_count) * 1000000)`,
+}
+
+// Provider defaults stay scoped to the task plugin because MiniMax-H3 can
+// also be served by the official Hailuo adapter with a different contract.
+// Wangpai settles in vendor credits: 1 credit = CNY 0.1. Expressions use USD
+// internally; 0.1 / 7.3 preserves domestic RMB display and billing.
+var builtinPluginBillingExpr = map[string]string{
+	"wangpaiai::MiniMax-H3":              wangpaiH3Expression,
+	"wangpaiai::MiniMax-H3-2K":           wangpaiH3Expression,
+	"wangpaiai::MiniMax-H3-Sensitive":    wangpaiH3Expression,
+	"newapi-video::MiniMax-H3":           wangpaiH3Expression,
+	"newapi-video::MiniMax-H3-261013":    wangpaiH3Expression,
+	"newapi-video::MiniMax-H3-2K":        wangpaiH3Expression,
+	"newapi-video::MiniMax-H3-Sensitive": wangpaiH3Expression,
 }

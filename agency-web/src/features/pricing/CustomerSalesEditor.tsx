@@ -2,15 +2,18 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ActionIcon } from "../../components/Heading";
 import { PageHeader } from "../../components/PageHeader";
-import { ErrorNotice, Field, Loading, Pager } from "../../components/ui";
+import { Dialog, ErrorNotice, Field, Loading, Pager } from "../../components/ui";
 import { useMutation } from "../../lib/mutations";
 import { useQuery } from "../../lib/query";
+import { CoefficientAdjustDialog, type AdjustmentOutcome } from "./AdjustDialog";
+import { PublishReasonDialog } from "./PublishReasonDialog";
+import { ChannelPricingRows } from "./ChannelFilter";
+import { VendorMark, VendorTabs } from "./VendorFilter";
+import { activeVendorKey, buildVendorOptions, matchesPricingSearch, vendorKeyOf } from "./vendorOptions";
 import {
-  adjustCustomerSalesValues,
-  type CustomerSalesAdjustmentError,
+  type CoefficientAdjustmentError,
   formatCoefficient,
   parseCoefficient,
-  parseSignedCoefficient,
 } from "./policy";
 
 type Override = {
@@ -28,9 +31,16 @@ type SalesResponse = {
   sales_cap_bps?: number;
   items: Override[];
 };
-type ModelsResponse = { items: string[] };
+type ModelCatalogItem = {
+  model: string;
+  vendor_name?: string;
+  vendor_icon?: string;
+};
+type ModelsResponse = { items: string[]; catalog?: ModelCatalogItem[] };
 type CustomerSalesRow = {
   model: string;
+  vendorName?: string;
+  vendorIcon?: string;
   agencyCostBPS: number;
   inheritedSalesBPS: number;
   overrideSalesBPS: number | null;
@@ -44,10 +54,14 @@ export function CustomerSalesEditor(props: { userId: string | number; username: 
   if (!pricing.data || !models.data) return <section><PageHeader icon="pricing" title={t("Customer sales pricing")} actions={<BackButton onBack={props.onBack} />} /><ErrorNotice error={pricing.error || models.error} /></section>;
   const data = pricing.data;
   const overrides = new Map(data.items.filter((item) => item.origin_model_name).map((item) => [item.origin_model_name, item]));
+  const catalog = new Map((models.data.catalog ?? []).map((item) => [item.model, item]));
   const rows = models.data.items.map((model): CustomerSalesRow => {
     const item = overrides.get(model);
+    const metadata = catalog.get(model);
     return {
       model,
+      vendorName: metadata?.vendor_name,
+      vendorIcon: metadata?.vendor_icon,
       agencyCostBPS: item?.agency_cost_bps ?? data.default_agency_cost_bps ?? 0,
       inheritedSalesBPS: item?.inherited_sales_bps ?? data.default_sales_bps,
       overrideSalesBPS: item?.override_sales_bps ?? null,
@@ -63,14 +77,19 @@ function CustomerSalesMatrix(props: { userId: string | number; username: string;
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<string[]>([]);
-  const [adjustment, setAdjustment] = useState("");
+  const [adjustTarget, setAdjustTarget] = useState(false);
   const [globalValue, setGlobalValue] = useState(props.globalSalesBPS == null ? "" : formatCoefficient(props.globalSalesBPS));
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(props.rows.map((row) => [row.model, row.overrideSalesBPS == null ? "" : formatCoefficient(row.overrideSalesBPS)])));
-  const [reason, setReason] = useState("");
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [quickAction, setQuickAction] = useState<"global" | "cost" | null>(null);
+  const [globalDraft, setGlobalDraft] = useState(globalValue);
   const [error, setError] = useState<unknown>(null);
-  const [rowErrors, setRowErrors] = useState<Record<string, CustomerSalesAdjustmentError>>({});
+  const [rowErrors, setRowErrors] = useState<Record<string, CoefficientAdjustmentError>>({});
   const [bulkResult, setBulkResult] = useState<{ updated: number; failed: number } | null>(null);
-  const visibleRows = useMemo(() => { const query = search.trim().toLowerCase(); return query ? props.rows.filter((row) => row.model.toLowerCase().includes(query)) : props.rows; }, [props.rows, search]);
+  const [vendorFilter, setVendorFilter] = useState("all");
+  const vendorOptions = useMemo(() => buildVendorOptions(props.rows.map((row) => ({ vendor_name: row.vendorName, vendor_icon: row.vendorIcon })), t("Other providers")), [props.rows, t]);
+  const activeVendor = activeVendorKey(vendorFilter, vendorOptions);
+  const visibleRows = useMemo(() => props.rows.filter((row) => (activeVendor === "all" || vendorKeyOf({ vendor_name: row.vendorName }) === activeVendor) && matchesPricingSearch(search, { origin_model_name: row.model, vendor_name: row.vendorName, channelNames: [] })), [activeVendor, props.rows, search]);
   const pageSize = 20;
   const pageCount = Math.max(1, Math.ceil(visibleRows.length / pageSize));
   const currentPage = Math.min(page, pageCount - 1);
@@ -85,29 +104,15 @@ function CustomerSalesMatrix(props: { userId: string | number; username: string;
     const allSelected = pageModels.every((model) => selected.includes(model));
     setSelected((current) => allSelected ? current.filter((model) => !pageModels.includes(model)) : Array.from(new Set([...current, ...pageModels])));
   }
-  function applyAdjustment() {
-    setError(null);
-    let deltaBPS: number;
-    try {
-      deltaBPS = parseSignedCoefficient(adjustment.trim());
-    } catch {
-      deltaBPS = 0;
-    }
-    if (!selectedRows.length || deltaBPS === 0) {
-      setError(new Error(t("Enter a valid adjustment, such as 0.1000 or -0.1000.")));
+  async function applyAdjustment(result: AdjustmentOutcome) {
+    if (Object.keys(result.errors).length) {
+      setRowErrors(result.errors);
       return;
     }
-    const result = adjustCustomerSalesValues(
-      props.rows,
-      values,
-      selected,
-      deltaBPS,
-      props.minSpreadBPS,
-      props.salesCapBPS,
-    );
-    setValues(result.values);
-    setRowErrors(result.errors);
-    setBulkResult({ updated: result.updated, failed: Object.keys(result.errors).length });
+    const nextValues = { ...values, ...result.values };
+    setRowErrors({});
+    setBulkResult(null);
+    await save(nextValues);
   }
   function fillCostPrices() {
     setError(null);
@@ -125,29 +130,51 @@ function CustomerSalesMatrix(props: { userId: string | number; username: string;
     });
     setBulkResult(null);
   }
-  function rowErrorMessage(code: CustomerSalesAdjustmentError) {
+  function rowErrorMessage(code: CoefficientAdjustmentError) {
     if (code === "below_cost") return t("This adjustment would be below the agency cost.");
     if (code === "below_spread") return t("This adjustment is above cost but does not meet the minimum spread. Use the exact cost price or meet the full minimum spread.");
     if (code === "above_cap") return t("This adjustment would exceed the sales cap.");
     return t("The current sales price is invalid. Enter a valid coefficient before adjusting it.");
   }
-  async function save() {
+  async function save(nextValues: Record<string, string> = values, reason = "") {
     setError(null);
     try {
-      await mutation.mutate("/customers/" + props.userId + "/pricing/batch", { global_sales_bps: globalValue.trim() ? parseCoefficient(globalValue) : null, models: props.rows.map((row) => ({ model_name: row.model, sales_bps: values[row.model]?.trim() ? parseCoefficient(values[row.model]) : null })), reason: reason.trim() }, { method: "PUT", action: "pricing.customer_sales.batch_publish", objectId: "user:" + props.userId, title: t("Save customer pricing") });
+      await mutation.mutate("/customers/" + props.userId + "/pricing/batch", { global_sales_bps: globalValue.trim() ? parseCoefficient(globalValue) : null, models: props.rows.map((row) => ({ model_name: row.model, sales_bps: nextValues[row.model]?.trim() ? parseCoefficient(nextValues[row.model]) : null })), reason }, { method: "PUT", action: "pricing.customer_sales.batch_publish", objectId: "user:" + props.userId, title: t("Save customer pricing") });
       props.onBack();
     } catch (cause) { setError(cause); }
   }
   const allVisibleSelected = pageRows.length > 0 && pageRows.every((row) => selected.includes(row.model));
   return <section className="customer-pricing-page">
     <PageHeader icon="pricing" title={t("Customer sales pricing") + " · " + props.username} description={t("Set prices for this customer only. A blank model value inherits its current sales price.")} actions={<BackButton onBack={props.onBack} disabled={mutation.pending} />} />
-    <div className="customer-pricing-summary"><Field label={t("Universal sales price (coefficient)")} hint={t("Leave blank to inherit each model's current sales price.")}><input inputMode="decimal" placeholder={formatCoefficient(props.agencyDefaultSalesBPS)} value={globalValue} onChange={(event) => setGlobalValue(event.target.value)} /></Field><div className="customer-pricing-summary-actions"><button type="button" className="secondary button-icon" onClick={fillCostPrices}><ActionIcon name="check" />{t("Set all models to cost")}</button><small>{t("Use each model's agency cost as this customer's sales price. Review and save to apply.")}</small></div></div>
-    <div className="pricing-search customer-pricing-search"><Field label={t("Search models")}><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} /></Field><span className="pricing-live-badge">{t("Models")} · {visibleRows.length}</span></div>
-    <div className="customer-pricing-bulk"><strong>{t("Batch adjust selected models")}</strong><span>{t("Selected")}: {selected.length}</span><input aria-label={t("Adjustment amount")} inputMode="decimal" placeholder="0.1000 / -0.1000" value={adjustment} onChange={(event) => setAdjustment(event.target.value)} /><button type="button" className="secondary" disabled={!selected.length} onClick={applyAdjustment}>{t("Increase/decrease sales prices")}</button><small>{t("Enter a positive value to increase sales prices or a negative value to decrease them. Cost, minimum spread and sales cap still apply.")}</small>{bulkResult && <p className={bulkResult.failed ? "customer-pricing-bulk-result warning" : "customer-pricing-bulk-result success"} role="status">{t("Adjusted {{updated}} models. {{failed}} models were not changed.", bulkResult)}</p>}</div>
-    <div className="table-wrap pricing-matrix-wrap customer-pricing-matrix-wrap customer-pricing-page-matrix"><table className="pricing-matrix customer-pricing-matrix"><thead><tr><th><input type="checkbox" aria-label={t("Select visible models")} checked={allVisibleSelected} onChange={toggleVisible} /></th><th>{t("Model name")}</th><th>{t("My cost (coefficient)")}</th><th>{t("Sales price (coefficient)")}</th></tr></thead><tbody>{pageRows.map((row) => { const rowError = rowErrors[row.model]; return <tr key={row.model} className={rowError ? "customer-pricing-row-error" : undefined}><td><input type="checkbox" aria-label={t("Select model") + ": " + row.model} checked={selected.includes(row.model)} onChange={() => toggle(row.model)} /></td><td><strong>{row.model}</strong></td><td><span className="coefficient-readonly">{formatCoefficient(row.agencyCostBPS)}</span></td><td><input aria-label={t("Sales price (coefficient)") + ": " + row.model} aria-invalid={rowError ? "true" : undefined} inputMode="decimal" placeholder={formatCoefficient(row.inheritedSalesBPS)} value={values[row.model] ?? ""} onChange={(event) => updateValue(row.model, event.target.value)} />{rowError ? <small className="customer-pricing-inline-error">{rowErrorMessage(rowError)}</small> : <small>{values[row.model] ? t("Customer override") : t("Using inherited sales price {{value}}", { value: formatCoefficient(row.inheritedSalesBPS) })}</small>}</td></tr>; })}</tbody></table></div>
+    <div className="pricing-action-bar"><button type="button" className="secondary button-icon" onClick={() => { setGlobalDraft(globalValue); setQuickAction("global"); }}><ActionIcon name="edit" />{t("Universal sales price (coefficient)")}</button><button type="button" className="secondary button-icon" onClick={() => setQuickAction("cost")}><ActionIcon name="check" />{t("Set all models to cost")}</button><button type="button" className="button-icon" disabled={mutation.pending} onClick={() => { setError(null); setSaveOpen(true); }}><ActionIcon name="save" />{t("Save customer pricing")}</button></div>
+    <ErrorNotice error={error} />
+    <div className="pricing-search customer-pricing-search"><label className="search-field"><ActionIcon name="search" /><input aria-label={t("Search models or providers")} placeholder={t("Search models or providers")} value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} /></label><span className="pricing-live-badge">{t("Models")} · {visibleRows.length}</span></div>
+    <VendorTabs vendors={vendorOptions} selected={activeVendor} total={props.rows.length} onSelect={(key) => { setVendorFilter(key); setPage(0); }} />
+    <div className="customer-pricing-bulk pricing-bulk-bar"><strong>{t("Batch adjust selected models")}</strong><span>{t("Selected")}: {selected.length}</span><button type="button" className="secondary button-icon compact-action" disabled={!selected.length} onClick={() => { setError(null); setAdjustTarget(true); }}><ActionIcon name="edit" />{t("Increase/decrease sales prices")}</button>{bulkResult && <p className={bulkResult.failed ? "customer-pricing-bulk-result warning" : "customer-pricing-bulk-result success"} role="status">{t("Adjusted {{updated}} models. {{failed}} models were not changed.", bulkResult)}</p>}</div>
+    <div className="table-wrap pricing-matrix-wrap customer-pricing-matrix-wrap customer-pricing-page-matrix">
+      <table className="pricing-matrix customer-pricing-matrix">
+        <thead><tr><th><input type="checkbox" aria-label={t("Select visible models")} checked={allVisibleSelected} onChange={toggleVisible} /></th><th>{t("Model name")}</th><th>{t("My cost (coefficient)")}</th><th>{t("Sales price (coefficient)")}</th></tr></thead>
+        <tbody>{pageRows.map((row) => {
+          const rowError = rowErrors[row.model];
+          const cost = <span className="coefficient-readonly">{formatCoefficient(row.agencyCostBPS)}</span>;
+          return <ChannelPricingRows key={row.model} className={rowError ? "customer-pricing-row-error" : undefined} showChannel={false}
+            leading={[
+              <input key="selection" type="checkbox" aria-label={t("Select model") + ": " + row.model} checked={selected.includes(row.model)} onChange={() => toggle(row.model)} />,
+              <div key="model" className="model-name-cell"><VendorMark icon={row.vendorIcon} name={row.vendorName?.trim() || t("Other providers")} /><strong>{row.model}</strong></div>,
+            ]}
+            channels={[]}
+            emptyCost={cost}
+            trailing={[<div key="sales" className="sales-coefficient-field"><input aria-label={t("Sales price (coefficient)") + ": " + row.model} aria-invalid={rowError ? "true" : undefined} inputMode="decimal" placeholder={formatCoefficient(row.inheritedSalesBPS)} value={values[row.model] ?? ""} onChange={(event) => updateValue(row.model, event.target.value)} />{rowError ? <small className="customer-pricing-inline-error">{rowErrorMessage(rowError)}</small> : <small>{values[row.model] ? t("Customer override") : t("Using inherited sales price {{value}}", { value: formatCoefficient(row.inheritedSalesBPS) })}</small>}</div>]} />;
+        })}</tbody>
+      </table>
+    </div>
     {visibleRows.length > pageSize && <Pager nextCursor={currentPage < pageCount - 1 ? String(currentPage + 1) : undefined} hasPrevious={currentPage > 0} onNext={() => setPage((value) => Math.min(value + 1, pageCount - 1))} onReset={() => setPage(0)} />}
     {!visibleRows.length && <p className="empty">{t("No models are available for customer pricing.")}</p>}
-    <div className="pricing-publish-row"><Field label={t("Change reason (optional)")}><input value={reason} maxLength={2000} onChange={(event) => setReason(event.target.value)} /></Field><button type="button" disabled={mutation.pending} onClick={() => void save()}>{t("Save customer pricing")}</button></div><ErrorNotice error={error} /><div className="actions customer-pricing-page-actions"><button type="button" className="secondary" disabled={mutation.pending} onClick={props.onBack}>{t("Cancel")}</button></div>
+    <div className="actions customer-pricing-page-actions"><button type="button" className="secondary" disabled={mutation.pending} onClick={props.onBack}>{t("Cancel")}</button></div>
+    {quickAction === "global" && <Dialog title={t("Universal sales price (coefficient)")} onClose={() => setQuickAction(null)}><Field label={t("Universal sales price (coefficient)")} hint={t("Leave blank to inherit each model's current sales price.")}><input inputMode="decimal" placeholder={formatCoefficient(props.agencyDefaultSalesBPS)} value={globalDraft} onChange={(event) => setGlobalDraft(event.target.value)} /></Field><div className="actions dialog-actions"><button type="button" className="secondary" onClick={() => setQuickAction(null)}>{t("Cancel")}</button><button type="button" onClick={() => { setGlobalValue(globalDraft); setQuickAction(null); }}>{t("Done")}</button></div></Dialog>}
+    {quickAction === "cost" && <Dialog title={t("Set all models to cost")} onClose={() => setQuickAction(null)}><p className="muted">{t("Use each model's agency cost as this customer's sales price. Review and save to apply.")}</p><div className="actions dialog-actions"><button type="button" className="secondary" onClick={() => setQuickAction(null)}>{t("Cancel")}</button><button type="button" onClick={() => { fillCostPrices(); setQuickAction(null); }}>{t("Set all models to cost")}</button></div></Dialog>}
+    {saveOpen && <PublishReasonDialog title={t("Save customer pricing")} busy={mutation.pending} error={error} onClose={() => setSaveOpen(false)} onConfirm={(reason) => void save(values, reason)} />}
+    {adjustTarget && <CoefficientAdjustDialog title={t("Increase/decrease sales prices")} description={t("Adjusted sales prices must stay at or above my cost plus the minimum spread and within the sales cap.")} rows={selectedRows.map((row) => ({ model: row.model, costBPS: row.agencyCostBPS, inheritedBPS: row.inheritedSalesBPS }))} values={Object.fromEntries(selectedRows.map((row) => [row.model, values[row.model] ?? ""]))} options={{ anchor: "cost", minSpreadBPS: props.minSpreadBPS, capBPS: props.salesCapBPS }} requireAllValid busy={mutation.pending} serverError={error} onApply={(result) => void applyAdjustment(result)} onClose={() => { setAdjustTarget(false); setError(null); }} />}
   </section>;
 }
 

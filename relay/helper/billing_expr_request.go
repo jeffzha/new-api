@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/gin-gonic/gin"
 )
@@ -72,6 +73,18 @@ func ResolveImageBillingRequestInput(c *gin.Context, info *relaycommon.RelayInfo
 	return input, nil
 }
 
+func ResolveFunASRBillingRequestInput(c *gin.Context, info *relaycommon.RelayInfo, input billingexpr.RequestInput) (billingexpr.RequestInput, error) {
+	if info == nil || info.RelayMode != relayconstant.RelayModeAudioTranscription || info.GetBillingModelName() != "fun-asr-flash-2026-06-15" {
+		return input, nil
+	}
+	metadata, err := InspectFunASRAudioRequest(c)
+	if err != nil {
+		return input, err
+	}
+	input.Usage = map[string]any{"seconds": metadata.Duration}
+	return input, nil
+}
+
 func BuildBillingExprRequestInputFromRequest(request dto.Request, headers map[string]string) (billingexpr.RequestInput, error) {
 	input := billingexpr.RequestInput{
 		Headers: cloneStringMap(headers),
@@ -103,6 +116,7 @@ func cloneRequestInput(src billingexpr.RequestInput) billingexpr.RequestInput {
 	input := billingexpr.RequestInput{
 		EvaluationTime: src.EvaluationTime,
 		Headers:        cloneStringMap(src.Headers),
+		Usage:          cloneAnyMap(src.Usage),
 	}
 	if src.ImageCount != nil {
 		count := *src.ImageCount
@@ -116,6 +130,15 @@ func cloneRequestInput(src billingexpr.RequestInput) billingexpr.RequestInput {
 		input.Body = append([]byte(nil), src.Body...)
 	}
 	return input
+}
+
+func cloneAnyMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	maps.Copy(dst, src)
+	return dst
 }
 
 func isJSONContentType(contentType string) bool {

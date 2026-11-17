@@ -20,6 +20,7 @@ import {
   BILLING_FUNCTIONS,
   BILLING_VARIABLES,
   TIME_FUNCTIONS,
+  TIME_PROBES,
   BillingExpressionError,
   expressionDependencies,
   expressionFailure,
@@ -398,10 +399,11 @@ function checkExpressionTypes(ast: ExpressionNode): void {
         result = 'number'
       }
     } else if (node.kind === 'call') {
-      if (['param', 'header', 'u', ...TIME_FUNCTIONS].includes(node.name)) {
+      if (['param', 'header', 'u', ...TIME_PROBES].includes(node.name)) {
         requireType(node.args[0], 'string')
       }
       if (node.name === 'header') result = 'string'
+      else if (node.name === 'is_holiday') result = 'boolean'
       else if (node.name === 'has') {
         requireType(node.args[1], 'string')
         result = 'boolean'
@@ -506,7 +508,7 @@ export function compileBillingExpression(source: string): CompilationResult {
       const calls = expressionDependencies(node.condition).functions
       if (
         ![...calls].some((name) =>
-          ['param', 'header', ...TIME_FUNCTIONS].includes(name)
+          ['param', 'header', ...TIME_PROBES].includes(name)
         )
       ) {
         return

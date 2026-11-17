@@ -513,6 +513,7 @@ func TransferAffQuota(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserTransferFailed, map[string]any{"Error": err.Error()})
 		return
 	}
+	model.RecordQuotaLog(user.Id, model.LogTypeSystem, fmt.Sprintf("邀请额度转入余额 %s", logger.LogQuota(tran.Quota)), tran.Quota, model.LogQuotaSourceAffiliateTransfer, false, nil)
 	common.ApiSuccessI18n(c, i18n.MsgUserTransferSuccess, nil)
 }
 
@@ -550,6 +551,12 @@ func GetSelf(c *gin.Context) {
 		return
 	}
 	responseData := buildSelfUserData(user)
+	walletBalances, err := model.GetWalletBalanceBreakdown(int64(user.Id), int64(user.Quota), user.BillingMode)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	responseData["wallet_balances"] = walletBalances
 	// The authenticated role is loaded from GetUserCache. It should equal the
 	// row role, but use it for capabilities so GetSelf and login/refresh remain
 	// consistent with the authorization decision made for this request.
@@ -572,7 +579,13 @@ func buildSelfUserData(user *model.User) map[string]any {
 	userSetting := user.GetSetting()
 	permissions := calculateUserPermissions(user.Role)
 	permissions["admin_permissions"] = authz.Capabilities(user.Id, user.Role)
-	return map[string]any{
+	// The credit position is display-only here. Managing the contract stays in
+	// Agency Hub so the wallet never becomes a second source of truth.
+	creditOverview, creditErr := model.GetAgencyCreditOverview(int64(user.Id))
+	if creditErr != nil {
+		creditOverview = nil
+	}
+	data := map[string]any{
 		"id":                user.Id,
 		"username":          user.Username,
 		"display_name":      user.DisplayName,
@@ -600,6 +613,10 @@ func buildSelfUserData(user *model.User) map[string]any {
 		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
 		"permissions":       permissions,
 	}
+	if creditOverview != nil {
+		data["credit"] = creditOverview
+	}
+	return data
 }
 
 // 计算用户权限的辅助函数
@@ -720,32 +737,113 @@ func GetUserModels(c *gin.Context) {
 		}
 	}
 	models := service.GetGroupsEnabledModels(groupsToQuery)
-	if c.Query("chat_only") == "true" {
-		chatAbilities, queryErr := model.GetEnabledAbilitiesWithChannelsByGroups(groupsToQuery)
+	if c.Query("chat_only") == "true" || c.Query("include_metadata") == "true" {
+		abilities, queryErr := model.GetEnabledAbilitiesWithChannelsByGroups(groupsToQuery)
 		if queryErr != nil {
 			common.ApiError(c, queryErr)
 			return
 		}
-		chatModels := make(map[string]struct{}, len(chatAbilities))
-		for _, ability := range chatAbilities {
-			if constant.IsTaskOnlyChannelType(ability.ChannelType) || common.IsImageGenerationModel(ability.Model) || !slices.Contains(common.GetEndpointTypesByChannelType(ability.ChannelType, ability.Model), constant.EndpointTypeOpenAI) {
-				continue
-			}
-			chatModels[ability.Model] = struct{}{}
-		}
-		filteredModels := make([]string, 0, len(models))
-		for _, modelName := range models {
-			if _, ok := chatModels[modelName]; ok {
-				filteredModels = append(filteredModels, modelName)
+		chatModels := make(map[string]struct{}, len(abilities))
+		for _, ability := range abilities {
+			if playgroundModelSupportsChat(ability.ChannelType, ability.Model) {
+				chatModels[ability.Model] = struct{}{}
 			}
 		}
-		models = filteredModels
+		if c.Query("chat_only") == "true" {
+			filteredModels := make([]string, 0, len(models))
+			for _, modelName := range models {
+				if _, ok := chatModels[modelName]; ok {
+					filteredModels = append(filteredModels, modelName)
+				}
+			}
+			models = filteredModels
+		}
+		if c.Query("include_metadata") == "true" {
+			modelKinds := make(map[string]string, len(models))
+			for _, ability := range abilities {
+				modelName := ability.Model
+				kind := playgroundModelKind(ability.ChannelType, modelName)
+				if current, ok := modelKinds[modelName]; !ok || playgroundKindPriority(kind) > playgroundKindPriority(current) {
+					modelKinds[modelName] = kind
+				}
+			}
+			data := make([]gin.H, 0, len(models))
+			for _, modelName := range models {
+				_, chatSupported := chatModels[modelName]
+				data = append(data, gin.H{
+					"model":          modelName,
+					"kind":           modelKinds[modelName],
+					"chat_supported": chatSupported,
+				})
+			}
+			c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": data})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 		"data":    models,
 	})
+}
+
+func playgroundModelKind(channelType int, modelName string) string {
+	modelLower := strings.ToLower(modelName)
+	endpointTypes := common.GetEndpointTypesByChannelType(channelType, modelName)
+	switch channelType {
+	case constant.ChannelTypeMidjourney, constant.ChannelTypeMidjourneyPlus:
+		return "image"
+	case constant.ChannelTypeSunoAPI:
+		return "audio"
+	}
+	if strings.Contains(modelLower, "midjourney") || strings.HasPrefix(modelLower, "mj_") || strings.Contains(modelLower, "nano-banana") {
+		return "image"
+	}
+	if strings.Contains(modelLower, "suno") {
+		return "audio"
+	}
+	if common.IsImageGenerationModel(modelName) || strings.Contains(modelLower, "seedream") || strings.Contains(modelLower, "-image") || slices.Contains(endpointTypes, constant.EndpointTypeImageGeneration) {
+		return "image"
+	}
+	if strings.Contains(modelLower, "seedance") || strings.Contains(modelLower, "hailuo") || strings.Contains(modelLower, "minimax-h3") || strings.HasPrefix(modelLower, "sora") || strings.HasPrefix(modelLower, "veo") || strings.Contains(modelLower, "video") || strings.Contains(modelLower, "-t2v") || strings.Contains(modelLower, "-i2v") || strings.Contains(modelLower, "-r2v") || constant.IsTaskOnlyChannelType(channelType) || slices.Contains(endpointTypes, constant.EndpointTypeOpenAIVideo) {
+		return "video"
+	}
+	if strings.Contains(modelLower, "embedding") || strings.Contains(modelLower, "embed-") || strings.Contains(modelLower, "bge-") || strings.Contains(modelLower, "rerank") || slices.Contains(endpointTypes, constant.EndpointTypeEmbeddings) || slices.Contains(endpointTypes, constant.EndpointTypeJinaRerank) {
+		return "embedding"
+	}
+	if strings.Contains(modelLower, "audio") || strings.Contains(modelLower, "speech") || strings.Contains(modelLower, "whisper") || strings.Contains(modelLower, "tts") || strings.Contains(modelLower, "asr") {
+		return "audio"
+	}
+	return "text"
+}
+
+func playgroundModelSupportsChat(channelType int, modelName string) bool {
+	if constant.IsTaskOnlyChannelType(channelType) {
+		return false
+	}
+	kind := playgroundModelKind(channelType, modelName)
+	if kind != "text" {
+		return false
+	}
+	if strings.Contains(strings.ToLower(modelName), "moderation") {
+		return false
+	}
+	return slices.Contains(common.GetEndpointTypesByChannelType(channelType, modelName), constant.EndpointTypeOpenAI)
+}
+
+func playgroundKindPriority(kind string) int {
+	switch kind {
+	case "video":
+		return 5
+	case "image":
+		return 4
+	case "audio":
+		return 3
+	case "embedding":
+		return 2
+	default:
+		return 1
+	}
 }
 
 func UpdateUser(c *gin.Context) {

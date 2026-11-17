@@ -1,0 +1,51 @@
+{
+  "gatewayId": "gw-cn-fixture",
+  "snapshotVersion": "fixture-catalog-1",
+  "models": [
+    {
+      "id": 1,
+      "model_name": "fixture-text",
+      "description": "Synthetic catalog entry",
+      "icon": "fixture-vendor",
+      "tags": ["text"],
+      "vendor_id": 1,
+      "status": 1,
+      "name_rule": 0,
+      "has_metadata": true,
+      "square_state": "visible",
+      "enable_groups": ["default"],
+      "supported_endpoints": ["/v1/chat/completions"],
+      "matched_models": ["fixture-text"]
+    },
+    {
+      "id": 2,
+      "model_name": "fixture-hidden-video",
+      "description": "",
+      "icon": "",
+      "tags": [],
+      "vendor_id": 0,
+      "status": 0,
+      "name_rule": 0,
+      "has_metadata": false,
+      "square_state": "hidden",
+      "enable_groups": [],
+      "supported_endpoints": [],
+      "matched_models": []
+    }
+  ],
+  "vendors": [
+    {"id": 1, "name": "Fixture vendor", "description": "", "icon": "fixture-vendor", "status": 1}
+  ],
+  "pricing": {
+    "entries": [
+      {
+        "model_name": "fixture-text",
+        "version": "fixture-local-price-1",
+        "configured": {"ModelRatio": "1", "CompletionRatio": "2"},
+        "effective": {"ModelRatio": "1", "CompletionRatio": "2"}
+      }
+    ],
+    "options": {"ModelRatio": "{\"fixture-text\":1}"},
+    "empty_version": "fixture-empty-price-1"
+  }
+}

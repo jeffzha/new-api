@@ -70,6 +70,7 @@ export function withPluginPricing(
     billing_expr: variant.billing_expr,
     billing_usage_schema: variant.billing_usage_schema,
     billing_usage_examples: variant.billing_usage_examples,
+    billing_material_pricing: variant.billing_material_pricing,
     billing_plugin_variants: undefined,
   }
 }

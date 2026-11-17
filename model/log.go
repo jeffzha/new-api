@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/businessapi"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -61,6 +63,7 @@ type Log struct {
 	UserId            int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
 	CreatedAt         int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:1;index:idx_created_at_type"`
 	Type              int    `json:"type" gorm:"index:idx_created_at_type"`
+	DisplayType       *int   `json:"display_type,omitempty" gorm:"->;-:migration"`
 	Content           string `json:"content"`
 	Username          string `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
 	TokenName         string `json:"token_name" gorm:"index;default:''"`
@@ -252,9 +255,94 @@ func RecordOperationAuditLog(logUserId, actorRole int, content string, ip string
 	RecordAuditLog(c, AuditLog{UserId: logUserId, Username: username, ActorRole: actorRole, Category: category, Action: action, Content: content, Ip: ip, Status: status, Success: success, Other: other})
 }
 
-func RecordTopupLog(userId int, content string, callerIp string, paymentMethod string, callbackPaymentMethod string) {
+// Wallet-change logs (types 1, 3 and 4) carry the changed quota in logs.quota, always non-negative, and say in
+// other where it came from (quota_source) and which way it moved (quota_direction), so the OPS push can book
+// them without reading the content text.
+const (
+	LogQuotaCredit = "credit"
+	LogQuotaDebit  = "debit"
+
+	LogQuotaSourceOnlineTopup         = "online_topup"
+	LogQuotaSourceAdminTopup          = "admin_topup" // 管理员补单
+	LogQuotaSourceRedemption          = "redemption"
+	LogQuotaSourceSubscription        = "subscription_purchase"
+	LogQuotaSourceSubscriptionBalance = "subscription_balance_purchase"
+	LogQuotaSourceAdminAdjustment     = "admin_adjustment"
+	LogQuotaSourceRegister            = "register_gift"
+	LogQuotaSourceInvitee             = "invitee_gift"
+	LogQuotaSourceInviter             = "inviter_reward" // credited to the invite balance, not the wallet: quota 0
+	LogQuotaSourceAffiliateTransfer   = "affiliate_transfer"
+	LogQuotaSourceCheckin             = "checkin_gift"
+)
+
+func walletLogFields(source string, debit bool, fields map[string]any) map[string]any {
+	values := map[string]any{"quota_source": source, "quota_direction": LogQuotaCredit}
+	if debit {
+		values["quota_direction"] = LogQuotaDebit
+	}
+	maps.Copy(values, fields)
+	return values
+}
+
+// RecordQuotaLog records a wallet change of quota (non-negative) with its source and direction.
+func RecordQuotaLog(userId int, logType int, content string, quota int, source string, debit bool, fields map[string]any) {
 	username, _ := GetUsernameById(userId, false)
 	other := NewLogOther()
+	other.MergePublic(walletLogFields(source, debit, fields))
+	log := &Log{
+		UserId:    userId,
+		Username:  username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      logType,
+		Content:   content,
+		Quota:     max(quota, 0),
+		Other:     other.JSONString(),
+	}
+	if err := createLog(log); err != nil {
+		common.SysLog("failed to record log: " + err.Error())
+	}
+}
+
+// RecordQuotaLogWithAdminInfo is RecordLogWithAdminInfo for a wallet change made by an operator; it always
+// writes to the logs table (RecordLogWithAdminInfo sends LogTypeManage to the audit table instead).
+func RecordQuotaLogWithAdminInfo(userId int, logType int, content string, quota int, source string, debit bool, adminInfo *AuditAdminInfo, operation *AuditOperation, request ...*gin.Context) {
+	username, _ := GetUsernameById(userId, false)
+	log := &Log{
+		UserId:    userId,
+		Username:  username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      logType,
+		Content:   content,
+		Quota:     max(quota, 0),
+	}
+	if len(request) > 0 && request[0] != nil {
+		log.RequestId = request[0].GetString(common.RequestIdKey)
+	}
+	values := map[string]any{}
+	if data, err := common.Marshal(AuditOther{AdminInfo: adminInfo, Op: operation}); err == nil {
+		_ = common.Unmarshal(data, &values)
+	}
+	maps.Copy(values, walletLogFields(source, debit, nil))
+	data, err := common.Marshal(values)
+	if err != nil {
+		common.SysError("failed to encode log admin info: " + err.Error())
+		return
+	}
+	log.Other = string(data)
+	if err := createLog(log); err != nil {
+		common.SysLog("failed to record log: " + err.Error())
+	}
+}
+
+// RecordTopupLog records a paid top-up of quota; tradeNo links it to its topups row.
+func RecordTopupLog(userId int, content string, callerIp string, paymentMethod string, callbackPaymentMethod string, quota int, tradeNo string) {
+	source := LogQuotaSourceOnlineTopup
+	if callbackPaymentMethod == "admin" {
+		source = LogQuotaSourceAdminTopup
+	}
+	username, _ := GetUsernameById(userId, false)
+	other := NewLogOther()
+	other.MergePublic(walletLogFields(source, false, map[string]any{"trade_no": tradeNo}))
 	other.MergeAdmin(map[string]any{
 		"server_ip":               common.GetIp(),
 		"node_name":               common.NodeName,
@@ -269,6 +357,7 @@ func RecordTopupLog(userId int, content string, callerIp string, paymentMethod s
 		CreatedAt: common.GetTimestamp(),
 		Type:      LogTypeTopup,
 		Content:   content,
+		Quota:     max(quota, 0),
 		Ip:        callerIp,
 		Other:     other.JSONString(),
 	}
@@ -284,7 +373,8 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
-	otherStr := other.JSONString()
+	other = captureRequestUpstream(c, other)
+	otherStr := businessCallerLogJSON(c, other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
 	if settingMap, err := GetUserSetting(userId, false); err == nil {
@@ -343,12 +433,19 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	if !common.LogConsumeEnabled {
 		return
 	}
+	if billing, ok := businessapi.BillingFromContext(c); ok {
+		if params.Other == nil {
+			params.Other = NewLogOther()
+		}
+		params.Other.SetPublic("billing", billing)
+	}
 	logger.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, params=%s", userId, common.GetJsonString(params)))
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	createdAt := common.GetTimestamp()
-	otherStr := params.Other.JSONString()
+	params.Other = captureRequestUpstream(c, params.Other)
+	otherStr := businessCallerLogJSON(c, params.Other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
 	if settingMap, err := GetUserSetting(userId, false); err == nil {
@@ -465,12 +562,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 }
 
 func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
-	var tx *gorm.DB
-	if logType == LogTypeUnknown {
-		tx = LOG_DB
-	} else {
-		tx = LOG_DB.Where("logs.type = ?", logType)
-	}
+	tx := applyLogTypeFilter(LOG_DB, logType)
 
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
 		return nil, 0, err
@@ -484,8 +576,8 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if requestId != "" {
 		tx = tx.Where("logs.request_id = ?", requestId)
 	}
-	if upstreamRequestId != "" {
-		tx = tx.Where("logs.upstream_request_id = ?", upstreamRequestId)
+	if tx, err = applyUpstreamLogFilter(tx, upstreamRequestId); err != nil {
+		return nil, 0, err
 	}
 	if startTimestamp != 0 {
 		tx = tx.Where("logs.created_at >= ?", startTimestamp)
@@ -507,7 +599,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		order = clickHouseLogOrder("logs.")
 	}
-	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
+	err = tx.Select("logs.*, " + logCategorySQL() + " AS display_type").Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
 		return nil, 0, err
 	}
@@ -561,12 +653,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 const logSearchCountLimit = 10000
 
 func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
-	var tx *gorm.DB
-	if logType == LogTypeUnknown {
-		tx = LOG_DB.Where("logs.user_id = ?", userId)
-	} else {
-		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, logType)
-	}
+	tx := applyLogTypeFilter(LOG_DB.Where("logs.user_id = ?", userId), logType)
 
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
 		return nil, 0, err
@@ -577,8 +664,8 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	if requestId != "" {
 		tx = tx.Where("logs.request_id = ?", requestId)
 	}
-	if upstreamRequestId != "" {
-		tx = tx.Where("logs.upstream_request_id = ?", upstreamRequestId)
+	if tx, err = applyUpstreamLogFilter(tx, upstreamRequestId); err != nil {
+		return nil, 0, err
 	}
 	if startTimestamp != 0 {
 		tx = tx.Where("logs.created_at >= ?", startTimestamp)
@@ -598,7 +685,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		order = clickHouseLogOrder("logs.")
 	}
-	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
+	err = tx.Select("logs.*, " + logCategorySQL() + " AS display_type").Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
 		common.SysError("failed to search user logs: " + err.Error())
 		return nil, 0, errors.New("查询日志失败")

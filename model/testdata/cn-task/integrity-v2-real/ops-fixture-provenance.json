@@ -1,0 +1,47 @@
+{
+  "synthetic": true,
+  "approvalMechanism": "actual Ops inventory services with separate synthetic actor identities",
+  "productionEligibility": false,
+  "financialGrants": 0,
+  "results": [
+    {
+      "engine": "sqlite",
+      "tenantId": "fixture-tenant",
+      "gatewayId": "test-cn",
+      "streamEpoch": "11111111-1111-4111-8111-111111111101",
+      "integrityEpoch": "22222222-2222-4222-8222-222222222201",
+      "inventoryId": "87e29103-67ba-45aa-b8da-1c5075749a71",
+      "approvedBodyHash": "sha256:b8fe6d30e31508bd985c7b98c68fb8b37ff05ca044267bb8e577ae4f2418289a",
+      "export": "D:\\JiuLu\\TokenOps\\.testtmp\\integrity-integration-inventories-20261015\\sqlite.json",
+      "exportSha256": "2d4dcfd1accda25379ad26632ba1fb57ef0b1712bf50a1f400051fb8748d009e",
+      "database": "D:\\JiuLu\\TokenOps\\.testtmp\\integrity-integration-inventories-20261015\\sqlite.sqlite3",
+      "databaseSha256": "b23d9cac1a66c1692af9cf1ca444f15220f6c1e337de326341611984906e0fa7"
+    },
+    {
+      "engine": "mysql",
+      "tenantId": "fixture-tenant",
+      "gatewayId": "test-cn",
+      "streamEpoch": "11111111-1111-4111-8111-111111111102",
+      "integrityEpoch": "22222222-2222-4222-8222-222222222202",
+      "inventoryId": "38ee3cdd-64f7-4419-8f5c-bd382b20b845",
+      "approvedBodyHash": "sha256:64cefbb38707bb5162b4e887a59848b7fe4f2c1e7a0f70ac484ec2e6f6ec9d7b",
+      "export": "D:\\JiuLu\\TokenOps\\.testtmp\\integrity-integration-inventories-20261015\\mysql.json",
+      "exportSha256": "0d4fbe697ebb5165232effb63d4a16cf0734c9ec76fd06d426e62a46d41b1a50",
+      "database": "D:\\JiuLu\\TokenOps\\.testtmp\\integrity-integration-inventories-20261015\\mysql.sqlite3",
+      "databaseSha256": "7d92cd3ca6c9f5af3b23bd703ca5b23bbe62661b8e8735999aa852efaa068e2d"
+    },
+    {
+      "engine": "postgres",
+      "tenantId": "fixture-tenant",
+      "gatewayId": "test-cn",
+      "streamEpoch": "11111111-1111-4111-8111-111111111103",
+      "integrityEpoch": "22222222-2222-4222-8222-222222222203",
+      "inventoryId": "e46b50ed-0ddd-44a9-b0e5-0bc85f176afc",
+      "approvedBodyHash": "sha256:95945214c8a72c2f2fd6465c7eee356abcc1ecaf4ce1fe467d04b2d5ca2dd71d",
+      "export": "D:\\JiuLu\\TokenOps\\.testtmp\\integrity-integration-inventories-20261015\\postgres.json",
+      "exportSha256": "539397c3ee860a22a0a9377b2c06f09c2226db3839257b590ef7a4faa0ae4a8b",
+      "database": "D:\\JiuLu\\TokenOps\\.testtmp\\integrity-integration-inventories-20261015\\postgres.sqlite3",
+      "databaseSha256": "150a0fcc47abd64a6303f1af67bda0bffcf52b31e2f7713ce64f92a26d1000ff"
+    }
+  ]
+}

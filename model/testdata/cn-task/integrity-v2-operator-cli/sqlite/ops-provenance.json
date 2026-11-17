@@ -1,0 +1,39 @@
+{
+  "approved": {
+    "applicant": "synthetic-applicant",
+    "approver": "synthetic-independent-reviewer",
+    "contentHash": "sha256:d8e24557808cd0bb32371fe4c2dedd75e23455b2d85c3df864dcbad82c9b9412",
+    "customerKeys": [
+      "1001"
+    ],
+    "exportable": true,
+    "gatewayId": "test-cn",
+    "id": "61c96948-ad42-4872-b46e-4007c507676e",
+    "integrityEpoch": "13e8745e-55ae-42b4-b355-7ebb6f738ca8",
+    "inventoryId": "61c96948-ad42-4872-b46e-4007c507676e",
+    "status": "approved",
+    "streamEpoch": "2b8b2405-becb-4463-b83b-c7ae126851eb",
+    "version": 2
+  },
+  "databaseSha256": "fee8f544e7c8762e9adf85299c6bdefb67bd5cdd62d05612b5dbfe2ae0698826",
+  "financialGrants": 0,
+  "frozen": {
+    "applicant": "synthetic-applicant",
+    "approver": null,
+    "contentHash": "sha256:86d09ebc6b05d699347050ebf3b935a3c484f00f60f0ddd68563ee6bc88806b3",
+    "customerKeys": [
+      "1001"
+    ],
+    "exportable": false,
+    "gatewayId": "test-cn",
+    "id": "61c96948-ad42-4872-b46e-4007c507676e",
+    "integrityEpoch": "13e8745e-55ae-42b4-b355-7ebb6f738ca8",
+    "inventoryId": "61c96948-ad42-4872-b46e-4007c507676e",
+    "status": "submitted",
+    "streamEpoch": "2b8b2405-becb-4463-b83b-c7ae126851eb",
+    "version": 1
+  },
+  "opsDatabase": "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\sqlite\\ops-review.sqlite3",
+  "productionEligibility": false,
+  "syntheticIntegration": true
+}

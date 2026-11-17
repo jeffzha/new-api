@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDefaultPricesUSDAreComplete(t *testing.T) {
+func TestDefaultPricesCNYAreComplete(t *testing.T) {
 	tests := []struct {
 		name       string
 		model      string
@@ -17,98 +17,227 @@ func TestDefaultPricesUSDAreComplete(t *testing.T) {
 		hasVideo   bool
 		want       float64
 	}{
-		{name: "standard 720p", model: StandardSeedanceModel, resolution: "720p", want: 7},
-		{name: "standard 480p falls back to 720p", model: StandardSeedanceModel, resolution: "480p", want: 7},
-		{name: "standard empty falls back to 720p", model: StandardSeedanceModel, want: 7},
-		{name: "standard unknown falls back to 720p", model: StandardSeedanceModel, resolution: "future-resolution", want: 7},
-		{name: "standard 720p video", model: StandardSeedanceModel, resolution: "720p", hasVideo: true, want: 4.3},
-		{name: "standard 1080p", model: StandardSeedanceModel, resolution: "1080p", want: 7.7},
-		{name: "standard 1080p video", model: StandardSeedanceModel, resolution: "1080p", hasVideo: true, want: 4.7},
-		{name: "standard 4k", model: StandardSeedanceModel, resolution: "4K", want: 4},
-		{name: "standard 4k video", model: StandardSeedanceModel, resolution: "4k", hasVideo: true, want: 2.4},
-		{name: "fast default", model: FastSeedanceModel, resolution: "720p", want: 5.6},
-		{name: "fast default video", model: FastSeedanceModel, resolution: "1080p", hasVideo: true, want: 3.3},
-		{name: "2.5 480p uses 720p tier", model: Seedance25Model, resolution: "480p", want: 10.7},
-		{name: "2.5 720p video", model: Seedance25Model, resolution: "720p", hasVideo: true, want: 6.4},
-		{name: "2.5 1080p list price", model: Seedance25Model, resolution: "1080p", want: 11.7},
-		{name: "2.5 1080p video list price", model: Seedance25Model, resolution: "1080p", hasVideo: true, want: 7},
-		{name: "aimodel 2.0 pricing alias", model: AimodelSeedance20Model, resolution: "720p", want: 7},
-		{name: "aimodel 2.5 pricing alias", model: AimodelSeedance25Model, resolution: "480p", want: 10.7},
+		{name: "standard 720p", model: StandardSeedanceModel, resolution: "720p", want: 46},
+		{name: "standard 480p falls back to 720p", model: StandardSeedanceModel, resolution: "480p", want: 46},
+		{name: "standard empty falls back to 720p", model: StandardSeedanceModel, want: 46},
+		{name: "standard unknown falls back to 720p", model: StandardSeedanceModel, resolution: "future-resolution", want: 46},
+		{name: "standard 720p video", model: StandardSeedanceModel, resolution: "720p", hasVideo: true, want: 28},
+		{name: "standard 1080p", model: StandardSeedanceModel, resolution: "1080p", want: 51},
+		{name: "standard 1080p video", model: StandardSeedanceModel, resolution: "1080p", hasVideo: true, want: 31},
+		{name: "standard 4k", model: StandardSeedanceModel, resolution: "4K", want: 26},
+		{name: "standard 4k video", model: StandardSeedanceModel, resolution: "4k", hasVideo: true, want: 16},
+		{name: "fast default", model: FastSeedanceModel, resolution: "720p", want: 37},
+		{name: "fast default video", model: FastSeedanceModel, resolution: "1080p", hasVideo: true, want: 22},
+		{name: "2.5 480p uses 720p tier", model: Seedance25Model, resolution: "480p", want: 70},
+		{name: "2.5 720p video", model: Seedance25Model, resolution: "720p", hasVideo: true, want: 42},
+		{name: "2.5 1080p list price", model: Seedance25Model, resolution: "1080p", want: 77},
+		{name: "2.5 1080p video list price", model: Seedance25Model, resolution: "1080p", hasVideo: true, want: 46},
+		{name: "aimodel 2.0 pricing alias", model: AimodelSeedance20Model, resolution: "720p", want: 46},
+		{name: "aimodel 2.5 pricing alias", model: AimodelSeedance25Model, resolution: "480p", want: 70},
+		{name: "mini 720p", model: MiniSeedanceModel, resolution: "720p", want: 23},
+		{name: "mini 480p uses 720p tier", model: MiniSeedanceModel, resolution: "480p", want: 23},
+		{name: "mini 720p video", model: MiniSeedanceModel, resolution: "720p", hasVideo: true, want: 14},
+		{name: "mini 480p video uses 720p tier", model: MiniSeedanceModel, resolution: "480p", hasVideo: true, want: 14},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			price, ok := GetUnitPriceUSD(tt.model, tt.resolution, tt.hasVideo)
+			price, ok := GetUnitPriceCNY(tt.model, tt.resolution, tt.hasVideo)
 			require.True(t, ok)
 			assert.Equal(t, tt.want, price.InexactFloat64())
 		})
 	}
 }
 
-func TestSeedance25RejectsUnsupportedResolutionWithoutChangingSeedance20Fallback(t *testing.T) {
-	_, ok := GetUnitPriceUSD(Seedance25Model, "4k", false)
-	assert.False(t, ok)
-	_, ok = GetUnitPriceUSD(Seedance25Model, "future-resolution", false)
-	assert.False(t, ok)
-	price, ok := GetUnitPriceUSD(StandardSeedanceModel, "future-resolution", false)
-	require.True(t, ok)
-	assert.Equal(t, 7.0, price.InexactFloat64())
-}
-
-func TestRebuildPriceIndexPreservesCustomSeedanceMatrix(t *testing.T) {
+func TestOverseasPricesPreserveUSDAndExplicitOverrides(t *testing.T) {
 	original := clonePrices(seedanceVideoPricing.PricesUSD)
 	t.Cleanup(func() {
 		seedanceVideoPricing.PricesUSD = original
 		require.NoError(t, RebuildPriceIndex())
 	})
-	prices := DefaultPricesUSD()
-	delete(prices, Seedance25Model)
-	prices[StandardSeedanceModel]["720p"][WithoutVideoKey] = 7.5
-	seedanceVideoPricing.PricesUSD = prices
+	seedanceVideoPricing.PricesUSD = DefaultPricesUSD()
 	require.NoError(t, RebuildPriceIndex())
-	standardPrice, ok := GetUnitPriceUSD(StandardSeedanceModel, "720p", false)
+	for _, tc := range []struct {
+		model, resolution string
+		video             bool
+		want              float64
+	}{
+		{StandardSeedanceModel, "720p", false, 7},
+		{StandardSeedanceModel, "720p", true, 4.3},
+		{StandardSeedanceModel, "1080p", false, 7.7},
+		{StandardSeedanceModel, "4k", true, 2.4},
+		{FastSeedanceModel, "720p", false, 5.6},
+		{Seedance25Model, "1080p", false, 11.7},
+	} {
+		price, ok := GetUnitPriceUSD(tc.model, tc.resolution, tc.video)
+		require.True(t, ok)
+		assert.Equal(t, tc.want, price.InexactFloat64())
+	}
+	seedanceVideoPricing.PricesUSD[StandardSeedanceModel]["720p"][WithoutVideoKey] = 8.25
+	require.NoError(t, RebuildPriceIndex())
+	price, ok := GetUnitPriceUSD(StandardSeedanceModel, "720p", false)
 	require.True(t, ok)
-	assert.Equal(t, 7.5, standardPrice.InexactFloat64())
-	seedance25Price, ok := GetUnitPriceUSD(Seedance25Model, "1080p", false)
-	require.True(t, ok)
-	assert.Equal(t, 11.7, seedance25Price.InexactFloat64())
+	assert.Equal(t, 8.25, price.InexactFloat64())
+	_, ok = GetUnitPriceUSD(MiniSeedanceModel, "720p", false)
+	assert.False(t, ok, "a supplier CNY amount must not become a USD default")
 }
 
-func TestValidatePricesUSDRejectsIncompleteOrUnsafeMatrices(t *testing.T) {
+func TestSeedance25RejectsUnsupportedResolutionWithoutChangingSeedance20Fallback(t *testing.T) {
+	_, ok := GetUnitPriceCNY(Seedance25Model, "4k", false)
+	assert.False(t, ok)
+	_, ok = GetUnitPriceCNY(Seedance25Model, "future-resolution", false)
+	assert.False(t, ok)
+
+	price, ok := GetUnitPriceCNY(StandardSeedanceModel, "future-resolution", false)
+	require.True(t, ok)
+	assert.Equal(t, 46.0, price.InexactFloat64())
+}
+
+func TestMiniSeedanceRejectsUnsupportedResolutions(t *testing.T) {
+	for _, res := range []string{"1080p", "4k", "4K", "future-resolution"} {
+		_, ok := GetUnitPriceCNY(MiniSeedanceModel, res, false)
+		assert.False(t, ok, "resolution %q should be unsupported for mini", res)
+	}
+}
+
+func TestRebuildPriceIndexMigratesLegacySeedanceMatrix(t *testing.T) {
+	original := clonePrices(seedanceVideoPricing.PricesCNY)
+	originalRequests := seedanceVideoPricing.RequestPricesCNY
+	t.Cleanup(func() {
+		seedanceVideoPricing.PricesCNY = original
+		seedanceVideoPricing.RequestPricesCNY = originalRequests
+		require.NoError(t, RebuildPriceIndex())
+	})
+
+	legacy := DefaultPricesCNY()
+	delete(legacy, Seedance25Model)
+	delete(legacy, MiniSeedanceModel)
+	legacy[StandardSeedanceModel]["720p"][WithoutVideoKey] = 49.5
+	seedanceVideoPricing.PricesCNY = legacy
+
+	require.NoError(t, RebuildPriceIndex())
+	standardPrice, ok := GetUnitPriceCNY(StandardSeedanceModel, "720p", false)
+	require.True(t, ok)
+	assert.Equal(t, 49.5, standardPrice.InexactFloat64())
+	seedance25Price, ok := GetUnitPriceCNY(Seedance25Model, "1080p", false)
+	require.True(t, ok)
+	assert.Equal(t, 77.0, seedance25Price.InexactFloat64())
+	aimodelPrice, ok := GetUnitPriceCNY(AimodelSeedance20Model, "720p", false)
+	require.True(t, ok)
+	assert.Equal(t, 46.0, aimodelPrice.InexactFloat64())
+	miniPrice, ok := GetRequestPriceCNY(MiniSeedanceModel, "480p", false)
+	require.True(t, ok)
+	assert.Equal(t, 23.0, miniPrice.InexactFloat64())
+	seedanceVideoPricing.PricesCNY[MiniSeedanceModel] = map[string]map[string]float64{
+		"720p": {WithoutVideoKey: 9.2, WithVideoKey: 5.6},
+	}
+	seedanceVideoPricing.RequestPricesCNY = map[string]map[string]float64{
+		MiniSeedanceModel: {WithoutVideoKey: 24, WithVideoKey: 15},
+	}
+	require.NoError(t, RebuildPriceIndex())
+	customMiniPrice, ok := GetUnitPriceCNY(MiniSeedanceModel, "720p", true)
+	require.True(t, ok)
+	assert.Equal(t, 15.0, customMiniPrice.InexactFloat64())
+}
+
+func TestValidatePricesCNYRejectsIncompleteOrUnsafeMatrices(t *testing.T) {
 	tests := []struct {
 		name   string
-		mutate func(PricesUSD)
+		mutate func(PricesCNY)
 	}{
-		{name: "missing model", mutate: func(prices PricesUSD) { delete(prices, FastSeedanceModel) }},
-		{name: "unknown model", mutate: func(prices PricesUSD) {
-			delete(prices, FastSeedanceModel)
-			prices["invented-mini-model"] = map[string]map[string]float64{"default": {WithoutVideoKey: 1, WithVideoKey: 1}}
-		}},
-		{name: "missing resolution", mutate: func(prices PricesUSD) { delete(prices[StandardSeedanceModel], "4k") }},
-		{name: "extra resolution", mutate: func(prices PricesUSD) {
-			prices[FastSeedanceModel]["720p"] = map[string]float64{WithoutVideoKey: 5.6, WithVideoKey: 3.3}
-		}},
-		{name: "missing input variant", mutate: func(prices PricesUSD) { delete(prices[StandardSeedanceModel]["720p"], WithVideoKey) }},
-		{name: "extra input variant", mutate: func(prices PricesUSD) { prices[StandardSeedanceModel]["720p"]["audio_only"] = 1 }},
-		{name: "zero price", mutate: func(prices PricesUSD) { prices[StandardSeedanceModel]["720p"][WithoutVideoKey] = 0 }},
-		{name: "negative price", mutate: func(prices PricesUSD) { prices[StandardSeedanceModel]["720p"][WithoutVideoKey] = -1 }},
-		{name: "nan price", mutate: func(prices PricesUSD) { prices[StandardSeedanceModel]["720p"][WithoutVideoKey] = math.NaN() }},
-		{name: "infinite price", mutate: func(prices PricesUSD) { prices[StandardSeedanceModel]["720p"][WithoutVideoKey] = math.Inf(1) }},
-		{name: "price above maximum", mutate: func(prices PricesUSD) {
-			prices[StandardSeedanceModel]["720p"][WithoutVideoKey] = MaxPriceUSDPerMillion + 1
-		}},
+		{
+			name: "missing model",
+			mutate: func(prices PricesCNY) {
+				delete(prices, FastSeedanceModel)
+			},
+		},
+		{
+			name: "unknown model",
+			mutate: func(prices PricesCNY) {
+				delete(prices, FastSeedanceModel)
+				prices["invented-mini-model"] = map[string]map[string]float64{
+					"default": {WithoutVideoKey: 1, WithVideoKey: 1},
+				}
+			},
+		},
+		{
+			name: "missing resolution",
+			mutate: func(prices PricesCNY) {
+				delete(prices[StandardSeedanceModel], "4k")
+			},
+		},
+		{
+			name: "extra resolution",
+			mutate: func(prices PricesCNY) {
+				prices[FastSeedanceModel]["720p"] = map[string]float64{WithoutVideoKey: 37, WithVideoKey: 22}
+			},
+		},
+		{
+			name: "missing input variant",
+			mutate: func(prices PricesCNY) {
+				delete(prices[StandardSeedanceModel]["720p"], WithVideoKey)
+			},
+		},
+		{
+			name: "extra input variant",
+			mutate: func(prices PricesCNY) {
+				prices[StandardSeedanceModel]["720p"]["audio_only"] = 1
+			},
+		},
+		{
+			name: "zero price",
+			mutate: func(prices PricesCNY) {
+				prices[StandardSeedanceModel]["720p"][WithoutVideoKey] = 0
+			},
+		},
+		{
+			name: "negative price",
+			mutate: func(prices PricesCNY) {
+				prices[StandardSeedanceModel]["720p"][WithoutVideoKey] = -1
+			},
+		},
+		{
+			name: "nan price",
+			mutate: func(prices PricesCNY) {
+				prices[StandardSeedanceModel]["720p"][WithoutVideoKey] = math.NaN()
+			},
+		},
+		{
+			name: "infinite price",
+			mutate: func(prices PricesCNY) {
+				prices[StandardSeedanceModel]["720p"][WithoutVideoKey] = math.Inf(1)
+			},
+		},
+		{
+			name: "price above maximum",
+			mutate: func(prices PricesCNY) {
+				prices[StandardSeedanceModel]["720p"][WithoutVideoKey] = MaxPriceCNYPerMillion + 1
+			},
+		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prices := DefaultPricesUSD()
+			prices := DefaultPricesCNY()
 			tt.mutate(prices)
-			assert.Error(t, ValidatePricesUSD(prices))
+			assert.Error(t, ValidatePricesCNY(prices))
 		})
 	}
 }
 
-func TestValidatePricesUSDJSONUsesStableContract(t *testing.T) {
-	encoded, err := common.Marshal(DefaultPricesUSD())
+func TestValidatePricesCNYJSONUsesStableContract(t *testing.T) {
+	requests, err := common.Marshal(DefaultRequestPricesCNY())
 	require.NoError(t, err)
-	require.NoError(t, ValidatePricesUSDJSON(string(encoded)))
-	assert.Error(t, ValidatePricesUSDJSON(`{"doubao-seedance-2-0-260128":{"720p":{"without_video":"7","with_video":4.3}}}`))
+	require.NoError(t, ValidateRequestPricesCNYJSON(string(requests)))
+	for _, raw := range []string{
+		`null`, `{}`, `{"doubao-seedance-2.0-mini":{"without_video":0,"with_video":14}}`,
+		`{"doubao-seedance-2.0-mini":{"without_video":23,"with_video":-1}}`,
+		`{"doubao-seedance-2.0-mini":{"without_video":23,"with_video":14,"extra":1}}`,
+	} {
+		assert.Error(t, ValidateRequestPricesCNYJSON(raw))
+	}
+	encoded, err := common.Marshal(DefaultPricesCNY())
+	require.NoError(t, err)
+	require.NoError(t, ValidatePricesCNYJSON(string(encoded)))
+	assert.Error(t, ValidatePricesCNYJSON(`{"doubao-seedance-2-0-260128":{"720p":{"without_video":"46","with_video":28}}}`))
 }

@@ -12,6 +12,7 @@ export interface Identity {
   };
   username?: string;
   must_change_password: boolean;
+  platform_account?: { username: string };
 }
 export interface Page<T> {
   items: T[];

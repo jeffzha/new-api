@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service/opsbridge"
 
 	"github.com/gin-gonic/gin"
 )
@@ -43,6 +44,10 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 	}
 
+	requestRouter := router.Group("/v1/requests")
+	requestRouter.Use(middleware.RouteTag("relay"), middleware.TokenAuth())
+	requestRouter.GET("/:request_id", controller.BusinessRequestDetail)
+
 	geminiRouter := router.Group("/v1beta/models")
 	geminiRouter.Use(middleware.RouteTag("relay"))
 	geminiRouter.Use(middleware.TokenAuth())
@@ -64,7 +69,7 @@ func SetRelayRouter(router *gin.Engine) {
 	playgroundRouter := router.Group("/pg")
 	playgroundRouter.Use(middleware.RouteTag("relay"))
 	playgroundRouter.Use(middleware.SystemPerformanceCheck())
-	playgroundRouter.Use(middleware.UserAuth(), middleware.Distribute())
+	playgroundRouter.Use(middleware.UserAuth(), middleware.Distribute(), opsbridge.CallGate())
 	{
 		playgroundRouter.POST("/chat/completions", controller.Playground)
 	}
@@ -75,13 +80,13 @@ func SetRelayRouter(router *gin.Engine) {
 	{
 		// Responses WebSocket route. Channel selection happens after the first
 		// response.create event; each event runs the ordinary request limiter.
-		relayV1Router.GET("/responses", controller.ResponsesWebSocket)
+		relayV1Router.GET("/responses", opsbridge.CallGate(), controller.ResponsesWebSocket)
 	}
 	relayV1Router.Use(middleware.ModelRequestRateLimit())
 	{
 		// WebSocket 路由（统一到 Relay）
 		wsRouter := relayV1Router.Group("")
-		wsRouter.Use(middleware.Distribute())
+		wsRouter.Use(middleware.Distribute(), opsbridge.CallGate())
 		wsRouter.GET("/realtime", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIRealtime)
 		})
@@ -89,7 +94,19 @@ func SetRelayRouter(router *gin.Engine) {
 	{
 		//http router
 		httpRouter := relayV1Router.Group("")
-		httpRouter.Use(middleware.Distribute())
+		businessCaller := middleware.BusinessCaller()
+		businessBilling := middleware.BusinessBilling()
+		httpRouter.Use(func(c *gin.Context) {
+			if c.Request.Method == "POST" && c.FullPath() == "/v1/chat/completions" {
+				businessBilling(c)
+			}
+		})
+		httpRouter.Use(func(c *gin.Context) {
+			if c.Request.Method == "POST" && c.FullPath() == "/v1/chat/completions" {
+				businessCaller(c)
+			}
+		})
+		httpRouter.Use(middleware.Distribute(), opsbridge.CallGate())
 
 		// claude related routes
 		// TODO: /messages/count_tokens is disabled. The current controller.CountClaudeTokens
@@ -102,7 +119,7 @@ func SetRelayRouter(router *gin.Engine) {
 		httpRouter.POST("/completions", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAI)
 		})
-		httpRouter.POST("/chat/completions", func(c *gin.Context) {
+		httpRouter.POST("/chat/completions", middleware.RelayUserConcurrency(), func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAI)
 		})
 
@@ -202,6 +219,7 @@ func SetRelayRouter(router *gin.Engine) {
 	relayGeminiRouter.Use(middleware.TokenAuth())
 	relayGeminiRouter.Use(middleware.ModelRequestRateLimit())
 	relayGeminiRouter.Use(middleware.Distribute())
+	relayGeminiRouter.Use(opsbridge.CallGate())
 	{
 		// Gemini API 路径格式: /v1beta/models/{model_name}:{action}
 		relayGeminiRouter.POST("/models/*path", func(c *gin.Context) {
@@ -213,6 +231,11 @@ func SetRelayRouter(router *gin.Engine) {
 func registerMjRouterGroup(relayMjRouter *gin.RouterGroup) {
 	relayMjRouter.GET("/image/:id", relay.RelayMidjourneyImage)
 	relayMjRouter.Use(middleware.TokenAuth(), middleware.Distribute())
+	relayMjRouter.Use(func(c *gin.Context) {
+		if strings.Contains(c.Request.URL.Path, "/submit/") || strings.HasSuffix(c.Request.URL.Path, "/insight-face/swap") {
+			opsbridge.CallGate()(c)
+		}
+	})
 	{
 		relayMjRouter.POST("/submit/action", controller.RelayMidjourney)
 		relayMjRouter.POST("/submit/shorten", controller.RelayMidjourney)

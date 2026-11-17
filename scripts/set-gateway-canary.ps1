@@ -23,9 +23,11 @@ param(
     [string]$GreenServiceName = "new-api-green",
     [string]$BlueUpstream = "new-api:3000",
     [string]$GreenUpstream = "new-api-green:3000",
+    [ValidateSet("/healthz", "/api/status")][string]$HealthUri = "/healthz",
     [string]$ExpectedVersion = "",
     [string]$DomainStatusUrl = "https://gateway.nexus-reach.com/api/status",
     [string]$IpStatusUrl = "https://124.174.0.221/api/status",
+    [string]$StaticArchiveRoot = "/opt/new-api/deploy/api-docs/gateway-assets",
     # Use when only the domain is a supported public HTTPS entry point.
     [switch]$DomainOnly,
     [ValidateRange(0, 120)][int]$SshConnectionCooldownSeconds = 30,
@@ -39,6 +41,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$staticPublicUrl = ([Uri]$DomainStatusUrl).GetLeftPart([System.UriPartial]::Authority)
 
 if ([string]::IsNullOrWhiteSpace($DomainStatusUrl)) {
     throw "DomainStatusUrl is required; public domain validation cannot be disabled."
@@ -87,15 +90,23 @@ reverse_proxy $BlueUpstream $GreenUpstream {
 	lb_policy cookie new_api_slot $cookieSecret {
 		fallback weighted_round_robin $blueWeight $greenWeight
 	}
-	health_uri /api/status
+	health_uri $HealthUri
+	health_body $(if ($HealthUri -eq "/healthz") { '`"status":"ready"`' } else { '`"success":true`' })
 	health_interval 10s
 	health_timeout 5s
 	health_status 200
+	health_fails 3
+	health_passes 2
 	fail_duration 30s
 	max_fails 2
 	lb_try_duration 5s
 	lb_try_interval 250ms
 	stream_close_delay 5m
+	# A flushed response may finish before the Gateway's billing tail returns.
+	# Do not queue the next request or health probe on that same connection.
+	transport http {
+		keepalive off
+	}
 }
 # END NEW-API BLUE-GREEN
 "@.Trim()
@@ -219,14 +230,23 @@ if ($managedMatch) {
     $currentProxyMatches = [regex]::Matches($currentManagedBlock, $currentProxyPattern)
     $currentCookieMatches = [regex]::Matches($currentManagedBlock, '(?m)^[\t ]*lb_policy[\t ]+cookie[\t ]+new_api_slot[\t ]+[0-9a-f]{64}[\t ]*\{[\t ]*\r?$')
     $currentFallbackMatches = [regex]::Matches($currentManagedBlock, '(?m)^[\t ]*fallback[\t ]+weighted_round_robin[\t ]+(\d+)[\t ]+(\d+)[\t ]*\r?$')
-    if ($currentWeightMatches.Count -ne 1 -or $currentProxyMatches.Count -ne 1 -or $currentCookieMatches.Count -ne 1 -or $currentFallbackMatches.Count -ne 1) {
+    $currentDirectMatches = [regex]::Matches($currentManagedBlock, '(?m)^[\t ]*lb_policy[\t ]+weighted_round_robin[\t ]+(\d+)[\t ]+(\d+)[\t ]*\r?$')
+    $cookiePolicy = $currentCookieMatches.Count -eq 1 -and $currentFallbackMatches.Count -eq 1 -and $currentDirectMatches.Count -eq 0
+    $directPolicy = $currentDirectMatches.Count -eq 1 -and $currentCookieMatches.Count -eq 0 -and $currentFallbackMatches.Count -eq 0
+    if ($currentWeightMatches.Count -ne 1 -or $currentProxyMatches.Count -ne 1 -or -not ($cookiePolicy -or $directPolicy)) {
         throw "The existing managed Gateway block is malformed or uses an unexpected load-balancing policy."
     }
+    $policyWeights = if ($directPolicy) { $currentDirectMatches[0] } else { $currentFallbackMatches[0] }
     $currentBlueWeight = [int]$currentWeightMatches[0].Groups[1].Value
     $currentGreenWeight = [int]$currentWeightMatches[0].Groups[2].Value
-    if ($currentBlueWeight -ne [int]$currentFallbackMatches[0].Groups[1].Value -or $currentGreenWeight -ne [int]$currentFallbackMatches[0].Groups[2].Value -or ($currentBlueWeight + $currentGreenWeight) -ne 100) {
+    if ($currentBlueWeight -ne [int]$policyWeights.Groups[1].Value -or $currentGreenWeight -ne [int]$policyWeights.Groups[2].Value -or ($currentBlueWeight + $currentGreenWeight) -ne 100) {
         throw "The existing Gateway weight comment and fallback weights are inconsistent."
     }
+    # Change weights only; preserve release fallback scope and live health policy.
+    $managedBlock = [regex]::Replace($currentManagedBlock, '(?m)(# weights blue=)\d+( green=)\d+', "`${1}$blueWeight`${2}$greenWeight")
+    $weightPattern = if ($directPolicy) { '(?m)(lb_policy[\t ]+weighted_round_robin[\t ]+)\d+[\t ]+\d+' } else { '(?m)(fallback[\t ]+weighted_round_robin[\t ]+)\d+[\t ]+\d+' }
+    $managedBlock = [regex]::Replace($managedBlock, $weightPattern, "`${1}$blueWeight $greenWeight")
+    $managedBlock = (($managedBlock -split "`n" | ForEach-Object { $_ -replace ("^" + [regex]::Escape($managedMatch.Groups["indent"].Value)), '' }) -join "`n").Trim()
 
     $newlyEnabledSlot = ""
     if ($currentBlueWeight -eq 0 -and $blueWeight -gt 0) {
@@ -323,6 +343,7 @@ ip_status_url="$IpStatusUrl"
 domain_only="$(if ($DomainOnly) { '1' } else { '0' })"
 blue_weight="$blueWeight"
 green_weight="$greenWeight"
+health_uri="$HealthUri"
 expected_hash="$currentHash"
 config_b64="$configBase64"
 lock_file="`$remote_dir/.gateway-blue-green.lock"
@@ -373,11 +394,36 @@ check_release() {
         echo "Slot `$release_slot does not match its release manifest." >&2
         return 1
     fi
+    # A healthy API does not prove that the browser can load its JavaScript.
+    # Refuse positive candidate traffic without an image-bound asset manifest
+    # and public MIME/checksum checks, including every async chunk.
+    if [ '$(if ($Rollback) { '1' } else { '0' })' != '1' ]; then
+        python3 "`$remote_dir/releases/gateway-static-assets.py" verify \
+            --root '$StaticArchiveRoot' --container "`$release_id" \
+            --public-url '$staticPublicUrl'
+    fi
 }
 
 check_caddy_upstream() {
     upstream="`$1"
     docker exec "`$caddy_container" wget -q -O - "http://`$upstream/api/status" | grep -Eq '"success"[[:space:]]*:[[:space:]]*true'
+    if [ "`$health_uri" = "/healthz" ]; then
+        docker exec "`$caddy_container" wget -q -O - "http://`$upstream/healthz" | grep -Fq '"status":"ready"'
+    fi
+}
+
+wait_caddy_admission() {
+    upstream="`$1"
+    deadline=`$((SECONDS + 90))
+    while [ `$SECONDS -lt `$deadline ]; do
+        if docker exec "`$caddy_container" wget -q -O - http://127.0.0.1:2019/metrics \
+            | grep -Fq "caddy_reverse_proxy_upstreams_healthy{upstream=\"`$upstream\"} 1"; then
+            return 0
+        fi
+        sleep 5
+    done
+    echo "Caddy has not admitted `$upstream; refusing traffic progression." >&2
+    return 1
 }
 
 check_public_status() {
@@ -393,11 +439,23 @@ check_public_status() {
     done
 }
 
+# Feed the freshly written host file through stdin before validating and
+# reloading. The Caddyfile is a file-level bind mount: if the host inode was
+# ever replaced, the container keeps seeing the old inode and a plain
+# `caddy reload --config /etc/caddy/Caddyfile` would silently reload stale
+# configuration while reporting success.
+load_caddy_config() {
+    config_container="`$1"
+    config_source="`$2"
+    docker exec -i "`$config_container" sh -c 'cat > /tmp/Caddyfile.canary.load' < "`$config_source" || return 1
+    docker exec "`$config_container" caddy validate --config /tmp/Caddyfile.canary.load --adapter caddyfile || return 1
+    docker exec "`$config_container" caddy reload --config /tmp/Caddyfile.canary.load --adapter caddyfile || return 1
+}
+
 restore_previous_config() {
     echo "Restoring the previous Caddy configuration..." >&2
     cp "`$backup_dir/Caddyfile" "`$caddyfile" || return 1
-    docker exec "`$caddy_container" caddy validate --config /etc/caddy/Caddyfile || return 1
-    docker exec "`$caddy_container" caddy reload --config /etc/caddy/Caddyfile || return 1
+    load_caddy_config "`$caddy_container" "`$backup_dir/Caddyfile" || return 1
     check_public_status || return 1
 }
 
@@ -434,10 +492,12 @@ fi
 if [ "`$blue_weight" -gt 0 ]; then
     check_service "`$blue_service"
     check_caddy_upstream "$BlueUpstream"
+    wait_caddy_admission "$BlueUpstream"
 fi
 if [ "`$green_weight" -gt 0 ]; then
     check_service "`$green_service"
     check_caddy_upstream "$GreenUpstream"
+    wait_caddy_admission "$GreenUpstream"
 fi
 if [ -n "`$validation_slot" ]; then
     check_release "`$validation_slot" "`$validation_service"
@@ -453,16 +513,31 @@ trap 'rm -f "`$tmp_file"' EXIT
 printf '%s' "`$config_b64" | base64 -d > "`$tmp_file"
 chmod --reference="`$caddyfile" "`$tmp_file"
 
-# The Caddyfile is bind-mounted as a file. Copy into the existing inode so the
-# running container sees the update; replacing it with mv would leave the bind
-# mount attached to the old inode.
+# Keep the host copy inside the existing inode (so a bind mount that still
+# points at this inode keeps working) and hand the same bytes to the container
+# through stdin, because the mounted inode can lag behind after a host-side
+# replace.
 cp "`$tmp_file" "`$caddyfile"
-if ! docker exec "`$caddy_container" caddy validate --config /etc/caddy/Caddyfile; then
+if ! docker exec -i "`$caddy_container" sh -c 'cat > /tmp/Caddyfile.canary.load' < "`$tmp_file"; then
+    fail_with_rollback "Caddy configuration handoff failed."
+fi
+
+if ! docker exec "`$caddy_container" caddy validate --config /tmp/Caddyfile.canary.load --adapter caddyfile; then
     fail_with_rollback "Caddy validation failed."
 fi
 
-if ! docker exec "`$caddy_container" caddy reload --config /etc/caddy/Caddyfile; then
+if ! docker exec "`$caddy_container" caddy reload --config /tmp/Caddyfile.canary.load --adapter caddyfile; then
     fail_with_rollback "Caddy reload failed."
+fi
+
+# Allow two active-health intervals plus the metrics refresh before accepting
+# the new policy. A Docker health result alone does not prove Caddy admission.
+sleep 25
+if [ "`$blue_weight" -gt 0 ] && ! wait_caddy_admission "$BlueUpstream"; then
+    fail_with_rollback "Blue Caddy admission failed."
+fi
+if [ "`$green_weight" -gt 0 ] && ! wait_caddy_admission "$GreenUpstream"; then
+    fail_with_rollback "Green Caddy admission failed."
 fi
 
 if ! check_public_status; then

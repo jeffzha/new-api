@@ -1,9 +1,12 @@
 package common
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"mime/multipart"
+	"net"
 	"net/smtp"
 	"slices"
 	"strings"
@@ -63,9 +66,14 @@ func smtpTLSConfig() *tls.Config {
 }
 
 func newSMTPClient(addr string) (*smtp.Client, error) {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	if SMTPSSLEnabled || (SMTPPort == 465 && !SMTPStartTLSEnabled) {
-		conn, err := tls.Dial("tcp", addr, smtpTLSConfig())
+		conn, err := tls.DialWithDialer(dialer, "tcp", addr, smtpTLSConfig())
 		if err != nil {
+			return nil, err
+		}
+		if err := conn.SetDeadline(time.Now().Add(45 * time.Second)); err != nil {
+			_ = conn.Close()
 			return nil, err
 		}
 		client, err := smtp.NewClient(conn, SMTPServer)
@@ -76,8 +84,17 @@ func newSMTPClient(addr string) (*smtp.Client, error) {
 		return client, nil
 	}
 
-	client, err := smtp.Dial(addr)
+	conn, err := dialer.Dial("tcp", addr)
 	if err != nil {
+		return nil, err
+	}
+	if err := conn.SetDeadline(time.Now().Add(45 * time.Second)); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	client, err := smtp.NewClient(conn, SMTPServer)
+	if err != nil {
+		_ = conn.Close()
 		return nil, err
 	}
 
@@ -96,7 +113,19 @@ func newSMTPClient(addr string) (*smtp.Client, error) {
 	return client, nil
 }
 
+type EmailAttachment struct {
+	Filename    string
+	ContentType string
+	Data        []byte
+}
+
 func SendEmail(subject string, receiver string, content string) error {
+	return SendEmailWithAttachments(subject, receiver, content, nil)
+}
+
+// SendEmailWithAttachments preserves the existing SMTP configuration path and
+// adds RFC 2046 multipart attachments for invoices and other audit documents.
+func SendEmailWithAttachments(subject string, receiver string, content string, attachments []EmailAttachment) error {
 	if !SMTPConfigured() {
 		return fmt.Errorf("SMTP 服务器未配置完整")
 	}
@@ -108,13 +137,63 @@ func SendEmail(subject string, receiver string, content string) error {
 		return err2
 	}
 	encodedSubject := fmt.Sprintf("=?UTF-8?B?%s?=", base64.StdEncoding.EncodeToString([]byte(subject)))
+	var body bytes.Buffer
+	contentType := "text/html; charset=UTF-8"
+	if len(attachments) > 0 {
+		mw := multipart.NewWriter(&body)
+		contentType = "multipart/mixed; boundary=" + mw.Boundary()
+		part, err := mw.CreatePart(map[string][]string{
+			"Content-Type":              {"text/html; charset=UTF-8"},
+			"Content-Transfer-Encoding": {"8bit"},
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := part.Write([]byte(content)); err != nil {
+			return err
+		}
+		for _, attachment := range attachments {
+			if strings.TrimSpace(attachment.Filename) == "" || len(attachment.Data) == 0 {
+				continue
+			}
+			attachmentType := strings.TrimSpace(attachment.ContentType)
+			if attachmentType == "" {
+				attachmentType = "application/octet-stream"
+			}
+			part, err := mw.CreatePart(map[string][]string{
+				"Content-Type":              {attachmentType + "; name=\"" + attachment.Filename + "\""},
+				"Content-Disposition":       {"attachment; filename=\"" + attachment.Filename + "\""},
+				"Content-Transfer-Encoding": {"base64"},
+			})
+			if err != nil {
+				return err
+			}
+			encoded := make([]byte, base64.StdEncoding.EncodedLen(len(attachment.Data)))
+			base64.StdEncoding.Encode(encoded, attachment.Data)
+			for start := 0; start < len(encoded); start += 76 {
+				end := start + 76
+				if end > len(encoded) {
+					end = len(encoded)
+				}
+				if _, err := part.Write(append(encoded[start:end], '\r', '\n')); err != nil {
+					return err
+				}
+			}
+		}
+		if err := mw.Close(); err != nil {
+			return err
+		}
+	} else {
+		body.WriteString(content)
+	}
 	mail := []byte(fmt.Sprintf("To: %s\r\n"+
 		"From: %s <%s>\r\n"+
 		"Subject: %s\r\n"+
 		"Date: %s\r\n"+
-		"Message-ID: %s\r\n"+ // 添加 Message-ID 头
-		"Content-Type: text/html; charset=UTF-8\r\n\r\n%s\r\n",
-		receiver, SystemName, SMTPFrom, encodedSubject, time.Now().Format(time.RFC1123Z), id, content))
+		"Message-ID: %s\r\n"+
+		"MIME-Version: 1.0\r\n"+
+		"Content-Type: %s\r\n\r\n%s\r\n",
+		receiver, SystemName, SMTPFrom, encodedSubject, time.Now().Format(time.RFC1123Z), id, contentType, body.String()))
 	auth := getSMTPAuth()
 	addr := fmt.Sprintf("%s:%d", SMTPServer, SMTPPort)
 	to := strings.Split(receiver, ";")

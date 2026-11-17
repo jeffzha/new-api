@@ -1,0 +1,30 @@
+=== RUN   TestCNIntegrityThousandNativeExports
+=== RUN   TestCNIntegrityThousandNativeExports/distinct-1000-pairs
+    cn_integrity_real_export_test.go:328: distinct-1000-pairs actual native charges=100 elapsed=1m39.692852s
+    cn_integrity_real_export_test.go:328: distinct-1000-pairs actual native charges=200 elapsed=1m43.2149346s
+    cn_integrity_real_export_test.go:328: distinct-1000-pairs actual native charges=300 elapsed=1m46.5835482s
+    cn_integrity_real_export_test.go:328: distinct-1000-pairs actual native charges=400 elapsed=1m49.3240032s
+    cn_integrity_real_export_test.go:328: distinct-1000-pairs actual native charges=500 elapsed=1m52.1161921s
+    cn_integrity_real_export_test.go:328: distinct-1000-pairs actual native charges=600 elapsed=1m55.090271s
+    cn_integrity_real_export_test.go:328: distinct-1000-pairs actual native charges=700 elapsed=1m58.0209034s
+    cn_integrity_real_export_test.go:328: distinct-1000-pairs actual native charges=800 elapsed=2m1.0062974s
+    cn_integrity_real_export_test.go:328: distinct-1000-pairs actual native charges=900 elapsed=2m4.6660522s
+    cn_integrity_real_export_test.go:328: distinct-1000-pairs actual native charges=1000 elapsed=2m8.7494703s
+    cn_integrity_real_export_test.go:349: distinct-1000-pairs sealed sha256:aabc0be7cc1d8a1a2d5204bdb67736ebba66e158fced476a6e5f1e4898d6cbb5 elapsed=4m24.0601232s
+=== RUN   TestCNIntegrityThousandNativeExports/shared-1000-charges
+    cn_integrity_real_export_test.go:328: shared-1000-charges actual native charges=100 elapsed=2.3535639s
+    cn_integrity_real_export_test.go:328: shared-1000-charges actual native charges=200 elapsed=7.0406681s
+    cn_integrity_real_export_test.go:328: shared-1000-charges actual native charges=300 elapsed=14.0637778s
+    cn_integrity_real_export_test.go:328: shared-1000-charges actual native charges=400 elapsed=21.6060273s
+    cn_integrity_real_export_test.go:328: shared-1000-charges actual native charges=500 elapsed=30.8132255s
+    cn_integrity_real_export_test.go:328: shared-1000-charges actual native charges=600 elapsed=42.8767357s
+    cn_integrity_real_export_test.go:328: shared-1000-charges actual native charges=700 elapsed=55.3231606s
+    cn_integrity_real_export_test.go:328: shared-1000-charges actual native charges=800 elapsed=1m9.2014722s
+    cn_integrity_real_export_test.go:328: shared-1000-charges actual native charges=900 elapsed=1m23.4493823s
+    cn_integrity_real_export_test.go:328: shared-1000-charges actual native charges=1000 elapsed=1m38.9415412s
+    cn_integrity_real_export_test.go:349: shared-1000-charges sealed sha256:3f1461baab67357e76d0c197ea705bfc69d3bf4bb826e5797dc630c122a70c11 elapsed=2m24.6972582s
+--- PASS: TestCNIntegrityThousandNativeExports (408.82s)
+    --- PASS: TestCNIntegrityThousandNativeExports/distinct-1000-pairs (264.09s)
+    --- PASS: TestCNIntegrityThousandNativeExports/shared-1000-charges (144.72s)
+PASS
+ok  	github.com/QuantumNous/new-api/model	409.249s

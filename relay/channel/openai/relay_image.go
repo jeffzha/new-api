@@ -43,6 +43,7 @@ func OpenaiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 	}
 
 	info.UpdateImageCount(gjson.GetBytes(responseBody, "data.#").Int())
+	service.ObserveOpsResponseUsage(c, "openai_images", responseBody)
 
 	// 写入新的 response body
 	service.IOCopyBytesGracefully(c, resp, responseBody)
@@ -120,6 +121,7 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp 
 			}
 			if chunk.Type == "image_generation.completed" || chunk.Type == "image_edit.completed" {
 				completedImages++
+				service.ObserveOpsImageStreamUsage(c, raw)
 			}
 		}
 		if err := writeOpenaiImageStreamChunk(c, raw); err != nil {
@@ -238,6 +240,7 @@ func openaiImageJSONAsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo,
 
 	imageCount := gjson.GetBytes(responseBody, "data.#").Int()
 	info.UpdateImageCount(imageCount)
+	service.ObserveOpsResponseUsage(c, "openai_images", responseBody)
 
 	helper.SetEventStreamHeaders(c)
 	c.Status(http.StatusOK)

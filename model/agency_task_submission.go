@@ -130,3 +130,116 @@ func agencyTaskSubmissionReason(reason string) string {
 		return "unknown"
 	}
 }
+
+// NonCanonicalTaskFinalizeCharges lists charges whose task finalization was
+// written without the operation identity and money sequence the agency hub
+// verifies. Those receipts predate the canonical settlement path; their
+// delivery stays in a permanent retry loop and their projected usage facts
+// carry the repair time instead of the charge time, so they are re-settled.
+func NonCanonicalTaskFinalizeCharges(limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	if DB == nil || !DB.Migrator().HasTable(&AgencyBillingOperation{}) {
+		return nil, nil
+	}
+	var chargeIDs []string
+	err := DB.Model(&AgencyBillingOperation{}).
+		Where("operation = ? AND money_seq = 0 AND (operation_id IS NULL OR operation_id = ?)", "finalize", "").
+		Order("id").Limit(limit).Pluck("charge_id", &chargeIDs).Error
+	if err != nil {
+		return nil, err
+	}
+	return chargeIDs, nil
+}
+
+// PendingFinalUsageTaskCharges lists successful async task charges parked in
+// reconcile_required because the frozen token basis could not price a final
+// usage. Tiered and plugin video models are billed from request parameters
+// (seconds, resolution) and never report tokens, so the wallet keeps the
+// accepted charge while the agency ledger waits forever. The settlement
+// backfill finalizes them at the charged quota so the call stops being
+// missing from agency usage and commission.
+func PendingFinalUsageTaskCharges(limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	if DB == nil || !DB.Migrator().HasTable(&AgencyBillingJournal{}) {
+		return nil, nil
+	}
+	var chargeIDs []string
+	err := DB.Model(&AgencyBillingJournal{}).
+		Where("status = ? AND last_error = ?", "reconcile_required", "final_usage_pending").
+		Order("id").Limit(limit).Pluck("charge_id", &chargeIDs).Error
+	if err != nil {
+		return nil, err
+	}
+	return chargeIDs, nil
+}
+
+// PendingTerminalTaskSettlementCharges lists successful task charges whose
+// terminal settlement failed after the wallet reservation. They are repaired
+// through SettleAgencyTaskAtChargedQuota, which is idempotent and does not move
+// money a second time.
+func PendingTerminalTaskSettlementCharges(limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	if DB == nil || !DB.Migrator().HasTable(&AgencyBillingJournal{}) {
+		return nil, nil
+	}
+	var chargeIDs []string
+	err := DB.Model(&AgencyBillingJournal{}).
+		Where("status = ? AND last_error = ?", "reconcile_required", "terminal_settlement_failed").
+		Order("id").Limit(limit).Pluck("charge_id", &chargeIDs).Error
+	if err != nil {
+		return nil, err
+	}
+	return chargeIDs, nil
+}
+
+// HasPendingAgencyTaskSettlementRepairs reports whether the async task worker
+// has a durable agency settlement repair to run even when no provider task is
+// still polling and no provider-billing receipt is due. Without this wake-up,
+// an otherwise idle system can leave a completed legacy charge parked forever.
+func HasPendingAgencyTaskSettlementRepairs() bool {
+	if DB == nil {
+		return false
+	}
+	if DB.Migrator().HasTable(&AgencyBillingJournal{}) {
+		var id int64
+		err := DB.Model(&AgencyBillingJournal{}).
+			Where("status = ? AND last_error IN ?", "reconcile_required", []string{"final_usage_pending", "terminal_settlement_failed"}).
+			Limit(1).
+			Pluck("id", &id).Error
+		if err == nil && id != 0 {
+			return true
+		}
+	}
+	if DB.Migrator().HasTable(&AgencyBillingOperation{}) {
+		var id int64
+		err := DB.Model(&AgencyBillingOperation{}).
+			Where("operation = ? AND money_seq = 0 AND (operation_id IS NULL OR operation_id = ?)", "finalize", "").
+			Limit(1).
+			Pluck("id", &id).Error
+		return err == nil && id != 0
+	}
+	return false
+}
+
+// AgencyTaskForCharge resolves the task that owns a durable agency charge
+// through its submission receipt, which is written before provider I/O.
+func AgencyTaskForCharge(chargeID string) (*Task, error) {
+	if strings.TrimSpace(chargeID) == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var attempt AgencyTaskSubmissionAttempt
+	if err := DB.Where("charge_id = ?", chargeID).Order("id").First(&attempt).Error; err != nil {
+		return nil, err
+	}
+	var task Task
+	if err := DB.Where("task_id = ?", attempt.PublicTaskID).First(&task).Error; err != nil {
+		return nil, err
+	}
+	return &task, nil
+}

@@ -16,6 +16,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
 
@@ -28,6 +29,41 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+func TestOpsNativeUsageRequiresOfficialEvidence(t *testing.T) {
+	for _, usage := range []*dto.Usage{nil, {}, {BillingUsage: &dto.BillingUsage{Estimated: true, OpenAIUsage: &dto.Usage{PromptTokens: 10}}}} {
+		_, _, err := opsNativeUsage(usage)
+		require.Error(t, err)
+	}
+	openai := &dto.Usage{InputTokens: 100, OutputTokens: 20,
+		InputTokensDetails:  &dto.InputTokenDetails{CachedTokens: 30, AudioTokens: 40},
+		OutputTokensDetails: &dto.OutputTokenDetails{ReasoningTokens: 5}}
+	provider, native, err := opsNativeUsage(&dto.Usage{PromptTokens: 999, BillingUsage: &dto.BillingUsage{OpenAIUsage: openai}})
+	require.NoError(t, err)
+	assert.Equal(t, "openai", provider)
+	assert.Equal(t, float64(100), native["prompt_tokens"], "normalized display usage must not replace official usage")
+	assert.Equal(t, float64(20), native["completion_tokens"])
+	assert.Equal(t, float64(30), native["prompt_tokens_details"].(map[string]any)["cached_tokens"])
+	assert.Equal(t, float64(5), native["completion_tokens_details"].(map[string]any)["reasoning_tokens"])
+	openai.InputTokensDetails.CacheWriteTokens = 1
+	_, _, err = opsNativeUsage(&dto.Usage{BillingUsage: &dto.BillingUsage{OpenAIUsage: openai}})
+	require.Error(t, err, "unsupported cache-write semantics must retain a usage gap")
+	for _, tc := range []struct {
+		provider string
+		envelope *dto.BillingUsage
+		field    string
+	}{
+		{"anthropic", &dto.BillingUsage{ClaudeUsage: &dto.ClaudeUsage{InputTokens: 10, CacheReadInputTokens: 20}}, "cache_read_input_tokens"},
+		{"google", &dto.BillingUsage{GeminiUsageMetadata: &dto.GeminiUsageMetadata{PromptTokenCount: 10, ThoughtsTokenCount: 20}}, "thoughtsTokenCount"},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			provider, native, err := opsNativeUsage(&dto.Usage{BillingUsage: tc.envelope})
+			require.NoError(t, err)
+			assert.Equal(t, tc.provider, provider)
+			assert.Equal(t, float64(20), native[tc.field])
+		})
+	}
+}
 
 // The configured DSNs must point at isolated test databases. Each dialect runs
 // the real reservation, settlement and log paths with the same billing cases.
@@ -100,27 +136,32 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 	const flat = `tier("request", fixed(0.01))`
 	const startingQuota = 2_000_000
 	const imageExpression = `tier("standard", p * 5 + cr * 1.25 + img * 8 + img_cr * 2 + c * 30)`
+	qwenImageExpression, ok := billing_setting.GetBuiltinBillingExpr("qwen-image-3.0")
+	require.True(t, ok)
 	imageUsage := &dto.Usage{PromptTokens: 1000, CompletionTokens: 100, TotalTokens: 1100,
 		PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 300, ImageTokens: 600, CachedTokensDetails: &dto.CachedTokenDetails{ImageTokens: common.GetPointer(200)}}}
 	operation_setting.SetToolPriceForTest("fixed_billing_tool", 4)
 	t.Cleanup(func() { operation_setting.DeleteToolPriceForTest("fixed_billing_tool") })
 	for index, tc := range []struct {
-		name, expression                          string
-		estimate                                  int
-		usage                                     *dto.Usage
-		audio, stream, refund, insufficient, tool bool
-		realtime, reserveInsufficient             bool
-		wallet, outboundImages                    int
-		groupRatio                                float64
-		want                                      int
-		unit                                      billingexpr.BillingUnit
-		requestedImages, actualImages             int
+		name, expression                                string
+		estimate                                        int
+		usage                                           *dto.Usage
+		usageFacts                                      map[string]any
+		audio, stream, refund, insufficient, tool       bool
+		realtime, reserveInsufficient, usageFactBilling bool
+		wallet, outboundImages                          int
+		groupRatio                                      float64
+		want                                            int
+		unit                                            billingexpr.BillingUnit
+		requestedImages, actualImages                   int
+		referenceImages                                 int
 	}{
 		{name: "missing usage charges once", expression: flat, want: 5000, unit: billingexpr.BillingUnitRequest},
 		{name: "zero usage charges once", expression: flat, usage: &dto.Usage{}, want: 5000, unit: billingexpr.BillingUnitRequest},
 		{name: "stream charges once", expression: flat, stream: true, usage: &dto.Usage{PromptTokens: 100, CompletionTokens: 20, TotalTokens: 120}, want: 5000, unit: billingexpr.BillingUnitRequest},
 		{name: "audio zero usage charges once", expression: flat, audio: true, usage: &dto.Usage{}, want: 5000, unit: billingexpr.BillingUnitRequest},
 		{name: "audio missing usage charges once", expression: flat, audio: true, want: 5000, unit: billingexpr.BillingUnitRequest},
+		{name: "usage facts bill audio seconds without tokens", expression: `tier("base", u("seconds") * 0.00003013698630136986)`, usageFacts: map[string]any{"seconds": 36000.0}, usageFactBilling: true, want: 542466, unit: billingexpr.BillingUnitToken},
 		{name: "token reservation refunds to fixed price", expression: mixed, estimate: 50000, usage: &dto.Usage{PromptTokens: 100, TotalTokens: 100}, want: 5000, unit: billingexpr.BillingUnitRequest},
 		{name: "fixed reservation settles token fallback", expression: mixed, estimate: 100, usage: &dto.Usage{PromptTokens: 50000, TotalTokens: 50000}, want: 50000, unit: billingexpr.BillingUnitToken},
 		{name: "missing usage uses estimated token fallback", expression: mixed, estimate: 50000, want: 50000, unit: billingexpr.BillingUnitToken},
@@ -134,6 +175,8 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 		{name: "realtime records actual expression inputs", expression: imageExpression, estimate: 10000, usage: imageUsage, realtime: true, want: 4000, unit: billingexpr.BillingUnitToken},
 		{name: "image cache insufficient wallet never reserves tokens", expression: imageExpression, estimate: 10000, insufficient: true},
 		{name: "image quantity refunds missing images", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 3, actualImages: 2, want: 40000, unit: billingexpr.BillingUnitRequest},
+		{name: "qwen reference images reach push and backfill log", expression: qwenImageExpression, usage: &dto.Usage{PromptTokens: 1, TotalTokens: 1}, requestedImages: 2, actualImages: 2, referenceImages: 3, want: 28767, unit: billingexpr.BillingUnitToken},
+		{name: "qwen missing output retains all reference images", expression: qwenImageExpression, usage: &dto.Usage{PromptTokens: 1, TotalTokens: 1}, requestedImages: 3, actualImages: 2, referenceImages: 3, want: 28767, unit: billingexpr.BillingUnitToken},
 		{name: "image quantity keeps request when actual missing", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 3, want: 60000, unit: billingexpr.BillingUnitRequest},
 		{name: "image quantity zero price stays free", expression: `tier("image", fixed(0)) * image_count`, requestedImages: 3, actualImages: 2, unit: billingexpr.BillingUnitRequest},
 		{name: "image quantity failure refunds reservation", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 3, refund: true},
@@ -166,14 +209,22 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 				group = 1
 			}
 			request := &billingexpr.RequestInput{Body: []byte(`{"fast":true}`)}
+			if len(tc.usageFacts) > 0 {
+				request.Usage = tc.usageFacts
+			}
 			if tc.requestedImages > 0 {
 				request.ImageCount = &tc.requestedImages
+				request.ReferenceImageCount = &tc.referenceImages
 			}
 			cost, trace, err := billingexpr.RunExprWithRequest(tc.expression, billingexpr.TokenParams{P: float64(tc.estimate), Len: float64(tc.estimate)}, *request)
 			require.NoError(t, err)
-			reservation, err := billingexpr.QuotaRoundStrict(cost / 1_000_000 * common.QuotaPerUnit * group)
+			quotaCost := cost / 1_000_000
+			if tc.usageFactBilling {
+				quotaCost = cost
+			}
+			reservation, err := billingexpr.QuotaRoundStrict(quotaCost * common.QuotaPerUnit * group)
 			require.NoError(t, err)
-			snapshot := &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: tc.expression, ExprHash: billingexpr.ExprHashString(tc.expression), QuotaPerUnit: common.QuotaPerUnit, GroupRatio: group, EstimatedTier: trace.MatchedTier, EstimatedBillingUnit: trace.BillingUnit, EstimatedFixedPrice: trace.FixedPrice, EstimatedQuotaAfterGroup: reservation}
+			snapshot := &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: tc.expression, ExprHash: billingexpr.ExprHashString(tc.expression), QuotaPerUnit: common.QuotaPerUnit, GroupRatio: group, EstimatedTier: trace.MatchedTier, EstimatedBillingUnit: trace.BillingUnit, EstimatedFixedPrice: trace.FixedPrice, EstimatedQuotaAfterGroup: reservation, UsageFactsBilling: tc.usageFactBilling}
 			snapshot.EstimatedImageCount = trace.ImageCount
 			info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}, OriginModelName: "fixed-test", UsingGroup: "default", UserGroup: "default", UserSetting: dto.UserSetting{BillingPreference: "wallet_only"}, ForcePreConsume: true, StartTime: time.Now(), IsStream: tc.stream, RelayFormat: types.RelayFormatOpenAI, PriceData: hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: group}}, TieredBillingSnapshot: snapshot, BillingRequestInput: request}
 			info.SetEstimatePromptTokens(tc.estimate)
@@ -192,6 +243,9 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 				held, err := model.GetUserQuota(user.Id, true)
 				require.NoError(t, err)
 				assert.Equal(t, quota-reservation, held)
+				if tc.requestedImages > 0 {
+					require.Nil(t, PrepareImageBillingForRequest(ctx, info, tc.requestedImages, tc.referenceImages, false))
+				}
 				if tc.outboundImages > 0 {
 					reserveErr := PrepareImageBillingForRequest(ctx, info, tc.outboundImages, 0, false)
 					if tc.reserveInsufficient {
@@ -245,6 +299,9 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 					var other map[string]any
 					require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
 					assert.Equal(t, string(tc.unit), other["billing_unit"])
+					if tc.usageFactBilling {
+						assert.Equal(t, tc.usageFacts, other["usage_facts"])
+					}
 					if tc.requestedImages > 0 {
 						count := tc.actualImages
 						if count == 0 {
@@ -254,11 +311,10 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 							}
 						}
 						assert.Equal(t, float64(count), other["image_count"])
-						expectedBillingCount := tc.requestedImages
-						if tc.outboundImages > 0 {
-							expectedBillingCount = tc.outboundImages
-						}
-						assert.Equal(t, expectedBillingCount, *request.ImageCount, "billing input must retain the final outbound count for settlement")
+						facts, ok := other["usage_facts"].(map[string]any)
+						require.True(t, ok)
+						assert.Equal(t, float64(tc.referenceImages), facts["input_images"], "reference count must survive log storage, including explicit zero")
+						assert.Equal(t, tc.requestedImages, *request.ImageCount, "actual count must not mutate the frozen request")
 					}
 					if tc.expression == imageExpression {
 						billable, ok := other["billing_tokens"].(map[string]any)

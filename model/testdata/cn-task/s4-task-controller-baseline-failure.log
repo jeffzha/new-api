@@ -1,0 +1,13 @@
+=== RUN   TestUpdateOptionRejectsIncompleteSeedanceVideoCNYPrices
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+    option_seedance_video_pricing_test.go:54: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/.testtmp/s4-task-baseline/controller/option_seedance_video_pricing_test.go:54
+        	Error:      	"Seedance video CNY prices must configure exactly 6 supported models" does not contain "exactly 3 supported models"
+        	Test:       	TestUpdateOptionRejectsIncompleteSeedanceVideoCNYPrices
+--- FAIL: TestUpdateOptionRejectsIncompleteSeedanceVideoCNYPrices (0.00s)
+FAIL
+FAIL	github.com/QuantumNous/new-api/controller	0.745s
+FAIL

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import {
   CircleAlert,
   Gauge,
@@ -57,7 +57,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import { Combobox } from '@/components/ui/combobox'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
@@ -115,6 +115,10 @@ function normalizeOpsSnapshot(snapshot: OpsSnapshot): OpsSnapshot {
     average_qps: 0,
     average_tps: 0,
     average_switches: 0,
+    success_rate: 0,
+    failure_rate: 0,
+    average_rpm: 0,
+    average_tpm: 0,
     ...numericRecord(value.overview, [
       'request_count',
       'success_count',
@@ -133,6 +137,10 @@ function normalizeOpsSnapshot(snapshot: OpsSnapshot): OpsSnapshot {
       'average_qps',
       'average_tps',
       'average_switches',
+      'success_rate',
+      'failure_rate',
+      'average_rpm',
+      'average_tpm',
     ]),
   } as OpsSnapshot['overview']
   const realtime = {
@@ -283,6 +291,8 @@ function normalizeOpsSnapshot(snapshot: OpsSnapshot): OpsSnapshot {
       groups: arrayOrEmpty(options.groups),
       endpoint_types: arrayOrEmpty(options.endpoint_types),
       nodes: arrayOrEmpty(options.nodes),
+      users: arrayOrEmpty(options.users),
+      tokens: arrayOrEmpty(options.tokens),
     },
     latency,
   } as OpsSnapshot
@@ -308,6 +318,8 @@ const LOADING_METRIC_IDS = [
 type WindowKey = keyof typeof WINDOW_SECONDS
 
 type FilterState = {
+  userId: number
+  tokenId: number
   model: string
   group: string
   endpoint: string
@@ -316,6 +328,8 @@ type FilterState = {
 }
 
 const emptyFilters: FilterState = {
+  userId: 0,
+  tokenId: 0,
   model: '',
   group: '',
   endpoint: '',
@@ -339,6 +353,8 @@ export function OperationsDashboard() {
         channel_id: filters.channelId || undefined,
         endpoint_type: filters.endpoint || undefined,
         node_name: filters.node || undefined,
+        user_id: filters.userId || undefined,
+        token_id: filters.tokenId || undefined,
       })
       if (!response.success || !response.data) {
         throw new Error(response.message || t('Could not load operations data'))
@@ -346,6 +362,7 @@ export function OperationsDashboard() {
       return normalizeOpsSnapshot(response.data)
     },
     refetchInterval: 30 * 1000,
+    placeholderData: keepPreviousData,
     staleTime: 10 * 1000,
     retry: false,
   })
@@ -387,12 +404,17 @@ export function OperationsDashboard() {
             ? snapshotQuery.error.message
             : t('Please try again later')}
         </AlertDescription>
+        <Button variant='outline' onClick={() => setFilters(emptyFilters)}>
+          {t('Clear filters')}
+        </Button>
       </Alert>
     )
   }
 
   const snapshot = snapshotQuery.data
   const channels = snapshot.concurrency.channels
+  const userOptions = snapshot.options.users ?? []
+  const tokenOptions = snapshot.options.tokens ?? []
 
   return (
     <Card>
@@ -445,85 +467,169 @@ export function OperationsDashboard() {
           </div>
         </div>
       </CardHeader>
-      <CardContent className='flex flex-col gap-4'>
-        <div className='flex flex-wrap gap-2'>
-          <NativeSelect
-            size='sm'
+      <CardContent
+        className='flex min-w-0 flex-col gap-4'
+        aria-busy={snapshotQuery.isFetching}
+      >
+        {snapshotQuery.isError && (
+          <Alert variant='destructive'>
+            <AlertDescription>{snapshotQuery.error.message}</AlertDescription>
+          </Alert>
+        )}
+        {snapshotQuery.isPlaceholderData && (
+          <Alert role='status'>
+            <AlertDescription>
+              {t('Loading results for the selected filters...')}
+            </AlertDescription>
+          </Alert>
+        )}
+        {snapshot.raw_details_complete === false && (
+          <Alert>
+            <AlertDescription>
+              {t(
+                'Detailed performance and task results are limited to retained raw telemetry.'
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
+        <div className='grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'>
+          <Combobox
+            aria-label={t('User')}
+            value={String(filters.userId)}
+            onValueChange={(value) =>
+              setFilters({
+                ...filters,
+                userId: Number(value),
+                tokenId: 0,
+              })
+            }
+            options={[
+              { value: '0', label: t('All users') },
+              ...userOptions.map((user) => ({
+                value: String(user.id),
+                label: `${user.name} (#${user.id})`,
+              })),
+              ...(filters.userId > 0 &&
+              !userOptions.some((user) => user.id === filters.userId)
+                ? [
+                    {
+                      value: String(filters.userId),
+                      label: `#${filters.userId}`,
+                    },
+                  ]
+                : []),
+            ]}
+          />
+          <Combobox
+            aria-label={t('API Key')}
+            value={String(filters.tokenId)}
+            onValueChange={(value) =>
+              setFilters({ ...filters, tokenId: Number(value) })
+            }
+            options={[
+              { value: '0', label: t('All API Keys') },
+              ...tokenOptions.map((token) => ({
+                value: String(token.id),
+                label: `${token.name} (#${token.id})`,
+              })),
+              ...(filters.tokenId > 0 &&
+              !tokenOptions.some((token) => token.id === filters.tokenId)
+                ? [
+                    {
+                      value: String(filters.tokenId),
+                      label: `#${filters.tokenId}`,
+                    },
+                  ]
+                : []),
+            ]}
+          />
+          <Combobox
+            aria-label={t('Model')}
             value={filters.model}
-            onChange={(event) =>
-              setFilters({ ...filters, model: event.target.value })
+            onValueChange={(value) =>
+              setFilters({ ...filters, model: value ?? '' })
             }
-          >
-            <NativeSelectOption value=''>{t('All models')}</NativeSelectOption>
-            {snapshot.options.models.map((model) => (
-              <NativeSelectOption key={model} value={model}>
-                {model}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-          <NativeSelect
-            size='sm'
+            options={[
+              { value: '', label: t('All models') },
+              ...[
+                ...new Set(
+                  [...snapshot.options.models, filters.model].filter(Boolean)
+                ),
+              ].map((model) => ({ value: model, label: model })),
+            ]}
+          />
+          <Combobox
             value={filters.group}
-            onChange={(event) =>
-              setFilters({ ...filters, group: event.target.value })
+            aria-label={t('Group')}
+            onValueChange={(value) =>
+              setFilters({ ...filters, group: value ?? '' })
             }
-          >
-            <NativeSelectOption value=''>{t('All groups')}</NativeSelectOption>
-            {snapshot.options.groups.map((group) => (
-              <NativeSelectOption key={group} value={group}>
-                {group}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-          <NativeSelect
-            size='sm'
-            value={filters.channelId}
-            onChange={(event) =>
-              setFilters({ ...filters, channelId: Number(event.target.value) })
+            options={[
+              { value: '', label: t('All groups') },
+              ...[
+                ...new Set(
+                  [...snapshot.options.groups, filters.group].filter(Boolean)
+                ),
+              ].map((group) => ({ value: group, label: group })),
+            ]}
+          />
+          <Combobox
+            value={String(filters.channelId)}
+            aria-label={t('Channel')}
+            onValueChange={(value) =>
+              setFilters({ ...filters, channelId: Number(value) })
             }
-          >
-            <NativeSelectOption value={0}>
-              {t('All channels')}
-            </NativeSelectOption>
-            {channels.map((channel) => (
-              <NativeSelectOption
-                key={channel.channel_id}
-                value={channel.channel_id}
-              >
-                {channel.channel_name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-          <NativeSelect
-            size='sm'
+            options={[
+              { value: '0', label: t('All channels') },
+              ...channels.map((channel) => ({
+                value: String(channel.channel_id),
+                label: `${channel.channel_name} (#${channel.channel_id})`,
+              })),
+              ...(filters.channelId > 0 &&
+              !channels.some(
+                (channel) => channel.channel_id === filters.channelId
+              )
+                ? [
+                    {
+                      value: String(filters.channelId),
+                      label: `#${filters.channelId}`,
+                    },
+                  ]
+                : []),
+            ]}
+          />
+          <Combobox
             value={filters.endpoint}
-            onChange={(event) =>
-              setFilters({ ...filters, endpoint: event.target.value })
+            aria-label={t('Endpoint')}
+            onValueChange={(value) =>
+              setFilters({ ...filters, endpoint: value ?? '' })
             }
-          >
-            <NativeSelectOption value=''>
-              {t('All endpoints')}
-            </NativeSelectOption>
-            {snapshot.options.endpoint_types.map((endpoint) => (
-              <NativeSelectOption key={endpoint} value={endpoint}>
-                {endpoint}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-          <NativeSelect
-            size='sm'
+            options={[
+              { value: '', label: t('All endpoints') },
+              ...[
+                ...new Set(
+                  [...snapshot.options.endpoint_types, filters.endpoint].filter(
+                    Boolean
+                  )
+                ),
+              ].map((endpoint) => ({ value: endpoint, label: endpoint })),
+            ]}
+          />
+          <Combobox
             value={filters.node}
-            onChange={(event) =>
-              setFilters({ ...filters, node: event.target.value })
+            aria-label={t('Node')}
+            onValueChange={(value) =>
+              setFilters({ ...filters, node: value ?? '' })
             }
-          >
-            <NativeSelectOption value=''>{t('All nodes')}</NativeSelectOption>
-            {snapshot.options.nodes.map((node) => (
-              <NativeSelectOption key={node} value={node}>
-                {node}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
+            options={[
+              { value: '', label: t('All nodes') },
+              ...[
+                ...new Set(
+                  [...snapshot.options.nodes, filters.node].filter(Boolean)
+                ),
+              ].map((node) => ({ value: node, label: node })),
+            ]}
+          />
           {Object.values(filters).some(Boolean) && (
             <Button
               size='sm'
@@ -535,46 +641,58 @@ export function OperationsDashboard() {
           )}
         </div>
 
-        <Tabs defaultValue='overview' className='min-w-0 gap-4'>
-          <TabsList className='max-w-full overflow-x-auto'>
-            <TabsTrigger value='overview' icon={<LayoutDashboard />}>
-              {t('Overview')}
-            </TabsTrigger>
-            <TabsTrigger value='infrastructure' icon={<Server />}>
-              {t('Infrastructure')}
-            </TabsTrigger>
-            <TabsTrigger value='concurrency' icon={<Gauge />}>
-              {t('Concurrency')}
-            </TabsTrigger>
-            <TabsTrigger value='tasks' icon={<ListTodo />}>
-              {t('Tasks and jobs')}
-            </TabsTrigger>
-            <TabsTrigger value='errors' icon={<CircleAlert />}>
-              {t('Errors')}
-            </TabsTrigger>
-            <TabsTrigger value='settings' icon={<Settings2 />}>
-              {t('Settings')}
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value='overview'>
-            <OverviewPanel snapshot={snapshot} settings={settingsQuery.data} />
-          </TabsContent>
-          <TabsContent value='infrastructure'>
-            <InfrastructurePanel snapshot={snapshot} />
-          </TabsContent>
-          <TabsContent value='concurrency'>
-            <ConcurrencyPanel snapshot={snapshot} />
-          </TabsContent>
-          <TabsContent value='tasks'>
-            <TaskPanel snapshot={snapshot} settings={settingsQuery.data} />
-          </TabsContent>
-          <TabsContent value='errors'>
-            <ErrorsPanel snapshot={snapshot} settings={settingsQuery.data} />
-          </TabsContent>
-          <TabsContent value='settings'>
-            <SettingsPanel channels={channels} />
-          </TabsContent>
-        </Tabs>
+        {!snapshotQuery.isPlaceholderData && !snapshotQuery.isError && (
+          <Tabs defaultValue='overview' className='min-w-0 gap-4'>
+            <TabsList className='max-w-full overflow-x-auto'>
+              <TabsTrigger value='overview' icon={<LayoutDashboard />}>
+                {t('Overview')}
+              </TabsTrigger>
+              <TabsTrigger value='infrastructure' icon={<Server />}>
+                {t('Infrastructure')}
+              </TabsTrigger>
+              <TabsTrigger value='concurrency' icon={<Gauge />}>
+                {t('Concurrency')}
+              </TabsTrigger>
+              <TabsTrigger value='tasks' icon={<ListTodo />}>
+                {t('Tasks and jobs')}
+              </TabsTrigger>
+              <TabsTrigger value='errors' icon={<CircleAlert />}>
+                {t('Errors')}
+              </TabsTrigger>
+              <TabsTrigger value='settings' icon={<Settings2 />}>
+                {t('Settings')}
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value='overview'>
+              <OverviewPanel
+                snapshot={snapshot}
+                settings={settingsQuery.data}
+              />
+            </TabsContent>
+            <TabsContent value='infrastructure'>
+              <Badge variant='outline'>
+                {t('Node resources · not filtered by user or API Key')}
+              </Badge>
+              <InfrastructurePanel snapshot={snapshot} />
+            </TabsContent>
+            <TabsContent value='concurrency'>
+              <Badge variant='outline'>{t('Live global concurrency')}</Badge>
+              <ConcurrencyPanel snapshot={snapshot} />
+            </TabsContent>
+            <TabsContent value='tasks'>
+              <Badge variant='outline'>
+                {t('Filtered submission cohort · global background jobs')}
+              </Badge>
+              <TaskPanel snapshot={snapshot} settings={settingsQuery.data} />
+            </TabsContent>
+            <TabsContent value='errors'>
+              <ErrorsPanel snapshot={snapshot} settings={settingsQuery.data} />
+            </TabsContent>
+            <TabsContent value='settings'>
+              <SettingsPanel channels={channels} />
+            </TabsContent>
+          </Tabs>
+        )}
       </CardContent>
     </Card>
   )

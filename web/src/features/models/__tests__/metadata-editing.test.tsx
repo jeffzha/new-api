@@ -134,7 +134,7 @@ describe('model pricing entry', () => {
     await user.click(screen.getByRole('tab', { name: 'Channels and groups' }))
     expect(
       screen.getByText(
-        'Channel availability and group access are derived from enabled channels. Importing metadata does not create a callable channel.'
+        'Configured channels include disabled channels. Only enabled channels provide model availability and group access.'
       )
     ).toBeVisible()
     expect(get).not.toHaveBeenCalledWith('/api/models/0')

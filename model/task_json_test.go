@@ -1,12 +1,32 @@
 package model
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTaskPrivateDataPreservesStandaloneSettlementFacts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data TaskPrivateData
+	}{
+		{name: "ops usage", data: TaskPrivateData{OpsUsage: json.RawMessage(`{"event_id":"terminal-event"}`)}},
+		{name: "settled tokens", data: TaskPrivateData{SettledTokens: 1234}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			value, err := tc.data.Value()
+			require.NoError(t, err)
+			require.NotEmpty(t, value)
+			var restored TaskPrivateData
+			require.NoError(t, restored.Scan(value))
+			assert.Equal(t, tc.data, restored)
+		})
+	}
+}
 
 // Exercise the real drivers, including PostgreSQL's production simple protocol.
 // Losing this JSON also loses the accepted billing identity used by refunds.
@@ -54,6 +74,19 @@ func TestTaskBillingJSONPersistenceAcrossDialects(t *testing.T) {
 			require.NoError(t, tx.First(&empty, task.ID).Error)
 			assert.Empty(t, empty.Properties)
 			assert.Empty(t, empty.PrivateData)
+			for _, private := range []TaskPrivateData{
+				{OpsUsage: json.RawMessage(`{"event_id":"terminal-event"}`)},
+				{SettledTokens: 1234},
+			} {
+				task.PrivateData = private
+				require.NoError(t, tx.Save(&task).Error)
+				require.NoError(t, tx.First(&persisted, task.ID).Error)
+				expectedJSON, err := common.Marshal(private)
+				require.NoError(t, err)
+				actualJSON, err := common.Marshal(persisted.PrivateData)
+				require.NoError(t, err)
+				assert.JSONEq(t, string(expectedJSON), string(actualJSON))
+			}
 		})
 	}
 }

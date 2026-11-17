@@ -76,3 +76,13 @@ func IsOpenAITextModel(modelName string) bool {
 	}
 	return false
 }
+
+// IsVideoGenerationModel identifies known video-only model families.
+func IsVideoGenerationModel(modelName string) bool {
+	modelName = strings.ToLower(modelName)
+	return strings.Contains(modelName, "seedance") || strings.Contains(modelName, "hailuo") ||
+		strings.HasPrefix(modelName, "minimax-h3") || strings.HasPrefix(modelName, "sora") ||
+		strings.HasPrefix(modelName, "veo") || strings.HasPrefix(modelName, "wan") &&
+		(strings.Contains(modelName, "-t2v") || strings.Contains(modelName, "-i2v") ||
+			strings.Contains(modelName, "-r2v") || strings.Contains(modelName, "-video"))
+}

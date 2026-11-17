@@ -126,7 +126,8 @@ func TestImageRequestReservesFinalQuantityBeforeUpstream(t *testing.T) {
 			assert.Nil(t, info.BillingImageCount)
 			if tc.tiered {
 				assert.Equal(t, tc.body, string(info.BillingRequestInput.Body))
-				assert.Equal(t, tc.count, *info.BillingRequestInput.ImageCount)
+				assert.Equal(t, 1, *info.BillingRequestInput.ImageCount, "the original request stays frozen across channel overrides")
+				assert.Equal(t, tc.count, info.RequestedImageCount())
 			}
 		})
 	}

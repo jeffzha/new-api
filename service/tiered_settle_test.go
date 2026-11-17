@@ -1,9 +1,11 @@
 package service
 
 import (
+	"errors"
 	"math"
 	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -15,6 +17,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // Claude Sonnet-style tiered expression: standard vs long-context
@@ -513,6 +516,132 @@ func TestBillingSessionReserveWalletTopUpDecrementsBalance(t *testing.T) {
 	userQuota, err := model.GetUserQuota(userID, false)
 	require.NoError(t, err)
 	assert.Equal(t, 450_000, userQuota)
+}
+
+func TestCNWalletBillingSessionFinalizesZeroAndTrustedReserve(t *testing.T) {
+	truncate(t)
+	t.Setenv("OPS_CN_FINANCE_V2_ENABLED", "true")
+	t.Setenv("OPS_CN_DURABLE_WALLET_ENABLED", "true")
+	require.NoError(t, model.MigrateCNFinance(model.DB, "s4-service-test"))
+	const userID = 703
+	seedUser(t, userID, 1000)
+	for _, tc := range []struct {
+		request     string
+		pre, actual int
+	}{{"service-zero-delta", 100, 100}, {"service-trusted-zero", 0, 60}} {
+		wallet := &WalletFunding{userId: userID, requestId: tc.request}
+		require.NoError(t, wallet.preConsumeDurable(tc.pre, 0, false, true))
+		require.True(t, wallet.durable)
+		session := &BillingSession{relayInfo: &relaycommon.RelayInfo{UserId: userID, RequestId: tc.request, IsPlayground: true}, funding: wallet, preConsumedQuota: tc.pre}
+		assert.True(t, session.NeedsRefund(), "zero reservation still needs a durable terminal state")
+		require.NoError(t, session.Settle(tc.actual))
+		require.NoError(t, session.Settle(tc.actual))
+		var lifecycle model.CNWalletLifecycle
+		require.NoError(t, model.DB.Where("request_id = ?", tc.request).First(&lifecycle).Error)
+		assert.Equal(t, "settled", lifecycle.State)
+		assert.EqualValues(t, tc.actual, lifecycle.Actual)
+		assert.False(t, session.NeedsRefund())
+	}
+	var user model.User
+	require.NoError(t, model.DB.First(&user, userID).Error)
+	assert.Equal(t, 840, user.Quota)
+}
+
+func TestCNWalletBillingSessionCancellationCanRetryIntentFailure(t *testing.T) {
+	truncate(t)
+	t.Setenv("OPS_CN_FINANCE_V2_ENABLED", "true")
+	t.Setenv("OPS_CN_DURABLE_WALLET_ENABLED", "true")
+	require.NoError(t, model.MigrateCNFinance(model.DB, "s4-service-test"))
+	const userID = 704
+	seedUser(t, userID, 1000)
+	wallet := &WalletFunding{userId: userID, requestId: "service-cancel-retry"}
+	require.NoError(t, wallet.preConsumeDurable(100, 0, false, true))
+	session := &BillingSession{relayInfo: &relaycommon.RelayInfo{UserId: userID, RequestId: wallet.requestId, IsPlayground: true}, funding: wallet, preConsumedQuota: 100}
+	require.NoError(t, model.DB.Callback().Create().Before("gorm:create").Register("s4-intent-failure", func(tx *gorm.DB) {
+		if tx.Statement.Table == "cn_wallet_cancellations" {
+			tx.AddError(errors.New("injected intent write failure"))
+		}
+	}))
+	t.Cleanup(func() { _ = model.DB.Callback().Create().Remove("s4-intent-failure") })
+	session.Refund(nil)
+	assert.True(t, session.NeedsRefund())
+	assert.False(t, session.refunded)
+	var user model.User
+	require.NoError(t, model.DB.First(&user, userID).Error)
+	assert.Equal(t, 900, user.Quota)
+	require.NoError(t, model.DB.Callback().Create().Remove("s4-intent-failure"))
+	session.Refund(nil)
+	assert.False(t, session.NeedsRefund())
+	require.ErrorIs(t, session.Settle(100), model.ErrCNConflict)
+	require.Eventually(t, func() bool {
+		var intent model.CNWalletCancellation
+		return model.DB.Where("request_id = ?", wallet.requestId).First(&intent).Error == nil && intent.State == "complete"
+	}, 5*time.Second, 10*time.Millisecond)
+	session.Refund(nil)
+	require.NoError(t, model.DB.First(&user, userID).Error)
+	assert.Equal(t, 1000, user.Quota)
+}
+
+func TestCNSubscriptionBillingSessionFinalAndCancel(t *testing.T) {
+	truncate(t)
+	t.Setenv("OPS_CN_FINANCE_V2_ENABLED", "true")
+	t.Setenv("OPS_CN_DURABLE_SUBSCRIPTION_ENABLED", "true")
+	require.NoError(t, model.MigrateCNFinance(model.DB, "s4-service-test"))
+	require.NoError(t, model.DB.AutoMigrate(&model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}))
+	const userID, tokenID, subID = 705, 705, 705
+	seedUser(t, userID, 1000)
+	seedToken(t, tokenID, userID, "subscription-service-token", 1000)
+	require.NoError(t, model.DB.Create(&model.SubscriptionPlan{Id: 705, Title: "CN subscription", TotalAmount: 1000, QuotaResetPeriod: model.SubscriptionResetNever}).Error)
+	seedSubscription(t, subID, userID, 1000, 0)
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", subID).Update("plan_id", 705).Error)
+	for _, tc := range []struct {
+		id                   string
+		pre, reserve, actual int
+		cancel               bool
+	}{{"sub-service-zero-delta", 100, 100, 100, false}, {"sub-service-extra", 100, 140, 120, false}, {"sub-service-free", 0, 1, 0, false}, {"sub-service-cancel", 100, 160, 0, true}} {
+		info := &relaycommon.RelayInfo{UserId: userID, TokenId: tokenID, TokenKey: "subscription-service-token", RequestId: tc.id, ForcePreConsume: true, UserSetting: dto.UserSetting{BillingPreference: "subscription_only"}}
+		ctx, _ := gin.CreateTestContext(nil)
+		billing, apiErr := NewBillingSession(ctx, info, tc.pre)
+		require.Nil(t, apiErr)
+		session := billing.(*BillingSession)
+		require.True(t, session.funding.(*SubscriptionFunding).durable)
+		require.NoError(t, session.Reserve(tc.reserve))
+		if tc.cancel {
+			require.NoError(t, model.DB.Callback().Create().Before("gorm:create").Register("s4-sub-intent-failure", func(tx *gorm.DB) {
+				if tx.Statement.Table == "cn_subscription_cancellations" {
+					tx.AddError(errors.New("injected intent failure"))
+				}
+			}))
+			session.Refund(ctx)
+			assert.True(t, session.NeedsRefund())
+			assert.False(t, session.refunded)
+			require.NoError(t, model.DB.Callback().Create().Remove("s4-sub-intent-failure"))
+			session.Refund(ctx)
+			require.Eventually(t, func() bool {
+				var intent model.CNSubscriptionCancellation
+				return model.DB.Where("request_id = ?", tc.id).First(&intent).Error == nil && intent.State == "complete"
+			}, 5*time.Second, 10*time.Millisecond)
+			session.Refund(ctx)
+		} else {
+			require.NoError(t, session.Settle(tc.actual))
+			require.NoError(t, session.Settle(tc.actual))
+		}
+		assert.False(t, session.NeedsRefund())
+		var lifecycle model.CNSubscriptionLifecycle
+		require.NoError(t, model.DB.Where("request_id = ?", tc.id).First(&lifecycle).Error)
+		assert.EqualValues(t, tc.actual, lifecycle.Actual)
+		assert.NotEqual(t, "reserved", lifecycle.State)
+	}
+	var sub model.UserSubscription
+	var token model.Token
+	var user model.User
+	require.NoError(t, model.DB.First(&sub, subID).Error)
+	assert.EqualValues(t, 220, sub.AmountUsed)
+	require.NoError(t, model.DB.First(&token, tokenID).Error)
+	assert.Equal(t, 780, token.RemainQuota)
+	assert.Equal(t, 220, token.UsedQuota)
+	require.NoError(t, model.DB.First(&user, userID).Error)
+	assert.Equal(t, 1000, user.Quota)
 }
 
 func TestTryTieredSettleUsesFinalGroupAfterRetry(t *testing.T) {

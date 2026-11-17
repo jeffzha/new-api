@@ -475,7 +475,11 @@ func BatchInsertChannels(channels []Channel) error {
 			}
 		}
 	}
-	return tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+	NotifyUpstreamMappingChange()
+	return nil
 }
 
 func BatchDeleteChannels(ids []int) (int64, error) {
@@ -552,6 +556,9 @@ func (channel *Channel) Insert() error {
 		return err
 	}
 	err = channel.AddAbilities(nil)
+	if err == nil {
+		NotifyUpstreamMappingChange()
+	}
 	return err
 }
 
@@ -601,6 +608,9 @@ func (channel *Channel) Update() error {
 	}
 	DB.Model(channel).First(channel, "id = ?", channel.Id)
 	err = channel.UpdateAbilities(nil)
+	if err == nil {
+		NotifyUpstreamMappingChange()
+	}
 	return err
 }
 

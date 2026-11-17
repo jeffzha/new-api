@@ -555,6 +555,25 @@ func TestAcceptedSubmitStreamNeverRetries(t *testing.T) {
 	assert.False(t, shouldRetryTaskRelay(c, 1, &dto.TaskError{StatusCode: 502, LocalError: true, NoRetry: true}, 3))
 }
 
+func TestExecuteTaskSubmissionNeverRetriesAfterOpsAdmission(t *testing.T) {
+	previousRetries := common.RetryTimes
+	common.RetryTimes = 2
+	t.Cleanup(func() { common.RetryTimes = previousRetries })
+	c := taskSubmissionTestContext()
+	info := taskSubmissionRelayInfo(nil)
+	attempts := 0
+
+	outcome, taskErr := executeTaskSubmissionWith(c, info, func(c *gin.Context, _ *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		attempts++
+		c.Set("ops_task_request", "request-task-once")
+		return nil, service.TaskErrorWrapperLocal(errors.New("provider unavailable"), "do_request_failed", http.StatusBadGateway)
+	})
+
+	assert.Nil(t, outcome)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, 1, attempts)
+}
+
 func TestExecuteTaskSubmissionRefundsWhenFinalReserveFails(t *testing.T) {
 	events := []string{}
 	setupTaskSubmissionDatabase(t, true, &events)

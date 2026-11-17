@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	builtinplugins "github.com/QuantumNous/new-api/plugins"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -1701,6 +1702,23 @@ func insertTaskPluginRouteTask(t *testing.T, task *model.Task) {
 }
 
 func TestPrepareTaskPluginEndpointFiltersEachSharedCandidate(t *testing.T) {
+	previousDB := model.DB
+	setupTaskPluginRouteDB(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	previousCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = previousCache
+		if previousCache && previousDB != nil && previousDB.Migrator().HasTable(&model.Channel{}) && previousDB.Migrator().HasTable(&model.Ability{}) {
+			model.DB = previousDB
+			model.InitChannelCache()
+		}
+	})
+	channel := &model.Channel{Id: 991, Type: constant.ChannelTypeTaskPlugin, Status: common.ChannelStatusEnabled, Models: "decode-shared-model", Group: "decode-test"}
+	channel.SetSetting(kitdto.ChannelSettings{TaskPluginKey: "decode-alpha"})
+	require.NoError(t, model.DB.Create(channel).Error)
+	require.NoError(t, model.DB.Create(&model.Ability{Group: "decode-test", Model: "decode-shared-model", ChannelId: channel.Id, Enabled: true}).Error)
+	model.InitChannelCache()
 	for _, tc := range []struct {
 		name, alpha, beta string
 		wantKeys          []string
@@ -1731,6 +1749,17 @@ func TestPrepareTaskPluginEndpointFiltersEachSharedCandidate(t *testing.T) {
 				assert.Equal(t, tc.wantKeys[0], c.GetString("task_plugin_key"))
 				assert.Same(t, pinned.Plugin, c.MustGet(jsplugin.ContextKeyPinnedPlugin).(jsplugin.PinnedPlugin).Plugin)
 				assert.Equal(t, tc.wantKeys, service.GetChannelConstraints(c).Filters[0].TaskPluginKeys)
+				channel := &model.Channel{Type: constant.ChannelTypeTaskPlugin}
+				channel.SetSetting(kitdto.ChannelSettings{TaskPluginKey: "decode-alpha"})
+				if tc.name == "first decoder rejects" {
+					assert.Equal(t, "alpha only accepts 720p", rejectedTaskPluginDetail(c, channel))
+					assert.Equal(t, "alpha only accepts 720p", rejectedAvailableTaskPluginDetail(c, "decode-test", "decode-shared-model"))
+					assert.Empty(t, rejectedAvailableTaskPluginDetail(c, "unrelated-group", "decode-shared-model"))
+				} else if tc.name == "both decoders accept" {
+					assert.Empty(t, rejectedTaskPluginDetail(c, channel))
+				}
+				channel.SetSetting(kitdto.ChannelSettings{TaskPluginKey: "unrelated-plugin"})
+				assert.Empty(t, rejectedTaskPluginDetail(c, channel))
 				c.Status(http.StatusNoContent)
 			})
 			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"decode-shared-model","resolution":"1080p"}`))

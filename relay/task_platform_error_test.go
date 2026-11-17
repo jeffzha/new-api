@@ -12,6 +12,12 @@ import (
 // adaptor serves a platform. The three shapes are user-actionable and must
 // stay distinguishable: system switched off, plugin disabled, unknown platform.
 func TestTaskPlatformUnavailableError(t *testing.T) {
+	t.Run("generic plugin channel explains the supported video endpoint", func(t *testing.T) {
+		code, message := TaskPlatformUnavailableError(constant.TaskPlatform("61"))
+		assert.Equal(t, "unsupported_task_endpoint", code)
+		assert.Contains(t, message, "POST /v1/videos")
+		assert.Contains(t, message, "remix endpoints are not supported")
+	})
 	t.Run("master switch off", func(t *testing.T) {
 		pluginruntime.DefaultRegistry.SetEnabled(false)
 		t.Cleanup(func() { pluginruntime.DefaultRegistry.SetEnabled(true) })

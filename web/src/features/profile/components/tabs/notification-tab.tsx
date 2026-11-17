@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Bell, Loader2, Mail, Server, Webhook } from 'lucide-react'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -27,6 +27,12 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { getCurrencyLabel } from '@/lib/currency'
+import {
+  getEditableQuotaStep,
+  parseQuotaFromDollars,
+  quotaUnitsToEditableAmount,
+} from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { ROLE } from '@/lib/roles'
 
@@ -52,10 +58,25 @@ interface NotificationTabProps {
 }
 
 export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
+  return (
+    <NotificationForm
+      key={`${profile?.id ?? ''}:${profile?.setting ?? ''}`}
+      profile={profile}
+      onUpdate={onUpdate}
+    />
+  )
+}
+
+function NotificationForm({ profile, onUpdate }: NotificationTabProps) {
   const { t } = useTranslation()
   const isAdmin = (profile?.role ?? 0) >= ROLE.ADMIN
   const [loading, setLoading] = useState(false)
-  const [settings, setSettings] = useState(() => normalizeUserSettings())
+  const [settings, setSettings] = useState(() =>
+    normalizeUserSettings(profile?.setting)
+  )
+  const [thresholdAmount, setThresholdAmount] = useState(() =>
+    String(quotaUnitsToEditableAmount(settings.quota_warning_threshold))
+  )
 
   // Update form field helper
   const updateField = useCallback(
@@ -68,17 +89,19 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
     []
   )
 
-  useEffect(() => {
-    if (profile?.setting) {
-      setSettings(normalizeUserSettings(profile.setting))
-    }
-  }, [profile])
-
   const handleSave = async () => {
+    const amount = Number(thresholdAmount)
+    if (!thresholdAmount.trim() || !Number.isFinite(amount) || amount <= 0) {
+      toast.error(t('Warning threshold must be greater than zero'))
+      return
+    }
     try {
       setLoading(true)
       const { record_ip_log: _recordIpLog, ...notificationSettings } = settings
-      const response = await updateUserSettings(notificationSettings)
+      const response = await updateUserSettings({
+        ...notificationSettings,
+        quota_warning_threshold: parseQuotaFromDollars(amount),
+      })
 
       if (response.success) {
         toast.success(t('Settings updated successfully'))
@@ -132,15 +155,17 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
 
       {/* Warning Threshold */}
       <div className='space-y-1.5'>
-        <Label htmlFor='threshold'>{t('Quota Warning Threshold')}</Label>
+        <Label htmlFor='threshold'>
+          {t('Quota Warning Threshold')} ({getCurrencyLabel()})
+        </Label>
         <Input
           id='threshold'
           type='number'
           className='h-9'
-          value={settings.quota_warning_threshold}
-          onChange={(e) =>
-            updateField('quota_warning_threshold', Number(e.target.value))
-          }
+          min={getEditableQuotaStep()}
+          step={getEditableQuotaStep()}
+          value={thresholdAmount}
+          onChange={(e) => setThresholdAmount(e.target.value)}
           placeholder={t('Enter threshold')}
         />
         <p className='text-muted-foreground text-xs'>

@@ -34,6 +34,7 @@ type RealtimeEvent struct {
 }
 
 type RealtimeResponse struct {
+	ID    string         `json:"id,omitempty"`
 	Usage *RealtimeUsage `json:"usage"`
 }
 

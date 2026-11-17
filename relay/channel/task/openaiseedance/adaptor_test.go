@@ -9,9 +9,13 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	seedancepricing "github.com/QuantumNous/new-api/setting/seedance_video_pricing"
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,6 +49,295 @@ func TestOpenAISeedanceBuildsNativeRequestFromOpenAIVideoShape(t *testing.T) {
 	require.Equal(t, "https://vedioapi.laomandi.com/v1/video/generations", url)
 }
 
+func TestOpenAISeedanceGenerationParametersMatchAimodelContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, test := range []struct {
+		name, baseURL, fields, resolution, ratio string
+		duration                                 int
+		audio                                    bool
+		topLevel                                 bool
+	}{
+		{name: "aimodel defaults", baseURL: "https://aimodel.szhtp.com", resolution: "720p", ratio: "adaptive", duration: 5, audio: true, topLevel: true},
+		{name: "aimodel explicit parameters", baseURL: "https://aimodel.szhtp.com", fields: `,"resolution":"1080p","ratio":"16:9","duration":10,"generate_audio":false`, resolution: "1080p", ratio: "16:9", duration: 10, topLevel: true},
+		{name: "aimodel metadata priority", baseURL: "https://aimodel.szhtp.com", fields: `,"resolution":"720p","duration":5,"metadata":{"resolution":"1080p","ratio":"9:16","duration":8,"audio_status":0}`, resolution: "1080p", ratio: "9:16", duration: 8, topLevel: true},
+		{name: "aimodel size fallback", baseURL: "https://aimodel.szhtp.com", fields: `,"size":"1920x1080","seconds":"6"`, resolution: "1080p", ratio: "adaptive", duration: 6, audio: true, topLevel: true},
+		{name: "laomandi metadata only", baseURL: "https://vedioapi.laomandi.com", fields: `,"resolution":"1080p","duration":10,"generate_audio":false`, resolution: "1080p", ratio: "adaptive", duration: 10},
+		{name: "other gateways metadata only", baseURL: "https://video.example.com", resolution: "720p", ratio: "adaptive", duration: 5, audio: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			body := `{"model":"doubao-seedance-2.0","prompt":"A paper boat"` + test.fields + `}`
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			info := &relaycommon.RelayInfo{
+				OriginModelName: seedancepricing.AimodelSeedance20Model,
+				ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: seedancepricing.AimodelSeedance20Model},
+			}
+			adaptor := &TaskAdaptor{baseURL: test.baseURL}
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+			bodyReader, err := adaptor.BuildRequestBody(ctx, info)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, common.DecodeJson(bodyReader, &payload))
+			metadata, ok := payload["metadata"].(map[string]any)
+			require.True(t, ok)
+			audioStatus := float64(0)
+			if test.audio {
+				audioStatus = 1
+			}
+			for field, expected := range map[string]any{
+				"resolution": test.resolution, "duration": float64(test.duration), "ratio": test.ratio,
+				"generate_audio": test.audio, "audio_status": audioStatus,
+			} {
+				assert.Equal(t, expected, metadata[field], "metadata.%s", field)
+				if test.topLevel {
+					assert.Equal(t, expected, payload[field], "top-level %s", field)
+				} else {
+					assert.NotContains(t, payload, field)
+				}
+			}
+		})
+	}
+}
+
+func TestOpenAISeedanceExtractsPromptFromContentText(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"doubao-seedance-2.0","seconds":5,"content":[{"type":"text","text":"A blue bird"},{"type":"image_url","image_url":{"url":"https://example.com/frame.png"}}]}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{OriginModelName: seedancepricing.AimodelSeedance20Model, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: seedancepricing.AimodelSeedance20Model}}
+	adaptor := &TaskAdaptor{baseURL: "https://aimodel.szhtp.com"}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+
+	body, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	require.Equal(t, "A blue bird", payload["prompt"])
+	content := payload["content"].([]any)
+	require.Equal(t, "A blue bird", content[0].(map[string]any)["text"])
+}
+
+func TestOpenAISeedanceRejectsImageOnlyContent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"doubao-seedance-2.0","seconds":5,"content":[{"type":"image_url","image_url":{"url":"https://example.com/frame.png"}}]}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{OriginModelName: seedancepricing.AimodelSeedance20Model}
+	result := (&TaskAdaptor{baseURL: "https://aimodel.szhtp.com"}).ValidateRequestAndSetAction(ctx, info)
+	require.NotNil(t, result)
+	require.Equal(t, "invalid_request", result.Code)
+}
+
+func TestOpenAISeedanceForwardsMultipleReferenceImagesToAimodel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	body := `{"model":"doubao-seedance-2.0","prompt":"A blue bird","seconds":"5","content":[
+		{"type":"image_url","image_url":{"url":"https://example.com/r1.png"},"role":"reference_image"},
+		{"type":"image_url","image_url":{"url":"https://example.com/r2.png"},"role":"reference_image"},
+		{"type":"image_url","image_url":{"url":"https://example.com/r3.png"},"role":"reference_image"}]}`
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: seedancepricing.AimodelSeedance20Model,
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: seedancepricing.AimodelSeedance20Model},
+	}
+	adaptor := &TaskAdaptor{baseURL: "https://aimodel.szhtp.com"}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+	request, err := getTaskRequest(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"https://example.com/r1.png",
+		"https://example.com/r2.png",
+		"https://example.com/r3.png",
+	}, request.ReferenceImages)
+
+	bodyReader, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(bodyReader)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	content, ok := payload["content"].([]any)
+	require.True(t, ok)
+	var refRoles []any
+	for _, item := range content {
+		entry := item.(map[string]any)
+		if entry["type"] == "image_url" {
+			refRoles = append(refRoles, entry["role"])
+		}
+	}
+	require.Equal(t, []any{"reference_image", "reference_image", "reference_image"}, refRoles)
+	// With multiple reference images the top-level "image" field is omitted so
+	// the upstream does not double-count the first image.
+	require.Nil(t, payload["image"])
+}
+
+func TestOpenAISeedanceRejectsTooManyReferenceImages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	urls := make([]string, 0, maxReferenceImages+1)
+	for i := 0; i < maxReferenceImages+1; i++ {
+		urls = append(urls, fmt.Sprintf("https://example.com/r%d.png", i))
+	}
+	encodedImages := strings.Join(urls, `","`)
+	body := fmt.Sprintf(`{"model":"doubao-seedance-2.0","prompt":"A blue bird","seconds":"5","images":["%s"]}`, encodedImages)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{OriginModelName: seedancepricing.AimodelSeedance20Model}
+	result := (&TaskAdaptor{baseURL: "https://aimodel.szhtp.com"}).ValidateRequestAndSetAction(ctx, info)
+	require.NotNil(t, result)
+}
+
+func TestOpenAISeedanceForwardsMultipleReferenceImagesToLaomandi(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	body := `{"model":"doubao-seedance-2-0-260128","prompt":"A blue bird","seconds":"10","images":[
+		"https://example.com/r1.png",
+		"https://example.com/r2.png",
+		"https://example.com/r3.png"]}`
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: defaultModel,
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: defaultModel},
+	}
+	adaptor := &TaskAdaptor{baseURL: "https://vedioapi.laomandi.com"}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+
+	bodyReader, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(bodyReader)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	content, ok := payload["content"].([]any)
+	require.True(t, ok, "expected content[] for laomandi multi-image request")
+	require.Equal(t, 4, len(content), "text + 3 reference images")
+	refRoles := make([]any, 0, 3)
+	refURLs := make([]any, 0, 3)
+	for _, item := range content {
+		entry := item.(map[string]any)
+		if entry["type"] == "image_url" {
+			refRoles = append(refRoles, entry["role"])
+			refURLs = append(refURLs, entry["image_url"].(map[string]any)["url"])
+		}
+	}
+	require.Equal(t, []any{"reference_image", "reference_image", "reference_image"}, refRoles)
+	require.Equal(t, []any{"https://example.com/r1.png", "https://example.com/r2.png", "https://example.com/r3.png"}, refURLs)
+	// Laomandi keeps its single-image top-level field only for one image.
+	require.Nil(t, payload["image"])
+}
+
+func TestOpenAISeedanceSingleImageLaomandiKeepsLegacyShape(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	body := `{"model":"doubao-seedance-2-0-260128","prompt":"A blue bird","seconds":"10","input_reference":"https://example.com/frame.png"}`
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: defaultModel,
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: defaultModel},
+	}
+	adaptor := &TaskAdaptor{baseURL: "https://vedioapi.laomandi.com"}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+	bodyReader, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(bodyReader)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	require.Equal(t, "https://example.com/frame.png", payload["image"])
+	require.Nil(t, payload["content"])
+}
+
+func TestOpenAISeedanceUzoomPreservesTwoImagesAndWrappedResponses(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(`{"model":"doubao-seedance-2-0-260128","prompt":"Combine both reference scenes","duration":5,"resolution":"720p","ratio":"16:9","images":["https://example.test/first.png","https://example.test/second.png"]}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{OriginModelName: defaultModel, TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "public-task"}, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: defaultModel}}
+	adaptor := &TaskAdaptor{baseURL: "https://api.uzoomtech.com"}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+	reader, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.DecodeJson(reader, &payload))
+	assert.Equal(t, []any{"https://example.test/first.png", "https://example.test/second.png"}, payload["images"])
+	assert.NotContains(t, payload, "image")
+	metadata, ok := payload["metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, float64(5), metadata["duration"])
+	createBody := `{"data":{"task_id":"upstream-task","status":"IN_PROGRESS"}}`
+	response := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(createBody))}
+	upstreamID, _, taskErr := adaptor.DoResponse(ctx, response, info)
+	require.Nil(t, taskErr)
+	assert.Equal(t, "upstream-task", upstreamID)
+	var publicResponse map[string]any
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &publicResponse))
+	assert.Equal(t, "public-task", publicResponse["id"])
+	assert.Equal(t, "public-task", publicResponse["task_id"])
+	parsed, parseErr := adaptor.ParseResponse(ctx, &http.Response{Body: io.NopCloser(strings.NewReader(createBody))}, info)
+	require.Nil(t, parseErr)
+	require.NotNil(t, parsed)
+	result, err := adaptor.ParseTaskResult(nil, nil, []byte(`{"data":{"task_id":"upstream-task","status":"SUCCESS","result_url":"https://example.test/result.mp4","usage":{"total_tokens":1200}}}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusSuccess, result.Status)
+	assert.Equal(t, "https://example.test/result.mp4", result.Url)
+}
+
+func TestOpenAISeedanceParsesUppercaseSuccessStatus(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResult(nil, nil, []byte(`{
+		"status":"SUCCESS",
+		"progress":100,
+		"result_url":"https://example.test/video.mp4"
+	}`))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, model.TaskStatusSuccess, result.Status)
+	assert.Equal(t, "100%", result.Progress)
+	assert.Equal(t, "https://example.test/video.mp4", result.Url)
+}
+
+func TestOpenAISeedanceRejectsLaomandiSeedance20Below720p(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"doubao-seedance-2-0-260128","prompt":"A blue bird","seconds":"5","resolution":"480p"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: defaultModel,
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: defaultModel},
+	}
+	result := (&TaskAdaptor{baseURL: "https://vedioapi.laomandi.com"}).ValidateRequestAndSetAction(ctx, info)
+	require.NotNil(t, result)
+	assert.Equal(t, "invalid_request", result.Code)
+	assert.Equal(t, http.StatusBadRequest, result.StatusCode)
+	assert.Contains(t, result.Message, "requires resolution 720p or higher")
+	assert.Contains(t, result.Message, "request was not sent upstream")
+}
+
+func TestOpenAISeedance720pAndOtherUpstreamsRemainAccepted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, test := range []struct {
+		name, baseURL, resolution string
+	}{
+		{name: "laomandi 720p", baseURL: "https://vedioapi.laomandi.com", resolution: "720p"},
+		{name: "other upstream 480p", baseURL: "https://video.example.com", resolution: "480p"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			body := fmt.Sprintf(`{"model":"doubao-seedance-2-0-260128","prompt":"A blue bird","seconds":"5","resolution":%q}`, test.resolution)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			info := &relaycommon.RelayInfo{OriginModelName: defaultModel, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: defaultModel}}
+			require.Nil(t, (&TaskAdaptor{baseURL: test.baseURL}).ValidateRequestAndSetAction(ctx, info))
+		})
+	}
+}
+
 func TestOpenAISeedanceDurationLimitDependsOnModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {
@@ -75,63 +368,50 @@ func TestOpenAISeedanceDurationLimitDependsOnModel(t *testing.T) {
 	}
 }
 
-func TestOpenAISeedanceForwardsMultipleReferenceImages(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"doubao-seedance-2-0-260128","prompt":"Two cars","seconds":"5","size":"1280x720","images":["https://example.com/a.png","https://example.com/b.png"]}`))
-	ctx.Request.Header.Set("Content-Type", "application/json")
-	info := &relaycommon.RelayInfo{
-		OriginModelName: defaultModel,
-		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: defaultModel},
-	}
-	adaptor := &TaskAdaptor{baseURL: "https://api.uzoomtech.com"}
-	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
-	body, err := adaptor.BuildRequestBody(ctx, info)
+func TestOpenAISeedancePerRequestSettlementDoesNotQueryUsage(t *testing.T) {
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 100
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	task := &model.Task{}
+	task.PrivateData.BillingContext = &model.TaskBillingContext{ProviderBilling: &model.TaskProviderBillingSnapshot{
+		BillingUnit: "request", UnitPricePerRequest: "23", Provider: providerName, Currency: "CNY", CNYPerUSD: "1", GroupRatio: 1,
+	}}
+	quota, clamp, handled, err := (&TaskAdaptor{}).AdjustBillingOnCompleteChecked(task, &relaycommon.TaskInfo{})
 	require.NoError(t, err)
-	encoded, err := io.ReadAll(body)
-	require.NoError(t, err)
-	var payload map[string]any
-	require.NoError(t, common.Unmarshal(encoded, &payload))
-	require.NotContains(t, payload, "image")
-	images, ok := payload["images"].([]any)
-	require.True(t, ok)
-	require.Equal(t, []any{"https://example.com/a.png", "https://example.com/b.png"}, images)
+	require.True(t, handled)
+	assert.Nil(t, clamp)
+	assert.Equal(t, 2300, quota)
 }
 
-func TestOpenAISeedanceKeepsSingleImageShape(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"doubao-seedance-2-0-260128","prompt":"One car","seconds":"5","images":["https://example.com/a.png"]}`))
-	ctx.Request.Header.Set("Content-Type", "application/json")
-	info := &relaycommon.RelayInfo{
-		OriginModelName: defaultModel,
-		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: defaultModel},
-	}
-	adaptor := &TaskAdaptor{baseURL: "https://api.uzoomtech.com"}
-	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
-	body, err := adaptor.BuildRequestBody(ctx, info)
-	require.NoError(t, err)
-	encoded, err := io.ReadAll(body)
-	require.NoError(t, err)
-	var payload map[string]any
-	require.NoError(t, common.Unmarshal(encoded, &payload))
-	require.Equal(t, "https://example.com/a.png", payload["image"])
-	require.NotContains(t, payload, "images")
-}
+func TestOpenAISeedanceMiniEstimatesMillionTokenPriceForVideoInputs(t *testing.T) {
+	oldQuotaPerUnit, oldRate := common.QuotaPerUnit, operation_setting.USDExchangeRate
+	common.QuotaPerUnit, operation_setting.USDExchangeRate = 500_000, 7.3
+	t.Cleanup(func() { common.QuotaPerUnit, operation_setting.USDExchangeRate = oldQuotaPerUnit, oldRate })
 
-func TestOpenAISeedancePreservesReferenceOrderAndDropsDuplicates(t *testing.T) {
-	request := relaycommon.TaskSubmitReq{
-		Image:          " https://example.com/a.png ",
-		InputReference: "https://example.com/a.png",
-		Images:         []string{"https://example.com/b.png", "https://example.com/a.png"},
-		Content: []map[string]any{{
-			"image_url": map[string]any{"url": "https://example.com/c.png"},
-		}},
+	for _, tc := range []struct {
+		name, content, price string
+	}{
+		{name: "without video", content: `[{"type":"text","text":"A blue bird"}]`, price: "23"},
+		{name: "with video", content: `[{"type":"text","text":"A blue bird"},{"type":"video_url","video_url":{"url":"https://example.com/input.mp4"}}]`, price: "14"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			body := fmt.Sprintf(`{"model":"doubao-seedance-2.0-mini","content":%s,"seconds":"5","resolution":"480p"}`, tc.content)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			info := &relaycommon.RelayInfo{OriginModelName: seedancepricing.MiniSeedanceModel, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: seedancepricing.MiniSeedanceModel}}
+			require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(ctx, info))
+			info.PriceData.GroupRatioInfo.GroupRatio = 1
+			estimate, taskErr := (&TaskAdaptor{}).EstimateTaskBilling(ctx, info)
+			require.Nil(t, taskErr)
+			require.NotNil(t, estimate)
+			assert.Empty(t, estimate.Snapshot.BillingUnit)
+			assert.Equal(t, tc.price, estimate.Snapshot.UnitPricePerMillionTokens)
+			assert.Positive(t, estimate.Snapshot.EstimatedTokens)
+			assert.True(t, estimate.Snapshot.AsyncReconciliationRequired)
+			expected := decimal.NewFromInt(estimate.Snapshot.EstimatedTokens).Div(decimal.NewFromInt(1_000_000)).Mul(decimal.RequireFromString(tc.price)).Div(decimal.NewFromFloat(7.3)).Mul(decimal.NewFromInt(500_000))
+			assert.Equal(t, common.QuotaFromDecimal(expected), estimate.PriceData.Quota)
+		})
 	}
-
-	require.Equal(t, []string{
-		"https://example.com/a.png",
-		"https://example.com/b.png",
-		"https://example.com/c.png",
-	}, referenceImages(request))
 }

@@ -83,7 +83,7 @@ describe('security sidebar visibility', () => {
       result.current
         .find((group) => group.id === 'personal')
         ?.items.map((item) => item.title)
-    ).toEqual(['Wallet', 'Profile', 'Security & Access'])
+    ).toEqual(['Wallet', 'My Invoices', 'Profile', 'Security & Access'])
     expect(
       result.current
         .flatMap((group) => group.items)
@@ -116,6 +116,19 @@ describe('security sidebar visibility', () => {
       result.current
         .flatMap((group) => group.items)
         .some((item) => item.title === 'Security & Access')
+    ).toBe(true)
+  })
+})
+
+describe('chat sidebar entries', () => {
+  it('keeps the overseas chat preset menu alongside Playground', () => {
+    const { result } = sidebarFor()
+    const items =
+      result.current.find((group) => group.id === 'chat')?.items ?? []
+
+    expect(items.map((item) => item.title)).toEqual(['Chat', 'Playground'])
+    expect(
+      items.some((item) => 'type' in item && item.type === 'chat-presets')
     ).toBe(true)
   })
 })

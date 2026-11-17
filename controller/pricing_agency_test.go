@@ -40,6 +40,12 @@ func agencyPricingCatalogFixture(t *testing.T) *gorm.DB {
 	for _, name := range []string{"hy3", "Hy3", "free-model", "per-call"} {
 		require.NoError(t, db.Create(&model.Ability{Group: "default", Model: name, ChannelId: 1, Enabled: true}).Error)
 	}
+	seedControllerPlatformPricing(t, db,
+		agencycontract.PlatformModelPrice{OriginModelName: "hy3", DefaultSalesBPS: 9000},
+		agencycontract.PlatformModelPrice{OriginModelName: "Hy3", DefaultSalesBPS: 9000},
+		agencycontract.PlatformModelPrice{OriginModelName: "free-model"},
+		agencycontract.PlatformModelPrice{OriginModelName: "per-call", DefaultSalesBPS: 9000},
+	)
 	model.InvalidatePricingCache()
 	t.Cleanup(func() {
 		model.InvalidatePricingCache()
@@ -53,6 +59,17 @@ func agencyPricingCatalogFixture(t *testing.T) *gorm.DB {
 		require.NoError(t, sqlDB.Close())
 	})
 	return db
+}
+
+func seedControllerPlatformPricing(t *testing.T, db *gorm.DB, prices ...agencycontract.PlatformModelPrice) {
+	t.Helper()
+	policy := agencycontract.PlatformPolicy{Revision: 1, ModelPrices: prices}
+	require.NoError(t, agencycontract.ValidatePlatformPolicy(policy))
+	encoded, err := common.Marshal(policy)
+	require.NoError(t, err)
+	version := model.AgencyPlatformPriceVersion{Revision: 1, PolicyJSON: string(encoded), PolicyHash: "controller-confirmed-pricing", CreatedByID: 1, CreatedAtMS: 1}
+	require.NoError(t, db.Create(&version).Error)
+	require.NoError(t, db.Create(&model.AgencyPlatformPriceState{ID: 1, Revision: 1, CurrentVersionID: version.ID, UpdatedAtMS: 1}).Error)
 }
 
 func bindAgencyPricingCustomer(t *testing.T, db *gorm.DB) {
@@ -128,7 +145,13 @@ func TestGetPricingUsesCustomerSalesWithoutMutatingStandardCatalog(t *testing.T)
 	}
 	// A committed policy publication must affect the next catalog response;
 	// the public model cache must not cache customer policy versions.
-	nextPolicy, err := common.Marshal(agencycontract.Policy{DefaultSalesBPS: 11000, SalesCapBPS: 30000})
+	nextSales := 11000
+	nextPolicy, err := common.Marshal(agencycontract.Policy{DefaultSalesBPS: nextSales, SalesCapBPS: 30000, ModelOverrides: []agencycontract.ModelOverride{
+		{OriginModelName: "hy3", SalesBPS: &nextSales},
+		{OriginModelName: "Hy3", SalesBPS: &nextSales},
+		{OriginModelName: "free-model", SalesBPS: &nextSales},
+		{OriginModelName: "per-call", SalesBPS: &nextSales},
+	}})
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&model.AgencyPricePolicyVersion{ID: 2, AgencyID: 1, Revision: 2, PolicyJSON: string(nextPolicy)}).Error)
 	require.NoError(t, db.Model(&model.Agency{}).Where("id = ?", 1).Update("current_policy_version_id", 2).Error)
@@ -174,4 +197,35 @@ func TestGetPricingRetainsLegacyCatalogWithoutAgencyTables(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	assert.Equal(t, "standard", response["pricing_scope"])
 	assert.NotContains(t, recorder.Body.String(), "sales_bps")
+}
+
+func TestFilterPricingByUsableGroupsHidesInternalMockGroup(t *testing.T) {
+	usable := map[string]string{"default": "Default", "mock-default": "Mock"}
+	pricing := []model.Pricing{
+		{ModelName: "public-model", EnableGroup: []string{"default", "mock-default"}},
+		{ModelName: "mock-only-model", EnableGroup: []string{"mock-default"}},
+		{ModelName: "wildcard-model", EnableGroup: []string{"all"}},
+	}
+
+	filtered := filterPricingByUsableGroups(pricing, usable)
+
+	require.Len(t, filtered, 2)
+	assert.Equal(t, "public-model", filtered[0].ModelName)
+	assert.Equal(t, []string{"default"}, filtered[0].EnableGroup, "public model must lose its internal routing group")
+	assert.Equal(t, "wildcard-model", filtered[1].ModelName)
+	assert.Equal(t, []string{"default"}, filtered[1].EnableGroup, "wildcard groups must never expand to internal groups")
+}
+
+func TestGetUserGroupsHidesInternalMockGroup(t *testing.T) {
+	agencyPricingCatalogFixture(t)
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","mock-default":"Mock"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":2,"mock-default":1}`))
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/user/self/groups", nil)
+	context.Set("id", 2)
+	GetUserGroups(context)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Contains(t, recorder.Body.String(), "default")
+	assert.NotContains(t, recorder.Body.String(), "mock-default")
 }

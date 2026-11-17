@@ -1,0 +1,42 @@
+[
+  {
+    "action": "integrity.inventory.freeze",
+    "actor_json": "{\"id\":\"synthetic-applicant\",\"role\":\"platform\"}",
+    "after_hash": "090085c7b5c32bb3bccf81380c5a2c874ae2bfb69afc3e0934a157598f139f29",
+    "after_json": "{\"applicant\":\"synthetic-applicant\",\"approver\":null,\"contentHash\":\"sha256:395153e7e69f1a1272616794e4bbb5060ec36ef0ca0eccb22da6ee3f62081041\",\"customerKeys\":[\"1001\"],\"exportable\":false,\"gatewayId\":\"test-cn\",\"id\":\"a809162a-6aca-4f82-b493-9626c46d4ca8\",\"integrityEpoch\":\"6009c284-6475-4b01-be3a-d44b91b56885\",\"inventoryId\":\"a809162a-6aca-4f82-b493-9626c46d4ca8\",\"status\":\"submitted\",\"streamEpoch\":\"2faa92dd-1539-48b4-b165-fb98f799f68f\",\"version\":1}",
+    "before_hash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+    "before_json": "null",
+    "correlation_id": "synthetic-cli-freeze",
+    "evidence_ids_json": "[]",
+    "gateway_id": "test-cn",
+    "id": "audit_21a4d8c97eed4dbcac9007cd1364a192",
+    "occurred_at": "2026-10-15T17:05:21.686562Z",
+    "operation_id": "synthetic-cli-freeze",
+    "outcome": "succeeded",
+    "reason": "synthetic actual CLI acceptance",
+    "sequence": 1,
+    "target_id": "a809162a-6aca-4f82-b493-9626c46d4ca8",
+    "target_type": "cn_finance",
+    "tenant_id": "operator-cli-synthetic"
+  },
+  {
+    "action": "integrity.inventory.approve:a809162a-6aca-4f82-b493-9626c46d4ca8",
+    "actor_json": "{\"id\":\"synthetic-independent-reviewer\",\"role\":\"platform\"}",
+    "after_hash": "b088ec4e751238458a65109b3548c0b4824fb91d0c8da7efe6eb5a8caca82db0",
+    "after_json": "{\"applicant\":\"synthetic-applicant\",\"approver\":\"synthetic-independent-reviewer\",\"contentHash\":\"sha256:cea75050592eb36624abc6400bbb5484a33462650984beeb93008c527c09d9f4\",\"customerKeys\":[\"1001\"],\"exportable\":true,\"gatewayId\":\"test-cn\",\"id\":\"a809162a-6aca-4f82-b493-9626c46d4ca8\",\"integrityEpoch\":\"6009c284-6475-4b01-be3a-d44b91b56885\",\"inventoryId\":\"a809162a-6aca-4f82-b493-9626c46d4ca8\",\"status\":\"approved\",\"streamEpoch\":\"2faa92dd-1539-48b4-b165-fb98f799f68f\",\"version\":2}",
+    "before_hash": "090085c7b5c32bb3bccf81380c5a2c874ae2bfb69afc3e0934a157598f139f29",
+    "before_json": "{\"applicant\":\"synthetic-applicant\",\"approver\":null,\"contentHash\":\"sha256:395153e7e69f1a1272616794e4bbb5060ec36ef0ca0eccb22da6ee3f62081041\",\"customerKeys\":[\"1001\"],\"exportable\":false,\"gatewayId\":\"test-cn\",\"id\":\"a809162a-6aca-4f82-b493-9626c46d4ca8\",\"integrityEpoch\":\"6009c284-6475-4b01-be3a-d44b91b56885\",\"inventoryId\":\"a809162a-6aca-4f82-b493-9626c46d4ca8\",\"status\":\"submitted\",\"streamEpoch\":\"2faa92dd-1539-48b4-b165-fb98f799f68f\",\"version\":1}",
+    "correlation_id": "synthetic-cli-review",
+    "evidence_ids_json": "[]",
+    "gateway_id": "test-cn",
+    "id": "audit_9c487607bd7d469a93a292e8cd18d516",
+    "occurred_at": "2026-10-15T17:05:21.687554Z",
+    "operation_id": "synthetic-cli-review",
+    "outcome": "succeeded",
+    "reason": "independent synthetic inventory review",
+    "sequence": 2,
+    "target_id": "a809162a-6aca-4f82-b493-9626c46d4ca8",
+    "target_type": "cn_finance",
+    "tenant_id": "operator-cli-synthetic"
+  }
+]

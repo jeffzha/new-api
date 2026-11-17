@@ -1,0 +1,40 @@
+{
+  "databaseScope": "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\sqlite\\gateway.sqlite3",
+  "databaseVersion": "3.50.4",
+  "engine": "sqlite",
+  "final": {
+    "batchSequence": 2,
+    "epochId": "13e8745e-55ae-42b4-b355-7ebb6f738ca8",
+    "generation": 3,
+    "latestProofId": "sha256:9de0771c439c962be495acaeb0f8e46e075b701e473b06624ad931c10f85320e",
+    "membershipThrough": 1,
+    "mutationThrough": 3,
+    "operatorEvidenceId": "",
+    "state": "paused"
+  },
+  "financialGrants": 0,
+  "gatewayId": "test-cn",
+  "native": {
+    "nativeBalance": 4
+  },
+  "prepared": {
+    "epochId": "13e8745e-55ae-42b4-b355-7ebb6f738ca8",
+    "generation": 1,
+    "operatorEvidenceId": "synthetic-cli-prepare",
+    "state": "prepared"
+  },
+  "productionEligibility": false,
+  "seconds": 6.302638299996033,
+  "streamEpoch": "2b8b2405-becb-4463-b83b-c7ae126851eb",
+  "syntheticIntegration": true,
+  "verified": [
+    {
+      "pages": 14,
+      "proofId": "sha256:f0f7c70bd29344ab5ccef413443085a713f6701cae792edafd0c03ea01038ccb"
+    },
+    {
+      "pages": 14,
+      "proofId": "sha256:9de0771c439c962be495acaeb0f8e46e075b701e473b06624ad931c10f85320e"
+    }
+  ]
+}

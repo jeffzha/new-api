@@ -1,16 +1,98 @@
 import { describe, expect, test } from "bun:test";
 import {
+  adjustCoefficientValues,
   adjustCustomerSalesValues,
+  changedCoefficientOverrides,
   draftToPolicy,
   initialPolicy,
   parseCoefficient,
   parseSignedCoefficient,
+  stepSignedCoefficient,
+  suggestedPlatformCoefficients,
   policyToDraft,
   pricingRequest,
 } from "../policy";
 import type { Policy } from "../types";
+import { normalizeModelSales, normalizePlatformPricing } from "../types";
 
 describe("pricing request contracts", () => {
+  test("publishing preserves untouched defaults and only submits changed coefficients", () => {
+    const rows = [
+      { origin_model_name: "auto", override_sales_bps: null },
+      { origin_model_name: "manual", override_sales_bps: 8000 },
+    ];
+    expect(
+      changedCoefficientOverrides(rows, { auto: "", manual: "0.8000" }, "override_sales_bps"),
+    ).toEqual([]);
+    expect(
+      changedCoefficientOverrides(rows, { auto: "0.7600", manual: "" }, "override_sales_bps"),
+    ).toEqual([
+      { origin_model_name: "auto", bps: 7600 },
+      { origin_model_name: "manual", bps: null },
+    ]);
+  });
+  test("negotiated child cost uses the actual floor rather than the default quote", () => {
+    const rows = [{ model: "model-a", costBPS: 8000, minimumBPS: 8200, inheritedBPS: 8500 }];
+    expect(adjustCoefficientValues(rows, {}, ["model-a"], 0, { anchor: "cost" }).errors).toEqual({
+      "model-a": "below_cost",
+    });
+    expect(adjustCoefficientValues(rows, {}, ["model-a"], 100, { anchor: "cost" }).errors).toEqual({
+      "model-a": "below_cost",
+    });
+    expect(adjustCoefficientValues(rows, {}, ["model-a"], 200, { anchor: "cost" }).values).toEqual({
+      "model-a": "0.8200",
+    });
+    expect(
+      adjustCoefficientValues([{ ...rows[0], minimumBPS: 8000 }], {}, ["model-a"], 0, {
+        anchor: "cost",
+      }).values,
+    ).toEqual({ "model-a": "0.8000" });
+  });
+  test("pricing responses normalize nullable collections before rendering", () => {
+    const sales = normalizeModelSales({
+      agency_id: 1,
+      agency_name: "Agency",
+      revision: 1,
+      platform_revision: 1,
+      min_spread_bps: 500,
+      default_sales_bps: 9000,
+      items: null,
+    } as unknown as Parameters<typeof normalizeModelSales>[0]);
+    expect(sales.items).toEqual([]);
+    expect(
+      normalizeModelSales({
+        ...sales,
+        items: [{ origin_model_name: "model-a", channels: null }],
+      } as unknown as Parameters<typeof normalizeModelSales>[0]).items[0].channels,
+    ).toEqual([]);
+
+    expect(
+      normalizePlatformPricing({
+        revision: 1,
+        refreshed_at_ms: 1,
+        items: null,
+      } as unknown as Parameters<typeof normalizePlatformPricing>[0]).items,
+    ).toEqual([]);
+
+    const platform = normalizePlatformPricing({
+      revision: 1,
+      refreshed_at_ms: 1,
+      items: [
+        {
+          origin_model_name: "model-a",
+          channel_names: null,
+          channel_costs: null,
+          platform_cost_bps: null,
+          agency_cost_bps: null,
+          child_cost_bps: null,
+          default_sales_bps: null,
+        },
+      ],
+    } as unknown as Parameters<typeof normalizePlatformPricing>[0]);
+    expect(platform.items[0].channel_names).toEqual([]);
+    expect(platform.items[0].channel_costs).toEqual([]);
+  });
+
   test("new agency drafts submit the standard price while existing discounts remain unchanged", () => {
     const newDraft = policyToDraft(initialPolicy);
     expect(newDraft.sales).toBe("1.0000");
@@ -25,6 +107,21 @@ describe("pricing request contracts", () => {
     expect(pricingRequest(draftToPolicy(existingDraft, existing, true), true, "")).toMatchObject({
       expected_revision: 7,
       default_sales_bps: 9000,
+    });
+  });
+
+  test("new platform rows keep missing costs pending while defaulting sales to 1", () => {
+    expect(suggestedPlatformCoefficients([5000, 5500], null, null)).toEqual({
+      agencyCostBPS: null,
+      salesBPS: 10000,
+    });
+    expect(suggestedPlatformCoefficients([9200], null, null)).toEqual({
+      agencyCostBPS: null,
+      salesBPS: 10000,
+    });
+    expect(suggestedPlatformCoefficients([5000], 6200, 8800)).toEqual({
+      agencyCostBPS: 6200,
+      salesBPS: 8800,
     });
   });
 
@@ -136,8 +233,34 @@ describe("pricing request contracts", () => {
     expect(() => parseSignedCoefficient("-0.10001")).toThrow();
   });
 
+  test("repeated +/- clicks accumulate the signed adjustment instead of resetting it", () => {
+    let amount = "0.1000";
+    amount = stepSignedCoefficient(amount, 1000);
+    expect(amount).toBe("0.2000");
+    amount = stepSignedCoefficient(amount, 1000);
+    expect(amount).toBe("0.3000");
+    amount = stepSignedCoefficient(amount, -1000);
+    expect(amount).toBe("0.2000");
+    expect(stepSignedCoefficient("0.1000", -1000)).toBe("0.0000");
+    expect(stepSignedCoefficient("0.1000", -2000)).toBe("-0.1000");
+  });
+
+  test("stepping recovers from empty or invalid input and stays inside the signed range", () => {
+    expect(stepSignedCoefficient("", 1000)).toBe("0.1000");
+    expect(stepSignedCoefficient("  ", -1000)).toBe("-0.1000");
+    expect(stepSignedCoefficient("abc", 1000)).toBe("0.1000");
+    expect(stepSignedCoefficient("10.0000", 1000)).toBe("10.0000");
+    expect(stepSignedCoefficient("-10.0000", -1000)).toBe("-10.0000");
+    expect(parseSignedCoefficient(stepSignedCoefficient("9.9000", 1000))).toBe(100000);
+  });
+
   test("batch customer adjustment keeps valid changes and reports invalid rows", () => {
-    const values = { valid: "0.9000", belowCost: "0.8000", aboveCap: "1.1900", untouched: "0.9500" };
+    const values = {
+      valid: "0.9000",
+      belowCost: "0.8000",
+      aboveCap: "1.1900",
+      untouched: "0.9500",
+    };
     const result = adjustCustomerSalesValues(
       [
         { model: "valid", agencyCostBPS: 7000, inheritedSalesBPS: 9000 },
@@ -166,5 +289,81 @@ describe("pricing request contracts", () => {
       30000,
     );
     expect(result).toEqual({ values: { "model-a": "0.8000" }, errors: {}, updated: 1 });
+  });
+
+  test("bulk coefficient adjustment from cost rewrites selected rows and reports missing costs", () => {
+    const rows = [
+      { model: "with-cost", costBPS: 8000, inheritedBPS: 9000 },
+      { model: "no-cost", costBPS: null, inheritedBPS: 9000 },
+      { model: "untouched", costBPS: 7000, inheritedBPS: 8000 },
+    ];
+    const result = adjustCoefficientValues(
+      rows,
+      { untouched: "0.8000", "with-cost": "0.8500" },
+      ["with-cost", "no-cost"],
+      1000,
+      { anchor: "cost" },
+    );
+    expect(result.values).toEqual({ untouched: "0.8000", "with-cost": "0.9000" });
+    expect(result.errors).toEqual({ "no-cost": "missing_cost" });
+    expect(result.updated).toBe(1);
+  });
+
+  test("bulk coefficient adjustment from the drafted value enforces cost, spread and cap", () => {
+    const rows = [
+      { model: "inherited", costBPS: 8000, inheritedBPS: 9000 },
+      { model: "invalid", costBPS: 7000, inheritedBPS: 9000 },
+      { model: "below-cost", costBPS: 8000, inheritedBPS: 9000 },
+      { model: "below-spread", costBPS: 8000, inheritedBPS: 9000 },
+      { model: "above-cap", costBPS: 8000, inheritedBPS: 9000 },
+    ];
+    const result = adjustCoefficientValues(
+      rows,
+      {
+        invalid: "not-a-number",
+        "below-cost": "0.7500",
+        "below-spread": "0.8200",
+        "above-cap": "9.9900",
+      },
+      rows.map((row) => row.model),
+      200,
+      { anchor: "current", minSpreadBPS: 500, capBPS: 100000 },
+    );
+    expect(result.values).toEqual({
+      invalid: "not-a-number",
+      "below-cost": "0.7500",
+      "below-spread": "0.8200",
+      "above-cap": "9.9900",
+      inherited: "0.9200",
+    });
+    expect(result.errors).toEqual({
+      invalid: "invalid_current",
+      "below-cost": "below_cost",
+      "below-spread": "below_spread",
+      "above-cap": "above_cap",
+    });
+    expect(result.updated).toBe(1);
+  });
+
+  test("bulk coefficient adjustment allows the exact cost and rejects an unknown anchor", () => {
+    const exact = adjustCoefficientValues(
+      [{ model: "model-a", costBPS: 8000, inheritedBPS: 9000 }],
+      { "model-a": "0.7500" },
+      ["model-a"],
+      500,
+      { anchor: "current", minSpreadBPS: 500 },
+    );
+    expect(exact.errors).toEqual({});
+    expect(exact.values).toEqual({ "model-a": "0.8000" });
+
+    const unknown = adjustCoefficientValues(
+      [{ model: "model-b", costBPS: null, inheritedBPS: null }],
+      {},
+      ["model-b"],
+      500,
+      { anchor: "current" },
+    );
+    expect(unknown.errors).toEqual({ "model-b": "invalid_current" });
+    expect(unknown.updated).toBe(0);
   });
 });

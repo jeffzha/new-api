@@ -13,9 +13,9 @@ export function getAgencyCenterUrl(platformLogin = false): string {
 }
 
 export function shouldAutoEnterAgencyCenter(
-  isSuperAdmin: boolean,
+  isAuthenticated: boolean,
   mode?: string,
   agencySignedOut?: boolean
 ): boolean {
-  return isSuperAdmin && mode === 'agency' && agencySignedOut !== true
+  return isAuthenticated && mode === 'agency' && agencySignedOut !== true
 }

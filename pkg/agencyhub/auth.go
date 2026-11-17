@@ -164,6 +164,13 @@ func (a *App) sessionMiddleware() gin.HandlerFunc {
 				respondError(c, http.StatusForbidden, "agency_disabled", "代理商已停用", nil)
 				return
 			}
+			if session.SourceSID != "" {
+				if err := a.validateOperatorSourceSession(session, account); err != nil {
+					_ = a.db.Model(&model.AgencySession{}).Where("id = ?", session.ID).Update("revoked_at", now).Error
+					respondError(c, http.StatusUnauthorized, "source_session_invalid", "主站会话或账号关联已失效", nil)
+					return
+				}
+			}
 		} else if session.ActorType != ActorTypeRoot {
 			respondError(c, http.StatusUnauthorized, "unauthorized", "会话类型无效", nil)
 			return
@@ -239,6 +246,35 @@ func (a *App) validateRootSourceSession(session model.AgencySession) error {
 	return nil
 }
 
+func (a *App) validateOperatorSourceSession(session model.AgencySession, account model.AgencyOperatorAccount) error {
+	if session.SourceSID == "" || session.SourceUserID <= 0 || session.SourceSessionVersion <= 0 || session.AgencyID == nil {
+		return errors.New("missing source session binding")
+	}
+	var source model.UserSession
+	if err := a.db.Where("sid = ? AND user_id = ?", session.SourceSID, session.SourceUserID).First(&source).Error; err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+	if source.Status != model.UserSessionStatusActive || source.RevokedAt != 0 || source.ExpiresAt <= now || source.Version != session.SourceSessionVersion {
+		return errors.New("source session is inactive")
+	}
+	var user model.User
+	if err := a.db.Select("id, role, status, auth_version").First(&user, session.SourceUserID).Error; err != nil {
+		return err
+	}
+	if user.Status != common.UserStatusEnabled || user.Role == common.RoleRootUser || user.AuthVersion != source.UserAuthVersion {
+		return errors.New("source user identity changed")
+	}
+	var binding model.AgencyOperatorIdentityBinding
+	if err := a.db.Where("operator_account_id = ? AND platform_user_id = ? AND agency_id = ?", account.ID, session.SourceUserID, *session.AgencyID).First(&binding).Error; err != nil {
+		return err
+	}
+	if account.AgencyID != binding.AgencyID {
+		return errors.New("operator agency changed")
+	}
+	return nil
+}
+
 func currentIdentity(c *gin.Context) *Identity {
 	value, ok := c.Get("agency_identity")
 	if !ok {
@@ -281,6 +317,49 @@ func (a *App) CreateRootSession(rootUserID int64, sourceSID string, sourceSessio
 	return token, csrf, nil
 }
 
+func (a *App) CreateOperatorSSOSession(platformUserID, operatorAccountID, agencyID int64, sourceSID string, sourceSessionVersion int64) (token, csrf string, err error) {
+	if platformUserID <= 0 || operatorAccountID <= 0 || agencyID <= 0 || strings.TrimSpace(sourceSID) == "" || sourceSessionVersion <= 0 {
+		return "", "", errors.New("linked platform browser session required")
+	}
+	var account model.AgencyOperatorAccount
+	if err = a.db.First(&account, operatorAccountID).Error; err != nil || account.Status != OperatorStatusActive || account.AgencyID != agencyID {
+		return "", "", errors.New("operator account is unavailable")
+	}
+	var agency model.Agency
+	if err = a.db.First(&agency, agencyID).Error; err != nil || agency.Status != AgencyStatusActive {
+		return "", "", errors.New("agency is unavailable")
+	}
+	var binding model.AgencyOperatorIdentityBinding
+	if err = a.db.Where("operator_account_id = ? AND platform_user_id = ? AND agency_id = ?", operatorAccountID, platformUserID, agencyID).First(&binding).Error; err != nil {
+		return "", "", errors.New("platform account link is unavailable")
+	}
+	var source model.UserSession
+	if err = a.db.Where("sid = ? AND user_id = ? AND version = ?", sourceSID, platformUserID, sourceSessionVersion).First(&source).Error; err != nil {
+		return "", "", errors.New("platform session is unavailable")
+	}
+	now := time.Now().Unix()
+	if source.Status != model.UserSessionStatusActive || source.RevokedAt != 0 || source.ExpiresAt <= now {
+		return "", "", errors.New("platform session is inactive")
+	}
+	var user model.User
+	if err = a.db.Select("id, role, status, auth_version").First(&user, platformUserID).Error; err != nil || user.Status != common.UserStatusEnabled || user.Role == common.RoleRootUser || user.AuthVersion != source.UserAuthVersion {
+		return "", "", errors.New("platform user is unavailable")
+	}
+	token, err = randomToken(32)
+	if err != nil {
+		return "", "", err
+	}
+	csrf, err = randomToken(24)
+	if err != nil {
+		return "", "", err
+	}
+	session := &model.AgencySession{TokenHash: tokenHash(token), ActorType: ActorTypeOperator, ActorID: account.ID, AgencyID: &agencyID, SourceSID: sourceSID, SourceUserID: platformUserID, SourceSessionVersion: sourceSessionVersion, AuthVersion: account.AuthVersion, CSRFHash: tokenHash(csrf), LastSeenAt: now, CreatedAt: now, ExpiresAt: now + int64(a.config.SessionAbsolute/time.Second)}
+	if err = a.db.Create(session).Error; err != nil {
+		return "", "", err
+	}
+	return token, csrf, nil
+}
+
 func (a *App) me(c *gin.Context) {
 	identity := currentIdentity(c)
 	if identity == nil {
@@ -294,6 +373,15 @@ func (a *App) me(c *gin.Context) {
 			var account model.AgencyOperatorAccount
 			_ = a.db.Select("username").Where("agency_id = ?", agency.ID).First(&account).Error
 			view.ActingAgency = &AgencyIdentity{DisplayName: agency.DisplayName, OperatorUsername: account.Username}
+		}
+	}
+	if identity.ActorType == ActorTypeOperator {
+		var binding model.AgencyOperatorIdentityBinding
+		if err := a.db.Where("operator_account_id = ?", identity.ActorID).First(&binding).Error; err == nil {
+			var user model.User
+			if err := a.db.Select("username").First(&user, binding.PlatformUserID).Error; err == nil {
+				view.PlatformAccount = &PlatformIdentity{Username: user.Username}
+			}
 		}
 	}
 	respondOK(c, &view)

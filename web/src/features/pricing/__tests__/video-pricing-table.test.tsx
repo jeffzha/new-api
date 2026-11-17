@@ -17,12 +17,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
-import { expect, it, vi } from 'vitest'
+import { render, screen, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import {
+  DEFAULT_CURRENCY_CONFIG,
+  useSystemConfigStore,
+} from '@/stores/system-config-store'
 
+import { ModelCard } from '../components/model-card'
 import { ModelDetailsContent } from '../components/model-details'
+import { ModelPriceCell } from '../components/model-price-cell'
+import { VideoPricingTables } from '../components/video-pricing-tables'
 import { withPluginPricing } from '../lib/plugin-pricing'
 import { getVideoPricingTable } from '../lib/video-pricing-table'
 import type {
@@ -34,7 +41,7 @@ import type {
 
 vi.mock('@visactor/react-vchart', () => ({ VChart: () => null }))
 
-// The overseas Wangpai H3 catalogue quotes credits; this is the USD rate the
+// The Wangpai H3 catalogue quotes credits; this is the internal USD rate the
 // billing expression applies to them (0.1 CNY per credit at the platform rate).
 const CREDIT_USD = 0.013698630136986302
 
@@ -46,11 +53,15 @@ function usageNumber(
   return { type: 'number', unit, description: { en, zh } }
 }
 
-// MiniMax's own resolutions; 480P exists only in the configured expression.
-const hailuoSchema: BillingUsageSchema = {
+const locopalSchema: BillingUsageSchema = {
   input_images: usageNumber('count', 'Input image unit price', '输入图片单价'),
+  input_video_seconds: usageNumber(
+    'second',
+    'Input video unit price',
+    '输入视频单价'
+  ),
   resolution: {
-    enum: ['512P', '768P', '720P', '1080P', '2K'],
+    enum: ['768P', '2K'],
     description: {
       en: 'Output video resolution',
       zh: '输出视频分辨率',
@@ -60,7 +71,7 @@ const hailuoSchema: BillingUsageSchema = {
 }
 
 const wangpaiSchema: BillingUsageSchema = {
-  ...hailuoSchema,
+  input_images: usageNumber('count', 'Input image unit price', '输入图片单价'),
   material_credits: usageNumber(
     'credit',
     'Material unit price',
@@ -85,6 +96,7 @@ const wangpaiSchema: BillingUsageSchema = {
       zh: '输出视频分辨率',
     },
   },
+  seconds: usageNumber('second', 'Video generation unit price', '视频生成单价'),
   vendor_credits: usageNumber(
     'credit',
     'Upstream credit unit price',
@@ -92,23 +104,16 @@ const wangpaiSchema: BillingUsageSchema = {
   ),
 }
 
-const resolutionMatrix = [
-  `u("resolution") == "480P" ? tier("480P", u("seconds") * 0.010958904109589043)`,
-  `u("resolution") == "720P" ? tier("720P", u("seconds") * 0.020547945205479454)`,
-  `u("resolution") == "1080P" ? tier("1080P", u("seconds") * 0.027397260273972605)`,
-  `tier("2K", u("seconds") * 0.041095890410958909)`,
-].join(' : ')
-
 const upstreamCreditsExpr = `tier("upstream", u("output_credits") * ${CREDIT_USD} + u("material_credits") * ${CREDIT_USD})`
 
-const hailuoExamples = [
+const locopalExamples = [
   {
     label: 'H3 768P 5s',
     facts: { input_images: 0, resolution: '768P', seconds: 5 },
   },
   {
-    label: '02 512P 6s',
-    facts: { input_images: 0, resolution: '512P', seconds: 6 },
+    label: 'H3 2K 5s',
+    facts: { input_images: 0, resolution: '2K', seconds: 5 },
   },
 ]
 
@@ -159,13 +164,14 @@ const wangpaiExamples = [
   },
 ]
 
-const hailuoVariant: BillingPluginVariant = {
-  plugin_key: 'hailuo',
-  plugin_name: 'Hailuo Video',
+const locopalVariant: BillingPluginVariant = {
+  plugin_key: 'cn-locopal-video',
+  plugin_name: 'LocoPal Video',
   billing_mode: 'tiered_expr',
-  billing_expr: resolutionMatrix,
-  billing_usage_schema: hailuoSchema,
-  billing_usage_examples: hailuoExamples,
+  billing_expr:
+    'u("resolution") == "2K" ? tier("2K", u("seconds") * 0.10958904109589041 + u("input_video_seconds") * 0.10958904109589041 + u("input_images") * 0.027397260273972605) : tier("768P", u("seconds") * 0.0684931506849315 + u("input_video_seconds") * 0.0684931506849315 + u("input_images") * 0.027397260273972605)',
+  billing_usage_schema: locopalSchema,
+  billing_usage_examples: locopalExamples,
 }
 
 const wangpaiVariant: BillingPluginVariant = {
@@ -177,7 +183,7 @@ const wangpaiVariant: BillingPluginVariant = {
   billing_usage_examples: wangpaiExamples,
 }
 
-const h3Model: PricingModel = {
+const locopalH3Model: PricingModel = {
   id: 11,
   model_name: 'MiniMax-H3',
   quota_type: 1,
@@ -185,17 +191,28 @@ const h3Model: PricingModel = {
   completion_ratio: 1,
   enable_groups: ['default'],
   billing_mode: 'tiered_expr',
-  billing_expr: resolutionMatrix,
-  billing_usage_schema: hailuoSchema,
-  billing_usage_examples: hailuoExamples,
-  billing_plugin_variants: [hailuoVariant, wangpaiVariant],
+  billing_expr: locopalVariant.billing_expr,
+  billing_usage_schema: locopalSchema,
+  billing_usage_examples: locopalExamples,
+  billing_plugin_variants: [locopalVariant],
+}
+
+const bridgeH3Model: PricingModel = {
+  ...locopalH3Model,
+  id: 12,
+  model_name: 'MiniMax-H3-261013',
+  billing_expr: upstreamCreditsExpr,
+  billing_usage_schema: wangpaiSchema,
+  billing_usage_examples: wangpaiExamples,
+  billing_material_pricing: undefined,
+  billing_plugin_variants: [wangpaiVariant],
 }
 
 const h3TwoKModel: PricingModel = {
-  ...h3Model,
+  ...bridgeH3Model,
   id: 12,
   model_name: 'MiniMax-H3-2K',
-  billing_expr: `tier("15s-2K", u("seconds") * 0.017351598173515986)`,
+  billing_expr: upstreamCreditsExpr,
   billing_usage_schema: wangpaiSchema,
   billing_usage_examples: [
     {
@@ -213,8 +230,171 @@ const h3TwoKModel: PricingModel = {
   billing_plugin_variants: [wangpaiVariant],
 }
 
+const h3SensitiveModel: PricingModel = {
+  ...bridgeH3Model,
+  id: 13,
+  model_name: 'MiniMax-H3-Sensitive',
+}
+
+const happyHorseModel: PricingModel = {
+  id: 33,
+  model_name: 'HappyHorse1.1',
+  quota_type: 1,
+  model_ratio: 1,
+  completion_ratio: 1,
+  enable_groups: ['default'],
+  billing_mode: 'tiered_expr',
+  billing_expr:
+    'u("kind") == "edit" && u("resolution") == "720P" ? tier("720P-edit", u("seconds") * 0.1232876712328767) : u("kind") == "edit" && u("resolution") == "1080P" ? tier("1080P-edit", u("seconds") * 0.2191780821917808) : u("resolution") == "480P" ? tier("480P", u("seconds") * 0.06164383561643836) : u("resolution") == "1080P" ? tier("1080P", u("seconds") * 0.1643835616438356) : tier("720P", u("seconds") * 0.1232876712328767)',
+  billing_usage_schema: {
+    kind: {
+      enum: ['video', 'edit'],
+      description: { en: 'Video operation type', zh: '视频操作类型' },
+    },
+    resolution: {
+      enum: ['480P', '720P', '1080P'],
+      description: { en: 'Output video resolution', zh: '输出视频分辨率' },
+    },
+    seconds: usageNumber(
+      'second',
+      'Video generation unit price',
+      '视频生成单价'
+    ),
+  },
+}
+
+describe('HappyHorse operation pricing', () => {
+  let previousCurrency = useSystemConfigStore.getState().config.currency
+  beforeEach(() => {
+    previousCurrency = useSystemConfigStore.getState().config.currency
+    useSystemConfigStore.getState().setConfig({
+      currency: {
+        ...DEFAULT_CURRENCY_CONFIG,
+        quotaDisplayType: 'CNY',
+        usdExchangeRate: 7.3,
+      },
+    })
+  })
+  afterEach(() => {
+    useSystemConfigStore.getState().setConfig({ currency: previousCurrency })
+  })
+
+  it.each(['HappyHorse1.1', 'happyhorse-1.1'])(
+    'keeps %s generation and editing prices separate at the same resolution',
+    (modelName) => {
+      const table = getVideoPricingTable({
+        ...happyHorseModel,
+        model_name: modelName,
+      })
+      expect(table?.outputRows).toHaveLength(5)
+      expect(table?.outputRows.map((row) => row.resolution)).toEqual([
+        '480P',
+        '720P',
+        '1080P',
+        '720P',
+        '1080P',
+      ])
+      const expected = [0.45, 0.9, 1.2, 0.9, 1.6]
+      table?.outputRows.forEach((row, index) => {
+        expect(row.amountUSD * 7.3).toBeCloseTo(expected[index], 10)
+      })
+      expect(new Set(table?.outputRows.map((row) => row.key)).size).toBe(5)
+    }
+  )
+
+  it('labels HappyHorse generation and editing rows with their distinct duration rules', () => {
+    const table = getVideoPricingTable(happyHorseModel)
+    if (!table) throw new Error('Expected a video pricing table')
+    render(
+      <VideoPricingTables
+        table={table}
+        tokenUnit='M'
+        priceRate={1}
+        usdExchangeRate={7.3}
+      />
+    )
+    const rows = screen.getAllByRole('row')
+    const generation = rows.find(
+      (row) =>
+        row.textContent?.includes('1080P') &&
+        row.textContent.includes('Video generation')
+    )
+    const editing = rows.find(
+      (row) =>
+        row.textContent?.includes('1080P') &&
+        row.textContent.includes('Video editing')
+    )
+    expect(generation).toBeDefined()
+    expect(editing).toBeDefined()
+    if (!generation || !editing) throw new Error('Expected both operation rows')
+    expect(
+      within(generation).getByText('Per second (output duration)')
+    ).toBeInTheDocument()
+    expect(generation).toHaveTextContent('¥1.2')
+    expect(
+      within(editing).getByText('Per second (input + output duration)')
+    ).toBeInTheDocument()
+    expect(editing).toHaveTextContent('¥1.6')
+  })
+
+  it('shows the HappyHorse 1080P generation price in the catalogue card', () => {
+    render(
+      <ModelCard
+        model={happyHorseModel}
+        onClick={() => undefined}
+        priceRate={1}
+        usdExchangeRate={7.3}
+      />
+    )
+    expect(screen.getByText(/1\.2(?:0)?$/)).toBeInTheDocument()
+    expect(screen.getByText(/1\.6(?:0)?$/)).toBeInTheDocument()
+    expect(screen.getAllByText(/Video generation/).length).toBeGreaterThan(0)
+  })
+
+  it('separates HappyHorse generation and editing prices in the catalogue table view', () => {
+    render(
+      <ModelPriceCell
+        model={happyHorseModel}
+        options={{ usdExchangeRate: 7.3 }}
+      />
+    )
+    expect(screen.getAllByText('Video generation')).toHaveLength(3)
+    expect(screen.getAllByText('Video editing')).toHaveLength(2)
+    expect(screen.getByText('¥1.2')).toBeInTheDocument()
+    expect(screen.getByText('¥1.6')).toBeInTheDocument()
+  })
+
+  it('uses administrator prices and the selected group multiplier without changing generation to editing', () => {
+    const table = getVideoPricingTable({
+      ...happyHorseModel,
+      billing_expr: happyHorseModel.billing_expr?.replace(
+        '0.1643835616438356',
+        '0.1'
+      ),
+    })
+    if (!table) throw new Error('Expected a video pricing table')
+    render(
+      <VideoPricingTables
+        table={table}
+        tokenUnit='M'
+        priceRate={1}
+        usdExchangeRate={7.3}
+        groupRatio={0.5}
+      />
+    )
+    const row = screen
+      .getAllByRole('row')
+      .find(
+        (candidate) =>
+          candidate.textContent?.includes('1080P') &&
+          candidate.textContent.includes('Video generation')
+      )
+    expect(row).toHaveTextContent('¥0.365')
+  })
+})
+
 it('expands the H3 output list from the configured expression, not the sampled resolutions', () => {
-  const table = getVideoPricingTable(h3Model)
+  const table = getVideoPricingTable(bridgeH3Model)
 
   expect(table?.outputRows.map((row) => row.resolution)).toEqual([
     '480P',
@@ -228,20 +408,25 @@ it('expands the H3 output list from the configured expression, not the sampled r
     'second',
     'second',
   ])
-  expect(table?.outputRows.map((row) => row.amountUSD)).toEqual([
-    0.010958904109589043, 0.020547945205479454, 0.027397260273972605,
-    0.041095890410958909,
-  ])
+  const prices = table?.outputRows.map((row) => row.amountUSD) ?? []
+  expect(prices).toHaveLength(4)
+  expect(prices[0]).toBeCloseTo(0.8 * CREDIT_USD, 12)
+  expect(prices[1]).toBeCloseTo(1.5 * CREDIT_USD, 12)
+  expect(prices[2]).toBeCloseTo(2 * CREDIT_USD, 12)
+  expect(prices[3]).toBeCloseTo(3 * CREDIT_USD, 12)
 })
 
-it('prices H3 material from the upstream credit pass-through declared by the provider variant', () => {
-  const table = getVideoPricingTable(h3Model)
+it.each([bridgeH3Model, h3TwoKModel, h3SensitiveModel])(
+  'does not mix LocoPal material charges into $model_name',
+  (model) => {
+    const table = getVideoPricingTable(model)
 
-  expect(table?.materialPricing).toEqual({
-    kind: 'upstream_credits',
-    creditPriceUSD: CREDIT_USD,
-  })
-})
+    expect(table?.materialPricing).toEqual({
+      kind: 'upstream_credits',
+      creditPriceUSD: CREDIT_USD,
+    })
+  }
+)
 
 it('quotes the fixed-duration 2K catalogue as one whole-request price', () => {
   const table = getVideoPricingTable(h3TwoKModel)
@@ -254,19 +439,34 @@ it('quotes the fixed-duration 2K catalogue as one whole-request price', () => {
 })
 
 it('prices each provider variant from its own expression', () => {
-  const hailuoTable = getVideoPricingTable(
-    withPluginPricing(h3Model, hailuoVariant)
+  const locopalTable = getVideoPricingTable(
+    withPluginPricing(locopalH3Model, locopalVariant)
   )
-  expect(hailuoTable?.outputRows.map((row) => row.resolution)).toEqual([
-    '480P',
-    '720P',
-    '1080P',
+  expect(locopalTable?.outputRows.map((row) => row.resolution)).toEqual([
+    '768P',
     '2K',
   ])
-  expect(hailuoTable?.materialPricing).toBeUndefined()
+  expect(locopalTable?.materialPricing).toEqual({
+    kind: 'usage_fields',
+    rows: [
+      {
+        field: 'input_video_seconds',
+        definition: locopalSchema.input_video_seconds,
+        rates: [
+          { label: '2K', amountUSD: 0.1095890410958904 },
+          { label: '768P', amountUSD: 0.0684931506849315 },
+        ],
+      },
+      {
+        field: 'input_images',
+        definition: locopalSchema.input_images,
+        rates: [{ amountUSD: 0.027397260273972605 }],
+      },
+    ],
+  })
 
   const wangpaiTable = getVideoPricingTable(
-    withPluginPricing(h3Model, wangpaiVariant)
+    withPluginPricing(bridgeH3Model, wangpaiVariant)
   )
   expect(wangpaiTable?.outputRows.map((row) => row.resolution)).toEqual([
     '480P',
@@ -286,9 +486,91 @@ it('prices each provider variant from its own expression', () => {
   })
 })
 
+it('renders LocoPal H3 material prices by resolution without claiming free images', () => {
+  const table = getVideoPricingTable(
+    withPluginPricing(locopalH3Model, locopalVariant)
+  )
+  expect(table).not.toBeNull()
+  if (!table) throw new Error('Expected a video pricing table')
+
+  render(
+    <VideoPricingTables
+      table={table}
+      tokenUnit='M'
+      priceRate={1}
+      usdExchangeRate={7.3}
+    />
+  )
+
+  expect(screen.getByText('Input image unit price')).toBeInTheDocument()
+  expect(screen.getByText('Input video unit price')).toBeInTheDocument()
+  expect(screen.getByText(/^\$0\.027397 \/ unit$/)).toBeInTheDocument()
+  expect(
+    screen.getByText(/^2K \$0\.109589 \/ s · 768P \$0\.068493 \/ s$/)
+  ).toBeInTheDocument()
+  expect(screen.queryByText(/First 5 free/i)).not.toBeInTheDocument()
+  expect(screen.queryByText(/credit/i)).not.toBeInTheDocument()
+})
+
+it.each([
+  { currency: 'USD' as const, amount: 0.04 },
+  { currency: 'CNY' as const, amount: 0.292 },
+])('shows $currency material catalogue prices consistently in overseas USD', ({ currency, amount }) => {
+  const table = getVideoPricingTable({
+    ...locopalH3Model,
+    billing_material_pricing: {
+      currency,
+      items: [{ material: 'image', unit: 'count', freeUnits: 5, rates: [{ amount }] }],
+    },
+  })
+  if (!table) throw new Error('Expected a video pricing table')
+  render(
+    <VideoPricingTables
+      table={table}
+      tokenUnit='M'
+      priceRate={1}
+      usdExchangeRate={7.3}
+    />
+  )
+  const row = screen.getByText('Image material').closest('tr')
+  expect(row).toHaveTextContent('$0.04/image')
+  expect(row).not.toHaveTextContent('¥')
+})
+
+it('explains Wangpai material billing without inventing fixed unit prices', () => {
+  const table = getVideoPricingTable(
+    withPluginPricing(bridgeH3Model, wangpaiVariant)
+  )
+  expect(table?.materialPricing).toEqual({
+    kind: 'upstream_credits',
+    creditPriceUSD: CREDIT_USD,
+  })
+  if (!table) throw new Error('Expected a video pricing table')
+
+  render(
+    <VideoPricingTables
+      table={table}
+      tokenUnit='M'
+      priceRate={1}
+      usdExchangeRate={7.3}
+    />
+  )
+
+  expect(
+    screen.getAllByText(
+      "Settled according to the supplier's final material charge; the supplier does not publish fixed per-image or input-video prices"
+    ).length
+  ).toBeGreaterThan(0)
+  expect(screen.queryByText('¥0.20/image')).not.toBeInTheDocument()
+  expect(
+    screen.queryByText('768P ¥0.50/s · 2K ¥0.80/s')
+  ).not.toBeInTheDocument()
+  expect(screen.queryByText(/credit/i)).not.toBeInTheDocument()
+})
+
 it('returns no video price list when the model does not price a resolution catalogue', () => {
   const musicModel: PricingModel = {
-    ...h3Model,
+    ...bridgeH3Model,
     model_name: 'incho_music',
     billing_expr: 'tier("music", u("clips") * 0.22)',
     billing_usage_schema: {
@@ -301,7 +583,7 @@ it('returns no video price list when the model does not price a resolution catal
   expect(getVideoPricingTable(musicModel)).toBeNull()
 })
 
-it('renders the H3 price list in the model drawer instead of the raw expression', () => {
+it('renders the bridge H3 price list in the model drawer instead of the raw expression', () => {
   vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -309,7 +591,7 @@ it('renders the H3 price list in the model drawer instead of the raw expression'
   render(
     <QueryClientProvider client={client}>
       <ModelDetailsContent
-        model={h3Model}
+        model={bridgeH3Model}
         groupRatio={{ default: 2 }}
         usableGroup={{ default: { desc: '', ratio: 2 } }}
         endpointMap={{}}
@@ -327,6 +609,11 @@ it('renders the H3 price list in the model drawer instead of the raw expression'
   )
   expect(screen.getAllByText('480P').length).toBeGreaterThan(0)
   expect(screen.getAllByText('2K').length).toBeGreaterThan(0)
+  expect(
+    screen.getAllByText(
+      "Settled according to the supplier's final material charge; the supplier does not publish fixed per-image or input-video prices"
+    ).length
+  ).toBeGreaterThan(0)
   expect(screen.queryByText(/u\("resolution"\)/)).not.toBeInTheDocument()
   expect(screen.queryByText(/Raw expression/)).not.toBeInTheDocument()
   expect(

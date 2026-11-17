@@ -6,6 +6,8 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -14,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -70,20 +73,24 @@ type Task struct {
 	FailReason string                `json:"fail_reason"`
 	// ResultURL carries the artifact URL that some upstream New API instances
 	// return at the top level of their task record instead of inside private_data.
-	ResultURL  string                `json:"result_url" gorm:"-"`
-	SubmitTime int64                 `json:"submit_time" gorm:"index"`
-	StartTime  int64                 `json:"start_time" gorm:"index"`
-	FinishTime int64                 `json:"finish_time" gorm:"index"`
-	Progress   string                `json:"progress" gorm:"type:varchar(20);index"`
+	ResultURL  string `json:"result_url" gorm:"-"`
+	SubmitTime int64  `json:"submit_time" gorm:"index"`
+	StartTime  int64  `json:"start_time" gorm:"index"`
+	FinishTime int64  `json:"finish_time" gorm:"index"`
+	Progress   string `json:"progress" gorm:"type:varchar(20);index"`
 	// BillingReconciliationPending is a durable enqueue intent. It is written
 	// with the task so a transient failure creating the reconciliation row can
 	// be recovered by the async task worker.
 	BillingReconciliationPending bool       `json:"-" gorm:"index"`
+	OpsUsagePending              bool       `json:"-" gorm:"index"`
 	Properties                   Properties `json:"properties" gorm:"type:json"`
 	Username                     string     `json:"username,omitempty" gorm:"-"`
 	// 禁止返回给用户，内部可能包含key等隐私信息
-	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
-	Data        json.RawMessage `json:"data" gorm:"type:json"`
+	PrivateData   TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
+	Data          json.RawMessage `json:"data" gorm:"type:json"`
+	CNBillingKey  string          `json:"-" gorm:"size:64;index"`
+	cnFinalTarget *int            `gorm:"-"`
+	cnFinalError  string          `gorm:"-"`
 }
 
 func (t *Task) SetData(data any) {
@@ -130,9 +137,12 @@ func (m Properties) Value() (driver.Value, error) {
 }
 
 type TaskPrivateData struct {
-	Key            string `json:"key,omitempty"`
-	UpstreamTaskID string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
-	ResultURL      string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
+	UpstreamBaseURL string `json:"upstream_base_url,omitempty"`
+	// OpsUsage is a credential-free terminal record committed with the task CAS.
+	OpsUsage       json.RawMessage `json:"ops_usage,omitempty"`
+	Key            string          `json:"key,omitempty"`
+	UpstreamTaskID string          `json:"upstream_task_id,omitempty"` // 上游真实 task ID
+	ResultURL      string          `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
 	// Execution records safe, immutable request provenance. It lives next to
 	// other private task state so public task DTOs cannot expose it by accident.
 	Execution *TaskExecutionSnapshot `json:"execution,omitempty"`
@@ -153,6 +163,8 @@ type TaskPrivateData struct {
 	PluginState json.RawMessage `json:"plugin_state,omitempty"`
 	// PollFailures counts consecutive unrecognized or transient poll outcomes.
 	PollFailures int `json:"poll_failures,omitempty"`
+	// SettledTokens is the provider-reported token quantity the task was settled on (0 until then).
+	SettledTokens int64 `json:"settled_tokens,omitempty"`
 }
 
 type TaskExecutionSnapshot struct {
@@ -205,6 +217,8 @@ type TaskBillingContext struct {
 // TaskProviderBillingSnapshot freezes provider-specific pricing inputs at
 // submission time so settlement is independent of later configuration changes.
 type TaskProviderBillingSnapshot struct {
+	BillingUnit                 string  `json:"billing_unit,omitempty"`
+	UnitPricePerRequest         string  `json:"unit_price_per_request,omitempty"`
 	Provider                    string  `json:"provider"`
 	Currency                    string  `json:"currency"`
 	UnitPricePerMillionTokens   string  `json:"unit_price_per_million_tokens"`
@@ -214,6 +228,146 @@ type TaskProviderBillingSnapshot struct {
 	HasVideoInput               bool    `json:"has_video_input"`
 	EstimatedTokens             int64   `json:"estimated_tokens"`
 	AsyncReconciliationRequired bool    `json:"async_reconciliation_required"`
+}
+
+// BillingLogFacts are the pricing facts a task billing log carries in `other` so a reader can recompute the
+// charge: the billed token quantity the provider reported at settlement (estimated_tokens before it), the
+// frozen CNY unit price and FX snapshot, resolution, video input and billing unit. Once the task succeeded,
+// its upstream result adds the generated length (seconds) and the upstream's own charge (upstream_amount).
+// A task priced by expression also gets its usage_facts with seconds and resolution filled in when the
+// snapshot lacked them; any other task gets seconds.
+func (task *Task) BillingLogFacts() map[string]any {
+	facts := map[string]any{}
+	if task == nil || task.PrivateData.BillingContext == nil {
+		return facts
+	}
+	bc := task.PrivateData.BillingContext
+	var usage map[string]any
+	if bc.TieredSnapshot != nil && len(bc.TieredSnapshot.UsageFacts) > 0 {
+		usage = maps.Clone(bc.TieredSnapshot.UsageFacts)
+	}
+	upstream := task.upstreamUsage()
+	seconds := bc.OtherRatios["seconds"]
+	if upstream.Seconds > 0 {
+		seconds = upstream.Seconds
+	}
+	if seconds > 0 {
+		if usage == nil {
+			facts["seconds"] = seconds
+		} else if _, ok := usage["seconds"]; !ok {
+			usage["seconds"] = seconds
+		}
+	}
+	if upstream.Amount != "" {
+		facts["upstream_amount"] = upstream.Amount
+	}
+	if task.PrivateData.SettledTokens > 0 {
+		facts["billed_tokens"] = task.PrivateData.SettledTokens
+	}
+	if snapshot := bc.ProviderBilling; snapshot != nil {
+		// The estimate is what was pre-charged; it is never reported as billed tokens.
+		if task.PrivateData.SettledTokens <= 0 && snapshot.EstimatedTokens > 0 {
+			facts["estimated_tokens"] = snapshot.EstimatedTokens
+		}
+		unit := snapshot.BillingUnit
+		if unit == "" {
+			unit = "token"
+		}
+		facts["billing_unit"] = unit
+		if snapshot.Currency == "CNY" && snapshot.UnitPricePerMillionTokens != "" {
+			facts["unit_price_cny_per_million"] = snapshot.UnitPricePerMillionTokens
+		}
+		if snapshot.Currency == "CNY" && snapshot.UnitPricePerRequest != "" {
+			facts["unit_price_cny_per_request"] = snapshot.UnitPricePerRequest
+		}
+		if snapshot.CNYPerUSD != "" {
+			facts["cny_per_usd"] = snapshot.CNYPerUSD
+		}
+		if snapshot.Resolution != "" {
+			facts["resolution"] = snapshot.Resolution
+			if _, ok := usage["resolution"]; usage != nil && !ok {
+				usage["resolution"] = snapshot.Resolution
+			}
+		}
+		facts["has_video_input"] = snapshot.HasVideoInput
+	}
+	if usage != nil {
+		facts["usage_facts"] = usage
+	}
+	return facts
+}
+
+// maxUpstreamSeconds bounds the generated length read back from an upstream result; it is a reported fact, not a
+// billing multiplier, so anything outside (0, a day] is ignored.
+const maxUpstreamSeconds = 86400
+
+type taskUpstreamUsage struct {
+	Seconds float64 // generated length: data.duration, else data.duration_secs
+	Amount  string  // the upstream's own charge for the task: data.usage.amount, as the upstream wrote it
+}
+
+// upstreamUsage reads the final facts a successful task's upstream result (Task.Data) reports. Seedance
+// upstreams return the generated length and, for LocoPal, the amount they charged; other results yield nothing.
+func (task *Task) upstreamUsage() taskUpstreamUsage {
+	var found taskUpstreamUsage
+	if task.Status != TaskStatusSuccess || len(task.Data) == 0 {
+		return found
+	}
+	var data, usage map[string]json.RawMessage
+	if common.Unmarshal(task.Data, &data) != nil {
+		return found
+	}
+	// Each value is read on its own: a number or a numeric string; anything else is skipped.
+	for _, key := range []string{"duration", "duration_secs"} {
+		var value json.Number
+		if common.Unmarshal(data[key], &value) != nil {
+			continue
+		}
+		if seconds, err := value.Float64(); err == nil && seconds > 0 && seconds <= maxUpstreamSeconds {
+			found.Seconds = seconds
+			break
+		}
+	}
+	var amount json.Number
+	if common.Unmarshal(data["usage"], &usage) == nil && common.Unmarshal(usage["amount"], &amount) == nil {
+		if value, err := amount.Float64(); err == nil && value >= 0 {
+			found.Amount = amount.String()
+		}
+	}
+	return found
+}
+
+// CNYBaseChargeUSD uses the frozen unit, never the model's current pricing.
+// An absent unit retains token billing for tasks submitted before this change.
+func (s *TaskProviderBillingSnapshot) CNYBaseChargeUSD(totalTokens int64) (decimal.Decimal, error) {
+	if s == nil || s.Provider == "" || (s.Currency != "CNY" && s.Currency != "USD") {
+		return decimal.Zero, fmt.Errorf("invalid frozen CNY provider snapshot")
+	}
+	priceText := s.UnitPricePerMillionTokens
+	quantity := decimal.NewFromInt(1)
+	switch s.BillingUnit {
+	case "request":
+		priceText = s.UnitPricePerRequest
+	case "", "token":
+		if totalTokens <= 0 {
+			return decimal.Zero, ErrAgencyTaskUsagePending
+		}
+		quantity = decimal.NewFromInt(totalTokens).Div(decimal.NewFromInt(1_000_000))
+	default:
+		return decimal.Zero, fmt.Errorf("unsupported frozen CNY billing unit %q", s.BillingUnit)
+	}
+	price, err := decimal.NewFromString(priceText)
+	if err != nil || !price.IsPositive() {
+		return decimal.Zero, fmt.Errorf("invalid frozen CNY unit price")
+	}
+	if s.Currency == "USD" {
+		return quantity.Mul(price), nil
+	}
+	rate, err := decimal.NewFromString(s.CNYPerUSD)
+	if err != nil || !rate.IsPositive() {
+		return decimal.Zero, fmt.Errorf("invalid frozen CNY/USD exchange rate")
+	}
+	return quantity.Mul(price).Div(rate), nil
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）
@@ -264,10 +418,11 @@ func (p *TaskPrivateData) Scan(val interface{}) error {
 }
 
 func (p TaskPrivateData) Value() (driver.Value, error) {
-	if p.Key == "" && p.UpstreamTaskID == "" && p.ResultURL == "" &&
+	if p.UpstreamBaseURL == "" && p.Key == "" && p.UpstreamTaskID == "" && p.ResultURL == "" &&
 		p.Execution == nil && p.BillingSource == "" && p.SubscriptionId == 0 &&
 		p.TokenId == 0 && p.NodeName == "" && p.BillingContext == nil &&
-		!p.ResponsesBackground && len(p.PluginState) == 0 && p.PollFailures == 0 {
+		!p.ResponsesBackground && len(p.PluginState) == 0 && p.PollFailures == 0 &&
+		len(p.OpsUsage) == 0 && p.SettledTokens == 0 {
 		return nil, nil
 	}
 	// PostgreSQL's simple protocol interprets []byte as bytea (\\x...),
@@ -293,6 +448,10 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 	properties := Properties{}
 	privateData := TaskPrivateData{}
 	if relayInfo != nil && relayInfo.ChannelMeta != nil {
+		privateData.UpstreamBaseURL = relayInfo.ChannelBaseUrl
+		if privateData.UpstreamBaseURL == "" {
+			privateData.UpstreamBaseURL = constant.GetChannelBaseURL(relayInfo.ChannelType)
+		}
 		if relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeGemini ||
 			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi ||
 			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeSeedanceDomestic ||
@@ -535,6 +694,12 @@ func (Task *Task) Insert() error {
 }
 
 func (Task *Task) InsertWithContext(ctx context.Context) error {
+	if Task.CNBillingKey != "" {
+		return cnInsertTask(ctx, Task)
+	}
+	if err := cnGuardLegacyTask(Task); err != nil {
+		return err
+	}
 	return DB.WithContext(ctx).Create(Task).Error
 }
 
@@ -577,16 +742,26 @@ func (t *Task) Snapshot() taskSnapshot {
 }
 
 func (Task *Task) Update() error {
+	if Task.CNBillingKey != "" {
+		_, err := cnUpdateTask(Task, nil)
+		return err
+	}
+	if err := cnGuardLegacyTask(Task); err != nil {
+		return err
+	}
 	var err error
 	err = DB.Save(Task).Error
 	return err
 }
 
 func (t *Task) UpdateQuota() error {
+	if t != nil && t.CNBillingKey != "" {
+		return ErrCNConflict
+	}
 	if t == nil || t.ID <= 0 {
 		return errors.New("task id is required to update quota")
 	}
-	result := DB.Model(&Task{}).Where("id = ?", t.ID).Update("quota", t.Quota)
+	result := DB.Model(&Task{}).Where("id = ? AND (cn_billing_key = ? OR cn_billing_key IS NULL)", t.ID, "").Update("quota", t.Quota)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -606,7 +781,10 @@ func (t *Task) UpdateQuota() error {
 // falls back to INSERT ON CONFLICT when the WHERE-guarded UPDATE matches
 // zero rows, which silently bypasses the CAS guard.
 func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
-	result := DB.Model(t).Where("status = ?", fromStatus).Select("*").Updates(t)
+	if t.CNBillingKey != "" {
+		return cnUpdateTask(t, &fromStatus)
+	}
+	result := DB.Model(t).Where("status = ? AND (cn_billing_key = ? OR cn_billing_key IS NULL)", fromStatus, "").Select("*").Updates(t)
 	if result.Error != nil {
 		return false, result.Error
 	}
@@ -624,6 +802,7 @@ func TaskBulkUpdateByID(ids []int64, params map[string]any) error {
 	}
 	return DB.Model(&Task{}).
 		Where("id in (?)", ids).
+		Where("cn_billing_key = ? OR cn_billing_key IS NULL", "").
 		Updates(params).Error
 }
 

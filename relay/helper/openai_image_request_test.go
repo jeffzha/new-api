@@ -55,6 +55,25 @@ func TestLegacyDalleValidationAndPricesRemainCompatible(t *testing.T) {
 	}
 }
 
+func TestSeedreamLiteImageSizeValidation(t *testing.T) {
+	for _, size := range []string{"", "2K", "2k", "3k", "4k", "2048x2048", "adaptive", "1024", "0x2048", "2Kx2K"} {
+		t.Run(size, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			body := fmt.Sprintf(`{"model":"doubao-seedream-5-0-lite","prompt":"circle","size":%q}`, size)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewBufferString(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			request, err := GetAndValidOpenAIImageRequest(c, relayconstant.RelayModeImagesGenerations)
+			switch size {
+			case "adaptive", "1024", "0x2048", "2Kx2K":
+				require.ErrorContains(t, err, "size must be 2K, 3K, 4K or WIDTHxHEIGHT")
+			default:
+				require.NoError(t, err)
+				assert.Equal(t, size, request.Size)
+			}
+		})
+	}
+}
+
 // TestGetAndValidOpenAIImageRequestMultipartStream verifies multipart image
 // edit parsing: the stream field is parsed and validated, and the request body
 // stays replayable for the upstream request.

@@ -1,0 +1,39 @@
+{
+  "approved": {
+    "applicant": "synthetic-applicant",
+    "approver": "synthetic-independent-reviewer",
+    "contentHash": "sha256:e19bff1d55e3b1cacc2778fd03c27244d74798c3de66f79814de5c6ddeb2b7ae",
+    "customerKeys": [
+      "1001"
+    ],
+    "exportable": true,
+    "gatewayId": "test-cn",
+    "id": "1b5cac45-07f4-4281-a5a3-69b6ca29818e",
+    "integrityEpoch": "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+    "inventoryId": "1b5cac45-07f4-4281-a5a3-69b6ca29818e",
+    "status": "approved",
+    "streamEpoch": "0f097a8f-7ff9-4eb4-a666-daf1e1fa9700",
+    "version": 2
+  },
+  "databaseSha256": "eeda29ab281b37b0f2fd0056a727e174e88645992c268b2163303b51a04a9891",
+  "financialGrants": 0,
+  "frozen": {
+    "applicant": "synthetic-applicant",
+    "approver": null,
+    "contentHash": "sha256:8986660bd2ebf6ac2bb336598a672b41f7f95f7d0ee3f13d1ea4f518165e4b3b",
+    "customerKeys": [
+      "1001"
+    ],
+    "exportable": false,
+    "gatewayId": "test-cn",
+    "id": "1b5cac45-07f4-4281-a5a3-69b6ca29818e",
+    "integrityEpoch": "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+    "inventoryId": "1b5cac45-07f4-4281-a5a3-69b6ca29818e",
+    "status": "submitted",
+    "streamEpoch": "0f097a8f-7ff9-4eb4-a666-daf1e1fa9700",
+    "version": 1
+  },
+  "opsDatabase": "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\ops-review.sqlite3",
+  "productionEligibility": false,
+  "syntheticIntegration": true
+}

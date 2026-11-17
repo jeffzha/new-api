@@ -1,0 +1,30 @@
+=== RUN   TestCNIntegrityWireVectors
+=== RUN   TestCNIntegrityWireVectors/number-sample
+=== RUN   TestCNIntegrityWireVectors/negative-zero-and-boundaries
+=== RUN   TestCNIntegrityWireVectors/utf16-property-order
+=== RUN   TestCNIntegrityWireVectors/unicode-not-normalized
+=== RUN   TestCNIntegrityWireVectors/numbers
+=== RUN   TestCNIntegrityWireVectors/unicode-key-order
+=== RUN   TestCNIntegrityWireVectors/strings
+=== RUN   TestCNIntegrityWireVectors/snapshots
+=== RUN   TestCNIntegrityWireVectors/sequence-strings
+=== RUN   TestCNIntegrityWireVectors/native-chain-wallet
+=== RUN   TestCNIntegrityWireVectors/native-chain-unicode
+=== RUN   TestCNIntegrityWireVectors/native-lineage-wallet
+--- PASS: TestCNIntegrityWireVectors (0.00s)
+    --- PASS: TestCNIntegrityWireVectors/number-sample (0.00s)
+    --- PASS: TestCNIntegrityWireVectors/negative-zero-and-boundaries (0.00s)
+    --- PASS: TestCNIntegrityWireVectors/utf16-property-order (0.00s)
+    --- PASS: TestCNIntegrityWireVectors/unicode-not-normalized (0.00s)
+    --- PASS: TestCNIntegrityWireVectors/numbers (0.00s)
+    --- PASS: TestCNIntegrityWireVectors/unicode-key-order (0.00s)
+    --- PASS: TestCNIntegrityWireVectors/strings (0.00s)
+    --- PASS: TestCNIntegrityWireVectors/snapshots (0.00s)
+    --- PASS: TestCNIntegrityWireVectors/sequence-strings (0.00s)
+    --- PASS: TestCNIntegrityWireVectors/native-chain-wallet (0.00s)
+    --- PASS: TestCNIntegrityWireVectors/native-chain-unicode (0.00s)
+    --- PASS: TestCNIntegrityWireVectors/native-lineage-wallet (0.00s)
+PASS
+ok  	github.com/QuantumNous/new-api/model	0.908s
+PASS Python rfc8785: 8 shared canonical bytes/hash vectors
+PASS Python rfc8785: 4 unchanged S5 RFC vectors

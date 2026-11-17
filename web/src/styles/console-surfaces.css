@@ -488,6 +488,11 @@ body:is(
     line-height: 1.5;
     color: var(--muted-foreground);
   }
+  .wallet-balance-breakdown {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    font-family: inherit;
+    line-height: 1.4;
+  }
   .console-wallet-operations {
     min-width: 0;
     flex: 1;
@@ -1093,8 +1098,18 @@ body:is(
       border-bottom: 1px solid var(--border);
     }
     .console-wallet-stat:first-child .console-wallet-stat-value {
+      flex: 1 1 100%;
+      min-width: 0;
       margin-top: 0;
       font-size: 28px;
+    }
+    .wallet-balance-breakdown {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .console-wallet-stat:first-child .wallet-balance-breakdown {
+      flex: 1 1 100%;
+      width: 100%;
+      margin-top: 4px;
     }
     .console-wallet-stat-note {
       display: none;

@@ -146,5 +146,15 @@ export function usePlaygroundOptions({
 
   return {
     isLoadingModels,
+    canChat:
+      !isLoadingModels &&
+      !isModelsError &&
+      Boolean(
+        currentGroup &&
+        modelsData?.some(
+          (model) =>
+            model.value === currentModel && model.chatSupported !== false
+        )
+      ),
   }
 }

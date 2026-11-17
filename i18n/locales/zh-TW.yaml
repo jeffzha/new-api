@@ -112,6 +112,10 @@ user.telegram_id_empty: "Telegram id 為空！"
 user.telegram_not_bound: "該 Telegram 帳號未綁定"
 user.linux_do_id_empty: "Linux DO id 為空！"
 user.quota_change_zero: "額度變更量不能為0"
+user.quota_provisioning: "此帳號正在遷移資金帳本，暫時無法調整餘額，請稍後重試。"
+user.quota_grant_unavailable: "本次減少或覆寫金額超過可撤回的未使用贈送額度。此入口僅支援撤回管理員贈送及遷移保留的非付款額度；實付餘額請走退款流程，兌換碼等其他來源額度請使用對應撤銷流程。餘額未修改。"
+user.quota_balance_reserved: "本次調整涉及已凍結或已預留的資金，請先完成對應退款或結算，再調整餘額。餘額未修改。"
+user.quota_funding_unavailable: "此帳號資金帳本暫時無法使用，為避免餘額與帳本不一致，本次未修改餘額，請聯絡管理員查核。"
 
 # Quota messages
 quota.negative: "額度不能為負數！"

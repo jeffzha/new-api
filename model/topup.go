@@ -37,6 +37,8 @@ type TopUp struct {
 	Status                  string `json:"status"`
 	PaymentSnapshot         string `json:"-" gorm:"type:text"`
 	QuotaConversionSnapshot string `json:"-" gorm:"type:text"`
+	InvoiceReservedCents    int64  `json:"-" gorm:"not null;default:0;index"`
+	InvoiceIssuedCents      int64  `json:"-" gorm:"not null;default:0;index"`
 }
 
 func (topUp *TopUp) creditedQuotaOr(defaultQuota int, defaultErr error) (int, error) {
@@ -177,12 +179,35 @@ func creditTopUpQuotaWithFunding(tx *gorm.DB, userId int, creditedQuota int, upd
 			return err
 		}
 	}
+	captureSupported := true
+	if billingMode != AgencyDurableBillingMode {
+		if err := cnBeginIntegrityCaptureTx(tx, userId); err != nil {
+			return err
+		}
+		if value, exists := tx.Statement.Settings.Load(cnIntegrityCaptureScopeKey); exists {
+			var native TopUp
+			err := lockForUpdate(tx).Where("trade_no = ? AND user_id = ? AND status = ?", sourceID, userId, common.TopUpStatusSuccess).First(&native).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			if errors.Is(err, gorm.ErrRecordNotFound) || sourceID == "" {
+				captureSupported = false
+				if err := cnInvalidateIntegrityUserTx(tx, userId); err != nil {
+					return err
+				}
+			}
+			delete(value.(*cnIntegrityCaptureScope).BeforeRows, CNIdentity("topup", sourceID))
+		}
+		if err := cnWalletValueTopupTx(tx, userId, int64(creditedQuota), sourceID, snapshots); err != nil {
+			return err
+		}
+	}
 
 	updateFields := make(map[string]any, len(updates)+1)
 	maps.Copy(updateFields, updates)
 	updateFields["quota"] = gorm.Expr("quota + ?", creditedQuota)
 
-	result := tx.Model(&User{}).
+	result := cnWalletValueWrite(tx).Model(&User{}).
 		Where("id = ? AND quota <= ?", userId, maxCurrentQuota).
 		Updates(updateFields)
 	if result.Error != nil {
@@ -196,7 +221,18 @@ func creditTopUpQuotaWithFunding(tx *gorm.DB, userId int, creditedQuota int, upd
 		if len(snapshots) == 1 && snapshots[0] != nil {
 			actorID = snapshots[0].InitiatedByUserID
 		}
-		return RecordAgencyTopupWithActor(tx, int64(userId), sourceKind, sourceID, "payment_callback", int64(creditedQuota), 0, actorID, snapshots...)
+		if err := RecordAgencyTopupWithActor(tx, int64(userId), sourceKind, sourceID, "payment_callback", int64(creditedQuota), 0, actorID, snapshots...); err != nil {
+			return err
+		}
+		if billingMode != AgencyDurableBillingMode && captureSupported {
+			if _, capturing := tx.Statement.Settings.Load(cnIntegrityCaptureScopeKey); capturing {
+				if err := tx.Model(&TopUp{}).Where("trade_no = ? AND user_id = ? AND credited_quota = ? AND status = ?", sourceID, userId, 0, common.TopUpStatusSuccess).Update("credited_quota", creditedQuota).Error; err != nil {
+					return err
+				}
+			}
+			return cnFinishIntegrityCaptureTx(tx, userId, "topup", sourceID)
+		}
+		return nil
 	}
 
 	var count int64
@@ -336,7 +372,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string, p
 	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "epay topup")
 
 	common.SysLog(fmt.Sprintf("易支付充值成功 trade_no=%s user_id=%d quota_to_add=%d money=%.2f", topUp.TradeNo, topUp.UserId, quotaToAdd, topUp.Money))
-	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%f", logger.LogQuota(quotaToAdd), topUp.Money), callerIp, topUp.PaymentMethod, PaymentProviderEpay)
+	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%f", logger.LogQuota(quotaToAdd), topUp.Money), callerIp, topUp.PaymentMethod, PaymentProviderEpay, quotaToAdd, topUp.TradeNo)
 	return false, nil
 }
 
@@ -403,7 +439,7 @@ func Recharge(referenceId string, customerId string, callerIp string, payment ..
 	}
 	syncCreditUserQuotaCache(topUp.UserId, quota, "stripe topup")
 
-	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%d", logger.FormatQuota(quota), topUp.Amount), callerIp, topUp.PaymentMethod, PaymentMethodStripe)
+	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%d", logger.FormatQuota(quota), topUp.Amount), callerIp, topUp.PaymentMethod, PaymentMethodStripe, quota, topUp.TradeNo)
 
 	return nil
 }
@@ -640,7 +676,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 
 	// 事务外记录日志，避免阻塞
 	syncCreditUserQuotaCache(userId, quotaToAdd, "manual topup")
-	RecordTopupLog(userId, fmt.Sprintf("管理员补单成功，充值金额: %v，支付金额：%f", logger.FormatQuota(quotaToAdd), payMoney), callerIp, paymentMethod, "admin")
+	RecordTopupLog(userId, fmt.Sprintf("管理员补单成功，充值金额: %v，支付金额：%f", logger.FormatQuota(quotaToAdd), payMoney), callerIp, paymentMethod, "admin", quotaToAdd, tradeNo)
 	return nil
 }
 func RechargeCreem(referenceId string, customerEmail string, customerName string, callerIp string, payment ...*TopupPaymentSnapshot) (err error) {
@@ -722,7 +758,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	}
 	syncCreditUserQuotaCache(topUp.UserId, quota, "creem topup")
 
-	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用Creem充值成功，充值额度: %v，支付金额：%.2f", quota, topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodCreem)
+	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用Creem充值成功，充值额度: %v，支付金额：%.2f", quota, topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodCreem, quota, topUp.TradeNo)
 
 	return nil
 }
@@ -789,7 +825,7 @@ func RechargeWaffo(tradeNo string, callerIp string, payment ...*TopupPaymentSnap
 	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "waffo topup")
 
 	if quotaToAdd > 0 {
-		RecordTopupLog(topUp.UserId, fmt.Sprintf("Waffo充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodWaffo)
+		RecordTopupLog(topUp.UserId, fmt.Sprintf("Waffo充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodWaffo, quotaToAdd, topUp.TradeNo)
 	}
 
 	return nil
@@ -857,7 +893,7 @@ func RechargeWaffoPancake(tradeNo string, payment ...*TopupPaymentSnapshot) (err
 	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "waffo pancake topup")
 
 	if quotaToAdd > 0 {
-		RecordLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("Waffo Pancake充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money))
+		RecordQuotaLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("Waffo Pancake充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money), quotaToAdd, LogQuotaSourceOnlineTopup, false, map[string]any{"trade_no": topUp.TradeNo})
 	}
 
 	return nil

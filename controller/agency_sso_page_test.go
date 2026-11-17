@@ -43,7 +43,7 @@ func TestAgencySSOPageOriginAllowlistAndPayload(t *testing.T) {
 	require.Contains(t, body, "new-api-agency-sso")
 	require.Contains(t, body, "/api/user/auth/refresh")
 	require.NotContains(t, body, "localStorage")
-	require.Contains(t, body, "'Authorization':'Bearer '+token")
+	require.Contains(t, body, "'Authorization':'Bearer '+auth.access_token")
 	require.Equal(t, "", rec.Header().Get("X-Frame-Options"))
 	require.Contains(t, rec.Header().Get("Content-Security-Policy"), "frame-ancestors http://127.0.0.1:3201")
 }
@@ -67,4 +67,34 @@ func TestAgencyVerificationBridgeRequiresAllowedParent(t *testing.T) {
 			require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
 		}
 	}
+}
+
+func TestAgencyLinkBridgeRequiresAllowedParentAndUsesDedicatedProofEndpoint(t *testing.T) {
+	t.Setenv("AGENCY_SSO_ALLOWED_ORIGIN", "https://hub.example")
+	router := gin.New()
+	router.GET("/api/agency/sso", AgencySSOPage)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/agency/sso?mode=link&origin=https://hub.example", nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"mode":"link"`)
+	require.Contains(t, recorder.Body.String(), "/api/agency/link-proof")
+	require.Contains(t, recorder.Body.String(), "agency-hub-account-link")
+	require.Contains(t, recorder.Body.String(), "new-api-agency-link")
+	require.Contains(t, recorder.Body.String(), "确认关联此账号")
+	require.Contains(t, recorder.Body.String(), "切换账号")
+	require.Contains(t, recorder.Body.String(), "data.user?.username")
+	require.Contains(t, recorder.Body.String(), "window.opener")
+	require.Contains(t, recorder.Body.String(), "/api/user/auth/logout")
+	require.Contains(t, recorder.Body.String(), "切换账号失败")
+	require.Contains(t, recorder.Body.String(), "/sign-in")
+	require.Contains(t, recorder.Body.String(), "document.getElementById('confirm').addEventListener")
+	require.NotContains(t, recorder.Body.String(), "localStorage")
+	require.NotContains(t, recorder.Body.String(), "url.searchParams.set('proof'")
+	require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+	require.Contains(t, recorder.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'")
+
+	blocked := httptest.NewRecorder()
+	router.ServeHTTP(blocked, httptest.NewRequest(http.MethodGet, "/api/agency/sso?mode=link&origin=https://evil.example", nil))
+	require.Equal(t, http.StatusForbidden, blocked.Code)
 }

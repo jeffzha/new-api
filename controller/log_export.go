@@ -103,6 +103,18 @@ func writeLogExport(c *gin.Context, params model.LogExportParams) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "不支持的账单格式"})
 		return
 	}
+	select {
+	case logExportSlot <- struct{}{}:
+		defer func() { <-logExportSlot }()
+	default:
+		c.Header("Retry-After", "30")
+		c.JSON(http.StatusTooManyRequests, gin.H{"success": false, "message": "当前有账单正在生成，请稍后再试"})
+		return
+	}
+	if format == "csv" || format == "xlsx" {
+		writeStreamingLogExport(c, params, format)
+		return
+	}
 	document, err := loadLogExportDocument(params)
 	if err != nil {
 		status := http.StatusInternalServerError

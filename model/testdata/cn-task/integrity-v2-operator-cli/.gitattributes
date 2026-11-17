@@ -1,0 +1,2 @@
+# Keep retained raw wire bytes and evidence fingerprints unchanged by checkout.
+* -text

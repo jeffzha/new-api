@@ -34,6 +34,7 @@ func TestAgencyCoreLifecycleFromInvitationToAuthenticatedCommissionReport(t *tes
 	for _, components := range []bool{false, true} {
 		t.Run("component_billing_"+strconv.FormatBool(components), func(t *testing.T) {
 			db, app := setupAgencyInviteControllerTest(t)
+			seedControllerPlatformPricing(t, db, agencycontract.PlatformModelPrice{OriginModelName: "agency-public-model", AgencyCostBPS: 7500, DefaultSalesBPS: 9000})
 			t.Setenv("AGENCY_COMPONENT_BILLING_ENABLED", strconv.FormatBool(components))
 			require.NoError(t, db.AutoMigrate(&model.TopUp{}, &model.Log{}, &model.Channel{}))
 			priorQuotaPerUnit, priorPreConsumed := common.QuotaPerUnit, common.PreConsumedQuota
@@ -310,6 +311,7 @@ func TestAgencyCoreTextSettlementUsesUnroundedModelBasis(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			db, app := setupAgencyInviteControllerTest(t)
+			seedControllerPlatformPricing(t, db, agencycontract.PlatformModelPrice{OriginModelName: "agency-small-model", AgencyCostBPS: 7500, DefaultSalesBPS: 9000})
 			t.Setenv("AGENCY_COMPONENT_BILLING_ENABLED", "false")
 			require.NoError(t, db.AutoMigrate(&model.Log{}, &model.Channel{}))
 			previousModelRatios := ratio_setting.ModelRatio2JSONString()

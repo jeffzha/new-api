@@ -154,6 +154,13 @@ interface Customer {
   agency_account?: string;
   effective_at_ms: string;
   revision: string;
+  // Read-only credit position granted by the super administrator. Agents
+  // never edit it; they only see how much of it their customers consumed.
+  credit_configured?: boolean;
+  credit_status?: string;
+  credit_limit?: number;
+  credit_used_quota?: number;
+  credit_available_quota?: number;
 }
 interface SyncStatus {
   schema: { ready: boolean };
@@ -170,7 +177,29 @@ export function OverviewPage({ identity }: { identity: Identity }) {
   const balances = useQuery<{ items: CommissionBalance[] }>(
     identity.agency_id ? "/commissions/summary" : null,
   );
-  if (!identity.agency_id) return <SyncStatusView />;
+  const root = identity.actor_type === "root" && !identity.agency_id;
+  const customers = useQuery<Page<Customer>>(root ? "/root/customers?page_size=1" : null);
+  const agencies = useQuery<Page<{ id: string | number }>>(root ? "/root/agencies?page_size=1" : null);
+  const [statusRevision, setStatusRevision] = useState(0);
+  if (root) {
+    return (
+      <section>
+        <PageHeader icon="overview" title={t("Overview")} description={t("Live health checks for services, queues and data")} actions={
+          <button type="button" className="secondary button-icon" onClick={() => {
+            customers.reload();
+            agencies.reload();
+            setStatusRevision((value) => value + 1);
+          }}><ActionIcon name="refresh" />{t("Refresh")}</button>
+        } />
+        <ErrorNotice error={customers.error || agencies.error} />
+        <div className="metrics commission-metrics">
+          <article><span>{t("Agencies")}</span><strong>{agencies.data?.total ?? "—"}</strong></article>
+          <article><span>{t("Customers")}</span><strong>{customers.data?.total ?? "—"}</strong></article>
+        </div>
+        <SyncStatusView key={statusRevision} />
+      </section>
+    );
+  }
   return (
     <section>
       <PageHeader icon="overview" title={t("Overview")} description={t("Review commission balances and account performance at a glance.")} actions={<button type="button" className="secondary button-icon" onClick={balances.reload}>
@@ -282,7 +311,22 @@ export function CustomersPage({
               rows={query.data?.items || []}
               rowKey={(row) => String(row.user_id)}
               columns={[
-                { key: "account_name", label: "Customer account" },
+                { key: "username", label: "Customer account" },
+                {
+                  key: "credit_limit",
+                  label: "Credit limit",
+                  render: (row: Customer) => (row.credit_configured ? formatYuan(row.credit_limit) : "—"),
+                },
+                {
+                  key: "credit_used_quota",
+                  label: "Used credit",
+                  render: (row: Customer) => (row.credit_configured ? formatYuan(row.credit_used_quota) : "—"),
+                },
+                {
+                  key: "credit_available_quota",
+                  label: "Available credit",
+                  render: (row: Customer) => (row.credit_configured ? formatYuan(row.credit_available_quota) : "—"),
+                },
                 ...(global ? [{
                   key: "agency_name",
                   label: "Agency",
@@ -449,6 +493,12 @@ function PagedReport({ path, columns }: { path: string; columns: Column<Row>[] }
           <ActionIcon name="refresh" />
           {t("Refresh")}
         </button>
+        {cursor && (
+          <button type="button" className="secondary button-icon" onClick={() => setCursor("")}>
+            <ActionIcon name="arrow-left" />
+            {t("Back to latest")}
+          </button>
+        )}
       </div>
       <ErrorNotice error={query.error} />
       {query.loading ? <Loading /> : <DataTable rows={query.data?.items || []} columns={columns} />}
@@ -557,13 +607,13 @@ function SyncStatusView() {
   const capabilityCount = query.data ? Object.keys(query.data.capabilities).length : 0;
   const capabilityPercent = capabilityCount ? Math.round((enabledCount / capabilityCount) * 100) : 0;
   const pendingCount = query.data
-    ? Object.values(query.data.backlog.deliveries || {}).reduce(
-        (sum, value) => sum + Number(value || 0),
+    ? Object.entries(query.data.backlog.deliveries || {}).reduce(
+        (sum, [status, value]) => sum + (["pending", "retry", "claimed", "poison"].includes(status) ? Number(value || 0) : 0),
         0,
       )
     : 0;
   return (
-    <section>
+    <section className="overview-service-status">
       <PageHeader icon="status" title={t("Service status")} description={t("Live health checks for services, queues and data")} actions={<button type="button" className="secondary button-icon" onClick={query.reload}>
           <ActionIcon name="refresh" />
           {t("Refresh")}
@@ -624,7 +674,6 @@ export function SyncPage() {
   const mutation = useMutation();
   const [error, setError] = useState<unknown>(null);
   const [revision, setRevision] = useState(0);
-  const [statusRevision, setStatusRevision] = useState(0);
   async function run() {
     setError(null);
     try {
@@ -644,7 +693,6 @@ export function SyncPage() {
   }
   return (
     <section>
-      <SyncStatusView key={`${revision}:${statusRevision}`} />
       <div className="reconciliation-page-header">
       <PageHeader icon="sync" title={t("Reconciliation")} description={t("Run checks to compare current records and resolve discrepancies.")} actions={<button className="button-icon" type="button" disabled={mutation.pending} onClick={() => void run()}>
           <ActionIcon name="refresh" />
@@ -659,7 +707,7 @@ export function SyncPage() {
       <ErrorNotice error={error} />
       <ReconciliationIssues
         key={revision}
-        onChanged={() => setStatusRevision((value) => value + 1)}
+        onChanged={() => setRevision((value) => value + 1)}
       />
       <ReconciliationRuns key={`runs:${revision}`} />
     </section>

@@ -114,11 +114,11 @@ export function AgentStore() {
 
   const categories = useMemo(
     () =>
-      Array.from(
+      [...
         new Set(
           catalogItems.map((item) => item.category.trim()).filter(Boolean)
         )
-      ).sort((left, right) => left.localeCompare(right)),
+      ].sort((left, right) => left.localeCompare(right)),
     [catalogItems]
   )
 

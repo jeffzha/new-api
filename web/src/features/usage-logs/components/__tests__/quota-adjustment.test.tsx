@@ -63,6 +63,8 @@ vi.hoisted(() => {
 afterAll(() => vi.unstubAllGlobals())
 
 function QuotaLogPreview(props: { log: UsageLog }) {
+  // TanStack Table intentionally returns a mutable table instance.
+  // eslint-disable-next-line react/incompatible-library
   const table = useReactTable({
     data: [props.log],
     columns: useCommonLogsColumns(false, false),
@@ -73,9 +75,11 @@ function QuotaLogPreview(props: { log: UsageLog }) {
     .rows[0].getAllCells()
     .find((item) => item.column.id === 'content')
   if (!cell) throw new Error('The quota log must have a content column')
+  const timeCell = table.getRowModel().rows[0].getAllCells()[0]
 
   return (
     <>
+      {flexRender(timeCell.column.columnDef.cell, timeCell.getContext())}
       {flexRender(cell.column.columnDef.cell, cell.getContext())}
       <DetailsDialog
         log={props.log}
@@ -161,6 +165,7 @@ describe('quota adjustment log localization', () => {
         user_id: 1,
         created_at: 1,
         type: 1,
+        display_type: 8,
         content: 'English export fallback',
         username: 'quota-user',
         token_name: '',
@@ -191,14 +196,22 @@ describe('quota adjustment log localization', () => {
 
       // The modal makes the table preview inert, but both remain rendered.
       expect(screen.getAllByText(scenario.english)).toHaveLength(2)
+      expect(screen.getAllByText('Quota Adjustment')).toHaveLength(2)
       expect(
         within(screen.getByRole('dialog')).getByText(scenario.english)
       ).toBeInTheDocument()
+      expect(
+        within(screen.getByRole('dialog')).getByText('Quota Adjustment')
+      ).toBeVisible()
       await act(() => i18n.changeLanguage('zh'))
       expect(screen.getAllByText(scenario.chinese)).toHaveLength(2)
+      expect(screen.getAllByText('额度调整')).toHaveLength(2)
       expect(
         within(screen.getByRole('dialog')).getByText(scenario.chinese)
       ).toBeInTheDocument()
+      expect(
+        within(screen.getByRole('dialog')).getByText('额度调整')
+      ).toBeVisible()
       expect(screen.queryByText('English export fallback')).toBeNull()
       if ('target_user_id' in scenario.params) {
         const dialog = within(screen.getByRole('dialog'))

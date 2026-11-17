@@ -20,7 +20,11 @@ import { describe, expect, test } from 'vitest'
 
 import type { AuthUser } from '@/stores/auth-store'
 
-import { getSavedLanguage, sanitizeAuthRedirect } from './auth-redirect'
+import {
+  getSavedLanguage,
+  requiresDocumentAuthRedirect,
+  sanitizeAuthRedirect,
+} from './auth-redirect'
 
 const origin = 'https://dashboard.example.com'
 
@@ -57,6 +61,16 @@ describe('authentication redirect validation', () => {
   test('rejects invalid or non-HTTP application origins', () => {
     expect(sanitizeAuthRedirect('/dashboard', 'not-an-origin')).toBe(null)
     expect(sanitizeAuthRedirect('/dashboard', 'file:///tmp/app')).toBe(null)
+  })
+
+  test('reloads the document only for the agency account authorization bridge', () => {
+    expect(
+      requiresDocumentAuthRedirect(
+        '/api/agency/sso?mode=link&origin=https%3A%2F%2Fhub.example'
+      )
+    ).toBe(true)
+    expect(requiresDocumentAuthRedirect('/api/agency/sso-ticket')).toBe(false)
+    expect(requiresDocumentAuthRedirect('/dashboard')).toBe(false)
   })
 })
 

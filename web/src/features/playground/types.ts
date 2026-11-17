@@ -158,6 +158,8 @@ export interface ParameterEnabled {
 export interface ModelOption {
   label: string
   value: string
+  category?: 'Text' | 'Video' | 'Image' | 'Audio' | 'Embedding'
+  chatSupported?: boolean
 }
 
 export interface GroupOption {

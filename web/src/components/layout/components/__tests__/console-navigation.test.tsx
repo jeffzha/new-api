@@ -151,7 +151,7 @@ describe('Shared console navigation', () => {
         within(screen.getByRole('navigation', { name: 'Personal' }))
           .getAllByRole('link')
           .map((link) => link.textContent)
-      ).toEqual(['Wallet', 'Profile', 'Security & Access'])
+      ).toEqual(['Wallet', 'My Invoices', 'Profile', 'Security & Access'])
       expect(
         within(screen.getByRole('navigation', { name: 'Admin' }))
           .getAllByRole('link')
@@ -162,6 +162,8 @@ describe('Shared console navigation', () => {
         'Users',
         'Redemption Codes',
         'Subscriptions',
+        'Invoice Review',
+        'Credit & statements',
         'Model mock scheduling',
         'System Info',
         'Workbench administration',

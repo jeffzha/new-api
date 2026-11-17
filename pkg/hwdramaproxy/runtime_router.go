@@ -37,6 +37,7 @@ type compiledRoute struct {
 type compiledRouteAction struct {
 	method string
 	path   string
+	action string
 }
 
 type runtimeRouteKey struct {
@@ -61,6 +62,7 @@ type RouteMatch struct {
 	UpstreamSecretKey  string
 	UpstreamMethod     string
 	UpstreamPath       string
+	UpstreamAction     string
 	AssetNamespaceID   string
 	AssetScopeID       string
 	UpstreamAuthHeader string
@@ -113,11 +115,11 @@ func BuildRuntimeRouter(config *RoutesConfig, secretLookup func(string) string) 
 			if upstreamAPIKey == "" {
 				return nil, fmt.Errorf("route %s upstream api key env %s is empty", route.Name, route.UpstreamAPIKeyEnv)
 			}
-		case UpstreamAuthTypeMobileCloudAKSK:
+		case UpstreamAuthTypeMobileCloudAKSK, UpstreamAuthTypeVolcengineAKSK:
 			upstreamAccessKey = strings.TrimSpace(secretLookup(route.UpstreamAccessKeyEnv))
 			upstreamSecretKey = strings.TrimSpace(secretLookup(route.UpstreamSecretKeyEnv))
 			if upstreamAccessKey == "" || upstreamSecretKey == "" {
-				return nil, fmt.Errorf("route %s mobile cloud AK/SK credentials are empty", route.Name)
+				return nil, fmt.Errorf("route %s AK/SK credentials are empty", route.Name)
 			}
 		}
 		routeActions := make(map[string]compiledRouteAction, len(route.EnabledActions))
@@ -136,6 +138,7 @@ func BuildRuntimeRouter(config *RoutesConfig, secretLookup func(string) string) 
 			routeActions[actionKey] = compiledRouteAction{
 				method: method,
 				path:   path,
+				action: action.UpstreamAction,
 			}
 		}
 		compiled := compiledRoute{
@@ -249,6 +252,7 @@ func (router *RuntimeRouter) Match(apiKeyID int, model string, action ActionMatc
 		UpstreamSecretKey:  matched.upstreamSecretKey,
 		UpstreamMethod:     routeAction.method,
 		UpstreamPath:       upstreamPath,
+		UpstreamAction:     routeAction.action,
 		AssetNamespaceID:   matched.assetNamespaceID,
 		AssetScopeID:       matched.assetScopeID,
 		UpstreamAuthHeader: matched.upstreamAuthHeader,

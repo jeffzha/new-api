@@ -21,6 +21,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	seedancepricing "github.com/QuantumNous/new-api/setting/seedance_video_pricing"
 	"github.com/QuantumNous/new-api/types"
 
@@ -187,7 +188,18 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 	default:
 		effectiveResolution = "720p"
 	}
-	unitPrice, ok := seedancepricing.GetUnitPriceUSD(info.OriginModelName, resolution, hasVideo)
+	getPrice := seedancepricing.GetUnitPriceUSD
+	currency, provider := "USD", model.TaskBillingProviderDoubaoVideoUSD
+	exchangeRate := 1.0
+	if info.OriginModelName == seedancepricing.MiniSeedanceModel {
+		getPrice = seedancepricing.GetUnitPriceCNY
+		currency, provider = "CNY", model.TaskBillingProviderDoubaoVideoCNY
+		exchangeRate = operation_setting.USDExchangeRate
+		if exchangeRate <= 0 || math.IsNaN(exchangeRate) || math.IsInf(exchangeRate, 0) {
+			return nil, service.TaskErrorWrapperLocal(fmt.Errorf("USD exchange rate must be positive"), "model_price_error", http.StatusInternalServerError)
+		}
+	}
+	unitPrice, ok := getPrice(info.OriginModelName, resolution, hasVideo)
 	if !ok {
 		return nil, service.TaskErrorWrapperLocal(
 			fmt.Errorf("USD price is not configured for model %s at resolution %s", info.OriginModelName, resolution),
@@ -266,8 +278,9 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 		Ceil().
 		IntPart()
 	snapshot := &model.TaskProviderBillingSnapshot{
-		Provider:                    model.TaskBillingProviderDoubaoVideoUSD,
-		Currency:                    "USD",
+		Provider:                    provider,
+		Currency:                    currency,
+		CNYPerUSD:                   decimal.NewFromFloat(exchangeRate).String(),
 		UnitPricePerMillionTokens:   unitPrice.String(),
 		GroupRatio:                  groupRatio,
 		Resolution:                  effectiveResolution,
@@ -284,7 +297,7 @@ func (a *TaskAdaptor) EstimateTaskBilling(c *gin.Context, info *relaycommon.Rela
 	}
 	return &channel.TaskBillingEstimate{
 		PriceData: types.PriceData{
-			ModelPrice:     unitPrice.InexactFloat64(),
+			ModelPrice:     unitPrice.Div(decimal.NewFromFloat(exchangeRate)).InexactFloat64(),
 			Quota:          quota,
 			FreeModel:      groupRatio == 0,
 			GroupRatioInfo: info.PriceData.GroupRatioInfo,
@@ -335,9 +348,8 @@ func (a *TaskAdaptor) AdjustBillingOnCompleteChecked(task *model.Task, taskResul
 	if bc == nil {
 		return 0, nil, false, nil
 	}
-	if snapshot := bc.ProviderBilling; snapshot != nil &&
-		(snapshot.Provider == model.TaskBillingProviderDoubaoVideoUSD || snapshot.Provider == model.TaskBillingProviderDoubaoVideoCNY) {
-		if taskResult.TotalTokens <= 0 {
+	if snapshot := bc.ProviderBilling; snapshot != nil && (snapshot.Provider == model.TaskBillingProviderDoubaoVideoCNY || snapshot.Provider == model.TaskBillingProviderDoubaoVideoUSD) {
+		if taskResult.TotalTokens <= 0 && snapshot.BillingUnit != "request" {
 			return 0, nil, true, fmt.Errorf("Doubao Video succeeded without usage.total_tokens")
 		}
 		quota, clamp, err := taskcommon.QuotaFromProviderPerMillionTokens(int64(taskResult.TotalTokens), snapshot)
@@ -439,7 +451,7 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *taskdto.TaskError) {
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		taskErr = service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
+		taskErr = service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusBadGateway)
 		return
 	}
 	_ = resp.Body.Close()
@@ -447,12 +459,12 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	// Parse Doubao response
 	var dResp responsePayload
 	if err := common.Unmarshal(responseBody, &dResp); err != nil {
-		taskErr = service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
+		taskErr = service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusBadGateway)
 		return
 	}
 
 	if dResp.ID == "" {
-		taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
+		taskErr = service.TaskErrorWrapper(fmt.Errorf("upstream returned no task id"), "invalid_response", http.StatusBadGateway)
 		return
 	}
 
@@ -469,14 +481,14 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 func (a *TaskAdaptor) ParseResponse(_ *gin.Context, resp *http.Response, _ *relaycommon.RelayInfo) (*channel.TaskSubmitResponse, *taskdto.TaskError) {
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
+		return nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusBadGateway)
 	}
 	var result responsePayload
 	if err := common.Unmarshal(responseBody, &result); err != nil {
-		return nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
+		return nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusBadGateway)
 	}
 	if strings.TrimSpace(result.ID) == "" {
-		return nil, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
+		return nil, service.TaskErrorWrapper(fmt.Errorf("upstream returned no task id"), "invalid_response", http.StatusBadGateway)
 	}
 	return &channel.TaskSubmitResponse{UpstreamTaskID: result.ID, TaskData: responseBody}, nil
 }

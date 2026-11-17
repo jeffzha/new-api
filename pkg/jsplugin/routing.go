@@ -226,6 +226,7 @@ type PinnedEndpoint struct {
 	Model       string
 	MappedModel string
 	Candidates  []ProtocolBinding
+	Rejected    map[string]string
 }
 
 // RouteRequestContext is the canonical request view exposed to declarative

@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencyhub"
 	"github.com/joho/godotenv"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -48,6 +49,32 @@ func run() error {
 		common.SysLog("Agency Hub migration completed")
 		return nil
 	}
+	if command == "migrate-writer-fence" {
+		if err := model.MigrateAgencyWriterFence(model.DB); err != nil {
+			return err
+		}
+		common.SysLog("Agency Hub writer fence migration completed")
+		return nil
+	}
+	if command == "migrate-consumer-prefix" {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		db := model.DB.WithContext(ctx)
+		if db.Dialector.Name() == "postgres" {
+			return db.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Exec("SET LOCAL lock_timeout = '2s'").Error; err != nil {
+					return err
+				}
+				return model.MigrateAgencyConsumerPrefix(tx)
+			})
+		}
+		return model.MigrateAgencyConsumerPrefix(db)
+	}
+	if command == "warm-consumer-prefix" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		return agencyhub.New(model.DB, nil, config).WarmConsumerPrefixes(ctx)
+	}
 	if command == "reconcile" {
 		app := agencyhub.New(model.DB, nil, config)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -64,13 +91,57 @@ func run() error {
 		return nil
 	}
 	if command != "serve" {
-		return fmt.Errorf("unknown command %q; expected serve, migrate, or reconcile", command)
+		if command == "recover-pricing-sources" {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			rootID, _ := strconv.ParseInt(os.Getenv("AGENCY_PRICING_REPAIR_ROOT_ID"), 10, 64)
+			report, err := agencyhub.New(model.DB, nil, config).RecoverPricingSources(ctx, os.Getenv("AGENCY_PRICING_REPAIR_PLAN_HASH"), rootID)
+			if err != nil {
+				return err
+			}
+			encoded, err := common.Marshal(report)
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(encoded))
+			return nil
+		}
+		if command == "repair-pricing" || command == "rollback-pricing" || command == "restore-negotiated-pricing" {
+			app := agencyhub.New(model.DB, nil, config)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			rootID, _ := strconv.ParseInt(os.Getenv("AGENCY_PRICING_REPAIR_ROOT_ID"), 10, 64)
+			if command == "rollback-pricing" {
+				return app.RollbackPricingRepair(ctx, os.Getenv("AGENCY_PRICING_REPAIR_PLAN_HASH"), rootID)
+			}
+			var report agencyhub.PricingRepairReport
+			var err error
+			if command == "restore-negotiated-pricing" {
+				report, err = app.RestoreNegotiatedPricing(ctx, os.Getenv("AGENCY_PRICING_ORIGINAL_REPAIR_HASH"), os.Getenv("AGENCY_PRICING_REPAIR_PLAN_HASH"), rootID)
+			} else {
+				report, err = app.RepairPricing(ctx, os.Getenv("AGENCY_PRICING_REPAIR_PLAN_HASH"), rootID)
+			}
+			if err != nil {
+				return fmt.Errorf("pricing repair failed: %w", err)
+			}
+			encoded, err := common.Marshal(report)
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(encoded))
+			return nil
+		}
+		return fmt.Errorf("unknown command %q; expected serve, migrate, migrate-writer-fence, reconcile, recover-pricing-sources, repair-pricing, restore-negotiated-pricing, or rollback-pricing", command)
 	}
 	if config.AutoMigrate {
 		if err := model.MigrateAgency(model.DB); err != nil {
 			return err
 		}
 	}
+	// Credit statements are emailed with the platform's SMTP settings, which
+	// live in the options table. Without this the sidecar would render its
+	// email path as unconfigured even though the main service can send mail.
+	model.InitOptionMap()
 	if err := model.InitLogDB(); err != nil {
 		return fmt.Errorf("initialize log database: %w", err)
 	}
@@ -103,7 +174,9 @@ func run() error {
 	app.SetReady(true)
 	workerCtx, stopWorker := context.WithCancel(context.Background())
 	defer stopWorker()
-	app.StartBackground(workerCtx)
+	if os.Getenv("AGENCY_HUB_BACKGROUND_DISABLED") != "true" {
+		app.StartBackground(workerCtx)
+	}
 	server := &http.Server{Addr: ":" + config.Port, Handler: app.Router(), ReadHeaderTimeout: 30 * time.Second}
 	serverErrors := make(chan error, 1)
 	go func() {

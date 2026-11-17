@@ -38,6 +38,27 @@ type TopupFundingSnapshot struct {
 	InitiatedByUserID int64 `json:"-"`
 }
 
+func (topUp *TopUp) settledQuota() (int64, bool) {
+	if topUp == nil {
+		return 0, false
+	}
+	if topUp.CreditedQuota > 0 {
+		return topUp.CreditedQuota, true
+	}
+	if strings.TrimSpace(topUp.QuotaConversionSnapshot) == "" {
+		return 0, false
+	}
+	var conversion TopupQuotaConversion
+	if err := common.UnmarshalJsonStr(topUp.QuotaConversionSnapshot, &conversion); err != nil {
+		return 0, false
+	}
+	quota, err := strconv.ParseInt(strings.TrimSpace(conversion.CreditedQuota), 10, 64)
+	if err != nil || quota <= 0 {
+		return 0, false
+	}
+	return quota, true
+}
+
 var ErrTopupPaymentSnapshot = errors.New("invalid top-up payment snapshot")
 
 func (snapshot TopupPaymentSnapshot) normalized() (TopupPaymentSnapshot, error) {

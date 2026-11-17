@@ -612,6 +612,7 @@ func PrepareTaskPluginEndpoint() gin.HandlerFunc {
 		var resolved map[string]any
 		var failures []string
 		rejectedPlugins := make(map[string][]string)
+		pinned.Rejected = make(map[string]string)
 		for _, candidate := range candidates {
 			candidateContext := protocolContext
 			candidateContext.Protocol = candidate.Protocol
@@ -651,6 +652,7 @@ func PrepareTaskPluginEndpoint() gin.HandlerFunc {
 					failures = append(failures, detail)
 				}
 				rejectedPlugins[detail] = append(rejectedPlugins[detail], candidate.Plugin.Meta.Key)
+				pinned.Rejected[candidate.Plugin.Meta.Key] = detail
 				continue
 			}
 			accepted = append(accepted, candidate)

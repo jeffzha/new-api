@@ -194,6 +194,9 @@ func getPrivateTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 // or the platform simply names nothing. The distinction is user-actionable,
 // so it must survive into the client-facing message.
 func TaskPlatformUnavailableError(platform constant.TaskPlatform) (string, string) {
+	if string(platform) == strconv.Itoa(constant.ChannelTypeTaskPlugin) {
+		return "unsupported_task_endpoint", "this task-plugin channel requires POST /v1/videos, GET /v1/videos/{id}, or GET /v1/videos/{id}/content; legacy video generation and remix endpoints are not supported by this channel"
+	}
 	if !pluginruntime.DefaultRegistry.Enabled() {
 		return "task_plugin_system_disabled", "the task plugin system is disabled on this gateway"
 	}

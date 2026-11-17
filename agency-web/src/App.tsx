@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { ActionIcon } from "./components/Heading";
 import { api, ApiError, hubConfig } from "./lib/api";
 import { startPlatformSSO } from "./lib/platform";
+import { agencySignInURL } from "./lib/navigation";
 import type { Identity } from "./lib/types";
 import { useMutation } from "./lib/mutation-context";
 import { MutationProvider } from "./components/MutationProvider";
@@ -83,7 +84,7 @@ export function App() {
       // An expired session is already signed out and should not strand the user.
       if (!(cause instanceof ApiError && cause.status === 401)) throw cause;
     }
-    window.location.replace(agencySignInURL(true));
+    window.location.replace(platformAgencySignInURL(true));
   }
   if (identity.must_change_password)
     return (
@@ -103,26 +104,21 @@ export function App() {
   );
 }
 
-function agencySignInURL(signedOut = false) {
-  const target = new URL(
-    "/sign-in?mode=agency",
-    hubConfig().platform_base_url || location.origin,
-  );
-  if (signedOut) target.searchParams.set("agency_signed_out", "true");
-  return target.href;
+function platformAgencySignInURL(signedOut = false) {
+  return agencySignInURL(hubConfig().platform_base_url, location.origin, signedOut);
 }
 
 function PlatformLoginRedirect(props: { error: unknown }) {
   const { t } = useTranslation();
   useEffect(() => {
     if (props.error) return;
-    window.location.replace(agencySignInURL());
+    window.location.replace(platformAgencySignInURL());
   }, [props.error]);
   return (
     <main className="shell">
       {props.error ? <ErrorNotice error={props.error} /> : <Loading />}
       {Boolean(props.error) && (
-        <button type="button" onClick={() => window.location.replace(agencySignInURL())}>
+        <button type="button" onClick={() => window.location.replace(platformAgencySignInURL(true))}>
           {t("Sign in")}
         </button>
       )}
@@ -159,6 +155,22 @@ const tabLabels: Record<Tab, string> = {
   audit: "Audit log",
   security: "Account security",
 };
+
+// Agency workspaces (and root administrators acting as an agency) share this
+// navigation so the acting root never sees the platform-wide agency list.
+const agencyWorkspaceTabs: Tab[] = [
+  "overview",
+  "children",
+  "customers",
+  "invitation",
+  "pricing",
+  "ledger",
+  "withdrawals",
+  "accounts",
+  "exports",
+  "security",
+  "audit",
+];
 
 function NavIcon({ tab }: { tab: Tab }) {
   const common = {
@@ -213,6 +225,9 @@ function Dashboard({
 }) {
   const { t, i18n } = useTranslation();
   const root = identity.actor_type === "root";
+  // A root administrator who entered an agency works inside that agency scope:
+  // the agency list becomes its direct children and pricing stays agency-only.
+  const actingAgencyID = root && identity.agency_id ? String(identity.agency_id) : null;
   const [tab, setTab] = useState<Tab>("overview");
   const [exportKind, setExportKind] = useState<ExportKind>("usage");
   const [pricingAgency, setPricingAgency] = useState<string | null>(
@@ -222,29 +237,19 @@ function Dashboard({
   const [busy, setBusy] = useState(false);
   const mutate = useMutation();
   const tabs: Tab[] = root
-    ? [
-        "overview",
-        "agencies",
-        "pricing",
-        "customers",
-        ...(identity.agency_id ? (["invitation", "ledger", "accounts", "exports"] as Tab[]) : []),
-        "withdrawals",
-        "sync",
-        "audit",
-      ]
-    : [
-        "overview",
-        "children",
-        "customers",
-        "invitation",
-        "pricing",
-        "ledger",
-        "withdrawals",
-        "accounts",
-        "exports",
-        "security",
-        "audit",
-      ];
+    ? actingAgencyID
+      ? agencyWorkspaceTabs
+      : [
+          "overview",
+          "agencies",
+          "pricing",
+          "customers",
+          "withdrawals",
+          "sync",
+          "audit",
+        ]
+    : agencyWorkspaceTabs;
+
   async function enter(id: string) {
     await mutate({ path: `/root/agencies/${id}/enter`, body: {} });
     await refresh();
@@ -278,7 +283,7 @@ function Dashboard({
       content = <ChildrenPage />;
       break;
     case "pricing":
-      content = <PricingPage root={root} agencyId={pricingAgency} />;
+      content = <PricingPage root={root} agencyId={pricingAgency} actingAgencyId={actingAgencyID} />;
       break;
     case "withdrawals":
       content = <WithdrawalsPage identity={identity} onAddAccount={() => setTab("accounts")} />;
@@ -312,7 +317,7 @@ function Dashboard({
       content = <AuditPage root={root} />;
       break;
     case "security":
-      content = <PasswordChange done={refresh} />;
+      content = <PasswordChange done={refresh} identity={identity} />;
       break;
     default:
       content = <OverviewPage identity={identity} />;
@@ -384,6 +389,8 @@ function Dashboard({
               key={item}
               type="button"
               aria-current={tab === item ? "page" : undefined}
+              aria-label={item === "pricing" ? t("Pricing") : t(tabLabels[item])}
+              title={item === "pricing" ? t("Pricing") : t(tabLabels[item])}
               onClick={() => {
                 setTab(item);
                 setError(null);

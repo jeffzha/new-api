@@ -16,19 +16,24 @@ type requestMetadata struct {
 // generateRequest is the normalized OpenAI-format video generate request that
 // is forwarded upstream. The client speaks OpenAI /v1/video/generations, so
 // the prompt is sent as a top-level "prompt" field (not volcengine content[]).
-// Image/Images carry the optional reference image URL(s) (image-to-video), read
-// from any OpenAI-format field (image/images/input_reference/content[].image_url).
-// A single reference is forwarded as the top-level OpenAI "image" field; two or
-// more are forwarded as the "images" array so every reference reaches upstream.
+// Image carries an optional single reference image URL (image-to-video), read
+// from any OpenAI-format field (image/images/content[].image_url) and forwarded
+// as the top-level OpenAI "image" field that the upstream seedance gateway
+// understands.
 type generateRequest struct {
-	Prompt      string   `json:"prompt"`
-	Model       string   `json:"model"`
-	Image       string   `json:"image,omitempty"`
-	Images      []string `json:"images,omitempty"`
-	Resolution  string   `json:"resolution"`
-	Ratio       string   `json:"ratio"`
-	Duration    int      `json:"duration"`
-	AudioStatus int      `json:"audio_status"`
+	Prompt      string `json:"prompt"`
+	Model       string `json:"model"`
+	Image       string `json:"image,omitempty"`
+	Resolution  string `json:"resolution"`
+	Ratio       string `json:"ratio"`
+	Duration    int    `json:"duration"`
+	AudioStatus int    `json:"audio_status"`
+	// ReferenceImages holds every reference image supplied by the client
+	// (up to maxReferenceImages). The first one is also mirrored into Image so
+	// single-image upstreams that only understand a top-level "image" field keep
+	// working unchanged.
+	ReferenceImages []string `json:"-"`
+	ReferenceVideos []string `json:"-"`
 }
 
 // responseTask mirrors the OpenAI-compatible video task status response that

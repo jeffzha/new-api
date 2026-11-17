@@ -250,6 +250,7 @@ function ComboboxInput({
       <InputGroupAddon align='inline-end'>
         {showTrigger && (
           <InputGroupButton
+            nativeButton
             size='icon-xs'
             variant='ghost'
             render={<ComboboxTrigger aria-label={triggerAriaLabel} />}

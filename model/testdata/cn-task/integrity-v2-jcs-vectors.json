@@ -1,0 +1,55 @@
+{
+  "schema": "cn-integrity-jcs-vectors-v2",
+  "goImplementation": "github.com/cyberphone/json-canonicalization v0.0.0-20261011152517-32a48195b9b2",
+  "pythonImplementation": "rfc8785==0.1.4",
+  "vectors": [
+    {
+      "id": "numbers",
+      "inputBase64": "eyJudW1iZXJzIjpbMzMzMzMzMzMzLjMzMzMzMzI5LDFFMzAsNC41MCwyZS0zLDFlLTI3LC0wLDFlLTYsMWUtNywxZTIwLDFlMjFdfQ==",
+      "canonicalBase64": "eyJudW1iZXJzIjpbMzMzMzMzMzMzLjMzMzMzMzMsMWUrMzAsNC41LDAuMDAyLDFlLTI3LDAsMC4wMDAwMDEsMWUtNywxMDAwMDAwMDAwMDAwMDAwMDAwMDAsMWUrMjFdfQ==",
+      "sha256": "sha256:4fdb883f97e3bd520b9989b9ed820983424c5ae657a92c6cd9e017d4a9a2fee8"
+    },
+    {
+      "id": "unicode-key-order",
+      "inputBase64": "eyJcdTIwYWMiOiJldXJvIiwiXHIiOiJyZXR1cm4iLCJcdWZiMzMiOiJoZWJyZXciLCIxIjoib25lIiwiXHVkODNkXHVkZTAwIjoiZmFjZSIsIlx1MDA4MCI6ImNvbnRyb2wiLCJcdTAwZjYiOiJsYXRpbiJ9",
+      "canonicalBase64": "eyJcciI6InJldHVybiIsIjEiOiJvbmUiLCLCgCI6ImNvbnRyb2wiLCLDtiI6ImxhdGluIiwi4oKsIjoiZXVybyIsIvCfmIAiOiJmYWNlIiwi76yzIjoiaGVicmV3In0=",
+      "sha256": "sha256:889d44b99a64fab047eb0213f4293ff0a21b6916c93ecc59f5da1ce8da7c60d1"
+    },
+    {
+      "id": "strings",
+      "inputBase64": "eyJzIjoiXHUyMDI4PD4mL1xiXHRcblxmXHJcdTAwMDBcdTRlMmRcdWQ4M2RcdWRlMDAifQ==",
+      "canonicalBase64": "eyJzIjoi4oCoPD4mL1xiXHRcblxmXHJcdTAwMDDkuK3wn5iAIn0=",
+      "sha256": "sha256:493369d7b006945f776e30fa286ef25d4dc7d90d1b31d2c8b95ce4c407a30779"
+    },
+    {
+      "id": "snapshots",
+      "inputBase64": "eyJwYXltZW50U25hcHNob3QiOnsicGF5bWVudF9yZWZlcmVuY2UiOiJyZWNlaXB0LTEiLCJjdXJyZW5jeV9jb2RlIjoiVVNEIiwiYWN0dWFsX21vbmV5IjoiMS4yNSJ9LCJxdW90YUNvbnZlcnNpb25TbmFwc2hvdCI6eyJzY2hlbWFfdmVyc2lvbiI6MSwiYmFzaXNfZmllbGQiOiJ0b3B1cC5hbW91bnQiLCJiYXNpc192YWx1ZSI6IjEyNSIsImNhbGN1bGF0aW9uIjoiaWRlbnRpdHkiLCJjcmVkaXRlZF9xdW90YSI6IjEyNSJ9fQ==",
+      "canonicalBase64": "eyJwYXltZW50U25hcHNob3QiOnsiYWN0dWFsX21vbmV5IjoiMS4yNSIsImN1cnJlbmN5X2NvZGUiOiJVU0QiLCJwYXltZW50X3JlZmVyZW5jZSI6InJlY2VpcHQtMSJ9LCJxdW90YUNvbnZlcnNpb25TbmFwc2hvdCI6eyJiYXNpc19maWVsZCI6InRvcHVwLmFtb3VudCIsImJhc2lzX3ZhbHVlIjoiMTI1IiwiY2FsY3VsYXRpb24iOiJpZGVudGl0eSIsImNyZWRpdGVkX3F1b3RhIjoiMTI1Iiwic2NoZW1hX3ZlcnNpb24iOjF9fQ==",
+      "sha256": "sha256:e54bd62fe64a88514cd5a5e184b29c3925ba32614cacc3fb561d1a00b60e421f"
+    },
+    {
+      "id": "sequence-strings",
+      "inputBase64": "eyJtdXRhdGlvblRocm91Z2giOiI5MDA3MTk5MjU0NzQwOTkzIiwicHVibGljYXRpb25UaHJvdWdoIjoiOTIyMzM3MjAzNjg1NDc3NTgwNyJ9",
+      "canonicalBase64": "eyJtdXRhdGlvblRocm91Z2giOiI5MDA3MTk5MjU0NzQwOTkzIiwicHVibGljYXRpb25UaHJvdWdoIjoiOTIyMzM3MjAzNjg1NDc3NTgwNyJ9",
+      "sha256": "sha256:da3ceaf8563bff1e93d8217738398f2761ef601d362e0a552786808694f1bdac"
+    },
+    {
+      "id": "native-chain-wallet",
+      "inputBase64": "WyJjbi1uYXRpdmUtY2hhaW4tdjIiLCJnYXRld2F5LWNuIiwidGVzdC1jbiIsIjE5NiIsIndhbGxldCIsInJlcXVlc3QtQSJd",
+      "canonicalBase64": "WyJjbi1uYXRpdmUtY2hhaW4tdjIiLCJnYXRld2F5LWNuIiwidGVzdC1jbiIsIjE5NiIsIndhbGxldCIsInJlcXVlc3QtQSJd",
+      "sha256": "sha256:7b4865805493268eb6823b6acd230eeb192c36646708366006c3d5cfb93b12d2"
+    },
+    {
+      "id": "native-chain-unicode",
+      "inputBase64": "WyJjbi1uYXRpdmUtY2hhaW4tdjIiLCJnYXRld2F5LWNuIiwidGVzdC1jbiIsIjE5NiIsInRvcHVwIiwib3JkZXItPD4mLVx1NGUyZFx1ZDgzZFx1ZGUwMCJd",
+      "canonicalBase64": "WyJjbi1uYXRpdmUtY2hhaW4tdjIiLCJnYXRld2F5LWNuIiwidGVzdC1jbiIsIjE5NiIsInRvcHVwIiwib3JkZXItPD4mLeS4rfCfmIAiXQ==",
+      "sha256": "sha256:b373707c3ff97aa9586bfb6af11cd8010ac0eaa5d5003a077de7222ac5cc241b"
+    },
+    {
+      "id": "native-lineage-wallet",
+      "inputBase64": "WyJjbi1uYXRpdmUtbGluZWFnZS12MiIsIjdiNDg2NTgwNTQ5MzI2OGViNjgyM2I2YWNkMjMwZWViMTkyYzM2NjQ2NzA4MzY2MDA2YzNkNWNmYjkzYjEyZDIiXQ==",
+      "canonicalBase64": "WyJjbi1uYXRpdmUtbGluZWFnZS12MiIsIjdiNDg2NTgwNTQ5MzI2OGViNjgyM2I2YWNkMjMwZWViMTkyYzM2NjQ2NzA4MzY2MDA2YzNkNWNmYjkzYjEyZDIiXQ==",
+      "sha256": "sha256:2943b021de504d6c5b33929231fb000ea7d26c1e3487061c6ef7dd2f6b6b0497"
+    }
+  ]
+}

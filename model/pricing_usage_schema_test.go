@@ -67,6 +67,17 @@ func TestPricingCarriesTaskUsageSchemaAndRefreshesWithPluginGeneration(t *testin
 	assert.Equal(t, "count", refreshedPricing["pricing-usage-model"].BillingUsageSchema["clips"].Unit)
 }
 
+func TestPricingExposesNativeFunASRAudioUsageSchema(t *testing.T) {
+	const modelName = "fun-asr-flash-2026-06-15"
+	schema := nativeAudioUsageSchema(modelName)
+	require.Contains(t, schema, "seconds")
+	assert.Equal(t, "second", schema["seconds"].Unit)
+	assert.Equal(t, "音频转写单价", schema["seconds"].Description["zh"])
+	expression, ok := billing_setting.GetBuiltinBillingExpr(modelName)
+	require.True(t, ok)
+	assert.Equal(t, `tier("base", u("seconds") * 0.00003013698630136986)`, expression)
+}
+
 func TestPricingAliasCarriesPluginUsageSchemaAndTailExpr(t *testing.T) {
 	resetPricingEndpointTestTables(t)
 	const pluginKey = "pricing-usage-probe"
@@ -155,7 +166,7 @@ export const meta = {
  usageSchema:{fallback:{type:"number",unit:"count"}},
  usageExamples:[{label:"default",facts:{fallback:1}}],
  usageProfiles:[
-  {models:["profile-image"],schema:{image_count:{type:"number",unit:"count"}}},
+  {models:["profile-image"],schema:{image_count:{type:"number",unit:"count"}},materialPricing:{currency:"CNY",items:[{material:"image",unit:"count",freeUnits:5,rates:[{amount:0.2}]}]}},
   {models:["profile-video"],schema:{seconds:{type:"number",unit:"second"}},examples:[{label:"5 seconds",facts:{seconds:5}}]}
  ]
 };
@@ -210,6 +221,16 @@ export function parseTaskResult(){return {};}
 	}
 	require.ErrorContains(t, ValidateModelPricing("profile-image", PricingValues{"billing_setting.billing_expr": `u("seconds")`}), "not declared")
 	require.ErrorContains(t, ValidateModelPricing("video-alias", PricingValues{"billing_setting.billing_expr": `u("image_count")`}), "not declared")
+	for _, name := range []string{"profile-image", "image-alias"} {
+		catalogue := pricing[name].BillingMaterialPricing
+		require.NotNil(t, catalogue)
+		require.Len(t, catalogue.Items, 1)
+		assert.Equal(t, 0.2, catalogue.Items[0].Rates[0].Amount)
+	}
+	pricing["image-alias"].BillingMaterialPricing.Items[0].Rates[0].Amount = 9
+	plugin, exists := jsplugin.DefaultRegistry.Get(key)
+	require.True(t, exists)
+	assert.Equal(t, 0.2, plugin.Meta.MaterialPricingForModel("profile-image").Items[0].Rates[0].Amount)
 
 	updated := strings.Replace(source, `version:"1.0.0"`, `version:"1.1.0"`, 1)
 	updated = strings.Replace(updated, `image_count:{type:"number",unit:"count"}`, `images:{type:"number",unit:"count"}`, 1)
@@ -290,10 +311,85 @@ func TestPricingSharedPluginVariantsUseEachSchemaAndExpression(t *testing.T) {
 	require.NoError(t, jsplugin.DefaultRegistry.Unregister("pricing-alpha"))
 	InvalidatePricingCache()
 	single := pricingByModel(GetPricing())["pricing-usage-model"]
-	require.Len(t, single.BillingPluginVariants, 1)
-	assert.Equal(t, "pricing-beta", single.BillingPluginVariants[0].PluginKey)
-	assert.Equal(t, `tier("beta", u("credits") * 2)`, single.BillingPluginVariants[0].BillingExpr)
+	assert.Empty(t, single.BillingPluginVariants)
+	assert.Equal(t, billing_setting.BillingModeTieredExpr, single.BillingMode)
+	assert.Equal(t, `tier("beta", u("credits") * 2)`, single.BillingExpr)
+	assert.Equal(t, "credit", single.BillingUsageSchema["credits"].Unit)
 	encoded, err := common.Marshal(single)
 	require.NoError(t, err)
-	assert.Contains(t, string(encoded), "billing_plugin_variants")
+	assert.NotContains(t, string(encoded), "billing_plugin_variants")
+}
+
+func TestPricingUsesOnlyActiveTaskPluginProviders(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	saved := config.GlobalConfig.ExportAllConfigs()
+	t.Cleanup(func() { require.NoError(t, config.GlobalConfig.LoadFromDB(saved)) })
+	for _, spec := range []struct{ key, field, unit string }{{"pricing-active", "seconds", "second"}, {"pricing-unused", "credits", "credit"}} {
+		source := strings.ReplaceAll(pricingUsagePluginSource("1.0.0", `{`+spec.field+`:{type:"number",unit:"`+spec.unit+`"}}`), "pricing-usage-probe", spec.key)
+		_, err := jsplugin.DefaultRegistry.Register(source, jsplugin.Options{})
+		require.NoError(t, err)
+		t.Cleanup(func() { jsplugin.DefaultRegistry.Unregister(spec.key) })
+	}
+	channel := &Channel{Id: 940, Type: constant.ChannelTypeTaskPlugin, Key: "key-940", Status: common.ChannelStatusEnabled, Name: "active-provider", Models: "pricing-usage-model"}
+	channel.SetSetting(dto.ChannelSettings{TaskPluginKey: "pricing-active"})
+	require.NoError(t, DB.Create(channel).Error)
+	insertPricingEndpointAbility(t, 940, "pricing-usage-model")
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		billing_setting.PluginBillingExprOption: `{"pricing-active::pricing-usage-model":"tier(\"active\", u(\"seconds\") * 1)","pricing-unused::pricing-usage-model":"tier(\"unused\", u(\"credits\") * 2)"}`,
+	}))
+	InvalidatePricingCache()
+	pricing := pricingByModel(GetPricing())["pricing-usage-model"]
+	assert.Empty(t, pricing.BillingPluginVariants)
+	assert.Equal(t, `tier("active", u("seconds") * 1)`, pricing.BillingExpr)
+	assert.Equal(t, "second", pricing.BillingUsageSchema["seconds"].Unit)
+}
+
+func TestPricingCollapsesIdenticalActiveProviderPrices(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	saved := config.GlobalConfig.ExportAllConfigs()
+	t.Cleanup(func() { require.NoError(t, config.GlobalConfig.LoadFromDB(saved)) })
+	for index, key := range []string{"pricing-identical-a", "pricing-identical-b"} {
+		source := strings.ReplaceAll(pricingUsagePluginSource("1.0.0", `{seconds:{type:"number",unit:"second"}}`), "pricing-usage-probe", key)
+		_, err := jsplugin.DefaultRegistry.Register(source, jsplugin.Options{})
+		require.NoError(t, err)
+		t.Cleanup(func() { jsplugin.DefaultRegistry.Unregister(key) })
+		channel := &Channel{Id: 950 + index, Type: constant.ChannelTypeTaskPlugin, Key: fmt.Sprintf("key-%d", 950+index), Status: common.ChannelStatusEnabled, Name: key, Models: "pricing-usage-model"}
+		channel.SetSetting(dto.ChannelSettings{TaskPluginKey: key})
+		require.NoError(t, DB.Create(channel).Error)
+		insertPricingEndpointAbility(t, channel.Id, "pricing-usage-model")
+	}
+	const expression = `tier("same", u("seconds") * 1)`
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		billing_setting.PluginBillingExprOption: `{"pricing-identical-a::pricing-usage-model":"tier(\"same\", u(\"seconds\") * 1)","pricing-identical-b::pricing-usage-model":"tier(\"same\", u(\"seconds\") * 1)"}`,
+	}))
+	InvalidatePricingCache()
+	pricing := pricingByModel(GetPricing())["pricing-usage-model"]
+	assert.Empty(t, pricing.BillingPluginVariants)
+	assert.Equal(t, billing_setting.BillingModeTieredExpr, pricing.BillingMode)
+	assert.Equal(t, expression, pricing.BillingExpr)
+}
+
+func TestPricingKeepsDistinctMaterialCataloguesForIdenticalProviderExpressions(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	saved := config.GlobalConfig.ExportAllConfigs()
+	t.Cleanup(func() { require.NoError(t, config.GlobalConfig.LoadFromDB(saved)) })
+	for index, key := range []string{"material-provider-a", "material-provider-b"} {
+		source := strings.ReplaceAll(pricingUsagePluginSource("1.0.0", `{seconds:{type:"number",unit:"second"}}`), "pricing-usage-probe", key)
+		source = strings.Replace(source, `fetchMode: "per_task",`, fmt.Sprintf(`fetchMode: "per_task", materialPricing: {currency:"CNY",items:[{material:"video",unit:"second",rates:[{amount:%g}]}]},`, float64(index+1)/2), 1)
+		_, err := jsplugin.DefaultRegistry.Register(source, jsplugin.Options{})
+		require.NoError(t, err)
+		t.Cleanup(func() { jsplugin.DefaultRegistry.Unregister(key) })
+		channel := &Channel{Id: 960 + index, Type: constant.ChannelTypeTaskPlugin, Status: common.ChannelStatusEnabled, Name: key, Models: "pricing-usage-model"}
+		channel.SetSetting(dto.ChannelSettings{TaskPluginKey: key})
+		require.NoError(t, DB.Create(channel).Error)
+		insertPricingEndpointAbility(t, channel.Id, "pricing-usage-model")
+	}
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		billing_setting.PluginBillingExprOption: `{"material-provider-a::pricing-usage-model":"tier(\"same\", u(\"seconds\") * 1)","material-provider-b::pricing-usage-model":"tier(\"same\", u(\"seconds\") * 1)"}`,
+	}))
+	InvalidatePricingCache()
+	variants := pricingByModel(GetPricing())["pricing-usage-model"].BillingPluginVariants
+	require.Len(t, variants, 2)
+	assert.Equal(t, 0.5, variants[0].BillingMaterialPricing.Items[0].Rates[0].Amount)
+	assert.Equal(t, 1.0, variants[1].BillingMaterialPricing.Items[0].Rates[0].Amount)
 }

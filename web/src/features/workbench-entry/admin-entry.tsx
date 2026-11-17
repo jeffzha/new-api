@@ -198,22 +198,30 @@ export function AdminWorkbenchEntry() {
     )
   }
 
-  return (
-    <Main>
-      {disabled ? (
+  if (disabled) {
+    return (
+      <Main>
         <ErrorState
           title={t('Workbench is not enabled')}
           description={t(
             'Enable the Workbench sidecar to use this page.'
           )}
         />
-      ) : failed ? (
+      </Main>
+    )
+  }
+  if (failed) {
+    return (
+      <Main>
         <ErrorState onRetry={() => setAttempt((value) => value + 1)} />
-      ) : (
+      </Main>
+    )
+  }
+  return (
+    <Main>
         <div className='flex min-h-[300px] items-center justify-center'>
           <Spinner className='size-6' />
         </div>
-      )}
     </Main>
   )
 }

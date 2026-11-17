@@ -1,10 +1,16 @@
 package model
 
-import seedancepricing "github.com/QuantumNous/new-api/setting/seedance_video_pricing"
+import (
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	seedancepricing "github.com/QuantumNous/new-api/setting/seedance_video_pricing"
+	"github.com/shopspring/decimal"
+	"math"
+)
 
 const (
-	providerPricingKindVideoTokenMatrix = "video_token_matrix"
-	mobileCloudSeedanceModel            = "doubao-seedance-2.0"
+	providerPricingKindVideoTokenMatrix   = "video_token_matrix"
+	providerPricingKindVideoRequestMatrix = "video_request_matrix"
+	mobileCloudSeedanceModel              = "doubao-seedance-2.0"
 )
 
 type ProviderPricing struct {
@@ -38,13 +44,24 @@ func getProviderPricing(modelName string) *ProviderPricing {
 	case seedancepricing.Seedance25Model, seedancepricing.AimodelSeedance25Model:
 		priceModel = modelName
 		resolutions = []string{"480p", "720p", "1080p"}
+	case seedancepricing.MiniSeedanceModel:
+		// 480P and 720P share one tier; 1080P / 4K are not supported.
+		priceModel = modelName
+		resolutions = []string{"480p", "720p"}
 	default:
 		return nil
 	}
 
 	tiers := make([]VideoTokenPricingTier, 0, len(resolutions))
+	getPrice := seedancepricing.GetUnitPriceUSD
+	currency := "USD"
+	if modelName == seedancepricing.MiniSeedanceModel {
+		getPrice = seedancepricing.GetUnitPriceCNY
+		currency = "CNY"
+	}
+	kind, unit := providerPricingKindVideoTokenMatrix, "1M_video_tokens"
 	for _, resolution := range resolutions {
-		withoutVideo, ok := seedancepricing.GetUnitPriceUSD(
+		withoutVideo, ok := getPrice(
 			priceModel,
 			resolution,
 			false,
@@ -52,13 +69,21 @@ func getProviderPricing(modelName string) *ProviderPricing {
 		if !ok {
 			return nil
 		}
-		withVideo, ok := seedancepricing.GetUnitPriceUSD(
+		withVideo, ok := getPrice(
 			priceModel,
 			resolution,
 			true,
 		)
 		if !ok {
 			return nil
+		}
+		if currency == "CNY" {
+			if operation_setting.USDExchangeRate <= 0 || math.IsNaN(operation_setting.USDExchangeRate) || math.IsInf(operation_setting.USDExchangeRate, 0) {
+				return nil
+			}
+			rate := decimal.NewFromFloat(operation_setting.USDExchangeRate)
+			withoutVideo = withoutVideo.Div(rate)
+			withVideo = withVideo.Div(rate)
 		}
 		tiers = append(tiers, VideoTokenPricingTier{
 			Resolution:   resolution,
@@ -68,9 +93,9 @@ func getProviderPricing(modelName string) *ProviderPricing {
 	}
 
 	return &ProviderPricing{
-		Kind:     providerPricingKindVideoTokenMatrix,
+		Kind:     kind,
 		Currency: "USD",
-		Unit:     "1M_video_tokens",
+		Unit:     unit,
 		Tiers:    tiers,
 	}
 }

@@ -350,7 +350,7 @@ export function useCommonLogsColumns(
       cell: ({ row }) => {
         const log = row.original
         const timestamp = row.getValue('created_at') as number
-        const config = getLogTypeConfig(log.type)
+        const config = getLogTypeConfig(log.display_type ?? log.type)
 
         return (
           <div className='flex min-w-0 flex-col gap-0.5'>
@@ -370,7 +370,9 @@ export function useCommonLogsColumns(
       filterFn: (row, _id, value) => {
         if (!Array.isArray(value) || value.length === 0) return true
         if (value.includes(LOG_TYPE_ALL_VALUE)) return true
-        return value.includes(String(row.original.type))
+        return value.includes(
+          String(row.original.display_type ?? row.original.type)
+        )
       },
       enableHiding: false,
       size: 180,

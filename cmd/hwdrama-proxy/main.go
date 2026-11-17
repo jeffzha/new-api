@@ -63,6 +63,11 @@ func run() error {
 		RoutesConfigPath: routesConfigPath,
 		SecretsFilePath:  strings.TrimSpace(os.Getenv("HWD_PROXY_SECRETS_FILE")),
 		Timeout:          time.Duration(timeoutSeconds) * time.Second,
+		MaterialFiles: hwdramaproxy.MaterialFilesConfig{
+			Directory: strings.TrimSpace(os.Getenv("HWD_PROXY_MATERIAL_FILES_DIR")),
+			PublicURL: strings.TrimSpace(os.Getenv("HWD_PROXY_MATERIAL_FILES_PUBLIC_URL")),
+			TTL:       time.Duration(common.GetEnvOrDefault("HWD_PROXY_MATERIAL_FILES_TTL_SECONDS", 86400)) * time.Second,
+		},
 	}
 	if routesConfigPath == "" {
 		proxyConfig.UpstreamBaseURL = strings.TrimSpace(os.Getenv("HWD_PROXY_UPSTREAM_BASE_URL"))

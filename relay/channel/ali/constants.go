@@ -10,6 +10,7 @@ var ModelList = []string{
 	"qwen3.8-flash",
 	"qwen3.8-max",
 	"qwen-image-3.0",
+	"fun-asr-flash-2026-06-15",
 	"text-embedding-v1",
 	"gte-rerank-v2",
 }

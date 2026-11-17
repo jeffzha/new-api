@@ -1,0 +1,47 @@
+=== RUN   TestCNTaskAcrossDialects
+=== RUN   TestCNTaskAcrossDialects/sqlite
+    cn_task_test.go:55: database version: 3.50.4
+=== RUN   TestCNTaskAcrossDialects/sqlite/upgrade_existing_receipts_exclude_other_lanes
+=== RUN   TestCNTaskAcrossDialects/sqlite/upgrade_existing_receipts_exclude_other_lanes/wallet
+    cn_task_test.go:109: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task_test.go:109
+        	Error:      	Expected error with "fact_identity_conflict" in chain but got nil.
+        	Test:       	TestCNTaskAcrossDialects/sqlite/upgrade_existing_receipts_exclude_other_lanes/wallet
+=== RUN   TestCNTaskAcrossDialects/sqlite/upgrade_existing_receipts_exclude_other_lanes/subscription
+    cn_task_test.go:112: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task_test.go:112
+        	Error:      	Expected error with "fact_identity_conflict" in chain but got nil.
+        	Test:       	TestCNTaskAcrossDialects/sqlite/upgrade_existing_receipts_exclude_other_lanes/subscription
+=== RUN   TestCNTaskAcrossDialects/sqlite/concurrent_first_prepare_cross_lane
+=== RUN   TestCNTaskAcrossDialects/sqlite/token_owner_mismatch_rolls_back_prepare
+=== RUN   TestCNTaskAcrossDialects/sqlite/initial_correction_final_and_guards
+=== RUN   TestCNTaskAcrossDialects/sqlite/fixed_and_zero_terminal
+=== RUN   TestCNTaskAcrossDialects/sqlite/unknown_keeps_reserve_and_never_redispatches
+=== RUN   TestCNTaskAcrossDialects/sqlite/acceptance_and_refund_atomic_recovery
+=== RUN   TestCNTaskAcrossDialects/sqlite/subscription_refund_uses_frozen_generation
+=== RUN   TestCNTaskAcrossDialects/sqlite/concurrent_terminal_is_once
+=== RUN   TestCNTaskAcrossDialects/sqlite/deleted_token_refund_records_exact_disposition
+=== RUN   TestCNTaskAcrossDialects/sqlite/provider_zero_bill_is_final_and_replayable
+=== RUN   TestCNTaskAcrossDialects/sqlite/legacy_and_durable_tasks_share_user_lock
+
+2026/10/15 18:44:36 [34;1mC:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task_test.go:578
+[0m[35m[warn] [0mremoving callback `cn-log-fail` from C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/model/cn_task_test.go:578
+--- FAIL: TestCNTaskAcrossDialects (1.81s)
+    --- FAIL: TestCNTaskAcrossDialects/sqlite (1.81s)
+        --- FAIL: TestCNTaskAcrossDialects/sqlite/upgrade_existing_receipts_exclude_other_lanes (0.17s)
+            --- FAIL: TestCNTaskAcrossDialects/sqlite/upgrade_existing_receipts_exclude_other_lanes/wallet (0.08s)
+            --- FAIL: TestCNTaskAcrossDialects/sqlite/upgrade_existing_receipts_exclude_other_lanes/subscription (0.09s)
+        --- PASS: TestCNTaskAcrossDialects/sqlite/concurrent_first_prepare_cross_lane (0.27s)
+        --- PASS: TestCNTaskAcrossDialects/sqlite/token_owner_mismatch_rolls_back_prepare (0.00s)
+        --- PASS: TestCNTaskAcrossDialects/sqlite/initial_correction_final_and_guards (0.05s)
+        --- PASS: TestCNTaskAcrossDialects/sqlite/fixed_and_zero_terminal (0.06s)
+        --- PASS: TestCNTaskAcrossDialects/sqlite/unknown_keeps_reserve_and_never_redispatches (0.02s)
+        --- PASS: TestCNTaskAcrossDialects/sqlite/acceptance_and_refund_atomic_recovery (0.17s)
+        --- PASS: TestCNTaskAcrossDialects/sqlite/subscription_refund_uses_frozen_generation (0.04s)
+        --- PASS: TestCNTaskAcrossDialects/sqlite/concurrent_terminal_is_once (0.04s)
+        --- PASS: TestCNTaskAcrossDialects/sqlite/deleted_token_refund_records_exact_disposition (0.10s)
+        --- PASS: TestCNTaskAcrossDialects/sqlite/provider_zero_bill_is_final_and_replayable (0.04s)
+        --- PASS: TestCNTaskAcrossDialects/sqlite/legacy_and_durable_tasks_share_user_lock (0.10s)
+FAIL
+FAIL	github.com/QuantumNous/new-api/model	2.161s
+FAIL

@@ -7,12 +7,12 @@ package model
 const AgencyTablePrefix = "agency_hub_"
 
 type Agency struct {
-	ID int64 `gorm:"primaryKey" json:"id"`
+	ID int64 `gorm:"primaryKey;index:idx_agency_depth_id,priority:2" json:"id"`
 	// ParentAgencyID is nil for legacy/root-managed agencies. Existing rows are
 	// therefore depth 1 and remain fully compatible with the single-level
 	// pricing path.
 	ParentAgencyID         *int64 `gorm:"index:idx_agency_parent_status" json:"parent_agency_id,omitempty"`
-	Depth                  int    `gorm:"not null;default:1;index:idx_agency_depth" json:"depth"`
+	Depth                  int    `gorm:"not null;default:1;index:idx_agency_depth;index:idx_agency_depth_id,priority:1" json:"depth"`
 	Code                   string `gorm:"size:64;not null;uniqueIndex:uidx_agency_code" json:"code"`
 	DisplayName            string `gorm:"size:191;not null" json:"display_name"`
 	Status                 string `gorm:"size:32;not null;index:idx_agency_status" json:"status"`
@@ -48,6 +48,22 @@ type AgencyOperatorAccount struct {
 }
 
 func (AgencyOperatorAccount) TableName() string { return AgencyTablePrefix + "operator_accounts" }
+
+// AgencyOperatorIdentityBinding links one authenticated platform user to one
+// existing agency operator account. It is intentionally separate from customer
+// ownership and billing bindings: this table grants login identity only.
+type AgencyOperatorIdentityBinding struct {
+	ID                int64 `gorm:"primaryKey" json:"id"`
+	OperatorAccountID int64 `gorm:"not null;uniqueIndex:uidx_agency_operator_identity_operator" json:"operator_account_id"`
+	AgencyID          int64 `gorm:"not null;index:idx_agency_operator_identity_agency" json:"agency_id"`
+	PlatformUserID    int64 `gorm:"not null;uniqueIndex:uidx_agency_operator_identity_user" json:"platform_user_id"`
+	CreatedAt         int64 `gorm:"not null" json:"created_at"`
+	UpdatedAt         int64 `gorm:"not null" json:"updated_at"`
+}
+
+func (AgencyOperatorIdentityBinding) TableName() string {
+	return AgencyTablePrefix + "operator_identity_bindings"
+}
 
 type AgencySession struct {
 	ID                   int64  `gorm:"primaryKey" json:"id"`
@@ -436,18 +452,18 @@ type AgencyEventDelivery struct {
 func (AgencyEventDelivery) TableName() string { return AgencyTablePrefix + "event_deliveries" }
 
 type AgencySourceEvent struct {
-	ID                int64  `gorm:"primaryKey"`
+	ID                int64  `gorm:"primaryKey;index:idx_agency_source_operation_revision,priority:3"`
 	EventID           string `gorm:"size:128;not null;uniqueIndex:uidx_agency_source_event"`
-	SourceOperationID string `gorm:"size:128;not null"`
-	JournalRevision   int64
+	SourceOperationID string `gorm:"size:128;not null;index:idx_agency_source_operation_revision,priority:1"`
+	JournalRevision   int64  `gorm:"index:idx_agency_source_operation_revision,priority:2"`
 	SchemaVersion     string `gorm:"size:64;not null"`
 	PayloadHash       string `gorm:"size:128;not null"`
-	UserID            int64  `gorm:"not null;index:idx_agency_source_user"`
-	MoneySeq          int64  `gorm:"not null"`
-	ProcessingStatus  string `gorm:"size:32;not null;index:idx_agency_source_status"`
+	UserID            int64  `gorm:"not null;index:idx_agency_source_user;index:idx_agency_source_user_status_seq,priority:1"`
+	MoneySeq          int64  `gorm:"not null;index:idx_agency_source_user_status_seq,priority:3"`
+	ProcessingStatus  string `gorm:"size:32;not null;index:idx_agency_source_status;index:idx_agency_source_user_status_seq,priority:2;index:idx_agency_source_status_created,priority:1"`
 	SkipReason        string `gorm:"type:text"`
 	Payload           string `gorm:"type:text;not null"`
-	CreatedAtMS       int64  `gorm:"not null"`
+	CreatedAtMS       int64  `gorm:"not null;index:idx_agency_source_status_created,priority:2"`
 }
 
 func (AgencySourceEvent) TableName() string { return AgencyTablePrefix + "source_events" }
@@ -922,14 +938,111 @@ type AgencyDebtRepayment struct {
 
 func (AgencyDebtRepayment) TableName() string { return AgencyTablePrefix + "debt_repayments" }
 
+// AgencyOpsWriterState is the durable source-writer fence shared by every
+// application instance. The singleton row is advanced with compare-and-swap.
+type AgencyOpsWriterState struct {
+	ID              int64  `gorm:"primaryKey" json:"id"`
+	Mode            string `gorm:"size:32;not null" json:"mode"`
+	FenceVersion    int64  `gorm:"not null" json:"fence_version"`
+	ManifestVersion int64  `gorm:"not null" json:"manifest_version"`
+	LastCommandID   string `gorm:"size:191;uniqueIndex:uidx_agency_writer_command" json:"last_command_id,omitempty"`
+	Reason          string `gorm:"type:text" json:"reason"`
+	EvidenceJSON    string `gorm:"type:text" json:"evidence_json"`
+	UpdatedAtMS     int64  `gorm:"not null" json:"updated_at_ms"`
+}
+
+func (AgencyOpsWriterState) TableName() string { return AgencyTablePrefix + "ops_writer_states" }
+
+// AgencyOpsWriterTransition is the immutable execution receipt for one writer
+// fence command. It makes command replay stable after later transitions have
+// advanced the singleton writer state.
+type AgencyOpsWriterTransition struct {
+	ID                    int64  `gorm:"primaryKey" json:"id"`
+	CommandID             string `gorm:"size:191;not null;uniqueIndex:uidx_agency_writer_transition_command" json:"command_id"`
+	PayloadHash           string `gorm:"size:128;not null" json:"payload_hash"`
+	TargetMode            string `gorm:"size:32;not null" json:"target_mode"`
+	ExpectedFenceVersion  int64  `gorm:"not null" json:"expected_fence_version"`
+	ResultingFenceVersion int64  `gorm:"not null" json:"resulting_fence_version"`
+	ManifestVersion       int64  `gorm:"not null" json:"manifest_version"`
+	Reason                string `gorm:"type:text;not null" json:"reason"`
+	EvidenceJSON          string `gorm:"type:text;not null" json:"evidence_json"`
+	ResultJSON            string `gorm:"type:text;not null" json:"result_json"`
+	CreatedAtMS           int64  `gorm:"not null" json:"created_at_ms"`
+}
+
+func (AgencyOpsWriterTransition) TableName() string {
+	return AgencyTablePrefix + "ops_writer_transitions"
+}
+
+// AgencyOpsSourceManifest freezes what the source database claimed at a
+// writer-fence version. TokenOps receives this exact payload and proof.
+type AgencyOpsSourceManifest struct {
+	Version      int64  `gorm:"primaryKey"`
+	FenceVersion int64  `gorm:"not null"`
+	Payload      string `gorm:"type:text;not null"`
+	PayloadHash  string `gorm:"size:128;not null"`
+	CreatedAtMS  int64  `gorm:"not null"`
+}
+
+func (AgencyOpsSourceManifest) TableName() string { return AgencyTablePrefix + "ops_source_manifests" }
+
+// AgencyCreditTerms is the customer's approved credit contract. Credit is
+// intentionally kept outside AgencyFundingDebt so chargeback/reversal debt
+// remains distinguishable from ordinary monthly credit usage.
+type AgencyCreditTerms struct {
+	UserID          int64  `gorm:"primaryKey" json:"user_id"`
+	CreditLimit     int64  `gorm:"not null" json:"credit_limit"`
+	PaymentTermDays int    `gorm:"not null;default:0" json:"payment_term_days"`
+	RepaymentDay    int    `gorm:"not null;default:1" json:"repayment_day"`
+	Status          string `gorm:"size:16;not null;index:idx_agency_credit_terms_status" json:"status"`
+	EmailEnabled    bool   `gorm:"not null;default:true" json:"email_enabled"`
+	UpdatedBy       int64  `gorm:"not null" json:"updated_by"`
+	CreatedAtMS     int64  `gorm:"not null" json:"created_at_ms"`
+	UpdatedAtMS     int64  `gorm:"not null" json:"updated_at_ms"`
+}
+
+func (AgencyCreditTerms) TableName() string { return AgencyTablePrefix + "credit_terms" }
+
+type AgencyCreditInvoice struct {
+	ID               int64  `gorm:"primaryKey" json:"id"`
+	UserID           int64  `gorm:"not null;index:idx_agency_credit_invoice_user_due;uniqueIndex:uidx_agency_credit_invoice_period,priority:1" json:"user_id"`
+	Period           string `gorm:"size:7;not null;uniqueIndex:uidx_agency_credit_invoice_period,priority:2" json:"period"`
+	PeriodStartMS    int64  `gorm:"not null" json:"period_start_ms"`
+	PeriodEndMS      int64  `gorm:"not null" json:"period_end_ms"`
+	AmountQuota      int64  `gorm:"not null" json:"amount_quota"`
+	PaidQuota        int64  `gorm:"not null;default:0" json:"paid_quota"`
+	BadDebtQuota     int64  `gorm:"not null;default:0" json:"bad_debt_quota"`
+	CurrencyCode     string `gorm:"size:16;not null" json:"currency_code"`
+	Status           string `gorm:"size:16;not null;index:idx_agency_credit_invoice_status" json:"status"`
+	RepaymentDay     int    `gorm:"not null;default:1" json:"repayment_day"`
+	PaymentTermDays  int    `gorm:"not null;default:0" json:"payment_term_days"`
+	DueAtMS          int64  `gorm:"not null;index:idx_agency_credit_invoice_user_due" json:"due_at_ms"`
+	OverdueAtMS      int64  `gorm:"not null;index:idx_agency_credit_invoice_status" json:"overdue_at_ms"`
+	BadDebtAtMS      *int64 `json:"bad_debt_at_ms,omitempty"`
+	BadDebtReason    string `gorm:"type:text" json:"bad_debt_reason,omitempty"`
+	EmailStatus      string `gorm:"size:16;not null" json:"email_status"`
+	EmailSentAtMS    *int64 `json:"email_sent_at_ms,omitempty"`
+	AttachmentName   string `gorm:"size:191" json:"attachment_name"`
+	EmailLastError   string `gorm:"type:text" json:"email_last_error,omitempty"`
+	PaidAtMS         *int64 `json:"paid_at_ms,omitempty"`
+	PaymentReference string `gorm:"size:191" json:"payment_reference,omitempty"`
+	ReceivedBy       int64  `gorm:"not null;default:0" json:"received_by,omitempty"`
+	CreatedAtMS      int64  `gorm:"not null" json:"created_at_ms"`
+	UpdatedAtMS      int64  `gorm:"not null" json:"updated_at_ms"`
+}
+
+func (AgencyCreditInvoice) TableName() string { return AgencyTablePrefix + "credit_invoices" }
+
 func AgencyModels() []any {
 	return []any{
-		&Agency{}, &AgencyOperatorAccount{}, &AgencySession{}, &AgencySSOTicketUse{}, &AgencyVerificationUse{}, &AgencyDeliverySecret{},
+		&Agency{}, &AgencyOperatorAccount{}, &AgencyOperatorIdentityBinding{}, &AgencySession{}, &AgencySSOTicketUse{}, &AgencyVerificationUse{}, &AgencyDeliverySecret{},
 		&AgencyUserBinding{}, &AgencyActiveUserBinding{}, &AgencyCustomerSalesOverride{}, &AgencyPricePolicyVersion{}, &AgencyPricePolicyItem{}, &AgencyPlatformPriceState{}, &AgencyPlatformPriceVersion{}, &AgencyIdempotencyRecord{},
-		&AgencyFundingAccount{}, &AgencyFundingLot{}, &AgencyFundingAllocation{}, &AgencyFundingLedger{}, &AgencyFundingDebt{}, &AgencyDebtRepayment{}, &AgencyFundingReversal{}, &AgencyFundingReversalChargeRecord{},
+		&AgencyFundingAccount{}, &AgencyFundingLot{}, &AgencyFundingAllocation{}, &AgencyFundingLedger{}, &AgencyFundingDebt{}, &AgencyDebtRepayment{}, &AgencyFundingReversal{}, &AgencyFundingReversalChargeRecord{}, &AgencyCreditTerms{}, &AgencyCreditInvoice{},
 		&AgencyBillingJournal{}, &AgencyBillingOperation{}, &AgencyBillingOutbox{}, &AgencyEventDelivery{}, &AgencyTaskSubmissionAttempt{},
+		&AgencyOpsPublisher{}, &AgencyOpsPublication{}, &AgencyOpsEvent{}, &AgencyOpsObjectRevision{}, &AgencyOpsSenderLease{}, &AgencyOpsWriterState{}, &AgencyOpsWriterTransition{}, &AgencyOpsSourceManifest{},
+		&AgencyBillingCorrection{},
 		&AgencyChargeComponent{}, &AgencyComponentFunding{},
-		&AgencySourceEvent{}, &AgencyUsageFact{}, &AgencyTopupFact{}, &AgencyCommissionJob{}, &AgencyCommissionLedger{}, &AgencyCommissionBalance{},
+		&AgencySourceEvent{}, &AgencyConsumerPrefix{}, &AgencyUsageFact{}, &AgencyTopupFact{}, &AgencyCommissionJob{}, &AgencyCommissionLedger{}, &AgencyCommissionBalance{},
 		&AgencyWithdrawalAccount{}, &AgencyWithdrawal{}, &AgencyWithdrawalPaymentReference{}, &AgencyWithdrawalTransition{}, &AgencyAuditLog{}, &AgencyDailyStat{},
 		&AgencyExportJob{}, &AgencyArchiveManifest{}, &AgencyWorkerLease{}, &AgencyReconciliationIssue{}, &AgencyReconciliationRun{}, &AgencyProvisioningJob{},
 		&AgencyCommand{},

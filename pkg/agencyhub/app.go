@@ -26,6 +26,7 @@ const (
 	OperatorStatusDisabled = "disabled"
 	ActorTypeRoot          = "root"
 	ActorTypeOperator      = "agency_operator"
+	ActorTypePlatformUser  = "platform_user"
 	ActorTypeSystem        = "system"
 )
 
@@ -43,15 +44,20 @@ type App struct {
 }
 
 type Identity struct {
-	ActorType            string          `json:"actor_type"`
-	ActorID              int64           `json:"actor_id"`
-	AgencyID             *int64          `json:"agency_id,omitempty"`
-	Username             string          `json:"username,omitempty"`
-	MustChangePassword   bool            `json:"must_change_password"`
-	ActingAgency         *AgencyIdentity `json:"acting_agency,omitempty"`
-	SessionID            int64           `json:"-"`
-	SourceSID            string          `json:"-"`
-	SourceSessionVersion int64           `json:"-"`
+	ActorType            string            `json:"actor_type"`
+	ActorID              int64             `json:"actor_id"`
+	AgencyID             *int64            `json:"agency_id,omitempty"`
+	Username             string            `json:"username,omitempty"`
+	MustChangePassword   bool              `json:"must_change_password"`
+	ActingAgency         *AgencyIdentity   `json:"acting_agency,omitempty"`
+	PlatformAccount      *PlatformIdentity `json:"platform_account,omitempty"`
+	SessionID            int64             `json:"-"`
+	SourceSID            string            `json:"-"`
+	SourceSessionVersion int64             `json:"-"`
+}
+
+type PlatformIdentity struct {
+	Username string `json:"username"`
 }
 
 // AgencyIdentity is the business-facing identity used when a root session is
@@ -84,6 +90,12 @@ func New(db, logDB *gorm.DB, config Config) *App {
 	if config.CookieName == "" {
 		config.CookieName = "agency_session"
 	}
+	if config.MaxLoginAttempts <= 0 {
+		config.MaxLoginAttempts = 5
+	}
+	if config.LoginLockout <= 0 {
+		config.LoginLockout = 15 * time.Minute
+	}
 	cursorSecret := []byte(strings.TrimSpace(config.CursorSecret))
 	if len(cursorSecret) < 32 {
 		if generated, err := randomToken(32); err == nil {
@@ -113,12 +125,15 @@ func (a *App) Router() *gin.Engine {
 	r.GET(a.config.BasePath+"/api/v1/public/invitations/:code/qr", a.publicInvitationQR)
 	api := r.Group(a.config.BasePath + "/api/v1")
 	api.Use(a.sessionMiddleware())
+	api.Use(a.writerFenceMiddleware())
 	api.Use(a.idempotencyMiddleware())
 	api.GET("/auth/me", a.me)
 	api.GET("/invitation", a.getOwnInvitation)
 	api.POST("/auth/logout", a.logout)
 	api.POST("/auth/change-password", a.changePassword)
 	api.POST("/auth/verify", a.operatorVerify)
+	api.POST("/auth/platform-link", a.linkPlatformAccount)
+	api.POST("/auth/platform-link/remove", a.unlinkPlatformAccount)
 	api.GET("/pricing", a.getOwnPricing)
 	api.GET("/pricing/history", a.getOwnPricingHistory)
 	api.GET("/pricing/model-sales", a.getOwnModelSales)
@@ -303,6 +318,8 @@ func (a *App) agencySchemaStatus() (gin.H, error) {
 		(model.AgencyFundingAllocation{}).TableName():    {"source_snapshot_json"},
 		(model.AgencyDebtRepayment{}).TableName():        {"source_kind"},
 		(model.AgencyFundingDebt{}).TableName():          {"allocation_id"},
+		(model.AgencyCreditTerms{}).TableName():          {"credit_limit", "payment_term_days", "repayment_day", "email_enabled"},
+		(model.AgencyCreditInvoice{}).TableName():        {"period", "amount_quota", "payment_term_days", "due_at_ms", "overdue_at_ms", "bad_debt_quota", "email_status", "email_last_error", "paid_at_ms", "payment_reference", "received_by"},
 		(model.AgencyCommissionLedger{}).TableName():     {"component_key"},
 	}
 	for table, columns := range required {
@@ -357,6 +374,9 @@ func (a *App) agencyCapabilities() gin.H {
 		"fact_projection":      a.config.FactProjectionEnabled,
 		"withdrawals":          a.config.WithdrawalsEnabled,
 		"exports":              strings.TrimSpace(a.config.ExportDir) != "",
+		"credit_terms_v1":      true,
+		"credit_invoices_v1":   true,
+		"credit_settlement_v1": true,
 	}
 }
 
@@ -388,10 +408,18 @@ func (a *App) agencyBacklogStatus(ctx context.Context) (gin.H, error) {
 		commissionJobs[status] = count
 	}
 	var lastProjected int64
-	if err := a.db.WithContext(ctx).Model(&model.AgencySourceEvent{}).
-		Where("processing_status IN ?", []string{"done", "facts_done", "skipped"}).
-		Select("COALESCE(MAX(created_at_ms), 0)").Scan(&lastProjected).Error; err != nil {
-		return nil, err
+	// One index-backed newest row per status avoids aggregating the full
+	// source history on every readiness probe, including out-of-order times.
+	for _, status := range []string{"done", "facts_done", "skipped"} {
+		var timestamps []int64
+		if err := a.db.WithContext(ctx).Model(&model.AgencySourceEvent{}).
+			Where("processing_status = ?", status).Order("created_at_ms DESC").Limit(1).
+			Pluck("created_at_ms", &timestamps).Error; err != nil {
+			return nil, err
+		}
+		if len(timestamps) > 0 {
+			lastProjected = max(lastProjected, timestamps[0])
+		}
 	}
 	return gin.H{
 		"deliveries":                    deliveries,

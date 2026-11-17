@@ -1,3 +1,5 @@
+import { OpsBridgeSection } from '@/features/ops-bridge'
+
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -39,6 +41,11 @@ function formatJsonForEditor(value: string, fallback: string) {
 }
 
 const MODELS_SECTIONS = [
+  {
+    id: 'tokenops',
+    titleKey: 'TokenOps connection',
+    build: () => <OpsBridgeSection />,
+  },
   {
     id: 'global',
     titleKey: 'Global Model Configuration',
@@ -167,6 +174,7 @@ const MODELS_SECTIONS = [
     build: (settings: ModelSettings) => (
       <SeedanceVideoPricingCard
         defaultValue={settings['seedance_video_pricing.prices_usd']}
+        requestDefaultValue={settings['seedance_video_pricing.request_prices_cny']}
       />
     ),
   },

@@ -37,6 +37,15 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 			groupsCopy[userGroup] = "用户分组"
 		}
 	}
+	// Platform-internal routing groups stay hidden from catalog selection and
+	// agency surfaces, even when an operator configures them globally. Members of
+	// an internal group keep access to their own group so internal service accounts
+	// (for example the model mock runner) keep authenticating.
+	for groupName := range groupsCopy {
+		if ratio_setting.IsInternalGroup(groupName) && groupName != userGroup {
+			delete(groupsCopy, groupName)
+		}
+	}
 	return groupsCopy
 }
 

@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -46,6 +48,8 @@ type requestDescriptor struct {
 	RewriteModel   string            `json:"rewriteModel"`
 	BodyType       string            `json:"bodyType"`
 	Parts          []requestPart     `json:"parts"`
+	MediaProbes    []mediaProbe      `json:"mediaProbes"`
+	ImageProbes    []mediaProbe      `json:"imageProbes"`
 }
 
 type requestPart struct {
@@ -82,12 +86,14 @@ const maxTaskArtifacts = 64
 const maxTaskPluginPersistedJSONBytes = 1 << 20
 
 type TaskAdaptor struct {
-	plugin         *pluginruntime.LoadedPlugin
-	info           *relaycommon.RelayInfo
-	submit         *requestDescriptor
-	routeRequest   *pluginruntime.RouteRequestContext
-	requestHeaders map[string]string
-	files          []map[string]any
+	plugin          *pluginruntime.LoadedPlugin
+	info            *relaycommon.RelayInfo
+	submit          *requestDescriptor
+	routeRequest    *pluginruntime.RouteRequestContext
+	requestHeaders  map[string]string
+	files           []map[string]any
+	mediaDurations  map[string]float64
+	mediaDimensions map[string]imageDimensions
 }
 
 func New(plugin *pluginruntime.LoadedPlugin) *TaskAdaptor { return &TaskAdaptor{plugin: plugin} }
@@ -196,6 +202,10 @@ func (a *TaskAdaptor) ExtractUsageFactsValidated(c *gin.Context, info *relaycomm
 	usageContext["usagePurpose"] = "facts"
 	value, err := a.plugin.Engine.Call(c.Request.Context(), "extractUsage", usageContext)
 	if err != nil {
+		var hookErr *pluginruntime.HookError
+		if errors.As(err, &hookErr) {
+			return nil, fmt.Errorf("plugin usage hook failed: %s", hookErr.Message)
+		}
 		return nil, fmt.Errorf("plugin usage hook failed")
 	}
 	if value == nil {
@@ -1201,6 +1211,58 @@ func (a *TaskAdaptor) buildSubmit(c *gin.Context, info *relaycommon.RelayInfo) (
 		return a.submit, nil
 	}
 	started := time.Now()
+	descriptor, err := a.buildSubmitDescriptor(c, info)
+	if err != nil {
+		return nil, err
+	}
+	if len(descriptor.MediaProbes) > 0 || len(descriptor.ImageProbes) > 0 {
+		if len(descriptor.MediaProbes) > 0 && !slices.Contains(a.plugin.Meta.RequiredCapabilities, pluginruntime.CapabilityMediaDuration) {
+			return nil, fmt.Errorf("media probes require media-duration@1")
+		}
+		if len(descriptor.ImageProbes) > 0 && !slices.Contains(a.plugin.Meta.RequiredCapabilities, pluginruntime.CapabilityImageDimensions) {
+			return nil, fmt.Errorf("image probes require image-dimensions@1")
+		}
+		durations, dimensions, probeErr := probeMedia(c, descriptor.MediaProbes, descriptor.ImageProbes)
+		if probeErr != nil {
+			return nil, probeErr
+		}
+		a.mediaDurations = durations
+		a.mediaDimensions = dimensions
+		if len(descriptor.ImageProbes) > 0 {
+			// Rebuild only opt-in image descriptors, with host-owned dimensions.
+			// Validate the final URL/model again; never recursively fetch new probes.
+			final, err := a.buildSubmitDescriptor(c, info)
+			if err != nil {
+				return nil, err
+			}
+			if len(final.ImageProbes) > 0 || !reflect.DeepEqual(final.MediaProbes, descriptor.MediaProbes) {
+				return nil, fmt.Errorf("plugin must resolve image probes without adding or changing media probes")
+			}
+			descriptor = final
+		}
+	}
+	a.submit = descriptor
+	method := strings.ToUpper(strings.TrimSpace(descriptor.Method))
+	if method == "" {
+		method = http.MethodPost
+	}
+	logger.LogDebug(
+		c,
+		"task_plugin subsystem=adaptor event=build_submit_complete plugin=%q method=%q body_type=%q parts=%d model=%q action_present=%t rewrite_model=%t elapsed_ms=%d",
+		a.plugin.Meta.Key,
+		method,
+		descriptor.BodyType,
+		len(descriptor.Parts),
+		info.OriginModelName,
+		info.Action != "",
+		descriptor.RewriteModel != "",
+		time.Since(started).Milliseconds(),
+	)
+	return a.submit, nil
+}
+
+func (a *TaskAdaptor) buildSubmitDescriptor(c *gin.Context, info *relaycommon.RelayInfo) (*requestDescriptor, error) {
+	started := time.Now()
 	value, err := a.plugin.Engine.Call(c.Request.Context(), "buildSubmitRequest", a.submitContext(c, info))
 	if err != nil {
 		logger.LogDebug(
@@ -1259,24 +1321,7 @@ func (a *TaskAdaptor) buildSubmit(c *gin.Context, info *relaycommon.RelayInfo) (
 	if descriptor.RewriteModel != "" {
 		info.UpstreamModelName = descriptor.RewriteModel
 	}
-	a.submit = &descriptor
-	method := strings.ToUpper(strings.TrimSpace(descriptor.Method))
-	if method == "" {
-		method = http.MethodPost
-	}
-	logger.LogDebug(
-		c,
-		"task_plugin subsystem=adaptor event=build_submit_complete plugin=%q method=%q body_type=%q parts=%d model=%q action_present=%t rewrite_model=%t elapsed_ms=%d",
-		a.plugin.Meta.Key,
-		method,
-		descriptor.BodyType,
-		len(descriptor.Parts),
-		info.OriginModelName,
-		info.Action != "",
-		descriptor.RewriteModel != "",
-		time.Since(started).Milliseconds(),
-	)
-	return a.submit, nil
+	return &descriptor, nil
 }
 
 func (a *TaskAdaptor) submitContext(c *gin.Context, info *relaycommon.RelayInfo) map[string]any {
@@ -1346,6 +1391,8 @@ func (a *TaskAdaptor) submitContext(c *gin.Context, info *relaycommon.RelayInfo)
 	ctx["requestBody"] = jsonValue(routeRequest.RequestBody)
 	ctx["requestHeaders"] = requestHeaders
 	ctx["files"] = files
+	ctx["mediaDurations"] = a.mediaDurations
+	ctx["mediaDimensions"] = jsonValue(a.mediaDimensions)
 	ctx["action"] = info.Action
 	ctx["originTaskId"] = info.OriginTaskID
 	if info.TaskRelayInfo != nil && len(info.OriginTasks) > 0 {

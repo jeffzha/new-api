@@ -19,7 +19,7 @@ func TestAgencyTaskSubmissionReceiptTransitionsAreIdempotent(t *testing.T) {
 	previous := DB
 	DB = db
 	t.Cleanup(func() { DB = previous })
-	require.NoError(t, db.AutoMigrate(&AgencyBillingJournal{}, &AgencyTaskSubmissionAttempt{}))
+	require.NoError(t, db.AutoMigrate(&AgencyBillingJournal{}, &AgencyTaskSubmissionAttempt{}, &AgencyOpsEvent{}, &AgencyOpsObjectRevision{}))
 	require.NoError(t, db.Create(&AgencyBillingJournal{
 		ChargeID: "charge-receipt-1", SegmentNo: 0, UserID: 42,
 		Status: "reserved", PricingSnapshot: "{}", BillingBasis: "{}",
@@ -58,11 +58,39 @@ func TestAgencyTaskSubmissionDoesNotPersistProviderError(t *testing.T) {
 	previous := DB
 	DB = db
 	t.Cleanup(func() { DB = previous })
-	require.NoError(t, db.AutoMigrate(&AgencyBillingJournal{}, &AgencyTaskSubmissionAttempt{}))
+	require.NoError(t, db.AutoMigrate(&AgencyBillingJournal{}, &AgencyTaskSubmissionAttempt{}, &AgencyOpsEvent{}, &AgencyOpsObjectRevision{}))
 	require.NoError(t, db.Create(&AgencyBillingJournal{ChargeID: "charge-redact", UserID: 7, Status: "reserved", PricingSnapshot: "{}", BillingBasis: "{}", Version: 1}).Error)
 	require.NoError(t, BeginAgencyTaskSubmission(7, "charge-redact", "public-redact", "hash", "/v1/videos"))
 	require.NoError(t, ResolveAgencyTaskSubmissionFailure("charge-redact", false, "dial tcp 10.0.0.1: secret-api-key"))
 	var attempt AgencyTaskSubmissionAttempt
 	require.NoError(t, db.First(&attempt).Error)
 	require.Equal(t, "unknown", attempt.EvidenceTrace)
+}
+
+func TestPendingAgencyTaskSettlementRepairWakesAsyncWorker(t *testing.T) {
+	dsn := "file:agency-task-repair-wakeup-" + strings.ReplaceAll(t.Name(), "/", "-") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	previous := DB
+	DB = db
+	t.Cleanup(func() { DB = previous })
+	require.NoError(t, db.AutoMigrate(&AgencyBillingJournal{}, &AgencyBillingOperation{}, &AgencyOpsEvent{}, &AgencyOpsObjectRevision{}))
+	require.False(t, HasPendingAgencyTaskSettlementRepairs())
+
+	require.NoError(t, db.Create(&AgencyBillingJournal{
+		ChargeID: "charge-terminal-repair", SegmentNo: 0, UserID: 42, Status: "reconcile_required",
+		BusinessStatus: "pending", DeliveryStatus: "pending", PricingSnapshot: "{}", BillingBasis: "{}",
+		LastError: "terminal_settlement_failed", Version: 1,
+	}).Error)
+	require.True(t, HasPendingAgencyTaskSettlementRepairs())
+
+	require.NoError(t, db.Model(&AgencyBillingJournal{}).Where("charge_id = ?", "charge-terminal-repair").
+		Updates(map[string]any{"status": "finalized", "last_error": ""}).Error)
+	require.False(t, HasPendingAgencyTaskSettlementRepairs())
+
+	require.NoError(t, db.Create(&AgencyBillingOperation{
+		ChargeID: "charge-legacy-finalize", SegmentNo: 0, Revision: 1, Operation: "finalize",
+		InputHash: "legacy", CommittedResult: "{}", EventCount: 1,
+	}).Error)
+	require.True(t, HasPendingAgencyTaskSettlementRepairs())
 }

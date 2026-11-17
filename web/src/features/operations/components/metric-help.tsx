@@ -28,6 +28,24 @@ import {
 import { cn } from '@/lib/utils'
 
 const METRIC_HELP_COPY = {
+  successAndFailure: {
+    labelKey: 'Success rate',
+    definitionKey:
+      'Success and failure rates include all observed downstream requests, including business-limit rejections. Retries are not additional requests.',
+    formula: 'success = S / R; failure = (R - S) / R',
+  },
+  rpmAndTpm: {
+    labelKey: 'Average RPM / TPM',
+    definitionKey:
+      'Requests and normalized tokens per minute averaged over the selected time window.',
+    formula: 'RPM = R * 60 / seconds; TPM = T * 60 / seconds',
+  },
+  netConsumption: {
+    labelKey: 'Net consumption',
+    definitionKey:
+      'Consumption entries minus refund entries posted within the selected window. Async reservations and adjustments are financial entries, not extra requests. Endpoint and node filters are unavailable in financial logs.',
+    formula: 'net = SUM(consume.quota) - SUM(refund.quota)',
+  },
   effectiveRequestSuccessRate: {
     labelKey: 'Effective request success rate',
     definitionKey:
@@ -98,13 +116,13 @@ const METRIC_HELP_COPY = {
   modelRequests: {
     labelKey: 'Requests',
     definitionKey:
-      'Successful requests for models whose names start with gpt during the fixed latest 30-day statistics window.',
-    formula: 'count(successful gpt* requests)',
+      'Successful model requests with output tokens matching the selected time window and filters. Polling and download requests are excluded.',
+    formula: 'count(successful requests with output_tokens > 0)',
   },
   tokensPerSecond: {
     labelKey: 'Tokens/s',
     definitionKey:
-      'Average per-request output token generation speed for successful requests in the fixed latest 30-day window.',
+      'Average per-request output token generation speed for successful requests matching the selected time window and filters.',
     formula: 'AVG(output_tokens × 1000 / duration_ms)',
   },
   averageTtft: {

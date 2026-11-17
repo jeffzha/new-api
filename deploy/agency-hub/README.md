@@ -20,6 +20,29 @@ AGENCY_WITHDRAWALS_ENABLED=false \
 
 ## Local SQLite and production PostgreSQL
 
+### Billing queue ordering and recovery
+
+The delivery worker selects due events in user money-sequence order before
+applying its batch limit. A live claim, future retry, or poison event blocks
+later sequences for that customer, while other customers remain eligible.
+After a failed predecessor, the worker leaves its selected successors untouched
+instead of spending retries on known dependencies. A tick stops when a batch
+completes no events; future retries do not trigger repeated empty scans.
+
+This scheduling does not replace transaction checks: prior receipts, immutable
+payload hashes, operation evidence, lease fencing, and financial deduplication
+remain required. Missing evidence is retained for reconciliation, never marked
+complete just to empty the queue. Usage synchronization is asynchronous;
+queue progress alone does not establish that historical financial records match.
+
+Verification on 2026-10-14 used real SQLite 3.50.4, MySQL 5.7.44, and PostgreSQL
+16.14. `go test ./pkg/agencyhub -count=1` passed. The isolated three-engine run
+covered `TestConsumerQueueAcrossDialects`, component gateway refund/projection,
+lease fencing, billing corrections, delayed reversals, and withdrawal reversals.
+Queue cases include a reversed 700-event backlog, barriers before a one-row
+batch limit, missing deliveries/receipts, malformed hashes, multiple events at
+one sequence, cancellation, and replay without duplicate financial effects.
+
 The same binary selects its database from `SQL_DSN`, using the repository's
 SQLite default when the variable is empty. This is suitable for local
 development and isolated tests. Start the gateway against the same absolute
@@ -53,7 +76,7 @@ service. A safe first deployment sequence is:
 
 ```sh
 docker network create agency_backend 2>/dev/null || true
-docker compose -f deploy/agency-hub/docker-compose.yml build agency-hub
+docker compose -f deploy/agency-hub/docker-compose.yml pull agency-hub
 docker compose -f deploy/agency-hub/docker-compose.yml run --rm \
   --entrypoint /agency-hub agency-hub migrate
 docker compose -f deploy/agency-hub/docker-compose.yml up -d agency-hub
@@ -185,16 +208,17 @@ the Compose environment. New ciphertexts use `AGENCY_PAYOUT_KEY_ID` (default
 keys are read only for decrypting historical account snapshots; all newly
 written accounts use the current key.
 
-The compose file builds the current `agency-web` sources, embeds that exact Vite
-output in a freshly compiled Linux binary, and uses `deploy/agency-hub/Dockerfile`.
-It does not depend on manually copied binaries or the old committed frontend.
+Build the image outside production with `deploy/agency-hub/Dockerfile`, including
+the matching `agency-web` output, and publish it with an immutable tag or digest.
+The production Compose file requires `AGENCY_HUB_IMAGE` and never builds source.
 The runtime runs as UID/GID 10001, mounts a
 persistent export volume, and joins the external `agency_backend` network. Create
 that network once (and attach PostgreSQL or use a reachable DSN) before starting:
 
 ```sh
 docker network create agency_backend 2>/dev/null || true
-docker compose -f deploy/agency-hub/docker-compose.yml up -d --build
+docker compose -f deploy/agency-hub/docker-compose.yml pull agency-hub
+docker compose -f deploy/agency-hub/docker-compose.yml up -d agency-hub
 ```
 
 The sample limits the sidecar to 0.75 CPU, 768 MiB RAM, 20 open database

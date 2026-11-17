@@ -23,3 +23,12 @@ func lockForUpdate(tx *gorm.DB) *gorm.DB {
 	}
 	return tx.Clauses(clause.Locking{Strength: "UPDATE"})
 }
+
+// lockForShare keeps a checked row stable until commit without serializing
+// other readers. GORM emits LOCK IN SHARE MODE for MySQL versions before 8.
+func lockForShare(tx *gorm.DB) *gorm.DB {
+	if tx.Dialector.Name() == "sqlite" {
+		return tx
+	}
+	return tx.Clauses(clause.Locking{Strength: "SHARE"})
+}

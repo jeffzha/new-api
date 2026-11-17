@@ -1,0 +1,2214 @@
+[
+  {
+    "exitCode": 0,
+    "fixtureAction": "provision"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "seed"
+  },
+  {
+    "arguments": [
+      "prepare",
+      "--gateway",
+      "test-cn",
+      "--evidence",
+      "synthetic-cli-prepare"
+    ],
+    "command": "prepare",
+    "exitCode": 0,
+    "stderr": "",
+    "stdout": "{\"epochId\":\"f8cc0ff7-553f-493a-9d6e-1a5cafb3b376\",\"generation\":1,\"operatorEvidenceId\":\"synthetic-cli-prepare\",\"state\":\"prepared\"}\n"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "arguments": [
+      "import",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "1",
+      "--evidence",
+      "synthetic-cli-import",
+      "--input",
+      "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\invalid.json"
+    ],
+    "command": "import-malformed",
+    "exitCode": 1,
+    "stderr": "{\"error\":\"control_or_parent_conflict\"}\n",
+    "stdout": ""
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "after": {
+      "admissions": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "approvals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:91736cf9a3adca0f3789fc32090643ef09e29fa5b96f6cb75e8623cf2bc21178",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "before": {
+      "admissions": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "approvals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:91736cf9a3adca0f3789fc32090643ef09e29fa5b96f6cb75e8623cf2bc21178",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "negativeStateCheck": "import-malformed"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "arguments": [
+      "import",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "2",
+      "--evidence",
+      "synthetic-cli-import",
+      "--input",
+      "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\approved.json"
+    ],
+    "command": "import-stale-generation",
+    "exitCode": 1,
+    "stderr": "{\"error\":\"control_or_parent_conflict\"}\n",
+    "stdout": ""
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "after": {
+      "admissions": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "approvals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:91736cf9a3adca0f3789fc32090643ef09e29fa5b96f6cb75e8623cf2bc21178",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "before": {
+      "admissions": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "approvals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:91736cf9a3adca0f3789fc32090643ef09e29fa5b96f6cb75e8623cf2bc21178",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "negativeStateCheck": "import-stale-generation"
+  },
+  {
+    "arguments": [
+      "import",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "1",
+      "--evidence",
+      "synthetic-cli-import",
+      "--input",
+      "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\approved.json"
+    ],
+    "command": "import",
+    "exitCode": 0,
+    "stderr": "",
+    "stdout": "{\"epochId\":\"f8cc0ff7-553f-493a-9d6e-1a5cafb3b376\",\"imported\":true,\"inventoryId\":\"1b5cac45-07f4-4281-a5a3-69b6ca29818e\",\"operatorEvidenceId\":\"synthetic-cli-import\"}\n"
+  },
+  {
+    "arguments": [
+      "import",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "1",
+      "--evidence",
+      "synthetic-cli-import",
+      "--input",
+      "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\approved.json"
+    ],
+    "command": "import-idempotent",
+    "exitCode": 0,
+    "stderr": "",
+    "stdout": "{\"epochId\":\"f8cc0ff7-553f-493a-9d6e-1a5cafb3b376\",\"imported\":true,\"inventoryId\":\"1b5cac45-07f4-4281-a5a3-69b6ca29818e\",\"operatorEvidenceId\":\"synthetic-cli-import\"}\n"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "arguments": [
+      "admit",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "1",
+      "--evidence",
+      "synthetic-cli-admit",
+      "--inventory",
+      "1b5cac45-07f4-4281-a5a3-69b6ca29818e",
+      "--user",
+      "1002"
+    ],
+    "command": "admit-customer-outside-inventory",
+    "exitCode": 1,
+    "stderr": "{\"error\":\"operation_failed\"}\n",
+    "stdout": ""
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "after": {
+      "admissions": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:91736cf9a3adca0f3789fc32090643ef09e29fa5b96f6cb75e8623cf2bc21178",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "before": {
+      "admissions": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:91736cf9a3adca0f3789fc32090643ef09e29fa5b96f6cb75e8623cf2bc21178",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "negativeStateCheck": "admit-customer-outside-inventory"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "arguments": [
+      "admit",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "2",
+      "--evidence",
+      "synthetic-cli-admit",
+      "--inventory",
+      "1b5cac45-07f4-4281-a5a3-69b6ca29818e",
+      "--user",
+      "1001"
+    ],
+    "command": "admit-stale-generation",
+    "exitCode": 1,
+    "stderr": "{\"error\":\"control_or_parent_conflict\"}\n",
+    "stdout": ""
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "after": {
+      "admissions": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:91736cf9a3adca0f3789fc32090643ef09e29fa5b96f6cb75e8623cf2bc21178",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "before": {
+      "admissions": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:91736cf9a3adca0f3789fc32090643ef09e29fa5b96f6cb75e8623cf2bc21178",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "negativeStateCheck": "admit-stale-generation"
+  },
+  {
+    "arguments": [
+      "admit",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "1",
+      "--evidence",
+      "synthetic-cli-admit",
+      "--inventory",
+      "1b5cac45-07f4-4281-a5a3-69b6ca29818e",
+      "--user",
+      "1001"
+    ],
+    "command": "admit",
+    "exitCode": 0,
+    "stderr": "",
+    "stdout": "{\"admissionId\":\"818a1d657ce436b837ed691763b176f9be2dff0d1274ba823f79856825ee46e6\",\"epochId\":\"f8cc0ff7-553f-493a-9d6e-1a5cafb3b376\",\"membershipSequence\":1,\"operatorEvidenceId\":\"synthetic-cli-admit\"}\n"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "arguments": [
+      "start",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "1",
+      "--evidence",
+      "synthetic-cli-start",
+      "--input",
+      "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\start.json"
+    ],
+    "command": "start-missing-explicit-flags",
+    "exitCode": 1,
+    "stderr": "{\"error\":\"operation_failed\"}\n",
+    "stdout": ""
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "after": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:38c2e400fd87b045a98fe8b0792501168390d64529cd29aa0b95f286924958b7",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "before": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:38c2e400fd87b045a98fe8b0792501168390d64529cd29aa0b95f286924958b7",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "negativeStateCheck": "start-missing-explicit-flags"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "arguments": [
+      "start",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "1",
+      "--evidence",
+      "synthetic-cli-start",
+      "--input",
+      "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\invalid.json"
+    ],
+    "command": "start-malformed",
+    "exitCode": 1,
+    "stderr": "{\"error\":\"operation_failed\"}\n",
+    "stdout": ""
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "after": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:38c2e400fd87b045a98fe8b0792501168390d64529cd29aa0b95f286924958b7",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "before": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:38c2e400fd87b045a98fe8b0792501168390d64529cd29aa0b95f286924958b7",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "negativeStateCheck": "start-malformed"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "arguments": [
+      "start",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "1",
+      "--evidence",
+      "synthetic-cli-start",
+      "--input",
+      "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\invalid.json"
+    ],
+    "command": "start-invalid-writer",
+    "exitCode": 1,
+    "stderr": "{\"error\":\"operation_failed\"}\n",
+    "stdout": ""
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "after": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:38c2e400fd87b045a98fe8b0792501168390d64529cd29aa0b95f286924958b7",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "before": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:38c2e400fd87b045a98fe8b0792501168390d64529cd29aa0b95f286924958b7",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "negativeStateCheck": "start-invalid-writer"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "arguments": [
+      "start",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "1",
+      "--evidence",
+      "synthetic-cli-start",
+      "--input",
+      "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\invalid.json"
+    ],
+    "command": "start-incomplete-attestation",
+    "exitCode": 1,
+    "stderr": "{\"error\":\"operation_failed\"}\n",
+    "stdout": ""
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "after": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:38c2e400fd87b045a98fe8b0792501168390d64529cd29aa0b95f286924958b7",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "before": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:38c2e400fd87b045a98fe8b0792501168390d64529cd29aa0b95f286924958b7",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "negativeStateCheck": "start-incomplete-attestation"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "arguments": [
+      "start",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "1",
+      "--evidence",
+      "synthetic-cli-start",
+      "--input",
+      "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\start.json"
+    ],
+    "command": "start-redis-enabled",
+    "exitCode": 1,
+    "stderr": "{\"error\":\"operation_failed\"}\n",
+    "stdout": ""
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "after": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:38c2e400fd87b045a98fe8b0792501168390d64529cd29aa0b95f286924958b7",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "before": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:38c2e400fd87b045a98fe8b0792501168390d64529cd29aa0b95f286924958b7",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "negativeStateCheck": "start-redis-enabled"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "arguments": [
+      "start",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "1",
+      "--evidence",
+      "synthetic-cli-start",
+      "--input",
+      "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\start.json"
+    ],
+    "command": "start-batch-enabled",
+    "exitCode": 1,
+    "stderr": "{\"error\":\"operation_failed\"}\n",
+    "stdout": ""
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "after": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:38c2e400fd87b045a98fe8b0792501168390d64529cd29aa0b95f286924958b7",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "before": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:38c2e400fd87b045a98fe8b0792501168390d64529cd29aa0b95f286924958b7",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "negativeStateCheck": "start-batch-enabled"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "arguments": [
+      "start",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "2",
+      "--evidence",
+      "synthetic-cli-start",
+      "--input",
+      "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\start.json"
+    ],
+    "command": "start-stale-generation",
+    "exitCode": 1,
+    "stderr": "{\"error\":\"control_or_parent_conflict\"}\n",
+    "stdout": ""
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "after": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:38c2e400fd87b045a98fe8b0792501168390d64529cd29aa0b95f286924958b7",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "before": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:01b97675e8f475460511b494c4b6113260222b606e58bcad571d2aac0c4e284a",
+        "count": 1
+      },
+      "epoch": {
+        "contentHash": "sha256:38c2e400fd87b045a98fe8b0792501168390d64529cd29aa0b95f286924958b7",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:eaab8edb56a207a7f4fc1941fa960287a885d36ce2aa7e0c44116207f08f23c7",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      }
+    },
+    "negativeStateCheck": "start-stale-generation"
+  },
+  {
+    "arguments": [
+      "start",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "1",
+      "--evidence",
+      "synthetic-cli-start",
+      "--input",
+      "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\start.json"
+    ],
+    "command": "start",
+    "exitCode": 0,
+    "stderr": "",
+    "stdout": "{\"epochId\":\"f8cc0ff7-553f-493a-9d6e-1a5cafb3b376\",\"generation\":2,\"operatorEvidenceId\":\"synthetic-cli-start\",\"state\":\"active\"}\n"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "arguments": [
+      "import",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "1",
+      "--evidence",
+      "synthetic-cli-import",
+      "--input",
+      "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\approved.json"
+    ],
+    "command": "import-stale-after-start",
+    "exitCode": 1,
+    "stderr": "{\"error\":\"control_or_parent_conflict\"}\n",
+    "stdout": ""
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "after": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:edf954826388034c6ad5b62d161d3510040dafc94a4292a7544ade2cd0afde02",
+        "count": 2
+      },
+      "epoch": {
+        "contentHash": "sha256:c8ca6b02c8fe9b6ee548dfe4ad0fdbbeb43d1381d2ba1b257821f3e42e82e457",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:55fb5181070e137f92806db4728ce9214703eec981336e156d76b8ec9ad69d85",
+        "count": 1
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:a4e5683ad35a79a98177c21eb779fc2ae39528dd659c28a2759e72540abf10e8",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:b38cb0cdb6aa390b6f7536033964fa8513ae604c56f2af6a9de4f3aaca31927e",
+        "count": 1
+      }
+    },
+    "before": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:edf954826388034c6ad5b62d161d3510040dafc94a4292a7544ade2cd0afde02",
+        "count": 2
+      },
+      "epoch": {
+        "contentHash": "sha256:c8ca6b02c8fe9b6ee548dfe4ad0fdbbeb43d1381d2ba1b257821f3e42e82e457",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:55fb5181070e137f92806db4728ce9214703eec981336e156d76b8ec9ad69d85",
+        "count": 1
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:a4e5683ad35a79a98177c21eb779fc2ae39528dd659c28a2759e72540abf10e8",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:3033bf9754a354340c3c02d66ecec704352dc0f643ead5d4afec206bc393a3ab",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:b38cb0cdb6aa390b6f7536033964fa8513ae604c56f2af6a9de4f3aaca31927e",
+        "count": 1
+      }
+    },
+    "negativeStateCheck": "import-stale-after-start"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "native"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "arguments": [
+      "stop",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "1",
+      "--state",
+      "paused",
+      "--evidence",
+      "synthetic-cli-stop"
+    ],
+    "command": "stop-stale-generation",
+    "exitCode": 1,
+    "stderr": "{\"error\":\"control_or_parent_conflict\"}\n",
+    "stdout": ""
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "after": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:edf954826388034c6ad5b62d161d3510040dafc94a4292a7544ade2cd0afde02",
+        "count": 2
+      },
+      "epoch": {
+        "contentHash": "sha256:80057c65449057064e16ccbcac2a105b7af2104e6651c43f940d795b639d41e9",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:55fb5181070e137f92806db4728ce9214703eec981336e156d76b8ec9ad69d85",
+        "count": 1
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:a4e5683ad35a79a98177c21eb779fc2ae39528dd659c28a2759e72540abf10e8",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:5a6f2a86bb43cb973dcc76e8d790cba0221da1290909a044b2d5d7074590defa",
+        "count": 3
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:f70f6a9d9a77351ce2eca5f8d3fb14b44ff64d4504a0ef34d5bb5462ba6415d9",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:b38cb0cdb6aa390b6f7536033964fa8513ae604c56f2af6a9de4f3aaca31927e",
+        "count": 1
+      }
+    },
+    "before": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:edf954826388034c6ad5b62d161d3510040dafc94a4292a7544ade2cd0afde02",
+        "count": 2
+      },
+      "epoch": {
+        "contentHash": "sha256:80057c65449057064e16ccbcac2a105b7af2104e6651c43f940d795b639d41e9",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:55fb5181070e137f92806db4728ce9214703eec981336e156d76b8ec9ad69d85",
+        "count": 1
+      },
+      "freezeHead": {
+        "contentHash": "sha256:5bfb22002c4c1076e80d83c341eb90b58e9ca2b42317808e706c512f02700f0b",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:a4e5683ad35a79a98177c21eb779fc2ae39528dd659c28a2759e72540abf10e8",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:5a6f2a86bb43cb973dcc76e8d790cba0221da1290909a044b2d5d7074590defa",
+        "count": 3
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "snapshots": {
+        "contentHash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "count": 0
+      },
+      "stream": {
+        "contentHash": "sha256:f70f6a9d9a77351ce2eca5f8d3fb14b44ff64d4504a0ef34d5bb5462ba6415d9",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:b38cb0cdb6aa390b6f7536033964fa8513ae604c56f2af6a9de4f3aaca31927e",
+        "count": 1
+      }
+    },
+    "negativeStateCheck": "stop-stale-generation"
+  },
+  {
+    "arguments": [
+      "status",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376"
+    ],
+    "command": "periodic-status",
+    "exitCode": 0,
+    "stderr": "",
+    "stdout": "{\"batchSequence\":0,\"epochId\":\"f8cc0ff7-553f-493a-9d6e-1a5cafb3b376\",\"generation\":2,\"latestProofId\":\"\",\"membershipThrough\":1,\"mutationThrough\":3,\"operatorEvidenceId\":\"\",\"state\":\"active\"}\n"
+  },
+  {
+    "arguments": [
+      "status",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376"
+    ],
+    "command": "periodic-status",
+    "exitCode": 0,
+    "stderr": "",
+    "stdout": "{\"batchSequence\":1,\"epochId\":\"f8cc0ff7-553f-493a-9d6e-1a5cafb3b376\",\"generation\":2,\"latestProofId\":\"sha256:bcf895030b7329547a10d5710d9a3e5bba7b53ce16fb97b5e3ff81065dea7cd5\",\"membershipThrough\":1,\"mutationThrough\":3,\"operatorEvidenceId\":\"\",\"state\":\"active\"}\n"
+  },
+  {
+    "arguments": [
+      "status",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376"
+    ],
+    "command": "periodic-status",
+    "exitCode": 0,
+    "stderr": "",
+    "stdout": "{\"batchSequence\":1,\"epochId\":\"f8cc0ff7-553f-493a-9d6e-1a5cafb3b376\",\"generation\":2,\"latestProofId\":\"sha256:bcf895030b7329547a10d5710d9a3e5bba7b53ce16fb97b5e3ff81065dea7cd5\",\"membershipThrough\":1,\"mutationThrough\":3,\"operatorEvidenceId\":\"\",\"state\":\"active\"}\n"
+  },
+  {
+    "arguments": [
+      "status",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376"
+    ],
+    "command": "periodic-status",
+    "exitCode": 0,
+    "stderr": "",
+    "stdout": "{\"batchSequence\":1,\"epochId\":\"f8cc0ff7-553f-493a-9d6e-1a5cafb3b376\",\"generation\":2,\"latestProofId\":\"sha256:bcf895030b7329547a10d5710d9a3e5bba7b53ce16fb97b5e3ff81065dea7cd5\",\"membershipThrough\":1,\"mutationThrough\":3,\"operatorEvidenceId\":\"\",\"state\":\"active\"}\n"
+  },
+  {
+    "arguments": [
+      "status",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376"
+    ],
+    "command": "periodic-status",
+    "exitCode": 0,
+    "stderr": "",
+    "stdout": "{\"batchSequence\":1,\"epochId\":\"f8cc0ff7-553f-493a-9d6e-1a5cafb3b376\",\"generation\":2,\"latestProofId\":\"sha256:bcf895030b7329547a10d5710d9a3e5bba7b53ce16fb97b5e3ff81065dea7cd5\",\"membershipThrough\":1,\"mutationThrough\":3,\"operatorEvidenceId\":\"\",\"state\":\"active\"}\n"
+  },
+  {
+    "arguments": [
+      "status",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376"
+    ],
+    "command": "periodic-status",
+    "exitCode": 0,
+    "stderr": "",
+    "stdout": "{\"batchSequence\":1,\"epochId\":\"f8cc0ff7-553f-493a-9d6e-1a5cafb3b376\",\"generation\":2,\"latestProofId\":\"sha256:bcf895030b7329547a10d5710d9a3e5bba7b53ce16fb97b5e3ff81065dea7cd5\",\"membershipThrough\":1,\"mutationThrough\":3,\"operatorEvidenceId\":\"\",\"state\":\"active\"}\n"
+  },
+  {
+    "arguments": [
+      "status",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376"
+    ],
+    "command": "periodic-status",
+    "exitCode": 0,
+    "stderr": "",
+    "stdout": "{\"batchSequence\":2,\"epochId\":\"f8cc0ff7-553f-493a-9d6e-1a5cafb3b376\",\"generation\":2,\"latestProofId\":\"sha256:ed1b038d9ec73e47332e23c837734b4057f08ed8c9ec185fde0ac74c0eb76d5a\",\"membershipThrough\":1,\"mutationThrough\":3,\"operatorEvidenceId\":\"\",\"state\":\"active\"}\n"
+  },
+  {
+    "arguments": [
+      "stop",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "2",
+      "--state",
+      "paused",
+      "--evidence",
+      "synthetic-cli-stop"
+    ],
+    "command": "stop",
+    "exitCode": 0,
+    "stderr": "",
+    "stdout": "{\"epochId\":\"f8cc0ff7-553f-493a-9d6e-1a5cafb3b376\",\"generation\":3,\"operatorEvidenceId\":\"synthetic-cli-stop\",\"state\":\"paused\"}\n"
+  },
+  {
+    "arguments": [
+      "freeze-loop",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "2",
+      "--evidence",
+      "synthetic-cli-loop",
+      "--from",
+      "2026-10-15T16:05:15.784456Z",
+      "--interval",
+      "1s",
+      "--state-file",
+      "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\loop.json"
+    ],
+    "command": "freeze-loop",
+    "exitCode": 1,
+    "expectedExit": "control generation changed by stop",
+    "stderr": "{\"error\":\"control_or_parent_conflict\"}\n",
+    "stdout": "{\"batchSequence\":\"1\",\"freezeSequence\":\"1\",\"operatorEvidenceId\":\"synthetic-cli-loop\",\"proofId\":\"sha256:bcf895030b7329547a10d5710d9a3e5bba7b53ce16fb97b5e3ff81065dea7cd5\"}\n{\"batchSequence\":\"2\",\"freezeSequence\":\"2\",\"operatorEvidenceId\":\"synthetic-cli-loop\",\"proofId\":\"sha256:ed1b038d9ec73e47332e23c837734b4057f08ed8c9ec185fde0ac74c0eb76d5a\"}\n"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "arguments": [
+      "freeze-loop",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "2",
+      "--evidence",
+      "synthetic-cli-loop",
+      "--from",
+      "2026-10-15T16:05:15.784456Z",
+      "--interval",
+      "1s",
+      "--state-file",
+      "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\mysql\\loop.json"
+    ],
+    "command": "loop-restart-stale-generation",
+    "exitCode": 1,
+    "stderr": "{\"error\":\"control_or_parent_conflict\"}\n",
+    "stdout": ""
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "after": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:a9481838829d308b9724994d48faa597edeb1cdccfab0d8d936af3c586ac79de",
+        "count": 3
+      },
+      "epoch": {
+        "contentHash": "sha256:b36ea2f4bc94e75920e3ebf52be099ba63d360a2f9056687bb93716ff1838f71",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:70320c4ed4dfcc099242c8cca05d76e45305f90de29d6d8326b448c86632c7c4",
+        "count": 2
+      },
+      "freezeHead": {
+        "contentHash": "sha256:60993e6164332e1b19f59c932eb6fe598ae9268671487fbaf82eb1393a9ec092",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:a4e5683ad35a79a98177c21eb779fc2ae39528dd659c28a2759e72540abf10e8",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:5a6f2a86bb43cb973dcc76e8d790cba0221da1290909a044b2d5d7074590defa",
+        "count": 3
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:7bf119c74b530db767d523efde388858097a8363821325aaba5d410f0ac19c04",
+        "count": 28
+      },
+      "snapshots": {
+        "contentHash": "sha256:585d00cdbc6f74c70e0b51f257f06ca67938b1c604a59f887e2c965741517253",
+        "count": 2
+      },
+      "stream": {
+        "contentHash": "sha256:f70f6a9d9a77351ce2eca5f8d3fb14b44ff64d4504a0ef34d5bb5462ba6415d9",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:fa53c6277b5048dc6dcb24dbe8dc807f067d6e3819f9b5a4074bf4489c698c6f",
+        "count": 2
+      }
+    },
+    "before": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:a9481838829d308b9724994d48faa597edeb1cdccfab0d8d936af3c586ac79de",
+        "count": 3
+      },
+      "epoch": {
+        "contentHash": "sha256:b36ea2f4bc94e75920e3ebf52be099ba63d360a2f9056687bb93716ff1838f71",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:70320c4ed4dfcc099242c8cca05d76e45305f90de29d6d8326b448c86632c7c4",
+        "count": 2
+      },
+      "freezeHead": {
+        "contentHash": "sha256:60993e6164332e1b19f59c932eb6fe598ae9268671487fbaf82eb1393a9ec092",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:a4e5683ad35a79a98177c21eb779fc2ae39528dd659c28a2759e72540abf10e8",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:5a6f2a86bb43cb973dcc76e8d790cba0221da1290909a044b2d5d7074590defa",
+        "count": 3
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:7bf119c74b530db767d523efde388858097a8363821325aaba5d410f0ac19c04",
+        "count": 28
+      },
+      "snapshots": {
+        "contentHash": "sha256:585d00cdbc6f74c70e0b51f257f06ca67938b1c604a59f887e2c965741517253",
+        "count": 2
+      },
+      "stream": {
+        "contentHash": "sha256:f70f6a9d9a77351ce2eca5f8d3fb14b44ff64d4504a0ef34d5bb5462ba6415d9",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:fa53c6277b5048dc6dcb24dbe8dc807f067d6e3819f9b5a4074bf4489c698c6f",
+        "count": 2
+      }
+    },
+    "negativeStateCheck": "loop-restart-stale-generation"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "arguments": [
+      "stop",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376",
+      "--expected-generation",
+      "2",
+      "--state",
+      "paused",
+      "--evidence",
+      "synthetic-cli-stop"
+    ],
+    "command": "stop-stale-repeat",
+    "exitCode": 1,
+    "stderr": "{\"error\":\"control_or_parent_conflict\"}\n",
+    "stdout": ""
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "inspect"
+  },
+  {
+    "after": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:a9481838829d308b9724994d48faa597edeb1cdccfab0d8d936af3c586ac79de",
+        "count": 3
+      },
+      "epoch": {
+        "contentHash": "sha256:b36ea2f4bc94e75920e3ebf52be099ba63d360a2f9056687bb93716ff1838f71",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:70320c4ed4dfcc099242c8cca05d76e45305f90de29d6d8326b448c86632c7c4",
+        "count": 2
+      },
+      "freezeHead": {
+        "contentHash": "sha256:60993e6164332e1b19f59c932eb6fe598ae9268671487fbaf82eb1393a9ec092",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:a4e5683ad35a79a98177c21eb779fc2ae39528dd659c28a2759e72540abf10e8",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:5a6f2a86bb43cb973dcc76e8d790cba0221da1290909a044b2d5d7074590defa",
+        "count": 3
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:7bf119c74b530db767d523efde388858097a8363821325aaba5d410f0ac19c04",
+        "count": 28
+      },
+      "snapshots": {
+        "contentHash": "sha256:585d00cdbc6f74c70e0b51f257f06ca67938b1c604a59f887e2c965741517253",
+        "count": 2
+      },
+      "stream": {
+        "contentHash": "sha256:f70f6a9d9a77351ce2eca5f8d3fb14b44ff64d4504a0ef34d5bb5462ba6415d9",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:fa53c6277b5048dc6dcb24dbe8dc807f067d6e3819f9b5a4074bf4489c698c6f",
+        "count": 2
+      }
+    },
+    "before": {
+      "admissions": {
+        "contentHash": "sha256:1d4ec66c3d65ed7f4e2bc646ab865c13b62db6132aabc5363af5f3b38c0fb04f",
+        "count": 1
+      },
+      "approvals": {
+        "contentHash": "sha256:0f42333b69d750d8608f7981fe9afe4d58708891718b0c6ca7177207737b766a",
+        "count": 1
+      },
+      "controls": {
+        "contentHash": "sha256:a9481838829d308b9724994d48faa597edeb1cdccfab0d8d936af3c586ac79de",
+        "count": 3
+      },
+      "epoch": {
+        "contentHash": "sha256:b36ea2f4bc94e75920e3ebf52be099ba63d360a2f9056687bb93716ff1838f71",
+        "count": 1
+      },
+      "fences": {
+        "contentHash": "sha256:70320c4ed4dfcc099242c8cca05d76e45305f90de29d6d8326b448c86632c7c4",
+        "count": 2
+      },
+      "freezeHead": {
+        "contentHash": "sha256:60993e6164332e1b19f59c932eb6fe598ae9268671487fbaf82eb1393a9ec092",
+        "count": 1
+      },
+      "gate": {
+        "contentHash": "sha256:a4e5683ad35a79a98177c21eb779fc2ae39528dd659c28a2759e72540abf10e8",
+        "count": 1
+      },
+      "originals": {
+        "contentHash": "sha256:5a6f2a86bb43cb973dcc76e8d790cba0221da1290909a044b2d5d7074590defa",
+        "count": 3
+      },
+      "snapshotCollections": {
+        "contentHash": "sha256:7bf119c74b530db767d523efde388858097a8363821325aaba5d410f0ac19c04",
+        "count": 28
+      },
+      "snapshots": {
+        "contentHash": "sha256:585d00cdbc6f74c70e0b51f257f06ca67938b1c604a59f887e2c965741517253",
+        "count": 2
+      },
+      "stream": {
+        "contentHash": "sha256:f70f6a9d9a77351ce2eca5f8d3fb14b44ff64d4504a0ef34d5bb5462ba6415d9",
+        "count": 1
+      },
+      "writers": {
+        "contentHash": "sha256:fa53c6277b5048dc6dcb24dbe8dc807f067d6e3819f9b5a4074bf4489c698c6f",
+        "count": 2
+      }
+    },
+    "negativeStateCheck": "stop-stale-repeat"
+  },
+  {
+    "arguments": [
+      "status",
+      "--gateway",
+      "test-cn",
+      "--epoch",
+      "f8cc0ff7-553f-493a-9d6e-1a5cafb3b376"
+    ],
+    "command": "final-status",
+    "exitCode": 0,
+    "stderr": "",
+    "stdout": "{\"batchSequence\":2,\"epochId\":\"f8cc0ff7-553f-493a-9d6e-1a5cafb3b376\",\"generation\":3,\"latestProofId\":\"sha256:ed1b038d9ec73e47332e23c837734b4057f08ed8c9ec185fde0ac74c0eb76d5a\",\"membershipThrough\":1,\"mutationThrough\":3,\"operatorEvidenceId\":\"\",\"state\":\"paused\"}\n"
+  },
+  {
+    "exitCode": 0,
+    "fixtureAction": "export"
+  }
+]

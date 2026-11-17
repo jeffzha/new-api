@@ -96,11 +96,36 @@ func SplitPluginBillingExprKey(key string) (plugin, model string, ok bool) {
 }
 
 func GetPluginBillingExprCopy() map[string]string {
-	return maps.Clone(billingSetting.PluginBillingExpr)
+	expressions := make(map[string]string, len(builtinPluginBillingExpr)+len(billingSetting.PluginBillingExpr))
+	for key := range builtinPluginBillingExpr {
+		plugin, model, _ := SplitPluginBillingExprKey(key)
+		if expression, ok := GetPluginBillingExpr(plugin, model); ok {
+			expressions[key] = expression
+		}
+	}
+	maps.Copy(expressions, billingSetting.PluginBillingExpr)
+	return expressions
 }
 
 func GetPluginBillingExpr(pluginKey, model string) (string, bool) {
-	expression, ok := billingSetting.PluginBillingExpr[PluginBillingExprKey(pluginKey, model)]
+	key := PluginBillingExprKey(pluginKey, model)
+	expression, ok := billingSetting.PluginBillingExpr[key]
+	if ok {
+		return expression, true
+	}
+	if _, configured := billingSetting.BillingMode[model]; configured {
+		return "", false
+	}
+	if _, configured := billingSetting.BillingExpr[model]; configured {
+		return "", false
+	}
+	if ratio_setting.HasConfiguredModelRatio(model) {
+		return "", false
+	}
+	if _, configured := ratio_setting.GetModelPrice(model, false); configured {
+		return "", false
+	}
+	expression, ok = builtinPluginBillingExpr[key]
 	return expression, ok
 }
 
@@ -108,11 +133,11 @@ func GetPluginBillingExpr(pluginKey, model string) (string, bool) {
 // model expression, retaining the model alias fallback and explicit modes.
 func ResolveTaskBillingExpr(pluginKey, model, mappedModel string) (string, bool) {
 	if pluginKey != "" {
-		if expr, ok := GetPluginBillingExpr(pluginKey, model); ok {
+		if expr, ok := billingSetting.PluginBillingExpr[PluginBillingExprKey(pluginKey, model)]; ok {
 			return expr, true
 		}
 		if mappedModel != "" && mappedModel != model {
-			if expr, ok := GetPluginBillingExpr(pluginKey, mappedModel); ok {
+			if expr, ok := billingSetting.PluginBillingExpr[PluginBillingExprKey(pluginKey, mappedModel)]; ok {
 				return expr, true
 			}
 		}
@@ -122,7 +147,19 @@ func ResolveTaskBillingExpr(pluginKey, model, mappedModel string) (string, bool)
 	}
 	if mappedModel != "" && mappedModel != model && GetBillingMode(mappedModel) == BillingModeTieredExpr {
 		expression, ok := GetBillingExpr(mappedModel)
-		return expression, ok && strings.TrimSpace(expression) != ""
+		if ok && strings.TrimSpace(expression) != "" {
+			return expression, true
+		}
+	}
+	if pluginKey != "" {
+		if expr, ok := GetPluginBillingExpr(pluginKey, model); ok {
+			return expr, true
+		}
+		if mappedModel != "" && mappedModel != model {
+			if expr, ok := GetPluginBillingExpr(pluginKey, mappedModel); ok {
+				return expr, true
+			}
+		}
 	}
 	return "", false
 }

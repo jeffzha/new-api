@@ -39,6 +39,7 @@ import { PlaygroundInputControls } from './playground-input-controls'
 import { PlaygroundInputTools } from './playground-input-tools'
 
 interface PlaygroundInputProps {
+  canSend: boolean
   config: PlaygroundConfig
   onSubmit: (text: string) => void
   onStop?: () => void
@@ -68,6 +69,7 @@ interface PlaygroundInputProps {
 }
 
 export function PlaygroundInput({
+  canSend,
   config,
   onSubmit,
   onStop,
@@ -91,9 +93,20 @@ export function PlaygroundInput({
 }: PlaygroundInputProps) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
+  const selectedModel = models.find((model) => model.value === modelValue)
+  const apiOnlyModel = selectedModel?.chatSupported === false
+  let inputPlaceholder = 'Ask anything'
+  if (apiOnlyModel) {
+    inputPlaceholder = 'This model is available through API calls only'
+  } else if (pricingAssistantEnabled) {
+    inputPlaceholder = 'Ask about platform pricing'
+  }
 
   const handleSubmit = (message: PromptInputMessage) => {
-    const submittableText = getSubmittableInputText(message, disabled)
+    const submittableText = getSubmittableInputText(
+      message,
+      disabled || !canSend
+    )
 
     if (!submittableText) return
     onSubmit(submittableText)
@@ -127,6 +140,19 @@ export function PlaygroundInput({
           />
         </div>
       )}
+      {apiOnlyModel && (
+        <div
+          className='text-foreground flex items-start gap-2 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-sm'
+          role='status'
+        >
+          <span className='font-medium'>{selectedModel.label}</span>
+          <span className='text-muted-foreground'>
+            {t(
+              'This model does not support chat in Playground. Call it through the API.'
+            )}
+          </span>
+        </div>
+      )}
       <PromptInput
         className='relative'
         groupClassName='bg-background/95 dark:bg-background/80 border-border/70 shadow-[0_18px_60px_-32px_rgba(0,0,0,0.65)] ring-1 ring-foreground/5 rounded-xl overflow-hidden transition-all duration-200 focus-within:border-primary/45 focus-within:ring-primary/15 focus-within:shadow-[0_22px_70px_-34px_rgba(0,0,0,0.75)]'
@@ -138,18 +164,15 @@ export function PlaygroundInput({
           autoCapitalize='off'
           spellCheck={false}
           className='min-h-20 px-5 pt-4 pb-3 leading-7 md:min-h-24 md:text-base'
-          disabled={disabled}
+          disabled={disabled || !canSend}
           onChange={(event) => setText(event.target.value)}
-          placeholder={t(
-            pricingAssistantEnabled
-              ? 'Ask about platform pricing'
-              : 'Ask anything'
-          )}
+          placeholder={t(inputPlaceholder)}
           value={text}
         />
 
         <PromptInputFooter className='border-border/60 bg-muted/20 dark:bg-muted/10 border-t px-3 py-2.5 backdrop-blur'>
           <PlaygroundInputControls
+            canSend={canSend}
             disabled={disabled}
             groups={groups}
             groupValue={groupValue}

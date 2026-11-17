@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Blob as NodeBlob } from 'node:buffer'
+
 import {
   createMemoryHistory,
   createRootRoute,
@@ -31,6 +33,8 @@ import {
   waitFor,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { AxiosError, AxiosHeaders } from 'axios'
+import { toast } from 'sonner'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
@@ -286,4 +290,61 @@ it('uses the bill-specific date range when selected', async () => {
   )
   expect(requestURL).toContain(`start_timestamp=${expectedStart}`)
   expect(requestURL).toContain(`end_timestamp=${expectedEnd}`)
+})
+
+it('shows the specific JSON error from a failed bill download instead of HTTP 400', async () => {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'viewer', role: ROLE.USER })
+  const message = 'Export is already running. Please wait and try again.'
+  const error = new AxiosError('Request failed with status code 400')
+  error.response = {
+    data: new NodeBlob([JSON.stringify({ success: false, message })], {
+      type: 'application/json; charset=utf-8',
+    }),
+    status: 400,
+    statusText: 'Bad Request',
+    headers: {},
+    config: { headers: new AxiosHeaders() },
+  }
+  vi.spyOn(api, 'get').mockRejectedValue(error)
+  const showError = vi.spyOn(toast, 'error')
+  const click = vi
+    .spyOn(HTMLAnchorElement.prototype, 'click')
+    .mockImplementation(() => undefined)
+
+  renderDownload('/usage-logs/common')
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Download usage bill' })
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Download bill' }))
+
+  await waitFor(() => expect(showError).toHaveBeenCalledWith(message))
+  expect(click).not.toHaveBeenCalled()
+  expect(screen.getByRole('button', { name: 'Download bill' })).toBeEnabled()
+})
+
+it('rejects a successful HTTP response containing a bill business error instead of downloading JSON', async () => {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'viewer', role: ROLE.USER })
+  const message = 'You do not have permission to export this bill.'
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: new NodeBlob([JSON.stringify({ success: false, message })], {
+      type: 'application/json',
+    }),
+  })
+  const showError = vi.spyOn(toast, 'error')
+  const click = vi
+    .spyOn(HTMLAnchorElement.prototype, 'click')
+    .mockImplementation(() => undefined)
+
+  renderDownload('/usage-logs/common')
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Download usage bill' })
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Download bill' }))
+
+  await waitFor(() => expect(showError).toHaveBeenCalledWith(message))
+  expect(click).not.toHaveBeenCalled()
 })

@@ -223,6 +223,36 @@ export interface AffiliateTransferRequest {
 /**
  * User wallet data
  */
+export interface WalletBalance {
+  /** Stable balance category identifier */
+  type: string
+  /** Currently available quota for this category */
+  quota: number
+}
+
+/**
+ * Credit contract position. Credit is a separate, repayable balance type:
+ * it is not wallet money and must never be added to the wallet balance.
+ */
+export interface UserCreditOverview {
+  /** Whether the administrator configured a credit contract */
+  configured: boolean
+  /** active | suspended */
+  status: string
+  /** Approved credit limit in quota units */
+  credit_limit: number
+  /** Outstanding credit usage in quota units */
+  used_quota: number
+  /** Remaining spendable credit in quota units */
+  available_quota: number
+  /** Grace days after the monthly repayment day */
+  payment_term_days: number
+  /** Unified monthly repayment day; always 1 */
+  repayment_day: number
+  /** Next statement timestamp in milliseconds */
+  next_statement_at_ms: number
+}
+
 export interface UserWalletData {
   /** User ID */
   id: number
@@ -230,6 +260,10 @@ export interface UserWalletData {
   username: string
   /** Current quota balance */
   quota: number
+  /** Extensible balance breakdown returned by the wallet API */
+  wallet_balances?: WalletBalance[]
+  /** Credit contract and outstanding credit usage, when one is configured */
+  credit?: UserCreditOverview
   /** Total used quota */
   used_quota: number
   /** Total request count */

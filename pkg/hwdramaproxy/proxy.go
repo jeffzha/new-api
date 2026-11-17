@@ -32,9 +32,11 @@ type Config struct {
 	TokenLookup      TokenLookup
 	TokenResolver    TokenResolver
 	Client           *http.Client
+	MaterialFiles    MaterialFilesConfig
 }
 
 type Proxy struct {
+	materialFiles    *materialFiles
 	upstream         *url.URL
 	upstreamAPIKey   string
 	client           *http.Client
@@ -102,10 +104,19 @@ func New(config Config) (*Proxy, error) {
 			return nil, err
 		}
 	}
+	files, err := newMaterialFiles(config.MaterialFiles)
+	if err != nil {
+		return nil, err
+	}
+	proxy.materialFiles = files
 	return proxy, nil
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if p.materialFiles != nil && (r.URL.Path == materialFilesPath || strings.HasPrefix(r.URL.Path, materialFilesPath+"/")) {
+		p.serveMaterialFiles(w, r)
+		return
+	}
 	if p.routesConfigPath != "" {
 		p.serveDynamic(w, r)
 		return
@@ -181,8 +192,16 @@ func (p *Proxy) serveDynamic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isVolcengineAssetAction(action.Config.UpstreamAction) && r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+	}
 	modelName, body, err := extractRequestModel(r)
 	if err != nil {
+		var sizeErr *http.MaxBytesError
+		if errors.As(err, &sizeErr) {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "invalid_request", "asset request body exceeds 4 MiB")
+			return
+		}
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "failed to parse request body")
 		return
 	}
@@ -278,6 +297,20 @@ func (p *Proxy) proxyRequest(
 			authValue = prefix + " " + authValue
 		}
 		req.Header.Set(authHeader, authValue)
+	case UpstreamAuthTypeVolcengineAKSK:
+		if r.URL.RawQuery != "" {
+			writeJSONError(w, http.StatusBadRequest, "invalid_request", "asset action query must be configured server-side")
+			return
+		}
+		for _, name := range []string{"Cookie", "New-Api-User", "X-Api-Key", "X-Security-Token"} {
+			req.Header.Del(name)
+		}
+		query := url.Values{"Action": {route.UpstreamAction}, "Version": {"2024-01-01"}}
+		req.URL.RawQuery = query.Encode()
+		if signErr := signVolcengineAssetRequest(req, route.UpstreamAccessKey, route.UpstreamSecretKey, time.Now()); signErr != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid_request", signErr.Error())
+			return
+		}
 	case UpstreamAuthTypeMobileCloudAKSK:
 		nonce, nonceErr := newMobileCloudNonce()
 		if nonceErr != nil {
@@ -294,7 +327,7 @@ func (p *Proxy) proxyRequest(
 	}
 
 	client := p.client
-	if upstreamAuthType == UpstreamAuthTypeMobileCloudAKSK {
+	if upstreamAuthType == UpstreamAuthTypeMobileCloudAKSK || upstreamAuthType == UpstreamAuthTypeVolcengineAKSK {
 		clientCopy := *p.client
 		clientCopy.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -307,7 +340,7 @@ func (p *Proxy) proxyRequest(
 		return
 	}
 	defer resp.Body.Close()
-	if upstreamAuthType == UpstreamAuthTypeMobileCloudAKSK &&
+	if (upstreamAuthType == UpstreamAuthTypeMobileCloudAKSK || upstreamAuthType == UpstreamAuthTypeVolcengineAKSK) &&
 		resp.StatusCode >= http.StatusMultipleChoices &&
 		resp.StatusCode < http.StatusBadRequest &&
 		strings.TrimSpace(resp.Header.Get("Location")) != "" {
@@ -642,6 +675,11 @@ type proxyError struct {
 
 func parseUpstreamBusinessError(body []byte) (string, string, bool) {
 	codeResult := gjson.GetBytes(body, "data.Code")
+	messagePath := "data.Message"
+	if gjson.GetBytes(body, "ResponseMetadata.Error").Exists() {
+		codeResult = gjson.GetBytes(body, "ResponseMetadata.Error.Code")
+		messagePath = "ResponseMetadata.Error.Message"
+	}
 	if codeResult.Type != gjson.String {
 		return "", "", false
 	}
@@ -655,7 +693,7 @@ func parseUpstreamBusinessError(body []byte) (string, string, bool) {
 	}
 
 	message := "upstream rejected the request"
-	messageResult := gjson.GetBytes(body, "data.Message")
+	messageResult := gjson.GetBytes(body, messagePath)
 	if messageResult.Type == gjson.String {
 		if upstreamMessage := strings.TrimSpace(messageResult.Str); upstreamMessage != "" {
 			messageRunes := []rune(upstreamMessage)

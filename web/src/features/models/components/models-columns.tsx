@@ -233,6 +233,36 @@ export function useModelsColumns(
                 {t(state.description)}
               </TooltipContent>
             </Tooltip>
+            {row.original.channel_connections?.slice(0, 2).map((channel) => (
+              <div key={channel.id} className='mt-1 min-w-0 text-xs'>
+                <span className='block truncate' title={channel.name}>
+                  {channel.name} ·{' '}
+                  {channel.status === 1 ? t('Enabled') : t('Disabled')}
+                </span>
+                <span
+                  className='text-muted-foreground block truncate font-mono'
+                  title={channel.base_url}
+                >
+                  {channel.base_url}
+                </span>
+                <span className='text-muted-foreground font-mono'>
+                  {channel.masked_key || '-'}
+                </span>
+              </div>
+            ))}
+            {(row.original.channel_connections?.length ?? 0) > 2 && (
+              <Button
+                variant='link'
+                size='sm'
+                className='h-auto px-0 text-xs'
+                onClick={() => {
+                  setCurrentRow(row.original)
+                  setOpen('update-model')
+                }}
+              >
+                {t('View all channels')}
+              </Button>
+            )}
           </div>
         )
       },

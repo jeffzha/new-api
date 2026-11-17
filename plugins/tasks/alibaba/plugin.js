@@ -345,6 +345,7 @@ function normalizeRequest(value) {
   } else delete req.auto_duration;
   // Normalize enum facts for host validation against the model's usage schema.
   if (req.resolution != null) req.resolution = normalizeResolution(req.resolution);
+  if (req.metadata && req.metadata.resolution != null) req.metadata.resolution = normalizeResolution(req.metadata.resolution);
   if (parameters.resolution != null) parameters.resolution = normalizeResolution(parameters.resolution);
   return req;
 }

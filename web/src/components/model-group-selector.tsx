@@ -38,6 +38,7 @@ For commercial licensing, please contact support@quantumnous.com
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Command,
@@ -72,6 +73,7 @@ interface ModelOption {
   value: string
   category?: string
   description?: string
+  chatSupported?: boolean
 }
 
 interface GroupOption {
@@ -96,6 +98,21 @@ interface GroupSelectorProps {
   onGroupChange: (value: string) => void
   className?: string
   disabled?: boolean
+}
+
+const MODEL_CATEGORY_LABELS: Record<string, string> = {
+  Text: 'Text models',
+  Video: 'Video models',
+  Image: 'Image models',
+  Audio: 'Audio models',
+  Embedding: 'Embedding models',
+}
+
+const MODEL_CATEGORY_ORDER = ['Text', 'Video', 'Image', 'Audio', 'Embedding']
+
+const modelCategoryOrder = (category: string) => {
+  const index = MODEL_CATEGORY_ORDER.indexOf(category)
+  return index === -1 ? MODEL_CATEGORY_ORDER.length : index
 }
 
 const ModelTriggerButton = React.forwardRef<
@@ -189,18 +206,25 @@ export const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
     // Group models by category
     const groupedModels = useMemo(
       () =>
-        models.reduce(
-          (acc, model) => {
-            const category = model.category || t('Other')
-            if (!acc[category]) {
-              acc[category] = []
-            }
-            acc[category].push(model)
-            return acc
-          },
-          {} as Record<string, ModelOption[]>
+        Object.fromEntries(
+          Object.entries(
+            models.reduce(
+              (acc, model) => {
+                const category = model.category || 'Text'
+                if (!acc[category]) {
+                  acc[category] = []
+                }
+                acc[category].push(model)
+                return acc
+              },
+              {} as Record<string, ModelOption[]>
+            )
+          ).sort(
+            ([first], [second]) =>
+              modelCategoryOrder(first) - modelCategoryOrder(second)
+          )
         ),
-      [models, t]
+      [models]
     )
 
     // Filter models by search query
@@ -274,13 +298,13 @@ export const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
                       isMobile ? 'text-xs' : 'text-[10px]'
                     )}
                   >
-                    {t('{{category}} Models', { category })}
+                    {t(MODEL_CATEGORY_LABELS[category] ?? 'Other models')}
                   </div>
                   {categoryModels.map((model) => (
                     <CommandItem
                       key={model.value}
                       value={model.value}
-                      onSelect={handleModelChange}
+                      onSelect={() => handleModelChange(model.value)}
                       className={cn(
                         'mb-0.5 flex items-center justify-between rounded-lg px-2 py-1.5 text-xs',
                         'transition-all duration-200',
@@ -291,12 +315,17 @@ export const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
                       <div className='flex min-w-0 flex-1 items-center gap-1'>
                         <div
                           className={cn(
-                            'truncate font-medium',
+                            'min-w-0 flex-1 truncate font-medium',
                             isMobile ? 'text-sm' : 'text-[11px]'
                           )}
                         >
                           <span className='inline'>{model.label}</span>
                         </div>
+                        {model.chatSupported === false && (
+                          <span className='text-muted-foreground shrink-0 text-[10px]'>
+                            {t('API only')}
+                          </span>
+                        )}
                         <Check
                           className={cn(
                             'h-4 w-4 flex-shrink-0',
@@ -620,6 +649,20 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
     })
   }, [models, searchQuery])
 
+  const groupedModels = useMemo(() => {
+    const groups = new Map<string, ModelOption[]>()
+    for (const model of filteredModels) {
+      const category = model.category || 'Text'
+      const items = groups.get(category) ?? []
+      items.push(model)
+      groups.set(category, items)
+    }
+    return [...groups.entries()].sort(
+      ([first], [second]) =>
+        modelCategoryOrder(first) - modelCategoryOrder(second)
+    )
+  }, [filteredModels])
+
   const handleModelChange = useCallback(
     (value: string) => {
       onModelChange(value)
@@ -758,43 +801,61 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
             {t('No model found.')}
           </div>
         ) : (
-          <CommandGroup className='p-1'>
-            {filteredModels.map((model) => (
-              <CommandItem
-                className={cn(
-                  modelGroupSelectorLayoutClasses.modelItem,
-                  selectedModel === model.value
-                    ? modelGroupSelectorLayoutClasses.selectedModelItem
-                    : modelGroupSelectorLayoutClasses.unselectedModelItem
-                )}
-                key={model.value}
-                onSelect={handleModelChange}
-                ref={
-                  selectedModel === model.value
-                    ? selectedModelOptionRef
-                    : undefined
-                }
-                value={model.value}
-              >
-                <span
+          groupedModels.map(([category, categoryModels]) => (
+            <CommandGroup
+              className='p-1'
+              heading={t(MODEL_CATEGORY_LABELS[category] ?? 'Other models')}
+              key={category}
+            >
+              {categoryModels.map((model) => (
+                <CommandItem
                   className={cn(
-                    'min-w-0 truncate',
+                    modelGroupSelectorLayoutClasses.modelItem,
                     selectedModel === model.value
-                      ? modelGroupSelectorLayoutClasses.selectedModelText
-                      : modelGroupSelectorLayoutClasses.unselectedModelText
+                      ? modelGroupSelectorLayoutClasses.selectedModelItem
+                      : modelGroupSelectorLayoutClasses.unselectedModelItem
                   )}
+                  key={model.value}
+                  onSelect={() => handleModelChange(model.value)}
+                  ref={
+                    selectedModel === model.value
+                      ? selectedModelOptionRef
+                      : undefined
+                  }
+                  value={model.value}
                 >
-                  {model.label}
-                </span>
-                <Check
-                  className={cn(
-                    'size-3.5 shrink-0',
-                    selectedModel === model.value ? 'opacity-100' : 'opacity-0'
-                  )}
-                />
-              </CommandItem>
-            ))}
-          </CommandGroup>
+                  <span className='flex min-w-0 flex-1 items-center gap-2'>
+                    <span
+                      className={cn(
+                        'min-w-0 flex-1 truncate',
+                        selectedModel === model.value
+                          ? modelGroupSelectorLayoutClasses.selectedModelText
+                          : modelGroupSelectorLayoutClasses.unselectedModelText
+                      )}
+                    >
+                      {model.label}
+                    </span>
+                    {model.chatSupported === false && (
+                      <Badge
+                        className='text-muted-foreground shrink-0 text-[10px] font-normal'
+                        variant='outline'
+                      >
+                        {t('API only - no chat')}
+                      </Badge>
+                    )}
+                  </span>
+                  <Check
+                    className={cn(
+                      'size-3.5 shrink-0',
+                      selectedModel === model.value
+                        ? 'opacity-100'
+                        : 'opacity-0'
+                    )}
+                  />
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          ))
         )}
       </CommandList>
     </Command>

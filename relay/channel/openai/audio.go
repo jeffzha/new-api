@@ -45,6 +45,7 @@ func OpenaiTTSHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 					logger.LogError(c, err.Error())
 					sr.Error(err)
 				} else if simpleResponse.Usage.TotalTokens != 0 {
+					service.ObserveOpsResponseUsage(c, "openai_audio", []byte(data))
 					usage.PromptTokens = simpleResponse.Usage.InputTokens
 					usage.CompletionTokens = simpleResponse.OutputTokens
 					usage.TotalTokens = simpleResponse.TotalTokens
@@ -124,6 +125,7 @@ func OpenaiSTTHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 	}
 	// 写入新的 response body
 	service.IOCopyBytesGracefully(c, resp, responseBody)
+	service.ObserveOpsResponseUsage(c, "openai_audio", responseBody)
 
 	var responseData struct {
 		Usage *dto.Usage `json:"usage"`

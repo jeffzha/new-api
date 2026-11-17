@@ -4,6 +4,7 @@ import (
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/service/opsexport"
 
 	// Import oauth package to register providers via init()
 	_ "github.com/QuantumNous/new-api/oauth"
@@ -20,15 +21,32 @@ func SetApiRouter(router *gin.Engine) {
 	apiRouter.Use(middleware.AccessTokenAudit())
 	apiRouter.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
 	apiRouter.Use(middleware.GlobalAPIRateLimit())
+	opsexport.Register(apiRouter.Group("/ops-export/v1", middleware.DisableCache()))
+	opsexport.RegisterV2(apiRouter.Group("/ops-export/v2", middleware.DisableCache()))
 	anonymousRequestBodyLimit := middleware.AnonymousRequestBodyLimit()
 	registerWorkbenchIdentityRoutes(apiRouter)
+	opsBridgeRoute := apiRouter.Group("/ops-bridge", middleware.RootAuth(), middleware.UserCriticalRateLimit("ops-bridge"), middleware.DisableCache())
+	controller.RegisterOpsBridgeRoutes(opsBridgeRoute)
 	agencyRoute := apiRouter.Group("/agency")
 	agencyRoute.GET("/sso", controller.AgencySSOPage)
-	agencyRoute.POST("/sso-ticket", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-sso"), middleware.DisableCache(), controller.IssueAgencySSOTicket)
+	agencyRoute.POST("/sso-ticket", middleware.UserAuth(), middleware.UserCriticalRateLimit("agency-sso"), middleware.DisableCache(), controller.IssueAgencySSOTicket)
+	agencyRoute.POST("/link-proof", middleware.UserAuth(), middleware.UserCriticalRateLimit("agency-account-link"), middleware.DisableCache(), controller.IssueAgencyLinkProof)
 	// Both proof endpoints check the Root password and share one guessing budget.
 	agencyRoute.POST("/verify", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-verification"), middleware.DisableCache(), controller.IssueAgencyVerification)
 	agencyRoute.POST("/command-proof", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-verification"), middleware.DisableCache(), controller.IssueAgencyCommandProof)
 	agencyRoute.GET("/effective-pricing", middleware.UserAuth(), controller.GetAgencyEffectivePricing)
+	// Historical charge corrections are Root-only and audited: they realign the
+	// agency projection with the funding the wallet already paid and never move
+	// money. The GET preview is read-only.
+	agencyRoute.GET("/charge-corrections", middleware.RootAuth(), middleware.DisableCache(), controller.ListAgencyChargeCorrections)
+	agencyRoute.POST("/charge-corrections", middleware.RootAuth(), middleware.UserCriticalRateLimit("agency-charge-correction"), middleware.DisableCache(), controller.ApplyAgencyChargeCorrections)
+	// The platform credit book is granted by the super administrator and never
+	// belongs to an agency, so it is served straight from the main site admin
+	// console instead of hiding behind the Agency Center login. Statement
+	// generation and the retrying mail lane stay in the Agency Hub sidecar.
+	creditBookRoute := apiRouter.Group("/credit")
+	creditBookRoute.Use(middleware.RootAuth(), middleware.DisableCache(), controller.CreditBookRootIdentity())
+	controller.RegisterCreditBookRoutes(creditBookRoute)
 	modelMockRoute := apiRouter.Group("/model-mock")
 	modelMockRoute.GET("/sso", controller.ModelMockSSOPage)
 	modelMockRoute.POST("/sso-ticket", middleware.UserAuth(), middleware.UserCriticalRateLimit("model-mock-sso"), middleware.DisableCache(), controller.IssueModelMockSSOTicket)
@@ -225,6 +243,31 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/subscription/epay/notify", controller.SubscriptionEpayNotify)
 		apiRouter.GET("/subscription/epay/return", controller.SubscriptionEpayReturn)
 		apiRouter.POST("/subscription/epay/return", anonymousRequestBodyLimit, controller.SubscriptionEpayReturn)
+
+		// Register the static admin prefix before the user :id routes for clarity.
+		invoiceAdminRoute := apiRouter.Group("/invoice-applications/admin")
+		invoiceAdminRoute.Use(middleware.DisableCache(), middleware.AdminAuth())
+		{
+			invoiceAdminRoute.GET("", controller.GetAdminInvoiceApplications)
+			invoiceAdminRoute.GET("/:id", controller.GetAdminInvoiceApplication)
+			invoiceAdminRoute.POST("/:id/review", controller.ReviewInvoiceApplication)
+			invoiceAdminRoute.POST("/:id/issue", controller.IssueInvoiceApplication)
+			invoiceAdminRoute.POST("/:id/void-review", controller.ReviewInvoiceVoid)
+			invoiceAdminRoute.POST("/:id/resend", controller.ResendInvoiceEmail)
+			invoiceAdminRoute.GET("/:id/document", controller.DownloadInvoiceDocument)
+		}
+		invoiceRoute := apiRouter.Group("/invoice-applications")
+		invoiceRoute.Use(middleware.DisableCache(), middleware.UserAuth())
+		{
+			invoiceRoute.GET("/summary", controller.GetInvoiceSummary)
+			invoiceRoute.GET("/sources", controller.GetInvoiceSources)
+			invoiceRoute.GET("", controller.GetInvoiceApplications)
+			invoiceRoute.GET("/:id", controller.GetInvoiceApplication)
+			invoiceRoute.POST("", middleware.CriticalRateLimit(), controller.CreateInvoiceApplication)
+			invoiceRoute.POST("/:id/withdraw", controller.WithdrawInvoiceApplication)
+			invoiceRoute.POST("/:id/void-request", controller.RequestInvoiceVoid)
+			invoiceRoute.GET("/:id/document", controller.DownloadInvoiceDocument)
+		}
 		optionRoute := apiRouter.Group("/option")
 		optionRoute.Use(middleware.RootAuth())
 		{

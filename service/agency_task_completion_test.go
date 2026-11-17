@@ -185,3 +185,60 @@ func TestAgencyTaskPollingUnknownAndTimeoutRetainReservation(t *testing.T) {
 	assert.Equal(t, 100, user.Quota)
 	assert.Equal(t, "cancelled", journal.Status)
 }
+
+func TestEnsureAgencyTaskFinalUsageEmitsForwardFact(t *testing.T) {
+	db, task, _, _, _ := agencyTerminalPollingFixture(t)
+	ok := task.PrivateData.BillingContext != nil && task.PrivateData.BillingContext.AgencyPricing != nil
+	require.True(t, ok)
+	task.PrivateData.BillingContext.AgencyPricing.OriginModelName = "doubao-seedance-2-0-260128"
+	// The polling path stores SUCCESS before the forward finalization runs, and
+	// the canonical settlement only finalizes a successful task.
+	task.Status = model.TaskStatusSuccess
+	require.NoError(t, db.Model(&model.Task{}).Where("id = ?", task.ID).Update("status", model.TaskStatusSuccess).Error)
+	// A terminal SUCCESS must finalize the reconcile_required journal into a
+	// forward usage fact for async video tasks whose resolver cannot bill.
+	require.NoError(t, ensureAgencyTaskFinalUsage(task, int64(task.Quota)))
+
+	var journal model.AgencyBillingJournal
+	require.NoError(t, db.Where("charge_id = ? AND segment_no = ?", task.PrivateData.BillingContext.AgencyChargeID, 0).First(&journal).Error)
+	assert.Equal(t, "finalized", journal.Status)
+	assert.Equal(t, "success", journal.BusinessStatus)
+
+	// The canonical settlement writes the receipt, outbox event and delivery.
+	// The agency hub projects the usage fact from that event, so the charge is
+	// accepted instead of being rejected for missing operation identity.
+	var outbox model.AgencyBillingOutbox
+	require.NoError(t, db.Where("user_id = ?", task.UserId).Order("id desc").First(&outbox).Error)
+	assert.NotEmpty(t, outbox.OperationID)
+	assert.Greater(t, outbox.MoneySeq, int64(0))
+	var finalize model.AgencyBillingOperation
+	require.NoError(t, db.Where("charge_id = ? AND segment_no = ? AND operation = ?",
+		task.PrivateData.BillingContext.AgencyChargeID, 0, "finalize").First(&finalize).Error)
+	assert.Equal(t, outbox.OperationID, finalize.OperationID)
+	// The event occurrence is the charge time, which keeps the agency usage
+	// record aligned with the platform consumption log.
+	assert.Equal(t, journal.CreatedAtMS, outbox.CreatedAtMS)
+
+	// Idempotent: a second call must not add another receipt or event.
+	require.NoError(t, ensureAgencyTaskFinalUsage(task, int64(task.Quota)))
+	var finalizeCount int64
+	db.Model(&model.AgencyBillingOperation{}).Where("charge_id = ? AND operation = ?",
+		task.PrivateData.BillingContext.AgencyChargeID, "finalize").Count(&finalizeCount)
+	assert.Equal(t, int64(1), finalizeCount)
+
+	// Failure tasks that were cancelled are never overwritten.
+	var cancelled model.AgencyBillingJournal
+	require.NoError(t, db.Model(&model.AgencyBillingJournal{}).Where("id = ?", journal.ID).Update("status", "cancelled").Error)
+	require.NoError(t, db.First(&cancelled, journal.ID).Error)
+	require.NoError(t, ensureAgencyTaskFinalUsage(task, int64(task.Quota)))
+	var cancelledAfter model.AgencyBillingJournal
+	require.NoError(t, db.First(&cancelledAfter, journal.ID).Error)
+	assert.Equal(t, "cancelled", cancelledAfter.Status)
+}
+
+func TestEnsureAgencyTaskFinalUsageNoopWithoutAgencyContext(t *testing.T) {
+	plain := &model.Task{TaskID: "no-agency", PrivateData: model.TaskPrivateData{BillingContext: &model.TaskBillingContext{}}}
+	require.NoError(t, ensureAgencyTaskFinalUsage(plain, 100))
+	nilCtx := &model.Task{TaskID: "nil-ctx"}
+	require.NoError(t, ensureAgencyTaskFinalUsage(nilCtx, 100))
+}

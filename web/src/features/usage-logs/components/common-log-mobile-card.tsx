@@ -70,7 +70,7 @@ export function CommonLogMobileCard<TData>(props: {
   const displayable = isDisplayableLogType(log.type)
   const timing = isTimingLogType(log.type)
   const model = formatModelName(log)
-  const config = getLogTypeConfig(log.type)
+  const config = getLogTypeConfig(log.display_type ?? log.type)
   const group = log.group || other?.group || ''
   const groupRatio =
     other?.user_group_ratio != null && other.user_group_ratio !== -1

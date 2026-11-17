@@ -23,6 +23,8 @@ export type OpsApiResponse<T> = {
 }
 
 export type OpsFilter = {
+  user_id?: number
+  token_id?: number
   start?: number
   end?: number
   model?: string
@@ -33,6 +35,10 @@ export type OpsFilter = {
 }
 
 export type OpsOverview = {
+  success_rate?: number
+  failure_rate?: number
+  average_rpm?: number
+  average_tpm?: number
   request_count: number
   success_count: number
   error_count: number
@@ -243,6 +249,16 @@ export type Diagnostic = {
 }
 
 export type OpsSnapshot = {
+  raw_details_complete?: boolean
+  raw_details_start_ts?: number
+  billing?: {
+    available: boolean
+    consume_entries: number
+    refund_entries: number
+    charged_quota: number
+    refunded_quota: number
+    net_quota: number
+  }
   overview: OpsOverview
   realtime: OpsRealtime
   throughput_trend: ThroughputPoint[]
@@ -283,6 +299,8 @@ export type OpsSnapshot = {
     dropped_attempts: number
   }
   options: {
+    users?: Array<{ id: number; name: string }>
+    tokens?: Array<{ id: number; name: string }>
     models: string[]
     groups: string[]
     endpoint_types: string[]

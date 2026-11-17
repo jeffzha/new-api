@@ -1,5 +1,6 @@
 export type ModelOverride = {
   origin_model_name: string;
+  agency_cost_bps?: number;
   settlement_bps?: number | null;
   child_cost_bps?: number | null;
   sales_bps?: number | null;
@@ -49,6 +50,8 @@ export type PricePreview = {
 
 export type PlatformPriceRow = {
   origin_model_name: string;
+  vendor_name?: string;
+  vendor_icon?: string;
   channel_names: string[];
   channel_costs: {
     channel_id: number;
@@ -60,6 +63,9 @@ export type PlatformPriceRow = {
   agency_cost_bps: number | null;
   child_cost_bps: number | null;
   default_sales_bps: number | null;
+  /** Explicit false means the administrator has not confirmed the cost chain. */
+  pricing_confirmed?: boolean;
+  agency_cost_confirmed?: boolean;
 };
 
 export type PlatformPricing = {
@@ -70,11 +76,16 @@ export type PlatformPricing = {
 
 export type ModelSaleRow = {
   origin_model_name: string;
+  vendor_name?: string;
+  vendor_icon?: string;
+  channels?: { channel_id: number; channel_name: string }[];
   agency_cost_bps: number;
   child_cost_bps: number;
   platform_default_sales_bps: number;
   sales_bps: number;
   override_sales_bps: number | null;
+  sales_source?: string;
+  child_cost_source?: string;
   default_child_cost_bps?: number;
   override_child_cost_bps: number | null;
 };
@@ -85,7 +96,33 @@ export type ModelSales = {
   revision: number;
   platform_revision: number;
   min_spread_bps: number;
+  sales_cap_bps?: number;
   default_sales_bps: number;
   default_child_cost_bps?: number;
   items: ModelSaleRow[];
 };
+
+export function normalizePlatformPricing(data: PlatformPricing): PlatformPricing {
+  return {
+    ...data,
+    items: Array.isArray(data.items)
+      ? data.items.map((row) => ({
+          ...row,
+          channel_names: Array.isArray(row.channel_names) ? row.channel_names : [],
+          channel_costs: Array.isArray(row.channel_costs) ? row.channel_costs : [],
+        }))
+      : [],
+  };
+}
+
+export function normalizeModelSales(data: ModelSales): ModelSales {
+  return {
+    ...data,
+    items: Array.isArray(data.items)
+      ? data.items.map((row) => ({
+          ...row,
+          channels: Array.isArray(row.channels) ? row.channels : [],
+        }))
+      : [],
+  };
+}

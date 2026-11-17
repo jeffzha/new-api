@@ -36,6 +36,14 @@ export interface BoundChannel {
 export type ModelSquareState = 'visible' | 'unavailable' | 'hidden' | 'partial'
 
 export interface Model {
+  channel_connections?: Array<
+    BoundChannel & {
+      id: number
+      status: number
+      base_url: string
+      masked_key: string
+    }
+  >
   square_state?: ModelSquareState
   has_metadata?: boolean
   configured_channel_count?: number

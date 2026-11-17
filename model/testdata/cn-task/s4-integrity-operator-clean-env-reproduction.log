@@ -1,0 +1,23 @@
+=== RUN   TestOperatorFreezeRecoveryAcrossDialects
+=== RUN   TestOperatorFreezeRecoveryAcrossDialects/sqlite
+    main_test.go:86: 
+        	Error Trace:	C:/Users/winton/.codex/worktrees/9564/TokenOps/data/gateway-cn/cmd/cn-integrity-operator/main_test.go:86
+        	Error:      	Target error should be in err chain:
+        	            	expected: "injected output unavailable"
+        	            	in chain: "rename C:\\Users\\winton\\AppData\\Local\\Packages\\sandbox.{a58d3b4c-ef92-4bb3-a6c8-fe92be436065}\\AC\\Temp\\TestOperatorFreezeRecoveryAcrossDialectssqlite1327979984\\002\\.cn-integrity-journal-765845058 C:\\Users\\winton\\AppData\\Local\\Packages\\sandbox.{a58d3b4c-ef92-4bb3-a6c8-fe92be436065}\\AC\\Temp\\TestOperatorFreezeRecoveryAcrossDialectssqlite1327979984\\002\\private-freeze.json: Access is denied."
+        	            		"Access is denied."
+        	Test:       	TestOperatorFreezeRecoveryAcrossDialects/sqlite
+        	Messages:   	freeze must commit before the injected output failure
+=== RUN   TestOperatorFreezeRecoveryAcrossDialects/mysql
+    main_test.go:55: requires owned real MySQL test database
+=== RUN   TestOperatorFreezeRecoveryAcrossDialects/postgres
+    main_test.go:60: requires owned real PostgreSQL test database
+--- FAIL: TestOperatorFreezeRecoveryAcrossDialects (0.71s)
+    --- FAIL: TestOperatorFreezeRecoveryAcrossDialects/sqlite (0.71s)
+    --- SKIP: TestOperatorFreezeRecoveryAcrossDialects/mysql (0.00s)
+    --- SKIP: TestOperatorFreezeRecoveryAcrossDialects/postgres (0.00s)
+=== RUN   TestOperatorStartupRequiresExistingExplicitDatabase
+--- PASS: TestOperatorStartupRequiresExistingExplicitDatabase (0.01s)
+FAIL
+FAIL	github.com/QuantumNous/new-api/cmd/cn-integrity-operator	1.108s
+FAIL

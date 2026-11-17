@@ -32,13 +32,18 @@ For commercial licensing, please contact support@quantumnous.com
 import type {
   BillingUsageFieldSchema,
   BillingUsageSchema,
+  MaterialPricingCatalog,
   PricingModel,
 } from '../types'
+import type { TaskTierCondition } from './billing-expr'
 import { compileBillingExpression } from './billing-expression/parser'
 import { visitExpression } from './billing-expression/types'
-import { withPluginPricing } from './plugin-pricing'
 import { evaluateTaskVisualConfig, tryParseTaskVisualConfig } from './task-expr'
-import { getTaskPricingDisplayTiers } from './task-matrix-display'
+import {
+  getTaskMatrixDisplayTiers,
+  getTaskPricingDisplayTiers,
+} from './task-matrix-display'
+import { taskPricingConditions } from './task-price-display'
 
 const RESOLUTION_FIELD = 'resolution'
 const SECONDS_FIELD = 'seconds'
@@ -50,22 +55,25 @@ const MATERIAL_CREDIT_FIELD = /material/i
 export type VideoOutputPriceRow = {
   key: string
   resolution: string
-  /** `second` bills by output duration; `request` bills a fixed-length job. */
+  /** `second` bills by duration; `request` bills a fixed-length job. */
   rule: 'second' | 'request'
   /** USD per second for `second` rows, USD per whole request for `request` rows. */
   amountUSD: number
   /** Duration the vendor fixes for `request` rows, when it is known. */
   seconds?: number
+  conditions?: TaskTierCondition[]
+  durationBasis?: 'output' | 'input_output'
 }
 
 export type VideoMaterialFieldRow = {
   field: string
   definition: BillingUsageFieldSchema
-  /** USD per declared unit of the material field. */
-  amountUSD: number
+  /** USD rates by output tier; a tier-independent price has no label. */
+  rates: Array<{ label?: string; amountUSD: number }>
 }
 
 export type VideoMaterialPricing =
+  | { kind: 'catalog'; catalog: MaterialPricingCatalog }
   /** Materials settle from the upstream invoice; credits carry the USD rate. */
   | { kind: 'upstream_credits'; creditPriceUSD: number }
   /** Materials bill per declared unit from the configured expression. */
@@ -74,6 +82,7 @@ export type VideoMaterialPricing =
 export type VideoPricingTable = {
   modelLabel: string
   outputRows: VideoOutputPriceRow[]
+  usageSchema?: BillingUsageSchema
   /** Absent when the expression prices no material, so materials add nothing. */
   materialPricing?: VideoMaterialPricing
 }
@@ -129,9 +138,8 @@ function mergeFieldDefinition(
 }
 
 /**
- * The catalogue schema every provider variant contributes to. Variants declare
- * the facts and resolutions they price, and the shared schema may describe a
- * different provider's catalogue, so the list reads all of them.
+ * Use only the selected provider's schema and expression. Other providers can
+ * expose the same model with different resolutions and material charges.
  */
 function declaredSchema(model: PricingModel): BillingUsageSchema {
   const merged: BillingUsageSchema = {}
@@ -139,10 +147,6 @@ function declaredSchema(model: PricingModel): BillingUsageSchema {
     model.billing_usage_schema,
   ]
   const expressions: (string | null | undefined)[] = [model.billing_expr]
-  for (const variant of model.billing_plugin_variants ?? []) {
-    sources.push(variant.billing_usage_schema)
-    expressions.push(variant.billing_expr)
-  }
   for (const source of sources) {
     for (const [field, definition] of Object.entries(source ?? {})) {
       merged[field] = mergeFieldDefinition(merged[field], definition)
@@ -201,32 +205,61 @@ function outputRowsOfTiers(
 ): VideoOutputPriceRow[] {
   const seen = new Set<string>()
   const rows: VideoOutputPriceRow[] = []
-  for (const tier of getTaskPricingDisplayTiers(model.billing_expr, schema)) {
+  const isHappyHorse = ['HappyHorse1.1', 'happyhorse-1.1'].includes(
+    model.model_name
+  )
+  const tiers = isHappyHorse
+    ? getTaskMatrixDisplayTiers(model.billing_expr, schema)
+    : null
+  for (const tier of tiers ??
+    getTaskPricingDisplayTiers(model.billing_expr, schema)) {
     if (!('unitPrices' in tier)) continue
     const resolution = tierResolution(
       tier.conditions,
       fields.resolution,
       tier.label
     ).trim()
-    if (!resolution || seen.has(resolution)) continue
+    const conditions = tier.conditions.filter(
+      (condition) => condition.field !== fields.resolution
+    )
+    const operation = conditions.find(
+      (condition) => condition.field === 'kind'
+    )?.value
+    // The unified HappyHorse alias routes editing to the 1.0 editor, which
+    // supports only 720P/1080P, not the generator's 480P fallback branch.
+    if (isHappyHorse && operation === 'edit' && resolution === '480P') continue
+    const scope = conditions
+      .map(({ field, value }) => `${field}=${value}`)
+      .join(';')
+    const rowKey = [scope, resolution].filter(Boolean).join('-')
+    if (!resolution || seen.has(rowKey)) continue
+    let durationBasis: VideoOutputPriceRow['durationBasis']
+    if (isHappyHorse && operation === 'video') durationBasis = 'output'
+    if (isHappyHorse && operation === 'edit') durationBasis = 'input_output'
+    const details = {
+      ...(conditions.length ? { conditions } : {}),
+      ...(durationBasis ? { durationBasis } : {}),
+    }
     const perSecond = Number(tier.unitPrices[fields.seconds])
     if (Number.isFinite(perSecond) && perSecond > 0) {
-      seen.add(resolution)
+      seen.add(rowKey)
       rows.push({
-        key: `${resolution}-second`,
+        key: `${rowKey}-second`,
         resolution,
         rule: 'second',
         amountUSD: perSecond,
+        ...details,
       })
       continue
     }
     if (Number.isFinite(tier.constant) && tier.constant > 0) {
-      seen.add(resolution)
+      seen.add(rowKey)
       rows.push({
-        key: `${resolution}-request`,
+        key: `${rowKey}-request`,
         resolution,
         rule: 'request',
         amountUSD: tier.constant,
+        ...details,
       })
     }
   }
@@ -299,6 +332,16 @@ function orderRows(
 ): VideoOutputPriceRow[] {
   const declared = definition?.enum ?? []
   return [...rows].sort((left, right) => {
+    const leftOperation = left.conditions?.find(
+      (condition) => condition.field === 'kind'
+    )?.value
+    const rightOperation = right.conditions?.find(
+      (condition) => condition.field === 'kind'
+    )?.value
+    if (leftOperation !== rightOperation) {
+      if (leftOperation === 'video') return -1
+      if (rightOperation === 'video') return 1
+    }
     const leftRank = resolutionRank(left.resolution)
     const rightRank = resolutionRank(right.resolution)
     if (leftRank !== null && rightRank !== null && leftRank !== rightRank) {
@@ -332,12 +375,7 @@ function materialFieldRows(
   fields: { resolution: string; seconds: string },
   schema: BillingUsageSchema
 ): VideoMaterialFieldRow[] {
-  const variants = [
-    model,
-    ...(model.billing_plugin_variants ?? []).map((variant) =>
-      withPluginPricing(model, variant)
-    ),
-  ]
+  const variants = [model]
   const rows: VideoMaterialFieldRow[] = []
   for (const candidate of variants) {
     for (const tier of getTaskPricingDisplayTiers(
@@ -352,12 +390,42 @@ function materialFieldRows(
         if (!isPricedNumberField(definition)) continue
         const amountUSD = Number(rawPrice)
         if (!Number.isFinite(amountUSD) || amountUSD <= 0) continue
-        if (rows.some((row) => row.field === field)) continue
-        rows.push({ field, definition, amountUSD })
+        const tierLabel = tier.conditions.find(
+          (condition) => condition.field === fields.resolution
+        )?.value
+        const existing = rows.find((row) => row.field === field)
+        if (!existing) {
+          rows.push({
+            field,
+            definition,
+            rates: [{ ...(tierLabel ? { label: tierLabel } : {}), amountUSD }],
+          })
+          continue
+        }
+        if (
+          existing.rates.some(
+            (rate) => rate.label === tierLabel && rate.amountUSD === amountUSD
+          )
+        ) {
+          continue
+        }
+        existing.rates.push({
+          ...(tierLabel ? { label: tierLabel } : {}),
+          amountUSD,
+        })
       }
     }
   }
-  return rows
+  return rows.map((row) => {
+    const first = row.rates[0]
+    if (
+      first &&
+      row.rates.every((rate) => rate.amountUSD === first.amountUSD)
+    ) {
+      return { ...row, rates: [{ amountUSD: first.amountUSD }] }
+    }
+    return row
+  })
 }
 
 function materialPricingOf(
@@ -365,13 +433,20 @@ function materialPricingOf(
   fields: { resolution: string; seconds: string },
   schema: BillingUsageSchema
 ): VideoMaterialPricing | null {
+  if (model.billing_material_pricing?.items.length) {
+    return { kind: 'catalog', catalog: model.billing_material_pricing }
+  }
   const rows = materialFieldRows(model, fields, schema)
   const passThrough = rows.find(
     (row) =>
       row.definition.unit === 'credit' && MATERIAL_CREDIT_FIELD.test(row.field)
   )
-  if (passThrough) {
-    return { kind: 'upstream_credits', creditPriceUSD: passThrough.amountUSD }
+  const passThroughRate = passThrough?.rates[0]
+  if (passThroughRate) {
+    return {
+      kind: 'upstream_credits',
+      creditPriceUSD: passThroughRate.amountUSD,
+    }
   }
   return rows.length > 0 ? { kind: 'usage_fields', rows } : null
 }
@@ -399,6 +474,28 @@ export function getVideoPricingTable(
   return {
     modelLabel: model.model_name,
     outputRows: orderRows(outputRows, schema[fields.resolution]),
+    usageSchema: schema,
     ...(materialPricing ? { materialPricing } : {}),
   }
+}
+
+export function videoPriceRowConditions(
+  row: VideoOutputPriceRow,
+  schema: BillingUsageSchema | undefined,
+  language: string,
+  t: (key: string) => string
+): string {
+  const conditions = row.conditions ?? []
+  if (!row.durationBasis) {
+    return taskPricingConditions(conditions, schema, language, t)
+  }
+  const operation =
+    row.durationBasis === 'output' ? t('Video generation') : t('Video editing')
+  const otherConditions = taskPricingConditions(
+    conditions.filter((condition) => condition.field !== 'kind'),
+    schema,
+    language,
+    t
+  )
+  return [operation, otherConditions].filter(Boolean).join(' · ')
 }

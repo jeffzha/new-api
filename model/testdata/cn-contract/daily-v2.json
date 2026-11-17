@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "2",
+  "gatewayId": "gw-cn-fixture",
+  "sourceSystem": "gateway-cn-finance-v2",
+  "streamEpoch": "fixture",
+  "date": "2026-10-14",
+  "timezone": "UTC",
+  "through": "Y25mMjpmaXh0dXJlOjI",
+  "rawVersionControls": {
+    "count": 2,
+    "countByKind": {"charge": 2},
+    "byKind": {"charge": {"cumulativeGrossByCurrency": {"CNY": "18"}, "cumulativeQuota": "900000", "deltaQuota": "400000", "unknownMoneyCount": 0}}
+  },
+  "economicNetControls": {
+    "byKind": {"charge": {"deltaGrossByCurrency": {"CNY": "8"}, "deltaNetByCurrency": {"CNY": "8"}, "deltaTaxByCurrency": {"CNY": "0"}, "deltaQuota": "400000", "recognizedGrossByCurrency": {"CNY": "6.4"}}},
+    "unresolvedPredecessorCount": 0,
+    "unresolvedEvidenceCount": 2
+  },
+  "backfillComplete": false,
+  "sourceCoverageComplete": false,
+  "dependencies": [
+    {"sourceId": "agency_wallet", "version": "fixture-1", "required": true, "coverageFrom": "2026-10-14T00:00:00Z", "coverageTo": "2026-10-15T00:00:00Z", "sourceCutoff": "fixture-outbox-4", "capturedThrough": "fixture-outbox-4", "publishedThrough": "2", "pendingCount": 0, "unknownCount": 0, "supportedPaths": ["agency-durable-v1"], "excludedPaths": [], "proofId": "fixture-agency-cutoff", "status": "complete"},
+    {"sourceId": "ordinary_wallet", "version": "fixture-1", "required": true, "coverageFrom": "2026-10-14T00:00:00Z", "coverageTo": "2026-10-15T00:00:00Z", "sourceCutoff": null, "capturedThrough": null, "publishedThrough": null, "pendingCount": 0, "unknownCount": 1, "supportedPaths": [], "excludedPaths": ["legacy-wallet"], "proofId": null, "status": "gap"},
+    {"sourceId": "subscriptions_and_credit_schedules", "version": "fixture-1", "required": true, "coverageFrom": "2026-10-14T00:00:00Z", "coverageTo": "2026-10-15T00:00:00Z", "sourceCutoff": null, "capturedThrough": null, "publishedThrough": null, "pendingCount": 0, "unknownCount": 1, "supportedPaths": [], "excludedPaths": ["ordinary-subscription", "agency-subscription", "credit-sale"], "proofId": null, "status": "gap"},
+    {"sourceId": "image_video_tasks", "version": "fixture-1", "required": true, "coverageFrom": "2026-10-14T00:00:00Z", "coverageTo": "2026-10-15T00:00:00Z", "sourceCutoff": null, "capturedThrough": null, "publishedThrough": null, "pendingCount": 1, "unknownCount": 1, "supportedPaths": [], "excludedPaths": ["all-discovered-task-platforms"], "proofId": null, "status": "pending"},
+    {"sourceId": "payments_refunds_compensations", "version": "fixture-1", "required": true, "coverageFrom": "2026-10-14T00:00:00Z", "coverageTo": "2026-10-15T00:00:00Z", "sourceCutoff": null, "capturedThrough": null, "publishedThrough": null, "pendingCount": 0, "unknownCount": 1, "supportedPaths": [], "excludedPaths": ["payment-provider"], "proofId": null, "status": "gap"},
+    {"sourceId": "funding_lots_allocations", "version": "fixture-1", "required": true, "coverageFrom": "2026-10-14T00:00:00Z", "coverageTo": "2026-10-15T00:00:00Z", "sourceCutoff": null, "capturedThrough": null, "publishedThrough": null, "pendingCount": 2, "unknownCount": 0, "supportedPaths": [], "excludedPaths": [], "proofId": null, "status": "pending"},
+    {"sourceId": "confirmed_supplier_bills_allocations", "version": "fixture-1", "required": true, "coverageFrom": "2026-10-14T00:00:00Z", "coverageTo": "2026-10-15T00:00:00Z", "sourceCutoff": null, "capturedThrough": null, "publishedThrough": null, "pendingCount": 0, "unknownCount": 1, "supportedPaths": [], "excludedPaths": ["ops-local-approved-bills"], "proofId": null, "status": "gap"},
+    {"sourceId": "commissions_payment_fees", "version": "fixture-1", "required": true, "coverageFrom": "2026-10-14T00:00:00Z", "coverageTo": "2026-10-15T00:00:00Z", "sourceCutoff": null, "capturedThrough": null, "publishedThrough": null, "pendingCount": 0, "unknownCount": 1, "supportedPaths": [], "excludedPaths": ["finance-approved-fees"], "proofId": null, "status": "gap"},
+    {"sourceId": "business_taxes_other_expenses", "version": "fixture-1", "required": true, "coverageFrom": "2026-10-14T00:00:00Z", "coverageTo": "2026-10-15T00:00:00Z", "sourceCutoff": null, "capturedThrough": null, "publishedThrough": null, "pendingCount": 0, "unknownCount": 1, "supportedPaths": [], "excludedPaths": ["ops-local-approved-tax-expense"], "proofId": null, "status": "gap"}
+  ],
+  "coverageGaps": ["ordinary_wallet", "subscriptions_and_credit_schedules", "image_video_tasks", "payments_refunds_compensations", "funding_lots_allocations", "confirmed_supplier_bills_allocations", "commissions_payment_fees", "business_taxes_other_expenses"]
+}

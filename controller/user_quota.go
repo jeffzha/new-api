@@ -44,7 +44,7 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 		markAuditLogged(c)
 	}()
 
-	adjustment, err := model.AdjustUserQuota(req.Id, c.GetInt("role"), req.Mode, req.Value)
+	adjustment, err := model.AdjustUserQuotaWithActor(req.Id, c.GetInt("role"), req.Mode, req.Value, int64(c.GetInt("id")))
 	if err != nil {
 		switch {
 		case errors.Is(err, model.ErrInvalidUserQuotaAdjustment):
@@ -63,6 +63,18 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 		case errors.Is(err, model.ErrWalletQuotaLimitExceeded):
 			params["failure_reason"] = "quota_limit_exceeded"
 			common.ApiError(c, err)
+		case errors.Is(err, model.ErrAgencyProvisioning):
+			params["failure_reason"] = "funding_provisioning"
+			common.ApiErrorI18n(c, i18n.MsgUserQuotaProvisioning)
+		case errors.Is(err, model.ErrAgencyAdminGrantUnavailable):
+			params["failure_reason"] = "grant_reversal_unavailable"
+			common.ApiErrorI18n(c, i18n.MsgUserQuotaGrantUnavailable)
+		case errors.Is(err, model.ErrInsufficientAgencyWalletQuota):
+			params["failure_reason"] = "funding_balance_reserved"
+			common.ApiErrorI18n(c, i18n.MsgUserQuotaBalanceReserved)
+		case errors.Is(err, model.ErrAgencyFundingUnavailable):
+			params["failure_reason"] = "funding_unavailable"
+			common.ApiErrorI18n(c, i18n.MsgUserQuotaFundingUnavailable)
 		default:
 			params["failure_reason"] = "database_error"
 			common.ApiError(c, err)
@@ -78,7 +90,8 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 	}
 	success = true
 	operation := model.AuditOperation{Action: action, Params: params}
-	model.RecordLogWithAdminInfo(adjustment.UserID, model.LogTypeTopup,
-		auditContentEN(action, params), auditOperatorInfo(c), &operation, c)
+	delta := adjustment.After - adjustment.Before
+	model.RecordQuotaLogWithAdminInfo(adjustment.UserID, model.LogTypeTopup, auditContentEN(action, params),
+		max(delta, -delta), model.LogQuotaSourceAdminAdjustment, delta < 0, auditOperatorInfo(c), &operation, c)
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
 }

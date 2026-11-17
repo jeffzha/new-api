@@ -27,12 +27,17 @@ import {
   type DynamicPriceOptions,
 } from '../lib/dynamic-price'
 import { taskPriceLabel, taskUsageUnitLabel } from '../lib/task-price-display'
-import type {
-  VideoMaterialFieldRow,
-  VideoMaterialPricing,
-  VideoPricingTable,
+import {
+  videoPriceRowConditions,
+  type VideoMaterialFieldRow,
+  type VideoMaterialPricing,
+  type VideoPricingTable,
 } from '../lib/video-pricing-table'
-import type { BillingUsageFieldSchema, TokenUnit } from '../types'
+import type {
+  BillingUsageFieldSchema,
+  MaterialPricingItem,
+  TokenUnit,
+} from '../types'
 
 type VideoPricingTablesProps = {
   table: VideoPricingTable
@@ -44,16 +49,10 @@ type VideoPricingTablesProps = {
   className?: string
 }
 
-const MATERIAL_LABEL_KEYS = [
-  'Audio material',
-  'Image material',
-  'Video material',
-]
-
 type MaterialTableRow = {
   pricing: VideoMaterialPricing
   row?: VideoMaterialFieldRow
-  labelKey?: string
+  item?: MaterialPricingItem
 }
 
 function materialUnitLabel(
@@ -64,6 +63,31 @@ function materialUnitLabel(
   if (definition.unit === 'second') return t('s')
   if (definition.unit === 'credit') return t('credit')
   return taskUsageUnitLabel(definition, language, t('unit'))
+}
+
+function officialMaterialLabel(
+  material: MaterialPricingItem['material'],
+  t: (key: string) => string
+): string {
+  if (material === 'audio') return t('Audio material')
+  if (material === 'image') return t('Image material')
+  return t('Video material')
+}
+
+function materialLabelOf(
+  row: MaterialTableRow,
+  language: string,
+  t: (key: string) => string
+): string {
+  if (row.item) return officialMaterialLabel(row.item.material, t)
+  if (row.row) {
+    return taskPriceLabel(
+      row.row.definition.description,
+      row.row.field,
+      language
+    )
+  }
+  return t('Reference materials (audio, images and video)')
 }
 
 export function VideoPricingTables(props: VideoPricingTablesProps) {
@@ -80,33 +104,67 @@ export function VideoPricingTables(props: VideoPricingTablesProps) {
   const materialPricing = props.table.materialPricing
   const materialRows: MaterialTableRow[] = useMemo(() => {
     if (!materialPricing) return []
+    if (materialPricing.kind === 'catalog') {
+      return materialPricing.catalog.items.map((item) => ({
+        pricing: materialPricing,
+        item,
+      }))
+    }
     if (materialPricing.kind === 'usage_fields') {
       return materialPricing.rows.map((row) => ({
         pricing: materialPricing,
         row,
       }))
     }
-    return MATERIAL_LABEL_KEYS.map((key) => ({
-      pricing: materialPricing,
-      labelKey: key,
-    }))
+    return [{ pricing: materialPricing }]
   }, [materialPricing])
 
   const thClass =
     'text-muted-foreground py-2 text-[10px] font-medium tracking-wider uppercase'
   const cellClass = 'py-2.5 align-top whitespace-normal break-words'
+  const hasConditions = props.table.outputRows.some(
+    (row) => row.conditions?.length
+  )
 
   const materialRuleOf = (row: MaterialTableRow): string => {
+    if (row.pricing.kind === 'catalog' && row.item) {
+      if (row.item.unit === 'free') return t('No charge')
+      const unit = row.item.unit === 'second' ? t('s') : t('image')
+      const rates = (row.item.rates ?? []).map((rate) => {
+        const exchangeRate = props.usdExchangeRate
+        if (row.pricing.kind !== 'catalog') return ''
+        if (row.pricing.catalog.currency === 'CNY' && (!Number.isFinite(exchangeRate) || exchangeRate <= 0)) return '—'
+        const amountUSD = row.pricing.catalog.currency === 'CNY'
+          ? rate.amount / exchangeRate
+          : rate.amount
+        const price = formatTaskUsageUnitPrice(amountUSD, {
+          ...priceOptions,
+          groupRatioMultiplier: 1,
+        })
+        const label = taskPriceLabel(rate.label, '', i18n.language)
+        return [label, `${price}/${unit}`].filter(Boolean).join(' ')
+      })
+      const rateText = rates.join(' · ')
+      if (row.item.freeUnits) {
+        return `${t('First {{count}} free, then', {
+          count: row.item.freeUnits,
+        })} ${rateText}`
+      }
+      return rateText
+    }
     if (row.pricing.kind === 'upstream_credits') {
-      const rate = formatTaskUsageUnitPrice(
-        row.pricing.creditPriceUSD,
-        priceOptions
+      return t(
+        "Settled according to the supplier's final material charge; the supplier does not publish fixed per-image or input-video prices"
       )
-      return `${t('Charged at the upstream credit cost')} · ${rate} / ${t('credit')}`
     }
     if (row.row) {
-      const rate = formatTaskUsageUnitPrice(row.row.amountUSD, priceOptions)
-      return `${rate} / ${materialUnitLabel(row.row.definition, i18n.language, t)}`
+      const unit = materialUnitLabel(row.row.definition, i18n.language, t)
+      return row.row.rates
+        .map((entry) => {
+          const rate = formatTaskUsageUnitPrice(entry.amountUSD, priceOptions)
+          return [entry.label, `${rate} / ${unit}`].filter(Boolean).join(' ')
+        })
+        .join(' · ')
     }
     return t('No extra material charge')
   }
@@ -135,22 +193,47 @@ export function VideoPricingTables(props: VideoPricingTablesProps) {
               cellClassName: `${cellClass} font-medium`,
               cell: (row) => row.resolution,
             },
+            ...(hasConditions
+              ? [
+                  {
+                    id: 'conditions',
+                    header: t('Applicable conditions'),
+                    className: thClass,
+                    cellClassName: cellClass,
+                    cell: (row: VideoPricingTable['outputRows'][number]) =>
+                      videoPriceRowConditions(
+                        row,
+                        props.table.usageSchema,
+                        i18n.language,
+                        t
+                      ),
+                  },
+                ]
+              : []),
             {
               id: 'rule',
               header: t('Billing rule'),
               className: thClass,
               cellClassName: `${cellClass} text-muted-foreground`,
-              cell: (row) =>
-                row.rule === 'second'
-                  ? t('Per second')
-                  : [
-                      t('Per request'),
-                      row.seconds
-                        ? t('Fixed {{seconds}}s', { seconds: row.seconds })
-                        : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' · '),
+              cell: (row) => {
+                if (row.rule === 'second') {
+                  if (row.durationBasis === 'input_output') {
+                    return t('Per second (input + output duration)')
+                  }
+                  if (row.durationBasis === 'output') {
+                    return t('Per second (output duration)')
+                  }
+                  return t('Per second')
+                }
+                return [
+                  t('Per request'),
+                  row.seconds
+                    ? t('Fixed {{seconds}}s', { seconds: row.seconds })
+                    : '',
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
+              },
             },
             {
               id: 'price',
@@ -178,7 +261,9 @@ export function VideoPricingTables(props: VideoPricingTablesProps) {
             tableClassName='text-sm'
             headerRowClassName='hover:bg-transparent'
             data={materialRows}
-            getRowKey={(row) => row.row?.field ?? row.labelKey ?? ''}
+            getRowKey={(row) =>
+              row.item?.material ?? row.row?.field ?? 'combined-materials'
+            }
             columns={[
               {
                 id: 'model',
@@ -192,14 +277,7 @@ export function VideoPricingTables(props: VideoPricingTablesProps) {
                 header: t('Material'),
                 className: thClass,
                 cellClassName: `${cellClass} font-medium`,
-                cell: (row) =>
-                  row.row
-                    ? taskPriceLabel(
-                        row.row.definition.description,
-                        row.row.field,
-                        i18n.language
-                      )
-                    : t(row.labelKey ?? ''),
+                cell: (row) => materialLabelOf(row, i18n.language, t),
               },
               {
                 id: 'rule',
@@ -213,7 +291,7 @@ export function VideoPricingTables(props: VideoPricingTablesProps) {
           {materialPricing.kind === 'upstream_credits' && (
             <p className='text-muted-foreground/50 text-[10px]'>
               {t(
-                'Material fees follow the upstream charge; nothing is added when the upstream does not bill for inputs.'
+                'The supplier returns only the combined material charge, not separate per-image or per-second prices. No material fee is added when the supplier charges none.'
               )}
             </p>
           )}

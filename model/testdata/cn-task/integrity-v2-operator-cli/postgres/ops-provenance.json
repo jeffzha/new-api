@@ -1,0 +1,39 @@
+{
+  "approved": {
+    "applicant": "synthetic-applicant",
+    "approver": "synthetic-independent-reviewer",
+    "contentHash": "sha256:cea75050592eb36624abc6400bbb5484a33462650984beeb93008c527c09d9f4",
+    "customerKeys": [
+      "1001"
+    ],
+    "exportable": true,
+    "gatewayId": "test-cn",
+    "id": "a809162a-6aca-4f82-b493-9626c46d4ca8",
+    "integrityEpoch": "6009c284-6475-4b01-be3a-d44b91b56885",
+    "inventoryId": "a809162a-6aca-4f82-b493-9626c46d4ca8",
+    "status": "approved",
+    "streamEpoch": "2faa92dd-1539-48b4-b165-fb98f799f68f",
+    "version": 2
+  },
+  "databaseSha256": "51a4903508ffbd9f6d80e3cc49deacf147302ead6cb53123afb3e3dfc49239d9",
+  "financialGrants": 0,
+  "frozen": {
+    "applicant": "synthetic-applicant",
+    "approver": null,
+    "contentHash": "sha256:395153e7e69f1a1272616794e4bbb5060ec36ef0ca0eccb22da6ee3f62081041",
+    "customerKeys": [
+      "1001"
+    ],
+    "exportable": false,
+    "gatewayId": "test-cn",
+    "id": "a809162a-6aca-4f82-b493-9626c46d4ca8",
+    "integrityEpoch": "6009c284-6475-4b01-be3a-d44b91b56885",
+    "inventoryId": "a809162a-6aca-4f82-b493-9626c46d4ca8",
+    "status": "submitted",
+    "streamEpoch": "2faa92dd-1539-48b4-b165-fb98f799f68f",
+    "version": 1
+  },
+  "opsDatabase": "C:\\Users\\winton\\.codex\\worktrees\\9564\\TokenOps\\data\\gateway-cn\\.testtmp\\operator-cli-run-20261016c\\postgres\\ops-review.sqlite3",
+  "productionEligibility": false,
+  "syntheticIntegration": true
+}

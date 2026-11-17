@@ -157,6 +157,13 @@ Inside `relaykit/`, use `kitutil.*` from `relaykit/relayconvert/kitutil/json.go`
 - Do NOT add new files under `docs/` or any of its subdirectories unless the user explicitly requests it.
 - Do NOT create or generate documentation files in this repository's plugin directories under `plugins/`, including `plugins/tasks/<plugin>/` and their subdirectories. This includes README files, changelogs, usage guides, and other documentation files, regardless of format.
 
+### Production frontend release gate
+
+- For every domestic Gateway product deployment, pack the exact image build's `web/dist` with `python scripts/gateway-static-assets.py pack --dist <dist> --output <bundle.tar.gz> --release <commit>`. Supply that bundle to `scripts/deploy-gateway-slot.ps1 -StaticAssetsBundle <bundle.tar.gz>`. Never rebuild a second frontend just to obtain assets.
+- Before any positive candidate traffic, publish the bundle to the independent static archive and run the image-bound `gateway-static-assets.py verify` gate. This also applies to one-off release helpers; API health and HTTP 200 alone do not prove browser readiness. Verify MIME types and SHA-256 for every entry and asynchronous asset. The canary helper enforces this gate; emergency rollback remains available.
+- Keep previously published assets for browsers with cached pages. Never replace this with a hand-maintained hash whitelist or route current files to an old reserve container. Do not prune the static archive during a release.
+- Domestic archive: `/opt/new-api/deploy/api-docs/gateway-assets`, served through the existing `api-docs:80` service. Publish only the managed static block with a validated graceful Caddy reload; preserve all other domains, `/test` routes, blue/green weights and containers. Other deployments must explicitly configure their own archive and public URL.
+
 ### Frontend Rules
 
 - **Reuse existing UI components first (mandatory):** Before implementing or changing frontend UI, read `web/AGENTS.md` and the project `shadcn-ui` skill, search `web/src/components/` and the relevant feature for existing components, and read matching implementations and call sites. Do not start from custom markup or registry installation without checking the repository first.

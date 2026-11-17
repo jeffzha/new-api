@@ -99,6 +99,12 @@ func sweepTimedOutTasks(ctx context.Context) {
 	timedOutCount := 0
 
 	for _, task := range tasks {
+		if task.CNBillingKey != "" {
+			if err := model.MarkCNTaskRepair(ctx, task.CNBillingKey, "task_timeout_requires_provider_evidence"); err != nil {
+				logger.LogError(ctx, err.Error())
+			}
+			continue
+		}
 		if model.IsAgencyDurableUser(task.UserId) {
 			// A timeout does not prove provider failure. Keep the reservation and
 			// mark the financial journal for operator/provider reconciliation.
@@ -163,6 +169,8 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	drainOpsTaskUsage(ctx)
+	defer drainOpsTaskUsage(ctx)
 
 	common.SysLog("任务进度轮询开始")
 	sweepTimedOutTasks(ctx)
@@ -386,6 +394,13 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 
 		isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
 		terminalTransition := isDone && snap.Status != task.Status
+		if terminalTransition {
+			if task.FinishTime == 0 {
+				task.FinishTime = time.Now().Unix()
+			}
+			prepareOpsTaskUsage(task, ch.Type, task.Data)
+			PrepareCNTaskTerminal(adaptor, task, &responseItem.TaskInfo)
+		}
 		won, updateErr := task.UpdateWithStatus(snap.Status)
 		if updateErr != nil {
 			common.SysLog("UpdateSunoTask task error: " + updateErr.Error())
@@ -396,6 +411,8 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 			continue
 		}
 		if terminalTransition {
+			recordTaskUpstreamBalanceFailure(task)
+			finalizeOpsTaskReservation(task)
 			billingSettled := settleTaskBillingOnComplete(ctx, adaptor, task, &responseItem.TaskInfo)
 			if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
 				RefundTaskQuota(ctx, task, task.FailReason)
@@ -517,6 +534,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	if privateData.Key != "" {
 		key = privateData.Key
 	}
+	if task.CNBillingKey != "" {
+		if err := model.ValidateCNTaskCredential(ctx, task.CNBillingKey, ch.Id, key); err != nil {
+			return recordPollFailure(ctx, adaptor, task, task.Status, pollClassAuth, 0, "")
+		}
+	}
 	snap := task.Snapshot()
 	fetchPath := ""
 	if privateData.Endpoint != nil {
@@ -545,6 +567,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	switch classifyPollHTTP(resp.StatusCode) {
 	case pollClassNotFound:
+		if task.CNBillingKey != "" {
+			return recordPollFailure(ctx, adaptor, task, snap.Status, pollClassNotFound, resp.StatusCode, "")
+		}
 		return failTaskFromPoll(ctx, adaptor, task, snap.Status, fmt.Sprintf("upstream task not found (HTTP %d)", resp.StatusCode))
 	case pollClassAuth:
 		logger.LogWarn(ctx, fmt.Sprintf("task poll auth failure channel_id=%d task=%s http=%d", ch.Id, task.TaskID, resp.StatusCode))
@@ -601,6 +626,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return recordPollFailure(ctx, adaptor, task, snap.Status, pollClassUnrecognized, resp.StatusCode, unrecognizedPollDetail(taskResult.Reason, responseBody))
 	}
 
+	opsResponseBody := responseBody
 	if sanitizer, ok := adaptor.(TaskPollingSanitizer); ok {
 		if sanitized, sanitizeErr := sanitizer.SanitizeTaskData(task, responseBody); sanitizeErr != nil {
 			return recordPollFailure(ctx, adaptor, task, snap.Status, pollClassHookError, resp.StatusCode, sanitizeErr.Error())
@@ -664,6 +690,8 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
 	if isDone && snap.Status != task.Status {
+		PrepareCNTaskTerminal(adaptor, task, taskResult)
+		prepareOpsTaskUsage(task, ch.Type, opsResponseBody)
 		won, err := task.UpdateWithStatus(snap.Status)
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("UpdateWithStatus failed for task %s: %s", task.TaskID, err.Error()))
@@ -671,6 +699,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		} else if !won {
 			logger.LogWarn(ctx, fmt.Sprintf("Task %s CAS lost or no-op update, skip billing", task.TaskID))
 			shouldFinalizeBilling = false
+		} else {
+			recordTaskUpstreamBalanceFailure(task)
+			finalizeOpsTaskReservation(task)
 		}
 	} else if !snap.Equal(task.Snapshot()) {
 		if _, err := task.UpdateWithStatus(snap.Status); err != nil {
@@ -737,6 +768,12 @@ func truncateBase64(s string) string {
 //
 // 表达式求值失败会保留预扣额度，因此也视为已接管，避免错误全退。
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) bool {
+	if task.CNBillingKey != "" {
+		if err := model.CompleteCNTaskIntent(context.WithoutCancel(ctx), model.DB, task.CNBillingKey); err != nil {
+			logger.LogWarn(ctx, "CN task financial finalization pending durable recovery")
+		}
+		return true
+	}
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.TieredSnapshot != nil {
 		// 用量表达式结算只适用于成功任务；失败任务由调用方全额退款。
 		if task.Status == model.TaskStatusFailure {
@@ -752,6 +789,7 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		}
 		bc.TieredSnapshot.UsageFacts = usageFacts
 		bc.TieredSnapshot.EstimatedTier = result.MatchedTier
+		recordTaskSettledTokens(task, taskResult)
 		RecalculateTaskQuota(ctx, task, result.ActualQuotaAfterGroup, "任务用量表达式结算", result.Clamp)
 		return true
 	}
@@ -769,6 +807,7 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 			return true
 		}
 		if handled {
+			recordTaskSettledTokens(task, taskResult)
 			RecalculateTaskQuota(ctx, task, actualQuota, "adaptor billing adjustment", clamp)
 			return true
 		}
@@ -850,6 +889,12 @@ func unrecognizedPollDetail(reason string, body []byte) string {
 }
 
 func recordPollFailure(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, fromStatus model.TaskStatus, class string, statusCode int, detail string) error {
+	if task.CNBillingKey != "" {
+		if err := model.MarkCNTaskRepair(ctx, task.CNBillingKey, "provider_poll_outcome_unknown"); err != nil {
+			return err
+		}
+		return fmt.Errorf("CN task provider outcome requires reconciliation: %s", class)
+	}
 	if model.IsAgencyDurableUser(task.UserId) && (class == pollClassTransport || class == pollClassHookError || class == pollClassTransient || class == pollClassAuth || class == pollClassNotFound) {
 		// These responses do not establish a terminal provider outcome. Never
 		// refund a durable Agency reservation on an ambiguous poll result.

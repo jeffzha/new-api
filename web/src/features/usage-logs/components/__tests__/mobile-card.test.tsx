@@ -63,6 +63,8 @@ function Fixture(props: {
 }) {
   const columns = useCommonLogsColumns(props.admin ?? true, false)
   const context = useUsageLogsContext()
+  // TanStack Table intentionally returns a mutable table instance.
+  // eslint-disable-next-line react/incompatible-library
   const table = useReactTable({
     data: props.logs ?? [log],
     columns,
@@ -265,4 +267,10 @@ it('shows loading placeholders without displaying stale log fields', () => {
   expect(
     screen.queryByRole('button', { name: /^Model:/ })
   ).not.toBeInTheDocument()
+})
+
+it('labels historical quota changes as adjustments while preserving their original type', () => {
+  renderLogs({ logs: [{ ...log, type: 1, display_type: 8 }] })
+  expect(screen.getByText('Quota Adjustment')).toBeVisible()
+  expect(screen.queryByText('Top-up')).not.toBeInTheDocument()
 })

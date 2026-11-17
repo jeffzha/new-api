@@ -22,7 +22,9 @@ package controller
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/csv"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http/httptest"
@@ -283,4 +285,151 @@ func testGetConsumeLogsForExportLoadsAgencyPricing(t *testing.T, db *gorm.DB, da
 	require.Equal(t, int64(1), funding[model.LogExportFundingKey{UserID: 1, RequestID: "bill-request-500"}].PaidQuota)
 	require.Equal(t, int64(1), funding[model.LogExportFundingKey{UserID: 2, RequestID: "bill-request-000"}].PaidQuota)
 	require.Equal(t, model.LogExportAgencyPricing{StandardQuota: 100, ChargedTotalQuota: 80, SalesBPS: 8000, QuotaPerUnit: "100", ExchangeRate: "7.3"}, agencyPricing[model.LogExportFundingKey{UserID: 1, RequestID: "bill-request-500"}])
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+
+	for _, format := range []string{"csv", "xlsx"} {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest("GET", "/api/log/self/export?format="+format, nil)
+		writeLogExport(ctx, model.LogExportParams{UserID: 1})
+		require.Equal(t, 200, recorder.Code, recorder.Body.String())
+		var rows [][]string
+		if format == "csv" {
+			reader := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(recorder.Body.Bytes(), []byte("\xEF\xBB\xBF"))))
+			reader.FieldsPerRecord = -1
+			rows, err = reader.ReadAll()
+		} else {
+			workbook, openErr := excelize.OpenReader(bytes.NewReader(recorder.Body.Bytes()))
+			require.NoError(t, openErr)
+			rows, err = workbook.GetRows("账单明细")
+			require.NoError(t, workbook.Close())
+		}
+		require.NoError(t, err)
+		require.Len(t, rows, 506, format) // title, notice, header, 501 charges, month subtotal, total
+		require.Equal(t, "5.84000000", rows[503][12], format)
+		require.Equal(t, "是", rows[503][16], format)
+		require.Equal(t, "0.8000", rows[503][17], format)
+	}
+}
+
+func TestLogExportMultiDayBillExceedsLegacyLimit(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:large-bill?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Log{}))
+	previousDB, previousLogDB := model.DB, model.LOG_DB
+	model.DB, model.LOG_DB = nil, db
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = previousDB, previousLogDB
+		sqlDB, closeErr := db.DB()
+		require.NoError(t, closeErr)
+		require.NoError(t, sqlDB.Close())
+	})
+	start := int64(1790812800) // October 1 in both UTC and the production timezone.
+	logs := make([]model.Log, model.LogExportMaxRows+1)
+	for i := range logs {
+		logs[i] = model.Log{Type: model.LogTypeConsume, UserId: 7, Username: "bill-user", CreatedAt: start + int64(i/40000)*86400 + int64(i%40000/301), PromptTokens: i, RequestId: fmt.Sprintf("bill-%d", i), Other: `{"quota_per_unit":100,"exchange_rate":1}`, Quota: 1}
+	}
+	require.NoError(t, db.CreateInBatches(logs, 100).Error)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest("GET", "/api/log/self/export?format=csv", nil)
+	writeLogExport(ctx, model.LogExportParams{UserID: 7, StartTimestamp: start, EndTimestamp: start + 3*86400})
+	require.Equal(t, 200, recorder.Code, recorder.Body.String())
+	reader := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(recorder.Body.Bytes(), []byte("\xEF\xBB\xBF"))))
+	reader.FieldsPerRecord = -1
+	rows, err := reader.ReadAll()
+	require.NoError(t, err)
+	require.Equal(t, len(logs)+5, len(rows))
+	for i := range logs {
+		require.Equal(t, fmt.Sprint(i), rows[i+3][3])
+	}
+	require.Equal(t, "2026-10 月度小计", rows[len(rows)-2][0])
+	require.Equal(t, rows[len(rows)-2][12], rows[len(rows)-1][12])
+
+	xlsxFile, err := os.CreateTemp(t.TempDir(), "bill-*.xlsx")
+	require.NoError(t, err)
+	defer xlsxFile.Close()
+	require.NoError(t, streamLogExportXLSX(context.Background(), model.LogExportParams{UserID: 7}, xlsxFile, t.TempDir()))
+	info, err := xlsxFile.Stat()
+	require.NoError(t, err)
+	archive, err := zip.NewReader(xlsxFile, info.Size())
+	require.NoError(t, err)
+	var excelRows int
+	for _, entry := range archive.File {
+		if entry.Name != "xl/worksheets/sheet1.xml" {
+			continue
+		}
+		input, err := entry.Open()
+		require.NoError(t, err)
+		defer input.Close()
+		decoder := xml.NewDecoder(input)
+		for {
+			token, err := decoder.Token()
+			if err == io.EOF {
+				break
+			}
+			require.NoError(t, err)
+			start, ok := token.(xml.StartElement)
+			if !ok || start.Name.Local != "row" {
+				continue
+			}
+			var row struct {
+				Cells []struct {
+					Ref   string `xml:"r,attr"`
+					Value string `xml:"v"`
+					Text  string `xml:"is>t"`
+				} `xml:"c"`
+			}
+			require.NoError(t, decoder.DecodeElement(&row, &start))
+			excelRows++
+			for _, cell := range row.Cells {
+				if cell.Ref == "D100004" {
+					require.Equal(t, "100000", cell.Value)
+				}
+				if cell.Ref == "A100006" {
+					require.Equal(t, "本期消费金额", cell.Text)
+				}
+			}
+		}
+	}
+	require.Equal(t, len(logs)+5, excelRows)
+
+	canceled, cancel := context.WithCancel(context.Background())
+	visited := 0
+	err = model.WalkConsumeLogsForExport(canceled, model.LogExportParams{UserID: 7}, func(batch []*model.Log, _ map[model.LogExportFundingKey]model.LogExportFunding, _ map[model.LogExportFundingKey]model.LogExportAgencyPricing) error {
+		visited += len(batch)
+		cancel()
+		return canceled.Err()
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Less(t, visited, len(logs))
+	visited = 0
+	err = model.WalkConsumeLogsForExport(canceled, model.LogExportParams{UserID: 7}, func(batch []*model.Log, _ map[model.LogExportFundingKey]model.LogExportFunding, _ map[model.LogExportFundingKey]model.LogExportAgencyPricing) error {
+		visited += len(batch)
+		return nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, visited)
+}
+
+func TestLogExportFailureDoesNotLeavePartialBill(t *testing.T) {
+	temporary := t.TempDir()
+	t.Setenv("TMPDIR", temporary)
+	t.Setenv("TMP", temporary)
+	t.Setenv("TEMP", temporary)
+	oldDB := model.LOG_DB
+	model.LOG_DB = nil
+	t.Cleanup(func() { model.LOG_DB = oldDB })
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest("GET", "/api/log/self/export?format=xlsx", nil)
+	writeLogExport(ctx, model.LogExportParams{UserID: 7})
+	require.Equal(t, 500, recorder.Code)
+	require.Empty(t, recorder.Header().Get("Content-Disposition"))
+	entries, err := os.ReadDir(temporary)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+	require.Empty(t, logExportSlot)
 }

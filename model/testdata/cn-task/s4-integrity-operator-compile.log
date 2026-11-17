@@ -1,0 +1,4 @@
+ok  	github.com/QuantumNous/new-api/cmd/cn-integrity-operator	0.371s [no tests to run]
+ok  	github.com/QuantumNous/new-api/model	0.337s [no tests to run]
+ok  	github.com/QuantumNous/new-api/controller	0.726s [no tests to run]
+ok  	github.com/QuantumNous/new-api/router	0.679s [no tests to run]

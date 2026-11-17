@@ -23,6 +23,9 @@ import (
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
 // 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
 func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model.Task) {
+	if task != nil && task.CNBillingKey != "" {
+		return
+	}
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
 	// 支持任务仅按次计费
@@ -72,6 +75,10 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 			other.SetPublic("usage_facts", snap.UsageFacts)
 		}
 	}
+	for key, value := range task.BillingLogFacts() {
+		other.SetPublic(key, value)
+	}
+	other.SetPublic("settlement_stage", "preconsume")
 	appendTaskLogInfo(task, other)
 	attachQuotaSaturation(c, info, other)
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
@@ -206,6 +213,9 @@ func taskBillingOther(task *model.Task) *model.LogOther {
 			other.SetPublic("agency_paid_allocated_quota", bc.AgencyPaidAllocatedQuota)
 		}
 	}
+	for key, value := range task.BillingLogFacts() {
+		other.SetPublic(key, value)
+	}
 	props := task.Properties
 	if props.UpstreamModelName != "" && props.UpstreamModelName != props.OriginModelName {
 		other.SetPublic("is_model_mapped", true)
@@ -218,6 +228,9 @@ func taskBillingOther(task *model.Task) *model.LogOther {
 func appendTaskLogInfo(task *model.Task, other *model.LogOther) {
 	if task == nil || other == nil {
 		return
+	}
+	if task.PrivateData.UpstreamBaseURL != "" {
+		model.CaptureUpstreamLogReference(other, task.PrivateData.UpstreamBaseURL)
 	}
 	if task.TaskID != "" {
 		other.SetPublic("task_id", task.TaskID)
@@ -259,6 +272,13 @@ func taskModelName(task *model.Task) string {
 // 当异步任务失败时，退还资金与令牌额度，并回减用户和渠道用量。
 // 返回资金来源是否已成功退还；失败时保留 quota，供显式重试或人工对账。
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool {
+	if task != nil && task.CNBillingKey != "" {
+		_, err := model.ApplyTaskQuotaAdjustment(task, 0)
+		if err != nil {
+			logger.LogWarn(ctx, "CN task refund pending durable recovery")
+		}
+		return err == nil
+	}
 	quota := task.Quota
 	if quota == 0 {
 		return true
@@ -297,6 +317,9 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 	other := taskBillingOther(task)
 	other.SetPublic("task_id", task.TaskID)
 	other.SetPublic("reason", reason)
+	other.SetPublic("pre_consumed_quota", quota)
+	other.SetPublic("actual_quota", quota+adjustment.QuotaDelta)
+	other.SetPublic("settlement_stage", "refund")
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   model.LogTypeRefund,
@@ -327,6 +350,9 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	adjustment, err := model.ApplyTaskQuotaAdjustment(task, actualQuota)
 	if err != nil {
 		logger.LogError(ctx, fmt.Sprintf("差额结算资金调整失败 task %s: %s", task.TaskID, err.Error()))
+		return
+	}
+	if task.CNBillingKey != "" {
 		return
 	}
 	if adjustment.TokenUnavailable {
@@ -376,6 +402,8 @@ func recordTaskQuotaAdjustment(ctx context.Context, task *model.Task, preConsume
 	other.SetPublic("task_id", task.TaskID)
 	other.SetPublic("pre_consumed_quota", preConsumedQuota)
 	other.SetPublic("actual_quota", actualQuota)
+	other.SetPublic("reason", reason)
+	other.SetPublic("settlement_stage", "settle")
 	for _, clamp := range clamps {
 		attachQuotaSaturationToOther(other, clamp)
 	}

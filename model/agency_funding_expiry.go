@@ -18,9 +18,17 @@ func addAgencyTopupExpiredQuotaTx(tx *gorm.DB, lot AgencyFundingLot, amount int6
 	if amount <= 0 || !isRedemptionSource(lot.SourceKind) {
 		return nil
 	}
-	return tx.Model(&AgencyTopupFact{}).
-		Where("user_id = ? AND source_id = ? AND funding_source IN ?", lot.UserID, lot.SourceID, []string{"redemption", "redeem", "redemption_code"}).
-		Updates(map[string]any{"expired_quota": gorm.Expr("expired_quota + ?", amount), "expires_at": lot.ExpiresAt}).Error
+	var rows []AgencyTopupFact
+	if err := AgencyLockForUpdate(tx).Where("user_id = ? AND source_id = ? AND funding_source IN ?",
+		lot.UserID, lot.SourceID, []string{"redemption", "redeem", "redemption_code"}).Find(&rows).Error; err != nil {
+		return err
+	}
+	for i := range rows {
+		if err := tx.Model(&rows[i]).Updates(map[string]any{"expired_quota": gorm.Expr("expired_quota + ?", amount), "expires_at": lot.ExpiresAt}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // restoreAgencyBonusTx reverses a consumed or debt-repaid bonus component. An

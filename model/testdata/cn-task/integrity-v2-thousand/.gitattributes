@@ -1,0 +1,3 @@
+# Preserve exported evidence bytes, including copied Ops provenance.
+* -text
+ops-fixture-provenance.json whitespace=cr-at-eol

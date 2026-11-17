@@ -30,8 +30,15 @@ import (
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/agencyopspush"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/service/opsbridge"
+	"github.com/QuantumNous/new-api/service/opscatalog"
+	"github.com/QuantumNous/new-api/service/opsexport"
 	"github.com/QuantumNous/new-api/service/opsmonitor"
+	"github.com/QuantumNous/new-api/service/opspush"
+	"github.com/QuantumNous/new-api/service/opsupstreams"
+	"github.com/QuantumNous/new-api/service/opsusers"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -154,6 +161,40 @@ func main() {
 	}
 	commandWorkerCtx, stopAgencyCommandWorker := context.WithCancel(context.Background())
 	defer stopAgencyCommandWorker()
+	service.StartBalanceReminderTask(commandWorkerCtx)
+	if err := opsupstreams.Start(commandWorkerCtx); err != nil {
+		common.FatalLog(err.Error())
+	}
+	if err := agencyopspush.StartConfigured(commandWorkerCtx, model.DB); err != nil {
+		common.FatalLog("failed to initialize distributor delivery: " + err.Error())
+		return
+	}
+	if err := opsexport.StartConfigured(model.DB); err != nil {
+		common.FatalLog("failed to initialize Ops export: " + err.Error())
+		return
+	}
+	if opsexport.Default != nil {
+		go model.RunCNWalletCancellationRecovery(commandWorkerCtx, model.DB)
+	}
+	if err := opsbridge.StartConfigured(commandWorkerCtx, service.OpsAgencyCommandExecutor{}, service.OpsBillingEventSource{}, service.OpsBillingEventSource{}); err != nil {
+		common.FatalLog("failed to initialize Ops bridge: " + err.Error())
+		return
+	}
+	if opsbridge.Default != nil {
+		defer opsbridge.Default.Close()
+	}
+	if err := opspush.StartConfigured(commandWorkerCtx); err != nil {
+		common.FatalLog("failed to initialize Ops push: " + err.Error())
+		return
+	}
+	if err := opsusers.StartConfigured(commandWorkerCtx); err != nil {
+		common.FatalLog("failed to initialize Ops user profile push: " + err.Error())
+		return
+	}
+	if err := opscatalog.StartConfigured(commandWorkerCtx); err != nil {
+		common.FatalLog("failed to initialize Ops catalog read: " + err.Error())
+		return
+	}
 	commandServer, err := service.StartConfiguredAgencyCommandServer()
 	if err != nil {
 		common.FatalLog("failed to start agency command listener: " + err.Error())
@@ -171,6 +212,11 @@ func main() {
 		}()
 	}
 	service.StartAgencyCommandWorker(commandWorkerCtx)
+
+	// Realign historical agency charges whose usage record still disagrees with
+	// the funding the wallet paid. Opt-in, idempotent and audited: it keeps every
+	// earlier receipt and adds a correction revision per charge.
+	model.StartAgencyChargeCorrectionBackfill()
 
 	// Register the periodic channel test, upstream model update, and async task
 	// polling (Midjourney / Suno / video) jobs as scheduled system tasks
@@ -202,6 +248,7 @@ func main() {
 
 	// Initialize HTTP server
 	server := gin.New()
+	middleware.RegisterHealthCheck(server)
 	if err := middleware.ConfigureTrustedProxies(server); err != nil {
 		common.FatalLog("failed to configure trusted proxies: " + err.Error())
 		return

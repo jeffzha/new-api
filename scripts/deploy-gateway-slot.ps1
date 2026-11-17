@@ -4,8 +4,7 @@ Deploy the current checkout to the inactive Gateway Blue or Green slot.
 
 .DESCRIPTION
 The script reads the Caddy-managed blue/green weights, refuses to replace a
-slot that receives traffic, builds an immutable image on the Gateway server
-(or verifies an explicitly prebuilt image), and starts only the inactive
+slot that receives traffic, verifies an explicitly prebuilt image, and starts only the inactive
 new-api service. It does not change traffic and does not recreate Caddy,
 PostgreSQL, Redis, API docs, or hwdrama-proxy.
 
@@ -33,6 +32,11 @@ param(
     [string]$ImageTag = "",
     [string]$ImageCommit = "",
     [string]$VersionNamespace = "gateway",
+    # Pack the exact dist embedded in the image with gateway-static-assets.py pack.
+    [string]$StaticAssetsBundle = "",
+    [string]$StaticArchiveRoot = "/opt/new-api/deploy/api-docs/gateway-assets",
+    [string]$DomainUrl = "https://gateway.nexus-reach.com",
+    [string]$CaddyContainerName = "new-api-seedance-caddy-1",
     [string]$Platform = "linux/amd64",
     [string]$DockerfilePath = "Dockerfile",
     [string]$BunRegistry = "https://registry.npmmirror.com",
@@ -54,6 +58,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not $PreflightOnly -and -not $UseExistingImage) {
+    throw "Production builds are disabled. Build outside production and supply -UseExistingImage, -ImageTag, and -ImageCommit."
+}
+if (-not $PreflightOnly -and -not (Test-Path -LiteralPath $StaticAssetsBundle -PathType Leaf)) {
+    throw "StaticAssetsBundle is required: pack the exact image build's web/dist before deployment."
+}
 
 if (-not (Test-Path -LiteralPath $SshKeyPath -PathType Leaf)) {
     throw "SSH key not found: $SshKeyPath"
@@ -191,13 +202,17 @@ function Get-GatewayCanaryState {
     $proxyMatches = [regex]::Matches($managedBlock, $proxyPattern)
     $fallbackMatches = [regex]::Matches($managedBlock, '(?m)^[\t ]*fallback[\t ]+weighted_round_robin[\t ]+(\d+)[\t ]+(\d+)[\t ]*\r?$')
     $cookieMatches = [regex]::Matches($managedBlock, '(?m)^[\t ]*lb_policy[\t ]+cookie[\t ]+new_api_slot[\t ]+[0-9a-f]{64}[\t ]*\{[\t ]*\r?$')
-    if ($weightMatches.Count -ne 1 -or $proxyMatches.Count -ne 1 -or $fallbackMatches.Count -ne 1 -or $cookieMatches.Count -ne 1) {
+    $directMatches = [regex]::Matches($managedBlock, '(?m)^[\t ]*lb_policy[\t ]+weighted_round_robin[\t ]+(\d+)[\t ]+(\d+)[\t ]*\r?$')
+    $cookiePolicy = $cookieMatches.Count -eq 1 -and $fallbackMatches.Count -eq 1 -and $directMatches.Count -eq 0
+    $directPolicy = $directMatches.Count -eq 1 -and $cookieMatches.Count -eq 0 -and $fallbackMatches.Count -eq 0
+    if ($weightMatches.Count -ne 1 -or $proxyMatches.Count -ne 1 -or -not ($cookiePolicy -or $directPolicy)) {
         throw "The managed Gateway blue/green block does not match the expected upstream and weight structure."
     }
+    $policyWeights = if ($directPolicy) { $directMatches[0] } else { $fallbackMatches[0] }
 
     $blueWeight = [int]$weightMatches[0].Groups[1].Value
     $greenWeight = [int]$weightMatches[0].Groups[2].Value
-    if ($blueWeight -ne [int]$fallbackMatches[0].Groups[1].Value -or $greenWeight -ne [int]$fallbackMatches[0].Groups[2].Value) {
+    if ($blueWeight -ne [int]$policyWeights.Groups[1].Value -or $greenWeight -ne [int]$policyWeights.Groups[2].Value) {
         throw "The Gateway weight comment and Caddy fallback weights are inconsistent."
     }
     if ($blueWeight -lt 0 -or $greenWeight -lt 0 -or ($blueWeight + $greenWeight) -ne 100) {
@@ -370,6 +385,10 @@ printf '\n'
     $remoteSourceTar = "$RemoteDir/releases/$safeTag-source.tar"
     $remoteBuildDir = "$RemoteDir/builds/$slotName-$safeTag"
     $overrideFile = "$RemoteDir/compose.$slotName.override.yml"
+    $remoteAssetsBundle = "$RemoteDir/releases/$safeTag-static.tar.gz"
+    $remoteAssetsHelper = "$RemoteDir/releases/gateway-static-assets.py"
+    Invoke-Scp -Source $StaticAssetsBundle -Destination "${RemoteHost}:$remoteAssetsBundle"
+    Invoke-Scp -Source (Join-Path $PSScriptRoot "gateway-static-assets.py") -Destination "${RemoteHost}:$remoteAssetsHelper"
 
     if (-not $UseExistingImage) {
         if (Test-Path -LiteralPath $localSourceTar) {
@@ -428,19 +447,20 @@ service_container() {
 }
 
 read_canary_weights() {
+    managed_config="`$(sed -n '/^[[:space:]]*# BEGIN NEW-API BLUE-GREEN[[:space:]]*`$/,/^[[:space:]]*# END NEW-API BLUE-GREEN[[:space:]]*`$/p' "`$caddyfile")"
     begin_count="`$(grep -Ec '^[[:space:]]*# BEGIN NEW-API BLUE-GREEN[[:space:]]*`$' "`$caddyfile" || true)"
     end_count="`$(grep -Ec '^[[:space:]]*# END NEW-API BLUE-GREEN[[:space:]]*`$' "`$caddyfile" || true)"
-    weight_count="`$(grep -Ec '^[[:space:]]*# weights blue=[0-9]+ green=[0-9]+[[:space:]]*`$' "`$caddyfile" || true)"
-    proxy_count="`$(grep -Fxc "reverse_proxy `$blue_upstream `$green_upstream {" < <(sed -E 's/^[[:space:]]+//; s/\r`$//' "`$caddyfile") || true)"
-    fallback_count="`$(grep -Ec '^[[:space:]]*fallback[[:space:]]+weighted_round_robin[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]*`$' "`$caddyfile" || true)"
-    cookie_count="`$(grep -Ec '^[[:space:]]*lb_policy[[:space:]]+cookie[[:space:]]+new_api_slot[[:space:]]+[0-9a-f]{64}[[:space:]]*\{[[:space:]]*`$' "`$caddyfile" || true)"
-    if [ "`$begin_count" -ne 1 ] || [ "`$end_count" -ne 1 ] || [ "`$weight_count" -ne 1 ] || [ "`$proxy_count" -ne 1 ] || [ "`$fallback_count" -ne 1 ] || [ "`$cookie_count" -ne 1 ]; then
+    weight_count="`$(grep -Ec '^[[:space:]]*# weights blue=[0-9]+ green=[0-9]+[[:space:]]*`$' <<< "`$managed_config" || true)"
+    proxy_count="`$(grep -Fxc "reverse_proxy `$blue_upstream `$green_upstream {" < <(sed -E 's/^[[:space:]]+//; s/\r`$//' <<< "`$managed_config") || true)"
+    fallback_count="`$(grep -Ec '^[[:space:]]*(fallback|lb_policy)[[:space:]]+weighted_round_robin[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]*`$' <<< "`$managed_config" || true)"
+    cookie_count="`$(grep -Ec '^[[:space:]]*lb_policy[[:space:]]+cookie[[:space:]]+new_api_slot[[:space:]]+[0-9a-f]{64}[[:space:]]*\{[[:space:]]*`$' <<< "`$managed_config" || true)"
+    if [ "`$begin_count" -ne 1 ] || [ "`$end_count" -ne 1 ] || [ "`$weight_count" -ne 1 ] || [ "`$proxy_count" -ne 1 ] || [ "`$fallback_count" -ne 1 ] || [ "`$cookie_count" -gt 1 ]; then
         echo "The managed Gateway block is missing, duplicated, or malformed." >&2
         return 1
     fi
 
-    weight_line="`$(grep -E '^[[:space:]]*# weights blue=[0-9]+ green=[0-9]+[[:space:]]*`$' "`$caddyfile")"
-    fallback_line="`$(grep -E '^[[:space:]]*fallback[[:space:]]+weighted_round_robin[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]*`$' "`$caddyfile")"
+    weight_line="`$(grep -E '^[[:space:]]*# weights blue=[0-9]+ green=[0-9]+[[:space:]]*`$' <<< "`$managed_config")"
+    fallback_line="`$(grep -E '^[[:space:]]*(fallback|lb_policy)[[:space:]]+weighted_round_robin[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]*`$' <<< "`$managed_config")"
     blue_weight="`$(printf '%s' "`$weight_line" | sed -E 's/.*blue=([0-9]+).*/\1/')"
     green_weight="`$(printf '%s' "`$weight_line" | sed -E 's/.*green=([0-9]+).*/\1/')"
     fallback_blue="`$(printf '%s' "`$fallback_line" | sed -E 's/.*weighted_round_robin[[:space:]]+([0-9]+)[[:space:]]+([0-9]+).*/\1/')"
@@ -556,30 +576,23 @@ if [ -z "`$source_id" ]; then
 fi
 docker exec "`$source_id" wget -q -O - http://127.0.0.1:3000/api/status | grep -Eq '"success"[[:space:]]*:[[:space:]]*true'
 
-if [ "`$target_slot" = "green" ]; then
-cat > "`$override_file" <<EOF
-services:
-  `$target_service:
-    extends:
-      file: $ComposeFile
-      service: $BlueServiceName
-    image: `$image
-    environment:
-      BATCH_UPDATE_ENABLED: "`$batch_update_enabled"
-      BATCH_UPDATE_INTERVAL: "`$batch_update_interval"
-      NODE_NAME: "`$node_name"
-EOF
-else
-cat > "`$override_file" <<EOF
-services:
-  `$target_service:
-    image: `$image
-    environment:
-      BATCH_UPDATE_ENABLED: "`$batch_update_enabled"
-      BATCH_UPDATE_INTERVAL: "`$batch_update_interval"
-      NODE_NAME: "`$node_name"
-EOF
-fi
+# Preserve env_file, integration flags and resource limits from the live slot.
+python3 - "`$override_file" "`$target_service" "`$target_slot" "`$image" "`$batch_update_enabled" "`$batch_update_interval" "`$node_name" <<'PY'
+import pathlib, shutil, sys, yaml
+path = pathlib.Path(sys.argv[1])
+config = yaml.safe_load(path.read_text()) if path.exists() else {"services": {}}
+if path.exists():
+    shutil.copy2(path, str(path) + ".before-" + sys.argv[4].split(":")[-1])
+service = config.setdefault("services", {}).setdefault(sys.argv[2], {})
+if sys.argv[3] == "green" and "extends" not in service:
+    service["extends"] = {"file": "$ComposeFile", "service": "$BlueServiceName"}
+service["image"] = sys.argv[4]
+environment = service.setdefault("environment", {})
+if not isinstance(environment, dict):
+    raise ValueError("Expected mapping-style environment; refusing to discard live settings")
+environment.update(BATCH_UPDATE_ENABLED=sys.argv[5], BATCH_UPDATE_INTERVAL=sys.argv[6], NODE_NAME=sys.argv[7])
+path.write_text(yaml.safe_dump(config, sort_keys=False))
+PY
 
 docker compose -p "`$compose_project" -f "`$compose_file" -f "`$override_file" config --quiet
 docker compose -p "`$compose_project" -f "`$compose_file" -f "`$override_file" up -d --no-deps "`$target_service"
@@ -629,6 +642,16 @@ exit 1
 
     Wait-ForNextSshConnection
     Invoke-RemoteScript $remoteScript
+
+    # Publish/verify all entry and async files before the separate traffic step.
+    # The replacement script has released the shared lock at this point.
+    Invoke-RemoteScript @"
+set -Eeuo pipefail
+umask 022
+target_id="`$(docker ps --filter 'label=com.docker.compose.project=$ComposeProject' --filter 'label=com.docker.compose.service=$targetService' --format '{{.ID}}')"
+test -n "`$target_id"
+python3 '$remoteAssetsHelper' publish --bundle '$remoteAssetsBundle' --root '$StaticArchiveRoot' --container "`$target_id" --caddyfile '$Caddyfile' --caddy-container '$CaddyContainerName' --public-url '$DomainUrl'
+"@
 
     if (-not $KeepLocalSourceTar -and (Test-Path -LiteralPath $localSourceTar)) {
         Remove-Item -LiteralPath $localSourceTar -Force

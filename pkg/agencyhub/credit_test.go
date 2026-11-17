@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,9 +14,13 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -163,6 +169,80 @@ func TestCreditStatementGenerationIsIdempotentAndTracksOverdue(t *testing.T) {
 	assert.Equal(t, int64(1), changed)
 	require.NoError(t, app.db.First(&invoice, invoice.ID).Error)
 	assert.Equal(t, model.AgencyCreditInvoiceStatusOverdue, invoice.Status)
+}
+
+func TestCreditStatementCurrencyRemainsRegionalAcrossDialects(t *testing.T) {
+	settings := operation_setting.GetGeneralSetting()
+	previous := settings.QuotaDisplayType
+	t.Cleanup(func() { settings.QuotaDisplayType = previous })
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			var driver gorm.Dialector
+			if dialect == "sqlite" {
+				driver = sqlite.Open(filepath.Join(t.TempDir(), "credit-currency.sqlite"))
+			} else {
+				dsn := os.Getenv("AGENCY_HUB_TEST_" + strings.ToUpper(dialect) + "_DSN")
+				if os.Getenv("AGENCY_HUB_RUN_EXTERNAL_DB_TESTS") != "1" || dsn == "" {
+					t.Skip("isolated external test database is not configured")
+				}
+				if dialect == "mysql" {
+					driver = mysql.Open(dsn)
+				} else {
+					driver = postgres.Open(dsn)
+				}
+			}
+			db, err := gorm.Open(driver, &gorm.Config{})
+			require.NoError(t, err)
+			pool, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, pool.Close()) })
+			require.NoError(t, model.MigrateAgency(db))
+			db = db.Begin()
+			require.NoError(t, db.Error)
+			t.Cleanup(func() { require.NoError(t, db.Rollback().Error) })
+			app := New(db, db, Config{})
+			now := time.Date(2026, 11, 1, 10, 0, 0, 0, creditLocation())
+			for i, currency := range []string{"USD", "CNY"} {
+				userID := int64(91000 + i)
+				creditSeedTerms(t, app, userID, 10000, 10, false)
+				require.NoError(t, db.Create(&model.AgencyUsageFact{
+					EventID: "credit-currency-" + currency, ComponentID: "default", UserID: userID,
+					OriginModelName: "test", ModelKey: "test", BusinessStatus: "success",
+					DebtQuota: 500, CurrencyCode: currency, OccurredAtMS: now.AddDate(0, -1, 0).UnixMilli(),
+				}).Error)
+				settings.QuotaDisplayType = currency
+				created, err := app.ProcessCreditInvoices(t.Context(), now)
+				require.NoError(t, err)
+				assert.Equal(t, 1, created)
+				settings.QuotaDisplayType = "TOKENS"
+				created, err = app.ProcessCreditInvoices(t.Context(), now)
+				require.NoError(t, err)
+				assert.Zero(t, created, "existing statement must not be rewritten after a configuration change")
+				var invoice model.AgencyCreditInvoice
+				require.NoError(t, db.Where("user_id = ? AND period = ?", userID, "2026-10").First(&invoice).Error)
+				assert.Equal(t, currency, invoice.CurrencyCode)
+				assert.Equal(t, int64(500), invoice.AmountQuota)
+			}
+			creditSeedTerms(t, app, 91002, 10000, 10, false)
+			for _, currency := range []string{"USD", "CNY"} {
+				require.NoError(t, db.Create(&model.AgencyUsageFact{
+					EventID: "credit-mixed-" + currency, ComponentID: "default", UserID: 91002,
+					OriginModelName: "test", ModelKey: "test", BusinessStatus: "success",
+					DebtQuota: 100, CurrencyCode: currency, OccurredAtMS: now.AddDate(0, -1, 0).UnixMilli(),
+				}).Error)
+			}
+			created, err := app.ProcessCreditInvoices(t.Context(), now)
+			require.ErrorContains(t, err, "USD or CNY")
+			assert.Zero(t, created)
+			settings.QuotaDisplayType = "USD"
+			created, err = app.ProcessCreditInvoices(t.Context(), now)
+			require.ErrorContains(t, err, "manual review required")
+			assert.Zero(t, created)
+			var count int64
+			require.NoError(t, db.Model(&model.AgencyCreditInvoice{}).Where("user_id = ?", 91002).Count(&count).Error)
+			assert.Zero(t, count, "mixed-currency history must not create a mislabeled invoice")
+		})
+	}
 }
 
 func TestCreditInvoicePartialAndFullSettlement(t *testing.T) {

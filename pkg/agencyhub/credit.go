@@ -14,6 +14,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -639,12 +640,30 @@ func (a *App) ProcessCreditInvoices(ctx context.Context, now time.Time) (int, er
 		if existing > 0 {
 			continue
 		}
-		var total int64
-		if err := a.db.WithContext(ctx).Model(&model.AgencyUsageFact{}).Where("user_id = ? AND occurred_at_ms >= ? AND occurred_at_ms < ? AND debt_quota > 0", term.UserID, start.UnixMilli(), end.UnixMilli()).Select("COALESCE(SUM(debt_quota), 0)").Scan(&total).Error; err != nil {
+		var amounts []struct {
+			CurrencyCode string
+			Total        int64
+		}
+		if err := a.db.WithContext(ctx).Model(&model.AgencyUsageFact{}).Where("user_id = ? AND occurred_at_ms >= ? AND occurred_at_ms < ? AND debt_quota > 0", term.UserID, start.UnixMilli(), end.UnixMilli()).Select("currency_code, SUM(debt_quota) AS total").Group("currency_code").Scan(&amounts).Error; err != nil {
 			return created, err
 		}
-		if total <= 0 {
+		if len(amounts) == 0 {
 			continue
+		}
+		currency := operation_setting.GetQuotaDisplayType()
+		if currency != operation_setting.QuotaDisplayTypeUSD && currency != operation_setting.QuotaDisplayTypeCNY {
+			return created, errors.New("credit statements require a USD or CNY platform currency")
+		}
+		var total int64
+		for _, amount := range amounts {
+			// Legacy facts may omit currency; explicit snapshots must never be relabeled.
+			if amount.CurrencyCode != "" && amount.CurrencyCode != currency {
+				return created, errors.New("credit statement usage currency differs from platform currency; manual review required")
+			}
+			if amount.Total <= 0 || total > common.MaxWalletQuota-amount.Total {
+				return created, errors.New("credit statement amount exceeds the supported quota range")
+			}
+			total += amount.Total
 		}
 		due := time.Date(local.Year(), local.Month(), model.AgencyCreditRepaymentDay, 0, 0, 0, 0, loc)
 		overdue := due.AddDate(0, 0, term.PaymentTermDays)
@@ -658,7 +677,7 @@ func (a *App) ProcessCreditInvoices(ctx context.Context, now time.Time) (int, er
 			PeriodStartMS:   start.UnixMilli(),
 			PeriodEndMS:     end.UnixMilli(),
 			AmountQuota:     total,
-			CurrencyCode:    "CNY",
+			CurrencyCode:    currency,
 			Status:          model.AgencyCreditInvoiceStatusIssued,
 			RepaymentDay:    model.AgencyCreditRepaymentDay,
 			PaymentTermDays: term.PaymentTermDays,

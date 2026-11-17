@@ -91,9 +91,6 @@ func (m *opsFeeMemory) put(fee OpsFee, feed bool, at time.Time) {
 		m.order.Remove(old)
 	}
 	ttl := 30 * time.Second
-	if fee.Status == "waiting" {
-		ttl = time.Second
-	}
 	e := m.order.PushBack(&opsFeeMemoryEntry{fee: fee, log: log, feed: feed, expires: at.Add(ttl), changed: make(chan struct{})})
 	m.entries[fee.RequestID] = e
 	if len(m.entries) > 16000 {

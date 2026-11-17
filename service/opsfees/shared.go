@@ -9,6 +9,7 @@ import (
 )
 
 type sharedFees struct {
+	Sender   string `json:"sender"`
 	Items    []Fee  `json:"items"`
 	Feed     bool   `json:"feed"`
 	Version  int64  `json:"version"`
@@ -23,6 +24,7 @@ func shareResults(ctx context.Context, c Config) func([]model.OpsFee, bool) {
 		return nil
 	}
 	client := common.RDB
+	sender := common.GetUUID()
 	queue := make(chan sharedFees, 64)
 	channel := "ops-fee-results:" + c.Connection
 	go func() {
@@ -31,6 +33,7 @@ func shareResults(ctx context.Context, c Config) func([]model.OpsFee, bool) {
 			case <-ctx.Done():
 				return
 			case message := <-queue:
+				message.Sender = sender
 				raw, err := common.Marshal(message)
 				if err == nil {
 					publish, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
@@ -56,7 +59,7 @@ func shareResults(ctx context.Context, c Config) func([]model.OpsFee, bool) {
 					continue
 				}
 				var value sharedFees
-				if common.UnmarshalJsonStr(message.Payload, &value) != nil || len(value.Items) > 500 {
+				if common.UnmarshalJsonStr(message.Payload, &value) != nil || len(value.Items) > 500 || value.Sender == sender {
 					continue
 				}
 				if len(value.Sent) > 0 {

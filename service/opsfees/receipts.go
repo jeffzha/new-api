@@ -46,15 +46,13 @@ func AcceptPushReceipts(base, key, secret string, sent, response []byte, at time
 			Charges []struct {
 				RequestID string `json:"requestId"`
 				UserID    string `json:"userId"`
+				Status    string `json:"status"`
 				LogFee    *Fee   `json:"logFee"`
 			} `json:"charges"`
 		} `json:"data"`
 	}
 	if common.Unmarshal(sent, &batch) != nil || common.Unmarshal(response, &ack) != nil || len(batch.Events) > 500 || len(ack.Data.Charges) > 500 {
 		return
-	}
-	if observer := receiptObserver.Load(); observer != nil {
-		(*observer)(sent, response, at)
 	}
 	if publication := sharePush.Load(); publication != nil {
 		// The sent identities are enough for the existing charge validator.
@@ -95,6 +93,9 @@ func AcceptPushReceipts(base, key, secret string, sent, response []byte, at time
 	items := []Fee{}
 	for _, charge := range ack.Data.Charges {
 		f := charge.LogFee
+		if charge.Status != "charged" && charge.Status != "station_billed" {
+			continue
+		}
 		if f == nil || f.RequestID != charge.RequestID || f.UserID != charge.UserID || identities[f.RequestID] != f.UserID+"\n"+f.Model || f.Amount == nil {
 			continue
 		}

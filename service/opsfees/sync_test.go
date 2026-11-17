@@ -52,7 +52,9 @@ func TestSharedFeeNoticeUsesBoundedBackgroundDelivery(t *testing.T) {
 	amount := "0.0042"
 	// Publishing simulates another blue/green process; the local request has
 	// no callback or database path that can supply this fee.
-	share([]model.OpsFee{{RequestID: "shared", UserID: "15", Model: "m", Amount: &amount, ChargedAt: "2026-11-17T01:00:00Z", Status: "available"}}, false)
+	raw, err := common.Marshal(sharedFees{Sender: "another-slot", Items: []Fee{{RequestID: "shared", UserID: "15", Model: "m", Amount: &amount, ChargedAt: "2026-11-17T01:00:00Z"}}})
+	require.NoError(t, err)
+	require.NoError(t, client.Publish(ctx, "ops-fee-results:shared-test", raw).Err())
 	require.Eventually(t, func() bool { fee := model.WaitOpsFee(ctx, log, 0); return fee != nil && fee.Status == "available" }, time.Second, time.Millisecond)
 	assert.Equal(t, "0.0042", *model.WaitOpsFee(ctx, log, 0).Amount)
 }
@@ -76,6 +78,8 @@ func TestPushLogFeeMemoryAndCorrection(t *testing.T) {
 	response := []byte(`{"data":{"charges":[{"requestId":"fast","userId":"15","status":"station_billed","logFee":{"requestId":"fast","userId":"15","model":"sample","opsAmount":"0.000006","refundAmount":"0","chargedAt":"2026-11-17T01:00:00Z"}}]}}`)
 	AcceptPushReceipts(c.BaseURL, "unbound", c.Secret, sent, response, time.Now())
 	assert.Equal(t, "waiting", model.WaitOpsFee(context.Background(), log, 0).Status)
+	AcceptPushReceipts(c.BaseURL, "push", c.Secret, sent, []byte(strings.ReplaceAll(string(response), "station_billed", "pending")), time.Now())
+	assert.Equal(t, "waiting", model.WaitOpsFee(context.Background(), log, 0).Status, "unfinished receipts must not publish a final fee")
 	AcceptPushReceipts(c.BaseURL, "push", c.Secret, sent, response, time.Now())
 	got := model.WaitOpsFee(context.Background(), log, 0)
 	require.NotNil(t, got)

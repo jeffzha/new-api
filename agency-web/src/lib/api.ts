@@ -1,6 +1,14 @@
+export interface QuotaDisplay {
+  currency_code: string;
+  currency_symbol: string;
+  quota_per_unit: number;
+  usd_to_currency_rate: number;
+}
+
 export interface HubConfig {
   base_path: string;
   platform_base_url: string;
+  quota_display?: QuotaDisplay;
 }
 declare global {
   interface Window {
@@ -14,6 +22,7 @@ export function hubConfig(): HubConfig {
     ? `${window.location.protocol}//${window.location.hostname}:3001`
     : "";
   return {
+    quota_display: config?.quota_display,
     base_path: config?.base_path?.replace(/\/$/, "") || "/agency",
     platform_base_url:
       config?.platform_base_url ||

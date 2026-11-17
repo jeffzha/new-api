@@ -7,10 +7,54 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/html"
 )
+
+func TestIndexUsesRegionalQuotaDisplaySettings(t *testing.T) {
+	settings := operation_setting.GetGeneralSetting()
+	previousCurrency, previousRate, previousQuota := settings.QuotaDisplayType, operation_setting.USDExchangeRate, common.QuotaPerUnit
+	t.Cleanup(func() {
+		settings.QuotaDisplayType, operation_setting.USDExchangeRate, common.QuotaPerUnit = previousCurrency, previousRate, previousQuota
+	})
+	for _, tc := range []struct {
+		currency, symbol string
+		rate             float64
+	}{
+		{"USD", "$", 1},
+		{"CNY", "¥", 7.1},
+	} {
+		t.Run(tc.currency, func(t *testing.T) {
+			settings.QuotaDisplayType = tc.currency
+			operation_setting.USDExchangeRate = 7.1
+			common.QuotaPerUnit = 1000000
+			app := New(nil, nil, Config{BasePath: "/agency"})
+			recorder := httptest.NewRecorder()
+			app.Router().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/agency/", nil))
+			require.Equal(t, http.StatusOK, recorder.Code)
+			_, after, found := strings.Cut(recorder.Body.String(), "window.__AGENCY_CONFIG__=")
+			require.True(t, found)
+			configJSON, _, found := strings.Cut(after, "</script>")
+			require.True(t, found)
+			var config struct {
+				QuotaDisplay struct {
+					CurrencyCode string  `json:"currency_code"`
+					Symbol       string  `json:"currency_symbol"`
+					QuotaPerUnit float64 `json:"quota_per_unit"`
+					Rate         float64 `json:"usd_to_currency_rate"`
+				} `json:"quota_display"`
+			}
+			require.NoError(t, common.UnmarshalJsonStr(configJSON, &config))
+			assert.Equal(t, tc.currency, config.QuotaDisplay.CurrencyCode)
+			assert.Equal(t, tc.symbol, config.QuotaDisplay.Symbol)
+			assert.Equal(t, float64(1000000), config.QuotaDisplay.QuotaPerUnit)
+			assert.Equal(t, tc.rate, config.QuotaDisplay.Rate)
+		})
+	}
+}
 
 func TestIndexEmbedsPlatformBaseURLAndSSOWiring(t *testing.T) {
 	app := newAgencyTestApp(t)

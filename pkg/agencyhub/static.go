@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -61,11 +62,24 @@ $('sso-btn').onclick=e=>{e.preventDefault();beginSSO()};$('login-form').onsubmit
 </script></body></html>`
 
 func (a *App) index(c *gin.Context) {
+	configJSON, err := common.Marshal(map[string]any{
+		"platform_base_url": a.config.PlatformBaseURL,
+		"base_path":         a.config.BasePath,
+		"quota_display": map[string]any{
+			"currency_code":        operation_setting.GetQuotaDisplayType(),
+			"currency_symbol":      operation_setting.GetCurrencySymbol(),
+			"quota_per_unit":       common.QuotaPerUnit,
+			"usd_to_currency_rate": operation_setting.GetUsdToCurrencyRate(operation_setting.USDExchangeRate),
+		},
+	})
+	if err != nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
 	if dist, err := fs.Sub(agencyWebDist, "webdist"); err == nil {
 		if c.Request.URL.Path == a.config.BasePath || c.Request.URL.Path == a.config.BasePath+"/" {
 			data, readErr := fs.ReadFile(dist, "index.html")
 			if readErr == nil {
-				configJSON, _ := common.Marshal(map[string]any{"platform_base_url": a.config.PlatformBaseURL, "base_path": a.config.BasePath})
 				data = bytes.ReplaceAll(data, []byte("/agency/assets/"), []byte(a.config.BasePath+"/assets/"))
 				data = bytes.Replace(data, []byte("</head>"), append([]byte(`<script>window.__AGENCY_CONFIG__=`), append(configJSON, []byte(`</script></head>`)...)...), 1)
 				c.Header("Content-Type", "text/html; charset=utf-8")
@@ -74,13 +88,6 @@ func (a *App) index(c *gin.Context) {
 				return
 			}
 		}
-	}
-	configJSON, err := common.Marshal(map[string]any{
-		"platform_base_url": a.config.PlatformBaseURL,
-		"base_path":         a.config.BasePath,
-	})
-	if err != nil {
-		configJSON = []byte(`{"platform_base_url":"","base_path":"/agency"}`)
 	}
 	page := strings.Replace(agencyIndexHTML, "__CONFIG__", string(configJSON), 1)
 	c.Header("Content-Type", "text/html; charset=utf-8")

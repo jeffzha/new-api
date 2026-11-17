@@ -6,6 +6,7 @@ import { DataTable, ErrorNotice, Loading, Money, Pagination, Time } from "../../
 import { useQuery } from "../../lib/query";
 import { useMutation } from "../../lib/mutations";
 import type { Column, Identity, Page } from "../../lib/types";
+import { hubConfig, type QuotaDisplay } from "../../lib/api";
 import type { CommissionBalance } from "../finance/contracts";
 import { CustomerManagementDialog } from "../customers/Management";
 import { CustomerSalesEditor } from "../pricing/CustomerSalesEditor";
@@ -82,11 +83,6 @@ function dynamicLabel(value: unknown, fallback: string): string {
   return dynamicLabels[raw] ?? (raw || fallback);
 }
 
-// Main-site quota is stored as USD-units scaled by quotaPerUnit. The default
-// system setting is 500,000 quota units per USD and 7.3 CNY per USD. Agency
-// reports intentionally show a stable RMB approximation for readable audit
-// tables; provider receipts still retain their exact source amount.
-const QUOTA_PER_YUAN = 500_000 / 7.3;
 function fundingSourceLabel(value: unknown): string {
   const raw = String(value ?? "").trim();
   return {
@@ -107,13 +103,15 @@ function statusLabel(value: unknown): string {
   return { success: "成功", pending: "处理中", failed: "失败", completed: "已完成", paid: "已支付" }[raw] ?? (raw || "未知状态");
 }
 
-export function formatYuan(value: unknown): string {
+export function formatQuota(value: unknown, display: QuotaDisplay | undefined): string {
   if (value === null || value === undefined || value === "") return "—";
   const number = Number(value);
-  if (!Number.isFinite(number)) return String(value);
-  const yuan = number / QUOTA_PER_YUAN;
-  const digits = Math.abs(yuan) > 0 && Math.abs(yuan) < 0.01 ? 6 : 2;
-  return `¥${yuan.toLocaleString("zh-CN", {
+  if (!Number.isFinite(number) || !display) return "—";
+  if (!Number.isFinite(display.quota_per_unit) || display.quota_per_unit <= 0
+    || !Number.isFinite(display.usd_to_currency_rate) || display.usd_to_currency_rate <= 0) return "—";
+  const amount = number / display.quota_per_unit * display.usd_to_currency_rate;
+  const digits = Math.abs(amount) > 0 && Math.abs(amount) < 0.01 ? 6 : 2;
+  return `${display.currency_symbol}${amount.toLocaleString("en-US", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   })}`;
@@ -126,21 +124,23 @@ export function formatExpiry(value: unknown): string {
   }).format(new Date(number < 1e12 ? number * 1000 : number));
 }
 
-function formatActualMoney(value: unknown, currency: unknown): string {
+export function formatActualMoney(value: unknown, currency: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
   const amount = Number(value);
   if (!Number.isFinite(amount)) return String(value);
-  const code = String(currency ?? "CNY").toUpperCase();
-  return `${code === "CNY" ? "¥" : code + " "}${amount.toFixed(2)}`;
+  const code = String(currency ?? "").trim().toUpperCase();
+  if (!code) return "—";
+  const symbol = { USD: "$", CNY: "¥" }[code] ?? code + " ";
+  return `${symbol}${amount.toFixed(2)}`;
 }
 
-function formatFundingBreakdown(value: unknown): string {
+export function formatFundingBreakdown(value: unknown, display: QuotaDisplay | undefined): string {
   if (!Array.isArray(value)) return "—";
   const parts = value.flatMap((entry) => {
     if (!entry || typeof entry !== "object") return [];
     const item = entry as { source?: unknown; quota?: unknown };
     const source = fundingSourceLabel(item.source);
-    const quota = formatYuan(item.quota);
+    const quota = formatQuota(item.quota, display);
     return source !== "—" && quota !== "—" ? [`${source}: ${quota}`] : [];
   });
   return parts.length ? parts.join(" · ") : "—";
@@ -256,6 +256,7 @@ export function CustomersPage({
   onEnter: (id: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
+  const quotaDisplay = hubConfig().quota_display;
   const [cursor, setCursor] = useState("");
   const [selected, setSelected] = useState<Customer | null>(null);
   const [management, setManagement] = useState<{ username?: string } | null>(null);
@@ -315,17 +316,17 @@ export function CustomersPage({
                 {
                   key: "credit_limit",
                   label: "Credit limit",
-                  render: (row: Customer) => (row.credit_configured ? formatYuan(row.credit_limit) : "—"),
+                  render: (row: Customer) => (row.credit_configured ? formatQuota(row.credit_limit, quotaDisplay) : "—"),
                 },
                 {
                   key: "credit_used_quota",
                   label: "Used credit",
-                  render: (row: Customer) => (row.credit_configured ? formatYuan(row.credit_used_quota) : "—"),
+                  render: (row: Customer) => (row.credit_configured ? formatQuota(row.credit_used_quota, quotaDisplay) : "—"),
                 },
                 {
                   key: "credit_available_quota",
                   label: "Available credit",
-                  render: (row: Customer) => (row.credit_configured ? formatYuan(row.credit_available_quota) : "—"),
+                  render: (row: Customer) => (row.credit_configured ? formatQuota(row.credit_available_quota, quotaDisplay) : "—"),
                 },
                 ...(global ? [{
                   key: "agency_name",
@@ -399,6 +400,7 @@ export function CustomersPage({
 
 function CustomerHistory({ customer }: { customer: Customer }) {
   const { t } = useTranslation();
+  const quotaDisplay = hubConfig().quota_display;
   const [tab, setTab] = useState<"usage" | "topups">("usage");
   const usageColumns: Column<Row>[] = [
     {
@@ -413,16 +415,16 @@ function CustomerHistory({ customer }: { customer: Customer }) {
     { key: "output_tokens", label: "Output tokens" },
     { key: "cache_read_tokens", label: "Cache read tokens" },
     { key: "cache_write_tokens", label: "Cache write tokens" },
-    { key: "standard_quota", label: "Standard quota", render: (row) => formatYuan(row.standard_quota) },
+    { key: "standard_quota", label: "Standard quota", render: (row) => formatQuota(row.standard_quota, quotaDisplay) },
     { key: "sales_bps", label: "Sales coefficient", render: (row) => row.sales_bps == null ? "—" : `${Number(row.sales_bps) / 100}%` },
-    { key: "charged_quota", label: "Charged amount", render: (row) => formatYuan(row.charged_quota) },
-    { key: "paid_quota", label: "Paid amount", render: (row) => formatYuan(row.paid_quota) },
-    { key: "nonpaid_quota", label: "Non-paid amount", render: (row) => formatYuan(row.nonpaid_quota) },
-    { key: "debt_quota", label: "Debt amount", render: (row) => formatYuan(row.debt_quota) },
+    { key: "charged_quota", label: "Charged amount", render: (row) => formatQuota(row.charged_quota, quotaDisplay) },
+    { key: "paid_quota", label: "Paid amount", render: (row) => formatQuota(row.paid_quota, quotaDisplay) },
+    { key: "nonpaid_quota", label: "Non-paid amount", render: (row) => formatQuota(row.nonpaid_quota, quotaDisplay) },
+    { key: "debt_quota", label: "Debt amount", render: (row) => formatQuota(row.debt_quota, quotaDisplay) },
     {
       key: "funding_breakdown",
       label: "Funding allocation",
-      render: (row) => formatFundingBreakdown(row.funding_breakdown),
+      render: (row) => formatFundingBreakdown(row.funding_breakdown, quotaDisplay),
     },
     { key: "skip_reason", label: "Commission exclusion reason" },
   ];
@@ -435,19 +437,19 @@ function CustomerHistory({ customer }: { customer: Customer }) {
     { key: "funding_source", label: "Funding source", render: (row) => fundingSourceLabel(row.funding_source) },
     { key: "initiated_by", label: "Initiated by", render: (row) => String(row.initiated_by ?? "系统") },
     { key: "actual_money", label: "Actual payment", render: (row) => formatActualMoney(row.actual_money, row.currency_code) },
-    { key: "currency_code", label: "Currency", render: () => "人民币" },
-    { key: "credited_quota", label: "Credited amount", render: (row) => formatYuan(row.credited_quota) },
-    { key: "paid_quota", label: "Paid amount", render: (row) => formatYuan(row.paid_quota) },
-    { key: "bonus_quota", label: "Bonus amount", render: (row) => formatYuan(row.bonus_quota) },
-    { key: "consumed_quota", label: "Consumed amount", render: (row) => formatYuan(row.consumed_quota) },
-    { key: "remaining_quota", label: "Remaining amount", render: (row) => formatYuan(row.remaining_quota) },
-    { key: "expired_quota", label: "Expired amount", render: (row) => formatYuan(row.expired_quota) },
+    { key: "currency_code", label: "Currency", render: (row) => String(row.currency_code || "—") },
+    { key: "credited_quota", label: "Credited amount", render: (row) => formatQuota(row.credited_quota, quotaDisplay) },
+    { key: "paid_quota", label: "Paid amount", render: (row) => formatQuota(row.paid_quota, quotaDisplay) },
+    { key: "bonus_quota", label: "Bonus amount", render: (row) => formatQuota(row.bonus_quota, quotaDisplay) },
+    { key: "consumed_quota", label: "Consumed amount", render: (row) => formatQuota(row.consumed_quota, quotaDisplay) },
+    { key: "remaining_quota", label: "Remaining amount", render: (row) => formatQuota(row.remaining_quota, quotaDisplay) },
+    { key: "expired_quota", label: "Expired amount", render: (row) => formatQuota(row.expired_quota, quotaDisplay) },
     {
       key: "expires_at",
       label: "Expires at",
       render: (row) => formatExpiry(row.expires_at),
     },
-    { key: "refunded_quota", label: "Refunded amount", render: (row) => formatYuan(row.refunded_quota) },
+    { key: "refunded_quota", label: "Refunded amount", render: (row) => formatQuota(row.refunded_quota, quotaDisplay) },
     { key: "completion_source", label: "Completion source", render: (row) => fundingSourceLabel(row.completion_source) },
     { key: "payment_status", label: "Payment status", render: (row) => statusLabel(row.payment_status) },
     { key: "payment_reference", label: "Payment reference" },

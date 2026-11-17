@@ -57,6 +57,21 @@ func TestSharedFeeNoticeUsesBoundedBackgroundDelivery(t *testing.T) {
 	require.NoError(t, client.Publish(ctx, "ops-fee-results:shared-test", raw).Err())
 	require.Eventually(t, func() bool { fee := model.WaitOpsFee(ctx, log, 0); return fee != nil && fee.Status == "available" }, time.Second, time.Millisecond)
 	assert.Equal(t, "0.0042", *model.WaitOpsFee(ctx, log, 0).Amount)
+	// Shared actual-debit receipts retain the original observation time, so a
+	// delayed notification cannot appear newer than a correction already read.
+	observed := make(chan time.Time, 1)
+	ConfigureReceiptObserver(func(_, _ []byte, at time.Time) { observed <- at })
+	t.Cleanup(func() { ConfigureReceiptObserver(nil) })
+	at := time.Unix(1794877200, 123)
+	raw, err = common.Marshal(sharedFees{Sender: "another-slot", Sent: []byte(`{"events":[]}`), Response: []byte(`{"data":{"charges":[]}}`), ReceivedAt: at.UnixNano()})
+	require.NoError(t, err)
+	require.NoError(t, client.Publish(ctx, "ops-fee-results:shared-test", raw).Err())
+	select {
+	case received := <-observed:
+		assert.Equal(t, at, received)
+	case <-time.After(time.Second):
+		t.Fatal("shared debit receipt missing")
+	}
 }
 
 func TestPushLogFeeMemoryAndCorrection(t *testing.T) {

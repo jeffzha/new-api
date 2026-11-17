@@ -9,12 +9,13 @@ import (
 )
 
 type sharedFees struct {
-	Sender   string `json:"sender"`
-	Items    []Fee  `json:"items"`
-	Feed     bool   `json:"feed"`
-	Version  int64  `json:"version"`
-	Sent     []byte `json:"sent,omitempty"`
-	Response []byte `json:"response,omitempty"`
+	Sender     string `json:"sender"`
+	ReceivedAt int64  `json:"receivedAt,omitempty"`
+	Items      []Fee  `json:"items"`
+	Feed       bool   `json:"feed"`
+	Version    int64  `json:"version"`
+	Sent       []byte `json:"sent,omitempty"`
+	Response   []byte `json:"response,omitempty"`
 }
 
 // Redis distributes validated results between blue/green processes. Bounded
@@ -64,7 +65,9 @@ func shareResults(ctx context.Context, c Config) func([]model.OpsFee, bool) {
 				}
 				if len(value.Sent) > 0 {
 					if observer := receiptObserver.Load(); observer != nil {
-						(*observer)(value.Sent, value.Response, time.Now())
+						if value.ReceivedAt > 0 {
+							(*observer)(value.Sent, value.Response, time.Unix(0, value.ReceivedAt))
+						}
 					}
 					continue
 				}
@@ -82,11 +85,11 @@ func shareResults(ctx context.Context, c Config) func([]model.OpsFee, bool) {
 			}
 		}
 	}()
-	sharePush.Store(&pushPublication{Send: func(sent, response []byte) {
+	sharePush.Store(&pushPublication{Send: func(sent, response []byte, at time.Time) {
 		// Only allowlisted invocation identities and charge receipt fields
 		// belong on this ephemeral channel; no original usage metadata.
 		select {
-		case queue <- sharedFees{Sent: sent, Response: response}:
+		case queue <- sharedFees{Sent: sent, Response: response, ReceivedAt: at.UnixNano()}:
 		default:
 		}
 	}})

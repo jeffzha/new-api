@@ -12,7 +12,9 @@ import (
 
 var receiptConfig atomic.Pointer[Config]
 
-type pushPublication struct{ Send func([]byte, []byte) }
+type pushPublication struct {
+	Send func([]byte, []byte, time.Time)
+}
 
 var sharePush atomic.Pointer[pushPublication]
 var receiptObserver atomic.Pointer[func([]byte, []byte, time.Time)]
@@ -82,7 +84,7 @@ func AcceptPushReceipts(base, key, secret string, sent, response []byte, at time
 			}
 			clean, err := common.Marshal(envelope)
 			if err == nil {
-				publication.Send(identities, clean)
+				publication.Send(identities, clean, at)
 			}
 		}
 	}

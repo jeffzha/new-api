@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/businessapi"
+	"github.com/QuantumNous/new-api/service/businessbilling"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -17,6 +20,17 @@ import (
 // opt in buffer JSON or receive the additional terminal SSE chunk.
 func BusinessBilling() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		source, err := businessbilling.Source(c.Request.URL.Query())
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "invalid_billing_source", "message": err.Error()}})
+			return
+		}
+		created := time.Now().Unix()
+		wait, err := businessbilling.WaitDuration(c.Request.URL.Query())
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "invalid_billing_wait", "message": err.Error()}})
+			return
+		}
 		c.Set(businessapi.ConversionKey, businessapi.Conversion{
 			Currency:     operation_setting.GetQuotaDisplayType(),
 			QuotaPerUnit: strconv.FormatFloat(common.QuotaPerUnit, 'f', -1, 64),
@@ -34,6 +48,12 @@ func BusinessBilling() gin.HandlerFunc {
 		billing, ok := businessapi.BillingFromContext(c)
 		if !ok {
 			billing = businessapi.UnavailableBilling()
+		}
+		if source == "ops" && writer.Status() == http.StatusOK && !writer.passthrough {
+			billing = businessbilling.ReceiptWithWait(c.Request.Context(), source, billing, &model.Log{
+				UserId: c.GetInt("id"), TokenId: c.GetInt("token_id"), RequestId: c.GetString(common.RequestIdKey),
+				ModelName: c.GetString("original_model"), CreatedAt: created, Type: model.LogTypeConsume,
+			}, wait)
 		}
 		writer.finish(c.GetString(common.RequestIdKey), billing)
 	}

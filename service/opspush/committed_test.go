@@ -2,6 +2,8 @@ package opspush
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"os"
 	"testing"
@@ -9,11 +11,36 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+func TestFastUsageBudgetIsSharedAndCancellationPreservesOutbox(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	oldClient, oldEnabled := common.RDB, common.RedisEnabled
+	common.RDB, common.RedisEnabled = client, true
+	t.Cleanup(func() { client.Close(); common.RDB, common.RedisEnabled = oldClient, oldEnabled })
+	stub := &opsStub{responses: []func(http.ResponseWriter){reply(200, `{"data":{"accepted":1,"duplicates":0,"rejected":[]}}`)}}
+	p, db := pusherFixture(t, stub)
+	log := model.Log{UserId: 1, Type: model.LogTypeConsume, ModelName: "m", RequestId: "budget", CreatedAt: 10000}
+	require.NoError(t, db.Create(&log).Error)
+	sum := sha256.Sum256([]byte(p.Config.URL + "\n" + p.Config.KeyID))
+	key := "ops-fast-push:" + hex.EncodeToString(sum[:])
+	require.NoError(t, client.Set(context.Background(), key, "another-slot", time.Minute).Err())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	require.Error(t, p.sendCommitted(ctx, []int{log.Id}))
+	require.Empty(t, stub.bodies, "an occupied fleet budget must not send")
+	require.False(t, p.deliveredFast(log.Id))
+	server.FastForward(time.Minute)
+	require.NoError(t, p.sendCommitted(context.Background(), []int{log.Id}))
+	require.Len(t, stub.bodies, 1)
+}
 
 func TestProductCommittedUsageDatabaseMatrix(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {

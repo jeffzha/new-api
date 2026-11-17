@@ -10,14 +10,23 @@ import (
 const BillingKey = "business_api_billing"
 const ConversionKey = "business_api_conversion"
 
-// Billing is the customer charge after settlement, never a catalog price or
-// the distributor's cost. Missing amounts remain null, including on failure.
+// Billing is a receipt from the explicitly selected source: a gateway charge
+// or an OPS calculation/debit receipt, never a catalog price or supplier cost.
+// charge_status is present only for an actual OPS debit query. Missing amounts
+// remain null; reading either kind of receipt never executes a payment.
 type Billing struct {
-	Status   string  `json:"status"`
-	Amount   *string `json:"amount"`
-	Currency string  `json:"currency"`
-	Quota    *int64  `json:"quota"`
-	Source   string  `json:"source"`
+	Status            string  `json:"status"`
+	Amount            *string `json:"amount"`
+	Currency          string  `json:"currency"`
+	Quota             *int64  `json:"quota"`
+	Source            string  `json:"source"`
+	Reason            string  `json:"reason,omitempty"`
+	RetryAfterSeconds *int    `json:"retry_after_seconds,omitempty"`
+	ChargeStatus      string  `json:"charge_status,omitempty"`
+	RefundAmount      *string `json:"refund_amount,omitempty"`
+	NetAmount         *string `json:"net_amount,omitempty"`
+	ChargedAt         string  `json:"charged_at,omitempty"`
+	CheckedAt         string  `json:"checked_at,omitempty"`
 }
 
 type Conversion struct {

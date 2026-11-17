@@ -14,15 +14,17 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/opsnotify"
+	"github.com/QuantumNous/new-api/service/opsfees"
 )
 
-const committedBatch = 50
+const committedBatch = 250
 
 // runCommitted is one bounded worker, independent of the cursor's ten-second
 // commit-order window. Only post-commit hints can enter this lane. It never
 // advances the durable cursor, so a crash, full queue or failed delivery falls
 // back to ordinary scanning without skipping an earlier uncommitted log.
 func (p *Pusher) runCommitted(ctx context.Context) {
+	var nextBatch time.Time
 	for {
 		var first int
 		select {
@@ -31,7 +33,7 @@ func (p *Pusher) runCommitted(ctx context.Context) {
 		case first = <-opsnotify.Committed():
 		}
 		ids := []int{first}
-		timer := time.NewTimer(100 * time.Millisecond)
+		timer := time.NewTimer(max(25*time.Millisecond, time.Until(nextBatch)))
 	collect:
 		for len(ids) < committedBatch {
 			select {
@@ -45,13 +47,21 @@ func (p *Pusher) runCommitted(ctx context.Context) {
 			}
 		}
 		timer.Stop()
-		_ = p.sendCommitted(ctx, ids) // durable scanner owns retries and diagnostics
-		// At most one fast HTTP batch per second, including during an outage.
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(time.Second):
+		if delay := time.Until(nextBatch); delay > 0 {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
 		}
+		interval := 1500 * time.Millisecond
+		if common.RedisEnabled && common.RDB != nil {
+			interval = 800 * time.Millisecond
+		}
+		nextBatch = time.Now().Add(interval)
+		_ = p.sendCommitted(ctx, ids) // durable scanner owns retries and diagnostics
 	}
 }
 
@@ -91,21 +101,54 @@ func (p *Pusher) sendCommitted(parent context.Context, ids []int) error {
 	if len(events) == 0 {
 		return nil
 	}
-	rawEvents, err := common.Marshal(events)
-	if err != nil {
-		return err
+	var body []byte
+	for {
+		rawEvents, err := common.Marshal(events)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(rawEvents)
+		schema := "1"
+		if p.Config.Spec == SpecV11 {
+			schema = "1.1"
+		}
+		body, err = common.Marshal(batch{SchemaVersion: schema, BatchId: fmt.Sprintf("gw-committed-%d-%s", 1, hex.EncodeToString(sum[:16])), Events: events})
+		if err != nil {
+			return err
+		}
+		if len(body) <= maxBody {
+			break
+		}
+		if len(events) == 1 {
+			return fmt.Errorf("committed usage batch exceeds limit")
+		}
+		// Bound HTTP without repeating SQL or spending another send budget.
+		// Omitted IDs remain available to the durable scanner.
+		keep := len(events) / 2
+		events, delivered = events[:keep], delivered[:keep]
 	}
-	sum := sha256.Sum256(rawEvents)
-	schema := "1"
-	if p.Config.Spec == SpecV11 {
-		schema = "1.1"
-	}
-	body, err := common.Marshal(batch{SchemaVersion: schema, BatchId: fmt.Sprintf("gw-committed-%d-%s", 1, hex.EncodeToString(sum[:16])), Events: events})
-	if err != nil {
-		return err
-	}
-	if len(body) > maxBody {
-		return fmt.Errorf("committed usage batch exceeds limit")
+	if common.RedisEnabled && common.RDB != nil {
+		// One fleet-wide fast batch per interval, independent of which blue/
+		// green slot handled calls. Busy/outage work stays in the SQL outbox.
+		sum := sha256.Sum256([]byte(p.Config.URL + "\n" + p.Config.KeyID))
+		for {
+			gate, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+			delay, err := common.RDB.Eval(gate, "if redis.call('SET',KEYS[1],'1','NX','PX',800) then return 0 else return redis.call('PTTL',KEYS[1]) end", []string{"ops-fast-push:" + hex.EncodeToString(sum[:])}).Int64()
+			cancel()
+			if err != nil {
+				return err
+			}
+			if delay == 0 {
+				break
+			}
+			timer := time.NewTimer(time.Duration(max(delay, 1)) * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, p.Config.URL+pushPath, bytes.NewReader(body))
 	if err != nil {
@@ -126,6 +169,7 @@ func (p *Pusher) sendCommitted(parent context.Context, ids []int) error {
 	if common.Unmarshal(raw, &ack) != nil || ack.Data.Accepted < 0 || ack.Data.Duplicates < 0 || len(ack.Data.Rejected) != 0 || ack.Data.Accepted+ack.Data.Duplicates != len(events) {
 		return fmt.Errorf("committed usage acknowledgement incomplete")
 	}
+	opsfees.AcceptPushReceipts(p.Config.URL, p.Config.KeyID, p.Config.Secret, body, raw, p.Now())
 
 	p.fastMu.Lock()
 	defer p.fastMu.Unlock()

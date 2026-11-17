@@ -42,12 +42,12 @@ func getLogOpsFees(c *gin.Context, self bool) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
-	var logs []*model.Log
-	q := model.LOG_DB.WithContext(ctx).Select("request_id,user_id,model_name,type").Where("request_id IN ? AND type = ?", ids, model.LogTypeConsume)
+	userID := 0
 	if self {
-		q = q.Where("user_id = ?", c.GetInt("id"))
+		userID = c.GetInt("id")
 	}
-	if q.Limit(100).Find(&logs).Error != nil || model.AttachOpsFees(ctx, logs) != nil {
+	logs, err := model.LogFeeLogs(ctx, ids, userID)
+	if err != nil || model.AttachOpsFees(ctx, logs) != nil {
 		c.JSON(503, gin.H{"success": false, "message": "Fees temporarily unavailable"})
 		return
 	}

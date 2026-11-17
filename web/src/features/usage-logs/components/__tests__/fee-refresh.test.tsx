@@ -114,7 +114,7 @@ it("refreshes only fees of retrieved rows while preserving search time and list"
     String(Math.floor(Date.now() / 1000)),
   );
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(500);
   });
   await waitFor(() => expect(screen.getByLabelText("¥0.42")).toBeVisible());
   expect(lists).toHaveLength(1);

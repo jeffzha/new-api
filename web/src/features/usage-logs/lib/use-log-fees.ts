@@ -54,7 +54,7 @@ export function useLogFees<T extends object>(
           );
       if (!pending) return 30_000;
       // Bound fast refreshes for this exact page; old unresolved rows slow down.
-      return query.state.dataUpdateCount < 30 ? 2_000 : 10_000;
+      return query.state.dataUpdateCount < 20 ? 500 : 10_000;
     },
     refetchIntervalInBackground: false,
   });

@@ -7,18 +7,29 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/businessapi"
+	"github.com/QuantumNous/new-api/service/businessbilling"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 func BusinessRequestDetail(c *gin.Context) {
 	c.Header("Cache-Control", "private, no-store")
+	source, sourceErr := businessbilling.Source(c.Request.URL.Query())
+	if sourceErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "invalid_billing_source", "message": sourceErr.Error()}})
+		return
+	}
 	requestID := c.Param("request_id")
+	wait, waitErr := businessbilling.WaitDuration(c.Request.URL.Query())
+	if waitErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "invalid_billing_wait", "message": waitErr.Error()}})
+		return
+	}
 	if requestID == "" || len(requestID) > 64 || !businessapi.ValidText(requestID, 64) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "invalid_request_id", "message": "Invalid request ID"}})
 		return
 	}
-	log, err := model.GetBusinessRequestLog(c.GetInt("id"), c.GetInt("token_id"), requestID)
+	log, err := model.CachedBusinessRequestLog(c.GetInt("id"), c.GetInt("token_id"), requestID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "request_not_found", "message": "Request not found or not yet recorded"}})
 		return
@@ -34,6 +45,7 @@ func BusinessRequestDetail(c *gin.Context) {
 	if common.UnmarshalJsonStr(log.Other, &stored) == nil && stored.Billing != nil {
 		billing = *stored.Billing
 	}
+	billing = businessbilling.ReceiptWithWait(c.Request.Context(), source, billing, log, wait)
 	status := "succeeded"
 	if log.Type == model.LogTypeError {
 		status = "failed"

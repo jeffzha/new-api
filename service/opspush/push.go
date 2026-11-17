@@ -38,6 +38,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service/opsfees"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -388,7 +389,10 @@ func (p *Pusher) send(state *State) time.Duration {
 	response.Body.Close()
 	if response.StatusCode == http.StatusOK {
 		var ok okBody
-		_ = common.Unmarshal(raw, &ok)
+		decodeErr := common.Unmarshal(raw, &ok)
+		if decodeErr == nil {
+			opsfees.AcceptPushReceipts(p.Config.URL, p.Config.KeyID, p.Config.Secret, body, raw, p.Now())
+		}
 		for _, item := range ok.Data.Rejected {
 			common.SysError(fmt.Sprintf("Ops push: %s rejected %s (%s)", state.BatchId, item.RequestId, item.Reason))
 		}

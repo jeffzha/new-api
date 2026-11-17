@@ -113,6 +113,8 @@ func createLog(log *Log) error {
 		opsnotify.UsageCommitted(log.Id)
 	}
 	if err == nil && log.Type == LogTypeConsume {
+		cacheBusinessInvocation(log)
+		RememberOpsFeePending(log)
 		NotifyOpsFees()
 	}
 	return err

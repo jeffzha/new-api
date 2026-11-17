@@ -13,8 +13,12 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/businessapi"
+	"github.com/QuantumNous/new-api/service/businessbilling"
 	"github.com/QuantumNous/new-api/service/opsclient"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/glebarez/sqlite"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
@@ -22,6 +26,134 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+func TestSharedFeeNoticeUsesBoundedBackgroundDelivery(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	oldClient, oldEnabled := common.RDB, common.RedisEnabled
+	common.RDB, common.RedisEnabled = client, true
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		client.Close()
+		common.RDB, common.RedisEnabled = oldClient, oldEnabled
+		model.ConfigureOpsFees(nil)
+	})
+	c := Config{Connection: "shared-test"}
+	share := shareResults(ctx, c)
+	require.NotNil(t, share)
+	model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: c.Connection})
+	log := &model.Log{RequestId: "shared", UserId: 15, ModelName: "m", Type: model.LogTypeConsume, Other: "{}"}
+	model.RememberOpsFeePending(log)
+	require.Eventually(t, func() bool {
+		channels, _ := client.PubSubChannels(ctx, "ops-fee-results:shared-test").Result()
+		return len(channels) == 1
+	}, time.Second, time.Millisecond)
+	amount := "0.0042"
+	// Publishing simulates another blue/green process; the local request has
+	// no callback or database path that can supply this fee.
+	share([]model.OpsFee{{RequestID: "shared", UserID: "15", Model: "m", Amount: &amount, ChargedAt: "2026-11-17T01:00:00Z", Status: "available"}}, false)
+	require.Eventually(t, func() bool { fee := model.WaitOpsFee(ctx, log, 0); return fee != nil && fee.Status == "available" }, time.Second, time.Millisecond)
+	assert.Equal(t, "0.0042", *model.WaitOpsFee(ctx, log, 0).Amount)
+}
+
+func TestPushLogFeeMemoryAndCorrection(t *testing.T) {
+	oldDB, oldLogs := model.DB, model.LOG_DB
+	db := testDB(t, "sqlite")
+	model.DB, model.LOG_DB = db, db
+	require.NoError(t, model.MigrateOpsFees(db))
+	model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: "receipt-test"})
+	c := Config{BaseURL: "https://ops.example", KeyID: "fees", Secret: "fixture-secret-for-receipts", Connection: "receipt-test", ReceiptKeyID: "push"}
+	oldConfig := receiptConfig.Swap(&c)
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = oldDB, oldLogs
+		model.ConfigureOpsFees(nil)
+		receiptConfig.Store(oldConfig)
+	})
+	log := &model.Log{RequestId: "fast", UserId: 15, TokenId: 10, ModelName: "sample", Type: model.LogTypeConsume, Other: "{}", CreatedAt: time.Now().Unix()}
+	model.RememberOpsFeePending(log)
+	sent := []byte(`{"events":[{"requestId":"fast","userId":"15","model":"sample"}]}`)
+	response := []byte(`{"data":{"charges":[{"requestId":"fast","userId":"15","status":"station_billed","logFee":{"requestId":"fast","userId":"15","model":"sample","opsAmount":"0.000006","refundAmount":"0","chargedAt":"2026-11-17T01:00:00Z"}}]}}`)
+	AcceptPushReceipts(c.BaseURL, "unbound", c.Secret, sent, response, time.Now())
+	assert.Equal(t, "waiting", model.WaitOpsFee(context.Background(), log, 0).Status)
+	AcceptPushReceipts(c.BaseURL, "push", c.Secret, sent, response, time.Now())
+	got := model.WaitOpsFee(context.Background(), log, 0)
+	require.NotNil(t, got)
+	require.NotNil(t, got.Amount)
+	assert.Equal(t, "0.000006", *got.Amount)
+	reads := 0
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("count_fee_reads", func(*gorm.DB) { reads++ }))
+	for range 3 {
+		rows, err := model.LogFeeLogs(context.Background(), []string{"fast"}, 15)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		require.NoError(t, model.AttachOpsFees(context.Background(), rows))
+		fee, _, reason, err := model.BusinessOpsFee(context.Background(), log)
+		require.NoError(t, err)
+		assert.Empty(t, reason)
+		assert.Equal(t, "0.000006", *fee.Amount)
+	}
+	assert.Zero(t, reads, "hot fee and authorized log refresh must perform no SQL")
+	rows, err := model.LogFeeLogs(context.Background(), []string{"fast"}, 16)
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+	wrong := *log
+	wrong.ModelName = "another"
+	assert.Nil(t, model.WaitOpsFee(context.Background(), &wrong, 0))
+	zero := "0"
+	got.Amount = &zero
+	model.AcceptOpsFeeResults(c.Connection, []model.OpsFee{*got}, true)
+	AcceptPushReceipts(c.BaseURL, "push", c.Secret, sent, response, time.Now())
+	assert.Equal(t, "0", *model.WaitOpsFee(context.Background(), log, 0).Amount, "late push must not undo feed correction")
+	billing := businessbilling.Receipt(context.Background(), "ops", businessapi.UnavailableBilling(), log)
+	assert.Equal(t, "available", billing.Status)
+	assert.Equal(t, "0", *billing.Amount)
+	assert.Empty(t, billing.ChargeStatus)
+	model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: "other-tenant"})
+	assert.Nil(t, model.WaitOpsFee(context.Background(), log, 0))
+}
+
+func TestMemoryFeeWaitWakesAndRespectsCancellation(t *testing.T) {
+	model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: "wait-test"})
+	t.Cleanup(func() { model.ConfigureOpsFees(nil) })
+	log := &model.Log{RequestId: "notify", UserId: 15, ModelName: "sample", Type: model.LogTypeConsume}
+	model.RememberOpsFeePending(log)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.Equal(t, "waiting", model.WaitOpsFee(ctx, log, time.Second).Status)
+	result := make(chan *model.OpsFee, 1)
+	go func() { result <- model.WaitOpsFee(context.Background(), log, time.Second) }()
+	amount := "0.000006"
+	model.AcceptOpsFeeResults("wait-test", []model.OpsFee{{RequestID: log.RequestId, UserID: "15", Model: "sample", Amount: &amount, Currency: "CNY", Status: "available"}}, false)
+	select {
+	case fee := <-result:
+		require.NotNil(t, fee)
+		assert.Equal(t, "available", fee.Status)
+		assert.Equal(t, amount, *fee.Amount)
+	case <-time.After(2 * time.Second):
+		t.Fatal("receipt notification did not release the waiting request")
+	}
+}
+
+func BenchmarkHotOpsFeeMemory(b *testing.B) {
+	model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: "benchmark"})
+	b.Cleanup(func() { model.ConfigureOpsFees(nil) })
+	log := &model.Log{RequestId: "hot", UserId: 15, ModelName: "sample", Type: model.LogTypeConsume}
+	model.RememberOpsFeePending(log)
+	amount := "0.000006"
+	model.AcceptOpsFeeResults("benchmark", []model.OpsFee{{RequestID: "hot", UserID: "15", Model: "sample", Amount: &amount, Status: "available"}}, false)
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			fee := model.WaitOpsFee(context.Background(), log, 0)
+			if fee == nil || fee.Amount == nil || *fee.Amount != amount {
+				b.Error("hot receipt missing")
+				return
+			}
+		}
+	})
+}
 
 func testDB(t *testing.T, dialect string) *gorm.DB {
 	t.Helper()

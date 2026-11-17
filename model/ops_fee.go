@@ -25,6 +25,7 @@ type OpsFee struct {
 	ChargedAt     string  `gorm:"type:varchar(40)" json:"charged_at"`
 	FetchedAt     int64   `json:"fetched_at"`
 	Status        string  `gorm:"type:varchar(32)" json:"status"`
+	Version       int64   `gorm:"-" json:"-"`
 }
 
 type OpsFeeSync struct {
@@ -45,6 +46,8 @@ type OpsFeeRuntime struct {
 	Scope      string
 	// CachedReceipt only reads a validated in-process result; it must not do I/O.
 	CachedReceipt func(string, int, string, time.Time) *OpsFee
+	memory        *opsFeeMemory
+	ShareResults  func([]OpsFee, bool)
 }
 
 var opsFeeRuntime atomic.Pointer[OpsFeeRuntime]
@@ -69,6 +72,9 @@ func NotifyOpsFees() {
 }
 
 func ConfigureOpsFees(config *OpsFeeRuntime) {
+	if config != nil {
+		config.memory = newOpsFeeMemory()
+	}
 	opsFeeLastActivity.Store(0)
 	opsFeeRuntime.Store(config)
 }
@@ -95,7 +101,7 @@ func ClaimOpsFeeSync(ctx context.Context, db *gorm.DB, connection, owner string,
 
 // Each page and its cursor commit together. A lost lease cannot advance progress.
 func SaveOpsFeePage(ctx context.Context, db *gorm.DB, connection, owner, cursor string, rows []OpsFee, at int64) error {
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var state OpsFeeSync
 		if e := lockForUpdate(tx).Where("connection = ? AND owner = ? AND lease_until >= ?", connection, owner, at).First(&state).Error; e != nil {
 			return errors.New("fee lease lost")
@@ -112,6 +118,10 @@ func SaveOpsFeePage(ctx context.Context, db *gorm.DB, connection, owner, cursor 
 		}
 		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "connection"}, {Name: "request_id"}}, DoUpdates: clause.AssignmentColumns([]string{"user_id", "model", "amount", "station_amount", "refund_amount", "difference", "currency", "charged_at", "fetched_at", "status"})}).CreateInBatches(rows, 50).Error
 	})
+	if err == nil {
+		AcceptOpsFeeResults(connection, rows, true)
+	}
+	return err
 }
 
 func FinishOpsFeeSync(ctx context.Context, db *gorm.DB, connection, owner string, next int64, code string, failures int) error {
@@ -135,13 +145,27 @@ func AttachOpsFees(ctx context.Context, logs []*Log) error {
 		return nil
 	}
 	ids := make([]string, 0, len(logs))
+	lookup := map[string]bool{}
+	now := time.Now()
 	for _, log := range logs {
 		if log.Type != LogTypeConsume {
 			continue
 		}
 		log.OpsFee = &OpsFee{Status: "waiting", Currency: "CNY"}
+		if cached, _ := config.memory.get(log.RequestId, now); cached != nil && cached.UserID == strconv.Itoa(log.UserId) && cached.Model == log.ModelName {
+			log.OpsFee = cached
+			if cached.Status == "waiting" && config.CachedReceipt != nil {
+				if receipt := config.CachedReceipt(log.RequestId, log.UserId, log.ModelName, now); receipt != nil && receipt.RequestID == log.RequestId && receipt.UserID == cached.UserID && receipt.Model == cached.Model && receipt.Status == "available" {
+					config.memory.put(*receipt, false, now)
+					log.OpsFee = receipt
+				}
+			}
+			config.memory.rememberLog(log)
+			continue
+		}
 		if log.RequestId != "" {
 			ids = append(ids, log.RequestId)
+			lookup[log.RequestId] = true
 		}
 	}
 	if len(ids) == 0 {
@@ -153,10 +177,17 @@ func AttachOpsFees(ctx context.Context, logs []*Log) error {
 	}
 	byID := make(map[string]*OpsFee, len(fees))
 	for i := range fees {
+		if cached, _ := config.memory.get(fees[i].RequestID, time.Now()); cached != nil && cached.Status != "waiting" {
+			// A background page/receipt may have completed during this cold SQL
+			// read. Its in-memory result must not be replaced by the old snapshot.
+			byID[fees[i].RequestID] = cached
+			continue
+		}
 		byID[fees[i].RequestID] = &fees[i]
+		config.memory.put(fees[i], true, now)
 	}
 	for _, log := range logs {
-		if log.OpsFee == nil {
+		if log.OpsFee == nil || !lookup[log.RequestId] {
 			continue
 		}
 		fee := byID[log.RequestId]
@@ -168,8 +199,15 @@ func AttachOpsFees(ctx context.Context, logs []*Log) error {
 			cached := config.CachedReceipt(log.RequestId, log.UserId, log.ModelName, time.Now())
 			if cached != nil && cached.RequestID == log.RequestId && cached.UserID == strconv.Itoa(log.UserId) && cached.Model == log.ModelName && cached.Status == "available" {
 				log.OpsFee = cached
+				config.memory.put(*cached, false, now)
 			}
 		}
+		if fee == nil && log.OpsFee.Status == "waiting" {
+			pending := *log.OpsFee
+			pending.RequestID, pending.UserID, pending.Model = log.RequestId, strconv.Itoa(log.UserId), log.ModelName
+			config.memory.put(pending, false, now)
+		}
+		config.memory.rememberLog(log)
 	}
 	return nil
 }

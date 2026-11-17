@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -8,8 +9,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -35,6 +38,73 @@ import (
 )
 
 type businessFailedSettlement struct{}
+
+func TestBusinessProductOPSReceiptUsesMemoryAndKeepsLocalWallet(t *testing.T) {
+	db := businessDatabaseFixture(t)
+	model.LOG_DB = db
+	require.NoError(t, db.AutoMigrate(&model.Log{}))
+	require.NoError(t, model.MigrateOpsFees(db))
+	model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: "business-product"})
+	t.Cleanup(func() { model.ConfigureOpsFees(nil) })
+	log := &model.Log{RequestId: "memory-detail", UserId: 15, TokenId: 23, ModelName: "m", Type: model.LogTypeConsume, CreatedAt: time.Now().Unix(), Other: `{"billing":{"source":"gateway","status":"settled","amount":"0.02","currency":"CNY"}}`}
+	require.NoError(t, db.Create(log).Error)
+	model.RememberOpsFeePending(log)
+	amount := "0.000006"
+	model.AcceptOpsFeeResults("business-product", []model.OpsFee{{RequestID: log.RequestId, UserID: "15", Model: "m", Amount: &amount, Status: "available", Currency: "CNY"}}, false)
+	// Warm only the original-key invocation identity. Subsequent concurrent
+	// API reads and fee refreshes must not query SQL.
+	_, err := model.CachedBusinessRequestLog(15, 23, log.RequestId)
+	require.NoError(t, err)
+	var reads atomic.Int64
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("count_hot_fee_queries", func(*gorm.DB) { reads.Add(1) }))
+	r := gin.New()
+	r.GET("/detail/:request_id", func(c *gin.Context) { c.Set("id", 15); c.Set("token_id", 23) }, BusinessRequestDetail)
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Go(func() {
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest("GET", "/detail/memory-detail?billing_wait_ms=0", nil))
+			assert.Equal(t, 200, w.Code)
+			assert.Contains(t, w.Body.String(), `"amount":"0.000006"`)
+			assert.NotContains(t, w.Body.String(), "charge_status")
+		})
+	}
+	wg.Wait()
+	assert.Zero(t, reads.Load(), "authorized hot detail path must not query SQL")
+	fee := model.WaitOpsFee(context.Background(), log, 0)
+	require.NotNil(t, fee)
+	for _, stream := range []bool{false, true} {
+		engine := gin.New()
+		engine.POST("/call", func(c *gin.Context) {
+			c.Set("id", 15)
+			c.Set("token_id", 23)
+			c.Set("original_model", "m")
+			c.Set(common.RequestIdKey, log.RequestId)
+		}, middleware.BusinessBilling(), func(c *gin.Context) {
+			if stream {
+				c.Header("Content-Type", "text/event-stream")
+				_, _ = c.Writer.WriteString("data: {\"choices\":[]}\n\n")
+				_, _ = c.Writer.WriteString("data: [DONE]\n\n")
+			} else {
+				c.JSON(200, gin.H{"choices": []any{}})
+			}
+		})
+		recorder := httptest.NewRecorder()
+		engine.ServeHTTP(recorder, httptest.NewRequest("POST", "/call?include=billing&billing_wait_ms=0", nil))
+		assert.Equal(t, 200, recorder.Code)
+		assert.Contains(t, recorder.Body.String(), `"amount":"0.000006"`)
+		if stream {
+			assert.Less(t, strings.Index(recorder.Body.String(), `"billing"`), strings.Index(recorder.Body.String(), "data: [DONE]"))
+		}
+	}
+	assert.Zero(t, reads.Load(), "JSON and stream receipts also use memory")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/detail/memory-detail?billing_source=gateway", nil))
+	assert.Contains(t, w.Body.String(), `"amount":"0.02"`)
+	var stored model.Log
+	require.NoError(t, db.First(&stored, log.Id).Error)
+	assert.Equal(t, log.Other, stored.Other, "reading OPS fees never rewrites local debit")
+}
 
 func (businessFailedSettlement) GetPreConsumedQuota() int { return 0 }
 func (businessFailedSettlement) Reserve(int) error        { return nil }

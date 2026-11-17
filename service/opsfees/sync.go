@@ -63,11 +63,14 @@ func StartConfigured(ctx context.Context, bindings ...func(Config, *model.OpsFee
 		return e
 	}
 	w := New(model.DB, model.LOG_DB, c)
+	sharePush.Store(nil)
 	runtime := &model.OpsFeeRuntime{Connection: c.Connection, Since: c.Since}
+	runtime.ShareResults = shareResults(ctx, c)
 	for _, bind := range bindings {
 		bind(c, runtime)
 	}
 	model.ConfigureOpsFees(runtime)
+	receiptConfig.Store(&c)
 	go w.Run(ctx)
 	common.SysLog("OPS fee comparison enabled")
 	return nil

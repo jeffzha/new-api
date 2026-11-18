@@ -71,7 +71,7 @@ export function OpsFeeCell(props: { fee: UsageLog['ops_fee'] }) {
         </TooltipTrigger>
         <TooltipContent role='tooltip' className='flex-col items-start'>
           <span>
-            {t('Operations calculated fee (CNY)')}: ¥{fee.amount}
+            {t('Cost')}: ¥{fee.amount}
           </span>
           {fee.station_amount != null && (
             <span>

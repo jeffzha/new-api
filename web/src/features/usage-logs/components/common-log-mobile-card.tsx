@@ -87,9 +87,7 @@ export function CommonLogMobileCard<TData>(props: {
       visible: displayable && props.cells.has('model_name') && !!model.name,
     },
     cost: {
-      label: props.cells.has('ops_fee')
-        ? t('Operations calculated fee (CNY)')
-        : t('Cost'),
+      label: t('Cost'),
       value: costValue,
       visible:
         displayable && (props.cells.has('quota') || props.cells.has('ops_fee')),

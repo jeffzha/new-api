@@ -888,7 +888,7 @@ export function useCommonLogsColumns(
     )
     columns.splice(costIndex, 1, {
       id: 'ops_fee',
-      header: t('Operations calculated fee (CNY)'),
+      header: t('Cost'),
       cell: ({ row }) =>
         row.original.type === 2 ? (
           <OpsFeeCell fee={row.original.ops_fee} />

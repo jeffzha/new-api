@@ -36,17 +36,14 @@ describe('operations fee display', () => {
     expect(screen.getByLabelText('¥0.004054')).toBeVisible()
     await user.tab()
     const tooltip = await screen.findByRole('tooltip')
-    expect(tooltip).toHaveTextContent('Operations calculated fee (CNY): ¥0.004054')
+    expect(tooltip).toHaveTextContent('Cost: ¥0.004054')
     expect(tooltip).toHaveTextContent('Actual customer deduction (CNY): ¥0.004059')
     expect(tooltip).toHaveTextContent('Deduction minus calculated fee (CNY): ¥0.000005')
   })
   test('Chinese users see translated fee labels and calculation states', async () => {
     const i18n = createInstance()
     await i18n.init({ lng: 'zh', resources: { zh } })
-    expect(i18n.t('Operations calculated fee (CNY)')).toBe(
-      '运营计算费用（人民币）'
-    )
-    expect(i18n.t('Operations fee (CNY)')).toBe('运营计算费用（人民币）')
+    expect(i18n.t('Cost')).toBe('费用')
     expect(i18n.t('Awaiting operations fee')).toBe('等待运营计算')
     expect(i18n.t('Operations fee unconfirmed')).toBe('运营费用待确认')
     expect(i18n.t('Operations fee received')).toBe('已取得运营费用')

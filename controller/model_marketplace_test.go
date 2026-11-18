@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/service/modelmarketplace"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -27,6 +28,9 @@ func TestModelMarketplaceCatalogContract(t *testing.T) {
 	t.Cleanup(func() { common.MemoryCacheEnabled = oldMemory })
 	require.NoError(t, db.Create(&model.Vendor{Id: 7, Name: "Example"}).Error)
 	require.NoError(t, db.Create(&model.Model{ModelName: "hy3", Description: "Example chat model", Tags: `["chat","tools"]`, VendorID: 7, Status: 1}).Error)
+	for _, group := range []string{"private-routing", "mock-default"} {
+		require.NoError(t, db.Create(&model.Ability{Group: group, Model: "hy3", ChannelId: 1, Enabled: true}).Error)
+	}
 	require.NoError(t, db.Create(&model.Token{Id: 1, UserId: 1, Key: "marketplacetest", Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true, Group: "default"}).Error)
 	require.NoError(t, db.Create(&model.Token{Id: 2, UserId: 1, Key: "marketplacerestricted", Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true, Group: "default", ModelLimitsEnabled: true, ModelLimits: "hy3"}).Error)
 	model.InvalidatePricingCache()
@@ -62,6 +66,13 @@ func TestModelMarketplaceCatalogContract(t *testing.T) {
 	}
 	assert.ElementsMatch(t, want, got)
 	assert.Equal(t, len(want), page.Total)
+	assert.Equal(t, map[string]int{"default": len(want)}, page.Facets.Groups)
+	assert.Equal(t, map[string]int{"chat": 1, "tools": 1}, page.Facets.Tags)
+	assert.Equal(t, 1, page.Facets.PricingTypes["request"])
+	assert.Equal(t, "standard", page.DisplayOptions.DefaultPriceMode)
+	assert.Equal(t, map[string]int{"1M": 1, "1K": 1000}, page.DisplayOptions.TokenUnitDivisors)
+	assert.NotContains(t, w.Body.String(), "private-routing")
+	assert.NotContains(t, w.Body.String(), "mock-default")
 	assert.Equal(t, "private, no-cache", w.Header().Get("Cache-Control"))
 	assert.Contains(t, w.Header().Get("Access-Control-Expose-Headers"), "ETag")
 	for _, forbidden := range []string{"settlement_bps", "sales_bps", "channel_id", "base_url", "policy_json", "marketplacetest"} {
@@ -76,6 +87,8 @@ func TestModelMarketplaceCatalogContract(t *testing.T) {
 	require.NoError(t, common.Unmarshal(restricted.Body.Bytes(), &page))
 	require.Len(t, page.Data, 1)
 	assert.Equal(t, "hy3", page.Data[0].ID)
+	assert.Equal(t, map[string]int{"chat": 1, "tools": 1}, page.Facets.Tags)
+	assert.Equal(t, map[string]int{"default": 1}, page.Facets.Groups)
 	assert.Equal(t, 404, request(path+"/detail?model=per-call", "marketplacerestricted", "").Code)
 	detail := request(path+"/detail?model=hy3", "marketplacetest", "")
 	require.Equal(t, 200, detail.Code, detail.Body.String())
@@ -85,6 +98,8 @@ func TestModelMarketplaceCatalogContract(t *testing.T) {
 	require.NoError(t, common.Unmarshal(detail.Body.Bytes(), &single))
 	assert.Equal(t, "Example", single.Data.Vendor.Name)
 	assert.Equal(t, []string{"chat", "tools"}, single.Data.Tags)
+	assert.Equal(t, []string{"default"}, single.Data.Groups)
+	assert.Equal(t, "token", single.Data.PricingType)
 	assert.Equal(t, "standard", single.Data.Pricing.Scope)
 	require.NotNil(t, single.Data.Pricing.Config)
 	assert.NotContains(t, detail.Body.String(), "enable_groups")
@@ -103,9 +118,40 @@ func TestModelMarketplaceCatalogContract(t *testing.T) {
 	require.NoError(t, common.Unmarshal(filtered.Body.Bytes(), &page))
 	require.Len(t, page.Data, 1)
 	assert.Equal(t, "hy3", page.Data[0].ID)
+	for _, filter := range []string{
+		"?vendor=Example&group=default&model_type=llm&tag=TOOLS&pricing_type=token&endpoint_type=openai",
+		"?q=Example", "?q=/v1/chat/completions&tag=chat",
+	} {
+		result := request(path+filter, "marketplacetest", "")
+		require.Equal(t, 200, result.Code, result.Body.String())
+		require.NoError(t, common.Unmarshal(result.Body.Bytes(), &page))
+		require.Len(t, page.Data, 1, filter)
+		assert.Equal(t, "hy3", page.Data[0].ID)
+		assert.Equal(t, len(want), page.Facets.Groups["default"], "facets count all visible models, not the current page")
+	}
+	for _, filter := range []string{"?group=private-routing", "?group=mock-default", "?tag=absent", "?endpoint_type=unknown-endpoint"} {
+		result := request(path+filter, "marketplacetest", "")
+		assert.Equal(t, 200, result.Code)
+		assert.Contains(t, result.Body.String(), `"data":[]`)
+	}
+	descending := request(path+"?sort=name_desc&page_size=1", "marketplacetest", "")
+	require.NoError(t, common.Unmarshal(descending.Body.Bytes(), &page))
+	assert.Equal(t, "per-call", page.Data[0].ID)
+	oldRecharge, oldExchange := operation_setting.Price, operation_setting.USDExchangeRate
+	t.Cleanup(func() { operation_setting.Price, operation_setting.USDExchangeRate = oldRecharge, oldExchange })
+	operation_setting.Price, operation_setting.USDExchangeRate = 3.65, 7.3
+	changedMode := request(path+"/detail?model=hy3", "marketplacetest", detail.Header().Get("ETag"))
+	require.Equal(t, 200, changedMode.Code, "display configuration changes invalidate ETag")
+	var mode struct {
+		DisplayOptions modelmarketplace.DisplayOptions `json:"display_options"`
+	}
+	require.NoError(t, common.Unmarshal(changedMode.Body.Bytes(), &mode))
+	require.NotNil(t, mode.DisplayOptions.RechargeFactor)
+	assert.Equal(t, 0.5, *mode.DisplayOptions.RechargeFactor)
+	assert.Equal(t, []string{"standard", "recharge"}, mode.DisplayOptions.PriceModes)
 	empty := request(path+"?q=absent", "marketplacetest", "")
 	assert.Contains(t, empty.Body.String(), `"data":[]`)
-	for _, suffix := range []string{"?page=0", "?page_size=101", "?page=1&page=2", "?model_type=bad", "?q=", "?include=secret", "/detail", "/detail?model=hy3&model=Hy3", "/detail?model=hy3&page=1"} {
+	for _, suffix := range []string{"?page=0", "?page_size=101", "?page=1&page=2", "?model_type=bad", "?q=", "?include=secret", "?tag=chat&tag=tools", "?group=", "?endpoint_type=", "?pricing_type=free", "?sort=price", "/detail", "/detail?model=hy3&model=Hy3", "/detail?model=hy3&page=1"} {
 		assert.Equal(t, 400, request(path+suffix, "marketplacetest", "").Code, suffix)
 	}
 	// A configured channel change is visible on the next query, with no external registry write.
@@ -130,6 +176,38 @@ func TestModelMarketplaceCatalogContract(t *testing.T) {
 		assert.NotContains(t, hidden.Body.String(), `"id":"hy3"`)
 	}
 	assert.Equal(t, 404, request(path+"/detail?model=hy3", "marketplacetest", "").Code)
+}
+
+func TestModelMarketplaceFilterMetadataAndDisplayUnits(t *testing.T) {
+	assert.Equal(t, []string{"chat", "tools"}, modelmarketplace.Tags("chat;tools|CHAT tools"))
+	assert.Equal(t, []string{"chat", "tools"}, modelmarketplace.Tags(`["chat","CHAT"," tools "]`))
+	assert.Empty(t, modelmarketplace.Tags("[]"))
+	for _, tc := range []struct {
+		p    model.Pricing
+		kind string
+	}{
+		{model.Pricing{}, "token"},
+		{model.Pricing{QuotaType: 1}, "request"},
+		{model.Pricing{QuotaType: 1, BillingUsageSchema: map[string]jsplugin.UsageFieldSchema{"seconds": {Type: "number"}}}, "task"},
+	} {
+		assert.Equal(t, tc.kind, modelmarketplace.PricingType(tc.p))
+	}
+	for _, values := range [][2]float64{{0, 7.3}, {7.3, 0}, {-1, 7.3}} {
+		options := modelmarketplace.NewDisplayOptions(values[0], values[1])
+		assert.False(t, options.RechargeAvailable)
+		assert.Nil(t, options.RechargeFactor)
+		assert.Equal(t, []string{"standard"}, options.PriceModes)
+	}
+	items := []modelmarketplace.Item{
+		{ID: "image-task", ModelType: "image", PricingType: "task", Groups: []string{"default"}, Tags: []string{"image"}, Endpoints: []modelmarketplace.Endpoint{{Type: constant.EndpointTypeImageGeneration}}},
+		{ID: "vector", ModelType: "embedding", PricingType: "token", Groups: []string{"default"}, Tags: []string{"embedding"}, Endpoints: []modelmarketplace.Endpoint{{Type: constant.EndpointTypeEmbeddings}}},
+	}
+	page := modelmarketplace.Paginate(items, modelmarketplace.Query{Page: 1, PageSize: 1, PricingType: "task", Endpoint: "image-generation"})
+	require.Len(t, page.Data, 1)
+	assert.Equal(t, "image-task", page.Data[0].ID)
+	assert.Equal(t, 1, page.Total)
+	assert.Equal(t, map[string]int{"image-generation": 1, "embeddings": 1}, page.Facets.EndpointTypes)
+	assert.Equal(t, map[string]int{"task": 1, "token": 1}, page.Facets.PricingTypes)
 }
 
 func TestModelMarketplacePriceRulesPreserveComplexPricing(t *testing.T) {
@@ -165,6 +243,7 @@ func TestModelMarketplaceDatabaseMatrix(t *testing.T) {
 			channel := model.Channel{Id: 700, Name: "catalogmatrix", Key: "unused", Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled}
 			require.NoError(t, db.Create(&channel).Error)
 			require.NoError(t, db.Create(&model.Ability{ChannelId: 700, Group: "default", Model: "matrix-embedding", Enabled: true}).Error)
+			require.NoError(t, db.Create(&model.Model{ModelName: "matrix-embedding", Tags: "embedding;vector", Endpoints: `{"embeddings":"/v1/embeddings"}`, Status: 1}).Error)
 			model.InvalidatePricingCache()
 			engine := gin.New()
 			engine.Use(func(c *gin.Context) {
@@ -173,7 +252,7 @@ func TestModelMarketplaceDatabaseMatrix(t *testing.T) {
 			})
 			engine.GET("/v1/model-marketplace", ModelMarketplace)
 			engine.GET("/v1/models", func(c *gin.Context) { ListModels(c, constant.ChannelTypeOpenAI) })
-			for _, path := range []string{"/v1/model-marketplace?model_type=embedding", "/v1/models?model_type=embedding"} {
+			for _, path := range []string{"/v1/model-marketplace?model_type=embedding&group=default&tag=vector&pricing_type=token&endpoint_type=embeddings", "/v1/models?model_type=embedding"} {
 				w := httptest.NewRecorder()
 				engine.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 				require.Equal(t, 200, w.Code, w.Body.String())

@@ -16,15 +16,20 @@ import (
 )
 
 type Query struct {
-	Page      int
-	PageSize  int
-	Search    string
-	ModelType string
-	Vendor    string
+	Page        int
+	PageSize    int
+	Search      string
+	ModelType   string
+	Vendor      string
+	Group       string
+	Tag         string
+	Endpoint    string
+	PricingType string
+	Sort        string
 }
 
 func ParseQuery(values url.Values, detail bool) (Query, error) {
-	q := Query{Page: 1, PageSize: 20}
+	q := Query{Page: 1, PageSize: 20, Sort: "name"}
 	for key, items := range values {
 		if len(items) != 1 || strings.TrimSpace(items[0]) == "" {
 			return q, fmt.Errorf("%s must have one non-empty value", key)
@@ -62,6 +67,28 @@ func ParseQuery(values url.Values, detail bool) (Query, error) {
 				return q, fmt.Errorf("vendor is too long")
 			}
 			q.Vendor = strings.ToLower(value)
+		case "group", "tag", "endpoint_type":
+			if len(value) > 200 {
+				return q, fmt.Errorf("%s is too long", key)
+			}
+			switch key {
+			case "group":
+				q.Group = value
+			case "tag":
+				q.Tag = strings.ToLower(value)
+			case "endpoint_type":
+				q.Endpoint = strings.ToLower(value)
+			}
+		case "pricing_type":
+			q.PricingType = strings.ToLower(value)
+			if !slices.Contains([]string{"token", "request", "task", "unavailable"}, q.PricingType) {
+				return q, fmt.Errorf("invalid pricing_type")
+			}
+		case "sort":
+			q.Sort = strings.ToLower(value)
+			if q.Sort != "name" && q.Sort != "name_desc" {
+				return q, fmt.Errorf("sort must be name or name_desc")
+			}
 		default:
 			return q, fmt.Errorf("unknown parameter: %s", key)
 		}
@@ -132,44 +159,77 @@ type Item struct {
 	Tags        []string            `json:"tags"`
 	Vendor      model.PricingVendor `json:"vendor"`
 	Endpoints   []Endpoint          `json:"endpoints"`
+	Groups      []string            `json:"groups"`
+	PricingType string              `json:"pricing_type"`
 	Pricing     Price               `json:"pricing"`
 }
 
 type Page struct {
-	Success  bool   `json:"success"`
-	Object   string `json:"object"`
-	Data     []Item `json:"data"`
-	Page     int    `json:"page"`
-	PageSize int    `json:"page_size"`
-	Total    int    `json:"total"`
-	HasMore  bool   `json:"has_more"`
-	Facets   Facets `json:"facets"`
+	Success        bool           `json:"success"`
+	Object         string         `json:"object"`
+	Data           []Item         `json:"data"`
+	Page           int            `json:"page"`
+	PageSize       int            `json:"page_size"`
+	Total          int            `json:"total"`
+	HasMore        bool           `json:"has_more"`
+	Facets         Facets         `json:"facets"`
+	DisplayOptions DisplayOptions `json:"display_options"`
 }
 
 type Facets struct {
-	ModelTypes map[string]int `json:"model_types"`
-	Vendors    map[string]int `json:"vendors"`
+	ModelTypes    map[string]int `json:"model_types"`
+	Vendors       map[string]int `json:"vendors"`
+	Groups        map[string]int `json:"groups"`
+	Tags          map[string]int `json:"tags"`
+	PricingTypes  map[string]int `json:"pricing_types"`
+	EndpointTypes map[string]int `json:"endpoint_types"`
 }
 
 func Paginate(items []Item, q Query) Page {
 	filtered := make([]Item, 0, len(items))
-	facets := Facets{ModelTypes: map[string]int{}, Vendors: map[string]int{}}
+	facets := Facets{ModelTypes: map[string]int{}, Vendors: map[string]int{}, Groups: map[string]int{}, Tags: map[string]int{}, PricingTypes: map[string]int{}, EndpointTypes: map[string]int{}}
 	for _, item := range items {
 		facets.ModelTypes[item.ModelType]++
 		facets.Vendors[item.Vendor.Name]++
+		facets.PricingTypes[item.PricingType]++
+		for _, group := range item.Groups {
+			facets.Groups[group]++
+		}
+		for _, tag := range item.Tags {
+			facets.Tags[strings.ToLower(tag)]++
+		}
+		endpointMatch := q.Endpoint == ""
+		searchText := item.ID + " " + item.DisplayName + " " + item.Description + " " + item.Vendor.Name + " " + strings.Join(item.Tags, " ")
+		for _, endpoint := range item.Endpoints {
+			kind := strings.ToLower(string(endpoint.Type))
+			facets.EndpointTypes[kind]++
+			endpointMatch = endpointMatch || kind == q.Endpoint
+			searchText += " " + kind + " " + endpoint.Path
+		}
 		if q.ModelType != "" && item.ModelType != q.ModelType {
 			continue
 		}
 		if q.Vendor != "" && strings.ToLower(item.Vendor.Name) != q.Vendor {
 			continue
 		}
-		haystack := strings.ToLower(item.ID + " " + item.Description + " " + strings.Join(item.Tags, " "))
+		if q.Group != "" && !slices.Contains(item.Groups, q.Group) ||
+			q.Tag != "" && !slices.ContainsFunc(item.Tags, func(tag string) bool { return strings.EqualFold(tag, q.Tag) }) ||
+			q.PricingType != "" && item.PricingType != q.PricingType || !endpointMatch {
+			continue
+		}
+		haystack := strings.ToLower(searchText)
 		if q.Search != "" && !strings.Contains(haystack, q.Search) {
 			continue
 		}
 		filtered = append(filtered, item)
 	}
-	slices.SortFunc(filtered, func(a, b Item) int { return strings.Compare(a.ID, b.ID) })
+	slices.SortFunc(filtered, func(a, b Item) int {
+		order := strings.Compare(a.ID, b.ID)
+		if q.Sort == "name_desc" {
+			return -order
+		}
+		return order
+	})
 	total := len(filtered)
 	start := min((q.Page-1)*q.PageSize, total)
 	end := min(start+q.PageSize, total)
@@ -180,18 +240,23 @@ func Tags(raw string) []string {
 	tags := []string{}
 	if strings.HasPrefix(strings.TrimSpace(raw), "[") {
 		if common.Unmarshal([]byte(raw), &tags) == nil {
-			if tags == nil {
-				return []string{}
-			}
-			return tags
+			return uniqueTags(tags)
 		}
 	}
-	for tag := range strings.SplitSeq(raw, ",") {
-		if tag = strings.TrimSpace(tag); tag != "" && !slices.Contains(tags, tag) {
-			tags = append(tags, tag)
+	return uniqueTags(strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '|' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	}))
+}
+
+func uniqueTags(tags []string) []string {
+	result := []string{}
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag != "" && !slices.ContainsFunc(result, func(existing string) bool { return strings.EqualFold(existing, tag) }) {
+			result = append(result, tag)
 		}
 	}
-	return tags
+	return result
 }
 
 func PublicPrice(p model.Pricing, detail bool) *PriceRules {

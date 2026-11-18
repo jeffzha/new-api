@@ -1,6 +1,6 @@
 # 模型广场接口补充说明
 
-版本：2026-11-18。本次仅完成本地开发和验证，尚未发布到国内 /test、联通或产品环境。
+版本：2026-11-18，V1.8。补齐模型广场组合筛选、筛选项统计和价格展示配置。本次仅完成本地开发和验证，尚未发布到国内 /test、联通或产品环境。
 
 ## 1. 接口分工
 
@@ -41,13 +41,20 @@ Authorization: Bearer <API_KEY>
 | --- | --- | --- |
 | `page` | 否 | 从 1 开始，默认 1，最大 1000000 |
 | `page_size` | 否 | 默认 20，最大 100 |
-| `q` | 否 | 模型 ID、描述、标签包含匹配，大小写不敏感，最长 200 字节 |
+| `q` | 否 | 模型 ID、展示名、描述、供应商、标签、端点类型或路径包含匹配，大小写不敏感，最长 200 字节 |
 | `model_type` | 否 | 单个类型，大小写不敏感 |
 | `vendor` | 否 | 供应商名称精确匹配，大小写不敏感，最长 200 字节 |
+| `group` | 否 | 当前 Key 可见的路由分组，精确匹配且区分大小写，最长 200 字节 |
+| `tag` | 否 | 单个模型标签精确匹配，大小写不敏感，最长 200 字节 |
+| `pricing_type` | 否 | `token` 按量、`request` 按次、`task` 任务、`unavailable` 尚无可分类价格资料 |
+| `endpoint_type` | 否 | 单个端点类型精确匹配，大小写不敏感，最长 200 字节；选项取自 `facets.endpoint_types` |
+| `sort` | 否 | `name` 默认按模型 ID 升序；`name_desc` 降序 |
 
 类型值：`llm`、`rerank`、`embedding`、`image`、`video`、`speech2text`、`tts`、`audio`。支持图片输入的对话模型仍属于 `llm`。未知自定义模型默认识别为 `llm`，应配置正确端点。
 
 所有已传参数必须只有一个非空值。重复参数、未知参数、越界页码、非法类型均返回 400。未选择筛选条件时省略参数，不要传 `q=`。查询值按 URL 编码；中文长度限制按 UTF-8 字节计算。
+
+不同条件之间按 AND 组合，每个条件一次选择一个值。例如从筛选项取得值后，查询 `?vendor=Example&group=default&model_type=embedding&tag=embedding&pricing_type=token&endpoint_type=embeddings&page=1&page_size=20`。未知供应商、分组、标签或端点值返回 200 空列表；无权分组同样为空，不扩大 Key 权限。全部选项用省略参数表示，不发送字面值 `all`。切换筛选时页码重置为 1。
 
 ### 响应示例
 
@@ -63,7 +70,21 @@ Authorization: Bearer <API_KEY>
   "has_more": false,
   "facets": {
     "model_types": {"embedding": 1},
-    "vendors": {"Example": 1}
+    "vendors": {"Example": 1},
+    "groups": {"default": 1},
+    "tags": {"embedding": 1},
+    "pricing_types": {"token": 1},
+    "endpoint_types": {"embeddings": 1}
+  },
+  "display_options": {
+    "default_price_mode": "standard",
+    "price_modes": ["standard", "recharge"],
+    "default_token_unit": "1M",
+    "token_units": ["1M", "1K"],
+    "token_unit_divisors": {"1M": 1, "1K": 1000},
+    "recharge_available": true,
+    "recharge_factor": 1,
+    "sort_options": ["name", "name_desc"]
   },
   "data": [{
     "id": "example-embedding",
@@ -73,6 +94,8 @@ Authorization: Bearer <API_KEY>
     "description": "示例向量模型",
     "icon": "",
     "tags": ["embedding"],
+    "groups": ["default"],
+    "pricing_type": "token",
     "vendor": {"id": 7, "name": "Example"},
     "endpoints": [{"type": "embeddings", "path": "/v1/embeddings", "method": "POST"}],
     "pricing": {
@@ -90,9 +113,15 @@ Authorization: Bearer <API_KEY>
 }
 ```
 
-列表按模型 ID 字典序排列。`total` 是本次筛选后总量，`has_more` 指示后续是否还有页面；没有结果或超过最后一页时返回 200 和 `data: []`。配置更新期间跨页查询不提供数据库快照保证，需要严格核对集合时在稳定配置窗口执行。
+列表默认按模型 ID 字典序排列，支持 `sort=name_desc`。`total` 是本次筛选后总量，`has_more` 指示后续是否还有页面；没有结果或超过最后一页时返回 200 和 `data: []`。配置更新期间跨页查询不提供数据库快照保证，需要严格核对集合时在稳定配置窗口执行。
 
-`facets` 是当前 Key **全部可见模型、应用本次筛选之前**的类型和供应商计数，可直接构建筛选栏；它只统计调用方有权限看到的模型。
+`facets` 是当前 Key 全部可见模型、应用本次任何筛选之前的计数，包含 `model_types`、`vendors`、`groups`、`tags`、`pricing_types`、`endpoint_types` 六项。首次列表请求即可构建全部筛选栏，无须拉全量分页或逐项查询。不是当前页数量，也不是其他条件联动后的剩余数量；未出现的选项可不显示，固定 UI 选项可补 0。
+
+标签计数键统一小写，每个模型的同义大小写标签只计一次；模型 `tags` 保留首个展示写法。分组仅返回当前 Key 的有效路由范围与该模型启用分组的交集，自动分组 Key 按其实际允许组展开；内部组不对外展示。与登录管理页面相比，API Key 通常只允许其中一个组，因此可选组数量可能更少。多分组、多端点、多标签会使对应计数之和大于模型总数。
+
+`display_options` 是标准价格的展示配置，列表和详情均返回。标准、充值以及 1M、1K 是前端展示开关，不是模型筛选；不向本接口传 `price_mode` 或 `token_unit` 参数。默认展示标准价与每百万 Token 单价。充值换算系数为聚合公开充值费率除以美元人民币汇率；充值展示价为同币种标准价乘 `recharge_factor`。费率无效时仅返回 `price_modes: ["standard"]`、`recharge_available: false`、`recharge_factor: null`，页面禁用充值选项，不能当作零元。这里只是平台默认充值费率的等价展示，不包含支付渠道、充值金额优惠、代理商或客户专属折扣。
+
+1K Token 的展示单价等于 1M 单价除以 1000。例如 2 元/1M 显示为 0.002 元/1K。只换算按百万 Token 声明的价格项；按张、秒、次、积分和原始用量单位的规则不变，上下文分档阈值不变。表达式、币种和 `provider_pricing` 原始结构保持不变，不能直接对整个表达式或所有数值统一除以 1000。卡片/表格视图由前端控制，无须再次请求。
 
 ### 模型字段
 
@@ -104,6 +133,8 @@ Authorization: Bearer <API_KEY>
 | `description`、`icon`、`tags` | 已配置的公开模型资料；缺少描述或图标可为空字符串，标签为数组 |
 | `vendor` | 公开供应商资料；没有专门配置时使用渠道提供方名称作为回退，其数字 ID 可以为 0 |
 | `endpoints` | 公开支持端点，含 `type`、`path`、`method`；可能为空数组 |
+| `groups` | 当前 Key 可见且模型已启用的分组字符串数组；不含其他组及组内折扣 |
+| `pricing_type` | 与筛选参数相同，按量、按次、任务互斥；存在自定义用量字段时归为任务，否则按现有按量/按次类型归类 |
 | `pricing` | 见下一节的标准标价结构 |
 
 `endpoints[].type` 按实际端点配置返回，不能仅凭上例推断所有类型枚举。`path` 是网关公开相对路径，客户端需按环境补齐域名与 `/test` 前缀。不会返回上游服务器地址、渠道密钥、渠道 ID、内部插件标识、客户折扣和结算成本。
@@ -165,7 +196,7 @@ GET /v1/model-marketplace/detail?model=example-embedding
 Authorization: Bearer <API_KEY>
 ```
 
-只接受 `model` 参数，精确匹配 ID，区分大小写；名称带 `/` 时请进行 URL 编码。返回 `success: true`、`object: model`、`data: {模型对象}`。字段与列表相同，本地规则增加完整用量示例、材料定价及适用的多提供方规则。OPS 仍使用其完整条件标价行。
+只接受 `model` 参数，精确匹配 ID，区分大小写；名称带 `/` 时请进行 URL 编码。返回 `success: true`、`object: model`、`data: {模型对象}`，同级返回 `display_options`。字段与列表相同，本地规则增加完整用量示例、材料定价及适用的多提供方规则。OPS 仍使用其完整条件标价行。
 
 不存在或当前 Key 无权查看的模型，统一返回 404 `model_not_found`。参数不合法返回 400 `invalid_catalog_query`。不通过错误信息区分“存在但无权查看”和“不存在”。
 

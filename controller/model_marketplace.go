@@ -28,6 +28,15 @@ func ModelMarketplace(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"code": "catalog_unavailable", "message": "Model catalog is temporarily unavailable"}})
 		return
 	}
+	groups, err := getModelListGroups(c)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"code": "catalog_unavailable", "message": "Model catalog is temporarily unavailable"}})
+		return
+	}
+	allowedGroups := make(map[string]string, len(groups.ownerGroups))
+	for _, group := range groups.ownerGroups {
+		allowedGroups[group] = group
+	}
 	prices := model.GetPricing()
 	byName := make(map[string]model.Pricing, len(prices))
 	for _, price := range prices {
@@ -49,6 +58,13 @@ func ModelMarketplace(c *gin.Context) {
 			vendor.Name = entry.OwnedBy
 		}
 		item := modelmarketplace.Item{ID: entry.Id, Object: "model", DisplayName: entry.Id, ModelType: businessapi.ModelType(entry.Id, entry.SupportedEndpointTypes), Description: p.Description, Icon: p.Icon, Tags: modelmarketplace.Tags(p.Tags), Vendor: vendor, Endpoints: []modelmarketplace.Endpoint{}, Pricing: modelmarketplace.Price{Scope: "standard", Source: "gateway", Status: "unavailable", Currency: "USD"}}
+		item.Groups = visibleModelGroups(p.EnableGroup, allowedGroups)
+		slices.Sort(item.Groups)
+		item.Groups = slices.Compact(item.Groups)
+		item.PricingType = "unavailable"
+		if hasPrice {
+			item.PricingType = modelmarketplace.PricingType(p)
+		}
 		for _, et := range entry.SupportedEndpointTypes {
 			// Only return Gateway-relative public paths. Custom upstream URLs are private.
 			info, exists := endpoints[string(et)]
@@ -63,6 +79,7 @@ func ModelMarketplace(c *gin.Context) {
 		items = append(items, item)
 	}
 	page := modelmarketplace.Paginate(items, query)
+	page.DisplayOptions = modelmarketplace.NewDisplayOptions(operation_setting.Price, operation_setting.USDExchangeRate)
 	if detail {
 		if len(items) == 0 {
 			c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "model_not_found", "message": "Model is not available to this API key"}})
@@ -92,7 +109,7 @@ func ModelMarketplace(c *gin.Context) {
 	}
 	var response any = page
 	if detail {
-		response = gin.H{"success": true, "object": "model", "data": page.Data[0]}
+		response = gin.H{"success": true, "object": "model", "data": page.Data[0], "display_options": page.DisplayOptions}
 	}
 	body, err := common.Marshal(response)
 	if err != nil {

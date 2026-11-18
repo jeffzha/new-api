@@ -1,16 +1,19 @@
 /* Copyright (C) 2023-2026 QuantumNous
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
-import { useQuery } from '@tanstack/react-query'
+import { hashKey, useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ErrorState } from '@/components/error-state'
-import { Skeleton } from '@/components/ui/skeleton'
+import { LoadingState } from '@/components/loading-state'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { fetchUsageAnalytics } from '../lib/usage-analytics'
+import {
+  fetchUsageAnalytics,
+  type UsageAnalyticsResult,
+} from '../lib/usage-analytics'
 import { buildApiParams } from '../lib/utils'
 import { UsageAnalyticsView } from './usage-analytics-view'
 import {
@@ -38,9 +41,20 @@ export function UsageAnalyticsPanel() {
       }),
     [search, isAdminView]
   )
+  const queryKey = ['logs', 'analytics', userId, viewAccess, params]
+  const progressKey = hashKey(queryKey)
+  const [progress, setProgress] = useState<{
+    key: string
+    data: UsageAnalyticsResult
+  } | null>(null)
   const query = useQuery({
-    queryKey: ['logs', 'analytics', userId, viewAccess, params],
-    queryFn: ({ signal }) => fetchUsageAnalytics(params, isAdminView, signal),
+    queryKey,
+    queryFn: ({ signal }) => {
+      setProgress(null)
+      return fetchUsageAnalytics(params, isAdminView, signal, (data) =>
+        setProgress({ key: progressKey, data })
+      )
+    },
     staleTime: 60_000,
     enabled: Boolean(userId) && sensitiveVisible,
   })
@@ -51,19 +65,21 @@ export function UsageAnalyticsPanel() {
       </p>
     )
   }
-  if (query.isPending) {
-    return (
-      <div role='status' aria-label={t('Loading...')}>
-        <Skeleton className='h-96 w-full' />
-      </div>
-    )
-  }
   if (query.isError) {
     return (
       <ErrorState
         title={t('Failed to load')}
         onRetry={() => void query.refetch()}
       />
+    )
+  }
+  const data =
+    query.data ?? (progress?.key === progressKey ? progress.data : null)
+  if (!data) {
+    return (
+      <div role='status' aria-label={t('Loading...')}>
+        <LoadingState className='min-h-96' />
+      </div>
     )
   }
   return (
@@ -75,13 +91,21 @@ export function UsageAnalyticsPanel() {
       <div className='flex flex-wrap items-center justify-between gap-2'>
         <h3 className='text-sm font-semibold'>{t('Usage analytics')}</h3>
         <p className='text-muted-foreground text-xs' role='status'>
+          {query.isFetching && (
+            <LoadingState
+              inline
+              size='sm'
+              message={t('Loading...')}
+              className='mr-3'
+            />
+          )}
           {t('Analyzed {{count}} of {{total}} records', {
-            count: query.data.rows.length,
-            total: query.data.total,
+            count: data.rows.length,
+            total: data.total,
           })}
         </p>
       </div>
-      {query.data.truncated && (
+      {query.isSuccess && data.truncated && (
         <p className='text-sm text-amber-700 dark:text-amber-300'>
           {t(
             'Analysis is limited to the latest 2,000 matching records. Narrow the time range for complete totals.'
@@ -89,7 +113,7 @@ export function UsageAnalyticsPanel() {
         </p>
       )}
       <UsageAnalyticsView
-        rows={query.data.rows}
+        rows={data.rows}
         showMetrics
         showDimensions
         showModelTable

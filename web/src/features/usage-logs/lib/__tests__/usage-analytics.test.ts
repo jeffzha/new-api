@@ -142,14 +142,17 @@ describe('usage analytics', () => {
   })
   it('stops duplicate pages and clearly reports incomplete analytics', async () => {
     const get = vi.spyOn(api, 'get').mockResolvedValue({
-      data: { success: true, data: { total: 5000, items: [record(1)] } },
+      data: { success: true, data: { total: 2, items: [record(1)] } },
     })
     expect(await fetchUsageAnalytics({}, true)).toMatchObject({
-      total: 5000,
+      total: 2,
       truncated: true,
     })
     expect(get).toHaveBeenCalledTimes(2)
-    expect(get).toHaveBeenCalledWith(expect.stringMatching(/^\/api\/log\?/))
+    expect(get).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/api\/log\?/),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
   })
   it('does not issue requests after the caller cancels an obsolete filter', async () => {
     const get = vi.spyOn(api, 'get')
@@ -160,11 +163,113 @@ describe('usage analytics', () => {
     ).rejects.toThrow()
     expect(get).not.toHaveBeenCalled()
   })
+  it('publishes the first page before loading the remaining pages with bounded concurrency', async () => {
+    const pending = new Map<number, (value: unknown) => void>()
+    const pageRows = (page: number) =>
+      Array.from({ length: 100 }, (_, index) =>
+        record((page - 1) * 100 + index + 1)
+      )
+    const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      const page = Number(
+        new URL(url, 'http://localhost').searchParams.get('p')
+      )
+      if (page === 1) {
+        return {
+          data: { success: true, data: { total: 500, items: pageRows(1) } },
+        }
+      }
+      return new Promise((resolve) => pending.set(page, resolve))
+    })
+    const progress = vi.fn()
+    const result = fetchUsageAnalytics({}, true, undefined, progress)
+    await vi.waitFor(() => expect(pending.size).toBe(3))
+    expect(get).toHaveBeenCalledTimes(4)
+    expect(progress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rows: pageRows(1),
+        total: 500,
+        truncated: true,
+      })
+    )
+    for (const page of [4, 2, 3]) {
+      pending.get(page)?.({
+        data: { success: true, data: { total: 500, items: pageRows(page) } },
+      })
+    }
+    await vi.waitFor(() => expect(pending.has(5)).toBe(true))
+    pending.get(5)?.({
+      data: { success: true, data: { total: 500, items: pageRows(5) } },
+    })
+    expect((await result).rows.map((row) => row.id)).toEqual(
+      Array.from({ length: 500 }, (_, index) => index + 1)
+    )
+  })
+  it('aborts an in-flight HTTP request when filters are canceled and publishes no obsolete data', async () => {
+    let finish!: (value: unknown) => void
+    const get = vi.spyOn(api, 'get').mockImplementation(
+      async () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const controller = new AbortController()
+    const progress = vi.fn()
+    const result = fetchUsageAnalytics({}, false, controller.signal, progress)
+    const rejected = expect(result).rejects.toThrow()
+    controller.abort()
+    expect(get.mock.calls[0][1]?.signal?.aborted).toBe(true)
+    finish({ data: { success: true, data: { total: 1, items: [record(1)] } } })
+    await rejected
+    expect(progress).not.toHaveBeenCalled()
+  })
+  it('caps page requests as well as records when overlapping pages never reach the reported total', async () => {
+    const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      const page = Number(
+        new URL(url, 'http://localhost').searchParams.get('p')
+      )
+      return {
+        data: { success: true, data: { total: 5000, items: [record(page)] } },
+      }
+    })
+    const result = await fetchUsageAnalytics({}, true)
+    expect(get).toHaveBeenCalledTimes(20)
+    expect(result).toMatchObject({ total: 5000, truncated: true })
+  })
   it('rejects a failed page instead of presenting partial data as complete', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({
       data: { success: false, message: 'Unavailable' },
     })
     await expect(fetchUsageAnalytics({}, false)).rejects.toThrow('Unavailable')
     expect(summarizeUsage([]).averageDuration).toBeNull()
+  })
+  it('cancels sibling page requests when a concurrent page fails', async () => {
+    const get = vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
+      const page = Number(
+        new URL(url, 'http://localhost').searchParams.get('p')
+      )
+      if (page === 1) {
+        return {
+          data: { success: true, data: { total: 400, items: [record(1)] } },
+        }
+      }
+      if (page === 2) {
+        return { data: { success: false, message: 'Page unavailable' } }
+      }
+      return new Promise((_, reject) => {
+        config?.signal?.addEventListener?.(
+          'abort',
+          () => reject(new Error('Canceled')),
+          { once: true }
+        )
+      })
+    })
+    const progress = vi.fn()
+    await expect(
+      fetchUsageAnalytics({}, true, undefined, progress)
+    ).rejects.toThrow('Page unavailable')
+    expect(get).toHaveBeenCalledTimes(4)
+    expect(get.mock.calls[2][1]?.signal?.aborted).toBe(true)
+    expect(get.mock.calls[3][1]?.signal?.aborted).toBe(true)
+    expect(progress).toHaveBeenCalledTimes(1)
   })
 })

@@ -10,6 +10,14 @@ import { buildBillingCalculation } from './billing-calculation'
 import { parseLogOther } from './format'
 
 export const ANALYTICS_LOG_LIMIT = 2000
+const ANALYTICS_PAGE_SIZE = 100
+const ANALYTICS_CONCURRENCY = 3
+
+export type UsageAnalyticsResult = {
+  rows: UsageLog[]
+  total: number
+  truncated: boolean
+}
 
 type UsageDistribution = {
   name: string
@@ -22,34 +30,67 @@ type UsageDistribution = {
 export async function fetchUsageAnalytics(
   params: GetLogsParams,
   isAdmin: boolean,
-  signal?: AbortSignal
-) {
+  signal?: AbortSignal,
+  onProgress?: (result: UsageAnalyticsResult) => void
+): Promise<UsageAnalyticsResult> {
   const rows: UsageLog[] = []
   const seen = new Set<number>()
   let total = 0
-  for (let page = 1; rows.length < ANALYTICS_LOG_LIMIT; page++) {
-    signal?.throwIfAborted()
-    const response = requireServerSuccess(
-      await (isAdmin ? getAllLogs : getUserLogs)({
-        ...params,
-        p: page,
-        page_size: 100,
-      })
-    )
-    signal?.throwIfAborted()
-    total = response.data?.total ?? 0
-    const items = response.data?.items ?? []
-    const before = rows.length
-    for (const item of items) {
-      const row = usageLogSchema.parse(item)
-      if (!seen.has(row.id) && rows.length < ANALYTICS_LOG_LIMIT) {
-        rows.push(row)
-        seen.add(row.id)
+  const controller = new AbortController()
+  const cancel = () => controller.abort(signal?.reason)
+  signal?.throwIfAborted()
+  signal?.addEventListener('abort', cancel, { once: true })
+  const maxPages = Math.ceil(ANALYTICS_LOG_LIMIT / ANALYTICS_PAGE_SIZE)
+  try {
+    for (
+      let page = 1;
+      page <= maxPages && rows.length < ANALYTICS_LOG_LIMIT;
+    ) {
+      controller.signal.throwIfAborted()
+      // Publish the first page promptly, then overlap only a small batch of reads.
+      const batchSize =
+        page === 1
+          ? 1
+          : Math.min(
+              ANALYTICS_CONCURRENCY,
+              Math.ceil((total - rows.length) / ANALYTICS_PAGE_SIZE),
+              maxPages - page + 1
+            )
+      const responses = await Promise.all(
+        Array.from({ length: batchSize }, async (_, index) =>
+          requireServerSuccess(
+            await (isAdmin ? getAllLogs : getUserLogs)(
+              {
+                ...params,
+                p: page + index,
+                page_size: ANALYTICS_PAGE_SIZE,
+              },
+              controller.signal
+            )
+          )
+        )
+      )
+      controller.signal.throwIfAborted()
+      const before = rows.length
+      for (const response of responses) {
+        total = Math.max(total, response.data?.total ?? 0)
+        for (const item of response.data?.items ?? []) {
+          const row = usageLogSchema.parse(item)
+          if (!seen.has(row.id) && rows.length < ANALYTICS_LOG_LIMIT) {
+            rows.push(row)
+            seen.add(row.id)
+          }
+        }
       }
+      onProgress?.({ rows: [...rows], total, truncated: rows.length < total })
+      if (rows.length >= total || rows.length === before) break
+      page += batchSize
     }
-    if (rows.length >= total || !items.length || rows.length === before) break
+    return { rows, total, truncated: rows.length < total }
+  } finally {
+    signal?.removeEventListener('abort', cancel)
+    controller.abort()
   }
-  return { rows, total, truncated: rows.length < total }
 }
 
 export function summarizeUsage(rows: UsageLog[], bucketSeconds = 3600) {

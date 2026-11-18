@@ -10,6 +10,7 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -179,11 +180,154 @@ function Fixture() {
     </UsageLogsProvider>
   )
 }
+async function renderPanel() {
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'tester', role: 1 })
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const root = createRootRoute()
+  const auth = createRoute({ getParentRoute: () => root, id: '_authenticated' })
+  const logs = createRoute({
+    getParentRoute: () => auth,
+    path: '/usage-logs/$section',
+    component: Fixture,
+    validateSearch: (search: Record<string, unknown>) => search,
+  })
+  const router = createRouter({
+    routeTree: root.addChildren([auth.addChildren([logs])]),
+    history: createMemoryHistory({ initialEntries: ['/usage-logs/common'] }),
+  })
+  await router.load()
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  )
+  return router
+}
+function mockPendingAnalyticsPage() {
+  let finish!: (value: unknown) => void
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    const params = new URL(url, 'http://localhost').searchParams
+    if (params.get('p') === '1') {
+      return {
+        data: {
+          success: true,
+          data: {
+            total: 101,
+            items: Array.from({ length: 100 }, (_, index) =>
+              usageLogSchema.parse({
+                id: index + 1,
+                user_id: 1,
+                created_at: 7200,
+                type: 2,
+                content: '',
+                model_name: 'first-page-model',
+                prompt_tokens: 1,
+              })
+            ),
+          },
+        },
+      }
+    }
+    return new Promise((resolve) => {
+      finish = resolve
+    })
+  })
+  return { get, finish: (value: unknown) => finish(value) }
+}
 afterEach(() => {
   cleanup()
   client?.clear()
   vi.restoreAllMocks()
   useAuthStore.getState().auth.reset()
+})
+it('shows the first page immediately and clears loading when all pages finish', async () => {
+  const pending = mockPendingAnalyticsPage()
+  await renderPanel()
+  const region = await screen.findByRole('region', { name: 'Usage analytics' })
+  expect(region).toHaveAttribute('aria-busy', 'true')
+  expect(within(region).getByText('Analyzed 100 of 101 records')).toBeVisible()
+  expect(within(region).getByText('Loading...')).toBeVisible()
+  await waitFor(() => expect(pending.get).toHaveBeenCalledTimes(2))
+  await act(async () =>
+    pending.finish({
+      data: {
+        success: true,
+        data: {
+          total: 101,
+          items: [
+            usageLogSchema.parse({
+              id: 101,
+              user_id: 1,
+              created_at: 7200,
+              type: 2,
+              content: '',
+              model_name: 'last-page-model',
+              prompt_tokens: 1,
+            }),
+          ],
+        },
+      },
+    })
+  )
+  expect(await screen.findByText('Analyzed 101 of 101 records')).toBeVisible()
+  expect(region).toHaveAttribute('aria-busy', 'false')
+  expect(within(region).queryByText('Loading...')).not.toBeInTheDocument()
+  expect(
+    within(region).getByRole('button', { name: 'last-page-model' })
+  ).toBeVisible()
+})
+it('replaces partial charts with an error when a later page fails', async () => {
+  const pending = mockPendingAnalyticsPage()
+  await renderPanel()
+  await screen.findByText('Analyzed 100 of 101 records')
+  await waitFor(() => expect(pending.get).toHaveBeenCalledTimes(2))
+  await act(async () =>
+    pending.finish({
+      data: { success: false, message: 'Later page unavailable' },
+    })
+  )
+  expect(await screen.findByText('Failed to load')).toBeVisible()
+  expect(
+    screen.queryByRole('region', { name: 'Usage analytics' })
+  ).not.toBeInTheDocument()
+})
+it('cancels an unfinished filter and does not show its partial data in the new filter', async () => {
+  const pending = mockPendingAnalyticsPage()
+  const router = await renderPanel()
+  await screen.findByText('Analyzed 100 of 101 records')
+  await waitFor(() => expect(pending.get).toHaveBeenCalledTimes(2))
+  const previousSignal = pending.get.mock.calls[1][1]?.signal
+  let finishNext!: (value: unknown) => void
+  pending.get.mockImplementation(
+    async () =>
+      new Promise((resolve) => {
+        finishNext = resolve
+      })
+  )
+  await act(async () => {
+    await router.navigate({ href: '/usage-logs/common?model=different-model' })
+  })
+  expect(previousSignal?.aborted).toBe(true)
+  expect(
+    screen.queryByText('Analyzed 100 of 101 records')
+  ).not.toBeInTheDocument()
+  expect(screen.getByRole('status', { name: 'Loading...' })).toBeVisible()
+  await act(async () =>
+    pending.finish({
+      data: { success: true, data: { total: 101, items: [] } },
+    })
+  )
+  expect(
+    screen.queryByRole('region', { name: 'Usage analytics' })
+  ).not.toBeInTheDocument()
+  await waitFor(() => expect(finishNext).toBeTypeOf('function'))
+  await act(async () =>
+    finishNext({
+      data: { success: true, data: { total: 0, items: [] } },
+    })
+  )
+  expect(await screen.findByText('Analyzed 0 of 0 records')).toBeVisible()
 })
 it('selecting a model or group updates the shared table URL filters without losing the other filters', async () => {
   useAuthStore.getState().auth.setUser({ id: 1, username: 'tester', role: 1 })
@@ -262,7 +406,8 @@ it('selecting a model or group updates the shared table URL filters without losi
   )
   await waitFor(() =>
     expect(api.get).toHaveBeenCalledWith(
-      expect.stringContaining('model_name=model-a')
+      expect.stringContaining('model_name=model-a'),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
   )
   expect(

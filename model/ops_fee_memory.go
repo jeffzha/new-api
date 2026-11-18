@@ -143,6 +143,7 @@ func sharedLogFee(c *OpsFeeRuntime, log *Log, at time.Time) *OpsFee {
 		b, eb := time.Parse(time.RFC3339Nano, fee.ChargedAt)
 		newer := primary.Version > 0 && primary.Version >= fee.Version || primary.Version == 0 && primary.FetchedAt > fee.FetchedAt
 		if ea == nil && eb == nil && (a.After(b) || a.Equal(b) && newer) {
+			c.memory.rememberLog(log)
 			return primary
 		}
 	}

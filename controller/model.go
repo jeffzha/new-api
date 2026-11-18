@@ -258,92 +258,19 @@ func ListModels(c *gin.Context, modelType int) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "code": "invalid_include", "param": "include", "message": "Use include=pricing with the OpenAI-compatible model list"}})
 		return
 	}
-	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
-	if !acceptUnsetRatioModel {
-		userId := c.GetInt("id")
-		if userId > 0 {
-			userSettings, _ := model.GetUserSetting(userId, false)
-			if userSettings.AcceptUnsetRatioModel {
-				acceptUnsetRatioModel = true
-			}
-		}
-	}
-
-	userModelNames := make([]string, 0)
-	groups, err := getModelListGroups(c)
+	userOpenAiModels, err := visibleOpenAIModels(c, hasFilter || c.Query("include") == "pricing")
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "get user group failed",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Model catalog is temporarily unavailable"})
 		return
 	}
-	ownerGroups := groups.ownerGroups
-	providerBilledModels := make(map[string]struct{})
-	nonProviderBilledModels := make(map[string]struct{})
-	if !acceptUnsetRatioModel {
-		abilities, err := model.GetEnabledAbilitiesWithChannelsByGroups(ownerGroups)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"message": "get provider billing models failed",
-			})
-			return
-		}
-		for _, ability := range abilities {
-			if relay.TaskAdaptorUsesProviderBilling(ability.ChannelType, ability.Model) {
-				if _, hasNonProviderChannel := nonProviderBilledModels[ability.Model]; !hasNonProviderChannel {
-					providerBilledModels[ability.Model] = struct{}{}
-				}
-				continue
-			}
-			nonProviderBilledModels[ability.Model] = struct{}{}
-			delete(providerBilledModels, ability.Model)
-		}
-	}
-	modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-	var tokenModelLimit map[string]bool
-	if modelLimitEnable {
-		s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
-		if ok {
-			tokenModelLimit, _ = s.(map[string]bool)
-		}
-		if tokenModelLimit == nil {
-			tokenModelLimit = map[string]bool{}
-		}
-	}
-	models := service.GetGroupsEnabledModels(ownerGroups)
-	for _, modelName := range models {
-		if modelLimitEnable {
-			matchingName := ratio_setting.RoutingMatchModelName(modelName)
-			if !tokenModelLimit[modelName] && !tokenModelLimit[matchingName] {
-				continue
+	if filter != "" {
+		filtered := make([]dto.OpenAIModels, 0, len(userOpenAiModels))
+		for _, item := range userOpenAiModels {
+			if businessapi.ModelType(item.Id, item.SupportedEndpointTypes) == filter {
+				filtered = append(filtered, item)
 			}
 		}
-		if !acceptUnsetRatioModel {
-			if _, providerBilled := providerBilledModels[modelName]; !providerBilled && !helper.HasModelBillingConfig(modelName) {
-				continue
-			}
-		}
-		userModelNames = append(userModelNames, modelName)
-	}
-
-	ownerByModel := map[string]string{}
-	if len(ownerGroups) > 0 {
-		ownerByModel = getPreferredModelOwners(userModelNames, ownerGroups)
-	}
-	userOpenAiModels := make([]dto.OpenAIModels, 0, len(userModelNames))
-	if hasFilter || c.Query("include") == "pricing" {
-		// Refresh the existing catalog cache so explicitly configured endpoints are
-		// available even before anyone has opened the model square.
-		model.GetPricing()
-	}
-	for _, modelName := range userModelNames {
-		item := buildOpenAIModel(modelName, ownerByModel)
-		if filter != "" && businessapi.ModelType(item.Id, item.SupportedEndpointTypes) != filter {
-			continue
-		}
-		userOpenAiModels = append(userOpenAiModels, item)
+		userOpenAiModels = filtered
 	}
 
 	switch modelType {
@@ -449,4 +376,93 @@ func RetrieveModel(c *gin.Context, modelType int) {
 			"error": openAIError,
 		})
 	}
+}
+
+// visibleOpenAIModels is the shared API-key catalog boundary for discovery and marketplace.
+func visibleOpenAIModels(c *gin.Context, refreshMetadata bool) ([]dto.OpenAIModels, error) {
+	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
+	if !acceptUnsetRatioModel {
+		userId := c.GetInt("id")
+		if userId > 0 {
+			userSettings, _ := model.GetUserSetting(userId, false)
+			if userSettings.AcceptUnsetRatioModel {
+				acceptUnsetRatioModel = true
+			}
+		}
+	}
+
+	userModelNames := make([]string, 0)
+	groups, err := getModelListGroups(c)
+	if err != nil {
+		return nil, fmt.Errorf("get user group: %w", err)
+	}
+	ownerGroups := groups.ownerGroups
+	providerBilledModels := make(map[string]struct{})
+	nonProviderBilledModels := make(map[string]struct{})
+	if !acceptUnsetRatioModel {
+		abilities, err := model.GetEnabledAbilitiesWithChannelsByGroups(ownerGroups)
+		if err != nil {
+			return nil, fmt.Errorf("get provider billing models: %w", err)
+		}
+		for _, ability := range abilities {
+			if relay.TaskAdaptorUsesProviderBilling(ability.ChannelType, ability.Model) {
+				if _, hasNonProviderChannel := nonProviderBilledModels[ability.Model]; !hasNonProviderChannel {
+					providerBilledModels[ability.Model] = struct{}{}
+				}
+				continue
+			}
+			nonProviderBilledModels[ability.Model] = struct{}{}
+			delete(providerBilledModels, ability.Model)
+		}
+	}
+	modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
+	var tokenModelLimit map[string]bool
+	if modelLimitEnable {
+		s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
+		if ok {
+			tokenModelLimit, _ = s.(map[string]bool)
+		}
+		if tokenModelLimit == nil {
+			tokenModelLimit = map[string]bool{}
+		}
+	}
+	models := service.GetGroupsEnabledModels(ownerGroups)
+	publicModels, err := model.PublicModelNames(model.DB, models)
+	if err != nil {
+		return nil, fmt.Errorf("get public model metadata: %w", err)
+	}
+	for _, modelName := range models {
+		if !publicModels[modelName] {
+			continue
+		}
+		if modelLimitEnable {
+			matchingName := ratio_setting.RoutingMatchModelName(modelName)
+			if !tokenModelLimit[modelName] && !tokenModelLimit[matchingName] {
+				continue
+			}
+		}
+		if !acceptUnsetRatioModel {
+			if _, providerBilled := providerBilledModels[modelName]; !providerBilled && !helper.HasModelBillingConfig(modelName) {
+				continue
+			}
+		}
+		userModelNames = append(userModelNames, modelName)
+	}
+
+	ownerByModel := map[string]string{}
+	if len(ownerGroups) > 0 {
+		ownerByModel = getPreferredModelOwners(userModelNames, ownerGroups)
+	}
+	userOpenAiModels := make([]dto.OpenAIModels, 0, len(userModelNames))
+	if refreshMetadata {
+		// Refresh the existing catalog cache so explicitly configured endpoints are
+		// available even before anyone has opened the model square.
+		model.GetPricing()
+	}
+	for _, modelName := range userModelNames {
+		item := buildOpenAIModel(modelName, ownerByModel)
+		userOpenAiModels = append(userOpenAiModels, item)
+	}
+
+	return userOpenAiModels, nil
 }

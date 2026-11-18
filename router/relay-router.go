@@ -44,6 +44,11 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 	}
 
+	marketplaceRouter := router.Group("/v1/model-marketplace")
+	marketplaceRouter.Use(middleware.RouteTag("relay"), middleware.TokenAuth())
+	marketplaceRouter.GET("", controller.ModelMarketplace)
+	marketplaceRouter.GET("/detail", controller.ModelMarketplace)
+
 	requestRouter := router.Group("/v1/requests")
 	requestRouter.Use(middleware.RouteTag("relay"), middleware.TokenAuth())
 	requestRouter.GET("/:request_id", controller.BusinessRequestDetail)

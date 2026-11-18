@@ -70,8 +70,8 @@ func ModelMarketplace(c *gin.Context) {
 		}
 		page.Data = items
 	}
-	// Project only the selected page. Complex expressions and schemas are never
-	// recompiled or fetched remotely, and unrelated models do not pay conversion cost.
+	// Project only the selected page from the existing in-memory price snapshot.
+	// No remote price request is made here; unrelated models avoid conversion work.
 	if modelmarketplace.PriceProjection != nil {
 		selected := make([]model.Pricing, 0, len(page.Data))
 		for _, item := range page.Data {

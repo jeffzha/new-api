@@ -64,7 +64,7 @@ func StartConfigured(ctx context.Context, bindings ...func(Config, *model.OpsFee
 	}
 	w := New(model.DB, model.LOG_DB, c)
 	sharePush.Store(nil)
-	runtime := &model.OpsFeeRuntime{Connection: c.Connection, Since: c.Since}
+	runtime := &model.OpsFeeRuntime{Connection: c.Connection, Since: c.Since, SharedLogConnection: c.SharedLogConnection, SharedLogScope: c.SharedLogScope}
 	runtime.ShareResults = shareResults(ctx, c)
 	for _, bind := range bindings {
 		bind(c, runtime)

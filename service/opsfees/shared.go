@@ -28,6 +28,10 @@ func shareResults(ctx context.Context, c Config) func([]model.OpsFee, bool) {
 	sender := common.GetUUID()
 	queue := make(chan sharedFees, 64)
 	channel := "ops-fee-results:" + c.Connection
+	channels := []string{channel}
+	if c.SharedLogConnection != "" {
+		channels = append(channels, "ops-fee-results:"+c.SharedLogConnection)
+	}
 	go func() {
 		for {
 			select {
@@ -45,7 +49,7 @@ func shareResults(ctx context.Context, c Config) func([]model.OpsFee, bool) {
 		}
 	}()
 	go func() {
-		sub := client.Subscribe(ctx, channel)
+		sub := client.Subscribe(ctx, channels...)
 		defer sub.Close()
 		messages := sub.Channel()
 		for {
@@ -64,6 +68,10 @@ func shareResults(ctx context.Context, c Config) func([]model.OpsFee, bool) {
 					continue
 				}
 				if len(value.Sent) > 0 {
+					// A shared display source must never reach project debit handling.
+					if message.Channel != channel {
+						continue
+					}
 					if observer := receiptObserver.Load(); observer != nil {
 						if value.ReceivedAt > 0 {
 							(*observer)(value.Sent, value.Response, time.Unix(0, value.ReceivedAt))
@@ -75,12 +83,19 @@ func shareResults(ctx context.Context, c Config) func([]model.OpsFee, bool) {
 				if err != nil {
 					continue
 				}
-				rows, _, _, err := decodePage(raw, c.Connection, time.Now().Unix())
+				connection := c.Connection
+				if message.Channel != channel {
+					connection = c.SharedLogConnection
+				}
+				rows, _, _, err := decodePage(raw, connection, time.Now().Unix())
 				if err == nil {
 					for i := range rows {
 						rows[i].Version = value.Version
+						if value.Version > 0 {
+							rows[i].FetchedAt = time.Unix(0, value.Version).Unix()
+						}
 					}
-					model.AcceptSharedOpsFeeResults(c.Connection, rows, value.Feed)
+					model.AcceptSharedOpsFeeResults(connection, rows, value.Feed)
 				}
 			}
 		}

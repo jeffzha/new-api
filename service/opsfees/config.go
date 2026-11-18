@@ -15,6 +15,7 @@ import (
 type Config struct {
 	BaseURL, KeyID, Secret, Connection                                string
 	ReceiptKeyID                                                      string
+	SharedLogConnection, SharedLogScope                               string
 	ActiveInterval, IdleInterval, Timeout, RoundBudget, MinRequestGap time.Duration
 	MaxPages                                                          int
 	Since                                                             int64
@@ -62,5 +63,16 @@ func LoadConfig() (Config, error) {
 	}
 	hash := sha256.Sum256([]byte(c.BaseURL + "\n" + c.KeyID + "\n" + os.Getenv("OPS_FEES_NAMESPACE")))
 	c.Connection = hex.EncodeToString(hash[:])
+	c.SharedLogConnection = os.Getenv("OPS_FEES_SHARED_LOG_CONNECTION")
+	c.SharedLogScope = os.Getenv("OPS_FEES_SHARED_LOG_SCOPE")
+	if c.SharedLogConnection != "" {
+		raw, err := hex.DecodeString(c.SharedLogConnection)
+		if err != nil || len(raw) != 32 || c.SharedLogConnection == c.Connection || strings.ToLower(c.SharedLogConnection) != c.SharedLogConnection {
+			return c, errors.New("invalid OPS_FEES_SHARED_LOG_CONNECTION")
+		}
+	}
+	if len(c.SharedLogScope) > 160 || strings.TrimSpace(c.SharedLogScope) != c.SharedLogScope {
+		return c, errors.New("invalid OPS_FEES_SHARED_LOG_SCOPE")
+	}
 	return c, nil
 }

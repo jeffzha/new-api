@@ -108,9 +108,46 @@ func (m *opsFeeMemory) rememberLog(log *Log) {
 	if e := m.entries[log.RequestId]; e != nil {
 		v := e.Value.(*opsFeeMemoryEntry)
 		if v.fee.UserID == strconv.Itoa(log.UserId) && v.fee.Model == log.ModelName {
-			v.log = &Log{RequestId: log.RequestId, UserId: log.UserId, ModelName: log.ModelName, Type: log.Type}
+			var meta struct {
+				Scope string `json:"billing_scope"`
+			}
+			other := "invalid"
+			if log.Other == "" || common.UnmarshalJsonStr(log.Other, &meta) == nil {
+				raw, _ := common.Marshal(meta)
+				other = string(raw)
+			}
+			v.log = &Log{RequestId: log.RequestId, UserId: log.UserId, ModelName: log.ModelName, Type: log.Type, Other: other}
 		}
 	}
+}
+
+// Shared results are display-only and only apply to the configured log scope.
+// An actual authorized log read is still required before returning any amount.
+func sharedLogFee(c *OpsFeeRuntime, log *Log, at time.Time) *OpsFee {
+	if c.SharedLogConnection == "" || log == nil || log.Type != LogTypeConsume {
+		return nil
+	}
+	var meta struct {
+		Scope string `json:"billing_scope"`
+	}
+	if log.Other != "" && common.UnmarshalJsonStr(log.Other, &meta) != nil || meta.Scope != c.SharedLogScope || meta.Scope == c.Scope {
+		return nil
+	}
+	fee, _ := c.sharedMemory.get(log.RequestId, at)
+	if fee == nil || fee.UserID != strconv.Itoa(log.UserId) || fee.Model != log.ModelName {
+		return nil
+	}
+	// The normal feed continues to own later corrections and refunds.
+	if primary, _ := c.memory.get(log.RequestId, at); primary != nil && primary.UserID == fee.UserID && primary.Model == fee.Model && primary.Status != "waiting" {
+		a, ea := time.Parse(time.RFC3339Nano, primary.ChargedAt)
+		b, eb := time.Parse(time.RFC3339Nano, fee.ChargedAt)
+		newer := primary.Version > 0 && primary.Version >= fee.Version || primary.Version == 0 && primary.FetchedAt > fee.FetchedAt
+		if ea == nil && eb == nil && (a.After(b) || a.Equal(b) && newer) {
+			return primary
+		}
+	}
+	c.sharedMemory.rememberLog(log)
+	return fee
 }
 
 // RememberOpsFeePending runs after a successful consume-log commit. New calls
@@ -156,6 +193,17 @@ func LogFeeLogs(ctx context.Context, ids []string, userID int) ([]*Log, error) {
 			}
 		}
 		c.memory.Unlock()
+		if log == nil && c.SharedLogConnection != "" {
+			c.sharedMemory.Lock()
+			if e := c.sharedMemory.entries[id]; e != nil {
+				v := e.Value.(*opsFeeMemoryEntry)
+				if time.Now().Before(v.expires) && v.log != nil {
+					copy := *v.log
+					log = &copy
+				}
+			}
+			c.sharedMemory.Unlock()
+		}
 		if log == nil {
 			missing = append(missing, id)
 		} else if userID == 0 || log.UserId == userID {
@@ -168,7 +216,7 @@ func LogFeeLogs(ctx context.Context, ids []string, userID int) ([]*Log, error) {
 	key := strconv.Itoa(userID) + "\n" + strings.Join(missing, "\n")
 	value, err, _ := c.memory.loads.Do(key, func() (any, error) {
 		var rows []*Log
-		q := LOG_DB.WithContext(ctx).Select("request_id,user_id,model_name,type").Where("request_id IN ? AND type = ?", missing, LogTypeConsume)
+		q := LOG_DB.WithContext(ctx).Select("request_id,user_id,model_name,type,other").Where("request_id IN ? AND type = ?", missing, LogTypeConsume)
 		if userID > 0 {
 			q = q.Where("user_id = ?", userID)
 		}
@@ -209,14 +257,21 @@ func AcceptOpsFeeResults(connection string, rows []OpsFee, feed bool) {
 // Shared delivery never republishes its own messages.
 func AcceptSharedOpsFeeResults(connection string, rows []OpsFee, feed bool) {
 	c := opsFeeRuntime.Load()
-	if c == nil || c.Connection != connection {
+	if c == nil {
 		return
+	}
+	memory := c.memory
+	if c.Connection != connection {
+		if c.SharedLogConnection == "" || c.SharedLogConnection != connection {
+			return
+		}
+		memory = c.sharedMemory
 	}
 	for _, row := range rows {
 		if row.RequestID == "" || row.UserID == "" || row.Model == "" || row.Connection != "" && row.Connection != connection {
 			continue
 		}
-		c.memory.put(row, feed, time.Now())
+		memory.put(row, feed, time.Now())
 	}
 }
 

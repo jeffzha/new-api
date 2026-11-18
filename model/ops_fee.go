@@ -48,6 +48,11 @@ type OpsFeeRuntime struct {
 	CachedReceipt func(string, int, string, time.Time) *OpsFee
 	memory        *opsFeeMemory
 	ShareResults  func([]OpsFee, bool)
+	// SharedLogConnection is an explicit read-only binding for another service
+	// which writes to this same usage-log database. It never supplies wallet data.
+	SharedLogConnection string
+	SharedLogScope      string
+	sharedMemory        *opsFeeMemory
 }
 
 var opsFeeRuntime atomic.Pointer[OpsFeeRuntime]
@@ -74,6 +79,7 @@ func NotifyOpsFees() {
 func ConfigureOpsFees(config *OpsFeeRuntime) {
 	if config != nil {
 		config.memory = newOpsFeeMemory()
+		config.sharedMemory = newOpsFeeMemory()
 	}
 	opsFeeLastActivity.Store(0)
 	opsFeeRuntime.Store(config)
@@ -152,6 +158,10 @@ func AttachOpsFees(ctx context.Context, logs []*Log) error {
 			continue
 		}
 		log.OpsFee = &OpsFee{Status: "waiting", Currency: "CNY"}
+		if cached := sharedLogFee(config, log, now); cached != nil {
+			log.OpsFee = cached
+			continue
+		}
 		if cached, _ := config.memory.get(log.RequestId, now); cached != nil && cached.UserID == strconv.Itoa(log.UserId) && cached.Model == log.ModelName {
 			log.OpsFee = cached
 			if cached.Status == "waiting" && config.CachedReceipt != nil {

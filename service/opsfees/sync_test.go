@@ -74,6 +74,107 @@ func TestSharedFeeNoticeUsesBoundedBackgroundDelivery(t *testing.T) {
 	}
 }
 
+func TestSharedLogFeeSourcePreservesScopeAndAuthorization(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	oldClient, oldEnabled, oldDB, oldLogs, oldType := common.RDB, common.RedisEnabled, model.DB, model.LOG_DB, common.MainDatabaseType()
+	common.RDB, common.RedisEnabled = client, true
+	dialect := os.Getenv("OPS_SHARED_FEE_TEST_DIALECT")
+	if dialect == "" {
+		dialect = "sqlite"
+	}
+	db := testDB(t, dialect)
+	model.DB, model.LOG_DB = db, db
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		client.Close()
+		common.RDB, common.RedisEnabled, model.DB, model.LOG_DB = oldClient, oldEnabled, oldDB, oldLogs
+		common.SetMainDatabaseType(oldType)
+		model.ConfigureOpsFees(nil)
+	})
+	source := strings.Repeat("a", 64)
+	for key, value := range map[string]string{
+		"OPS_FEES_ENABLED": "true", "OPS_FEES_URL": "https://ops.example.com/test",
+		"OPS_FEES_KEY_ID": "project", "OPS_FEES_SECRET": "fee-reader-fixture-secret",
+		"OPS_FEES_SHARED_LOG_CONNECTION": source, "OPS_FEES_SHARED_LOG_SCOPE": "",
+	} {
+		t.Setenv(key, value)
+	}
+	runtimeConfig, err := LoadConfig()
+	require.NoError(t, err)
+	model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: runtimeConfig.Connection, Scope: "project-a", SharedLogConnection: source})
+	require.NotNil(t, shareResults(ctx, runtimeConfig))
+	logs := []*model.Log{
+		{RequestId: "product", UserId: 15, ModelName: "sample", Type: 2, Other: "{}"},
+		{RequestId: "project", UserId: 15, ModelName: "sample", Type: 2, Other: "{\"billing_scope\":\"project-a\"}"},
+		{RequestId: "malformed", UserId: 15, ModelName: "sample", Type: 2, Other: "invalid"},
+	}
+	require.NoError(t, db.AutoMigrate(&model.Log{}))
+	require.NoError(t, model.MigrateOpsFees(db))
+	require.NoError(t, db.Create(logs).Error)
+	require.NoError(t, model.AttachOpsFees(ctx, logs))
+	require.Eventually(t, func() bool {
+		n, _ := client.PubSubNumSub(ctx, "ops-fee-results:"+source).Result()
+		return n["ops-fee-results:"+source] > 0
+	}, time.Second, time.Millisecond)
+	amount := "0.000006"
+	debits := make(chan struct{}, 1)
+	ConfigureReceiptObserver(func(_, _ []byte, _ time.Time) { debits <- struct{}{} })
+	t.Cleanup(func() { ConfigureReceiptObserver(nil) })
+	debit, err := common.Marshal(sharedFees{Sender: "product-slot", Sent: []byte(`{"events":[]}`), Response: []byte(`{"data":{"charges":[]}}`)})
+	require.NoError(t, err)
+	require.NoError(t, client.Publish(ctx, "ops-fee-results:"+source, debit).Err())
+	raw, err := common.Marshal(sharedFees{Sender: "product-slot", Items: []Fee{
+		{RequestID: "product", UserID: "15", Model: "sample", Amount: &amount, ChargedAt: "2026-11-18T01:00:00Z"},
+		{RequestID: "project", UserID: "15", Model: "sample", Amount: &amount, ChargedAt: "2026-11-18T01:00:00Z"},
+		{RequestID: "malformed", UserID: "15", Model: "sample", Amount: &amount, ChargedAt: "2026-11-18T01:00:00Z"},
+	}})
+	require.NoError(t, err)
+	require.NoError(t, client.Publish(ctx, "ops-fee-results:"+source, raw).Err())
+	require.Eventually(t, func() bool {
+		require.NoError(t, model.AttachOpsFees(ctx, logs))
+		return logs[0].OpsFee.Status == "available"
+	}, time.Second, time.Millisecond)
+	assert.Equal(t, amount, *logs[0].OpsFee.Amount)
+	assert.Empty(t, debits, "display-only notices must never invoke project debit handling")
+	assert.Equal(t, "waiting", logs[1].OpsFee.Status, "product results must never serve project invocations")
+	assert.Equal(t, "waiting", logs[2].OpsFee.Status, "malformed scope must fail closed")
+	reads := 0
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("count_shared_fee_reads", func(*gorm.DB) { reads++ }))
+	rows, err := model.LogFeeLogs(ctx, []string{"product"}, 15)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.NoError(t, model.AttachOpsFees(ctx, rows))
+	assert.Equal(t, amount, *rows[0].OpsFee.Amount)
+	denied, err := model.LogFeeLogs(ctx, []string{"product"}, 16)
+	require.NoError(t, err)
+	assert.Empty(t, denied)
+	assert.Zero(t, reads, "authorized hot refresh must use memory only")
+	wrong := *logs[0]
+	wrong.UserId = 16
+	require.NoError(t, model.AttachOpsFees(ctx, []*model.Log{&wrong}))
+	assert.Equal(t, "waiting", wrong.OpsFee.Status)
+	// A cold authorized lookup must select the scope before using the notice.
+	model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: runtimeConfig.Connection, Scope: "project-a", SharedLogConnection: source})
+	model.AcceptSharedOpsFeeResults(source, []model.OpsFee{{Connection: source, RequestID: "product", UserID: "15", Model: "sample", Amount: &amount, Currency: "CNY", Status: "available", ChargedAt: "2026-11-18T01:00:00Z"}}, false)
+	rows, err = model.LogFeeLogs(ctx, []string{"product"}, 15)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, amount, *rows[0].OpsFee.Amount)
+	reads = 0
+	_, err = model.LogFeeLogs(ctx, []string{"product"}, 15)
+	require.NoError(t, err)
+	assert.Zero(t, reads)
+	// A later authoritative feed correction wins over the immediate notice.
+	zero := "0"
+	cfg, err := LoadConfig()
+	require.NoError(t, err)
+	model.AcceptOpsFeeResults(cfg.Connection, []model.OpsFee{{RequestID: "product", UserID: "15", Model: "sample", Amount: &zero, Currency: "CNY", Status: "available", ChargedAt: "2026-11-18T02:00:00Z", FetchedAt: time.Now().Unix()}}, true)
+	require.NoError(t, model.AttachOpsFees(ctx, logs[:1]))
+	assert.Equal(t, "0", *logs[0].OpsFee.Amount)
+}
+
 func TestPushLogFeeMemoryAndCorrection(t *testing.T) {
 	oldDB, oldLogs := model.DB, model.LOG_DB
 	db := testDB(t, "sqlite")

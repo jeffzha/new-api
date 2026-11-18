@@ -4,18 +4,50 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestOiiOiiSuper2UsesExistingDoubaoNativeContract(t *testing.T) {
 	plugin := loadTaskPlugin(t, "oiioii")
-	for _, model := range []string{"doubao-seedance-2-0-260128", "doubao-seedance-2-5-260628"} {
+	for model, upstream := range map[string]string{
+		"doubao-seedance-2.0":        "doubao-seedance-2-0-260128",
+		"doubao-seedance-2.5":        "doubao-seedance-2-5-260628",
+		"doubao-seedance-2-0":        "doubao-seedance-2-0-260128",
+		"doubao-seedance-2-5":        "doubao-seedance-2-5-260628",
+		"doubao-seedance-2-0-260128": "doubao-seedance-2-0-260128",
+		"doubao-seedance-2-5-260628": "doubao-seedance-2-5-260628",
+	} {
 		t.Run(model, func(t *testing.T) {
+			assert.Contains(t, plugin.Meta.Models, model)
+			if model == "doubao-seedance-2.0" || model == "doubao-seedance-2.5" {
+				candidates := jsplugin.DefaultRegistry.Generation().LookupEndpointCandidates("POST", "/v1/videos", model)
+				keys := make([]string, 0, len(candidates))
+				for _, candidate := range candidates {
+					keys = append(keys, candidate.Plugin.Meta.Key)
+				}
+				assert.ElementsMatch(t, []string{"doubao", "oiioii"}, keys, "existing native channels must remain routing candidates")
+				_, claimedResponses := jsplugin.DefaultRegistry.Generation().LookupEndpoint("POST", "/v1/responses", model)
+				assert.False(t, claimedResponses, "renaming video models must not claim a new Responses endpoint")
+			}
 			body := map[string]any{
 				"model": model, "duration": float64(4), "resolution": "480p", "ratio": "16:9",
 				"generate_audio": false, "watermark": false,
 				"content": []any{map[string]any{"type": "text", "text": "A red wooden cube on a white tabletop"}},
+			}
+			if model == "doubao-seedance-2.0" || model == "doubao-seedance-2.5" {
+				legacy := loadTaskPlugin(t, "doubao")
+				value, err := legacy.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"}, map[string]any{
+					"model": model, "body": map[string]any{"kind": "json", "value": body},
+				})
+				require.NoError(t, err)
+				legacyJSON, err := common.Marshal(value)
+				require.NoError(t, err)
+				var legacyIntent map[string]any
+				require.NoError(t, common.Unmarshal(legacyJSON, &legacyIntent))
+				assert.Equal(t, model, legacyIntent["model"])
+				assert.Equal(t, body, legacyIntent["requestBody"], "existing native channels must receive the unchanged request")
 			}
 			value, err := plugin.Engine.CallPath(t.Context(), "native", []string{"createTask"}, map[string]any{
 				"body": map[string]any{"kind": "json", "value": body},
@@ -28,20 +60,29 @@ func TestOiiOiiSuper2UsesExistingDoubaoNativeContract(t *testing.T) {
 			assert.Equal(t, model, intent["model"])
 			assert.Equal(t, "text_to_video", intent["action"])
 			ctx := map[string]any{
-				"model": model, "upstreamModel": model, "baseUrl": "https://api.oiioii.tv",
+				"model": model, "upstreamModel": upstream, "baseUrl": "https://api.oiioii.tv",
 				"apiKey": "test-key", "requestBody": intent["requestBody"],
 			}
 			request := callTaskPlugin(t, plugin, "buildSubmitRequest", ctx)
 			assert.Equal(t, "https://api.oiioii.tv/api/v3/contents/generations/tasks", request["url"])
 			assert.Equal(t, "POST", request["method"])
 			assert.Equal(t, "Bearer test-key", request["headers"].(map[string]any)["Authorization"])
+			body["model"] = upstream
 			assert.Equal(t, body, request["body"], "native parameters and explicit false switches must survive relay")
+			body["model"] = model
+			decoded, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"}, map[string]any{
+				"body": map[string]any{"kind": "json", "value": body},
+			})
+			require.NoError(t, err)
+			decodedJSON, err := common.Marshal(decoded)
+			require.NoError(t, err)
+			assert.JSONEq(t, string(encoded), string(decodedJSON), "both entry points must preserve the public billing identity")
 			usage := callTaskPlugin(t, plugin, "extractUsage", ctx)
 			assert.Equal(t, map[string]any{"tokens": float64(38430), "resolution": "480p", "video_input": "none"}, usage)
 			ctx["model"] = "public-seedance"
 			mapped := callTaskPlugin(t, plugin, "buildSubmitRequest", ctx)
-			assert.Equal(t, model, mapped["body"].(map[string]any)["model"])
-			assert.Equal(t, model, mapped["rewriteModel"])
+			assert.Equal(t, upstream, mapped["body"].(map[string]any)["model"])
+			assert.Equal(t, upstream, mapped["rewriteModel"])
 		})
 	}
 }
@@ -98,6 +139,17 @@ func TestOiiOiiSuper2TaskResultUsageAndDownload(t *testing.T) {
 
 func TestOiiOiiSuper2RejectsUnsupportedOptionsBeforeDispatch(t *testing.T) {
 	plugin := loadTaskPlugin(t, "oiioii")
+	for _, model := range []string{"doubao-seedance-2.5", "doubao-seedance-2-5", "doubao-seedance-2-5-260628"} {
+		_, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"}, map[string]any{
+			"body": map[string]any{"kind": "json", "value": map[string]any{"model": model, "prompt": "A red cube", "resolution": "4k"}},
+		})
+		require.ErrorContains(t, err, "does not support 4k")
+	}
+	_, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
+		"model": "custom-alias", "upstreamModel": "doubao-seedance-2-5-260628",
+		"requestBody": map[string]any{"metadata": map[string]any{"resolution": "4k"}},
+	})
+	require.ErrorContains(t, err, "does not support 4k")
 	for _, extra := range []map[string]any{
 		{"duration": 0}, {"duration": 16}, {"duration": 4.5},
 		{"resolution": "invalid"}, {"seed": 0}, {"camera_fixed": false},

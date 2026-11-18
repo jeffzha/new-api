@@ -7,7 +7,7 @@ export const meta = {
     en: "Volcengine Doubao Seedance video generation (text-to-video, image-to-video, and video-to-video)",
     zh: "火山引擎豆包 Seedance 视频生成（文生视频、图生视频、视频生视频）",
   },
-  version: "1.0.2",
+  version: "1.0.3",
   author: { name: "QuantumNous" },
   // Channel 1000 is also allowed to advertise the shared OpenAI video
   // protocol for the same model names.  After distribution the host swaps
@@ -15,6 +15,8 @@ export const meta = {
   // only makes the channel visible to /v1/videos candidate selection.
   channelTypes: [54, 45, 1000],
   models: [
+    "doubao-seedance-2.0",
+    "doubao-seedance-2.5",
     "doubao-seedance-1-0-pro-250528",
     "doubao-seedance-1-0-lite-t2v",
     "doubao-seedance-1-0-lite-i2v",
@@ -64,7 +66,11 @@ export const meta = {
     { method: "POST", path: "/doubao/api/v3/contents/generations/tasks", type: "submit", decode: "createTask", render: "taskCreated" },
     { method: "GET", path: "/doubao/api/v3/contents/generations/tasks/:task_id", type: "query", render: "taskStatus" },
   ],
-  protocols: [{ name: "openai_responses", supports: ["stream", "sync", "background"] }, "openai_video"],
+  protocols: [{
+    name: "openai_responses",
+    models: ["doubao-seedance-1-0-pro-250528", "doubao-seedance-1-0-lite-t2v", "doubao-seedance-1-0-lite-i2v", "doubao-seedance-1-5-pro-251215", "doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128", "doubao-seedance-2-0-mini-260615", "doubao-seedance-2-5-260628"],
+    supports: ["stream", "sync", "background"],
+  }, "openai_video"],
 };
 
 function trimmed(value) {

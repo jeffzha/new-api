@@ -4,10 +4,10 @@ export const meta = {
   name: "OiiOii Seedance",
   icon: "Doubao.Color",
   description: { en: "Seedance video generation through OiiOii Super2", zh: "通过 OiiOii Super2 生成 Seedance 视频" },
-  version: "1.0.1",
+  version: "1.0.3",
   author: { name: "QuantumNous" },
   baseUrl: "https://api.oiioii.tv",
-  models: ["doubao-seedance-2-0-260128", "doubao-seedance-2-5-260628"],
+  models: ["doubao-seedance-2.0", "doubao-seedance-2.5", "doubao-seedance-2-0", "doubao-seedance-2-5", "doubao-seedance-2-0-260128", "doubao-seedance-2-5-260628"],
   fetchMode: "per_task",
   usageSchema: {
     tokens: { type: "number", unit: "token", description: { en: "Billing token unit price", zh: "计费 Token 单价" } },
@@ -50,7 +50,7 @@ function normalize(body) {
   source.resolution = String(source.resolution || (["480p", "720p", "1080p", "4k"].includes(size) ? size : "720p")).toLowerCase();
   delete source.size;
   if (!meta.usageSchema.resolution.enum.includes(source.resolution)) throw new Error("unsupported resolution");
-  if (model === "doubao-seedance-2-5-260628" && source.resolution === "4k") throw new Error("Seedance 2.5 does not support 4k");
+  if (["doubao-seedance-2.5", "doubao-seedance-2-5", "doubao-seedance-2-5-260628"].includes(model) && source.resolution === "4k") throw new Error("Seedance 2.5 does not support 4k");
   if (source.ratio !== undefined && !["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"].includes(source.ratio)) throw new Error("unsupported ratio");
   for (const field of ["generate_audio", "watermark"]) {
     if (source[field] !== undefined && typeof source[field] !== "boolean") throw new Error(field + " must be a boolean");
@@ -85,6 +85,7 @@ export const protocols = {
 
 export function buildSubmitRequest(ctx) {
   const body = Object.assign({}, ctx.requestBody.metadata, { model: ctx.upstreamModel || ctx.model });
+  if (["doubao-seedance-2.5", "doubao-seedance-2-5", "doubao-seedance-2-5-260628"].includes(body.model) && body.resolution === "4k") throw new Error("Seedance 2.5 does not support 4k");
   return { url: ctx.baseUrl + "/api/v3/contents/generations/tasks", method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + ctx.apiKey }, body: body, rewriteModel: body.model };
 }
 

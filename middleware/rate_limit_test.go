@@ -243,6 +243,51 @@ func TestGlobalAPIRateLimitDoesNotGateCaddyStatus(t *testing.T) {
 	assert.Equal(t, http.StatusOK, performRateLimitRequest(router, "/api/status", remote).Code)
 }
 
+func TestGlobalAPIRateLimitIsolatesEpayCallbacks(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, backend := range []string{"redis", "memory"} {
+		t.Run(backend, func(t *testing.T) {
+			_, client := useRateLimitMiniRedis(t)
+			common.RedisEnabled = backend == "redis"
+			previousEnabled, previousLimit, previousDuration := common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration
+			common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration = true, 1, 60
+			t.Cleanup(func() {
+				common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration = previousEnabled, previousLimit, previousDuration
+			})
+			router := gin.New()
+			require.NoError(t, router.SetTrustedProxies(nil))
+			router.Use(GlobalAPIRateLimit())
+			router.NoRoute(func(c *gin.Context) { c.Status(http.StatusNoContent) })
+			for _, request := range []struct {
+				method string
+				path   string
+				status int
+			}{
+				{http.MethodGet, "/api/log/", http.StatusNoContent},
+				{http.MethodGet, "/api/log/", http.StatusTooManyRequests},
+				{http.MethodGet, "/api/user/epay/notify?out_trade_no=paid-order", http.StatusNoContent},
+				{http.MethodPost, "/api/user/epay/notify", http.StatusTooManyRequests},
+				{http.MethodPost, "/api/subscription/epay/notify", http.StatusNoContent},
+				{http.MethodGet, "/api/subscription/epay/notify", http.StatusTooManyRequests},
+				{http.MethodGet, "/api/user/epay/notify/other", http.StatusTooManyRequests},
+				{http.MethodPut, "/api/user/epay/notify", http.StatusTooManyRequests},
+				{http.MethodGet, "/api/status", http.StatusNoContent},
+			} {
+				req := httptest.NewRequest(request.method, request.path, nil)
+				req.RemoteAddr = "192.0.2.80:12345"
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, req)
+				assert.Equal(t, request.status, response.Code, "%s %s", request.method, request.path)
+			}
+			if backend == "redis" {
+				require.NoError(t, client.Close())
+				response := performRateLimitRequest(router, "/api/user/epay/notify", "192.0.2.81:12345")
+				assert.Equal(t, http.StatusInternalServerError, response.Code)
+			}
+		})
+	}
+}
+
 func TestRedisEmailVerificationRateLimiterPreservesResponseAndTTL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	redisServer, _ := useRateLimitMiniRedis(t)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/Calcium-Ion/go-epay/epay"
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -154,15 +155,38 @@ func TestVerifiedEpayWebhookStoresSignedCNYMoneyAndProviderTradeNumber(t *testin
 		operation_setting.PayAddress, operation_setting.EpayId, operation_setting.EpayKey, operation_setting.PayMethods = oldAddress, oldID, oldKey, oldMethods
 	})
 	user := setupSnapshotWebhookDB(t, model.PaymentProviderEpay)
+	oldEnabled, oldLimit, oldDuration := common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration
+	common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration = true, 4, 60
+	t.Cleanup(func() {
+		common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration = oldEnabled, oldLimit, oldDuration
+	})
 	router := gin.New()
-	router.POST("/epay", EpayNotify)
+	router.Use(middleware.GlobalAPIRateLimit())
+	router.POST("/api/user/epay/notify", EpayNotify)
+	router.GET("/api/log/", func(c *gin.Context) { c.Status(http.StatusOK) })
+	for i := range 5 {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/log/", nil))
+		if i < 4 {
+			require.Equal(t, http.StatusOK, response.Code)
+		} else {
+			require.Equal(t, http.StatusTooManyRequests, response.Code)
+		}
+	}
+	invalid := httptest.NewRequest(http.MethodPost, "/api/user/epay/notify", strings.NewReader("out_trade_no=webhook-snapshot&money=12.34&trade_status=TRADE_SUCCESS&sign=invalid"))
+	invalid.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	invalidResponse := httptest.NewRecorder()
+	router.ServeHTTP(invalidResponse, invalid)
+	require.Equal(t, "fail", invalidResponse.Body.String())
+	require.NoError(t, model.DB.First(user, user.Id).Error)
+	require.Zero(t, user.Quota)
 	for i, money := range []string{"12.34", "12.34", "99.00"} {
 		params := epay.GenerateParams(map[string]string{"pid": "123", "out_trade_no": "webhook-snapshot", "trade_no": "epay_provider_trade", "type": "alipay", "money": money, "name": "wallet", "trade_status": "TRADE_SUCCESS"}, operation_setting.EpayKey)
 		form := url.Values{}
 		for key, value := range params {
 			form.Set(key, value)
 		}
-		request := httptest.NewRequest(http.MethodPost, "/epay", strings.NewReader(form.Encode()))
+		request := httptest.NewRequest(http.MethodPost, "/api/user/epay/notify", strings.NewReader(form.Encode()))
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)

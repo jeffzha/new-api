@@ -38,6 +38,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -87,6 +88,7 @@ type Config struct {
 	URL, KeyID, Secret string
 	Since              int64  // first run only: start after the last log older than this; 0 = start at the newest log
 	Spec               string // SpecV1 (default) or SpecV11
+	Currency           string // empty/CNY preserves the domestic protocol; USD opts into native amounts
 }
 
 type Pusher struct {
@@ -103,16 +105,16 @@ func StartConfigured(ctx context.Context) error {
 	if base == "" {
 		return nil
 	}
-	config := Config{URL: base, KeyID: os.Getenv("OPS_PUSH_KEY_ID"), Secret: os.Getenv("OPS_PUSH_SECRET")}
-	if err := config.validate(); err != nil {
-		return err
-	}
+	config := Config{URL: base, KeyID: os.Getenv("OPS_PUSH_KEY_ID"), Secret: os.Getenv("OPS_PUSH_SECRET"), Currency: os.Getenv("OPS_PUSH_CURRENCY")}
 	switch config.Spec = os.Getenv("OPS_PUSH_SPEC"); config.Spec {
 	case "", SpecV1:
 		config.Spec = SpecV1
 	case SpecV11:
 	default:
 		return errors.New("OPS_PUSH_SPEC must be v1 or v1.1")
+	}
+	if err := config.validate(); err != nil {
+		return err
 	}
 	if raw := os.Getenv("OPS_PUSH_SINCE"); raw != "" {
 		since, err := strconv.ParseInt(raw, 10, 64)
@@ -134,6 +136,12 @@ func StartConfigured(ctx context.Context) error {
 }
 
 func (c Config) validate() error {
+	if c.Currency != "" && c.Currency != "CNY" && c.Currency != "USD" {
+		return errors.New("OPS_PUSH_CURRENCY must be CNY or USD")
+	}
+	if c.Currency == "USD" && c.Spec != SpecV11 {
+		return errors.New("USD push requires OPS_PUSH_SPEC=v1.1")
+	}
 	parsed, err := url.Parse(c.URL)
 	loopback := parsed != nil && parsed.Scheme == "http" && (parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost")
 	if err != nil || (parsed.Scheme != "https" && !loopback) || parsed.Host == "" || parsed.User != nil ||
@@ -280,7 +288,15 @@ func (p *Pusher) build(state *State) (bool, error) {
 		events, skipped := make([]map[string]any, 0, len(logs)), 0
 		for _, log := range logs {
 			event := Event(log, names[log.ChannelId])
-			if v11 {
+			if p.Config.Currency == "USD" {
+				if !v11 {
+					return false, errors.New("USD push requires v1.1")
+				}
+				event, err = EventUSD(log, names[log.ChannelId], topups[log.Id], conversion)
+				if err != nil {
+					return false, fmt.Errorf("USD log %d: %w", log.Id, err)
+				}
+			} else if v11 {
 				event = EventV11(log, names[log.ChannelId], topups[log.Id], conversion)
 			}
 			if event != nil {
@@ -381,7 +397,14 @@ func (p *Pusher) send(state *State) time.Duration {
 	response.Body.Close()
 	if response.StatusCode == http.StatusOK {
 		var ok okBody
-		_ = common.Unmarshal(raw, &ok)
+		decodeErr := common.Unmarshal(raw, &ok)
+		if p.Config.Currency == "USD" {
+			var sent batch
+			if decodeErr != nil || common.Unmarshal(body, &sent) != nil || len(ok.Data.Rejected) > 0 || ok.Data.Accepted+ok.Data.Duplicates != len(sent.Events) {
+				p.fail(state, "USD acknowledgement incomplete; retained original financial batch")
+				return stalledWait
+			}
+		}
 		for _, item := range ok.Data.Rejected {
 			common.SysError(fmt.Sprintf("Ops push: %s rejected %s (%s)", state.BatchId, item.RequestId, item.Reason))
 		}
@@ -405,6 +428,10 @@ func (p *Pusher) send(state *State) time.Duration {
 	message := fmt.Sprintf("send %s: HTTP %d %s", state.BatchId, response.StatusCode, code)
 	switch {
 	case response.StatusCode == http.StatusBadRequest && code == "invalid_events" && len(failure.Error.Details.Rejected) > 0:
+		if p.Config.Currency == "USD" {
+			p.fail(state, message)
+			return stalledWait // Native financial records must never be silently dropped.
+		}
 		// The spec lets the same batchId be resent once corrected: drop the rejected events and resend the rest.
 		p.dropRejected(state, failure)
 		return 0
@@ -936,6 +963,79 @@ func EventV11(log *model.Log, channelName string, topup *model.TopUp, conversion
 	event["extra"] = extra
 	attachUpstreamAlert(other, event)
 	return event
+}
+
+// USDAmount converts internal quota to exact native USD, never through a CNY exchange rate.
+// Reject amounts the receiver cannot represent rather than rounding a customer's ledger.
+func USDAmount(quota int64, perUnit float64) (string, error) {
+	if math.IsNaN(perUnit) || math.IsInf(perUnit, 0) || perUnit < 1 || perUnit > math.MaxInt32 || perUnit != math.Trunc(perUnit) {
+		return "", errors.New("invalid USD quota unit")
+	}
+	amount := decimal.NewFromInt(quota).Div(decimal.NewFromInt(int64(perUnit)))
+	if !amount.Equal(amount.Truncate(6)) || !amount.Mul(decimal.NewFromInt(int64(perUnit))).Equal(decimal.NewFromInt(quota)) || amount.Abs().GreaterThan(decimal.NewFromInt(1_000_000_000)) {
+		return "", errors.New("USD amount exceeds receiver precision or range")
+	}
+	return amount.String(), nil
+}
+
+// EventUSD preserves stable event IDs and usage facts but sends only native financial fields.
+func EventUSD(log *model.Log, channelName string, topup *model.TopUp, conversion Conversion) (map[string]any, error) {
+	event := EventV11(log, channelName, topup, conversion)
+	if event == nil {
+		return nil, errors.New("invalid USD event identity")
+	}
+	extra := event["extra"].(map[string]any)
+	kind := extra["recordKind"].(string)
+	other := object(json.RawMessage(log.Other))
+	if kind != "error" {
+		if log.Quota < 0 || extra["quotaRecorded"] == false {
+			return nil, errors.New("USD wallet amount is not recorded")
+		}
+		quota := int64(log.Quota)
+		if kind == "usage" || kind == "refund" {
+			source, _ := textValue(other["billing_source"])
+			if source == "subscription" {
+				quota = 0
+			}
+			if raw, present := other["wallet_quota_deducted"]; present {
+				value, valid := integer(raw)
+				if !valid || value > int64(log.Quota) || (source == "subscription" && value != 0) {
+					return nil, errors.New("invalid USD wallet charge fact")
+				}
+				quota = value
+			}
+		}
+		amount, err := USDAmount(quota, extra["quotaPerUnit"].(float64))
+		if err != nil {
+			return nil, err
+		}
+		event["amount"] = amount
+	}
+	delete(event, "gatewayQuota")
+	event["currency"] = "USD"
+	for _, key := range []string{"quotaPerUnit", "usdExchangeRate", "topupPrice", "topup"} {
+		delete(extra, key)
+	}
+	if kind == "refund" && log.RequestId != "" {
+		if _, exists := extra["request_id"]; !exists {
+			extra["request_id"] = log.RequestId
+		}
+	}
+	if kind == "topup" && topup != nil {
+		facts := map[string]any{"tradeNo": topup.TradeNo, "paymentMethod": topup.PaymentMethod}
+		if topup.CompleteTime > 0 {
+			facts["completedAt"] = time.Unix(topup.CompleteTime, 0).UTC().Format(time.RFC3339)
+		}
+		var payment model.TopupPaymentSnapshot
+		if topup.PaymentSnapshot != "" && common.UnmarshalJsonStr(topup.PaymentSnapshot, &payment) == nil && payment.ActualMoney != "" && payment.CurrencyCode != "" {
+			facts["paidAmount"], facts["paidCurrency"] = payment.ActualMoney, payment.CurrencyCode
+		}
+		extra["topup"] = facts
+	}
+	if raw, err := common.Marshal(extra); err != nil || len(raw) > maxExtra {
+		return nil, errors.New("USD financial facts exceed receiver limit")
+	}
+	return event, nil
 }
 
 // Backoff is the spec 4 retry wait shared by every OPS client in this gateway (pushes, registrations and reads).

@@ -229,6 +229,12 @@ func appendTaskLogInfo(task *model.Task, other *model.LogOther) {
 	if task == nil || other == nil {
 		return
 	}
+	if task.PrivateData.BillingSource != "" {
+		other.SetPublic("billing_source", task.PrivateData.BillingSource)
+	}
+	if taskIsSubscription(task) {
+		other.SetPublic("wallet_quota_deducted", 0)
+	}
 	if task.PrivateData.UpstreamBaseURL != "" {
 		model.CaptureUpstreamLogReference(other, task.PrivateData.UpstreamBaseURL)
 	}

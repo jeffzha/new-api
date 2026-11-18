@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -17,6 +18,8 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -69,7 +72,20 @@ func (o *opsStub) count() int {
 }
 
 func setup(t *testing.T) (*gorm.DB, *opsStub, *Syncer) {
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "users.sqlite3")), &gorm.Config{})
+	var driver gorm.Dialector = sqlite.Open(filepath.Join(t.TempDir(), "users.sqlite3"))
+	engine := os.Getenv("OPS_NATIVE_TEST_ENGINE")
+	if engine == "mysql" {
+		driver = mysql.Open(os.Getenv("OPS_NATIVE_TEST_DSN"))
+	}
+	if engine == "postgres" {
+		driver = postgres.Open(os.Getenv("OPS_NATIVE_TEST_DSN"))
+	}
+	previous := common.MainDatabaseType()
+	if engine != "" {
+		common.SetMainDatabaseType(common.DatabaseType(engine))
+	}
+	t.Cleanup(func() { common.SetMainDatabaseType(previous) })
+	db, err := gorm.Open(driver, &gorm.Config{})
 	require.NoError(t, err)
 	pool, err := db.DB()
 	require.NoError(t, err)
@@ -191,4 +207,23 @@ func TestOnlyTheLeaseHolderPushes(t *testing.T) {
 	require.NoError(t, db.Model(&model.User{}).Where("id = 1").Update("display_name", "changed").Error)
 	other.Step()
 	assert.Equal(t, 1, stub.count(), "the second instance waits for the lease")
+}
+
+func TestUSDBalanceSnapshotsRefreshWithoutCurrencyConversion(t *testing.T) {
+	db, stub, syncer := setup(t)
+	syncer.Config.Currency = "USD"
+	require.NoError(t, db.Create(&model.User{Id: 17, Username: "usd-test", Status: common.UserStatusEnabled, Quota: 50_000_000, AffCode: "usd17"}).Error)
+	syncer.Step()
+	require.Equal(t, 1, stub.count())
+	balance := usersOf(stub.last())["17"]["balance"].(map[string]any)
+	assert.Equal(t, "100", balance["amount"])
+	assert.Equal(t, "USD", balance["currency"])
+	assert.NotContains(t, balance, "quota")
+	assert.NotContains(t, balance, "usdExchangeRate")
+	require.NoError(t, db.Model(&model.User{}).Where("id = 17").Update("quota", -1).Error)
+	syncer.Step()
+	require.Equal(t, 2, stub.count(), "balance changes must refresh a USD snapshot")
+	assert.Equal(t, "-0.000002", usersOf(stub.last())["17"]["balance"].(map[string]any)["amount"])
+	syncer.Step()
+	assert.Equal(t, 2, stub.count(), "unchanged snapshots do not resend")
 }

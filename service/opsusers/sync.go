@@ -70,7 +70,7 @@ type State struct {
 
 func (State) TableName() string { return "ops_user_sync_states" }
 
-// Profile is what OPS last answered for one user: the hash of the pushed profile without its timestamps and balance.
+// Profile stores the acknowledged hash. Native USD also tracks quota so balance-only changes are sent.
 type Profile struct {
 	UserId    int64  `gorm:"primaryKey;autoIncrement:false"`
 	Hash      string `gorm:"type:varchar(64);not null;default:''"`
@@ -83,6 +83,7 @@ func (Profile) TableName() string { return "ops_user_profiles" }
 
 type Config struct {
 	URL, KeyID, Secret string
+	Currency           string
 	// Resend, when changed, pushes every user once more (for example at the balance opening moment, spec 5.4).
 	Resend string
 }
@@ -101,8 +102,8 @@ func StartConfigured(ctx context.Context) error {
 		return nil
 	}
 	config := Config{URL: strings.TrimRight(os.Getenv("OPS_PUSH_URL"), "/"), KeyID: os.Getenv("OPS_PUSH_KEY_ID"),
-		Secret: os.Getenv("OPS_PUSH_SECRET"), Resend: strings.TrimSpace(os.Getenv("OPS_USER_SYNC_RESEND"))}
-	if err := (opspush.Config{URL: config.URL, KeyID: config.KeyID, Secret: config.Secret}).Validate(); err != nil {
+		Secret: os.Getenv("OPS_PUSH_SECRET"), Resend: strings.TrimSpace(os.Getenv("OPS_USER_SYNC_RESEND")), Currency: os.Getenv("OPS_PUSH_CURRENCY")}
+	if err := (opspush.Config{URL: config.URL, KeyID: config.KeyID, Secret: config.Secret, Currency: config.Currency, Spec: opspush.SpecV11}).Validate(); err != nil {
 		return errors.New("OPS_USER_SYNC_ENABLED needs a valid Ops push configuration: " + err.Error())
 	}
 	if len(config.Resend) > 64 {
@@ -280,7 +281,7 @@ func (s *Syncer) build(state *State) (built, more bool, err error) {
 		for _, user := range users {
 			present[user.Id] = true
 			profile := userProfile(user, distributors, agencies)
-			hash := profileHash(profile)
+			hash := profileHash(profile, s.Config.Currency)
 			if row, ok := known[user.Id]; ok && row.Hash == hash {
 				continue
 			}
@@ -292,7 +293,7 @@ func (s *Syncer) build(state *State) (built, more bool, err error) {
 				continue
 			}
 			profile := map[string]any{"userId": strconv.FormatInt(row.UserId, 10), "status": "removed"}
-			if hash := profileHash(profile); row.Hash != hash {
+			if hash := profileHash(profile, s.Config.Currency); row.Hash != hash {
 				found = append(found, candidate{pending{row.UserId, hash, "removed", now.Unix()}, profile})
 			}
 		}
@@ -318,7 +319,7 @@ func (s *Syncer) build(state *State) (built, more bool, err error) {
 		tail := make([]byte, 3)
 		_, _ = rand.Read(tail)
 		id := fmt.Sprintf("users-%s-%06d-%s", now.UTC().Format("20060102"), state.Seq, hex.EncodeToString(tail))
-		body, meta, err := encode(id, changed, now)
+		body, meta, err := encode(id, changed, now, s.Config.Currency)
 		if err != nil {
 			return false, false, err
 		}
@@ -410,10 +411,10 @@ func printable(value string) bool {
 	return true
 }
 
-func profileHash(profile map[string]any) string {
+func profileHash(profile map[string]any, currency string) string {
 	copied := make(map[string]any, len(profile))
 	for key, value := range profile {
-		if key != "quota" {
+		if key != "quota" || currency == "USD" {
 			copied[key] = value
 		}
 	}
@@ -423,7 +424,7 @@ func profileHash(profile map[string]any) string {
 }
 
 // encode builds the request body: each profile gets updatedAt and, when the conversion is valid, a balance snapshot.
-func encode(id string, changed []candidate, now time.Time) ([]byte, []byte, error) {
+func encode(id string, changed []candidate, now time.Time, currency string) ([]byte, []byte, error) {
 	perUnit, rate := common.QuotaPerUnit, operation_setting.USDExchangeRate
 	balanced := perUnit >= 1 && perUnit == math.Trunc(perUnit) && perUnit <= math.MaxInt32 && rate > 0 && rate <= 1000
 	at := now.UTC().Format(time.RFC3339)
@@ -437,9 +438,17 @@ func encode(id string, changed []candidate, now time.Time) ([]byte, []byte, erro
 			}
 		}
 		user["updatedAt"] = time.Unix(item.UpdatedAt, 0).UTC().Format(time.RFC3339)
-		if quota, ok := item.profile["quota"].(int64); ok && balanced {
-			user["balance"] = map[string]any{"quota": quota, "quotaPerUnit": int64(perUnit),
-				"usdExchangeRate": strconv.FormatFloat(rate, 'f', -1, 64), "at": at}
+		if quota, ok := item.profile["quota"].(int64); ok {
+			if currency == "USD" {
+				amount, err := opspush.USDAmount(quota, perUnit)
+				if err != nil {
+					return nil, nil, err
+				}
+				user["balance"] = map[string]any{"amount": amount, "currency": "USD", "at": at}
+			} else if balanced {
+				user["balance"] = map[string]any{"quota": quota, "quotaPerUnit": int64(perUnit),
+					"usdExchangeRate": strconv.FormatFloat(rate, 'f', -1, 64), "at": at}
+			}
 		}
 		users[index], meta[index] = user, item.pending
 	}
@@ -491,10 +500,14 @@ func (s *Syncer) send(state *State) time.Duration {
 	response.Body.Close()
 	if response.StatusCode == http.StatusOK {
 		var ok okBody
-		_ = common.Unmarshal(raw, &ok)
+		decodeErr := common.Unmarshal(raw, &ok)
 		var meta []pending
 		if err := common.UnmarshalJsonStr(state.BatchMeta, &meta); err != nil {
 			s.fail(state, "stored batch unreadable: "+err.Error())
+			return stalledWait
+		}
+		if s.Config.Currency == "USD" && (decodeErr != nil || ok.Data.Accepted+ok.Data.Unchanged != len(meta)) {
+			s.fail(state, "USD user acknowledgement incomplete; retained original balance batch")
 			return stalledWait
 		}
 		if err := s.remember(meta); err != nil {
@@ -515,6 +528,10 @@ func (s *Syncer) send(state *State) time.Duration {
 	message := fmt.Sprintf("send %s: HTTP %d %s", state.BatchId, response.StatusCode, code)
 	switch {
 	case response.StatusCode == http.StatusBadRequest && code == "invalid_users" && len(failure.Error.Details.Rejected) > 0:
+		if s.Config.Currency == "USD" {
+			s.fail(state, message)
+			return stalledWait
+		}
 		// Nothing was stored; the spec lets the same batchId be resent once corrected, so resend without the rejected users.
 		s.dropRejected(state, failure)
 		return busyWait

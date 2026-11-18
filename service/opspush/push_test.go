@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,8 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -90,7 +94,20 @@ func reply(status int, body string) func(http.ResponseWriter) {
 
 func pusherFixture(t *testing.T, stub *opsStub) (*Pusher, *gorm.DB) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:opspush-"+strings.ReplaceAll(t.Name(), "/", "-")+"?mode=memory&cache=shared"), &gorm.Config{})
+	var driver gorm.Dialector = sqlite.Open("file:opspush-" + strings.ReplaceAll(t.Name(), "/", "-") + "?mode=memory&cache=shared")
+	engine := os.Getenv("OPS_NATIVE_TEST_ENGINE")
+	if engine == "mysql" {
+		driver = mysql.Open(os.Getenv("OPS_NATIVE_TEST_DSN"))
+	}
+	if engine == "postgres" {
+		driver = postgres.Open(os.Getenv("OPS_NATIVE_TEST_DSN"))
+	}
+	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
+	if engine != "" {
+		common.SetDatabaseTypes(common.DatabaseType(engine), common.DatabaseType(engine))
+	}
+	t.Cleanup(func() { common.SetDatabaseTypes(previousMain, previousLog) })
+	db, err := gorm.Open(driver, &gorm.Config{})
 	require.NoError(t, err)
 	pool, err := db.DB()
 	require.NoError(t, err)
@@ -237,6 +254,108 @@ func TestEventV11RefundRequestIds(t *testing.T) {
 		log := &model.Log{Id: 30, UserId: 9, Type: model.LogTypeRefund, ModelName: "m", RequestId: c.requestId, Other: c.other}
 		assert.Equal(t, c.expected, EventV11(log, "", nil, testConversion)["requestId"], c.other)
 	}
+}
+
+func TestUSDEventsKeepNativeAmountsAndDomesticFormat(t *testing.T) {
+	for _, tc := range []struct {
+		kind          int
+		other, amount string
+	}{
+		{model.LogTypeConsume, "{}", "0.0055"},
+		{model.LogTypeConsume, `{"billing_source":"subscription","wallet_quota_deducted":0}`, "0"},
+		{model.LogTypeConsume, `{"billing_source":"subscription"}`, "0"},
+		{model.LogTypeRefund, `{"billing_source":"subscription"}`, "0"},
+		{model.LogTypeRefund, "{}", "0.0055"},
+		{model.LogTypeManage, `{"quota_source":"admin_adjustment","quota_direction":"debit"}`, "0.0055"},
+		{model.LogTypeSystem, `{"quota_source":"checkin_gift"}`, "0.0055"},
+		{model.LogTypeTopup, `{"quota_source":"online_topup"}`, "0.0055"},
+		{model.LogTypeError, "{}", ""},
+	} {
+		log := &model.Log{Id: 91, Type: tc.kind, UserId: 17, ModelName: "gpt-test", RequestId: "usd-91", Quota: 2750, Other: tc.other}
+		topup := &model.TopUp{TradeNo: "usd-trade", PaymentMethod: "stripe", CompleteTime: 1792540800,
+			PaymentSnapshot: `{"actual_money":"20.00","currency_code":"EUR"}`}
+		event, err := EventUSD(log, "usd-channel", topup, testConversion)
+		require.NoError(t, err)
+		assert.Equal(t, "USD", event["currency"])
+		assert.NotContains(t, event, "gatewayQuota")
+		if tc.amount == "" {
+			assert.NotContains(t, event, "amount")
+		} else {
+			assert.Equal(t, tc.amount, event["amount"])
+		}
+		extra := extraOfEvent(t, event)
+		assert.NotContains(t, extra, "usdExchangeRate")
+		assert.NotContains(t, extra, "topupPrice")
+		if tc.kind == model.LogTypeTopup {
+			facts := extra["topup"].(map[string]any)
+			assert.Equal(t, "20.00", facts["paidAmount"])
+			assert.Equal(t, "EUR", facts["paidCurrency"])
+			assert.NotContains(t, facts, "moneyCny")
+		}
+		if tc.kind == model.LogTypeRefund {
+			assert.Equal(t, "usd-91", extra["request_id"])
+		}
+		domestic := EventV11(log, "usd-channel", topup, testConversion)
+		assert.Equal(t, 2750, domestic["gatewayQuota"])
+		assert.NotContains(t, domestic, "currency")
+		assert.NotContains(t, domestic, "amount")
+	}
+	for _, log := range []*model.Log{
+		{Id: 92, UserId: 17, Type: model.LogTypeSystem, Quota: 0},
+		{Id: 93, UserId: 17, Type: model.LogTypeConsume, ModelName: "m", Quota: -1},
+		{Id: 94, UserId: 17, Type: model.LogTypeConsume, ModelName: "m", Quota: 1, Other: `{"wallet_quota_deducted":-1}`},
+		{Id: 95, UserId: 17, Type: model.LogTypeConsume, ModelName: "m", Quota: 1, Other: `{"wallet_quota_deducted":2}`},
+	} {
+		_, err := EventUSD(log, "", nil, testConversion)
+		require.Error(t, err, "unrecorded or invalid money must stop the outbox")
+	}
+}
+
+func TestUSDAmountIsExactAndBounded(t *testing.T) {
+	for _, tc := range []struct {
+		quota int64
+		unit  float64
+		want  string
+	}{
+		{1, 500000, "0.000002"}, {-1, 500000, "-0.000002"}, {0, 500000, "0"}, {50_000_000, 500000, "100"},
+		{1, 3, ""}, {1, 0, ""}, {1, math.NaN(), ""}, {math.MaxInt64, 500000, ""},
+	} {
+		value, err := USDAmount(tc.quota, tc.unit)
+		if tc.want == "" {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, value)
+		}
+	}
+	cfg := Config{URL: "https://ops.example.com", KeyID: "usd-test", Secret: "test-only-secret-value", Currency: "USD"}
+	require.Error(t, cfg.Validate())
+	cfg.Spec = SpecV11
+	require.NoError(t, cfg.Validate())
+}
+
+func TestUSDOutboxRetriesExactBodyAndRetainsRejectedMoney(t *testing.T) {
+	stub := &opsStub{responses: []func(http.ResponseWriter){
+		reply(503, `{"error":{"code":"storage_unavailable"}}`),
+		reply(400, `{"error":{"code":"invalid_events","details":{"rejected":[{"index":0,"requestId":"r1","reason":"invalid_amount"}]}}}`),
+		reply(200, `{"data":{"accepted":3,"duplicates":0,"rejected":[]}}`),
+	}}
+	p, db := pusherFixture(t, stub)
+	p.Config.Spec, p.Config.Currency = SpecV11, "USD"
+	require.NoError(t, db.AutoMigrate(&model.TopUp{}))
+	p.Step()
+	p.Step()
+	var state State
+	require.NoError(t, db.First(&state, 1).Error)
+	assert.Equal(t, int64(1), state.Cursor)
+	assert.NotEmpty(t, state.BatchBody)
+	assert.Zero(t, state.Rejected)
+	p.Step()
+	require.Len(t, stub.bodies, 3)
+	assert.Equal(t, stub.bodies[0], stub.bodies[1])
+	assert.Equal(t, stub.bodies[0], stub.bodies[2])
+	assert.Contains(t, stub.bodies[0], `"currency":"USD"`)
+	assert.NotContains(t, stub.bodies[0], "gatewayQuota")
 }
 
 func taskLog(t *testing.T, task *model.Task, added map[string]any) *model.Log {

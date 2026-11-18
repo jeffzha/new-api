@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service/opspush"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -57,6 +58,24 @@ func TestLogTaskConsumptionIncludesPublicTaskID(t *testing.T) {
 	require.NoError(t, common.UnmarshalJsonStr(logRow.Other, &other))
 	assert.Equal(t, true, other["is_task"])
 	assert.Equal(t, "task_public_123", other["task_id"])
+}
+
+func TestTaskUSDWalletAmountsPreserveFundingSource(t *testing.T) {
+	for _, source := range []string{BillingSourceWallet, BillingSourceSubscription} {
+		t.Run(source, func(t *testing.T) {
+			task := &model.Task{TaskID: "task-usd", PrivateData: model.TaskPrivateData{BillingSource: source, SubscriptionId: 1}}
+			other := taskBillingOther(task)
+			for i, kind := range []int{model.LogTypeConsume, model.LogTypeRefund} {
+				event, err := opspush.EventUSD(&model.Log{Id: i + 100, UserId: 1, Type: kind, ModelName: "video-model", Quota: 500, Other: other.JSONString()}, "", nil, opspush.Conversion{QuotaPerUnit: 500000})
+				require.NoError(t, err)
+				want := "0.001"
+				if source == BillingSourceSubscription {
+					want = "0"
+				}
+				assert.Equal(t, want, event["amount"])
+			}
+		})
+	}
 }
 
 func TestMain(m *testing.M) {

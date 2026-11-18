@@ -167,11 +167,25 @@ func GlobalWebRateLimit() func(c *gin.Context) {
 func GlobalAPIRateLimit() func(c *gin.Context) {
 	if common.GlobalApiRateLimitEnable {
 		limited := rateLimitFactory(common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration, "GA")
+		epayTopup := rateLimitFactory(common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration, "EPAY:topup")
+		epaySubscription := rateLimitFactory(common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration, "EPAY:subscription")
 		return func(c *gin.Context) {
 			// Caddy's active probe must not depend on Redis rate limiting.
 			if c.Request.Method == http.MethodGet && c.Request.URL.Path == "/api/status" {
 				c.Next()
 				return
+			}
+			// Signed payment callbacks must not compete with management polling
+			// from the same IP. Keep their own limits and handler verification.
+			if c.Request.Method == http.MethodGet || c.Request.Method == http.MethodPost {
+				switch c.Request.URL.Path {
+				case "/api/user/epay/notify":
+					epayTopup(c)
+					return
+				case "/api/subscription/epay/notify":
+					epaySubscription(c)
+					return
+				}
 			}
 			limited(c)
 		}

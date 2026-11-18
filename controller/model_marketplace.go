@@ -104,6 +104,7 @@ func ModelMarketplace(c *gin.Context) {
 	c.Header("Cache-Control", "private, no-cache")
 	c.Header("Vary", "Authorization, x-api-key, x-goog-api-key")
 	c.Header("ETag", tag)
+	c.Header("Access-Control-Expose-Headers", common.RequestIdKey+", ETag")
 	for match := range strings.SplitSeq(c.GetHeader("If-None-Match"), ",") {
 		if match = strings.TrimSpace(match); match == tag || match == "W/"+tag || match == "*" {
 			c.Status(http.StatusNotModified)

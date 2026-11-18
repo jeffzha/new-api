@@ -63,6 +63,7 @@ func TestModelMarketplaceCatalogContract(t *testing.T) {
 	assert.ElementsMatch(t, want, got)
 	assert.Equal(t, len(want), page.Total)
 	assert.Equal(t, "private, no-cache", w.Header().Get("Cache-Control"))
+	assert.Contains(t, w.Header().Get("Access-Control-Expose-Headers"), "ETag")
 	for _, forbidden := range []string{"settlement_bps", "sales_bps", "channel_id", "base_url", "policy_json", "marketplacetest"} {
 		assert.NotContains(t, w.Body.String(), forbidden)
 	}

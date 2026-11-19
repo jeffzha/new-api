@@ -57,6 +57,45 @@ function pricingHookWrapper(props: PropsWithChildren) {
 }
 
 describe('viewer-scoped customer price loading', () => {
+  it('shows list prices without applying customer or group discounts when list mode is enabled', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    clients.push(client)
+    client.setQueryData(['status'], { price: 1, usd_exchange_rate: 7.3 })
+    const response = pricingResponse(7000)
+    response.list_price_data = response.data.map((model) => ({
+      ...model,
+      model_ratio: 3,
+    }))
+    response.list_price_status = { version: 'v1', stale: false }
+    api.defaults.adapter = async (config) => ({
+      config,
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      data: response,
+    })
+    const hook = renderHook(() => usePricingData(true, true), {
+      wrapper: pricingHookWrapper,
+    })
+    await waitFor(() => expect(hook.result.current.models).toHaveLength(1))
+    expect(hook.result.current.listPricing).toBe(true)
+    expect(hook.result.current.agencyPricing).toBe(false)
+    expect(hook.result.current.models[0].sales_bps).toBeUndefined()
+    expect(hook.result.current.models[0].model_ratio).toBe(3)
+    expect(hook.result.current.models[0].group_ratio).toEqual({ default: 1 })
+    expect(hook.result.current.listPriceStatus?.version).toBe('v1')
+    const localHook = renderHook(usePricingData, {
+      wrapper: pricingHookWrapper,
+    })
+    expect(localHook.result.current.models[0].model_ratio).toBe(2)
+    expect(localHook.result.current.models[0].sales_bps).toBe(7000)
+    expect(localHook.result.current.listPricing).toBe(false)
+    localHook.unmount()
+    hook.unmount()
+  })
+
   it('does not show a prior user price after switching accounts or signing out', async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },

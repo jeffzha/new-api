@@ -31,6 +31,8 @@ import {
 } from '../lib/dynamic-price'
 import { isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, stripTrailingZeros } from '../lib/price'
+import { OfficialPrice } from '../ops-list-prices/official-price'
+import { getOfficialRows } from '../ops-list-prices/official-price-data'
 import type { PricingModel } from '../types'
 import type { ModelPriceCellOptions } from './model-price-cell'
 
@@ -76,6 +78,20 @@ export function CachedPriceCell(props: {
     ]
   )
 
+  if (getOfficialRows(model)) {
+    return (
+      <OfficialPrice
+        model={model}
+        tokenUnit={tokenUnit}
+        usdExchangeRate={
+          props.options.usdExchangeRate ?? currency.usdExchangeRate
+        }
+        variant='cache'
+        showRechargePrice={showRechargePrice}
+        priceRate={priceRate}
+      />
+    )
+  }
   if (dynamicSummary) {
     if (dynamicSummary.isSpecialExpression) {
       const priceNote = getSpecialExpressionPriceNote(model)

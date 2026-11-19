@@ -46,6 +46,7 @@ import {
 import { EXCLUDED_GROUPS, VIEW_MODES } from './constants'
 import { useFilters } from './hooks/use-filters'
 import { usePricingData } from './hooks/use-pricing-data'
+import { ListPriceNotice } from './ops-list-prices/list-price-notice'
 
 export function Pricing() {
   const { t } = useTranslation()
@@ -60,6 +61,8 @@ export function Pricing() {
     vendors,
     groupRatio,
     agencyPricing,
+    listPricing,
+    listPriceStatus,
     usableGroup,
     endpointMap,
     autoGroups,
@@ -68,7 +71,7 @@ export function Pricing() {
     refetch,
     priceRate,
     usdExchangeRate,
-  } = usePricingData()
+  } = usePricingData(true, true)
 
   const availableGroups = useMemo(
     () =>
@@ -120,9 +123,12 @@ export function Pricing() {
     clearSearch,
   } = useFilters(publicModels)
 
-  const handleModelClick = useCallback((modelName: string) => {
-    setSelectedModelName(modelName)
-  }, [])
+  const handleModelClick = useCallback(
+    (modelName: string) => {
+      setSelectedModelName(modelName)
+    },
+    [setSelectedModelName]
+  )
 
   const selectedModel = useMemo(
     () =>
@@ -344,6 +350,14 @@ export function Pricing() {
             )}
 
             <main className='min-w-0 space-y-4'>
+              {listPricing && !error && (
+                <ListPriceNotice
+                  models={publicModels}
+                  status={listPriceStatus}
+                  priceRate={priceRate}
+                  usdExchangeRate={usdExchangeRate}
+                />
+              )}
               {agencyPricing && !error && (
                 <CustomerPricingNotice models={publicModels} />
               )}

@@ -1,16 +1,20 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/modelmarketplace"
+	"github.com/QuantumNous/new-api/service/opspricing"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -19,6 +23,73 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestOpsListPriceProjectionLeavesLocalCatalogAndChargePolicyUnchanged(t *testing.T) {
+	db := agencyPricingCatalogFixture(t)
+	bindAgencyPricingCustomer(t, db)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"version":"official-v1","station":{"quotaPerUnit":500000,"usdExchangeRate":"7.3"},"items":[{"model":"hy3","callType":"text","officialCny":{"input_per_million":"99","output_per_million":"199"}}]}}`))
+	}))
+	defer server.Close()
+	reader := opspricing.New(opspricing.Config{BaseURL: server.URL, Timeout: time.Second, Interval: 5 * time.Minute})
+	require.NoError(t, reader.Refresh(context.Background()))
+	before, err := common.Marshal(model.GetPricing())
+	require.NoError(t, err)
+	quoteBefore, err := service.AgencyQuoteForUser(1, 0, "hy3", 1000)
+	require.NoError(t, err)
+	previous := opspricing.Default
+	opspricing.Default = reader
+	t.Cleanup(func() { opspricing.Default = previous })
+	_, response := requestAgencyPricingCatalog(t, 1)
+	require.Equal(t, "agency", response["pricing_scope"])
+	require.Contains(t, response, "list_price_data")
+	require.Equal(t, float64(2), response["group_ratio"].(map[string]any)["default"])
+	for _, raw := range response["data"].([]any) {
+		row := raw.(map[string]any)
+		if row["model_name"] == "hy3" {
+			require.Equal(t, float64(12500), row["sales_bps"])
+		}
+	}
+	after, err := common.Marshal(model.GetPricing())
+	require.NoError(t, err)
+	require.Equal(t, string(before), string(after))
+	quoteAfter, err := service.AgencyQuoteForUser(1, 0, "hy3", 1000)
+	require.NoError(t, err)
+	require.Equal(t, quoteBefore, quoteAfter)
+	// The external marketplace consumes the same memory snapshot without a
+	// remote call, even after the OPS fixture becomes unavailable.
+	server.Close()
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) { c.Set("id", 1); common.SetContextKey(c, constant.ContextKeyUserGroup, "default") })
+	engine.GET("/v1/model-marketplace", ModelMarketplace)
+	engine.GET("/v1/model-marketplace/detail", ModelMarketplace)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, httptest.NewRequest("GET", "/v1/model-marketplace?q=hy3", nil))
+	require.Equal(t, 200, w.Code, w.Body.String())
+	var page modelmarketplace.Page
+	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &page))
+	require.Len(t, page.Data, 2)
+	for _, item := range page.Data {
+		if item.ID == "hy3" {
+			assert.Equal(t, "ops", item.Pricing.Source)
+			assert.Equal(t, "CNY", item.Pricing.Currency)
+			assert.Equal(t, "official-v1", item.Pricing.Version)
+			assert.Contains(t, w.Body.String(), `"input_per_million":"99"`)
+			assert.Nil(t, item.Pricing.Config)
+		} else {
+			assert.Equal(t, "gateway", item.Pricing.Source)
+			assert.Equal(t, "USD", item.Pricing.Currency)
+			assert.NotNil(t, item.Pricing.Config)
+		}
+	}
+	require.Error(t, reader.Refresh(context.Background()))
+	stale := httptest.NewRecorder()
+	engine.ServeHTTP(stale, httptest.NewRequest("GET", "/v1/model-marketplace/detail?model=hy3", nil))
+	require.Equal(t, 200, stale.Code, stale.Body.String())
+	assert.Contains(t, stale.Body.String(), `"stale":true`)
+	assert.Contains(t, stale.Body.String(), `"input_per_million":"99"`)
+	assert.NotContains(t, stale.Body.String(), "sales_bps")
+}
 
 func agencyPricingCatalogFixture(t *testing.T) *gorm.DB {
 	t.Helper()

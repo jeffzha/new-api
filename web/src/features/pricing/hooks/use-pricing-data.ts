@@ -25,7 +25,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { getPricing } from '../api'
 
-export function usePricingData(enabled = true) {
+export function usePricingData(enabled = true, preferListPrices = false) {
   const { status } = useStatus()
   const userId = useAuthStore((state) => state.auth.user?.id ?? 0)
   const queryClient = useQueryClient()
@@ -48,14 +48,30 @@ export function usePricingData(enabled = true) {
   )
 
   const effectiveData =
-    data ?? (userId === 0 ? queryClient.getQueryData<typeof data>(['pricing']) : undefined)
+    data ??
+    (userId === 0
+      ? queryClient.getQueryData<typeof data>(['pricing'])
+      : undefined)
+
+  // Editors and usage-log explanations also use this hook. Only the model
+  // catalog opts into OPS display prices; all other consumers keep local data.
+  const listPricing = preferListPrices && effectiveData?.list_price_data != null
+  const groupRatio = useMemo(() => {
+    const ratios = effectiveData?.group_ratio ?? {}
+    return listPricing
+      ? Object.fromEntries(Object.keys(ratios).map((group) => [group, 1]))
+      : ratios
+  }, [effectiveData, listPricing])
 
   const models = useMemo(() => {
     if (error || !effectiveData?.data || !effectiveData?.vendors) return []
 
     const vendorMap = new Map(effectiveData.vendors.map((v) => [v.id, v]))
 
-    return effectiveData.data.map((model) => {
+    const catalog = listPricing
+      ? (effectiveData.list_price_data ?? effectiveData.data)
+      : effectiveData.data
+    return catalog.map((model) => {
       const vendor = model.vendor_id
         ? vendorMap.get(model.vendor_id)
         : undefined
@@ -65,17 +81,21 @@ export function usePricingData(enabled = true) {
         vendor_name: vendor?.name,
         vendor_icon: vendor?.icon,
         vendor_description: vendor?.description,
-        group_ratio: effectiveData.group_ratio,
+        sales_bps: listPricing ? undefined : model.sales_bps,
+        group_ratio: groupRatio,
       }
     })
-  }, [effectiveData, error])
-  const agencyPricing = effectiveData?.pricing_scope === 'agency'
+  }, [effectiveData, error, groupRatio, listPricing])
+  const agencyPricing =
+    !listPricing && effectiveData?.pricing_scope === 'agency'
 
   return {
     models,
     vendors: effectiveData?.vendors ?? [],
-    groupRatio: effectiveData?.group_ratio ?? {},
+    groupRatio,
     agencyPricing,
+    listPricing,
+    listPriceStatus: effectiveData?.list_price_status,
     usableGroup: effectiveData?.usable_group ?? {},
     endpointMap: effectiveData?.supported_endpoint ?? {},
     autoGroups: effectiveData?.auto_groups ?? [],

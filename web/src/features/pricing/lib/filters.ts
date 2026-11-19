@@ -23,9 +23,14 @@ import {
   QUOTA_TYPE_VALUES,
   ENDPOINT_TYPES,
 } from '../constants'
+import { getOfficialRows } from '../ops-list-prices/official-price-data'
 import type { PricingModel } from '../types'
+import { getBillingModeLabelKey } from './billing-mode'
 import { hasTaskUsageSchema } from './dynamic-price'
-import { getLowestVideoTokenMatrixPrice, getVideoTokenMatrixPricing } from './provider-pricing'
+import {
+  getLowestVideoTokenMatrixPrice,
+  getVideoTokenMatrixPricing,
+} from './provider-pricing'
 
 // ----------------------------------------------------------------------------
 // Filter Utilities
@@ -80,17 +85,23 @@ export function filterByQuotaType(
   quotaType: string
 ): PricingModel[] {
   if (quotaType === QUOTA_TYPES.ALL) return models
-  // Task-usage models form their own bucket, disjoint from token/request.
-  if (quotaType === QUOTA_TYPES.TASK) {
-    return models.filter((m) => hasTaskUsageSchema(m))
-  }
-  const targetType =
-    quotaType === QUOTA_TYPES.TOKEN
-      ? QUOTA_TYPE_VALUES.TOKEN
-      : QUOTA_TYPE_VALUES.REQUEST
-  return models.filter(
-    (m) => m.quota_type === targetType && !hasTaskUsageSchema(m)
-  )
+  return models.filter((model) => {
+    if (getOfficialRows(model)) {
+      const mode = getBillingModeLabelKey(model)
+      if (quotaType === QUOTA_TYPES.TASK) return mode === 'Task billing'
+      if (quotaType === QUOTA_TYPES.TOKEN) {
+        return mode === 'Token-based' || mode === 'Dynamic Pricing'
+      }
+      return mode === 'Per Request'
+    }
+    const task = hasTaskUsageSchema(model)
+    if (quotaType === QUOTA_TYPES.TASK) return task
+    const targetType =
+      quotaType === QUOTA_TYPES.TOKEN
+        ? QUOTA_TYPE_VALUES.TOKEN
+        : QUOTA_TYPE_VALUES.REQUEST
+    return !task && model.quota_type === targetType
+  })
 }
 
 /**

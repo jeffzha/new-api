@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { getOfficialRows } from '../ops-list-prices/official-price-data'
 import type { PricingModel } from '../types'
 import { hasTaskUsageSchema, isDynamicPricingModel } from './dynamic-price'
 import { isTokenBasedModel } from './model-helpers'
@@ -29,6 +30,13 @@ export type BillingModeLabelKey =
 export function getBillingModeLabelKey(
   model: PricingModel
 ): BillingModeLabelKey {
+  const officialRows = getOfficialRows(model)
+  if (officialRows) {
+    const fields = officialRows.flatMap((row) => Object.keys(row.prices))
+    if (fields.every((key) => key === 'per_request')) return 'Per Request'
+    if (fields.some((key) => key.startsWith('per_'))) return 'Task billing'
+    return officialRows.length > 1 ? 'Dynamic Pricing' : 'Token-based'
+  }
   // Task-usage models badge as one business category; the metering unit
   // ($/1M token, $/credit, $/second) is already carried by the price line.
   if (hasTaskUsageSchema(model)) return 'Task billing'

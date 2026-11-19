@@ -82,6 +82,7 @@ export type VideoTokenMatrixPricing = {
 }
 
 export type PricingModel = {
+  list_price?: import('./ops-list-prices/types').ListPriceInfo
   billing_material_pricing?: MaterialPricingCatalog
   billing_plugin_variants?: BillingPluginVariant[]
   id: number
@@ -162,6 +163,8 @@ export type PricingData = {
   supported_endpoint: Record<string, string>
   auto_groups: string[]
   pricing_scope?: 'standard' | 'agency'
+  list_price_data?: PricingModel[]
+  list_price_status?: import('./ops-list-prices/types').ListPriceStatus
 }
 
 export type TokenUnit = 'M' | 'K'

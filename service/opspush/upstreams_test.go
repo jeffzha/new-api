@@ -1,6 +1,7 @@
 package opspush
 
 import (
+	"context"
 	"errors"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -14,6 +15,32 @@ import (
 	"testing"
 	"time"
 )
+
+func TestUSDUsageBackfillUsesRegisteredStationUpstream(t *testing.T) {
+	p, db := pusherFixture(t, &opsStub{})
+	p.Config.Spec, p.Config.Currency, p.Config.UsageOnly = SpecV11, "USD", true
+	t.Setenv("OPS_UPSTREAM_SYNC_ENABLED", "true")
+	t.Setenv("OPS_UPSTREAM_URL", "")
+	require.NoError(t, upstreammap.Migrate(db))
+	row, err := upstreammap.Ensure(db, "https://upstream.example")
+	require.NoError(t, err)
+	target := upstreammap.Target(p.Config.URL, p.Config.KeyID)
+	require.NoError(t, upstreammap.EnsureBinding(db, row.ID, target))
+	require.NoError(t, db.Model(&upstreammap.Binding{}).Where("mapping_id = ? AND target = ?", row.ID, target).Update("ops_upstream_id", 37).Error)
+	other := model.NewLogOther()
+	other.SetAdmin("upstream", map[string]any{"base_url": "https://upstream.example"})
+	require.NoError(t, db.Model(&model.Log{}).Where("id = ?", 2).Updates(map[string]any{"channel_id": 1, "other": other.JSONString()}).Error)
+	page, err := p.BackfillPage(context.Background(), 1, 4, 100)
+	require.NoError(t, err)
+	var body batch
+	require.NoError(t, common.UnmarshalJsonStr(page.Body, &body))
+	raw, err := common.Marshal(body.Events[0]["extra"])
+	require.NoError(t, err)
+	assert.Equal(t, "37", string(object(raw)["ops_upstream_id"]))
+	p.Config.KeyID = "different-station"
+	_, err = p.BackfillPage(context.Background(), 1, 4, 100)
+	require.ErrorIs(t, err, ErrUpstreamPending)
+}
 
 func TestUpstreamEnrichmentPreservesV11BillingFactsWhenDiagnosticsAreLarge(t *testing.T) {
 	p, _ := pusherFixture(t, &opsStub{})

@@ -124,7 +124,7 @@ func run() error {
 				return err
 			}
 		}
-		config := opspush.Config{Spec: os.Getenv("OPS_PUSH_SPEC"), Currency: os.Getenv("OPS_PUSH_CURRENCY"), UsageOnly: os.Getenv("OPS_PUSH_USAGE_ONLY") == "true"}
+		config := opspush.Config{URL: os.Getenv("OPS_PUSH_URL"), KeyID: os.Getenv("OPS_PUSH_KEY_ID"), Spec: os.Getenv("OPS_PUSH_SPEC"), Currency: os.Getenv("OPS_PUSH_CURRENCY"), UsageOnly: os.Getenv("OPS_PUSH_USAGE_ONLY") == "true"}
 		result, err = opspush.New(model.DB, model.LOG_DB, config).BackfillPage(ctx, input.AfterID, input.ThroughID, input.Limit)
 	} else if input.Action == "facts-backfill" {
 		var after int64

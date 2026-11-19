@@ -1,0 +1,25 @@
+name: Index change policy
+
+on:
+  push:
+    branches:
+      - main
+      - codex/seedance-cn-adapter
+      - codex/project-integration-uac-20261029
+      - codex/project-uac-go-migration-20261114
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  index-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check versioned instructions and index registry
+        run: python scripts/release/check_index_policy.py

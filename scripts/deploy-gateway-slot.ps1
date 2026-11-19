@@ -59,6 +59,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+& python (Join-Path $PSScriptRoot "release/check_index_policy.py")
+if ($LASTEXITCODE -ne 0) {
+    throw "Index change policy verification failed; deployment stopped before any remote operation."
+}
+
 if (-not $PreflightOnly -and -not $UseExistingImage) {
     throw "Production builds are disabled. Build outside production and supply -UseExistingImage, -ImageTag, and -ImageCommit."
 }

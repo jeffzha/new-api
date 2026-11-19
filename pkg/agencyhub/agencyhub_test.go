@@ -205,6 +205,33 @@ func runOpsFinanceCommands(t *testing.T, app *App) {
 	var count int64
 	require.NoError(t, app.db.Model(&model.AgencyWithdrawal{}).Where("agency_id = ?", agency.ID).Count(&count).Error)
 	assert.EqualValues(t, 1, count, "replaying must never freeze twice")
+	usdBalance := model.AgencyCommissionBalance{AgencyID: agency.ID, CurrencyCode: "USD", EarnedMicros: 50000000, AvailableMicros: 50000000, Version: 1}
+	require.NoError(t, app.db.Create(&usdBalance).Error)
+	usdCommand := command
+	usdCommand.Currency, usdCommand.CommandID = "USD", "ops-finance-usd-withdrawal"
+	usdFirst, err := ApplyOpsWithdrawal(app.db, usdCommand, config)
+	require.NoError(t, err)
+	assert.Equal(t, "USD", usdFirst["currency_code"])
+	usdReplay, err := ApplyOpsWithdrawal(app.db, usdCommand, config)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprint(usdFirst["id"]), fmt.Sprint(usdReplay["id"]))
+	require.NoError(t, app.db.First(&usdBalance, usdBalance.ID).Error)
+	assert.EqualValues(t, 40000000, usdBalance.AvailableMicros)
+	assert.EqualValues(t, 10000000, usdBalance.LockedMicros)
+	assert.EqualValues(t, 2, usdBalance.Version)
+	require.NoError(t, app.db.First(&balance, balance.ID).Error)
+	assert.EqualValues(t, 90000000, balance.AvailableMicros, "USD must not change CNY funds")
+	assert.EqualValues(t, 10000000, balance.LockedMicros)
+	for _, currency := range []string{"EUR", "usd", ""} {
+		bad := usdCommand
+		bad.Currency, bad.CommandID = currency, "invalid-currency-"+currency
+		_, err := ApplyOpsWithdrawal(app.db, bad, config)
+		require.Error(t, err)
+	}
+	usdSubCent := usdCommand
+	usdSubCent.AmountMicros, usdSubCent.CommandID = 10000001, "ops-finance-usd-sub-cent"
+	_, err = ApplyOpsWithdrawal(app.db, usdSubCent, config)
+	require.Error(t, err)
 	for name, alter := range map[string]func(*OpsWithdrawalCommand){
 		"stale account":     func(c *OpsWithdrawalCommand) { c.AccountVersion++ },
 		"wrong account":     func(c *OpsWithdrawalCommand) { c.AccountID = 99999999 },

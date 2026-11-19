@@ -41,7 +41,7 @@ func validateOpsFinanceRoot(db *gorm.DB, id int64) error {
 
 func ApplyOpsWithdrawal(db *gorm.DB, input OpsWithdrawalCommand, config Config) (map[string]any, error) {
 	if !config.WithdrawalsEnabled || input.AgencyID <= 0 || input.AccountID <= 0 || input.AccountVersion <= 0 ||
-		input.Currency != "CNY" || input.AmountMicros < 10000 || input.AmountMicros%10000 != 0 ||
+		(input.Currency != "CNY" && input.Currency != "USD") || input.AmountMicros < 10000 || input.AmountMicros%10000 != 0 ||
 		len(input.CommandID) < 8 || len(input.CommandID) > 160 {
 		return nil, errors.New("invalid withdrawal command")
 	}

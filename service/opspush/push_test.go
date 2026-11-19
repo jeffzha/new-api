@@ -263,6 +263,50 @@ func TestUSDUsageBackfillPreservesLiveCursorAndExcludesWallets(t *testing.T) {
 
 var testConversion = Conversion{QuotaPerUnit: 500000, USDExchangeRate: 7.3, TopupPrice: 7.3}
 
+func TestUSDWalletBackfillPreservesRecordedAmountsAndLiveState(t *testing.T) {
+	p, db := pusherFixture(t, &opsStub{})
+	p.Config.Spec, p.Config.Currency, p.Config.UsageOnly = SpecV11, "USD", true
+	logs := []model.Log{
+		{Type: model.LogTypeTopup, UserId: 1, Quota: 5_000_000, CreatedAt: 300, Other: `{"quota_source":"online_topup","quota_direction":"credit","trade_no":"usd-history"}`},
+		{Type: model.LogTypeManage, UserId: 1, Quota: 250000, CreatedAt: 300, Other: `{"quota_source":"admin_adjustment","quota_direction":"debit"}`},
+		{Type: model.LogTypeSystem, UserId: 1, Quota: 125000, CreatedAt: 300, Other: `{"quota_source":"redemption","quota_direction":"credit"}`},
+		{Type: model.LogTypeRefund, UserId: 1, ModelName: "video", Quota: 50000, CreatedAt: 300, RequestId: "refunded-request"},
+	}
+	require.NoError(t, db.Create(&logs).Error)
+	require.NoError(t, db.AutoMigrate(&model.TopUp{}))
+	require.NoError(t, db.Create(&model.TopUp{UserId: 1, TradeNo: "usd-history", PaymentMethod: "stripe", PaymentSnapshot: `{"actual_money":"10","currency_code":"USD"}`}).Error)
+	var before State
+	require.NoError(t, db.First(&before, 1).Error)
+	page, err := p.WalletBackfillPage(context.Background(), 0, int64(logs[3].Id), 100)
+	require.NoError(t, err)
+	assert.Equal(t, 4, page.Scanned)
+	replay, err := p.WalletBackfillPage(context.Background(), 0, int64(logs[3].Id), 100)
+	require.NoError(t, err)
+	assert.Equal(t, page, replay)
+	var received batch
+	require.NoError(t, common.UnmarshalJsonStr(page.Body, &received))
+	require.Len(t, received.Events, 4)
+	assert.Contains(t, received.BatchId, "gw-wallet-history-usd-")
+	for i, event := range received.Events {
+		assert.Equal(t, "USD", event["currency"])
+		assert.Equal(t, []string{"10", "0.5", "0.25", "0.1"}[i], event["amount"])
+		assert.Equal(t, []string{"topup", "adjustment", "gift", "refund"}[i], event["extra"].(map[string]any)["recordKind"])
+		assert.NotContains(t, event, "balanceAfter")
+		assert.NotContains(t, event, "gatewayQuota")
+	}
+	assert.Equal(t, "debit", received.Events[1]["extra"].(map[string]any)["direction"])
+	facts := received.Events[0]["extra"].(map[string]any)["topup"].(map[string]any)
+	assert.Equal(t, "10", facts["paidAmount"])
+	assert.Equal(t, "USD", facts["paidCurrency"])
+	assert.Equal(t, "refunded-request", received.Events[3]["extra"].(map[string]any)["request_id"])
+	var after State
+	require.NoError(t, db.First(&after, 1).Error)
+	assert.Equal(t, before, after)
+	require.NoError(t, db.Model(&model.Log{}).Where("id = ?", logs[1].Id).Update("other", `{}`).Error)
+	_, err = p.WalletBackfillPage(context.Background(), 0, int64(logs[3].Id), 100)
+	require.ErrorContains(t, err, "amount is not recorded")
+}
+
 func extraOfEvent(t *testing.T, event map[string]any) map[string]any {
 	t.Helper()
 	require.NotNil(t, event)

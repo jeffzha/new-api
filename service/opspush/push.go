@@ -291,31 +291,51 @@ type UsageBackfillPage struct {
 // AfterID only after a complete durable ACK. Invalid historical records stop
 // the page rather than disappearing from the audit trail.
 func (p *Pusher) BackfillPage(ctx context.Context, afterID, throughID int64, limit int) (*UsageBackfillPage, error) {
+	return p.backfillPage(ctx, afterID, throughID, limit, false)
+}
+
+// WalletBackfillPage prepares recorded native USD wallet facts separately from
+// usage. It never changes balances, the live cursor, or an existing pending batch.
+func (p *Pusher) WalletBackfillPage(ctx context.Context, afterID, throughID int64, limit int) (*UsageBackfillPage, error) {
+	return p.backfillPage(ctx, afterID, throughID, limit, true)
+}
+
+func (p *Pusher) backfillPage(ctx context.Context, afterID, throughID int64, limit int, wallet bool) (*UsageBackfillPage, error) {
 	if p.Config.Currency != "USD" || p.Config.Spec != SpecV11 || !p.Config.UsageOnly ||
 		afterID < 0 || throughID <= afterID || limit < 1 || limit > 100 {
-		return nil, errors.New("invalid bounded USD usage backfill")
+		return nil, errors.New("invalid bounded USD backfill")
+	}
+	types := []int{model.LogTypeConsume, model.LogTypeError}
+	namespace := "gw-history-usd"
+	if wallet {
+		types = []int{model.LogTypeTopup, model.LogTypeManage, model.LogTypeSystem, model.LogTypeRefund}
+		namespace = "gw-wallet-history-usd"
 	}
 	var unsettled int64
 	if err := p.LogDB.WithContext(ctx).Model(&model.Log{}).
 		Where("id <= ? AND type IN ? AND created_at > ?", throughID,
-			[]int{model.LogTypeConsume, model.LogTypeError}, p.Now().Unix()-settleSeconds).
+			types, p.Now().Unix()-settleSeconds).
 		Count(&unsettled).Error; err != nil {
 		return nil, err
 	}
 	if unsettled > 0 {
-		return nil, errors.New("usage backfill upper bound includes unsettled records")
+		return nil, errors.New("backfill upper bound includes unsettled records")
 	}
 	var logs []*model.Log
 	if err := p.LogDB.WithContext(ctx).Where("id > ? AND id <= ? AND type IN ? AND created_at <= ?",
-		afterID, throughID, []int{model.LogTypeConsume, model.LogTypeError}, p.Now().Unix()-settleSeconds).
+		afterID, throughID, types, p.Now().Unix()-settleSeconds).
 		Order("id").Limit(limit).Find(&logs).Error; err != nil {
 		return nil, err
 	}
 	result := &UsageBackfillPage{AfterID: afterID, Scanned: len(logs)}
 	names, conversion := p.channelNames(logs), CurrentConversion()
+	var topups map[int]*model.TopUp
+	if wallet {
+		topups = p.topups(logs)
+	}
 	events := make([]map[string]any, 0, len(logs))
 	for _, log := range logs {
-		event, err := EventUSD(log, names[log.ChannelId], nil, conversion)
+		event, err := EventUSD(log, names[log.ChannelId], topups[log.Id], conversion)
 		if err != nil {
 			return nil, fmt.Errorf("USD historical log %d: %w", log.Id, err)
 		}
@@ -329,7 +349,7 @@ func (p *Pusher) BackfillPage(ctx context.Context, afterID, throughID int64, lim
 		result.AfterID = throughID
 	}
 	if len(events) > 0 {
-		id := fmt.Sprintf("gw-history-usd-%d-%d", afterID+1, result.AfterID)
+		id := fmt.Sprintf("%s-%d-%d", namespace, afterID+1, result.AfterID)
 		body, err := common.Marshal(batch{SchemaVersion: "1.1", BatchId: id, Events: events})
 		if err != nil || len(body) > maxBody {
 			return nil, errors.New("usage backfill page exceeds delivery limit")

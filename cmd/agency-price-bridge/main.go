@@ -74,7 +74,7 @@ func run() error {
 	if err := common.DecodeJson(io.LimitReader(os.Stdin, 2<<20), &input); err != nil {
 		return err
 	}
-	review := input.Action == "events-review" || input.Action == "events-review-ack" || input.Action == "facts-backfill" || input.Action == "usage-backfill" || input.Action == "withdrawal-create" || input.Action == "withdrawal-action" || input.Action == "identity" || input.Action == "reconciliation-read" || input.Action == "platform-read" || input.Action == "platform-apply"
+	review := input.Action == "events-review" || input.Action == "events-review-ack" || input.Action == "facts-backfill" || input.Action == "usage-backfill" || input.Action == "wallet-backfill" || input.Action == "withdrawal-create" || input.Action == "withdrawal-action" || input.Action == "identity" || input.Action == "reconciliation-read" || input.Action == "platform-read" || input.Action == "platform-apply"
 	many := input.Action == "read-many" || input.Action == "directory-read" || input.Action == "customers-read" || input.Action == "payout-read" || input.Action == "distributor-provision" || input.Action == "credential-apply" || review
 	if (input.AgencyID <= 0 && !many) || (!review && input.Action != "read" && input.Action != "read-many" && input.Action != "apply" && input.Action != "directory-read" && input.Action != "directory-apply" && input.Action != "customers-read" && input.Action != "customer-transfer" && input.Action != "payout-read" && input.Action != "payout-apply" && input.Action != "customer-provision" && input.Action != "distributor-provision" && input.Action != "credential-apply") || len(input.Customers) > 1000 || len(input.Children) > 1000 {
 		return fmt.Errorf("invalid bounded bridge request")
@@ -99,7 +99,7 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	var result any
-	if input.Action == "usage-backfill" {
+	if input.Action == "usage-backfill" || input.Action == "wallet-backfill" {
 		if err := model.InitLogDB(); err != nil {
 			return err
 		}
@@ -125,7 +125,12 @@ func run() error {
 			}
 		}
 		config := opspush.Config{URL: os.Getenv("OPS_PUSH_URL"), KeyID: os.Getenv("OPS_PUSH_KEY_ID"), Spec: os.Getenv("OPS_PUSH_SPEC"), Currency: os.Getenv("OPS_PUSH_CURRENCY"), UsageOnly: os.Getenv("OPS_PUSH_USAGE_ONLY") == "true"}
-		result, err = opspush.New(model.DB, model.LOG_DB, config).BackfillPage(ctx, input.AfterID, input.ThroughID, input.Limit)
+		pusher := opspush.New(model.DB, model.LOG_DB, config)
+		if input.Action == "wallet-backfill" {
+			result, err = pusher.WalletBackfillPage(ctx, input.AfterID, input.ThroughID, input.Limit)
+		} else {
+			result, err = pusher.BackfillPage(ctx, input.AfterID, input.ThroughID, input.Limit)
+		}
 	} else if input.Action == "facts-backfill" {
 		var after int64
 		var queued int

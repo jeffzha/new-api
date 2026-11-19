@@ -102,6 +102,8 @@ import {
   taskPricingConditions,
 } from '../lib/task-price-display'
 import { getVideoPricingTable } from '../lib/video-pricing-table'
+import { OfficialPrice } from '../ops-list-prices/official-price'
+import { getOfficialRows } from '../ops-list-prices/official-price-data'
 import type {
   ModelCapability,
   PriceType,
@@ -1647,6 +1649,7 @@ export interface ModelDetailsContentProps {
 
 export function ModelDetailsContent(props: ModelDetailsContentProps) {
   const { t } = useTranslation()
+  const officialRows = getOfficialRows(props.model)
   const showRechargePrice = props.showRechargePrice ?? false
 
   const isDynamic =
@@ -1690,60 +1693,77 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
 
         <TabsContent value='overview' className='space-y-6 outline-none'>
           <OverviewSummaryGrid model={props.model} />
-          {props.model.sales_bps != null && (
+          {!officialRows && props.model.sales_bps != null && (
             <CustomerPricingNotice models={props.pricingModels} />
           )}
 
           <section className='bg-card/60 space-y-5 rounded-xl border p-4 shadow-sm'>
             <SectionTitle>{t('Pricing')}</SectionTitle>
-            {videoPricingTable && (
-              <VideoPricingTables
-                table={videoPricingTable}
-                tokenUnit={props.tokenUnit}
-                showRechargePrice={showRechargePrice}
-                priceRate={props.priceRate}
-                usdExchangeRate={props.usdExchangeRate}
-                groupRatio={getEffectiveGroupRatio(props.model, {}, '_base')}
-              />
-            )}
-            {!videoPricingTable && showBasePrices && (
-              <PriceSection
+            {officialRows ? (
+              <OfficialPrice
                 model={props.model}
-                priceRate={props.priceRate}
-                usdExchangeRate={props.usdExchangeRate}
                 tokenUnit={props.tokenUnit}
+                usdExchangeRate={props.usdExchangeRate}
+                variant='details'
                 showRechargePrice={showRechargePrice}
+                priceRate={props.priceRate}
               />
-            )}
-            {!videoPricingTable &&
-              isDynamic &&
-              !simpleTaskPricing &&
-              !specialExpressionPriceNote && (
-                <DynamicPricingBreakdown
-                  billingExpr={props.model.billing_expr}
-                  usageSchema={props.model.billing_usage_schema}
-                  taskPriceOptions={{
-                    showRechargePrice,
-                    priceRate: props.priceRate,
-                    usdExchangeRate: props.usdExchangeRate,
-                    groupRatioMultiplier: getEffectiveGroupRatio(
+            ) : (
+              <>
+                {videoPricingTable && (
+                  <VideoPricingTables
+                    table={videoPricingTable}
+                    tokenUnit={props.tokenUnit}
+                    showRechargePrice={showRechargePrice}
+                    priceRate={props.priceRate}
+                    usdExchangeRate={props.usdExchangeRate}
+                    groupRatio={getEffectiveGroupRatio(
                       props.model,
                       {},
                       '_base'
-                    ),
-                  }}
+                    )}
+                  />
+                )}
+                {!videoPricingTable && showBasePrices && (
+                  <PriceSection
+                    model={props.model}
+                    priceRate={props.priceRate}
+                    usdExchangeRate={props.usdExchangeRate}
+                    tokenUnit={props.tokenUnit}
+                    showRechargePrice={showRechargePrice}
+                  />
+                )}
+                {!videoPricingTable &&
+                  isDynamic &&
+                  !simpleTaskPricing &&
+                  !specialExpressionPriceNote && (
+                    <DynamicPricingBreakdown
+                      billingExpr={props.model.billing_expr}
+                      usageSchema={props.model.billing_usage_schema}
+                      taskPriceOptions={{
+                        showRechargePrice,
+                        priceRate: props.priceRate,
+                        usdExchangeRate: props.usdExchangeRate,
+                        groupRatioMultiplier: getEffectiveGroupRatio(
+                          props.model,
+                          {},
+                          '_base'
+                        ),
+                      }}
+                    />
+                  )}
+                <GroupPricingSection
+                  model={props.model}
+                  groupRatio={props.groupRatio}
+                  usableGroup={props.usableGroup}
+                  autoGroups={props.autoGroups}
+                  priceRate={props.priceRate}
+                  usdExchangeRate={props.usdExchangeRate}
+                  tokenUnit={props.tokenUnit}
+                  showRechargePrice={showRechargePrice}
                 />
-              )}
-            <GroupPricingSection
-              model={props.model}
-              groupRatio={props.groupRatio}
-              usableGroup={props.usableGroup}
-              autoGroups={props.autoGroups}
-              priceRate={props.priceRate}
-              usdExchangeRate={props.usdExchangeRate}
-              tokenUnit={props.tokenUnit}
-              showRechargePrice={showRechargePrice}
-            />
+              </>
+            )}
           </section>
 
           <ModelBackendDetailsSection model={props.model} />
@@ -1812,7 +1832,7 @@ export function ModelDetails() {
     isLoading,
     priceRate,
     usdExchangeRate,
-  } = usePricingData()
+  } = usePricingData(true, true)
 
   const tokenUnit: TokenUnit =
     search.tokenUnit === 'K' ? 'K' : DEFAULT_TOKEN_UNIT

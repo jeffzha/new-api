@@ -184,6 +184,26 @@ func TestOpsFeeDatabaseMatrix(t *testing.T) {
 				require.FailNow(t, fmt.Sprint("original charge changed"))
 			}
 			// A failed insert rolls cursor back as part of the same transaction.
+			var usdPage map[string]any
+			require.NoError(t, common.Unmarshal(feePage(t, "0.0065", "usd-cursor", false), &usdPage))
+			usdPage["data"].(map[string]any)["currency"] = "USD"
+			rawUSD, err := common.Marshal(usdPage)
+			require.NoError(t, err)
+			usdRows, usdCursor, _, err := decodePage(rawUSD, "usd-connection", 202, "USD")
+			require.NoError(t, err)
+			_, err = model.ClaimOpsFeeSync(ctx, db, "usd-connection", "usd-owner", 202)
+			require.NoError(t, err)
+			for range 2 {
+				require.NoError(t, model.SaveOpsFeePage(ctx, db, "usd-connection", "usd-owner", usdCursor, usdRows, 202))
+			}
+			model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: "usd-connection", Currency: "USD"})
+			usdLogs := []*model.Log{{UserId: 15, Type: 2, RequestId: "req-1", ModelName: "sample"}}
+			require.NoError(t, model.AttachOpsFees(ctx, usdLogs))
+			assert.Equal(t, "USD", usdLogs[0].OpsFee.Currency)
+			assert.Equal(t, "0.0065", *usdLogs[0].OpsFee.Amount)
+			model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: "usd-connection", Currency: "CNY"})
+			require.NoError(t, model.AttachOpsFees(ctx, usdLogs))
+			assert.Equal(t, "waiting", usdLogs[0].OpsFee.Status, "a result cannot cross currencies")
 			if err = db.Migrator().DropTable(&model.OpsFee{}); err != nil {
 				require.FailNow(t, fmt.Sprint(err))
 			}
@@ -390,6 +410,32 @@ func TestOpsFeePageValidationAndDisabledMode(t *testing.T) {
 	t.Setenv("OPS_FEES_ENABLED", "")
 	if err = StartConfigured(context.Background()); err != nil {
 		require.FailNow(t, fmt.Sprint(err))
+	}
+}
+
+func TestUSDFeesRequireExplicitMatchingCurrency(t *testing.T) {
+	var envelope map[string]any
+	require.NoError(t, common.Unmarshal(feePage(t, "0.10", "next", false), &envelope))
+	data := envelope["data"].(map[string]any)
+	for _, currency := range []string{"", "CNY", "USD"} {
+		t.Run(currency, func(t *testing.T) {
+			data["currency"] = currency
+			raw, err := common.Marshal(envelope)
+			require.NoError(t, err)
+			rows, cursor, _, err := decodePage(raw, "usd-connection", 1, "USD")
+			if currency != "USD" {
+				require.ErrorContains(t, err, "currency mismatch")
+				assert.Empty(t, rows)
+				assert.Empty(t, cursor)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			assert.Equal(t, "USD", rows[0].Currency)
+			assert.Equal(t, "0.10", *rows[0].Amount)
+			_, _, _, err = decodePage(raw, "cn-connection", 1, "CNY")
+			require.ErrorContains(t, err, "currency mismatch")
+		})
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/opspricing"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -120,7 +122,7 @@ func GetPricing(c *gin.Context) {
 		}
 	}
 
-	c.JSON(200, gin.H{
+	response := gin.H{
 		"success":            true,
 		"data":               pricingData,
 		"pricing_scope":      pricingScope,
@@ -130,7 +132,14 @@ func GetPricing(c *gin.Context) {
 		"supported_endpoint": model.GetSupportedEndpointMap(),
 		"auto_groups":        service.GetUserAutoGroup(group),
 		"pricing_version":    "a42d372ccf0b5dd13ecf71203521f9d2",
-	})
+	}
+	if reader := opspricing.Default; reader != nil {
+		// A separate display projection keeps existing API consumers (including
+		// the OPS catalog collector) on the unchanged local pricing contract.
+		response["list_price_data"] = reader.Display(pricing, operation_setting.USDExchangeRate, common.QuotaPerUnit)
+		response["list_price_status"] = reader.Status()
+	}
+	c.JSON(200, response)
 }
 
 func ResetModelRatio(c *gin.Context) {

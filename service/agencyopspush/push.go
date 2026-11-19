@@ -195,6 +195,14 @@ func (s *Sender) Step(ctx context.Context) (time.Duration, error) {
 		}
 		size := 0
 		for _, row := range candidates {
+			if !model.AgencyOpsFactAllowed(row.Payload) {
+				// Preserve the payload/ID for an explicitly audited future resume.
+				if err := tx.Model(&model.AgencyOpsEvent{}).Where("id = ? AND status IN ?", row.ID, []string{"queued", "retry"}).
+					Updates(map[string]any{"status": "paused", "error_code": "non_wallet_scope"}).Error; err != nil {
+					return err
+				}
+				continue
+			}
 			if row.ErrorCode == "delivery_isolate" && len(leased) > 0 {
 				break
 			}

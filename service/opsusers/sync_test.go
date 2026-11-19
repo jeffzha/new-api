@@ -227,3 +227,37 @@ func TestUSDBalanceSnapshotsRefreshWithoutCurrencyConversion(t *testing.T) {
 	syncer.Step()
 	assert.Equal(t, 2, stub.count(), "unchanged snapshots do not resend")
 }
+
+func TestUSDProfileOnlySyncOmitsBalancesAndIgnoresQuotaChanges(t *testing.T) {
+	db, stub, syncer := setup(t)
+	syncer.Config.Currency, syncer.Config.OmitBalance = "USD", true
+	require.NoError(t, db.Create(&model.User{Id: 17, Username: "profile-only", Status: common.UserStatusEnabled, Quota: 50_000_000, AffCode: "profile17"}).Error)
+	syncer.Step()
+	require.Equal(t, 1, stub.count())
+	assert.NotContains(t, usersOf(stub.last())["17"], "balance")
+	require.NoError(t, db.Model(&model.User{}).Where("id = 17").Update("quota", 1).Error)
+	syncer.Step()
+	assert.Equal(t, 1, stub.count())
+	require.NoError(t, db.Model(&model.User{}).Where("id = 17").Update("display_name", "Changed").Error)
+	syncer.Step()
+	require.Equal(t, 2, stub.count())
+	assert.Equal(t, "Changed", usersOf(stub.last())["17"]["displayName"])
+	assert.NotContains(t, usersOf(stub.last())["17"], "balance")
+}
+
+func TestProfileOnlySyncRetainsPendingBalanceBatchWithoutSending(t *testing.T) {
+	db, stub, syncer := setup(t)
+	syncer.Config.Currency = "USD"
+	require.NoError(t, db.Create(&model.User{Id: 17, Username: "pending", Status: common.UserStatusEnabled, Quota: 50_000_000, AffCode: "pending17"}).Error)
+	stub.reply = func(batch) (int, string) { return 503, `{}` }
+	syncer.Step()
+	var before, after State
+	require.NoError(t, db.First(&before, 1).Error)
+	syncer.Config.OmitBalance = true
+	assert.Equal(t, stalledWait, syncer.Step())
+	require.NoError(t, db.First(&after, 1).Error)
+	assert.Equal(t, 1, stub.count())
+	assert.Equal(t, before.BatchBody, after.BatchBody)
+	assert.Equal(t, before.BatchId, after.BatchId)
+	assert.Equal(t, before.BatchMeta, after.BatchMeta)
+}

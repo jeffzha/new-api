@@ -89,6 +89,7 @@ type Config struct {
 	Since              int64  // first run only: start after the last log older than this; 0 = start at the newest log
 	Spec               string // SpecV1 (default) or SpecV11
 	Currency           string // empty/CNY preserves the domestic protocol; USD opts into native amounts
+	UsageOnly          bool   // skip wallet records; later wallet replay requires a separate audited backfill
 }
 
 type Pusher struct {
@@ -106,6 +107,7 @@ func StartConfigured(ctx context.Context) error {
 		return nil
 	}
 	config := Config{URL: base, KeyID: os.Getenv("OPS_PUSH_KEY_ID"), Secret: os.Getenv("OPS_PUSH_SECRET"), Currency: os.Getenv("OPS_PUSH_CURRENCY")}
+	config.UsageOnly = os.Getenv("OPS_PUSH_USAGE_ONLY") == "true"
 	switch config.Spec = os.Getenv("OPS_PUSH_SPEC"); config.Spec {
 	case "", SpecV1:
 		config.Spec = SpecV1
@@ -222,6 +224,20 @@ func (p *Pusher) Step() time.Duration {
 			return idleWait
 		}
 	}
+	if p.Config.UsageOnly {
+		var pending batch
+		if common.UnmarshalJsonStr(state.BatchBody, &pending) != nil {
+			p.fail(state, "stored usage batch unreadable")
+			return stalledWait
+		}
+		for _, event := range pending.Events {
+			extra, _ := event["extra"].(map[string]any)
+			if kind := extra["recordKind"]; kind != nil && kind != "usage" && kind != "error" {
+				p.fail(state, "pending wallet batch requires review before usage-only sync")
+				return stalledWait
+			}
+		}
+	}
 	return p.send(state)
 }
 
@@ -264,12 +280,74 @@ type batch struct {
 	Events        []map[string]any `json:"events"`
 }
 
+type UsageBackfillPage struct {
+	AfterID int64  `json:"afterId"`
+	Body    string `json:"body"`
+	Scanned int    `json:"scanned"`
+}
+
+// BackfillPage prepares one native USD historical page without touching the
+// live cursor. The operator must persist Body before sending, then checkpoint
+// AfterID only after a complete durable ACK. Invalid historical records stop
+// the page rather than disappearing from the audit trail.
+func (p *Pusher) BackfillPage(ctx context.Context, afterID, throughID int64, limit int) (*UsageBackfillPage, error) {
+	if p.Config.Currency != "USD" || p.Config.Spec != SpecV11 || !p.Config.UsageOnly ||
+		afterID < 0 || throughID <= afterID || limit < 1 || limit > 100 {
+		return nil, errors.New("invalid bounded USD usage backfill")
+	}
+	var unsettled int64
+	if err := p.LogDB.WithContext(ctx).Model(&model.Log{}).
+		Where("id <= ? AND type IN ? AND created_at > ?", throughID,
+			[]int{model.LogTypeConsume, model.LogTypeError}, p.Now().Unix()-settleSeconds).
+		Count(&unsettled).Error; err != nil {
+		return nil, err
+	}
+	if unsettled > 0 {
+		return nil, errors.New("usage backfill upper bound includes unsettled records")
+	}
+	var logs []*model.Log
+	if err := p.LogDB.WithContext(ctx).Where("id > ? AND id <= ? AND type IN ? AND created_at <= ?",
+		afterID, throughID, []int{model.LogTypeConsume, model.LogTypeError}, p.Now().Unix()-settleSeconds).
+		Order("id").Limit(limit).Find(&logs).Error; err != nil {
+		return nil, err
+	}
+	result := &UsageBackfillPage{AfterID: afterID, Scanned: len(logs)}
+	names, conversion := p.channelNames(logs), CurrentConversion()
+	events := make([]map[string]any, 0, len(logs))
+	for _, log := range logs {
+		event, err := EventUSD(log, names[log.ChannelId], nil, conversion)
+		if err != nil {
+			return nil, fmt.Errorf("USD historical log %d: %w", log.Id, err)
+		}
+		if err := p.attachUpstream(log, event); err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+		result.AfterID = int64(log.Id)
+	}
+	if len(logs) < limit {
+		result.AfterID = throughID
+	}
+	if len(events) > 0 {
+		id := fmt.Sprintf("gw-history-usd-%d-%d", afterID+1, result.AfterID)
+		body, err := common.Marshal(batch{SchemaVersion: "1.1", BatchId: id, Events: events})
+		if err != nil || len(body) > maxBody {
+			return nil, errors.New("usage backfill page exceeds delivery limit")
+		}
+		result.Body = string(body)
+	}
+	return result, nil
+}
+
 // build persists the next batch after the cursor. It returns false when there is nothing to send.
 func (p *Pusher) build(state *State) (bool, error) {
 	v11 := p.Config.Spec == SpecV11
 	types, schema := []int{model.LogTypeConsume, model.LogTypeError}, "1"
 	if v11 {
 		types, schema = v11Types, "1.1"
+	}
+	if p.Config.UsageOnly {
+		types = []int{model.LogTypeConsume, model.LogTypeError}
 	}
 	var logs []*model.Log
 	err := p.LogDB.Where("id > ? AND type IN ? AND created_at <= ?", state.Cursor,

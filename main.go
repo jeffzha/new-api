@@ -37,6 +37,7 @@ import (
 	"github.com/QuantumNous/new-api/service/opsexport"
 	"github.com/QuantumNous/new-api/service/opsfees"
 	"github.com/QuantumNous/new-api/service/opsmonitor"
+	"github.com/QuantumNous/new-api/service/opspricing"
 	"github.com/QuantumNous/new-api/service/opspush"
 	"github.com/QuantumNous/new-api/service/opsupstreams"
 	"github.com/QuantumNous/new-api/service/opsusers"
@@ -186,6 +187,10 @@ func main() {
 	}
 	if err := opsfees.StartConfigured(commandWorkerCtx); err != nil {
 		common.FatalLog("failed to initialize OPS fee comparison: " + err.Error())
+		return
+	}
+	if err := opspricing.StartConfigured(commandWorkerCtx); err != nil {
+		common.FatalLog("failed to initialize OPS list price display: " + err.Error())
 		return
 	}
 	if err := opspush.StartConfigured(commandWorkerCtx); err != nil {

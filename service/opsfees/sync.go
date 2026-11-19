@@ -32,6 +32,7 @@ type Fee struct {
 }
 type page struct {
 	Data *struct {
+		Currency   string  `json:"currency"`
 		Items      []Fee   `json:"items"`
 		NextCursor *string `json:"nextCursor"`
 		HasMore    *bool   `json:"hasMore"`
@@ -51,10 +52,6 @@ func StartConfigured(ctx context.Context) error {
 	if os.Getenv("OPS_FEES_ENABLED") != "true" {
 		return nil
 	}
-	// The current OPS fee contract is CNY-only. Never relabel it as USD.
-	if operation_setting.GetQuotaDisplayType() != operation_setting.QuotaDisplayTypeCNY {
-		return errors.New("OPS fee readback requires a verified wallet currency contract")
-	}
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		return errors.New("OPS fees need SQL usage logs")
 	}
@@ -62,11 +59,14 @@ func StartConfigured(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
+	if operation_setting.GetQuotaDisplayType() != c.Currency {
+		return errors.New("OPS fee readback requires a verified wallet currency contract")
+	}
 	if e = model.MigrateOpsFees(model.DB); e != nil {
 		return e
 	}
 	w := New(model.DB, model.LOG_DB, c)
-	model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: c.Connection, Since: c.Since})
+	model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: c.Connection, Since: c.Since, Currency: c.Currency})
 	go w.Run(ctx)
 	common.SysLog("OPS fee comparison enabled")
 	return nil
@@ -173,7 +173,7 @@ func (w *Worker) Step(ctx context.Context) (time.Duration, error) {
 			stepErr = errors.New(code)
 			break
 		}
-		rows, cursor, hasMore, parseErr := decodePage(raw, w.Config.Connection, w.Now().Unix())
+		rows, cursor, hasMore, parseErr := decodePage(raw, w.Config.Connection, w.Now().Unix(), w.Config.Currency)
 		if cursor == "" && len(rows) == 0 && !hasMore {
 			cursor = state.Cursor
 		}
@@ -215,10 +215,21 @@ done:
 	return wait, stepErr
 }
 
-func decodePage(raw []byte, connection string, at int64) ([]model.OpsFee, string, bool, error) {
+func decodePage(raw []byte, connection string, at int64, expectedCurrency ...string) ([]model.OpsFee, string, bool, error) {
 	var p page
 	if e := common.Unmarshal(raw, &p); e != nil || p.Data == nil || p.Data.HasMore == nil || len(p.Data.Items) > 500 {
 		return nil, "", false, errors.New("invalid page")
+	}
+	currency := "CNY"
+	if len(expectedCurrency) > 0 && expectedCurrency[0] != "" {
+		currency = expectedCurrency[0]
+	}
+	actual := p.Data.Currency
+	if actual == "" {
+		actual = "CNY"
+	}
+	if (currency != "USD" && currency != "CNY") || actual != currency {
+		return nil, "", false, errors.New("fee currency mismatch")
 	}
 	cursor := ""
 	if p.Data.NextCursor != nil {
@@ -251,7 +262,7 @@ func decodePage(raw []byte, connection string, at int64) ([]model.OpsFee, string
 		if f.Amount == nil {
 			status = "unconfirmed"
 		}
-		rows = append(rows, model.OpsFee{Connection: connection, RequestID: f.RequestID, UserID: f.UserID, Model: f.Model, Amount: f.Amount, StationAmount: f.StationAmount, RefundAmount: f.RefundAmount, Difference: f.Difference, Currency: "CNY", ChargedAt: f.ChargedAt, FetchedAt: at, Status: status})
+		rows = append(rows, model.OpsFee{Connection: connection, RequestID: f.RequestID, UserID: f.UserID, Model: f.Model, Amount: f.Amount, StationAmount: f.StationAmount, RefundAmount: f.RefundAmount, Difference: f.Difference, Currency: currency, ChargedAt: f.ChargedAt, FetchedAt: at, Status: status})
 	}
 	// Corrections in one page may repeat a request; retain its final result.
 	positions := make(map[string]int, len(rows))

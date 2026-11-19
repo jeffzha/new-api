@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,7 +17,9 @@ import (
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/QuantumNous/new-api/pkg/agencyhub"
 	"github.com/QuantumNous/new-api/service/agencyopspush"
+	"github.com/QuantumNous/new-api/service/opspush"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type request struct {
@@ -46,6 +49,10 @@ type request struct {
 	PlatformPrice    agencyhub.OpsPlatformPriceCommand    `json:"platformPrice"`
 	WithdrawalAction agencyhub.OpsWithdrawalAction        `json:"withdrawalAction"`
 	Identity         agencyhub.OpsIdentityCommand         `json:"identity"`
+	FactKind         string                               `json:"factKind"`
+	AfterID          int64                                `json:"afterId"`
+	ThroughID        int64                                `json:"throughId"`
+	Limit            int                                  `json:"limit"`
 }
 
 func main() {
@@ -67,7 +74,7 @@ func run() error {
 	if err := common.DecodeJson(io.LimitReader(os.Stdin, 2<<20), &input); err != nil {
 		return err
 	}
-	review := input.Action == "events-review" || input.Action == "events-review-ack" || input.Action == "withdrawal-create" || input.Action == "withdrawal-action" || input.Action == "identity" || input.Action == "reconciliation-read" || input.Action == "platform-read" || input.Action == "platform-apply"
+	review := input.Action == "events-review" || input.Action == "events-review-ack" || input.Action == "facts-backfill" || input.Action == "usage-backfill" || input.Action == "withdrawal-create" || input.Action == "withdrawal-action" || input.Action == "identity" || input.Action == "reconciliation-read" || input.Action == "platform-read" || input.Action == "platform-apply"
 	many := input.Action == "read-many" || input.Action == "directory-read" || input.Action == "customers-read" || input.Action == "payout-read" || input.Action == "distributor-provision" || input.Action == "credential-apply" || review
 	if (input.AgencyID <= 0 && !many) || (!review && input.Action != "read" && input.Action != "read-many" && input.Action != "apply" && input.Action != "directory-read" && input.Action != "directory-apply" && input.Action != "customers-read" && input.Action != "customer-transfer" && input.Action != "payout-read" && input.Action != "payout-apply" && input.Action != "customer-provision" && input.Action != "distributor-provision" && input.Action != "credential-apply") || len(input.Customers) > 1000 || len(input.Children) > 1000 {
 		return fmt.Errorf("invalid bounded bridge request")
@@ -92,7 +99,39 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	var result any
-	if input.Action == "identity" {
+	if input.Action == "usage-backfill" {
+		if err := model.InitLogDB(); err != nil {
+			return err
+		}
+		if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+			return fmt.Errorf("invalid usage backfill database")
+		}
+		logPool, e := model.LOG_DB.DB()
+		if e != nil {
+			return e
+		}
+		if logPool != pool {
+			defer logPool.Close()
+			logPool.SetMaxOpenConns(1)
+		}
+		var options []model.Option
+		if err := model.DB.WithContext(ctx).Where(clause.Eq{Column: "key", Value: "QuotaPerUnit"}).Find(&options).Error; err != nil {
+			return err
+		}
+		if len(options) > 0 {
+			common.QuotaPerUnit, err = strconv.ParseFloat(options[0].Value, 64)
+			if err != nil {
+				return err
+			}
+		}
+		config := opspush.Config{Spec: os.Getenv("OPS_PUSH_SPEC"), Currency: os.Getenv("OPS_PUSH_CURRENCY"), UsageOnly: os.Getenv("OPS_PUSH_USAGE_ONLY") == "true"}
+		result, err = opspush.New(model.DB, model.LOG_DB, config).BackfillPage(ctx, input.AfterID, input.ThroughID, input.Limit)
+	} else if input.Action == "facts-backfill" {
+		var after int64
+		var queued int
+		after, queued, err = model.BackfillAgencyOpsFacts(model.DB.WithContext(ctx), input.FactKind, input.AfterID, input.ThroughID, input.Limit)
+		result = map[string]any{"afterId": after, "queued": queued, "hasMore": after < input.ThroughID}
+	} else if input.Action == "identity" {
 		key, e := agencyhub.LoadSSOPublicKey(agencyhub.LoadConfig().SSOPublicKeyFile)
 		if e != nil {
 			return e
@@ -118,12 +157,13 @@ func run() error {
 		}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	} else if input.Action == "events-review" {
 		var events []model.AgencyOpsEvent
-		events, err = model.ReadAgencyOpsReview(model.DB.WithContext(ctx), input.ReviewBeforeMS)
+		var hasMore bool
+		events, hasMore, err = model.ReadAgencyOpsReview(model.DB.WithContext(ctx), input.ReviewBeforeMS)
 		items := make([]map[string]any, 0, len(events))
 		for _, event := range events {
 			items = append(items, map[string]any{"id": event.ID, "hash": event.PayloadHash, "payload": string(event.Payload)})
 		}
-		result = map[string]any{"items": items}
+		result = map[string]any{"items": items, "hasMore": hasMore}
 	} else if input.Action == "events-review-ack" {
 		err = model.AcknowledgeAgencyOpsReview(model.DB.WithContext(ctx), input.Reviews, input.ReviewAtMS)
 		result = map[string]any{"reviewed": len(input.Reviews)}

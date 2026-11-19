@@ -14,6 +14,7 @@ import (
 
 type Config struct {
 	BaseURL, KeyID, Secret, Connection                                string
+	Currency                                                          string
 	ActiveInterval, IdleInterval, Timeout, RoundBudget, MinRequestGap time.Duration
 	MaxPages                                                          int
 	Since                                                             int64
@@ -21,6 +22,13 @@ type Config struct {
 
 func LoadConfig() (Config, error) {
 	c := Config{BaseURL: strings.TrimRight(os.Getenv("OPS_FEES_URL"), "/"), KeyID: os.Getenv("OPS_FEES_KEY_ID"), Secret: os.Getenv("OPS_FEES_SECRET"), ActiveInterval: 5 * time.Second, IdleInterval: 5 * time.Minute, Timeout: 5 * time.Second, RoundBudget: 10 * time.Second, MinRequestGap: 3 * time.Second, MaxPages: 3}
+	c.Currency = os.Getenv("OPS_FEES_CURRENCY")
+	if c.Currency == "" {
+		c.Currency = "CNY"
+	}
+	if c.Currency != "CNY" && c.Currency != "USD" {
+		return c, errors.New("invalid OPS_FEES_CURRENCY")
+	}
 	if err := opsclient.ValidateBase(c.BaseURL); err != nil {
 		return c, err
 	}
@@ -54,6 +62,9 @@ func LoadConfig() (Config, error) {
 		c.Since = v
 	}
 	hash := sha256.Sum256([]byte(c.BaseURL + "\n" + c.KeyID + "\n" + os.Getenv("OPS_FEES_NAMESPACE")))
+	if c.Currency == "USD" {
+		hash = sha256.Sum256([]byte(c.BaseURL + "\n" + c.KeyID + "\n" + os.Getenv("OPS_FEES_NAMESPACE") + "\nUSD"))
+	}
 	c.Connection = hex.EncodeToString(hash[:])
 	return c, nil
 }

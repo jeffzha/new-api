@@ -84,6 +84,7 @@ func (Profile) TableName() string { return "ops_user_profiles" }
 type Config struct {
 	URL, KeyID, Secret string
 	Currency           string
+	OmitBalance        bool
 	// Resend, when changed, pushes every user once more (for example at the balance opening moment, spec 5.4).
 	Resend string
 }
@@ -103,6 +104,7 @@ func StartConfigured(ctx context.Context) error {
 	}
 	config := Config{URL: strings.TrimRight(os.Getenv("OPS_PUSH_URL"), "/"), KeyID: os.Getenv("OPS_PUSH_KEY_ID"),
 		Secret: os.Getenv("OPS_PUSH_SECRET"), Resend: strings.TrimSpace(os.Getenv("OPS_USER_SYNC_RESEND")), Currency: os.Getenv("OPS_PUSH_CURRENCY")}
+	config.OmitBalance = os.Getenv("OPS_USER_SYNC_BALANCES_ENABLED") == "false"
 	if err := (opspush.Config{URL: config.URL, KeyID: config.KeyID, Secret: config.Secret, Currency: config.Currency, Spec: opspush.SpecV11}).Validate(); err != nil {
 		return errors.New("OPS_USER_SYNC_ENABLED needs a valid Ops push configuration: " + err.Error())
 	}
@@ -281,7 +283,7 @@ func (s *Syncer) build(state *State) (built, more bool, err error) {
 		for _, user := range users {
 			present[user.Id] = true
 			profile := userProfile(user, distributors, agencies)
-			hash := profileHash(profile, s.Config.Currency)
+			hash := profileHash(profile, s.Config.Currency, s.Config.OmitBalance)
 			if row, ok := known[user.Id]; ok && row.Hash == hash {
 				continue
 			}
@@ -293,7 +295,7 @@ func (s *Syncer) build(state *State) (built, more bool, err error) {
 				continue
 			}
 			profile := map[string]any{"userId": strconv.FormatInt(row.UserId, 10), "status": "removed"}
-			if hash := profileHash(profile, s.Config.Currency); row.Hash != hash {
+			if hash := profileHash(profile, s.Config.Currency, s.Config.OmitBalance); row.Hash != hash {
 				found = append(found, candidate{pending{row.UserId, hash, "removed", now.Unix()}, profile})
 			}
 		}
@@ -319,7 +321,7 @@ func (s *Syncer) build(state *State) (built, more bool, err error) {
 		tail := make([]byte, 3)
 		_, _ = rand.Read(tail)
 		id := fmt.Sprintf("users-%s-%06d-%s", now.UTC().Format("20060102"), state.Seq, hex.EncodeToString(tail))
-		body, meta, err := encode(id, changed, now, s.Config.Currency)
+		body, meta, err := encode(id, changed, now, s.Config.Currency, s.Config.OmitBalance)
 		if err != nil {
 			return false, false, err
 		}
@@ -411,10 +413,10 @@ func printable(value string) bool {
 	return true
 }
 
-func profileHash(profile map[string]any, currency string) string {
+func profileHash(profile map[string]any, currency string, omitBalance bool) string {
 	copied := make(map[string]any, len(profile))
 	for key, value := range profile {
-		if key != "quota" || currency == "USD" {
+		if key != "quota" || currency == "USD" && !omitBalance {
 			copied[key] = value
 		}
 	}
@@ -424,7 +426,7 @@ func profileHash(profile map[string]any, currency string) string {
 }
 
 // encode builds the request body: each profile gets updatedAt and, when the conversion is valid, a balance snapshot.
-func encode(id string, changed []candidate, now time.Time, currency string) ([]byte, []byte, error) {
+func encode(id string, changed []candidate, now time.Time, currency string, omitBalance bool) ([]byte, []byte, error) {
 	perUnit, rate := common.QuotaPerUnit, operation_setting.USDExchangeRate
 	balanced := perUnit >= 1 && perUnit == math.Trunc(perUnit) && perUnit <= math.MaxInt32 && rate > 0 && rate <= 1000
 	at := now.UTC().Format(time.RFC3339)
@@ -438,7 +440,7 @@ func encode(id string, changed []candidate, now time.Time, currency string) ([]b
 			}
 		}
 		user["updatedAt"] = time.Unix(item.UpdatedAt, 0).UTC().Format(time.RFC3339)
-		if quota, ok := item.profile["quota"].(int64); ok {
+		if quota, ok := item.profile["quota"].(int64); ok && !omitBalance {
 			if currency == "USD" {
 				amount, err := opspush.USDAmount(quota, perUnit)
 				if err != nil {
@@ -482,6 +484,19 @@ type errorBody struct {
 
 func (s *Syncer) send(state *State) time.Duration {
 	body := []byte(state.BatchBody)
+	if s.Config.OmitBalance {
+		var pending batch
+		if common.Unmarshal(body, &pending) != nil {
+			s.fail(state, "stored user batch unreadable")
+			return stalledWait
+		}
+		for _, user := range pending.Users {
+			if _, exists := user["balance"]; exists {
+				s.fail(state, "pending balance snapshot requires review before profile-only sync")
+				return stalledWait
+			}
+		}
+	}
 	request, err := http.NewRequest(http.MethodPost, s.Config.URL+Path, bytes.NewReader(body))
 	if err != nil {
 		s.fail(state, err.Error())

@@ -407,7 +407,7 @@ func TestDistributorEventsAcrossDatabases(t *testing.T) {
 			// A later-committing smaller ID still remains independently eligible.
 			reviewAt := time.Now().UnixMilli()
 			require.NoError(t, db.Model(&model.AgencyOpsEvent{}).Where("id > ?", 0).Update("created_at_ms", reviewAt-1000).Error)
-			page, err := model.ReadAgencyOpsReview(db, reviewAt)
+			page, hasMore, err := model.ReadAgencyOpsReview(db, reviewAt)
 			require.NoError(t, err)
 			require.NotEmpty(t, page)
 			acks := make([]model.AgencyOpsReview, 0, len(page))
@@ -423,7 +423,7 @@ func TestDistributorEventsAcrossDatabases(t *testing.T) {
 			require.NoError(t, model.AcknowledgeAgencyOpsReview(db, []model.AgencyOpsReview{{ID: late.ID, Hash: late.PayloadHash}}, reviewAt))
 			late.ID, late.EventID = 8000001, "review-late-lower-id"
 			require.NoError(t, db.Create(&late).Error)
-			page, err = model.ReadAgencyOpsReview(db, reviewAt)
+			page, hasMore, err = model.ReadAgencyOpsReview(db, reviewAt)
 			require.NoError(t, err)
 			require.Len(t, page, 1)
 			assert.Equal(t, int64(8000001), page[0].ID)
@@ -475,6 +475,126 @@ func TestDistributorEventsAcrossDatabases(t *testing.T) {
 			require.NoError(t, db.Where("payload LIKE ?", `%"kind":"source_credential"%`).Find(&credentialChanges).Error)
 			require.Len(t, credentialChanges, 1)
 			assert.NotContains(t, credentialChanges[0].Payload, operator.PasswordHash)
+			// Non-wallet integration retains financial facts without exporting them,
+			// including the independent nightly repair path and financial audits.
+			t.Setenv("OPS_DISTRIBUTOR_NON_WALLET_ONLY", "true")
+			for _, kind := range []string{"usage", "journals", "dailyStats", "prices", "platformPrices", "priceItems",
+				"bindings", "activeBindings", "salesOverrides", "source_directory", "source_customer", "source_credential", "source_price"} {
+				assert.True(t, model.AgencyOpsFactAllowed(model.AgencyOpsPayload(fmt.Sprintf(`{"kind":%q}`, kind))), kind)
+			}
+			for _, kind := range []string{"balances", "wallets", "topups", "withdrawals", "commissions", "funding", "fundingLots", "debts", "reversals", "source_payout", "future_kind"} {
+				assert.False(t, model.AgencyOpsFactAllowed(model.AgencyOpsPayload(fmt.Sprintf(`{"kind":%q}`, kind))), kind)
+			}
+			assert.False(t, model.AgencyOpsFactAllowed(`not-json`))
+			assert.False(t, model.AgencyOpsFactAllowed(`{"kind":"audit","record":{"action":"credit.invoice.mark_paid"}}`))
+			assert.True(t, model.AgencyOpsFactAllowed(`{"kind":"audit","record":{"action":"pricing.publish"}}`))
+			require.NoError(t, db.Where("id > ?", 0).Delete(&model.AgencyOpsEvent{}).Error)
+			var blocked []model.AgencyOpsEvent
+			for index := range 100 {
+				blocked = append(blocked, model.AgencyOpsEvent{EventID: fmt.Sprintf("held-history-%d", index),
+					Payload: `{"kind":"wallets"}`, PayloadHash: strings.Repeat("b", 64), Status: "delivered", CreatedAtMS: reviewAt - 1000})
+			}
+			require.NoError(t, db.Create(&blocked).Error)
+			held := model.AgencyOpsEvent{EventID: "held-queued", Payload: `{"kind":"topups"}`, PayloadHash: strings.Repeat("c", 64),
+				Status: "queued", CreatedAtMS: reviewAt - 500, NextAtMS: now.UnixMilli()}
+			// Use valid immutable envelopes; neither their payload nor identity may
+			// be rewritten just to fit the permitted integration scope.
+			require.NoError(t, db.Create(&held).Error)
+			allowedEvent := model.AgencyOpsEvent{EventID: "allowed-price", Payload: `{"kind":"source_price","eventId":"allowed-price"}`,
+				PayloadHash: strings.Repeat("d", 64), Status: "queued", CreatedAtMS: reviewAt - 100, NextAtMS: now.UnixMilli()}
+			require.NoError(t, db.Create(&allowedEvent).Error)
+			server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var batch struct {
+					Events []map[string]any `json:"events"`
+				}
+				require.NoError(t, common.DecodeJson(r.Body, &batch))
+				require.Len(t, batch.Events, 1)
+				assert.Equal(t, "source_price", batch.Events[0]["kind"])
+				_, _ = w.Write([]byte(`{"data":{"accepted":["allowed-price"],"durable":true}}`))
+			})
+			_, err = sender.Step(t.Context())
+			require.NoError(t, err)
+			var retained model.AgencyOpsEvent
+			require.NoError(t, db.First(&retained, held.ID).Error)
+			assert.Equal(t, "paused", retained.Status)
+			assert.Zero(t, retained.Attempts)
+			assert.Equal(t, held.Payload, retained.Payload)
+			assert.Equal(t, held.EventID, retained.EventID)
+			page, hasMore, err = model.ReadAgencyOpsReview(db, reviewAt)
+			require.NoError(t, err)
+			assert.Empty(t, page, "bounded review holds the first financial page")
+			assert.True(t, hasMore, "an empty held page must not end the nightly review")
+			page, hasMore, err = model.ReadAgencyOpsReview(db, reviewAt)
+			require.NoError(t, err)
+			require.Len(t, page, 1, "financial history cannot starve price review")
+			assert.Equal(t, allowedEvent.EventID, page[0].EventID)
+			require.NoError(t, db.First(&retained, held.ID).Error)
+			assert.Equal(t, int64(-1), retained.ReviewedAtMS, "held is not a successful review acknowledgement")
+			assert.Equal(t, held.PayloadHash, retained.PayloadHash)
+			require.NoError(t, model.AcknowledgeAgencyOpsReview(db, []model.AgencyOpsReview{{ID: allowedEvent.ID, Hash: allowedEvent.PayloadHash}}, reviewAt))
+			t.Setenv("OPS_DISTRIBUTOR_NON_WALLET_ONLY", "false")
+			page, hasMore, err = model.ReadAgencyOpsReview(db, reviewAt)
+			require.NoError(t, err)
+			assert.Empty(t, page, "turning off the scope guard must not silently replay held history")
+			assert.False(t, hasMore)
+			// Historical usage uses a separate bounded cursor, never a live log
+			// cursor reset. Retrying a committed page cannot allocate new revisions.
+			historicalUsage := []model.AgencyUsageFact{
+				{EventID: "historical-usage-one", ComponentID: "history-one", UserID: 301,
+					OriginModelName: "gpt-4o", ModelKey: "history", BusinessStatus: "success", CurrencyCode: "USD", OccurredAtMS: reviewAt},
+				{EventID: "historical-usage-two", ComponentID: "history-two", UserID: 301,
+					OriginModelName: "gpt-4o", ModelKey: "history", BusinessStatus: "success", CurrencyCode: "USD", OccurredAtMS: reviewAt},
+			}
+			require.NoError(t, db.Session(&gorm.Session{SkipHooks: true}).Create(&historicalUsage).Error)
+			through := historicalUsage[1].ID
+			after, queued, err := model.BackfillAgencyOpsFacts(db, "usage", historicalUsage[0].ID-1, through, 1)
+			require.NoError(t, err)
+			assert.Equal(t, historicalUsage[0].ID, after)
+			assert.Equal(t, 1, queued)
+			_, queued, err = model.BackfillAgencyOpsFacts(db, "usage", historicalUsage[0].ID-1, through, 1)
+			require.NoError(t, err)
+			assert.Zero(t, queued)
+			after, queued, err = model.BackfillAgencyOpsFacts(db, "usage", after, through, 100)
+			require.NoError(t, err)
+			assert.Equal(t, through, after)
+			assert.Equal(t, 1, queued)
+			var snapshots []model.AgencyOpsEvent
+			require.NoError(t, db.Where("event_id LIKE ?", "agency-backfill-usage-%").Find(&snapshots).Error)
+			require.Len(t, snapshots, 2)
+			for _, event := range snapshots {
+				assert.Contains(t, event.Payload, `"currency_code":"USD"`)
+				assert.Contains(t, event.Payload, `"revision":1`)
+			}
+			activeBinding := model.AgencyActiveUserBinding{UserID: 903, BindingID: 904, AgencyID: agency, Revision: 1}
+			require.NoError(t, db.Session(&gorm.Session{SkipHooks: true}).Create(&activeBinding).Error)
+			_, queued, err = model.BackfillAgencyOpsFacts(db, "activeBindings", 0, activeBinding.UserID, 100)
+			require.NoError(t, err)
+			assert.Equal(t, 1, queued)
+			var bindingSnapshot model.AgencyOpsEvent
+			require.NoError(t, db.Where("event_id = ?", "agency-backfill-activeBindings-903").First(&bindingSnapshot).Error)
+			assert.Contains(t, bindingSnapshot.Payload, `"objectId":903`)
+			assert.Contains(t, bindingSnapshot.Payload, `"binding_id":904`)
+			policy := model.AgencyPricePolicyVersion{AgencyID: agency, Revision: 903, PolicyJSON: `{}`, PolicyHash: "history-price", CreatedAtMS: reviewAt}
+			require.NoError(t, db.Session(&gorm.Session{SkipHooks: true}).Create(&policy).Error)
+			priceItem := model.AgencyPricePolicyItem{PolicyVersionID: policy.ID, Scope: "model", ModelKey: "history-price", OriginModelName: "gpt-4o", ResolvedSalesBPS: 10000}
+			require.NoError(t, db.Session(&gorm.Session{SkipHooks: true}).Create(&priceItem).Error)
+			_, queued, err = model.BackfillAgencyOpsFacts(db, "priceItems", priceItem.ID-1, priceItem.ID, 100)
+			require.NoError(t, err)
+			assert.Equal(t, 1, queued)
+			var priceSnapshot model.AgencyOpsEvent
+			require.NoError(t, db.Where("event_id = ?", fmt.Sprintf("agency-backfill-priceItems-%d", priceItem.ID)).First(&priceSnapshot).Error)
+			assert.Contains(t, priceSnapshot.Payload, fmt.Sprintf(`"agency_id":%d`, agency))
+			assert.Contains(t, priceSnapshot.Payload, fmt.Sprintf(`"created_at_ms":%d`, reviewAt))
+			for _, kind := range []string{"wallets", "balances", "topups", "withdrawals", "future_kind"} {
+				_, _, err := model.BackfillAgencyOpsFacts(db, kind, 0, 100, 10)
+				require.Error(t, err)
+			}
+			_, _, err = model.BackfillAgencyOpsFacts(db, "usage", 0, through, 101)
+			require.Error(t, err)
+			// Keep the sender response focused on its allowed-price fixture.
+			require.NoError(t, db.Where("event_id LIKE ?", "agency-backfill-%").Delete(&model.AgencyOpsEvent{}).Error)
+			_, err = sender.Step(t.Context())
+			require.NoError(t, err)
 			var version string
 			if dialect == "sqlite" {
 				require.NoError(t, db.Raw("SELECT sqlite_version()").Scan(&version).Error)

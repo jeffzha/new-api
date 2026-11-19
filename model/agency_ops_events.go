@@ -39,6 +39,37 @@ type AgencyOpsEvent struct {
 
 func (AgencyOpsEvent) TableName() string { return AgencyTablePrefix + "ops_events" }
 
+// AgencyOpsFactAllowed keeps financial facts queued locally while a station
+// integrates only its non-wallet facts. Unknown kinds fail closed in that mode.
+func AgencyOpsFactAllowed(payload AgencyOpsPayload) bool {
+	if os.Getenv("OPS_DISTRIBUTOR_NON_WALLET_ONLY") != "true" {
+		return true
+	}
+	var event struct {
+		Kind   string `json:"kind"`
+		Record struct {
+			Action string `json:"action"`
+		} `json:"record"`
+	}
+	if common.Unmarshal([]byte(payload), &event) != nil {
+		return false
+	}
+	switch event.Kind {
+	case "audit":
+		for _, prefix := range []string{"pricing.", "agency.", "operator.", "auth.", "customer.", "user.transfer", "provisioning."} {
+			if strings.HasPrefix(event.Record.Action, prefix) {
+				return true
+			}
+		}
+		return false
+	case "usage", "journals", "dailyStats", "prices", "platformPrices", "priceItems",
+		"bindings", "activeBindings", "salesOverrides", "source_directory", "source_customer", "source_credential", "source_price":
+		return true
+	default:
+		return false
+	}
+}
+
 // MySQL TEXT is only 64 KiB; PostgreSQL and SQLite use their native TEXT.
 type AgencyOpsPayload string
 
@@ -76,24 +107,45 @@ type AgencyOpsReview struct {
 
 // Each immutable event is reviewed once, not every business row every night.
 // A per-row acknowledgement (not max(id)) also covers smaller IDs committed late.
-func ReadAgencyOpsReview(db *gorm.DB, beforeMS int64) ([]AgencyOpsEvent, error) {
+func ReadAgencyOpsReview(db *gorm.DB, beforeMS int64) ([]AgencyOpsEvent, bool, error) {
 	if beforeMS <= 0 || beforeMS > time.Now().UnixMilli() {
-		return nil, fmt.Errorf("invalid Ops review window")
+		return nil, false, fmt.Errorf("invalid Ops review window")
 	}
-	var rows []AgencyOpsEvent
-	if err := db.Where("reviewed_at_ms = ? AND created_at_ms < ?", 0, beforeMS).
-		Order("created_at_ms,id").Limit(100).Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	size, count := 0, 0
-	for _, row := range rows {
-		if count > 0 && size+len(row.Payload) > 500*1024 {
-			break
+	allowed := make([]AgencyOpsEvent, 0, 100)
+	hasMore := false
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var rows []AgencyOpsEvent
+		if err := tx.Where("reviewed_at_ms = ? AND created_at_ms < ?", 0, beforeMS).
+			Order("created_at_ms,id").Limit(100).Find(&rows).Error; err != nil {
+			return err
 		}
-		size += len(row.Payload)
-		count++
-	}
-	return rows[:count], nil
+		size := 0
+		for _, row := range rows {
+			if !AgencyOpsFactAllowed(row.Payload) {
+				// -1 means held, not acknowledged. Move held rows out of this
+				// indexed range so later usage/prices cannot starve behind them.
+				// Resuming requires an explicit audit, never an env-only replay.
+				if err := tx.Model(&AgencyOpsEvent{}).Where("id = ? AND payload_hash = ? AND reviewed_at_ms = ?", row.ID, row.PayloadHash, 0).
+					Update("reviewed_at_ms", -1).Error; err != nil {
+					return err
+				}
+				continue
+			}
+			if len(allowed) > 0 && size+len(row.Payload) > 500*1024 {
+				break
+			}
+			size += len(row.Payload)
+			allowed = append(allowed, row)
+		}
+		var pending []AgencyOpsEvent
+		if err := tx.Select("id").Where("reviewed_at_ms = ? AND created_at_ms < ?", 0, beforeMS).
+			Order("created_at_ms,id").Limit(1).Find(&pending).Error; err != nil {
+			return err
+		}
+		hasMore = len(pending) > 0
+		return nil
+	})
+	return allowed, hasMore, err
 }
 
 func AcknowledgeAgencyOpsReview(db *gorm.DB, rows []AgencyOpsReview, atMS int64) error {
@@ -209,7 +261,7 @@ func agencyOpsSafeAudit(value any) any {
 // CaptureAgencyOpsRecordTx accepts only the explicit fact types below. It does
 // not commit, contact OPS, or change any existing financial writer.
 func CaptureAgencyOpsRecordTx(tx *gorm.DB, value any) error {
-	return captureAgencyOpsRecordTx(tx, value, nil, false)
+	return captureAgencyOpsRecordTx(tx, value, nil, false, "")
 }
 
 // Delete customer overrides in bounded pages and retain a versioned tombstone.
@@ -235,7 +287,7 @@ func DeleteAgencyCustomerSalesOverridesTx(query *gorm.DB) error {
 			return err
 		}
 		for i := range rows {
-			if err := captureAgencyOpsRecordTx(query, &rows[i], nil, true); err != nil {
+			if err := captureAgencyOpsRecordTx(query, &rows[i], nil, true, ""); err != nil {
 				return err
 			}
 		}
@@ -257,14 +309,83 @@ func CaptureAgencyOpsPriceItemsTx(tx *gorm.DB, items []AgencyPricePolicyItem) er
 		if items[i].PolicyVersionID != version.ID {
 			return fmt.Errorf("Ops price batch requires one version")
 		}
-		if err := captureAgencyOpsRecordTx(tx, &items[i], &version, false); err != nil {
+		if err := captureAgencyOpsRecordTx(tx, &items[i], &version, false, ""); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func captureAgencyOpsRecordTx(tx *gorm.DB, value any, priceVersion *AgencyPricePolicyVersion, deleted bool) error {
+// BackfillAgencyOpsFacts queues a bounded non-wallet snapshot using the same
+// redaction and revision contract as live events. Retried pages keep event IDs.
+func BackfillAgencyOpsFacts(db *gorm.DB, kind string, afterID, throughID int64, limit int) (int64, int, error) {
+	if os.Getenv("OPS_DISTRIBUTOR_EVENTS_ENABLED") != "true" || afterID < 0 || throughID <= afterID || limit < 1 || limit > 100 {
+		return afterID, 0, fmt.Errorf("invalid bounded Ops fact backfill")
+	}
+	var value any
+	switch kind {
+	case "usage":
+		value = &AgencyUsageFact{}
+	case "journals":
+		value = &AgencyBillingJournal{}
+	case "dailyStats":
+		value = &AgencyDailyStat{}
+	case "prices":
+		value = &AgencyPricePolicyVersion{}
+	case "platformPrices":
+		value = &AgencyPlatformPriceVersion{}
+	case "priceItems":
+		value = &AgencyPricePolicyItem{}
+	case "bindings":
+		value = &AgencyUserBinding{}
+	case "activeBindings":
+		value = &AgencyActiveUserBinding{}
+	case "salesOverrides":
+		value = &AgencyCustomerSalesOverride{}
+	default:
+		return afterID, 0, fmt.Errorf("unsupported non-wallet Ops backfill kind")
+	}
+	lastID, queued := afterID, 0
+	err := AgencyOpsTransaction(db, func(tx *gorm.DB) error {
+		s, err := schema.Parse(value, &agencyOpsEventSchemas, tx.NamingStrategy)
+		if err != nil || len(s.PrimaryFields) != 1 {
+			return fmt.Errorf("invalid Ops backfill identity")
+		}
+		key := s.PrimaryFields[0]
+		rows := reflect.New(reflect.SliceOf(reflect.TypeOf(value)))
+		if err := lockForShare(tx).Where(key.DBName+" > ? AND "+key.DBName+" <= ?", afterID, throughID).
+			Order(key.DBName).Limit(limit).Find(rows.Interface()).Error; err != nil {
+			return err
+		}
+		for i := range rows.Elem().Len() {
+			row := rows.Elem().Index(i)
+			ident, _ := key.ValueOf(tx.Statement.Context, reflect.Indirect(row))
+			lastID = reflect.ValueOf(ident).Int()
+			eventID := fmt.Sprintf("agency-backfill-%s-%d", kind, lastID)
+			var existing []AgencyOpsEvent
+			if err := tx.Select("id").Where("event_id = ?", eventID).Limit(1).Find(&existing).Error; err != nil {
+				return err
+			}
+			if len(existing) != 0 {
+				continue
+			}
+			if err := captureAgencyOpsRecordTx(tx, row.Interface(), nil, false, eventID); err != nil {
+				return err
+			}
+			queued++
+		}
+		if rows.Elem().Len() < limit {
+			lastID = throughID
+		}
+		return nil
+	})
+	if err != nil {
+		return afterID, 0, err
+	}
+	return lastID, queued, nil
+}
+
+func captureAgencyOpsRecordTx(tx *gorm.DB, value any, priceVersion *AgencyPricePolicyVersion, deleted bool, eventID string) error {
 	if os.Getenv("OPS_DISTRIBUTOR_EVENTS_ENABLED") != "true" {
 		return nil
 	}
@@ -419,7 +540,9 @@ func captureAgencyOpsRecordTx(tx *gorm.DB, value any, priceVersion *AgencyPriceP
 		record["agency_id"] = priceVersion.AgencyID
 		record["created_at_ms"] = priceVersion.CreatedAtMS
 	}
-	eventID := "agency-ops-" + common.NewRequestId()
+	if eventID == "" {
+		eventID = "agency-ops-" + common.NewRequestId()
+	}
 	payload, err := common.Marshal(map[string]any{"eventId": eventID, "kind": kind, "objectId": ident, "revision": revision, "record": record})
 	if err != nil {
 		return err

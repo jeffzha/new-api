@@ -1,16 +1,19 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/opspricing"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -19,6 +22,40 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestOpsListPriceProjectionLeavesLocalCatalogAndChargePolicyUnchanged(t *testing.T) {
+	db := agencyPricingCatalogFixture(t)
+	bindAgencyPricingCustomer(t, db)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"version":"official-v1","station":{"quotaPerUnit":500000,"usdExchangeRate":"7.3"},"items":[{"model":"hy3","callType":"text","officialCny":{"input_per_million":"99","output_per_million":"199"}}]}}`))
+	}))
+	defer server.Close()
+	reader := opspricing.New(opspricing.Config{BaseURL: server.URL, Timeout: time.Second, Interval: 5 * time.Minute})
+	require.NoError(t, reader.Refresh(context.Background()))
+	before, err := common.Marshal(model.GetPricing())
+	require.NoError(t, err)
+	quoteBefore, err := service.AgencyQuoteForUser(1, 0, "hy3", 1000)
+	require.NoError(t, err)
+	previous := opspricing.Default
+	opspricing.Default = reader
+	t.Cleanup(func() { opspricing.Default = previous })
+	_, response := requestAgencyPricingCatalog(t, 1)
+	require.Equal(t, "agency", response["pricing_scope"])
+	require.Contains(t, response, "list_price_data")
+	require.Equal(t, float64(2), response["group_ratio"].(map[string]any)["default"])
+	for _, raw := range response["data"].([]any) {
+		row := raw.(map[string]any)
+		if row["model_name"] == "hy3" {
+			require.Equal(t, float64(12500), row["sales_bps"])
+		}
+	}
+	after, err := common.Marshal(model.GetPricing())
+	require.NoError(t, err)
+	require.Equal(t, string(before), string(after))
+	quoteAfter, err := service.AgencyQuoteForUser(1, 0, "hy3", 1000)
+	require.NoError(t, err)
+	require.Equal(t, quoteBefore, quoteAfter)
+}
 
 func agencyPricingCatalogFixture(t *testing.T) *gorm.DB {
 	t.Helper()

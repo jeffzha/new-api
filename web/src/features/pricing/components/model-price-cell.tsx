@@ -40,6 +40,8 @@ import {
   getVideoPricingTable,
   videoPriceRowConditions,
 } from '../lib/video-pricing-table'
+import { OfficialPrice } from '../ops-list-prices/official-price'
+import { getOfficialRows } from '../ops-list-prices/official-price-data'
 import type { PricingModel, TokenUnit } from '../types'
 import { VideoTokenMatrixPricing } from './video-token-matrix-pricing'
 
@@ -93,6 +95,17 @@ export function ModelPriceCell(props: {
     ]
   )
   let metrics: Array<{ label: string; value: string }>
+  if (getOfficialRows(props.model)) {
+    return (
+      <OfficialPrice
+        model={props.model}
+        tokenUnit={tokenUnit}
+        usdExchangeRate={options.usdExchangeRate ?? currency.usdExchangeRate}
+        showRechargePrice={options.showRechargePrice}
+        priceRate={options.priceRate}
+      />
+    )
+  }
   if (providerVideoPricing) {
     return (
       <VideoTokenMatrixPricing

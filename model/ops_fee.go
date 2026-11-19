@@ -41,6 +41,7 @@ type OpsFeeSync struct {
 
 type OpsFeeRuntime struct {
 	Connection string
+	Currency   string
 	Since      int64
 	Scope      string
 }
@@ -137,7 +138,11 @@ func AttachOpsFees(ctx context.Context, logs []*Log) error {
 		if log.Type != LogTypeConsume {
 			continue
 		}
-		log.OpsFee = &OpsFee{Status: "waiting", Currency: "CNY"}
+		currency := config.Currency
+		if currency == "" {
+			currency = "CNY"
+		}
+		log.OpsFee = &OpsFee{Status: "waiting", Currency: currency}
 		if log.RequestId != "" {
 			ids = append(ids, log.RequestId)
 		}
@@ -158,7 +163,7 @@ func AttachOpsFees(ctx context.Context, logs []*Log) error {
 			continue
 		}
 		fee := byID[log.RequestId]
-		if fee != nil && fee.UserID == strconv.Itoa(log.UserId) && fee.Model == log.ModelName {
+		if fee != nil && fee.UserID == strconv.Itoa(log.UserId) && fee.Model == log.ModelName && fee.Currency == log.OpsFee.Currency {
 			log.OpsFee = fee
 		}
 	}

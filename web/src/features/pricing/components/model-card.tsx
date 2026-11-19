@@ -47,6 +47,8 @@ import {
   getVideoPricingTable,
   videoPriceRowConditions,
 } from '../lib/video-pricing-table'
+import { OfficialPrice } from '../ops-list-prices/official-price'
+import { getOfficialRows } from '../ops-list-prices/official-price-data'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
@@ -102,7 +104,17 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
       : groups[0]
 
   let priceSummary: ReactNode
-  if (providerPricing) {
+  if (getOfficialRows(props.model)) {
+    priceSummary = (
+      <OfficialPrice
+        model={props.model}
+        tokenUnit={tokenUnit}
+        usdExchangeRate={usdExchangeRate}
+        showRechargePrice={showRechargePrice}
+        priceRate={priceRate}
+      />
+    )
+  } else if (providerPricing) {
     priceSummary = (
       <VideoTokenMatrixPricing
         pricing={providerPricing}

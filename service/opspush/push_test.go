@@ -1,6 +1,7 @@
 package opspush
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"maps"
@@ -180,6 +181,84 @@ func TestLeaseKeepsOnePusher(t *testing.T) {
 	first.Step()
 	assert.Equal(t, leaseSeconds*time.Second/2, second.Step(), "the other instance waits for the lease")
 	assert.Len(t, stub.bodies, 1)
+}
+
+func TestUsageOnlyPushExcludesWalletRecordsAndKeepsUSDUsage(t *testing.T) {
+	stub := &opsStub{responses: []func(http.ResponseWriter){reply(200, `{"data":{"accepted":3,"duplicates":0,"rejected":[]}}`)}}
+	pusher, db := pusherFixture(t, stub)
+	pusher.Config.Spec, pusher.Config.Currency, pusher.Config.UsageOnly = SpecV11, "USD", true
+	for _, kind := range []int{model.LogTypeTopup, model.LogTypeManage, model.LogTypeSystem, model.LogTypeRefund} {
+		require.NoError(t, db.Create(&model.Log{Type: kind, UserId: 1, Quota: 500000, CreatedAt: 300, RequestId: "wallet"}).Error)
+	}
+	pusher.Step()
+	require.Len(t, stub.bodies, 1)
+	var received batch
+	require.NoError(t, common.UnmarshalJsonStr(stub.bodies[0], &received))
+	require.Len(t, received.Events, 3)
+	for _, event := range received.Events {
+		assert.Equal(t, "USD", event["currency"])
+		assert.Equal(t, "usage", event["extra"].(map[string]any)["recordKind"])
+		assert.NotContains(t, event, "balanceAfter")
+	}
+}
+
+func TestUsageOnlyPushDoesNotSendOrRewritePendingWalletBatch(t *testing.T) {
+	stub := &opsStub{}
+	pusher, db := pusherFixture(t, stub)
+	pusher.Config.UsageOnly = true
+	body := `{"schemaVersion":"1.1","batchId":"pending-wallet","events":[{"extra":{"recordKind":"topup"}}]}`
+	require.NoError(t, db.Model(&State{}).Where("id = 1").Updates(map[string]any{"batch_id": "pending-wallet", "batch_body": body, "batch_last": 4}).Error)
+	assert.Equal(t, stalledWait, pusher.Step())
+	assert.Empty(t, stub.bodies)
+	var state State
+	require.NoError(t, db.First(&state, 1).Error)
+	assert.Equal(t, body, state.BatchBody)
+	assert.Equal(t, int64(1), state.Cursor)
+}
+
+func TestUSDUsageBackfillPreservesLiveCursorAndExcludesWallets(t *testing.T) {
+	p, db := pusherFixture(t, &opsStub{})
+	p.Config.Spec, p.Config.Currency, p.Config.UsageOnly = SpecV11, "USD", true
+	for _, kind := range []int{model.LogTypeTopup, model.LogTypeManage, model.LogTypeSystem, model.LogTypeRefund} {
+		require.NoError(t, db.Create(&model.Log{Type: kind, UserId: 1, Quota: 500000, CreatedAt: 300, RequestId: "wallet"}).Error)
+	}
+	require.NoError(t, db.Create(&model.Log{Type: model.LogTypeError, UserId: 1, ModelName: "m", CreatedAt: 300, RequestId: "historical-error"}).Error)
+	const pending = `{"schemaVersion":"1.1","batchId":"live-pending","events":[]}`
+	require.NoError(t, db.Model(&State{}).Where("id = 1").Updates(map[string]any{"batch_id": "live-pending", "batch_body": pending}).Error)
+	var before State
+	require.NoError(t, db.First(&before, 1).Error)
+	page, err := p.BackfillPage(context.Background(), 0, 9, 2)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), page.AfterID)
+	assert.Equal(t, 2, page.Scanned)
+	retry, err := p.BackfillPage(context.Background(), 0, 9, 2)
+	require.NoError(t, err)
+	assert.Equal(t, page.Body, retry.Body)
+	page, err = p.BackfillPage(context.Background(), page.AfterID, 9, 100)
+	require.NoError(t, err)
+	assert.Equal(t, int64(9), page.AfterID)
+	var received batch
+	require.NoError(t, common.UnmarshalJsonStr(page.Body, &received))
+	require.Len(t, received.Events, 3)
+	assert.Equal(t, "gw-history-usd-3-9", received.BatchId)
+	for _, event := range received.Events {
+		assert.Equal(t, "USD", event["currency"])
+		assert.Contains(t, []any{"usage", "error"}, event["extra"].(map[string]any)["recordKind"])
+		assert.NotContains(t, event, "balanceAfter")
+	}
+	var after State
+	require.NoError(t, db.First(&after, 1).Error)
+	assert.Equal(t, before, after, "historical preparation never takes the live lease or changes its batch")
+	for _, limit := range []int{0, 101} {
+		_, err := p.BackfillPage(context.Background(), 0, 9, limit)
+		require.Error(t, err)
+	}
+	require.NoError(t, db.Create(&model.Log{Type: model.LogTypeConsume, UserId: 1, ModelName: "m", CreatedAt: p.Now().Unix(), RequestId: "unsettled"}).Error)
+	_, err = p.BackfillPage(context.Background(), 0, 10, 2)
+	require.ErrorContains(t, err, "unsettled")
+	require.NoError(t, db.Model(&model.Log{}).Where("id = ?", 2).Update("quota", -1).Error)
+	_, err = p.BackfillPage(context.Background(), 0, 9, 100)
+	require.ErrorContains(t, err, "historical log 2")
 }
 
 var testConversion = Conversion{QuotaPerUnit: 500000, USDExchangeRate: 7.3, TopupPrice: 7.3}

@@ -171,7 +171,7 @@ func (w *Worker) Step(ctx context.Context) (time.Duration, error) {
 		w.nextRequest = w.Now().Add(w.Config.MinRequestGap)
 		if readErr != nil {
 			failures++
-			wait = min(time.Minute*time.Duration(1<<min(failures-1, 3)), 5*time.Minute)
+			wait = feeRecoveryDelay(readErr, failures, w.Config.MinRequestGap)
 			code = "read_unavailable"
 			var httpErr *opsclient.ReadError
 			if errors.As(readErr, &httpErr) {

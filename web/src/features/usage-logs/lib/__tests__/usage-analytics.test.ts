@@ -150,7 +150,7 @@ describe('usage analytics', () => {
     })
     expect(get).toHaveBeenCalledTimes(2)
     expect(get).toHaveBeenCalledWith(
-      expect.stringMatching(/^\/api\/log\?/),
+      expect.stringMatching(/^\/api\/log\/\?/),
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
   })
@@ -191,7 +191,15 @@ describe('usage analytics', () => {
         truncated: true,
       })
     )
-    for (const page of [4, 2, 3]) {
+    pending.get(2)?.({
+      data: { success: true, data: { total: 500, items: pageRows(2) } },
+    })
+    await vi.waitFor(() =>
+      expect(progress).toHaveBeenLastCalledWith(
+        expect.objectContaining({ rows: [...pageRows(1), ...pageRows(2)] })
+      )
+    )
+    for (const page of [4, 3]) {
       pending.get(page)?.({
         data: { success: true, data: { total: 500, items: pageRows(page) } },
       })

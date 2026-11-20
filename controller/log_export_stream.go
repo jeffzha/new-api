@@ -30,6 +30,7 @@ import (
 	"os"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
@@ -44,6 +45,7 @@ const logExportMaxFileBytes = 256 << 20
 var (
 	errLogExportFileSize  = errors.New("账单文件超过 256 MB，请缩小时间范围或按用户、模型筛选后重试")
 	errLogExportExcelRows = errors.New("Excel 账单超过工作表行数上限，请改用 CSV 或缩小时间范围")
+	errLogExportExcelCell = errors.New("单条记录超过 Excel 单元格 32767 字符上限，请改用 CSV 下载完整内容")
 	errLogExportTempSize  = errors.New("账单临时文件超过 1 GB，请改用 CSV 或缩小时间范围")
 )
 
@@ -96,7 +98,7 @@ func writeStreamingLogExport(c *gin.Context, params model.LogExportParams, forma
 		status := http.StatusInternalServerError
 		if errors.Is(err, context.DeadlineExceeded) {
 			message, status = "账单生成超过 5 分钟，请缩小时间范围或增加筛选条件", http.StatusRequestTimeout
-		} else if errors.Is(err, errLogExportExcelRows) || errors.Is(err, errLogExportFileSize) || errors.Is(err, errLogExportTempSize) {
+		} else if errors.Is(err, errLogExportExcelRows) || errors.Is(err, errLogExportExcelCell) || errors.Is(err, errLogExportFileSize) || errors.Is(err, errLogExportTempSize) {
 			message, status = err.Error(), http.StatusBadRequest
 		}
 		c.JSON(status, gin.H{"success": false, "message": message})
@@ -113,34 +115,37 @@ func writeStreamingLogExport(c *gin.Context, params model.LogExportParams, forma
 
 // A single ordered cursor keeps identical request IDs and split charges intact.
 func streamLogExportRows(ctx context.Context, params model.LogExportParams, write func([]string, bool) error) error {
+	logType := params.LogType
+	if logType == 0 {
+		logType = model.LogTypeConsume
+	}
+	schema := logExportSchemaFor(logType)
 	month := ""
 	monthTotal, total := 0.0, 0.0
+	count := 0.0
 	err := model.WalkConsumeLogsForExport(ctx, params, func(logs []*model.Log, funds map[model.LogExportFundingKey]model.LogExportFunding, prices map[model.LogExportFundingKey]model.LogExportAgencyPricing) error {
-		for _, log := range logs {
+		rows, err := logExportBatchRows(ctx, logType, logs, funds, prices)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			nextMonth := time.Unix(log.CreatedAt, 0).Format("2006-01")
-			if month != "" && month != nextMonth {
-				if err := write(logExportSummaryValues(month+" 月度小计", monthTotal), true); err != nil {
+			nextMonth := time.Unix(row.Log.CreatedAt, 0).Format("2006-01")
+			if logType == model.LogTypeConsume && month != "" && month != nextMonth {
+				if err := write(schema.summary(month+" 月度小计", monthTotal), true); err != nil {
 					return err
 				}
 				monthTotal = 0
 			}
 			month = nextMonth
-			other, parsed := parseLogExportOther(log)
-			if !parsed {
-				other = logExportOther{}
-			}
-			key := model.LogExportFundingKey{UserID: int64(log.UserId), RequestID: log.RequestId}
-			funding, hasFunding := funds[key]
-			price, hasPrice := prices[key]
-			row := logExportRow{Log: log, Other: other, Funding: funding, HasFunds: hasFunding, AgencyPricing: price, HasAgencyPricing: hasPrice}
-			if amount, ok := logExportRowActualMoney(row); ok {
+			count++
+			if amount, ok := logExportRowActualMoney(row); ok && logType == model.LogTypeConsume {
 				monthTotal += amount
 				total += amount
 			}
-			if err := write(logExportRowValues(row), false); err != nil {
+			if err := write(logExportEventValues(logType, row), false); err != nil {
 				return err
 			}
 		}
@@ -149,20 +154,28 @@ func streamLogExportRows(ctx context.Context, params model.LogExportParams, writ
 	if err != nil {
 		return err
 	}
-	if month != "" {
-		if err := write(logExportSummaryValues(month+" 月度小计", monthTotal), true); err != nil {
+	if logType == model.LogTypeConsume && month != "" {
+		if err := write(schema.summary(month+" 月度小计", monthTotal), true); err != nil {
 			return err
 		}
 	}
-	return write(logExportSummaryValues("本期消费金额", total), true)
+	if logType == model.LogTypeConsume {
+		return write(schema.summary("本期消费金额", total), true)
+	}
+	return write(schema.summary("本期记录数", count), true)
 }
 
 func streamLogExportCSV(ctx context.Context, params model.LogExportParams, output io.Writer) error {
+	logType := params.LogType
+	if logType == 0 {
+		logType = model.LogTypeConsume
+	}
+	schema := logExportSchemaFor(logType)
 	if _, err := io.WriteString(output, "\xEF\xBB\xBF"); err != nil {
 		return err
 	}
 	w := csv.NewWriter(output)
-	for _, values := range [][]string{{"按量消费明细"}, {logExportBillingNotice}, logExportHeaders} {
+	for _, values := range [][]string{{schema.Title}, {schema.Notice}, schema.Headers} {
 		if err := w.Write(values); err != nil {
 			return err
 		}
@@ -175,6 +188,11 @@ func streamLogExportCSV(ctx context.Context, params model.LogExportParams, outpu
 }
 
 func streamLogExportXLSX(ctx context.Context, params model.LogExportParams, output io.Writer, directory string) error {
+	logType := params.LogType
+	if logType == 0 {
+		logType = model.LogTypeConsume
+	}
+	schema := logExportSchemaFor(logType)
 	f := excelize.NewFile(excelize.Options{TmpDir: directory})
 	defer f.Close()
 	const sheet = "账单明细"
@@ -185,7 +203,7 @@ func streamLogExportXLSX(ctx context.Context, params model.LogExportParams, outp
 	if err != nil {
 		return err
 	}
-	for i, width := range logExportColumnWidths {
+	for i, width := range schema.Widths {
 		if err := sw.SetColWidth(i+1, i+1, width); err != nil {
 			return err
 		}
@@ -199,10 +217,11 @@ func streamLogExportXLSX(ctx context.Context, params model.LogExportParams, outp
 	if err != nil {
 		return err
 	}
-	if err := sw.MergeCell("A1", "S1"); err != nil {
+	lastColumn, _ := excelize.ColumnNumberToName(len(schema.Headers))
+	if err := sw.MergeCell("A1", lastColumn+"1"); err != nil {
 		return err
 	}
-	if err := sw.MergeCell("A2", "S2"); err != nil {
+	if err := sw.MergeCell("A2", lastColumn+"2"); err != nil {
 		return err
 	}
 	rowIndex := 1
@@ -232,12 +251,15 @@ func streamLogExportXLSX(ctx context.Context, params model.LogExportParams, outp
 		}
 		cells := make([]any, len(values))
 		for col, value := range values {
+			if utf8.RuneCountInString(value) > excelize.TotalCellChars {
+				return errLogExportExcelCell
+			}
 			cells[col] = excelize.Cell{Value: value}
-			if rowIndex > 3 && col >= 3 && col <= 6 {
+			if logType == model.LogTypeConsume && rowIndex > 3 && col >= 3 && col <= 6 {
 				if number, err := strconv.Atoi(value); err == nil {
 					cells[col] = number
 				}
-			} else if rowIndex > 3 && ((col >= 7 && col <= 15) || col == 18) {
+			} else if logType == model.LogTypeConsume && rowIndex > 3 && ((col >= 7 && col <= 15) || col == 18) {
 				if number, err := strconv.ParseFloat(value, 64); err == nil {
 					cells[col] = excelize.Cell{Value: number, StyleID: moneyStyle}
 				}
@@ -247,7 +269,7 @@ func streamLogExportXLSX(ctx context.Context, params model.LogExportParams, outp
 		if rowIndex <= 3 || summary {
 			opts.StyleID = header
 		}
-		if summary {
+		if summary && logType == model.LogTypeConsume {
 			if err := sw.MergeCell(fmt.Sprintf("A%d", rowIndex), fmt.Sprintf("L%d", rowIndex)); err != nil {
 				return err
 			}
@@ -256,7 +278,7 @@ func streamLogExportXLSX(ctx context.Context, params model.LogExportParams, outp
 		rowIndex++
 		return err
 	}
-	for _, values := range [][]string{{"按量消费明细"}, {logExportBillingNotice}, logExportHeaders} {
+	for _, values := range [][]string{{schema.Title}, {schema.Notice}, schema.Headers} {
 		if err := write(values, false); err != nil {
 			return err
 		}

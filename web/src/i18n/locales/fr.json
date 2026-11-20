@@ -1,5 +1,7 @@
 {
   "translation": {
+    "Payments retain their original currency. Missing historical payment details are marked as not recorded.": "Les paiements conservent leur devise d’origine. Les détails historiques manquants sont signalés comme non enregistrés.",
+    "Quota adjustments and refunds are quota movements, not cash payments.": "Les ajustements et remboursements de quota ne sont pas des paiements en espèces.",
     "Quota Adjustment": "Ajustement de quota",
     "Customer": "Client",
     "Term": "Délai",

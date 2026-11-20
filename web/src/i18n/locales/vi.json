@@ -1,5 +1,7 @@
 {
   "translation": {
+    "Payments retain their original currency. Missing historical payment details are marked as not recorded.": "Khoản thanh toán giữ nguyên đơn vị tiền tệ. Thông tin thanh toán cũ bị thiếu được đánh dấu là chưa ghi nhận.",
+    "Quota adjustments and refunds are quota movements, not cash payments.": "Điều chỉnh và hoàn hạn mức là thay đổi hạn mức, không phải thanh toán tiền mặt.",
     "Quota Adjustment": "Điều chỉnh hạn mức",
     "Customer": "Khách hàng",
     "Term": "Kỳ hạn",

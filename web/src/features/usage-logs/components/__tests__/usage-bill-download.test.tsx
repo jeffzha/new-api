@@ -93,6 +93,55 @@ afterEach(() => {
 })
 
 it.each([
+  { label: 'Consume', type: 2, relayFilters: true },
+  { label: 'Top-up', type: 1, relayFilters: false },
+  { label: 'Quota Adjustment', type: 8, relayFilters: false },
+  { label: 'System', type: 4, relayFilters: false },
+  { label: 'Error', type: 5, relayFilters: true },
+  { label: 'Refund', type: 6, relayFilters: true },
+])(
+  'exports $label with its own type and applicable filters',
+  async (testCase) => {
+    useAuthStore
+      .getState()
+      .auth.setUser({ id: 7, username: 'owner', role: ROLE.USER })
+    const get = vi
+      .spyOn(api, 'get')
+      .mockResolvedValue({ data: new Blob(['bill']) })
+    vi.stubGlobal(
+      'URL',
+      Object.assign(class extends URL {}, {
+        createObjectURL: vi.fn(() => 'blob:bill'),
+        revokeObjectURL: vi.fn(),
+      })
+    )
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(
+      () => undefined
+    )
+    renderDownload(
+      '/usage-logs/common?type=5&model=deepseek-chat&group=premium&username=other&channel=7'
+    )
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Download bill' })
+    )
+    await userEvent.click(screen.getByRole('combobox', { name: 'Type' }))
+    await userEvent.click(
+      await screen.findByRole('option', { name: testCase.label })
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Download bill' }))
+    await waitFor(() => expect(get).toHaveBeenCalledOnce())
+    const url = String(get.mock.calls[0][0])
+    expect(url).toContain('/api/log/self/export?')
+    expect(new URL(url, 'http://localhost').searchParams.get('type')).toBe(
+      String(testCase.type)
+    )
+    expect(url.includes('model_name=deepseek-chat')).toBe(testCase.relayFilters)
+    expect(url).not.toContain('username=')
+    expect(url).not.toContain('channel=')
+  }
+)
+
+it.each([
   {
     role: ROLE.ADMIN,
     endpoint: '/api/log/export',
@@ -138,7 +187,7 @@ it.each([
       )
     }
     await userEvent.click(
-      await screen.findByRole('button', { name: 'Download usage bill' })
+      await screen.findByRole('button', { name: 'Download bill' })
     )
     expect(
       await screen.findByText(
@@ -219,7 +268,7 @@ it('lets a super admin download a bill for one username', async () => {
 
   renderDownload('/usage-logs/common?username=page-user&channel=7')
   await userEvent.click(
-    await screen.findByRole('button', { name: 'Download usage bill' })
+    await screen.findByRole('button', { name: 'Download bill' })
   )
   const username = screen.getByRole('combobox', { name: 'Username' })
   expect(username).toHaveValue('All users')
@@ -270,7 +319,7 @@ it('uses the bill-specific date range when selected', async () => {
 
   renderDownload('/usage-logs/common')
   await userEvent.click(
-    await screen.findByRole('button', { name: 'Download usage bill' })
+    await screen.findByRole('button', { name: 'Download bill' })
   )
   await userEvent.click(screen.getByRole('button', { name: 'All time' }))
   const start = screen.getByLabelText('Start Time')
@@ -290,6 +339,37 @@ it('uses the bill-specific date range when selected', async () => {
   )
   expect(requestURL).toContain(`start_timestamp=${expectedStart}`)
   expect(requestURL).toContain(`end_timestamp=${expectedEnd}`)
+})
+
+it('locks the type, format and dialog while the selected bill is downloading', async () => {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 7, username: 'owner', role: ROLE.USER })
+  let rejectDownload: (reason: Error) => void = () => undefined
+  vi.spyOn(api, 'get').mockImplementation(
+    () =>
+      new Promise((_, reject) => {
+        rejectDownload = reject
+      })
+  )
+  vi.spyOn(toast, 'error').mockImplementation(() => '')
+  renderDownload('/usage-logs/common')
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Download bill' })
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Download bill' }))
+  await screen.findByRole('button', { name: 'Downloading...' })
+  expect(screen.getByRole('combobox', { name: 'Type' })).toBeDisabled()
+  expect(screen.getByRole('combobox', { name: 'File format' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'All time' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+  await userEvent.keyboard('{Escape}')
+  expect(screen.getByRole('dialog')).toBeInTheDocument()
+  rejectDownload(new Error('Download failed'))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Download bill' })).toBeEnabled()
+  )
+  expect(screen.getByRole('combobox', { name: 'Type' })).toBeEnabled()
 })
 
 it('shows the specific JSON error from a failed bill download instead of HTTP 400', async () => {
@@ -315,7 +395,7 @@ it('shows the specific JSON error from a failed bill download instead of HTTP 40
 
   renderDownload('/usage-logs/common')
   await userEvent.click(
-    await screen.findByRole('button', { name: 'Download usage bill' })
+    await screen.findByRole('button', { name: 'Download bill' })
   )
   await userEvent.click(screen.getByRole('button', { name: 'Download bill' }))
 
@@ -341,7 +421,7 @@ it('rejects a successful HTTP response containing a bill business error instead 
 
   renderDownload('/usage-logs/common')
   await userEvent.click(
-    await screen.findByRole('button', { name: 'Download usage bill' })
+    await screen.findByRole('button', { name: 'Download bill' })
   )
   await userEvent.click(screen.getByRole('button', { name: 'Download bill' }))
 

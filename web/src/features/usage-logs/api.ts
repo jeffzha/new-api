@@ -122,7 +122,7 @@ async function fetchLogStats<T>(
 // ============================================================================
 
 export const getAllLogs = (params: GetLogsParams = {}, signal?: AbortSignal) =>
-  fetchLogs('/api/log', params, true, signal)
+  fetchLogs('/api/log/', params, true, signal)
 
 export const getUserLogs = (
   params: Omit<GetLogsParams, 'username' | 'channel'> = {},

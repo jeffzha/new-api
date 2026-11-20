@@ -1,5 +1,7 @@
 {
   "translation": {
+    "Payments retain their original currency. Missing historical payment details are marked as not recorded.": "實付金額保留原幣別；歷史付款資訊缺失時標為未記錄。",
+    "Quota adjustments and refunds are quota movements, not cash payments.": "額度調整和退款表示額度變動，不代表現金收支。",
     "Quota Adjustment": "額度調整",
     "Customer": "客戶",
     "Term": "帳期",

@@ -37,6 +37,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xuri/excelize/v2"
 	"gorm.io/driver/mysql"
@@ -432,4 +433,319 @@ func TestLogExportFailureDoesNotLeavePartialBill(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, entries)
 	require.Empty(t, logExportSlot)
+}
+
+func TestTypedLogExportHistoryPermissionsAndFormats(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			var db *gorm.DB
+			var err error
+			switch dialect {
+			case "mysql":
+				if os.Getenv("TEST_MYSQL_DSN") == "" {
+					t.Skip("TEST_MYSQL_DSN not set")
+				}
+				db, err = gorm.Open(mysql.Open(os.Getenv("TEST_MYSQL_DSN")), &gorm.Config{})
+			case "postgres":
+				if os.Getenv("TEST_POSTGRES_DSN") == "" {
+					t.Skip("TEST_POSTGRES_DSN not set")
+				}
+				db, err = gorm.Open(postgres.Open(os.Getenv("TEST_POSTGRES_DSN")), &gorm.Config{})
+			default:
+				db, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+			}
+			require.NoError(t, err)
+			pool, err := db.DB()
+			require.NoError(t, err)
+			pool.SetMaxOpenConns(1)
+			t.Cleanup(func() { require.NoError(t, pool.Close()) })
+			previousDB, previousLogDB := model.DB, model.LOG_DB
+			previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
+			model.DB, model.LOG_DB = db, db
+			common.SetDatabaseTypes(common.DatabaseType(dialect), common.DatabaseType(dialect))
+			t.Cleanup(func() {
+				model.DB, model.LOG_DB = previousDB, previousLogDB
+				common.SetDatabaseTypes(previousMain, previousLog)
+			})
+			require.NoError(t, db.AutoMigrate(&model.Log{}, &model.TopUp{}))
+			t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(&model.Log{}, &model.TopUp{})) })
+			logs := []model.Log{
+				{Type: 2, Content: "consume", RequestId: "consume", Quota: 1, Other: `{"quota_per_unit":100}`},
+				{Type: 1, Content: "self-payment", RequestId: "topup", Quota: 500, Other: `{"quota_source":"online_topup","trade_no":"paid-order"}`},
+				{Type: 1, Content: "使用在线充值成功，充值金额: ¥10", RequestId: "legacy-topup"},
+				{Type: 1, Content: "manual", RequestId: "adjust", Quota: 30, Other: `{"quota_source":"admin_adjustment","quota_direction":"debit","op":{"action":"user.quota_override","params":{"from":40,"to":10}},"admin_info":{"secret":"admin-secret"},"root_info":{"secret":"root-secret"}}`},
+				{Type: 1, Content: "通过兑换码充值 ¥10 额度", RequestId: "legacy-redemption"},
+				{Type: 3, Content: "legacy-manual", RequestId: "legacy-manual", Other: `{"op":{"action":"user.quota_add"}}`},
+				{Type: 4, Content: "system-event", RequestId: "system"},
+				{Type: 5, Content: "=HYPERLINK(test)", RequestId: "error", Other: `{"status_code":429,"error_code":"rate_limit","error_type":"upstream_error","request_path":"/v1/videos","root_info":{"secret":"root-secret"}}`},
+				{Type: 6, RequestId: "refund", Quota: 40, Other: `{"task_id":"task-1","reason":"task failed; quota returned"}`},
+				{Type: 1, Content: "subscription-not-topup", Other: `{"quota_source":"subscription_purchase"}`},
+				{Type: 1, Content: "foreign-trade-owner", RequestId: "foreign-trade", Quota: 1, Other: `{"quota_source":"online_topup","trade_no":"other-order"}`},
+			}
+			for i := range logs {
+				logs[i].UserId = 7
+				logs[i].Username = "owner"
+				logs[i].CreatedAt = int64(1790000000 + i)
+				logs[i].ModelName = "example"
+			}
+			for _, typ := range []int{2, 1, 8, 4, 5, 6} {
+				stored, other := typ, "{}"
+				if typ == 8 {
+					stored = 1
+					other = `{"quota_source":"admin_adjustment"}`
+				}
+				if typ == 1 {
+					other = `{"quota_source":"online_topup"}`
+				}
+				logs = append(logs, model.Log{Type: stored, UserId: 8, Username: "other", CreatedAt: 1790000100, Content: "other-user", Other: other})
+			}
+			require.NoError(t, db.CreateInBatches(logs, 50).Error)
+			require.NoError(t, db.Create(&model.TopUp{UserId: 7, TradeNo: "paid-order", FundingSource: "payment_assisted", PaymentMethod: "wxpay", PaymentSnapshot: `{"actual_money":"7.30","currency_code":"CNY","payment_reference":"receipt-secret"}`, PaymentParams: "payment-secret"}).Error)
+			require.NoError(t, db.Create(&model.TopUp{UserId: 8, TradeNo: "other-order", PaymentSnapshot: `{"actual_money":"999","currency_code":"USD"}`}).Error)
+			for _, scenario := range []struct {
+				typ, count int
+				title      string
+			}{
+				{2, 1, "按量消费明细"}, {1, 3, "充值明细"}, {8, 3, "额度调整明细"}, {4, 1, "系统日志明细"}, {5, 1, "错误日志明细"}, {6, 1, "退款明细"},
+			} {
+				t.Run(fmt.Sprint(scenario.typ), func(t *testing.T) {
+					for _, format := range []string{"csv", "xlsx", "docx", "pdf"} {
+						recorder := httptest.NewRecorder()
+						ctx, _ := gin.CreateTestContext(recorder)
+						ctx.Request = httptest.NewRequest("GET", fmt.Sprintf("/api/log/self/export?type=%d&format=%s&username=other&user_id=8", scenario.typ, format), nil)
+						ctx.Set("id", 7)
+						ctx.Set("role", common.RoleCommonUser)
+						GetUserLogsExport(ctx)
+						require.Equal(t, 200, recorder.Code, recorder.Body.String())
+						var rows [][]string
+						switch format {
+						case "csv":
+							reader := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(recorder.Body.Bytes(), []byte{0xef, 0xbb, 0xbf})))
+							reader.FieldsPerRecord = -1
+							rows, err = reader.ReadAll()
+							require.NoError(t, err)
+						case "xlsx":
+							book, openErr := excelize.OpenReader(bytes.NewReader(recorder.Body.Bytes()))
+							require.NoError(t, openErr)
+							rows, err = book.GetRows("账单明细")
+							require.NoError(t, err)
+							require.NoError(t, book.Close())
+						case "docx":
+							archive, openErr := zip.NewReader(bytes.NewReader(recorder.Body.Bytes()), int64(recorder.Body.Len()))
+							require.NoError(t, openErr)
+							xml := readZipEntry(t, archive, "word/document.xml")
+							assert.Contains(t, xml, scenario.title)
+							assert.NotContains(t, xml, "other-user")
+							assert.NotContains(t, xml, "root-secret")
+						case "pdf":
+							assert.Contains(t, recorder.Body.String(), pdfText(scenario.title))
+							assert.NotContains(t, recorder.Body.String(), "other-user")
+						}
+						if rows != nil {
+							assert.Equal(t, scenario.title, rows[0][0])
+							extra := 4
+							if scenario.typ == 2 {
+								extra++
+							}
+							require.Len(t, rows, scenario.count+extra)
+							for _, row := range rows[3 : 3+scenario.count] {
+								assert.Equal(t, "owner", row[0])
+							}
+							joined := fmt.Sprint(rows)
+							for _, secret := range []string{"admin-secret", "root-secret", "payment-secret", "receipt-secret", "subscription-not-topup"} {
+								assert.NotContains(t, joined, secret)
+							}
+							if scenario.typ == 1 {
+								assert.Equal(t, "代充", rows[3][3])
+								assert.Equal(t, "7.30", rows[3][6])
+								assert.Equal(t, "CNY", rows[3][7])
+								assert.Equal(t, "用户直充", rows[4][3])
+								assert.Equal(t, "未记录", rows[5][6])
+							}
+							if scenario.typ == 8 {
+								assert.Equal(t, "减少", rows[3][4])
+								assert.Equal(t, "40", rows[3][6])
+								assert.Equal(t, "10", rows[3][7])
+							}
+							if scenario.typ == 5 {
+								assert.Equal(t, "429", rows[3][9])
+								assert.Equal(t, "rate_limit", rows[3][10])
+								assert.Equal(t, "'=HYPERLINK(test)", rows[3][13])
+							}
+							if scenario.typ == 6 {
+								assert.Equal(t, "task failed; quota returned", rows[3][8])
+							}
+						}
+					}
+					for _, username := range []string{"", "owner", "other"} {
+						found, _, _, findErr := model.GetConsumeLogsForExport(model.LogExportParams{IsAdmin: true, Username: username, LogType: scenario.typ})
+						require.NoError(t, findErr)
+						want := scenario.count
+						if username == "" {
+							want++
+						} else if username == "other" {
+							want = 1
+						}
+						assert.Len(t, found, want)
+						recorder := httptest.NewRecorder()
+						ctx, _ := gin.CreateTestContext(recorder)
+						ctx.Request = httptest.NewRequest("GET", fmt.Sprintf("/api/log/export?type=%d&format=csv&username=%s", scenario.typ, username), nil)
+						ctx.Set("role", common.RoleRootUser)
+						GetAllLogsExport(ctx)
+						require.Equal(t, 200, recorder.Code)
+						reader := csv.NewReader(strings.NewReader(strings.TrimPrefix(recorder.Body.String(), "\xEF\xBB\xBF")))
+						reader.FieldsPerRecord = -1
+						exported, err := reader.ReadAll()
+						require.NoError(t, err)
+						require.GreaterOrEqual(t, len(exported), 3+want)
+						otherPresent := false
+						for _, record := range exported[3 : 3+want] {
+							if username != "" {
+								assert.Equal(t, username, record[0])
+							}
+							otherPresent = otherPresent || record[0] == "other"
+						}
+						assert.Equal(t, username != "owner", otherPresent)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestLogExportRejectsUnsupportedTypesBeforeReadingDatabase(t *testing.T) {
+	for _, value := range []string{"0", "3", "7", "-1", "all", "99"} {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest("GET", "/api/log/self/export?type="+value, nil)
+		GetUserLogsExport(ctx)
+		assert.Equal(t, 400, recorder.Code)
+		assert.Empty(t, recorder.Header().Get("Content-Disposition"))
+	}
+}
+
+func TestTypedLogExportBatchingAndSizeLimits(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	pool, err := db.DB()
+	require.NoError(t, err)
+	pool.SetMaxOpenConns(1)
+	t.Cleanup(func() { require.NoError(t, pool.Close()) })
+	require.NoError(t, db.AutoMigrate(&model.Log{}))
+	previousDB, previousLogDB := model.DB, model.LOG_DB
+	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
+	model.DB, model.LOG_DB = nil, db
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = previousDB, previousLogDB
+		common.SetDatabaseTypes(previousMain, previousLog)
+	})
+	logs := make([]model.Log, 501)
+	for i := range logs {
+		logs[i] = model.Log{Type: model.LogTypeError, UserId: 7, CreatedAt: 1790000000, RequestId: fmt.Sprintf("error-%03d", i), Content: "upstream-error"}
+	}
+	require.NoError(t, db.CreateInBatches(logs, 100).Error)
+	params := model.LogExportParams{UserID: 7, LogType: model.LogTypeError}
+	for _, format := range []string{"csv", "xlsx"} {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest("GET", "/api/log/self/export?type=5&format="+format, nil)
+		writeLogExport(ctx, params)
+		require.Equal(t, 200, recorder.Code)
+		var rows [][]string
+		if format == "csv" {
+			reader := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(recorder.Body.Bytes(), []byte{0xef, 0xbb, 0xbf})))
+			reader.FieldsPerRecord = -1
+			rows, err = reader.ReadAll()
+		} else {
+			book, openErr := excelize.OpenReader(bytes.NewReader(recorder.Body.Bytes()))
+			require.NoError(t, openErr)
+			rows, err = book.GetRows("账单明细")
+			require.NoError(t, book.Close())
+		}
+		require.NoError(t, err)
+		require.Len(t, rows, 505)
+		for i := range logs {
+			assert.Equal(t, fmt.Sprintf("error-%03d", i), rows[i+3][6])
+		}
+		assert.Equal(t, "本期记录数：501 条", rows[len(rows)-1][0])
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	visited := 0
+	err = model.WalkConsumeLogsForExport(canceled, params, func(batch []*model.Log, _ map[model.LogExportFundingKey]model.LogExportFunding, _ map[model.LogExportFundingKey]model.LogExportAgencyPricing) error {
+		visited += len(batch)
+		cancel()
+		return canceled.Err()
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 500, visited)
+	params.UserID = 99
+	empty, err := loadLogExportDocument(context.Background(), params)
+	require.NoError(t, err)
+	assert.Empty(t, empty.Rows)
+	assert.Zero(t, empty.Total)
+
+	longDetail := strings.Repeat("错", excelize.TotalCellChars+1)
+	require.NoError(t, db.Model(&model.Log{}).Where("id = ?", logs[0].Id).Update("content", longDetail).Error)
+	for _, format := range []string{"csv", "xlsx"} {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest("GET", "/api/log/self/export?type=5&format="+format, nil)
+		writeLogExport(ctx, model.LogExportParams{UserID: 7})
+		if format == "csv" {
+			assert.Equal(t, 200, recorder.Code)
+			assert.Contains(t, recorder.Body.String(), longDetail)
+		} else {
+			assert.Equal(t, 400, recorder.Code)
+			assert.Contains(t, recorder.Body.String(), errLogExportExcelCell.Error())
+			assert.Empty(t, recorder.Header().Get("Content-Disposition"))
+		}
+	}
+
+	for _, format := range []string{"pdf", "docx"} {
+		require.NoError(t, db.Model(&model.Log{}).Where("id = ?", logs[0].Id).Update("content", strings.Repeat("x", 8<<20)).Error)
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest("GET", "/api/log/self/export?type=5&format="+format, nil)
+		writeLogExport(ctx, model.LogExportParams{UserID: 7})
+		assert.Equal(t, 400, recorder.Code)
+		assert.Contains(t, recorder.Body.String(), errLogExportDocumentSize.Error())
+		assert.Empty(t, recorder.Header().Get("Content-Disposition"))
+	}
+}
+
+func TestLogExportPDFPreservesLongEventDetails(t *testing.T) {
+	document := logExportDocument{LogType: model.LogTypeError, Total: 1, Rows: []logExportRow{{Log: &model.Log{Content: strings.Repeat("详情", 100) + "END"}}}}
+	rows, err := logExportPDFRows(document, logExportSchemaFor(document.LogType))
+	require.NoError(t, err)
+	require.Greater(t, len(rows), 1)
+	var detail strings.Builder
+	for _, row := range rows {
+		detail.WriteString(row[len(row)-1])
+	}
+	assert.Equal(t, document.Rows[0].Log.Content, detail.String())
+	document.Rows[0].Log.Content = strings.Repeat("错", 1<<20)
+	_, err = buildLogExportPDF(document)
+	require.ErrorIs(t, err, errLogExportDocumentSize)
+
+	document.Rows[0].Log.Content = "upstream <error> & invalid\x00\x1b\xff chars"
+	data, err := buildLogExportDOCX(document)
+	require.NoError(t, err)
+	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	require.NoError(t, err)
+	documentXML := readZipEntry(t, archive, "word/document.xml")
+	decoder := xml.NewDecoder(strings.NewReader(documentXML))
+	var text strings.Builder
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		if chars, ok := token.(xml.CharData); ok {
+			text.Write(chars)
+		}
+	}
+	assert.Contains(t, text.String(), "upstream <error> & invalid")
+	assert.Contains(t, text.String(), " chars")
 }

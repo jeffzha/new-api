@@ -12,6 +12,8 @@
   "signal.page.marketplace": "Explore capabilities. Compare prices. Find your next model.",
   "signal.page.rankings": "Read the platform’s model demand and provider trends.",
   "translation": {
+    "Payments retain their original currency. Missing historical payment details are marked as not recorded.": "Payments retain their original currency. Missing historical payment details are marked as not recorded.",
+    "Quota adjustments and refunds are quota movements, not cash payments.": "Quota adjustments and refunds are quota movements, not cash payments.",
     "Quota Adjustment": "Quota Adjustment",
     "Customer": "Customer",
     "Term": "Term",

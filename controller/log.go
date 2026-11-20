@@ -41,6 +41,7 @@ type logExportRow struct {
 	HasFunds         bool
 	AgencyPricing    model.LogExportAgencyPricing
 	HasAgencyPricing bool
+	Topup            *model.TopUp
 }
 
 func logExportCSVSafe(value string) string {

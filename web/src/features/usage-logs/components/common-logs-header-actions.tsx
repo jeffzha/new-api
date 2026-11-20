@@ -51,13 +51,18 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { searchUsers } from '../../users/api'
 import type { User } from '../../users/types'
 import { downloadUsageBill } from '../api'
+import { LOG_TYPES } from '../constants'
 import { buildApiParams } from '../lib/utils'
 import { CompactDateTimeRangePicker } from './compact-date-time-range-picker'
 import { useLogsViewScope } from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
+const billTypes = [2, 1, 8, 4, 5, 6].flatMap((value) =>
+  LOG_TYPES.filter((item) => item.value === value)
+)
 
 type BillUserOption = Pick<User, 'id' | 'username' | 'display_name'>
+const emptyBillUsers: BillUserOption[] = []
 
 function BillUserSearch(props: {
   value: BillUserOption | null
@@ -67,11 +72,19 @@ function BillUserSearch(props: {
   const anchor = useComboboxAnchor()
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const [users, setUsers] = useState<BillUserOption[]>([])
-  const [status, setStatus] = useState<
-    'idle' | 'loading' | 'success' | 'error'
-  >('idle')
+  const [result, setResult] = useState<{
+    keyword: string
+    users: BillUserOption[]
+    status: 'success' | 'error'
+  }>({ keyword: '', users: [], status: 'success' })
   const keyword = useDebounce(search.trim(), 250)
+  const ready = open && keyword && keyword === search.trim()
+  const users =
+    ready && result.keyword === keyword ? result.users : emptyBillUsers
+  let status: 'idle' | 'loading' | 'success' | 'error' = 'idle'
+  if (open && search.trim()) {
+    status = ready && result.keyword === keyword ? result.status : 'loading'
+  }
   const allUsers = useMemo<BillUserOption>(
     () => ({ id: 0, username: t('All users'), display_name: '' }),
     [t]
@@ -80,35 +93,29 @@ function BillUserSearch(props: {
   const options = useMemo(() => [allUsers, ...users], [allUsers, users])
 
   useEffect(() => {
-    if (!open || !keyword) {
-      setUsers([])
-      setStatus('idle')
-      return
-    }
+    if (!open || !keyword) return
 
     let active = true
-    setStatus('loading')
     searchUsers({ keyword, p: 1, page_size: 20 })
       .then((response) => {
         if (!active) return
         if (!response.success || !response.data) {
-          setUsers([])
-          setStatus('error')
+          setResult({ keyword, users: [], status: 'error' })
           return
         }
-        setUsers(
-          response.data.items.map((user) => ({
+        setResult({
+          keyword,
+          users: response.data.items.map((user) => ({
             id: user.id,
             username: user.username,
             display_name: user.display_name,
-          }))
-        )
-        setStatus('success')
+          })),
+          status: 'success',
+        })
       })
       .catch(() => {
         if (!active) return
-        setUsers([])
-        setStatus('error')
+        setResult({ keyword, users: [], status: 'error' })
       })
 
     return () => {
@@ -193,7 +200,7 @@ function BillUserSearch(props: {
 }
 
 /**
- * Page-header action for downloading a complete consume bill using the
+ * Page-header action for downloading a typed bill using the
  * currently applied usage-log filters.
  */
 export function CommonLogsHeaderActions() {
@@ -203,6 +210,7 @@ export function CommonLogsHeaderActions() {
   const [open, setOpen] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [format, setFormat] = useState<'csv' | 'xlsx' | 'pdf' | 'docx'>('xlsx')
+  const [billType, setBillType] = useState(2)
   const [start, setStart] = useState<Date>()
   const [end, setEnd] = useState<Date>()
   const [selectedUser, setSelectedUser] = useState<BillUserOption | null>(null)
@@ -222,6 +230,15 @@ export function CommonLogsHeaderActions() {
         : undefined
       params.end_timestamp = end ? Math.floor(end.getTime() / 1000) : undefined
       params.username = isRootView ? selectedUser?.username : undefined
+      params.type = billType
+      if (billType === 1 || billType === 8 || billType === 4) {
+        params.model_name = undefined
+        params.token_name = undefined
+        params.channel = undefined
+        params.group = undefined
+        params.request_id = undefined
+        params.upstream_request_id = undefined
+      }
       const blob = await downloadUsageBill(params, isAdmin, format)
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
@@ -250,7 +267,7 @@ export function CommonLogsHeaderActions() {
               size='sm'
               onClick={() => setOpen(true)}
               disabled={downloading}
-              aria-label={t('Download usage bill')}
+              aria-label={t('Download bill')}
               className='h-8 gap-2 px-3'
             />
           }
@@ -258,19 +275,26 @@ export function CommonLogsHeaderActions() {
           <Download className='size-4' />
           <span>{t('Download bill')}</span>
         </TooltipTrigger>
-        <TooltipContent>{t('Download usage bill')}</TooltipContent>
+        <TooltipContent>{t('Download bill')}</TooltipContent>
       </Tooltip>
       <Dialog
         open={open}
-        onOpenChange={setOpen}
+        onOpenChange={(nextOpen) => {
+          if (!downloading) setOpen(nextOpen)
+        }}
         title={t('Download bill')}
         description={t(
           'Choose a date range or leave it blank to export all matching records.'
         )}
         contentClassName='sm:max-w-lg'
+        showCloseButton={!downloading}
         footer={
           <>
-            <Button variant='outline' onClick={() => setOpen(false)}>
+            <Button
+              variant='outline'
+              onClick={() => setOpen(false)}
+              disabled={downloading}
+            >
               {t('Cancel')}
             </Button>
             <Button onClick={handleDownload} disabled={downloading}>
@@ -280,15 +304,66 @@ export function CommonLogsHeaderActions() {
           </>
         }
       >
-        <div className='space-y-5'>
-          <Alert>
-            <Info className='size-4' />
-            <AlertDescription className='text-xs'>
-              {t(
-                "Actual consumption is the customer's final charge after agency sales pricing, customer-specific pricing, and applicable discounts. Exported files show whether each charge used an agency discount and the discount amount."
-              )}
-            </AlertDescription>
-          </Alert>
+        <fieldset disabled={downloading} className='space-y-5'>
+          <div className='space-y-2'>
+            <Label htmlFor='usage-bill-type'>{t('Type')}</Label>
+            <Select
+              value={billType}
+              disabled={downloading}
+              items={billTypes.map((item) => ({
+                value: item.value,
+                label: t(item.label),
+              }))}
+              onValueChange={(value) => {
+                if (value !== null) setBillType(value)
+              }}
+            >
+              <SelectTrigger
+                id='usage-bill-type'
+                aria-label={t('Type')}
+                className='w-full'
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {billTypes.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {t(item.label)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {billType === 2 && (
+            <Alert>
+              <Info className='size-4' />
+              <AlertDescription className='text-xs'>
+                {t(
+                  "Actual consumption is the customer's final charge after agency sales pricing, customer-specific pricing, and applicable discounts. Exported files show whether each charge used an agency discount and the discount amount."
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+          {billType === 1 && (
+            <Alert>
+              <Info className='size-4' />
+              <AlertDescription className='text-xs'>
+                {t(
+                  'Payments retain their original currency. Missing historical payment details are marked as not recorded.'
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+          {(billType === 8 || billType === 6) && (
+            <Alert>
+              <Info className='size-4' />
+              <AlertDescription className='text-xs'>
+                {t(
+                  'Quota adjustments and refunds are quota movements, not cash payments.'
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
           {isRootView && (
             <div className='space-y-2'>
               <Label htmlFor='usage-bill-username'>{t('Username')}</Label>
@@ -305,8 +380,10 @@ export function CommonLogsHeaderActions() {
               end={end}
               emptyLabel={t('All time')}
               onChange={(range) => {
-                setStart(range.start)
-                setEnd(range.end)
+                if (!downloading) {
+                  setStart(range.start)
+                  setEnd(range.end)
+                }
               }}
             />
             <div className='flex items-center justify-between gap-3'>
@@ -322,6 +399,7 @@ export function CommonLogsHeaderActions() {
                   type='button'
                   variant='ghost'
                   size='sm'
+                  disabled={downloading}
                   className='h-7 shrink-0 px-2 text-xs'
                   onClick={() => {
                     setStart(undefined)
@@ -337,6 +415,13 @@ export function CommonLogsHeaderActions() {
             <Label htmlFor='usage-bill-format'>{t('File format')}</Label>
             <Select
               value={format}
+              disabled={downloading}
+              items={[
+                { value: 'xlsx', label: t('Excel workbook (XLSX)') },
+                { value: 'pdf', label: t('PDF document') },
+                { value: 'csv', label: t('CSV file') },
+                { value: 'docx', label: t('Word document (DOCX)') },
+              ]}
               onValueChange={(value) => {
                 if (value) setFormat(value as typeof format)
               }}
@@ -359,7 +444,7 @@ export function CommonLogsHeaderActions() {
               </SelectContent>
             </Select>
           </div>
-        </div>
+        </fieldset>
       </Dialog>
     </div>
   )

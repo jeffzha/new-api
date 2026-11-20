@@ -56,9 +56,10 @@ export async function fetchUsageAnalytics(
               Math.ceil((total - rows.length) / ANALYTICS_PAGE_SIZE),
               maxPages - page + 1
             )
+      const completed = new Map<number, UsageLog[]>()
       const responses = await Promise.all(
-        Array.from({ length: batchSize }, async (_, index) =>
-          requireServerSuccess(
+        Array.from({ length: batchSize }, async (_, index) => {
+          const response = requireServerSuccess(
             await (isAdmin ? getAllLogs : getUserLogs)(
               {
                 ...params,
@@ -68,21 +69,40 @@ export async function fetchUsageAnalytics(
               controller.signal
             )
           )
-        )
+          controller.signal.throwIfAborted()
+          total = Math.max(total, response.data?.total ?? 0)
+          const items = (response.data?.items ?? []).map((item) =>
+            usageLogSchema.parse(item)
+          )
+          completed.set(index, items)
+          const published = new Set(seen)
+          const available = [...completed.entries()]
+            .sort(([a], [b]) => a - b)
+            .flatMap(([, batch]) => batch)
+            .filter((row) => {
+              if (published.has(row.id)) return false
+              published.add(row.id)
+              return true
+            })
+          const partial = [...rows, ...available].slice(0, ANALYTICS_LOG_LIMIT)
+          onProgress?.({
+            rows: partial,
+            total,
+            truncated: partial.length < total,
+          })
+          return items
+        })
       )
       controller.signal.throwIfAborted()
       const before = rows.length
-      for (const response of responses) {
-        total = Math.max(total, response.data?.total ?? 0)
-        for (const item of response.data?.items ?? []) {
-          const row = usageLogSchema.parse(item)
+      for (const batch of responses) {
+        for (const row of batch) {
           if (!seen.has(row.id) && rows.length < ANALYTICS_LOG_LIMIT) {
             rows.push(row)
             seen.add(row.id)
           }
         }
       }
-      onProgress?.({ rows: [...rows], total, truncated: rows.length < total })
       if (rows.length >= total || rows.length === before) break
       page += batchSize
     }

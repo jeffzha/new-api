@@ -12,6 +12,8 @@
   "signal.page.marketplace": "探索模型能力，对比调用价格，找到下一款适合你的模型。",
   "signal.page.rankings": "通过平台调用数据，洞察模型需求与服务商趋势。",
   "translation": {
+    "Payments retain their original currency. Missing historical payment details are marked as not recorded.": "实付金额保留原币种；历史支付信息缺失时标为未记录。",
+    "Quota adjustments and refunds are quota movements, not cash payments.": "额度调整和退款表示额度变动，不代表现金收支。",
     "Quota Adjustment": "额度调整",
     "Customer": "客户",
     "Term": "账期",

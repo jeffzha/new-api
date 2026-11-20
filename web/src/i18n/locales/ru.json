@@ -1,5 +1,7 @@
 {
   "translation": {
+    "Payments retain their original currency. Missing historical payment details are marked as not recorded.": "Платежи указаны в исходной валюте. Отсутствующие исторические данные помечены как незаписанные.",
+    "Quota adjustments and refunds are quota movements, not cash payments.": "Корректировки и возвраты квоты отражают изменение квоты, а не денежные платежи.",
     "Quota Adjustment": "Корректировка квоты",
     "Customer": "Клиент",
     "Term": "Срок оплаты",

@@ -137,7 +137,9 @@ it('marks only retired log types as deprecated while keeping historical filters 
 it('queries quota adjustments independently of paid top-ups', async () => {
   const router = await renderFilter()
   await userEvent.click(screen.getByRole('combobox', { name: 'Type' }))
-  await userEvent.click(screen.getByRole('option', { name: 'Quota Adjustment' }))
+  await userEvent.click(
+    screen.getByRole('option', { name: 'Quota Adjustment' })
+  )
   await userEvent.click(screen.getByRole('button', { name: 'Search' }))
   await waitFor(() =>
     expect(router.state.location.search).toMatchObject({ type: ['8'], page: 1 })
@@ -151,7 +153,7 @@ it('queries quota adjustments independently of paid top-ups', async () => {
   await getAllLogs(params)
   await getUserLogs(params)
   const urls = vi.mocked(api.get).mock.calls.map(([url]) => url)
-  for (const path of ['/api/log?', '/api/log/self?']) {
+  for (const path of ['/api/log/?', '/api/log/self?']) {
     const url = urls.find((url) => url.startsWith(path))
     if (!url) throw new Error('Missing usage log request')
     expect(new URL(url, 'http://localhost').searchParams.get('type')).toBe('8')

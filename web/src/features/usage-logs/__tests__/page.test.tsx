@@ -73,7 +73,7 @@ async function renderPage(
     }
     if (
       options.loadLogs &&
-      (url.startsWith('/api/log?') || url.startsWith('/api/log/self?'))
+      (url.startsWith('/api/log/?') || url.startsWith('/api/log/self?'))
     ) {
       return {
         data: await options.loadLogs(
@@ -117,9 +117,7 @@ it.each(['signal-console', 'prism-console'])(
   '%s preserves bill download and URL filters when switching analytics and returning',
   async (preset) => {
     const router = await renderPage(preset)
-    expect(
-      screen.getByRole('button', { name: 'Download usage bill' })
-    ).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Download bill' })).toBeVisible()
     expect(screen.getByRole('tab', { name: 'Log records' })).toHaveAttribute(
       'aria-selected',
       'true'
@@ -131,17 +129,13 @@ it.each(['signal-console', 'prism-console'])(
     expect(
       await screen.findByRole('region', { name: 'Usage analytics' })
     ).toBeVisible()
-    expect(
-      screen.getByRole('button', { name: 'Download usage bill' })
-    ).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Download bill' })).toBeVisible()
     expect(
       screen.queryByRole('button', { name: 'Search' })
     ).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('tab', { name: 'Log records' }))
     expect(await screen.findByRole('button', { name: 'Search' })).toBeVisible()
-    expect(
-      screen.getByRole('button', { name: 'Download usage bill' })
-    ).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Download bill' })).toBeVisible()
     await waitFor(() =>
       expect(router.state.location.search).toMatchObject({
         model: 'production-model',
@@ -197,10 +191,11 @@ it.each([
     const adjustment = new Promise<LogResponse>((resolve) => {
       finishAdjustment = resolve
     })
-    const loadLogs = vi.fn(async (type: string | null): Promise<LogResponse> =>
-      type === '8'
-        ? adjustment
-        : { success: true, data: { items: [consumeLog], total: 101 } }
+    const loadLogs = vi.fn(
+      async (type: string | null): Promise<LogResponse> =>
+        type === '8'
+          ? adjustment
+          : { success: true, data: { items: [consumeLog], total: 101 } }
     )
     const router = await renderPage('default', {
       role,
@@ -258,10 +253,12 @@ it.each([
 it.each(['8', '["8"]'])(
   'loading a quota-adjustment URL with type=%s preserves the filter',
   async (type) => {
-    const loadLogs = vi.fn(async (): Promise<LogResponse> => ({
-      success: true,
-      data: { items: [], total: 0 },
-    }))
+    const loadLogs = vi.fn(
+      async (): Promise<LogResponse> => ({
+        success: true,
+        data: { items: [], total: 0 },
+      })
+    )
     const router = await renderPage('default', {
       initialEntry: `/usage-logs/common?type=${type}`,
       loadLogs,

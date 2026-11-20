@@ -65,6 +65,7 @@ type logExportSourceSnapshot struct {
 }
 
 type LogExportParams struct {
+	LogType           int
 	UserID            int
 	IsAdmin           bool
 	StartTimestamp    int64
@@ -79,7 +80,16 @@ type LogExportParams struct {
 }
 
 func buildConsumeLogQuery(params LogExportParams) (*gorm.DB, error) {
-	tx := LOG_DB.Where("logs.type = ?", LogTypeConsume)
+	logType := params.LogType
+	if logType == 0 {
+		logType = LogTypeConsume
+	}
+	switch logType {
+	case LogTypeConsume, LogTypeTopup, LogTypeQuotaAdjustment, LogTypeSystem, LogTypeError, LogTypeRefund:
+	default:
+		return nil, errors.New("不支持的账单类型")
+	}
+	tx := applyLogTypeFilter(LOG_DB.Model(&Log{}), logType)
 	if !params.IsAdmin {
 		tx = tx.Where("logs.user_id = ?", params.UserID)
 	} else if params.Username != "" {
@@ -144,6 +154,9 @@ func GetConsumeLogsForExport(params LogExportParams) ([]*Log, map[LogExportFundi
 	if err := tx.Order(order).Limit(LogExportMaxRows).Find(&logs).Error; err != nil {
 		return nil, nil, nil, err
 	}
+	if params.LogType != 0 && params.LogType != LogTypeConsume {
+		return logs, nil, nil, nil
+	}
 	funding, agencyPricing, err := loadLogExportPricing(context.Background(), logs)
 	return logs, funding, agencyPricing, err
 }
@@ -162,6 +175,9 @@ func WalkConsumeLogsForExport(ctx context.Context, params LogExportParams, visit
 		return err
 	}
 	visitBatch := func(logs []*Log) error {
+		if params.LogType != 0 && params.LogType != LogTypeConsume {
+			return visit(logs, nil, nil)
+		}
 		funds, prices, err := loadLogExportPricing(ctx, logs)
 		if err != nil {
 			return err
@@ -224,6 +240,39 @@ func WalkConsumeLogsForExport(ctx context.Context, params LogExportParams, visit
 		}
 		last = batch[len(batch)-1]
 	}
+}
+
+// LoadLogExportTopups reads only non-secret payment facts, in bounded batches.
+// Both the trade number and owner must match before facts are attached to a log.
+func LoadLogExportTopups(ctx context.Context, logs []*Log) (map[LogExportFundingKey]TopUp, error) {
+	result := make(map[LogExportFundingKey]TopUp)
+	if DB == nil || len(logs) == 0 {
+		return result, ctx.Err()
+	}
+	db := DB.WithContext(ctx)
+	if !db.Migrator().HasTable(&TopUp{}) {
+		return result, ctx.Err()
+	}
+	trades := make([]string, 0, len(logs))
+	for _, log := range logs {
+		var other struct {
+			TradeNo string `json:"trade_no"`
+		}
+		if common.UnmarshalJsonStr(log.Other, &other) == nil && other.TradeNo != "" {
+			trades = append(trades, other.TradeNo)
+		}
+	}
+	for start := 0; start < len(trades); start += logExportFundingBatchSize {
+		var batch []TopUp
+		if err := db.Select("user_id", "trade_no", "funding_source", "payment_method", "payment_snapshot", "complete_time").
+			Where("trade_no IN ?", trades[start:min(start+logExportFundingBatchSize, len(trades))]).Find(&batch).Error; err != nil {
+			return nil, err
+		}
+		for _, topup := range batch {
+			result[LogExportFundingKey{UserID: int64(topup.UserId), RequestID: topup.TradeNo}] = topup
+		}
+	}
+	return result, ctx.Err()
 }
 
 func loadLogExportPricing(ctx context.Context, logs []*Log) (map[LogExportFundingKey]LogExportFunding, map[LogExportFundingKey]LogExportAgencyPricing, error) {

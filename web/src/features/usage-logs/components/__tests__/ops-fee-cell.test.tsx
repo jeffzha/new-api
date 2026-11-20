@@ -27,18 +27,35 @@ import { usageLogSchema } from '../../data/schema'
 import { OpsFeeCell } from '../ops-fee-cell'
 
 describe('operations fee display', () => {
-  test('shows the OPS amount exactly and explains the separately reported customer deduction', async () => {
+  test('shows the OPS amount exactly without a comparison popup on hover or keyboard navigation', async () => {
     const user = userEvent.setup()
-    render(<OpsFeeCell fee={{
-      status: 'available', amount: '0.004054', currency: 'CNY',
-      station_amount: '0.004059', difference: '0.000005',
-    }} />)
-    expect(screen.getByLabelText('¥0.004054')).toBeVisible()
+    render(
+      <>
+        <OpsFeeCell
+          fee={{
+            status: 'available',
+            amount: '0.004054',
+            currency: 'CNY',
+            station_amount: '0.004059',
+            difference: '0.000005',
+          }}
+        />
+        <button type='button'>Next action</button>
+      </>
+    )
+    const amount = screen.getByLabelText('¥0.004054')
+    expect(amount).toBeVisible()
+    await user.hover(amount)
     await user.tab()
-    const tooltip = await screen.findByRole('tooltip')
-    expect(tooltip).toHaveTextContent('Cost: ¥0.004054')
-    expect(tooltip).toHaveTextContent('Actual customer deduction (CNY): ¥0.004059')
-    expect(tooltip).toHaveTextContent('Deduction minus calculated fee (CNY): ¥0.000005')
+    expect(screen.getByRole('button', { name: 'Next action' })).toHaveFocus()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/Actual customer deduction/)
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/Deduction minus calculated fee/)
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText(/0[.]004059|0[.]000005/)).not.toBeInTheDocument()
   })
   test('Chinese users see translated fee labels and calculation states', async () => {
     const i18n = createInstance()

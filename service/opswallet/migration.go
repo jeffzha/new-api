@@ -58,7 +58,7 @@ func sourceMigrationUsers(ctx context.Context, db *gorm.DB) ([]MigrationUser, er
 		if u.ID <= 0 || u.Quota < -common.MaxWalletQuota || u.Quota > common.MaxWalletQuota {
 			return nil, errors.New("invalid source wallet identity or quota")
 		}
-		lots, debt, err := model.OPSAgencyOpeningLots(db.WithContext(ctx), u.ID, u.Quota)
+		lots, debt, err := openingFundingLots(db.WithContext(ctx), u.ID, u.Quota)
 		if err != nil {
 			return nil, err
 		}

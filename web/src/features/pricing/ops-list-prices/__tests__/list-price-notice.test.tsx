@@ -1,10 +1,11 @@
 /* Copyright (C) 2023-2026 QuantumNous
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it } from 'vitest'
 
+import { useAuthStore } from '@/stores/auth-store'
 import {
   DEFAULT_CURRENCY_CONFIG,
   useSystemConfigStore,
@@ -20,8 +21,11 @@ import type { PricingModel } from '../../types'
 import { ListPriceNotice } from '../list-price-notice'
 import { OfficialPrice } from '../official-price'
 
+const previousAuth = useAuthStore.getState()
+
 afterEach(() => {
   cleanup()
+  useAuthStore.setState(previousAuth, true)
   useSystemConfigStore
     .getState()
     .setConfig({ currency: { ...DEFAULT_CURRENCY_CONFIG } })
@@ -42,6 +46,7 @@ const ops: PricingModel = {
 }
 
 it('opens the comparison with separate price sources and no discounts', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'admin', role: 10 })
   render(
     <ListPriceNotice
       models={[ops]}
@@ -68,6 +73,7 @@ it('opens the comparison with separate price sources and no discounts', async ()
 })
 
 it('explains retained prices after a failed refresh', () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'admin', role: 10 })
   render(
     <ListPriceNotice
       models={[ops]}
@@ -82,6 +88,7 @@ it('explains retained prices after a failed refresh', () => {
 })
 
 it('explains local fallback before the first successful read and handles an empty catalog', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'admin', role: 100 })
   render(
     <ListPriceNotice
       models={[]}
@@ -98,6 +105,48 @@ it('explains local fallback before the first successful read and handles an empt
     screen.getByRole('button', { name: 'Compare list prices' })
   )
   expect(screen.getByRole('dialog')).toHaveTextContent('No models available')
+})
+
+it.each([null, { id: 2, username: 'customer', role: 1 }])(
+  'hides the list price notice and comparison for non-administrator %j',
+  (user) => {
+    useAuthStore.getState().auth.setUser(user)
+    render(
+      <ListPriceNotice
+        models={[ops]}
+        status={{ version: 'v1', stale: false }}
+        priceRate={1}
+        usdExchangeRate={7.3}
+      />
+    )
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Compare list prices' })
+    ).not.toBeInTheDocument()
+  }
+)
+
+it('closes the administrator comparison when switching to a customer account', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'admin', role: 10 })
+  render(
+    <ListPriceNotice
+      models={[ops]}
+      status={{ version: 'v1', stale: false }}
+      priceRate={1}
+      usdExchangeRate={7.3}
+    />
+  )
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Compare list prices' })
+  )
+  expect(screen.getByRole('dialog')).toBeInTheDocument()
+  act(() => {
+    useAuthStore
+      .getState()
+      .auth.setUser({ id: 2, username: 'customer', role: 1 })
+  })
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
 
 it('renders projected token prices as unit prices instead of a special expression', () => {

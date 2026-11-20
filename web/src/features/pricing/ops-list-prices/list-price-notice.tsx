@@ -16,18 +16,27 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useIsAdmin } from '@/hooks/use-admin'
 import { toIntlLocale } from '@/i18n/languages'
 
 import { ModelPriceCell } from '../components/model-price-cell'
 import type { PricingModel } from '../types'
 import type { ListPriceStatus } from './types'
 
-export function ListPriceNotice(props: {
+type ListPriceNoticeProps = {
   models: PricingModel[]
   status?: ListPriceStatus
   priceRate: number
   usdExchangeRate: number
-}) {
+}
+
+export function ListPriceNotice(props: ListPriceNoticeProps) {
+  const isAdmin = useIsAdmin()
+  if (!isAdmin) return null
+  return <AdminListPriceNotice {...props} />
+}
+
+function AdminListPriceNotice(props: ListPriceNoticeProps) {
   const { t, i18n } = useTranslation()
   const [open, setOpen] = useState(false)
   const hasSnapshot = Boolean(props.status?.version)

@@ -92,16 +92,27 @@ func opsAuthorityRelayEvent(c *gin.Context, info *relaycommon.RelayInfo, quota i
 	other.SetPublic("group_ratio", info.PriceData.GroupRatioInfo.GroupRatio)
 	other.SetPublic("cache_ratio", info.PriceData.CacheRatio)
 	other.SetPublic("cache_tokens", usage.PromptTokensDetails.CachedTokens)
-	other.SetPublic("cache_creation_tokens", usage.PromptTokensDetails.CacheCreationTokensTotal())
 	other.SetPublic("cache_creation_tokens_5m", usage.ClaudeCacheCreation5mTokens)
 	other.SetPublic("cache_creation_tokens_1h", usage.ClaudeCacheCreation1hTokens)
 	other.SetPublic("model_price", info.PriceData.ModelPrice)
 	other.SetPublic("audio_ratio", info.PriceData.AudioRatio)
 	other.SetPublic("audio_completion_ratio", info.PriceData.AudioCompletionRatio)
 	other.SetPublic("image_ratio", info.PriceData.ImageRatio)
-	appendCacheCreationPricing(other, info.PriceData.CacheCreationPricingConfigured, usage.PromptTokensDetails.CacheCreationTokensTotal(), info.PriceData.CacheCreationRatio, info.PriceData.CacheCreation5mRatio, info.PriceData.CacheCreation1hRatio)
 	other.SetPublic("usage_semantic", usage.UsageSemantic)
 	other.SetPublic("usage_source", usage.UsageSource)
+	normalized := BuildTieredTokenParams(usage, usage.UsageSemantic == "anthropic", map[string]bool{"cr": true, "cc": true, "cc1h": true, "ai": true, "ao": true, "img": true, "img_o": true})
+	// The station wire contract bounds token counts. Reject invalid facts before
+	// converting normalized totals or posting a monetary event to OPS.
+	for _, count := range []float64{float64(usage.PromptTokens), float64(usage.CompletionTokens), normalized.Len, normalized.CR, normalized.CC, normalized.CC1h, normalized.CC + normalized.CC1h, normalized.AI, normalized.AO, normalized.Img, normalized.ImgO} {
+		if count < 0 || count > 1_000_000_000_000 {
+			return nil, model.ErrOPSWalletHoldConflict
+		}
+	}
+	cacheCreation := int(normalized.CC + normalized.CC1h)
+	other.SetPublic("cache_creation_tokens", cacheCreation)
+	appendCacheCreationPricing(other, info.PriceData.CacheCreationPricingConfigured, cacheCreation, info.PriceData.CacheCreationRatio, info.PriceData.CacheCreation5mRatio, info.PriceData.CacheCreation1hRatio)
+	other.SetPublic("input_tokens_total", normalized.Len)
+	other.SetPublic("billing_tokens", map[string]any{"p": normalized.P, "c": normalized.C, "len": normalized.Len, "cr": normalized.CR, "cc": normalized.CC, "cc1h": normalized.CC1h, "ai": normalized.AI, "ao": normalized.AO, "img": normalized.Img, "img_o": normalized.ImgO})
 	facts := map[string]any{}
 	if input := info.BillingRequestInput; input != nil {
 		maps.Copy(facts, input.Usage)

@@ -17,7 +17,8 @@ type DisplayRow struct {
 }
 
 var displayComponents = map[string]bool{
-	"input_per_million": true, "output_per_million": true, "cache_read_per_million": true, "cache_write_per_million": true,
+	"cache_write_1h_per_million": true,
+	"input_per_million":          true, "output_per_million": true, "cache_read_per_million": true, "cache_write_per_million": true,
 	"audio_input_per_million": true, "audio_output_per_million": true, "per_image": true, "per_second": true,
 	"per_reference_image": true, "per_reference_video_second": true, "per_million_tokens": true,
 	"per_output_credit": true, "per_material_credit": true, "per_request": true,

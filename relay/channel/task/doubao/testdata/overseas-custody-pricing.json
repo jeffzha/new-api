@@ -1,0 +1,92 @@
+{
+  "Source": [
+    {
+      "billing_details": {},
+      "effective": {
+        "CacheRatio": 1,
+        "CompletionRatio": 1.818181818182,
+        "CreateCacheRatio": 1.25,
+        "ImageRatio": 1,
+        "ModelRatio": 3.85
+      },
+      "model": "doubao-seedance-2-0-260128"
+    },
+    {
+      "billing_details": {},
+      "effective": {
+        "CacheRatio": 1,
+        "CompletionRatio": 1,
+        "CreateCacheRatio": 1.25,
+        "ImageRatio": 1,
+        "ModelRatio": 3.5
+      },
+      "model": "doubao-seedance-2-0-fast-260128"
+    },
+    {
+      "billing_details": {},
+      "effective": {
+        "CacheRatio": 1,
+        "CompletionRatio": 1,
+        "CreateCacheRatio": 1.25,
+        "ImageRatio": 1,
+        "ModelRatio": 2.8
+      },
+      "model": "doubao-seedance-2-0-fast-filter-off"
+    },
+    {
+      "billing_details": {},
+      "effective": {
+        "CacheRatio": 1,
+        "CompletionRatio": 1,
+        "CreateCacheRatio": 1.25,
+        "ImageRatio": 1,
+        "ModelRatio": 3.5
+      },
+      "model": "doubao-seedance-2-0-filter-off"
+    },
+    {
+      "billing_details": {},
+      "effective": {
+        "CacheRatio": 1,
+        "CompletionRatio": 1,
+        "CreateCacheRatio": 1.25,
+        "ImageRatio": 1,
+        "ModelRatio": 3.5
+      },
+      "model": "doubao-seedance-2-0-mini-260615"
+    },
+    {
+      "billing_details": {},
+      "effective": {
+        "CacheRatio": 1,
+        "CompletionRatio": 1,
+        "CreateCacheRatio": 1.25,
+        "ImageRatio": 1,
+        "ModelRatio": 1.75
+      },
+      "model": "dreamina-seedance-2-0-mini"
+    },
+    {
+      "billing_details": {},
+      "effective": {
+        "CacheRatio": 1,
+        "CompletionRatio": 1,
+        "CreateCacheRatio": 1.25,
+        "ImageRatio": 1,
+        "ModelRatio": 1.75
+      },
+      "model": "dreamina-seedance-2-0-mini-filter-off"
+    },
+    {
+      "billing_details": {},
+      "effective": {
+        "CacheRatio": 1,
+        "CompletionRatio": 1,
+        "CreateCacheRatio": 1.25,
+        "ImageRatio": 1,
+        "ModelRatio": 5.35
+      },
+      "model": "dreamina-seedance-2-5-filter-off"
+    }
+  ]
+}

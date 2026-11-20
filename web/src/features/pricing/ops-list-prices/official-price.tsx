@@ -25,6 +25,7 @@ const priceFields = [
   ['per_reference_video_second', 'Reference video unit price', 'second'],
   ['cache_read_per_million', 'Cache Read', 'tokens'],
   ['cache_write_per_million', 'Cache Write', 'tokens'],
+  ['cache_write_1h_per_million', 'Cache Write (1h)', 'tokens'],
   ['per_request', 'Per-request', 'request'],
 ] as const
 
@@ -227,7 +228,8 @@ export function OfficialPrice(props: {
       ? fields.filter(
           ([key]) =>
             key === 'cache_read_per_million' ||
-            key === 'cache_write_per_million'
+            key === 'cache_write_per_million' ||
+            key === 'cache_write_1h_per_million'
         )
       : fields.filter(([key]) => !key.startsWith('cache_')).slice(0, 3)
   if (!visible.length) return <span className='text-muted-foreground'>—</span>

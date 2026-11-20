@@ -23,16 +23,17 @@ import (
 // Retrying uses identical batch IDs, bodies and timestamps. No recovery path
 // takes custody back or removes source guards automatically.
 type OpeningMigration struct {
-	Version        int             `json:"version"`
-	Scope          string          `json:"scope"`
-	URL            string          `json:"url"`
-	KeyID          string          `json:"keyId"`
-	FrozenAt       string          `json:"frozenAt"`
-	WriterEvidence string          `json:"writerEvidence"`
-	Users          []MigrationUser `json:"users"`
-	SnapshotSHA256 string          `json:"snapshotSha256"`
-	Phase          string          `json:"phase"`
-	CustodySince   string          `json:"custodySince,omitempty"`
+	HistoricalReviewSHA256 string          `json:"historicalReviewSha256,omitempty"`
+	Version                int             `json:"version"`
+	Scope                  string          `json:"scope"`
+	URL                    string          `json:"url"`
+	KeyID                  string          `json:"keyId"`
+	FrozenAt               string          `json:"frozenAt"`
+	WriterEvidence         string          `json:"writerEvidence"`
+	Users                  []MigrationUser `json:"users"`
+	SnapshotSHA256         string          `json:"snapshotSha256"`
+	Phase                  string          `json:"phase"`
+	CustodySince           string          `json:"custodySince,omitempty"`
 }
 
 // Only public profile identity and exact native quota are selected, never
@@ -43,8 +44,8 @@ type MigrationUser struct {
 	Username          string               `json:"username"`
 	Status            int                  `json:"status"`
 	DeletedAt         gorm.DeletedAt       `json:"deletedAt"`
-	FundingLots       []model.OPSAgencyLot `json:"fundingLots,omitempty"`
-	FundingDebtMicros int64                `json:"fundingDebtMicros,omitempty"`
+	FundingLots       []model.OPSAgencyLot `json:"fundingLots,omitempty" gorm:"-"`
+	FundingDebtMicros int64                `json:"fundingDebtMicros,omitempty" gorm:"-"`
 }
 
 func sourceMigrationUsers(ctx context.Context, db *gorm.DB) ([]MigrationUser, error) {
@@ -117,6 +118,9 @@ func PrepareOpening(ctx context.Context, db *gorm.DB, client *opsclient.Client, 
 	if err := ValidateSourceReadiness(ctx, db); err != nil {
 		return nil, err
 	}
+	if os.Getenv("OPS_WALLET_HISTORICAL_REVIEW_FILE") != "" && (scope != os.Getenv("OPS_PROJECT_SCOPE") || client.KeyID != os.Getenv("OPS_PUSH_KEY_ID")) {
+		return nil, errors.New("historical review station differs from opening station")
+	}
 	// Persisted unsent batches or an active sync lease must be drained before
 	// freezing. An old profile batch could overwrite the opening timestamp.
 	for _, table := range []string{"ops_push_states", "ops_user_sync_states"} {
@@ -140,6 +144,10 @@ func PrepareOpening(ctx context.Context, db *gorm.DB, client *opsclient.Client, 
 	// OPS ledger timestamps have whole-second precision. Every writer and
 	// outstanding upload was drained before this snapshot.
 	m := &OpeningMigration{Version: 1, Scope: scope, URL: client.BaseURL, KeyID: client.KeyID, FrozenAt: time.Now().UTC().Truncate(time.Second).Format(time.RFC3339), WriterEvidence: evidence, Users: users, Phase: "prepared"}
+	m.HistoricalReviewSHA256, _, err = historicalReview(ctx, db)
+	if err != nil {
+		return nil, err
+	}
 	m.SnapshotSHA256, err = m.snapshotDigest()
 	return m, err
 }
@@ -211,6 +219,10 @@ func (m *OpeningMigration) reconcile(wallets *migrationWallets, custody bool) er
 // explicit reviewed snapshot digest pins the source account and station set.
 // Stop ALL writers throughout, including OPS admin adjustments/collectors.
 func ApplyOpening(ctx context.Context, db *gorm.DB, client *opsclient.Client, m *OpeningMigration, reviewedSHA, approvedBy string, save func(*OpeningMigration) error) (*CutoverApproval, error) {
+	heldSHA, _, heldErr := historicalReview(ctx, db)
+	if heldErr != nil || heldSHA != m.HistoricalReviewSHA256 {
+		return nil, errors.New("historical review differs from frozen opening")
+	}
 	digest, err := m.snapshotDigest()
 	if err != nil || m.Version != 1 || reviewedSHA != digest || m.SnapshotSHA256 != digest || m.URL != client.BaseURL || m.KeyID != client.KeyID || strings.TrimSpace(approvedBy) == "" || len(approvedBy) > 100 || common.QuotaPerUnit != 500_000 || save == nil {
 		return nil, errors.New("reviewed opening or station identity mismatch")
@@ -342,6 +354,7 @@ func ApplyOpening(ctx context.Context, db *gorm.DB, client *opsclient.Client, m 
 	}
 	zero, total := 0, decimal.Zero
 	proof := &CutoverApproval{SchemaVersion: 1, Scope: m.Scope, URL: m.URL, KeyID: m.KeyID, Currency: "USD", GatewayQuotaPerUnit: 500_000, ApprovedBy: approvedBy, ApprovedAt: time.Now().UTC().Format(time.RFC3339Nano), FrozenAt: m.FrozenAt, CustodySince: m.CustodySince, Differences: &zero, MissingBalances: &zero}
+	proof.HistoricalReviewSHA256 = m.HistoricalReviewSHA256
 	for _, u := range m.Users {
 		proof.Users = append(proof.Users, OpeningBalance{UserID: u.ID, Quota: u.Quota})
 		total = total.Add(decimal.NewFromInt(u.Quota).Div(decimal.NewFromInt(500_000)))

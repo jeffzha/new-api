@@ -206,6 +206,7 @@ type TaskEndpointSnapshot struct {
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
 type TaskBillingContext struct {
+	UsageDimensions          *TaskUsageDimensions            `json:"usage_dimensions,omitempty"`
 	ModelPrice               float64                         `json:"model_price,omitempty"`       // 模型单价
 	GroupRatio               float64                         `json:"group_ratio,omitempty"`       // 分组倍率
 	ModelRatio               float64                         `json:"model_ratio,omitempty"`       // 模型倍率
@@ -222,6 +223,13 @@ type TaskBillingContext struct {
 	// be confused with the outbox event ID, which is generated at finalization.
 	AgencyChargeID       string `json:"agency_charge_id,omitempty"`
 	AgencyBillingEventID string `json:"agency_billing_event_id,omitempty"`
+}
+
+// TaskUsageDimensions retains only the non-content request facts needed for
+// pricing. A nil reference flag distinguishes old tasks from an explicit false.
+type TaskUsageDimensions struct {
+	Resolution     string `json:"resolution,omitempty"`
+	ReferenceVideo *bool  `json:"reference_video,omitempty"`
 }
 
 // TaskProviderBillingSnapshot freezes provider-specific pricing inputs at
@@ -252,6 +260,14 @@ func (task *Task) BillingLogFacts() map[string]any {
 		return facts
 	}
 	bc := task.PrivateData.BillingContext
+	if dimensions := bc.UsageDimensions; dimensions != nil {
+		if dimensions.Resolution != "" {
+			facts["resolution"] = dimensions.Resolution
+		}
+		if dimensions.ReferenceVideo != nil {
+			facts["has_video_input"] = *dimensions.ReferenceVideo
+		}
+	}
 	var usage map[string]any
 	if bc.TieredSnapshot != nil && len(bc.TieredSnapshot.UsageFacts) > 0 {
 		usage = maps.Clone(bc.TieredSnapshot.UsageFacts)

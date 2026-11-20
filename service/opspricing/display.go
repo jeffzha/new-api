@@ -121,7 +121,9 @@ func samePrice(value any, number float64) bool {
 }
 
 var componentVariables = map[string]string{
-	"input_per_million": "p", "output_per_million": "c", "cache_read_per_million": "cr", "cache_write_per_million": "cc",
+	"cache_write_1h_per_million": "cc1h",
+	"audio_input_per_million":    "ai",
+	"input_per_million":          "p", "output_per_million": "c", "cache_read_per_million": "cr", "cache_write_per_million": "cc",
 	"per_image": `u("images")`, "per_second": `u("seconds")`, "per_reference_image": `u("input_images")`,
 	"per_reference_video_second": `u("input_video_seconds")`, "per_million_tokens": `u("billed_tokens")`,
 }

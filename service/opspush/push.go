@@ -867,7 +867,8 @@ func logAttributes(other, facts map[string]json.RawMessage) map[string]any {
 var billingKeys = []string{"billing_scope", "project_relay_terminal", "model_ratio", "group_ratio", "completion_ratio", "cache_ratio", "model_price", "user_group_ratio",
 	"matched_tier", "billing_source", "request_path", "cache_tokens", "cache_creation_tokens", "image_count", "frt",
 	"task_id", "usage_facts", "billed_tokens", "estimated_tokens", "seconds", "resolution", "has_video_input", "upstream_amount",
-	"settlement_stage", "pre_consumed_quota", "actual_quota", "upstream_alert"}
+	"settlement_stage", "pre_consumed_quota", "actual_quota", "upstream_alert",
+	"billing_tokens", "input_tokens_total", "usage_semantic", "usage_source", "cache_creation_tokens_5m", "cache_creation_tokens_1h"}
 
 // v11BillingKeys are kept as well under v1.1: the frozen task price, refund reasons and the wallet record keys.
 var v11BillingKeys = append(append([]string{}, billingKeys...),

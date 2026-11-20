@@ -26,20 +26,21 @@ import (
 // custody. Its exact file digest is pinned in the private release environment.
 // The source quotas remain an audit snapshot after OPS begins writing money.
 type CutoverApproval struct {
-	SchemaVersion       int              `json:"schemaVersion"`
-	Scope               string           `json:"scope"`
-	URL                 string           `json:"url"`
-	KeyID               string           `json:"keyId"`
-	Currency            string           `json:"currency"`
-	GatewayQuotaPerUnit int64            `json:"gatewayQuotaPerUnit"`
-	ApprovedBy          string           `json:"approvedBy"`
-	ApprovedAt          string           `json:"approvedAt"`
-	FrozenAt            string           `json:"frozenAt"`
-	CustodySince        string           `json:"custodySince"`
-	Differences         *int             `json:"differences"`
-	MissingBalances     *int             `json:"missingBalances"`
-	Total               string           `json:"total"`
-	Users               []OpeningBalance `json:"users"`
+	HistoricalReviewSHA256 string           `json:"historicalReviewSha256,omitempty"`
+	SchemaVersion          int              `json:"schemaVersion"`
+	Scope                  string           `json:"scope"`
+	URL                    string           `json:"url"`
+	KeyID                  string           `json:"keyId"`
+	Currency               string           `json:"currency"`
+	GatewayQuotaPerUnit    int64            `json:"gatewayQuotaPerUnit"`
+	ApprovedBy             string           `json:"approvedBy"`
+	ApprovedAt             string           `json:"approvedAt"`
+	FrozenAt               string           `json:"frozenAt"`
+	CustodySince           string           `json:"custodySince"`
+	Differences            *int             `json:"differences"`
+	MissingBalances        *int             `json:"missingBalances"`
+	Total                  string           `json:"total"`
+	Users                  []OpeningBalance `json:"users"`
 }
 
 type OpeningBalance struct {
@@ -68,6 +69,10 @@ func ValidateCutover(ctx context.Context, db *gorm.DB, client *opsclient.Client)
 	var proof CutoverApproval
 	if common.Unmarshal(raw, &proof) != nil {
 		return errors.New("invalid OPS wallet opening")
+	}
+	heldSHA, _, err := historicalReview(ctx, db)
+	if err != nil || heldSHA != proof.HistoricalReviewSHA256 {
+		return errors.New("historical review differs from approved opening")
 	}
 	frozen, frozenErr := time.Parse(time.RFC3339Nano, proof.FrozenAt)
 	since, sinceErr := time.Parse(time.RFC3339Nano, proof.CustodySince)
@@ -179,6 +184,10 @@ func ValidateCutover(ctx context.Context, db *gorm.DB, client *opsclient.Client)
 // entitlements or settlement writers still need to change the old wallet.
 // It is read-only; an operator must drain or explicitly migrate these items.
 func ValidateSourceReadiness(ctx context.Context, db *gorm.DB) error {
+	_, held, err := historicalReview(ctx, db)
+	if err != nil {
+		return err
+	}
 	checks := []struct {
 		name     string
 		optional any
@@ -222,6 +231,9 @@ func ValidateSourceReadiness(ctx context.Context, db *gorm.DB) error {
 	query = db.WithContext(ctx).Select("id, task_id").Where("status IS NULL OR status NOT IN ?", []string{model.TaskBillingReconciliationSettled, model.TaskBillingReconciliationNotNeeded})
 	return query.FindInBatches(&bills, 100, func(tx *gorm.DB, _ int) error {
 		for _, bill := range bills {
+			if held[bill.ID] {
+				continue
+			}
 			var task model.Task
 			if err := tx.Session(&gorm.Session{NewDB: true}).Select("id, private_data").First(&task, bill.TaskID).Error; err != nil {
 				return errors.New("source wallet is not ready: unresolved orphan provider bill")

@@ -331,8 +331,22 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil {
 		return nil
 	}
-	hasVideo := hasVideoInMetadata(req.Metadata)
-	resolution := seedanceResolution(req)
+	payload, err := a.convertToRequestPayload(&req)
+	if err != nil {
+		return nil
+	}
+	hasVideo := false
+	for _, item := range payload.Content {
+		if item.Type == "video_url" || item.VideoURL != nil {
+			hasVideo = true
+			break
+		}
+	}
+	resolution := strings.ToLower(strings.TrimSpace(payload.Resolution))
+	if resolution == "" {
+		resolution = "720p"
+	}
+	c.Set("task_billing_dimensions", &model.TaskUsageDimensions{Resolution: resolution, ReferenceVideo: &hasVideo})
 	ratio, ok := GetVideoInputRatio(info.OriginModelName, resolution, hasVideo)
 	if !ok || ratio == 1.0 {
 		return nil

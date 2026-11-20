@@ -844,6 +844,11 @@ func executeTaskSubmissionWith(
 		AgencyBillingEventID:     relayInfo.AgencyBillingEventID,
 	}
 	task.Quota = result.Quota
+	if value, exists := c.Get("task_billing_dimensions"); exists {
+		if dimensions, ok := value.(*model.TaskUsageDimensions); ok {
+			task.PrivateData.BillingContext.UsageDimensions = dimensions
+		}
+	}
 	if model.IsAgencyDurableUser(relayInfo.UserId) {
 		// Durable agency tasks keep the frozen reservation until the provider
 		// reaches a terminal state and the billing journal is finalized.

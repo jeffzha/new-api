@@ -11,6 +11,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -31,7 +33,7 @@ func main() {
 
 func run(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 1 && (args[0] == "help" || args[0] == "--help") {
-		_, err := fmt.Fprintln(out, "ops-wallet-cutover <prepare|apply> --state /private/opening.json --writers-stopped --evidence CHANGE-ID --scope OVERSEAS-ID\nStop and drain all Gateway/Agency/OPS writers, collectors and pending payment callbacks first. Prepare freezes legacy source quota in the database, snapshots every user and prints the review digest.\nApply additionally needs --review-sha256 DIGEST --approved-by OPERATOR --output /private/approved.json. It imports balances, checks each user and explicitly hands custody to OPS. Retain the state file for all retries; failure NEVER unfreezes money or takes custody back.\nLinux operator. Environment: explicit SQL_DSN (SQLite: existing absolute SQLITE_PATH), OPS_PUSH_URL, OPS_PUSH_KEY_ID, OPS_PUSH_SECRET. No automatic application migrations. After verification, deploy OPS custody configuration with OPS_WALLET_OPENING_FILE and the printed OPS_WALLET_OPENING_SHA256.")
+		_, err := fmt.Fprintln(out, "ops-wallet-cutover <prepare|apply> --state /private/opening.json --writers-stopped --evidence CHANGE-ID --scope OVERSEAS-ID\nStop and drain all Gateway/Agency/OPS writers, collectors and pending payment callbacks first. Prepare freezes legacy source quota in the database, snapshots every user and prints the review digest.\nApply additionally needs --review-sha256 DIGEST --approved-by OPERATOR --output /private/approved.json. It imports balances, checks each user and explicitly hands custody to OPS. Retain the state file for all retries; failure NEVER unfreezes money or takes custody back.\nreview-held --state /private/held.json --scope OVERSEAS-ID --evidence APPROVAL-ID --approved-by OPERATOR --bill-ids 5,6 creates a read-only pinned approval retaining those held terminal bills, without settling or changing balances. Configure OPS_PROJECT_SCOPE and pin OPS_WALLET_HISTORICAL_REVIEW_FILE/SHA256 before prepare; retain that manifest for apply and every custody startup.\nLinux operator. Environment: explicit SQL_DSN (SQLite: existing absolute SQLITE_PATH), OPS_PUSH_URL, OPS_PUSH_KEY_ID, OPS_PUSH_SECRET. No automatic application migrations. After verification, deploy OPS custody configuration with OPS_WALLET_OPENING_FILE and the printed OPS_WALLET_OPENING_SHA256.")
 		return err
 	}
 	if len(args) < 1 {
@@ -48,7 +50,9 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	flags.StringVar(&digest, "review-sha256", "", "reviewed frozen snapshot digest")
 	flags.StringVar(&operator, "approved-by", "", "operator approval identity")
 	flags.StringVar(&output, "output", "", "private verified opening approval")
-	if flags.Parse(args[1:]) != nil || flags.NArg() != 0 || state == "" || !stopped || evidence == "" || scope == "" || args[0] != "prepare" && args[0] != "apply" || args[0] == "apply" && (digest == "" || operator == "" || output == "" || output == state) {
+	var billIDs string
+	flags.StringVar(&billIDs, "bill-ids", "", "explicit comma-separated held provider bill IDs")
+	if flags.Parse(args[1:]) != nil || flags.NArg() != 0 || state == "" || evidence == "" || scope == "" || args[0] != "prepare" && args[0] != "apply" && args[0] != "review-held" || args[0] != "review-held" && !stopped || args[0] == "review-held" && (billIDs == "" || operator == "") || args[0] == "apply" && (digest == "" || operator == "" || output == "" || output == state) {
 		return errors.New("invalid operator arguments")
 	}
 	if opsclient.ValidateBase(os.Getenv("OPS_PUSH_URL")) != nil || os.Getenv("OPS_PUSH_KEY_ID") == "" || len(os.Getenv("OPS_PUSH_SECRET")) < 16 {
@@ -84,6 +88,32 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	defer pool.Close()
 	client := opsclient.New(os.Getenv("OPS_PUSH_URL"), os.Getenv("OPS_PUSH_KEY_ID"), os.Getenv("OPS_PUSH_SECRET"), 10*time.Second)
+	if args[0] == "review-held" {
+		if _, err := os.Stat(state); !errors.Is(err, os.ErrNotExist) {
+			return errors.New("historical review file already exists")
+		}
+		var ids []int64
+		for item := range strings.SplitSeq(billIDs, ",") {
+			id, err := strconv.ParseInt(item, 10, 64)
+			if err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		r, err := opswallet.ApproveHistoricalReview(ctx, db, scope, client.KeyID, ids, operator, evidence)
+		if err != nil {
+			return err
+		}
+		if err := opswallet.SaveMigrationFile(state, r); err != nil {
+			return err
+		}
+		raw, err := common.Marshal(r)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(out, "held bills retained=%d OPS_WALLET_HISTORICAL_REVIEW_SHA256=%x; no balances or bills changed\n", len(ids), sha256.Sum256(raw))
+		return err
+	}
 	if args[0] == "prepare" {
 		if _, err := os.Stat(state); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("journal already exists or cannot be inspected; do not overwrite")

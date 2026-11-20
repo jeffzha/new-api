@@ -1,7 +1,6 @@
 package service
 
 import (
-	"sync"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -12,14 +11,18 @@ import (
 func TestCheckNotificationLimitUsesMemoryStoreBeforeRedisClientInitialization(t *testing.T) {
 	previousEnabled, previousClient := common.RedisEnabled, common.RDB
 	previousLimit := constant.NotifyLimitCount
-	previousStore := notifyLimitStore
+	previousStore := make(map[any]any)
+	notifyLimitStore.Range(func(key, value any) bool { previousStore[key] = value; return true })
 	common.RedisEnabled, common.RDB = true, nil
 	constant.NotifyLimitCount = 2
-	notifyLimitStore = sync.Map{}
+	notifyLimitStore.Clear()
 	t.Cleanup(func() {
 		common.RedisEnabled, common.RDB = previousEnabled, previousClient
 		constant.NotifyLimitCount = previousLimit
-		notifyLimitStore = previousStore
+		notifyLimitStore.Clear()
+		for key, value := range previousStore {
+			notifyLimitStore.Store(key, value)
+		}
 	})
 
 	allowed, err := CheckNotificationLimit(71, "quota_exceed")

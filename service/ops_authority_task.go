@@ -96,6 +96,15 @@ func freezeOPSAuthorityTaskTerminal(task *model.Task, target int, result *relayc
 		other.SetPublic("request_path", path)
 	}
 	facts := map[string]any{}
+	if bc != nil && bc.UsageDimensions != nil {
+		dimensions := bc.UsageDimensions
+		if dimensions.Resolution != "" {
+			facts["resolution"] = dimensions.Resolution
+		}
+		if dimensions.ReferenceVideo != nil {
+			facts["reference_video"] = *dimensions.ReferenceVideo
+		}
+	}
 	if result != nil {
 		for key, value := range result.UsageFacts {
 			facts[key] = value

@@ -16,9 +16,11 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencyhub"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/service/opswallet"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -424,7 +426,7 @@ func GetAllUsers(c *gin.Context) {
 	}
 
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(users)
+	pageInfo.SetItems(walletUsersResponse(users))
 
 	common.ApiSuccess(c, pageInfo)
 	return
@@ -454,7 +456,7 @@ func SearchUsers(c *gin.Context) {
 	}
 
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(users)
+	pageInfo.SetItems(walletUsersResponse(users))
 	common.ApiSuccess(c, pageInfo)
 	return
 }
@@ -483,7 +485,7 @@ func GetUser(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    user,
+		"data":    walletUserResponse(user),
 	})
 	return
 }
@@ -551,12 +553,14 @@ func GetSelf(c *gin.Context) {
 		return
 	}
 	responseData := buildSelfUserData(user)
-	walletBalances, err := model.GetWalletBalanceBreakdown(int64(user.Id), int64(user.Quota), user.BillingMode)
-	if err != nil {
-		common.ApiError(c, err)
-		return
+	if !opsauthority.Enabled() {
+		walletBalances, err := model.GetWalletBalanceBreakdown(int64(user.Id), int64(user.Quota), user.BillingMode)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		responseData["wallet_balances"] = walletBalances
 	}
-	responseData["wallet_balances"] = walletBalances
 	// The authenticated role is loaded from GetUserCache. It should equal the
 	// row role, but use it for capabilities so GetSelf and login/refresh remain
 	// consistent with the authorization decision made for this request.
@@ -615,6 +619,11 @@ func buildSelfUserData(user *model.User) map[string]any {
 	}
 	if creditOverview != nil {
 		data["credit"] = creditOverview
+	}
+	if opsauthority.Enabled() {
+		data["wallet_authority"] = "ops"
+		data["ops_balance"] = walletBalance(user.Id)
+		data["wallet_adjustments_enabled"] = opswallet.Enabled()
 	}
 	return data
 }
@@ -1300,10 +1309,13 @@ func updateAdminPermissionsForUserInTx(c *gin.Context, tx *gorm.DB, userID int, 
 }
 
 type ManageRequest struct {
-	Id     int    `json:"id"`
-	Action string `json:"action"`
-	Value  int    `json:"value"`
-	Mode   string `json:"mode"`
+	Id        int    `json:"id"`
+	Action    string `json:"action"`
+	Value     int    `json:"value"`
+	Mode      string `json:"mode"`
+	RequestID string `json:"request_id"`
+	OPSAmount string `json:"ops_amount"`
+	Reason    string `json:"reason"`
 }
 
 // ManageUser Only admin user can do this

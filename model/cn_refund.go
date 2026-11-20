@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -178,6 +179,9 @@ func MigrateCNRefund(db *gorm.DB) error {
 }
 
 func (s *CNRefundService) scope(tenant, gateway, operation string) error {
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 	if s == nil || s.DB == nil || s.TenantID == "" || s.GatewayID == "" || tenant != s.TenantID || gateway != s.GatewayID {
 		return ErrCNRefundScope
 	}
@@ -466,6 +470,9 @@ func (s *CNRefundService) Get(ctx context.Context, tenant, gateway, operation st
 // The native funding ledger records hold/release/settlement as distinct roles.
 // A hold reduces wallet and available quota once; settlement never debits again.
 func cnRefundMoveHoldTx(tx *gorm.DB, u *User, a *AgencyFundingAccount, l *AgencyFundingLot, quota int64, action, operation string) error {
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 	paidBefore, seqBefore := a.PaidAvailable, a.MoneySeq
 	delta := int64(0)
 	switch action {

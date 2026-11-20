@@ -1,8 +1,11 @@
 package controller
 
 import (
+	"errors"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -17,13 +20,28 @@ func GetSubscription(c *gin.Context) {
 	if common.DisplayTokenStatEnabled {
 		tokenId := c.GetInt("token_id")
 		token, err = model.GetTokenById(tokenId)
-		expiredTime = token.ExpiredTime
-		remainQuota = token.RemainQuota
-		usedQuota = token.UsedQuota
+		if err == nil && token != nil {
+			expiredTime = token.ExpiredTime
+			remainQuota = token.RemainQuota
+			usedQuota = token.UsedQuota
+		} else if err == nil {
+			err = errors.New("API token unavailable")
+		}
 	} else {
 		userId := c.GetInt("id")
-		remainQuota, err = model.GetUserQuota(userId, false)
-		usedQuota, err = model.GetUserUsedQuota(userId)
+		if opsauthority.Enabled() {
+			balance := walletBalance(userId)
+			if balance.Status != "available" || balance.Quota == nil || balance.Stale {
+				err = errors.New("OPS balance unavailable")
+			} else {
+				remainQuota = int(*balance.Quota)
+			}
+		} else {
+			remainQuota, err = model.GetUserQuota(userId, false)
+		}
+		if err == nil {
+			usedQuota, err = model.GetUserUsedQuota(userId)
+		}
 	}
 	if expiredTime <= 0 {
 		expiredTime = 0
@@ -38,8 +56,8 @@ func GetSubscription(c *gin.Context) {
 		})
 		return
 	}
-	quota := remainQuota + usedQuota
-	amount := float64(quota)
+	// Convert before adding: wallet and lifetime usage may each be large.
+	amount := float64(remainQuota) + float64(usedQuota)
 	// OpenAI 兼容接口中的 *_USD 字段含义保持“额度单位”对应值：
 	// 我们将其解释为以“站点展示类型”为准：
 	// - USD: 直接除以 QuotaPerUnit
@@ -75,7 +93,11 @@ func GetUsage(c *gin.Context) {
 	if common.DisplayTokenStatEnabled {
 		tokenId := c.GetInt("token_id")
 		token, err = model.GetTokenById(tokenId)
-		quota = token.UsedQuota
+		if err == nil && token != nil {
+			quota = token.UsedQuota
+		} else if err == nil {
+			err = errors.New("API token unavailable")
+		}
 	} else {
 		userId := c.GetInt("id")
 		quota, err = model.GetUserUsedQuota(userId)

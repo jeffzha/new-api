@@ -172,3 +172,33 @@ func TestAgencyCommandOptInDoesNotBreakUsageOnlyBridge(t *testing.T) {
 	require.Error(t, StartConfigured(t.Context(), &commandTestExecutor{}, nil))
 	assert.Nil(t, Default)
 }
+
+func TestCatalogWalletBridgeKeepsAgencyFactsButRejectsLegacyDebits(t *testing.T) {
+	cfg := Config{URL: "http://127.0.0.1:1", GatewayID: "overseas-facts", Key: "test-only", StateDir: t.TempDir(), CatalogWalletAuthority: true}
+	b, err := Open(cfg)
+	require.NoError(t, err)
+	for _, path := range []string{"agency-center/billing-events", "agency-center/source-manifests", "agency-center/command-receipts"} {
+		require.NoError(t, b.Enqueue(path, "fact-1", map[string]any{"fact": "test"}))
+	}
+	for _, path := range []string{"native-usage/bulk", "call-reservations", "call-reservations/cancel", "balance-changes"} {
+		require.Error(t, b.Enqueue(path, "debit-1", map[string]any{"amount": "1"}))
+		require.ErrorContains(t, b.request(t.Context(), http.MethodPost, path, "debit-1", nil, nil), "rejects legacy")
+	}
+	require.Len(t, b.state.Deliveries, 3)
+	require.NoError(t, b.Close())
+	b, err = Open(cfg)
+	require.NoError(t, err, "agency facts remain replayable across restarts")
+	require.NoError(t, b.Close())
+	cfg.EnforceCalls = true
+	_, err = Open(cfg)
+	require.Error(t, err)
+	cfg.EnforceCalls = false
+	cfg.CatalogWalletAuthority = false
+	b, err = Open(cfg)
+	require.NoError(t, err)
+	require.NoError(t, b.Enqueue("native-usage/bulk", "old-usage", map[string]any{"records": []any{}}))
+	require.NoError(t, b.Close())
+	cfg.CatalogWalletAuthority = true
+	_, err = Open(cfg)
+	require.ErrorContains(t, err, "must be drained")
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"gorm.io/gorm"
 )
 
@@ -80,12 +81,18 @@ func quotaResultFromLua(result int, err error) (cacheQuotaResult, error) {
 }
 
 func cacheTryReserveUserQuota(userID int, amount int64) (cacheQuotaResult, error) {
+	if opsauthority.Enabled() {
+		return cacheQuotaMiss, ErrOPSLocalWalletWrite
+	}
 	result, err := common.RDB.Eval(context.Background(), userQuotaReserveScript,
 		[]string{getUserCacheKey(userID)}, amount, userID, userCacheSchemaVersion).Int()
 	return quotaResultFromLua(result, err)
 }
 
 func cacheApplyUserQuotaDelta(userID int, delta int64) (cacheQuotaResult, error) {
+	if opsauthority.Enabled() {
+		return cacheQuotaMiss, ErrOPSLocalWalletWrite
+	}
 	result, err := common.RDB.Eval(context.Background(), userQuotaDeltaScript,
 		[]string{getUserCacheKey(userID)}, delta, userID, userCacheSchemaVersion).Int()
 	return quotaResultFromLua(result, err)
@@ -106,6 +113,9 @@ func cacheApplyTokenQuotaDelta(id int, key string, delta int64) (cacheQuotaResul
 // persistUserQuotaDelta 把已在缓存侧预扣成功的增量落库；批量模式下入队，
 // 直写模式下要求行存在（用户已删除时报错，交由调用方补偿缓存）。
 func persistUserQuotaDelta(id int, delta int) error {
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 	if common.BatchUpdateEnabled {
 		addNewRecord(BatchUpdateTypeUserQuota, id, delta)
 		return nil
@@ -142,6 +152,9 @@ func persistTokenQuotaDelta(id int, delta int) error {
 }
 
 func reserveUserQuotaDB(id int, quota int) (bool, error) {
+	if opsauthority.Enabled() {
+		return false, ErrOPSLocalWalletWrite
+	}
 	result := DB.Model(&User{}).
 		Where("id = ? AND quota >= ?", id, quota).
 		Update("quota", gorm.Expr("quota - ?", quota))
@@ -163,6 +176,9 @@ func reserveTokenQuotaDB(id int, quota int) (bool, error) {
 // 缓存命中时以缓存余额为准（避免批量模式下过期的数据库余额放大并发超扣）；
 // Redis 异常或水合失败时降级为数据库条件更新，保证服务可用。
 func TryReserveUserQuota(id int, quota int) (bool, error) {
+	if opsauthority.Enabled() {
+		return false, ErrOPSLocalWalletWrite
+	}
 	if quota < 0 {
 		return false, errors.New("quota 不能为负数！")
 	}

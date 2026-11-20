@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"gorm.io/gorm"
 )
 
@@ -85,6 +86,9 @@ func restoreAgencyBonusTx(tx *gorm.DB, lot *AgencyFundingLot, amount int64, from
 // redemption deadline is frozen on the lot at redeem time, so later edits to
 // the source code cannot extend credit that has already been issued.
 func expireAgencyRedemptionLotsTx(tx *gorm.DB, userID, now int64) (int64, error) {
+	if opsauthority.Enabled() {
+		return 0, ErrOPSLocalWalletWrite
+	}
 	if tx == nil || userID <= 0 || now <= 0 {
 		return 0, ErrAgencyFundingUnavailable
 	}
@@ -176,6 +180,9 @@ func expireAgencyRedemptionLotsForUser(userID, now int64) (int64, error) {
 // Lazy expiry at the spend boundary remains authoritative; this sweep keeps
 // displayed balances current even when an account makes no new requests.
 func ExpireAgencyRedemptionLots(now int64, limit int) (int, int64, error) {
+	if opsauthority.Enabled() {
+		return 0, 0, ErrOPSLocalWalletWrite
+	}
 	if DB == nil || now <= 0 {
 		return 0, 0, ErrAgencyFundingUnavailable
 	}

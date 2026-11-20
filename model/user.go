@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -603,6 +604,9 @@ func inviteUser(inviterId int) error {
 }
 
 func (user *User) TransferAffQuotaToQuota(quota int) error {
+	if quota <= 0 || int64(quota) > common.MaxWalletQuota {
+		return ErrInvalidUserQuotaAdjustment
+	}
 	// 检查quota是否小于最小额度
 	if float64(quota) < common.QuotaPerUnit {
 		return fmt.Errorf("转移额度最小为%s！", logger.LogQuota(common.QuotaFromFloat(common.QuotaPerUnit)))
@@ -632,7 +636,19 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 		return ErrAgencyProvisioning
 	}
 
-	if current.BillingMode == AgencyDurableBillingMode {
+	if opsauthority.Enabled() {
+		if err := QueueOPSUSDFundingTx(tx, int64(current.Id), int64(quota), "gift", "affiliate_transfer", common.GetUUID(), nil); err != nil {
+			return err
+		}
+		result := tx.Model(&User{}).Where("id = ? AND aff_quota >= ?", current.Id, quota).
+			Update("aff_quota", gorm.Expr("aff_quota - ?", quota))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("insufficient affiliate quota")
+		}
+	} else if current.BillingMode == AgencyDurableBillingMode {
 		if err := ApplyAgencyQuotaDeltaTx(tx, int64(current.Id), int64(quota), "affiliate_transfer"); err != nil {
 			return err
 		}
@@ -650,7 +666,7 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 			return errors.New("邀请额度不足！")
 		}
 	}
-	if current.BillingMode == AgencyDurableBillingMode {
+	if !opsauthority.Enabled() && current.BillingMode == AgencyDurableBillingMode {
 		result := tx.Model(&User{}).
 			Where("id = ? AND aff_quota >= ?", current.Id, quota).
 			Update("aff_quota", gorm.Expr("aff_quota - ?", quota))
@@ -665,6 +681,9 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 		return err
 	}
 	user.AffQuota = current.AffQuota - quota
+	if opsauthority.Enabled() {
+		return nil
+	}
 	user.Quota = current.Quota + quota
 	if current.BillingMode == AgencyDurableBillingMode {
 		if common.RedisEnabled {
@@ -738,6 +757,9 @@ func (user *User) Insert(inviterId int) error {
 				return err
 			}
 			user.Quota = common.QuotaForNewUser
+			if opsauthority.Enabled() {
+				user.Quota = 0
+			}
 			if user.BillingMode == "" {
 				user.BillingMode = "legacy"
 			}
@@ -750,7 +772,10 @@ func (user *User) Insert(inviterId int) error {
 				user.SetSetting(defaultSetting)
 			}
 
-			return tx.Create(user).Error
+			if err := tx.Create(user).Error; err != nil {
+				return err
+			}
+			return user.queueOPSRegistrationFunding(tx, inviterId)
 		})
 	}); err != nil {
 		return err
@@ -776,6 +801,9 @@ func (user *User) finishInsert(inviterId int) {
 		}
 	}
 
+	if opsauthority.Enabled() {
+		return // Financial gifts committed with registration, not after it.
+	}
 	if common.QuotaForNewUser > 0 {
 		RecordQuotaLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)), common.QuotaForNewUser, LogQuotaSourceRegister, false, nil)
 	}
@@ -805,6 +833,9 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 			return err
 		}
 		user.Quota = common.QuotaForNewUser
+		if opsauthority.Enabled() {
+			user.Quota = 0
+		}
 		if user.BillingMode == "" {
 			user.BillingMode = "legacy"
 		}
@@ -816,8 +847,44 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 			user.SetSetting(defaultSetting)
 		}
 
-		return tx.Create(user).Error
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
+		return user.queueOPSRegistrationFunding(tx, inviterId)
 	})
+}
+
+// Registration and its gifts share one transaction. A failed delivery cannot
+// create a second gift, and OAuth rollback cannot leave an orphaned credit.
+func (user *User) queueOPSRegistrationFunding(tx *gorm.DB, inviterID int) error {
+	if !opsauthority.Enabled() {
+		return nil
+	}
+	if common.QuotaForNewUser > 0 {
+		if err := QueueOPSUSDFundingTx(tx, int64(user.Id), int64(common.QuotaForNewUser), "gift", "register", strconv.Itoa(user.Id), nil); err != nil {
+			return err
+		}
+	}
+	if inviterID <= 0 || !operation_setting.IsPaymentComplianceConfirmed() {
+		return nil
+	}
+	if common.QuotaForInvitee > 0 {
+		if err := QueueOPSUSDFundingTx(tx, int64(user.Id), int64(common.QuotaForInvitee), "gift", "invitee", strconv.Itoa(user.Id), nil); err != nil {
+			return err
+		}
+	}
+	if common.QuotaForInviter > 0 {
+		result := tx.Model(&User{}).Where("id = ? AND aff_quota <= ? AND aff_history <= ?", inviterID,
+			common.MaxWalletQuota-int64(common.QuotaForInviter), common.MaxWalletQuota-int64(common.QuotaForInviter)).
+			Updates(map[string]any{"aff_count": gorm.Expr("aff_count + 1"), "aff_quota": gorm.Expr("aff_quota + ?", common.QuotaForInviter), "aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter)})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrWalletQuotaLimitExceeded
+		}
+	}
+	return nil
 }
 
 // InsertWithTxAgency creates an agency-invited customer with zero initial
@@ -855,6 +922,9 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		}
 	}
 
+	if opsauthority.Enabled() {
+		return
+	}
 	if common.QuotaForNewUser > 0 {
 		RecordQuotaLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)), common.QuotaForNewUser, LogQuotaSourceRegister, false, nil)
 	}
@@ -1325,6 +1395,9 @@ func ValidateAccessToken(token string) (*User, error) {
 
 // GetUserQuota gets quota from Redis first, falls back to DB if needed
 func GetUserQuota(id int, fromDB bool) (quota int, err error) {
+	if opsauthority.Enabled() {
+		return 0, ErrOPSLocalWalletWrite
+	}
 	if !fromDB && common.RedisEnabled {
 		return getUserQuotaCache(id)
 	}
@@ -1413,6 +1486,9 @@ func GetUserSetting(id int, fromDB bool) (settingMap dto.UserSetting, err error)
 }
 
 func IncreaseUserQuota(id int, quota int, db bool) (err error) {
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
@@ -1454,6 +1530,9 @@ func IncreaseUserQuotaWithActor(id int, quota int, actorID int64) error {
 }
 
 func increaseUserQuota(id int, quota int) (err error) {
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 	result := DB.Model(&User{}).
 		Where("id = ? AND quota <= ?", id, common.MaxWalletQuota-quota).
 		Update("quota", gorm.Expr("quota + ?", quota))
@@ -1474,6 +1553,9 @@ func increaseUserQuota(id int, quota int) (err error) {
 }
 
 func DecreaseUserQuota(id int, quota int, db bool) (err error) {
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
@@ -1510,6 +1592,9 @@ func DecreaseUserQuotaWithActor(id int, quota int, actorID int64) error {
 }
 
 func decreaseUserQuota(id int, quota int) (err error) {
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 	err = DB.Model(&User{}).Where("id = ?", id).Update("quota", gorm.Expr("quota - ?", quota)).Error
 	if err != nil {
 		return err
@@ -1635,6 +1720,10 @@ func updateUserUsedQuotaAndRequestCount(id int, quota int, count int) {
 }
 
 func updateUserQuotaUsedQuotaAndRequestCount(id int, quota int, usedQuota int, requestCount int) {
+	if opsauthority.Enabled() && quota != 0 {
+		common.SysError("rejected legacy batch wallet mutation under OPS custody")
+		return
+	}
 	if quota == 0 && usedQuota == 0 && requestCount == 0 {
 		return
 	}

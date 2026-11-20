@@ -37,6 +37,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
+	"github.com/QuantumNous/new-api/pkg/opsstorage"
+	"github.com/QuantumNous/new-api/service/opsbilling"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -60,14 +63,14 @@ const (
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9_.:@-]{1,160}$`)
 
-// State is the single pusher row (id 1). Owner/LeaseUntil keep one pushing
+// State is one pusher's row (legacy id 1). Owner/LeaseUntil keep one pushing
 // instance when blue and green both run.
 type State struct {
 	Id            int    `gorm:"primaryKey;autoIncrement:false"`
 	Cursor        int64  `gorm:"not null;default:0"`
 	BatchId       string `gorm:"type:varchar(160);not null;default:''"`
 	BatchLast     int64  `gorm:"not null;default:0"`
-	BatchBody     string `gorm:"type:text"`
+	BatchBody     opsstorage.LargeText
 	Attempts      int    `gorm:"not null;default:0"`
 	Owner         string `gorm:"type:varchar(64);not null;default:''"`
 	LeaseUntil    int64  `gorm:"not null;default:0"`
@@ -90,14 +93,19 @@ type Config struct {
 	Spec               string // SpecV1 (default) or SpecV11
 	Currency           string // empty/CNY preserves the domestic protocol; USD opts into native amounts
 	UsageOnly          bool   // skip wallet records; later wallet replay requires a separate audited backfill
+	Scope              string // empty preserves the product stream; custody uses a separate scoped stream
+	StateID            int
 }
 
 type Pusher struct {
-	DB, LogDB *gorm.DB
-	Config    Config
-	Client    *http.Client
-	Owner     string
-	Now       func() time.Time
+	DB, LogDB      *gorm.DB
+	Config         Config
+	Client         *http.Client
+	Owner          string
+	Now            func() time.Time
+	lastTaskBatch  bool
+	lastRelayBatch bool
+	taskAfter      int64
 }
 
 // StartConfigured starts the pusher when OPS_PUSH_URL is set.
@@ -108,6 +116,10 @@ func StartConfigured(ctx context.Context) error {
 	}
 	config := Config{URL: base, KeyID: os.Getenv("OPS_PUSH_KEY_ID"), Secret: os.Getenv("OPS_PUSH_SECRET"), Currency: os.Getenv("OPS_PUSH_CURRENCY")}
 	config.UsageOnly = os.Getenv("OPS_PUSH_USAGE_ONLY") == "true"
+	if opsauthority.Enabled() {
+		config.Scope = opsauthority.Scope()
+		config.StateID, _ = strconv.Atoi(os.Getenv("OPS_PUSH_STATE_ID"))
+	}
 	switch config.Spec = os.Getenv("OPS_PUSH_SPEC"); config.Spec {
 	case "", SpecV1:
 		config.Spec = SpecV1
@@ -138,6 +150,12 @@ func StartConfigured(ctx context.Context) error {
 }
 
 func (c Config) validate() error {
+	if c.Scope != "" && (!opsauthority.Enabled() || c.Scope != opsauthority.Scope()) {
+		return errors.New("OPS custody stream does not match process authority scope")
+	}
+	if c.Scope != "" && (c.StateID < 2 || !idPattern.MatchString(c.Scope) || c.Spec != SpecV11 || !c.UsageOnly) {
+		return errors.New("OPS custody push requires an independent scoped v1.1 usage stream")
+	}
 	if c.Currency != "" && c.Currency != "CNY" && c.Currency != "USD" {
 		return errors.New("OPS_PUSH_CURRENCY must be CNY or USD")
 	}
@@ -178,12 +196,6 @@ func (p *Pusher) Migrate() error {
 	if err := p.DB.AutoMigrate(&State{}); err != nil {
 		return err
 	}
-	if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
-		// A batch body is up to 1 MB; MySQL TEXT stops at 64 KB.
-		if err := p.DB.Exec("ALTER TABLE ops_push_states MODIFY batch_body MEDIUMTEXT").Error; err != nil {
-			return err
-		}
-	}
 	var cursor int64
 	if p.Config.Since > 0 {
 		p.LogDB.Model(&model.Log{}).Where("created_at < ?", p.Config.Since).Select("COALESCE(MAX(id), 0)").Scan(&cursor)
@@ -191,7 +203,14 @@ func (p *Pusher) Migrate() error {
 		p.LogDB.Model(&model.Log{}).Select("COALESCE(MAX(id), 0)").Scan(&cursor)
 	}
 	// Only the first instance to start sets the starting point; later starts keep the stored cursor.
-	return p.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&State{Id: 1, Cursor: cursor}).Error
+	return p.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&State{Id: p.stateID(), Cursor: cursor}).Error
+}
+
+func (p *Pusher) stateID() int {
+	if p.Config.StateID > 0 {
+		return p.Config.StateID
+	}
+	return 1
 }
 
 func (p *Pusher) Run(ctx context.Context) {
@@ -226,7 +245,7 @@ func (p *Pusher) Step() time.Duration {
 	}
 	if p.Config.UsageOnly {
 		var pending batch
-		if common.UnmarshalJsonStr(state.BatchBody, &pending) != nil {
+		if common.UnmarshalJsonStr(string(state.BatchBody), &pending) != nil {
 			p.fail(state, "stored usage batch unreadable")
 			return stalledWait
 		}
@@ -243,11 +262,11 @@ func (p *Pusher) Step() time.Duration {
 
 func (p *Pusher) lease() (*State, bool) {
 	now := p.Now().Unix()
-	err := p.DB.Model(&State{}).Where("id = 1 AND (owner = ? OR lease_until < ?)", p.Owner, now).
+	err := p.DB.Model(&State{}).Where("id = ? AND (owner = ? OR lease_until < ?)", p.stateID(), p.Owner, now).
 		Updates(map[string]any{"owner": p.Owner, "lease_until": now + leaseSeconds}).Error
 	// Read the owner back: MySQL counts changed rows, so RowsAffected is 0 when the lease is renewed within a second.
 	var state State
-	if err != nil || p.DB.First(&state, 1).Error != nil || state.Owner != p.Owner {
+	if err != nil || p.DB.First(&state, p.stateID()).Error != nil || state.Owner != p.Owner {
 		return nil, false
 	}
 	return &state, true
@@ -255,11 +274,11 @@ func (p *Pusher) lease() (*State, bool) {
 
 // save writes the given columns only while this instance still holds the lease.
 func (p *Pusher) save(values map[string]any) error {
-	if err := p.DB.Model(&State{}).Where("id = 1 AND owner = ?", p.Owner).Updates(values).Error; err != nil {
+	if err := p.DB.Model(&State{}).Where("id = ? AND owner = ?", p.stateID(), p.Owner).Updates(values).Error; err != nil {
 		return err
 	}
 	var owner string
-	if err := p.DB.Model(&State{}).Where("id = 1").Select("owner").Scan(&owner).Error; err != nil || owner != p.Owner {
+	if err := p.DB.Model(&State{}).Where("id = ?", p.stateID()).Select("owner").Scan(&owner).Error; err != nil || owner != p.Owner {
 		return errors.New("lease lost")
 	}
 	return nil
@@ -361,6 +380,18 @@ func (p *Pusher) backfillPage(ctx context.Context, afterID, throughID int64, lim
 
 // build persists the next batch after the cursor. It returns false when there is nothing to send.
 func (p *Pusher) build(state *State) (bool, error) {
+	if p.Config.Scope != "" && !p.lastTaskBatch {
+		builders := []func(*State) (bool, error){p.buildRelayBatch, p.buildTaskBatch}
+		if p.lastRelayBatch {
+			builders[0], builders[1] = builders[1], builders[0]
+		}
+		for _, build := range builders {
+			if built, err := build(state); built || err != nil {
+				return built, err
+			}
+		}
+	}
+	p.lastTaskBatch = false
 	v11 := p.Config.Spec == SpecV11
 	types, schema := []int{model.LogTypeConsume, model.LogTypeError}, "1"
 	if v11 {
@@ -385,6 +416,18 @@ func (p *Pusher) build(state *State) (bool, error) {
 	for len(logs) > 0 {
 		events, skipped := make([]map[string]any, 0, len(logs)), 0
 		for _, log := range logs {
+			if !p.ownsLog(log) {
+				continue
+			}
+			if p.Config.Scope != "" {
+				if log.Type == model.LogTypeConsume {
+					continue // Financial debits come only from transactional outboxes.
+				}
+				meta := object(json.RawMessage(log.Other))
+				if string(meta["is_task"]) == "true" || len(meta["task_id"]) > 0 {
+					continue // Tasks have one terminal event, not submission/adjustment charges.
+				}
+			}
 			event := Event(log, names[log.ChannelId])
 			if p.Config.Currency == "USD" {
 				if !v11 {
@@ -415,6 +458,9 @@ func (p *Pusher) build(state *State) (bool, error) {
 			return false, p.save(map[string]any{"cursor": last})
 		}
 		id := fmt.Sprintf("gw-%d-%d", state.Cursor+1, last)
+		if p.Config.Scope != "" {
+			id = fmt.Sprintf("gw-%s-%d-%d", p.Config.Scope, state.Cursor+1, last)
+		}
 		body, err := common.Marshal(batch{SchemaVersion: schema, BatchId: id, Events: events})
 		if err != nil {
 			return false, err
@@ -423,10 +469,21 @@ func (p *Pusher) build(state *State) (bool, error) {
 			logs = logs[:len(logs)/2]
 			continue
 		}
-		state.BatchId, state.BatchLast, state.BatchBody, state.Attempts = id, last, string(body), 0
+		state.BatchId, state.BatchLast, state.BatchBody, state.Attempts = id, last, opsstorage.LargeText(body), 0
 		return true, p.save(map[string]any{"batch_id": id, "batch_last": last, "batch_body": state.BatchBody, "attempts": 0})
 	}
 	return false, nil
+}
+
+// Missing scope belongs to the pre-custody product stream and must not be
+// replayed as a new OPS debit after importing the opening balance.
+func (p *Pusher) ownsLog(log *model.Log) bool {
+	raw := object(json.RawMessage(log.Other))["billing_scope"]
+	if len(raw) == 0 {
+		return p.Config.Scope == ""
+	}
+	var scope string
+	return common.Unmarshal(raw, &scope) == nil && scope == p.Config.Scope
 }
 
 func (p *Pusher) channelNames(logs []*model.Log) map[int]string {
@@ -496,9 +553,9 @@ func (p *Pusher) send(state *State) time.Duration {
 	if response.StatusCode == http.StatusOK {
 		var ok okBody
 		decodeErr := common.Unmarshal(raw, &ok)
-		if p.Config.Currency == "USD" {
+		if p.Config.Currency == "USD" || p.Config.Scope != "" {
 			var sent batch
-			if decodeErr != nil || common.Unmarshal(body, &sent) != nil || len(ok.Data.Rejected) > 0 || ok.Data.Accepted+ok.Data.Duplicates != len(sent.Events) {
+			if decodeErr != nil || common.Unmarshal(body, &sent) != nil || ok.Data.Accepted < 0 || ok.Data.Duplicates < 0 || len(ok.Data.Rejected) > 0 || ok.Data.Accepted+ok.Data.Duplicates != len(sent.Events) {
 				p.fail(state, "USD acknowledgement incomplete; retained original financial batch")
 				return stalledWait
 			}
@@ -507,6 +564,25 @@ func (p *Pusher) send(state *State) time.Duration {
 			common.SysError(fmt.Sprintf("Ops push: %s rejected %s (%s)", state.BatchId, item.RequestId, item.Reason))
 		}
 		count := ok.Data.Accepted + ok.Data.Duplicates + len(ok.Data.Rejected)
+		if reader := opsbilling.Default; reader != nil && p.Config.Scope != "" && reader.Client.BaseURL == p.Config.URL && reader.Client.KeyID == p.Config.KeyID && reader.Client.Secret == p.Config.Secret {
+			reader.AcceptPushReceipts(body, raw, p.Now())
+		}
+		if strings.HasPrefix(state.BatchId, "custody-task-") {
+			if err := p.acknowledgeTaskBatch(state); err != nil {
+				p.fail(state, "terminal task acknowledgement retained")
+				return idleWait
+			}
+			p.lastTaskBatch = true
+			p.lastRelayBatch = false
+		}
+		if strings.HasPrefix(state.BatchId, "custody-relay-") {
+			if err := p.acknowledgeRelayBatch(state); err != nil {
+				p.fail(state, "relay acknowledgement retained")
+				return idleWait
+			}
+			p.lastTaskBatch = true
+			p.lastRelayBatch = true
+		}
 		err := p.save(map[string]any{
 			"cursor": state.BatchLast, "batch_id": "", "batch_last": 0, "batch_body": "", "attempts": 0, "last_error": "",
 			"last_success_at": p.Now().Unix(), "delivered": gorm.Expr("delivered + ?", count),
@@ -526,7 +602,7 @@ func (p *Pusher) send(state *State) time.Duration {
 	message := fmt.Sprintf("send %s: HTTP %d %s", state.BatchId, response.StatusCode, code)
 	switch {
 	case response.StatusCode == http.StatusBadRequest && code == "invalid_events" && len(failure.Error.Details.Rejected) > 0:
-		if p.Config.Currency == "USD" {
+		if p.Config.Currency == "USD" || p.Config.Scope != "" {
 			p.fail(state, message)
 			return stalledWait // Native financial records must never be silently dropped.
 		}
@@ -788,7 +864,7 @@ func logAttributes(other, facts map[string]json.RawMessage) map[string]any {
 // billingKeys are the `other` keys OPS shows in its usage detail and needs to price a task (its usage facts, billed or
 // estimated tokens, length, resolution, video input, the upstream's own charge and which settlement step the log is);
 // used when the whole object is over 4 KB.
-var billingKeys = []string{"model_ratio", "group_ratio", "completion_ratio", "cache_ratio", "model_price", "user_group_ratio",
+var billingKeys = []string{"billing_scope", "project_relay_terminal", "model_ratio", "group_ratio", "completion_ratio", "cache_ratio", "model_price", "user_group_ratio",
 	"matched_tier", "billing_source", "request_path", "cache_tokens", "cache_creation_tokens", "image_count", "frt",
 	"task_id", "usage_facts", "billed_tokens", "estimated_tokens", "seconds", "resolution", "has_video_input", "upstream_amount",
 	"settlement_stage", "pre_consumed_quota", "actual_quota", "upstream_alert"}

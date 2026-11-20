@@ -54,6 +54,7 @@ import {
 
 import type { User } from '../../types'
 import { useUsersColumns } from '../users-columns'
+import { UsersMutateDrawer } from '../users-mutate-drawer'
 import { UsersProvider } from '../users-provider'
 import { UsersTable } from '../users-table'
 
@@ -63,6 +64,73 @@ await i18n.init({
   lng: 'en',
   resources: { en: { translation: {} } },
   initAsync: false,
+})
+
+it('rejects another user balance in the user editor and labels the retained snapshot as stale', async () => {
+  const selected: User = {
+    id: 2,
+    username: 'selected-wallet',
+    display_name: 'Selected wallet',
+    role: 1,
+    status: 1,
+    group: 'default',
+    quota: 500000000,
+    used_quota: 0,
+    request_count: 0,
+    wallet_authority: 'ops',
+    ops_balance: {
+      status: 'available',
+      amount: '12.345678',
+      currency: 'USD',
+      quota: 6172839,
+      stale: false,
+    },
+  }
+  useAuthStore.getState().auth.setUser({
+    id: 1,
+    username: 'operator',
+    role: 100,
+    wallet_authority: 'ops',
+  })
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/group/') {
+      return { data: { success: true, data: ['default'] } }
+    }
+    if (url === '/api/authz/catalog') {
+      return { data: { success: true, data: { resources: [], roles: [] } } }
+    }
+    return {
+      data: {
+        success: true,
+        data: {
+          ...selected,
+          id: 3,
+          ops_balance: { ...selected.ops_balance, amount: '999' },
+        },
+      },
+    }
+  })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  render(
+    <I18nextProvider i18n={i18n}>
+      <QueryClientProvider client={client}>
+        <UsersProvider>
+          <UsersMutateDrawer
+            open
+            onOpenChange={() => undefined}
+            currentRow={selected}
+          />
+        </UsersProvider>
+      </QueryClientProvider>
+    </I18nextProvider>
+  )
+  expect(
+    await screen.findByLabelText('Last known OPS balance')
+  ).toHaveTextContent('$12.345678')
+  expect(screen.queryByText('$999.00')).not.toBeInTheDocument()
 })
 
 function QuotaTable(props: { remaining: number; used: number }) {

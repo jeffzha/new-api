@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/gin-gonic/gin"
 	"github.com/skip2/go-qrcode"
 	"gorm.io/gorm"
@@ -1058,10 +1059,10 @@ func BindUserByInvite(tx *gorm.DB, userID int64, inviteCode, source string, root
 	openingNonpaid := int64(0)
 	openingDebt := int64(0)
 	if source == "root_bind" {
-		if user.BillingMode == model.AgencyDurableBillingMode {
+		if !opsauthority.Enabled() && user.BillingMode == model.AgencyDurableBillingMode {
 			return model.AgencyUserBinding{}, errors.New("user is already durable")
 		}
-		if user.BillingMode != model.AgencyProvisioningBillingMode && user.BillingMode != "" && user.BillingMode != "legacy" {
+		if !opsauthority.Enabled() && user.BillingMode != model.AgencyProvisioningBillingMode && user.BillingMode != "" && user.BillingMode != "legacy" {
 			return model.AgencyUserBinding{}, errors.New("user billing mode does not permit provisioning")
 		}
 		var inFlight int64
@@ -1071,6 +1072,12 @@ func BindUserByInvite(tx *gorm.DB, userID int64, inviteCode, source string, root
 		if inFlight > 0 {
 			return model.AgencyUserBinding{}, errors.New("user has in-flight tasks; provisioning is blocked")
 		}
+		if opsauthority.Enabled() {
+			if err := model.CheckOPSAgencyBindingTx(tx, int(userID)); err != nil {
+				return model.AgencyUserBinding{}, err
+			}
+			return binding, nil
+		}
 		if user.Quota >= 0 {
 			openingNonpaid = int64(user.Quota)
 		} else {
@@ -1079,6 +1086,9 @@ func BindUserByInvite(tx *gorm.DB, userID int64, inviteCode, source string, root
 		if err := tx.Model(&model.User{}).Where("id = ? AND billing_mode <> ?", userID, model.AgencyDurableBillingMode).Updates(map[string]any{"billing_mode": model.AgencyDurableBillingMode, "funding_version": 1}).Error; err != nil {
 			return model.AgencyUserBinding{}, err
 		}
+	}
+	if opsauthority.Enabled() {
+		return binding, nil
 	}
 	opening, err := common.Marshal(map[string]int64{"quota": int64(user.Quota), "paid": 0, "nonpaid": openingNonpaid, "debt": openingDebt})
 	if err != nil {
@@ -1276,6 +1286,14 @@ func transferCustomer(db *gorm.DB, identity *Identity, userID, targetAgencyID, e
 			}
 			agencies[agencyID] = agency
 		}
+		if opsauthority.Enabled() {
+			// Admission freezes ownership while holding this same user lock.
+			// Existing calls keep their original snapshot after a transfer.
+			var user model.User
+			if err := model.AgencyLockForUpdate(tx).Select("id").First(&user, userID).Error; err != nil {
+				return err
+			}
+		}
 		// Re-read the pointer after agency locks and before changing history so
 		// a concurrent transfer cannot create an ownership gap or overwrite a
 		// newer revision.
@@ -1304,9 +1322,11 @@ func transferCustomer(db *gorm.DB, identity *Identity, userID, targetAgencyID, e
 		if err := agencycontract.ValidatePolicy(policy); err != nil {
 			return err
 		}
-		var account model.AgencyFundingAccount
-		if err := model.AgencyLockForUpdate(tx).Where("user_id = ?", userID).First(&account).Error; err != nil {
-			return errors.New("customer funding account is unavailable")
+		if !opsauthority.Enabled() {
+			var account model.AgencyFundingAccount
+			if err := model.AgencyLockForUpdate(tx).Where("user_id = ?", userID).First(&account).Error; err != nil {
+				return errors.New("customer funding account is unavailable")
+			}
 		}
 		if current.Revision == int64(^uint64(0)>>1) {
 			return errors.New("binding revision exhausted")

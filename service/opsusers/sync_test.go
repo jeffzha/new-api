@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -207,6 +208,44 @@ func TestOnlyTheLeaseHolderPushes(t *testing.T) {
 	require.NoError(t, db.Model(&model.User{}).Where("id = 1").Update("display_name", "changed").Error)
 	other.Step()
 	assert.Equal(t, 1, stub.count(), "the second instance waits for the lease")
+}
+
+func TestPendingProfilesSurviveSchemaUpgrade(t *testing.T) {
+	db, stub, syncer := setup(t)
+	syncer.Config.Currency, syncer.Config.OmitBalance = "USD", true
+	legacy := &struct {
+		BatchBody string `gorm:"type:text"`
+		BatchMeta string `gorm:"type:text"`
+	}{}
+	for _, column := range []string{"BatchBody", "BatchMeta"} {
+		require.NoError(t, db.Table("ops_user_sync_states").Migrator().AlterColumn(legacy, column))
+	}
+	require.NoError(t, syncer.Migrate())
+	const batchID = "users-upgrade-pending"
+	body, err := common.Marshal(batch{SchemaVersion: "1.1", BatchId: batchID, Users: []map[string]any{{"userId": "17", "username": "profile-upgrade", "status": "active", "evidence": strings.Repeat("x", 80*1024)}}})
+	require.NoError(t, err)
+	meta, err := common.Marshal([]pending{{UserId: 17, Hash: strings.Repeat("a", 64), Status: "active", UpdatedAt: syncer.Now().Unix()}})
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&State{}).Where("id = 1").Updates(map[string]any{"batch_id": batchID, "batch_body": string(body), "batch_meta": string(meta), "scan_after": 17, "seq": 8, "attempts": 2}).Error)
+	var before State
+	require.NoError(t, db.First(&before, 1).Error)
+	for range 2 {
+		require.NoError(t, syncer.Migrate())
+		var after State
+		require.NoError(t, db.First(&after, 1).Error)
+		assert.Equal(t, before, after, "the exact batch, profile metadata and cursor survive restart")
+	}
+	assert.Equal(t, busyWait, syncer.Step())
+	require.Equal(t, 1, stub.count())
+	assert.Equal(t, batchID, stub.last().BatchId)
+	assert.Equal(t, strings.Repeat("x", 80*1024), stub.last().Users[0]["evidence"])
+	var profile Profile
+	require.NoError(t, db.First(&profile, 17).Error)
+	assert.Equal(t, strings.Repeat("a", 64), profile.Hash)
+	var delivered State
+	require.NoError(t, db.First(&delivered, 1).Error)
+	assert.Empty(t, delivered.BatchBody)
+	assert.Empty(t, delivered.BatchMeta)
 }
 
 func TestUSDBalanceSnapshotsRefreshWithoutCurrencyConversion(t *testing.T) {

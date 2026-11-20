@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
@@ -175,7 +177,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	// common.SetContextKey(c, constant.ContextKeyTokenCountMeta, meta)
 
-	if priceData.FreeModel {
+	if priceData.FreeModel && !opsauthority.Enabled() {
 		logger.LogInfo(c, fmt.Sprintf("模型 %s 免费，跳过预扣费", relayInfo.OriginModelName))
 		if err := service.BeginCNDirectRelay(relayInfo); err != nil {
 			newAPIError = types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
@@ -708,7 +710,7 @@ func executeTaskSubmissionWith(
 		stage = "submit"
 		result, taskErr = submit(c, relayInfo)
 		attempt.FinishTask(taskErr)
-		if requestErr := c.Request.Context().Err(); requestErr != nil && service.CNTaskBillingKey(relayInfo) == "" {
+		if requestErr := c.Request.Context().Err(); requestErr != nil && service.CNTaskBillingKey(relayInfo) == "" && relayInfo.BillingSource != "ops" {
 			// A caller disconnect during submission must be reported as a
 			// cancellation, regardless of the adaptor's transport error.
 			taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
@@ -727,6 +729,9 @@ func executeTaskSubmissionWith(
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
 				taskAPIError, relayInfo)
+		}
+		if c.GetBool("ops_authority_task_dispatched") {
+			break
 		}
 		if c.GetBool("cn_task_attempted") {
 			break
@@ -781,7 +786,7 @@ func executeTaskSubmissionWith(
 		diagnostics.failed("submit", "missing_result", taskErr, false)
 		return nil, taskErr
 	}
-	if requestErr := c.Request.Context().Err(); requestErr != nil && service.CNTaskBillingKey(relayInfo) == "" {
+	if requestErr := c.Request.Context().Err(); requestErr != nil && service.CNTaskBillingKey(relayInfo) == "" && relayInfo.BillingSource != "ops" {
 		diagnostics.cancelled("before_reserve", retryParam.GetRetry()+1)
 		taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 		return nil, taskErr
@@ -790,7 +795,7 @@ func executeTaskSubmissionWith(
 	// Reserve any submit-time upward billing adjustment before persistence.
 	// This keeps insertion failures fully refundable while ensuring settlement
 	// after the barrier normally has a zero positive delta.
-	if relayInfo.Billing != nil && service.CNTaskBillingKey(relayInfo) == "" {
+	if relayInfo.Billing != nil && service.CNTaskBillingKey(relayInfo) == "" && relayInfo.BillingSource != "ops" {
 		stage = "reserve"
 		diagnostics.reserve("reserve_start", result.Quota)
 		if reserveErr := relayInfo.Billing.Reserve(result.Quota); reserveErr != nil {
@@ -801,7 +806,7 @@ func executeTaskSubmissionWith(
 		}
 		diagnostics.reserve("reserve_complete", result.Quota)
 	}
-	if requestErr := c.Request.Context().Err(); requestErr != nil && service.CNTaskBillingKey(relayInfo) == "" {
+	if requestErr := c.Request.Context().Err(); requestErr != nil && service.CNTaskBillingKey(relayInfo) == "" && relayInfo.BillingSource != "ops" {
 		diagnostics.cancelled("before_insert", retryParam.GetRetry()+1)
 		taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 		return nil, taskErr
@@ -812,6 +817,13 @@ func executeTaskSubmissionWith(
 	task.PrivateData.Execution = service.TaskExecutionSnapshotFromContext(c)
 	task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 	task.PrivateData.BillingSource = relayInfo.BillingSource
+	if relayInfo.BillingSource == "ops" {
+		task.PrivateData.BillingScope = opsauthority.Scope()
+		if task.PrivateData.Execution == nil {
+			task.PrivateData.Execution = &model.TaskExecutionSnapshot{}
+		}
+		task.PrivateData.Execution.RequestID = relayInfo.RequestId
+	}
 	task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
 	task.PrivateData.TokenId = relayInfo.TokenId
 	task.PrivateData.NodeName = common.NodeName
@@ -861,6 +873,7 @@ func executeTaskSubmissionWith(
 		}
 	}
 	service.PrepareOpsTaskTerminal(task, relayInfo.ChannelType, task.Data)
+	service.PrepareOPSAuthorityTask(nil, task, result.Immediate)
 	if key := service.CNTaskBillingKey(relayInfo); key != "" {
 		task.CNBillingKey = key
 		if task.PrivateData.Execution == nil {
@@ -884,7 +897,15 @@ func executeTaskSubmissionWith(
 		}
 	}
 	diagnostics.insertStart(task)
-	if insertErr := task.InsertWithContext(c.Request.Context()); insertErr != nil {
+	persistContext := c.Request.Context()
+	if relayInfo.BillingSource == "ops" {
+		// Acceptance belongs to the durable dispatch receipt, not the client
+		// connection. Keep the job pollable even if the caller disconnects.
+		var cancel context.CancelFunc
+		persistContext, cancel = context.WithTimeout(context.WithoutCancel(persistContext), 10*time.Second)
+		defer cancel()
+	}
+	if insertErr := task.InsertWithContext(persistContext); insertErr != nil {
 		common.SysError("insert task error: " + insertErr.Error())
 		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to persist task"), "task_insert_failed", http.StatusInternalServerError)
 		diagnostics.failed("insert", "database_error", taskErr, false)
@@ -896,7 +917,7 @@ func executeTaskSubmissionWith(
 	diagnostics.durable(task)
 	diagnostics.settleStart(task, result.Quota)
 
-	if !model.IsAgencyDurableUser(relayInfo.UserId) {
+	if relayInfo.BillingSource != "ops" && !model.IsAgencyDurableUser(relayInfo.UserId) {
 		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
 			common.SysError("settle task billing error: " + settleErr.Error())
 			taskErr = service.TaskErrorWrapperLocal(errors.New("failed to settle task billing"), "task_billing_settlement_failed", http.StatusInternalServerError)

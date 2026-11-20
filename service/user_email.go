@@ -31,7 +31,7 @@ func SendUserEmail(email, subject, message string) error {
 // Delivery is asynchronous so an SMTP outage cannot delay the payment callback.
 func NotifyTopUpSuccess(tradeNo string) {
 	tradeNo = strings.TrimSpace(tradeNo)
-	if tradeNo == "" {
+	if tradeNo == "" || !common.SMTPConfigured() {
 		return
 	}
 	if _, loaded := topUpEmailNotifications.LoadOrStore(tradeNo, time.Now()); loaded {

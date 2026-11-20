@@ -533,7 +533,11 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		}
 	}
 
-	if err := SettleBilling(ctx, relayInfo, summary.Quota); err != nil {
+	settlementUsage := billingUsage
+	if projectAuthority() && settlementUsage == nil {
+		settlementUsage = &dto.Usage{PromptTokens: summary.PromptTokens, CompletionTokens: summary.CompletionTokens, TotalTokens: summary.TotalTokens, UsageSemantic: summary.UsageSemantic, UsageSource: "local_estimate"}
+	}
+	if err := SettleBilling(ctx, relayInfo, summary.Quota, settlementUsage); err != nil {
 		logger.LogError(ctx, "error settling billing: "+err.Error())
 	}
 	upstreamevent.EmitUpstreamResponse(ctx, relayInfo, originUsage, map[string]interface{}{

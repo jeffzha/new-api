@@ -143,6 +143,7 @@ func TestBillingSessionDoesNotTrustDurableAgencyWallet(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	user := &model.User{
 		Username:       "durable-trust-guard-" + common.GetRandomString(8),
+		AffCode:        "durable-trust-guard",
 		Password:       "unused-password-hash",
 		Role:           common.RoleCommonUser,
 		Status:         common.UserStatusEnabled,

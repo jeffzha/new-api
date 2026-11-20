@@ -30,6 +30,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/opsstorage"
 	"github.com/QuantumNous/new-api/service/opspush"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
@@ -56,8 +57,8 @@ type State struct {
 	Resend        string `gorm:"type:varchar(64);not null;default:''"`
 	Seq           int64  `gorm:"not null;default:0"`
 	BatchId       string `gorm:"type:varchar(160);not null;default:''"`
-	BatchBody     string `gorm:"type:text"`
-	BatchMeta     string `gorm:"type:text"`
+	BatchBody     opsstorage.LargeText
+	BatchMeta     opsstorage.LargeText
 	Attempts      int    `gorm:"not null;default:0"`
 	Owner         string `gorm:"type:varchar(64);not null;default:''"`
 	LeaseUntil    int64  `gorm:"not null;default:0"`
@@ -128,14 +129,6 @@ func New(db *gorm.DB, config Config) *Syncer {
 func (s *Syncer) Migrate() error {
 	if err := s.DB.AutoMigrate(&State{}, &Profile{}); err != nil {
 		return err
-	}
-	if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
-		// A batch of 500 profiles is over the 64 KB MySQL TEXT limit.
-		for _, column := range []string{"batch_body", "batch_meta"} {
-			if err := s.DB.Exec("ALTER TABLE ops_user_sync_states MODIFY " + column + " MEDIUMTEXT").Error; err != nil {
-				return err
-			}
-		}
 	}
 	return s.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&State{Id: 1, Resend: s.Config.Resend}).Error
 }
@@ -330,7 +323,7 @@ func (s *Syncer) build(state *State) (built, more bool, err error) {
 			after = changed[len(changed)-1].UserId
 			continue
 		}
-		state.ScanAfter, state.BatchId, state.BatchBody, state.BatchMeta, state.Attempts = after, id, string(body), string(meta), 0
+		state.ScanAfter, state.BatchId, state.BatchBody, state.BatchMeta, state.Attempts = after, id, opsstorage.LargeText(body), opsstorage.LargeText(meta), 0
 		return true, true, s.save(map[string]any{"scan_after": after, "seq": state.Seq, "batch_id": id,
 			"batch_body": state.BatchBody, "batch_meta": state.BatchMeta, "attempts": 0})
 	}
@@ -517,7 +510,7 @@ func (s *Syncer) send(state *State) time.Duration {
 		var ok okBody
 		decodeErr := common.Unmarshal(raw, &ok)
 		var meta []pending
-		if err := common.UnmarshalJsonStr(state.BatchMeta, &meta); err != nil {
+		if err := common.UnmarshalJsonStr(string(state.BatchMeta), &meta); err != nil {
 			s.fail(state, "stored batch unreadable: "+err.Error())
 			return stalledWait
 		}
@@ -582,7 +575,7 @@ func (s *Syncer) remember(meta []pending) error {
 func (s *Syncer) dropRejected(state *State, failure errorBody) {
 	var current batch
 	var meta []pending
-	if common.UnmarshalJsonStr(state.BatchBody, &current) != nil || common.UnmarshalJsonStr(state.BatchMeta, &meta) != nil || len(meta) != len(current.Users) {
+	if common.UnmarshalJsonStr(string(state.BatchBody), &current) != nil || common.UnmarshalJsonStr(string(state.BatchMeta), &meta) != nil || len(meta) != len(current.Users) {
 		s.fail(state, "stored batch unreadable")
 		return
 	}

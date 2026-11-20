@@ -23,6 +23,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/opsstorage"
 	"github.com/QuantumNous/new-api/service/opspush"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -50,19 +51,19 @@ var kinds = []struct {
 
 // Snapshot is the last valid copy of one read and the state of its schedule.
 type Snapshot struct {
-	Kind        string `json:"kind" gorm:"primaryKey;type:varchar(16)"`
-	Version     string `json:"version" gorm:"type:varchar(128);not null;default:''"`
-	GeneratedAt string `json:"generated_at" gorm:"type:varchar(40);not null;default:''"`
-	Items       int    `json:"items" gorm:"not null;default:0"`
-	Body        string `json:"-" gorm:"type:text"`
-	FetchedAt   int64  `json:"fetched_at" gorm:"not null;default:0"`
-	CheckedAt   int64  `json:"checked_at" gorm:"not null;default:0"`
-	NextAt      int64  `json:"next_at" gorm:"not null;default:0"`
-	Attempts    int    `json:"attempts" gorm:"not null;default:0"`
-	LastStatus  int    `json:"last_status" gorm:"not null;default:0"`
-	LastError   string `json:"last_error" gorm:"type:varchar(255);not null;default:''"`
-	Owner       string `json:"-" gorm:"type:varchar(64);not null;default:''"`
-	LeaseUntil  int64  `json:"-" gorm:"not null;default:0"`
+	Kind        string               `json:"kind" gorm:"primaryKey;type:varchar(16)"`
+	Version     string               `json:"version" gorm:"type:varchar(128);not null;default:''"`
+	GeneratedAt string               `json:"generated_at" gorm:"type:varchar(40);not null;default:''"`
+	Items       int                  `json:"items" gorm:"not null;default:0"`
+	Body        opsstorage.LargeText `json:"-"`
+	FetchedAt   int64                `json:"fetched_at" gorm:"not null;default:0"`
+	CheckedAt   int64                `json:"checked_at" gorm:"not null;default:0"`
+	NextAt      int64                `json:"next_at" gorm:"not null;default:0"`
+	Attempts    int                  `json:"attempts" gorm:"not null;default:0"`
+	LastStatus  int                  `json:"last_status" gorm:"not null;default:0"`
+	LastError   string               `json:"last_error" gorm:"type:varchar(255);not null;default:''"`
+	Owner       string               `json:"-" gorm:"type:varchar(64);not null;default:''"`
+	LeaseUntil  int64                `json:"-" gorm:"not null;default:0"`
 }
 
 func (Snapshot) TableName() string { return "ops_catalog_snapshots" }
@@ -103,12 +104,6 @@ func New(db *gorm.DB, config Config) *Reader {
 func (r *Reader) Migrate() error {
 	if err := r.DB.AutoMigrate(&Snapshot{}); err != nil {
 		return err
-	}
-	if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
-		// A copy can be up to 4 MB; MySQL TEXT stops at 64 KB.
-		if err := r.DB.Exec("ALTER TABLE ops_catalog_snapshots MODIFY body MEDIUMTEXT").Error; err != nil {
-			return err
-		}
 	}
 	for _, kind := range kinds {
 		if err := r.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&Snapshot{Kind: kind.Kind}).Error; err != nil {

@@ -8,7 +8,9 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service/opswallet"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
 	"github.com/gin-gonic/gin"
 )
@@ -21,6 +23,17 @@ const (
 // PreConsumeBilling 根据用户计费偏好创建 BillingSession 并执行预扣费。
 // 会话存储在 relayInfo.Billing 上，供后续 Settle / Refund 使用。
 func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
+	if projectAuthority() {
+		if relayInfo != nil && relayInfo.QuotaClamp != nil {
+			return types.NewErrorWithStatusCode(relayInfo.QuotaClamp, types.ErrorCodeModelPriceError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		session, err := newOPSAuthoritySession(c, relayInfo, preConsumedQuota)
+		if err != nil {
+			return opsAuthorityAPIError(err)
+		}
+		relayInfo.Billing = session
+		return nil
+	}
 	if CNDirectRealtimeRequested(relayInfo) && relayInfo.RelayFormat == types.RelayFormatOpenAIRealtime {
 		if err := BeginCNDirectRealtime(relayInfo, preConsumedQuota); err != nil {
 			return cnDirectRealtimeAPIError(err)
@@ -70,8 +83,22 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 
 // SettleBilling 执行计费结算。如果 RelayInfo 上有 BillingSession 则通过 session 结算，
 // 否则回退到旧的 PostConsumeQuota 路径（兼容按次计费等场景）。
-func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuota int) (err error) {
+func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuota int, usage ...*dto.Usage) (err error) {
 	defer recordBusinessSettlement(ctx, relayInfo, actualQuota, &err)
+	if projectAuthority() {
+		if relayInfo == nil || relayInfo.BillingSource != "ops" {
+			return fmt.Errorf("OPS billing reservation missing")
+		}
+		session, ok := relayInfo.Billing.(*opswallet.Session)
+		if !ok || len(usage) != 1 || usage[0] == nil {
+			return fmt.Errorf("OPS billing session mismatch")
+		}
+		event, err := opsAuthorityRelayEvent(ctx, relayInfo, actualQuota, usage[0])
+		if err != nil {
+			return err
+		}
+		return session.SettleUsage(actualQuota, event)
+	}
 	if relayInfo.Billing != nil {
 		preConsumed := relayInfo.Billing.GetPreConsumedQuota()
 		delta := actualQuota - preConsumed

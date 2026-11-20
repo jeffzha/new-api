@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -28,6 +29,9 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuo
 }
 
 func AdjustUserQuotaWithActor(userID, operatorRole int, mode string, value int, actorID int64) (*UserQuotaAdjustment, error) {
+	if opsauthority.Enabled() {
+		return nil, ErrOPSLocalWalletWrite
+	}
 	if userID <= 0 || (mode != "add" && mode != "subtract" && mode != "override") {
 		return nil, ErrInvalidUserQuotaAdjustment
 	}

@@ -35,6 +35,7 @@ import { computeTimeRange } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { useWalletBalance } from '../../hooks/use-wallet-balance'
 import { StatCard } from '../ui/stat-card'
 
 const SUMMARY_SPARKLINE_BUCKETS = 12
@@ -143,7 +144,8 @@ export function SummaryCards() {
   const { status, loading } = useStatus()
 
   const summaryTimeRange = useMemo(() => computeTimeRange(1), [])
-  const remainQuota = Number(user?.quota ?? 0)
+  const wallet = useWalletBalance(user)
+  const remainQuota = wallet.quota ?? 0
   const usedQuota = Number(user?.used_quota ?? 0)
   const requestCount = Number(user?.request_count ?? 0)
 
@@ -211,11 +213,15 @@ export function SummaryCards() {
 
   const healthLevel = getHealthLevel(remainQuota, recentUsage)
   const healthCfg = HEALTH_CONFIG[healthLevel]
-  const runwayDays = getRunwayDays(remainQuota, recentUsage)
+  const runwayDays = wallet.external
+    ? null
+    : getRunwayDays(remainQuota, recentUsage)
 
   const todayUsageDisplay = formatQuota(recentUsage)
   let runwayDisplay: string
-  if (runwayDays !== null) {
+  if (wallet.external) {
+    runwayDisplay = '—'
+  } else if (runwayDays !== null) {
     if (runwayDays < 1) {
       runwayDisplay = t('Less than 1 day left')
     } else if (runwayDays > 999) {
@@ -295,18 +301,30 @@ export function SummaryCards() {
                 {t('Credit remaining')}
               </span>
               <span className='flex items-center gap-1.5'>
-                <span
-                  className={cn('size-1.5 rounded-full', healthCfg.dotClass)}
-                  aria-hidden='true'
-                />
-                <span className='text-muted-foreground text-[11px] font-medium'>
-                  {t(healthCfg.labelKey)}
-                </span>
+                {!wallet.external && (
+                  <>
+                    <span
+                      className={cn(
+                        'size-1.5 rounded-full',
+                        healthCfg.dotClass
+                      )}
+                      aria-hidden='true'
+                    />
+                    <span className='text-muted-foreground text-[11px] font-medium'>
+                      {t(healthCfg.labelKey)}
+                    </span>
+                  </>
+                )}
+                {wallet.external && (
+                  <span className='text-muted-foreground text-[11px]'>
+                    {wallet.hint}
+                  </span>
+                )}
               </span>
             </div>
 
             <div className='font-mono text-xl font-semibold tracking-tight sm:text-2xl'>
-              {formatQuota(remainQuota)}
+              {wallet.text}
             </div>
 
             <div className='grid grid-cols-2 gap-2'>

@@ -62,6 +62,8 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
+import { OPSAdjustDialog } from '@/features/ops-wallet/adjust-dialog'
+import { OPSBalanceValue } from '@/features/ops-wallet/balance-value'
 import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
@@ -113,6 +115,26 @@ export function UsersMutateDrawer({
   const isUpdate = !!currentRow
   const { triggerRefresh } = useUsers()
   const currentUser = useAuthStore((s) => s.auth.user)
+  const external =
+    currentUser?.wallet_authority === 'ops' ||
+    currentRow?.wallet_authority === 'ops'
+  const {
+    data: balanceUser,
+    refetch: refreshBalance,
+    isError: balanceFailed,
+  } = useQuery({
+    queryKey: ['users', 'ops-balance', currentRow?.id],
+    queryFn: async () => {
+      if (!currentRow) throw new Error('No user selected')
+      const result = requireServerSuccess(await getUser(currentRow.id))
+      if (result.data?.id !== currentRow.id) {
+        throw new Error('Wallet identity changed')
+      }
+      return result
+    },
+    enabled: external && open && !!currentRow,
+    refetchInterval: external && open ? 15_000 : false,
+  })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [quotaDialogOpen, setQuotaDialogOpen] = useState(false)
   const [assistedPaymentOpen, setAssistedPaymentOpen] = useState(false)
@@ -144,7 +166,7 @@ export function UsersMutateDrawer({
       // For update, fetch fresh data
       void getUser(currentRow.id)
         .then((result) => {
-          if (result.success && result.data) {
+          if (result.success && result.data?.id === currentRow.id) {
             form.reset(transformUserToFormDefaults(result.data))
           }
         })
@@ -220,6 +242,7 @@ export function UsersMutateDrawer({
         form.reset(transformUserToFormDefaults(result.data))
       }
       triggerRefresh()
+      if (external) await refreshBalance()
     } catch (error) {
       handleServerError(error, t('Failed to load'))
     }
@@ -408,55 +431,83 @@ export function UsersMutateDrawer({
                     )}
                   />
 
-                  <FormField
-                    control={form.control}
-                    name='quota_dollars'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>
-                          {t('Remaining Quota ({{currency}})', {
-                            currency: currencyLabel,
-                          })}
-                        </FormLabel>
-                        <div className='flex flex-wrap gap-2'>
-                          <FormControl>
-                            <Input
-                              value={
-                                tokensOnly
-                                  ? String(field.value || 0)
-                                  : (field.value || 0).toFixed(6)
-                              }
-                              readOnly
-                              className='flex-1'
-                            />
-                          </FormControl>
-                          <Button
-                            type='button'
-                            variant='outline'
-                            onClick={() => setQuotaDialogOpen(true)}
-                          >
-                            <Pencil className='mr-1 h-4 w-4' />
-                            {t('Adjust Quota')}
-                          </Button>
-                          {currentUser?.role === ROLE.SUPER_ADMIN && (
+                  {external ? (
+                    <div className='space-y-2'>
+                      <Label>{t('OPS balance')}</Label>
+                      <OPSBalanceValue
+                        balance={(balanceUser?.data ?? currentRow)?.ops_balance}
+                        failed={balanceFailed}
+                      />
+                      {(balanceUser?.data ?? currentRow)
+                        ?.wallet_adjustments_enabled && (
+                        <Button
+                          type='button'
+                          variant='outline'
+                          onClick={() => setQuotaDialogOpen(true)}
+                        >
+                          <Pencil className='mr-1 h-4 w-4' />
+                          {t('Adjust Quota')}
+                        </Button>
+                      )}
+                      <p className='text-muted-foreground text-sm'>
+                        {t(
+                          'Balance changes are recorded in OPS. Local balance is unchanged.'
+                        )}
+                      </p>
+                    </div>
+                  ) : (
+                    <FormField
+                      control={form.control}
+                      name='quota_dollars'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            {t('Remaining Quota ({{currency}})', {
+                              currency: currencyLabel,
+                            })}
+                          </FormLabel>
+                          <div className='flex flex-wrap gap-2'>
+                            <FormControl>
+                              <Input
+                                value={
+                                  tokensOnly
+                                    ? String(field.value || 0)
+                                    : (field.value || 0).toFixed(6)
+                                }
+                                readOnly
+                                className='flex-1'
+                              />
+                            </FormControl>
                             <Button
                               type='button'
                               variant='outline'
-                              onClick={() => setAssistedPaymentOpen(true)}
-                              title={t('Create an assisted payment')}
+                              onClick={() => setQuotaDialogOpen(true)}
                             >
-                              <CircleDollarSign className='mr-1 h-4 w-4' />
-                              {t('Assisted payment')}
+                              <Pencil className='mr-1 h-4 w-4' />
+                              {t('Adjust Quota')}
                             </Button>
-                          )}
-                        </div>
-                        <FormDescription>
-                          {formatQuota(parseQuotaFromDollars(field.value || 0))}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                            {currentUser?.role === ROLE.SUPER_ADMIN && (
+                              <Button
+                                type='button'
+                                variant='outline'
+                                onClick={() => setAssistedPaymentOpen(true)}
+                                title={t('Create an assisted payment')}
+                              >
+                                <CircleDollarSign className='mr-1 h-4 w-4' />
+                                {t('Assisted payment')}
+                              </Button>
+                            )}
+                          </div>
+                          <FormDescription>
+                            {formatQuota(
+                              parseQuotaFromDollars(field.value || 0)
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
 
                   <FormField
                     control={form.control}
@@ -615,7 +666,19 @@ export function UsersMutateDrawer({
       </Sheet>
 
       {/* Adjust Quota Dialog */}
-      {currentRow && (
+      {currentRow &&
+        external &&
+        (balanceUser?.data ?? currentRow)?.wallet_adjustments_enabled && (
+          <OPSAdjustDialog
+            key={currentRow.id}
+            open={quotaDialogOpen}
+            onOpenChange={setQuotaDialogOpen}
+            userId={currentRow.id}
+            balance={(balanceUser?.data ?? currentRow)?.ops_balance}
+            onSuccess={refreshUserData}
+          />
+        )}
+      {currentRow && !external && (
         <UserQuotaDialog
           open={quotaDialogOpen}
           onOpenChange={setQuotaDialogOpen}
@@ -624,7 +687,7 @@ export function UsersMutateDrawer({
           onSuccess={refreshUserData}
         />
       )}
-      {currentRow && (
+      {currentRow && !external && (
         <AssistedPaymentDialog
           open={assistedPaymentOpen}
           onOpenChange={setAssistedPaymentOpen}

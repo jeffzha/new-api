@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/cachex"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/samber/hot"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -37,6 +38,7 @@ const (
 var (
 	ErrSubscriptionOrderNotFound      = errors.New("subscription order not found")
 	ErrSubscriptionOrderStatusInvalid = errors.New("subscription order status invalid")
+	ErrOPSSubscriptionsUnsupported    = errors.New("subscriptions are unavailable while OPS owns the wallet")
 )
 
 const (
@@ -484,6 +486,9 @@ func downgradeUserGroupForSubscriptionTx(tx *gorm.DB, sub *UserSubscription, now
 }
 
 func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *SubscriptionPlan, source string) (*UserSubscription, error) {
+	if opsauthority.Enabled() {
+		return nil, ErrOPSSubscriptionsUnsupported
+	}
 	if tx == nil {
 		return nil, errors.New("tx is nil")
 	}
@@ -756,6 +761,9 @@ func calcSubscriptionBalanceQuota(priceAmount float64) (int, error) {
 
 // PurchaseSubscriptionWithBalance creates a subscription by deducting the user's wallet quota.
 func PurchaseSubscriptionWithBalance(userId int, planId int) error {
+	if opsauthority.Enabled() {
+		return ErrOPSSubscriptionsUnsupported
+	}
 	if userId <= 0 || planId <= 0 {
 		return errors.New("invalid userId or planId")
 	}

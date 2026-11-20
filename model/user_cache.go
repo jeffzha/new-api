@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	"github.com/gin-gonic/gin"
@@ -147,6 +148,9 @@ func cacheGetUserBase(userId int) (*UserBase, error) {
 // 通过守卫式 Lua 脚本执行：哈希不存在时直接跳过（下次读取会从数据库水合），
 // 不会像裸 HINCRBY 那样创建只含 Quota 字段的残缺哈希。
 func cacheIncrUserQuota(userId int, delta int64) error {
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 	if !common.RedisEnabled {
 		return nil
 	}
@@ -162,6 +166,9 @@ func cacheDecrUserQuota(userId int, delta int64) error {
 // 余额。预扣以缓存值为准（存在期间），授信不能绕过它，否则新到账的额度在
 // 缓存过期前不可用；缓存未命中无需处理，下次读取会从已提交的数据库余额水合。
 func syncCreditUserQuotaCache(userId int, quota int, operation string) {
+	if opsauthority.Enabled() {
+		return
+	}
 	if quota <= 0 {
 		return
 	}
@@ -185,6 +192,9 @@ func syncCreditUserQuotaCache(userId int, quota int, operation string) {
 // users must invalidate rather than apply a blind decrement because the
 // funding transaction can consume non-paid lots or create debt.
 func syncDebitUserQuotaCache(userId int, quota int, operation string) {
+	if opsauthority.Enabled() {
+		return
+	}
 	if quota <= 0 {
 		return
 	}
@@ -209,6 +219,9 @@ func getUserGroupCache(userId int) (string, error) {
 }
 
 func getUserQuotaCache(userId int) (int, error) {
+	if opsauthority.Enabled() {
+		return 0, ErrOPSLocalWalletWrite
+	}
 	cache, err := GetUserCache(userId)
 	if err != nil {
 		return 0, err

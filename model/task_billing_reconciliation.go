@@ -231,6 +231,9 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 		if identityTask.CNBillingKey != "" {
 			return settleCNTaskReconciliation(&identityTask, id, settlement)
 		}
+		if identityTask.PrivateData.BillingSource == "ops" {
+			return nil, ErrOPSWalletHoldConflict
+		}
 	}
 	if id <= 0 || settlement.ActualQuota < 0 || int64(settlement.ActualQuota) > int64(common.MaxQuota) || settlement.TotalTokens <= 0 {
 		return nil, fmt.Errorf("invalid task billing settlement")

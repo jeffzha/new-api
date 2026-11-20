@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"gorm.io/gorm"
 )
 
@@ -46,6 +47,12 @@ type TaskQuotaAdjustmentResult struct {
 func ApplyTaskQuotaAdjustment(task *Task, targetQuota int) (*TaskQuotaAdjustmentResult, error) {
 	if task == nil || targetQuota < 0 {
 		return nil, errors.New("invalid task quota adjustment")
+	}
+	if task.PrivateData.BillingSource == "ops" {
+		return nil, ErrOPSWalletHoldConflict
+	}
+	if opsauthority.Enabled() {
+		return nil, ErrOPSLocalWalletWrite
 	}
 	if modelMax := int64(common.MaxQuota); int64(targetQuota) > modelMax {
 		return nil, errors.New("task quota adjustment exceeds quota limit")
@@ -87,6 +94,9 @@ func ApplyTaskQuotaAdjustment(task *Task, targetQuota int) (*TaskQuotaAdjustment
 			}
 			if persisted.CNBillingKey != "" || persisted.UserId != owner {
 				return ErrCNConflict
+			}
+			if persisted.PrivateData.BillingSource == "ops" {
+				return ErrOPSWalletHoldConflict
 			}
 			if persisted.Quota != task.Quota {
 				return fmt.Errorf("task quota changed concurrently")
@@ -210,6 +220,9 @@ func lockTaskBillingUserTx(tx *gorm.DB, user int) error {
 }
 
 func applyTaskFundingDeltaTx(tx *gorm.DB, task *Task, delta, targetQuota int) error {
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 	if task.PrivateData.BillingSource == TaskBillingSourceSubscription && task.PrivateData.SubscriptionId > 0 {
 		var subscription UserSubscription
 		if err := lockForUpdate(tx).Where("id = ?", task.PrivateData.SubscriptionId).First(&subscription).Error; err != nil {

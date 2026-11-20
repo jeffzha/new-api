@@ -24,6 +24,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Card, CardContent } from '@/components/ui/card'
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useWalletBalance } from '@/features/dashboard/hooks/use-wallet-balance'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatCompactNumber, formatQuota } from '@/lib/format'
 import { getRoleLabel } from '@/lib/roles'
@@ -47,6 +48,7 @@ export function ProfileHeader({
   compact,
 }: ProfileHeaderProps) {
   const { t } = useTranslation()
+  const wallet = useWalletBalance(profile)
 
   if (loading) {
     return (
@@ -101,8 +103,8 @@ export function ProfileHeader({
   }[] = [
     {
       label: t('Current Balance'),
-      value: formatQuota(profile.quota),
-      description: t('Remaining quota'),
+      value: wallet.text,
+      description: wallet.external ? wallet.hint : t('Remaining quota'),
       icon: WalletCards,
       tone: 'success',
     },

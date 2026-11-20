@@ -17,6 +17,9 @@ import (
 )
 
 func CNDirectRealtimeRequested(info *relaycommon.RelayInfo) bool {
+	if projectAuthority() {
+		return false
+	}
 	if info != nil {
 		switch info.Billing.(type) {
 		case *cnDirectRealtimeSession, *cnDirectRelaySession:
@@ -150,7 +153,7 @@ func cnDirectRealtimeAPIError(err error) *types.NewAPIError {
 
 // response.done is a terminal absolute snapshot for one response, not a session
 // counter. Different response IDs contribute independently in arrival order.
-func cnDirectRealtimeSum(current, previous *dto.RealtimeUsage) (*dto.RealtimeUsage, error) {
+func realtimeUsageSum(current, previous *dto.RealtimeUsage) (*dto.RealtimeUsage, error) {
 	counts := func(u *dto.RealtimeUsage) []int {
 		return []int{u.TotalTokens, u.InputTokens, u.OutputTokens, u.InputTokenDetails.CachedTokens, u.InputTokenDetails.CacheWriteTokens, u.InputTokenDetails.CachedCreationTokens, u.InputTokenDetails.TextTokens, u.InputTokenDetails.AudioTokens, u.InputTokenDetails.ImageTokens, u.OutputTokenDetails.TextTokens, u.OutputTokenDetails.AudioTokens, u.OutputTokenDetails.ImageTokens, u.OutputTokenDetails.ReasoningTokens}
 	}
@@ -225,7 +228,7 @@ func PreConsumeCNRealtimeResponse(ctx *gin.Context, info *relaycommon.RelayInfo,
 				return nil, err
 			}
 		}
-		total, err := cnDirectRealtimeSum(current, &previous)
+		total, err := realtimeUsageSum(current, &previous)
 		if err != nil {
 			return nil, err
 		}

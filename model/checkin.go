@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"math/rand"
+	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -97,7 +98,7 @@ func userCheckinWithTransaction(checkin *Checkin, userId int, quotaAwarded int) 
 		}
 
 		// 步骤2: 在同一事务中增加用户额度及 durable 资金投影
-		if err := ApplyAgencyQuotaDeltaTx(tx, int64(userId), int64(quotaAwarded), "checkin"); err != nil {
+		if err := ApplyAgencyQuotaDeltaWithSourceTx(tx, int64(userId), int64(quotaAwarded), "checkin", strconv.Itoa(checkin.Id)); err != nil {
 			return errors.New("签到失败：更新额度出错")
 		}
 

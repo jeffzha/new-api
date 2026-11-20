@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { SectionPageLayout } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { useThemeCustomization } from '@/context/theme-customization-provider'
+import { useWalletBalance } from '@/features/dashboard/hooks/use-wallet-balance'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
@@ -72,6 +73,7 @@ export function Wallet(props: WalletProps) {
   const workspace = usesConsoleWorkspace(customization.preset)
   const [user, setUser] = useState<UserWalletData | null>(null)
   const [userLoading, setUserLoading] = useState(true)
+  const walletBalance = useWalletBalance(user)
   const [topupAmount, setTopupAmount] = useState(0)
   const [selectedPreset, setSelectedPreset] = useState<number | null>(null)
   const [selectedPaymentMethod, setSelectedPaymentMethod] =
@@ -311,7 +313,12 @@ export function Wallet(props: WalletProps) {
         <SectionPageLayout.Content>
           <div className='signal-wallet-layout mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
             <WalletStatsCard
-              user={user}
+              user={
+                user && walletBalance.external
+                  ? { ...user, ops_balance: walletBalance.balance }
+                  : user
+              }
+              opsBalanceFailed={walletBalance.failed}
               loading={userLoading}
               workspace={workspace}
             />

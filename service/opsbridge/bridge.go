@@ -19,11 +19,13 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 )
 
 type Config struct {
 	URL, GatewayID, Key, StateDir, CommandSigningKey string
 	EnforceCalls                                     bool
+	CatalogWalletAuthority                           bool
 	CommandExecutor                                  CommandExecutor
 	BillingSource                                    BillingEventSource
 	ManifestSource                                   SourceManifestSource
@@ -98,11 +100,12 @@ func StartConfigured(ctx context.Context, commandExecutor CommandExecutor, billi
 	}
 	b, err := Open(Config{URL: os.Getenv("OPS_BRIDGE_URL"), GatewayID: os.Getenv("OPS_GATEWAY_ID"),
 		Key: os.Getenv("OPS_GATEWAY_KEY"), StateDir: os.Getenv("OPS_BRIDGE_STATE_DIR"),
-		CommandSigningKey: os.Getenv("OPS_AGENCY_COMMAND_SIGNING_KEY"),
-		CommandExecutor:   commandExecutor,
-		BillingSource:     billingSource,
-		ManifestSource:    manifestSource,
-		EnforceCalls:      os.Getenv("OPS_ENFORCE_CALLS") == "true"})
+		CommandSigningKey:      os.Getenv("OPS_AGENCY_COMMAND_SIGNING_KEY"),
+		CommandExecutor:        commandExecutor,
+		BillingSource:          billingSource,
+		ManifestSource:         manifestSource,
+		CatalogWalletAuthority: opsauthority.Enabled(),
+		EnforceCalls:           os.Getenv("OPS_ENFORCE_CALLS") == "true"})
 	if err != nil {
 		return err
 	}
@@ -121,6 +124,9 @@ func StartConfigured(ctx context.Context, commandExecutor CommandExecutor, billi
 }
 
 func Open(cfg Config) (*Bridge, error) {
+	if cfg.CatalogWalletAuthority && cfg.EnforceCalls {
+		return nil, errors.New("catalog wallet authority cannot enforce legacy call reservations")
+	}
 	if cfg.CommandExecutor != nil && len(cfg.CommandSigningKey) < 32 {
 		return nil, errors.New("Ops agency command signing key must contain at least 32 characters")
 	}
@@ -167,6 +173,20 @@ func Open(cfg Config) (*Bridge, error) {
 	}
 	if b.state.CommandReceipts == nil {
 		b.state.CommandReceipts = map[string]*CommandReceipt{}
+	}
+	if cfg.CatalogWalletAuthority {
+		for _, job := range b.state.Deliveries {
+			if job.Status != "delivered" && !catalogWalletBridgePath(http.MethodPost, job.Path) {
+				_ = b.Close()
+				return nil, errors.New("legacy OPS financial deliveries must be drained before custody")
+			}
+		}
+		for _, status := range b.state.Requests {
+			if status != "delivered" && status != "blocked" {
+				_ = b.Close()
+				return nil, errors.New("legacy OPS call reservations must be drained before custody")
+			}
+		}
 	}
 	// Older state files did not persist enqueue order. Assign a deterministic
 	// one once, then preserve it for all future restarts.
@@ -253,6 +273,9 @@ func writeEvidence(path string, data []byte) error {
 // request deliberately returns no upstream body or URL on error: either can
 // contain credentials or customer data from a misconfigured remote service.
 func (b *Bridge) request(ctx context.Context, method, path, key string, body any, result any) error {
+	if b.cfg.CatalogWalletAuthority && !catalogWalletBridgePath(method, path) {
+		return errors.New("catalog wallet authority rejects legacy OPS financial requests")
+	}
 	b.mu.Lock()
 	fault := b.fault
 	b.mu.Unlock()
@@ -313,6 +336,9 @@ func (b *Bridge) Enqueue(path, key string, body map[string]any) error {
 // The delivery and its request state are one durable transition. A relay must
 // never cancel a reservation after its terminal usage was already queued.
 func (b *Bridge) enqueueLocked(path, key string, body map[string]any, requestID, status string) error {
+	if b.cfg.CatalogWalletAuthority && !catalogWalletBridgePath(http.MethodPost, path) {
+		return errors.New("catalog wallet authority rejects legacy OPS financial deliveries")
+	}
 	encoded, err := common.Marshal(body)
 	if err != nil {
 		return err
@@ -511,7 +537,7 @@ func (b *Bridge) Run(ctx context.Context) {
 					common.SysError(err.Error())
 				}
 			}
-			if now.Unix()%60 == 0 {
+			if !b.cfg.CatalogWalletAuthority && now.Unix()%60 == 0 {
 				if err := b.RenewTasks(ctx); err != nil {
 					common.SysError(err.Error())
 				}
@@ -524,11 +550,27 @@ func (b *Bridge) Run(ctx context.Context) {
 				if _, err := b.ArchiveDelivered(); err != nil {
 					common.SysError(err.Error())
 				}
-				if err := b.RefreshNotifications(ctx); err != nil {
-					common.SysError(err.Error())
+				if !b.cfg.CatalogWalletAuthority {
+					if err := b.RefreshNotifications(ctx); err != nil {
+						common.SysError(err.Error())
+					}
 				}
 			}
 		}
+	}
+}
+
+// Agency facts and signed management commands do not post customer-wallet
+// debits. Native usage and call reservations belong to the catalog contract.
+func catalogWalletBridgePath(method, path string) bool {
+	if method != http.MethodPost {
+		return false
+	}
+	switch path {
+	case "agency-center/billing-events", "agency-center/source-manifests", "agency-center/command-receipts", "agency-center/commands/claim", "agency-center/commands/ack":
+		return true
+	default:
+		return false
 	}
 }
 

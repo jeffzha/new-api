@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { OPSBalanceValue } from '@/features/ops-wallet/balance-value'
 import { formatQuota } from '@/lib/format'
 
 import type { UserWalletData } from '../types'
@@ -36,6 +37,7 @@ interface WalletStatsCardProps {
   user: UserWalletData | null
   loading?: boolean
   workspace?: boolean
+  opsBalanceFailed?: boolean
 }
 
 export function WalletStatsCard(props: WalletStatsCardProps) {
@@ -76,14 +78,22 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
 
   const stats: {
     label: string
-    value: string
+    value: React.ReactNode
     description: string
     icon: typeof WalletCards
     tone: IconBadgeTone
   }[] = [
     {
       label: t('Current Balance'),
-      value: formatQuota(props.user?.quota ?? 0),
+      value:
+        props.user?.wallet_authority === 'ops' ? (
+          <OPSBalanceValue
+            balance={props.user.ops_balance}
+            failed={props.opsBalanceFailed}
+          />
+        ) : (
+          formatQuota(props.user?.quota ?? 0)
+        ),
       description: t('Remaining quota'),
       icon: WalletCards,
       tone: 'success',
@@ -103,9 +113,10 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
       tone: 'chart-4',
     },
   ]
-  const balanceBreakdown = props.user?.wallet_balances ?? []
+  const external = props.user?.wallet_authority === 'ops'
+  const balanceBreakdown = external ? [] : (props.user?.wallet_balances ?? [])
 
-  const credit = props.user?.credit
+  const credit = external ? undefined : props.user?.credit
   let creditStatusText = t('Credit not configured')
   if (credit?.configured) {
     creditStatusText =

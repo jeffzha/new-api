@@ -13,11 +13,18 @@ const ConversionKey = "business_api_conversion"
 // Billing is the customer charge after settlement, never a catalog price or
 // the distributor's cost. Missing amounts remain null, including on failure.
 type Billing struct {
-	Status   string  `json:"status"`
-	Amount   *string `json:"amount"`
-	Currency string  `json:"currency"`
-	Quota    *int64  `json:"quota"`
-	Source   string  `json:"source"`
+	Status            string  `json:"status"`
+	Amount            *string `json:"amount"`
+	Currency          string  `json:"currency"`
+	Quota             *int64  `json:"quota"`
+	Source            string  `json:"source"`
+	Reason            string  `json:"reason,omitempty"`
+	RetryAfterSeconds *int    `json:"retry_after_seconds,omitempty"`
+	ChargeStatus      string  `json:"charge_status,omitempty"`
+	RefundAmount      *string `json:"refund_amount,omitempty"`
+	NetAmount         *string `json:"net_amount,omitempty"`
+	ChargedAt         string  `json:"charged_at,omitempty"`
+	CheckedAt         string  `json:"checked_at,omitempty"`
 }
 
 type Conversion struct {

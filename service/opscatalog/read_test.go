@@ -4,14 +4,19 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -25,7 +30,19 @@ type stub struct {
 }
 
 func setup(t *testing.T) (*gorm.DB, *stub, *Reader, *time.Time) {
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "catalog.sqlite3")), &gorm.Config{})
+	var driver gorm.Dialector = sqlite.Open(filepath.Join(t.TempDir(), "catalog.sqlite3"))
+	switch os.Getenv("OPS_NATIVE_TEST_ENGINE") {
+	case "mysql":
+		driver = mysql.Open(os.Getenv("OPS_NATIVE_TEST_DSN"))
+	case "postgres":
+		driver = postgres.Open(os.Getenv("OPS_NATIVE_TEST_DSN"))
+	}
+	previous := common.MainDatabaseType()
+	if engine := os.Getenv("OPS_NATIVE_TEST_ENGINE"); engine != "" {
+		common.SetMainDatabaseType(common.DatabaseType(engine))
+	}
+	t.Cleanup(func() { common.SetMainDatabaseType(previous) })
+	db, err := gorm.Open(driver, &gorm.Config{})
 	require.NoError(t, err)
 	pool, err := db.DB()
 	require.NoError(t, err)
@@ -144,4 +161,30 @@ func TestOnlyOneInstanceReads(t *testing.T) {
 	require.NoError(t, db.Model(&Snapshot{}).Where("1 = 1").Update("next_at", 0).Error)
 	other.Step(context.Background())
 	assert.Len(t, s.requests, 2, "the lease holder keeps the reads")
+}
+
+func TestLargeCatalogSurvivesSchemaUpgrade(t *testing.T) {
+	db, s, reader, _ := setup(t)
+	legacy := &struct {
+		Body string `gorm:"type:text"`
+	}{}
+	require.NoError(t, db.Table("ops_catalog_snapshots").Migrator().AlterColumn(legacy, "Body"))
+	require.NoError(t, reader.Migrate())
+	body := strings.Replace(modelsBody, `"model":"gpt-4o"`, `"evidence":"`+strings.Repeat("x", 80*1024)+`","model":"gpt-4o"`, 1)
+	s.reply[ModelsPath] = func(*http.Request) (int, string, http.Header) { return http.StatusOK, body, nil }
+	s.reply[DiscountsPath] = func(*http.Request) (int, string, http.Header) { return http.StatusOK, discountsBody, nil }
+	reader.Step(context.Background())
+	before := snapshot(t, db, KindModels)
+	require.Equal(t, http.StatusOK, before.LastStatus)
+	var expected struct {
+		Data map[string]any `json:"data"`
+	}
+	require.NoError(t, common.UnmarshalJsonStr(body, &expected))
+	var stored map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(string(before.Body), &stored))
+	assert.Equal(t, expected.Data, stored)
+	for range 2 {
+		require.NoError(t, reader.Migrate())
+		assert.Equal(t, before, snapshot(t, db, KindModels), "restart retains the full catalog, version and refresh schedule")
+	}
 }

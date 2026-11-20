@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"gorm.io/gorm"
 )
 
@@ -35,7 +36,8 @@ type provisioningTask struct {
 }
 
 type provisioningBlockedError struct {
-	Tasks []provisioningTask
+	Tasks  []provisioningTask
+	Reason string
 }
 
 func (e *provisioningBlockedError) Error() string {
@@ -102,10 +104,10 @@ func (a *App) enqueueProvisioningJob(userID int64, inviteCode string, rootID int
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		if user.BillingMode == model.AgencyDurableBillingMode {
+		if !opsauthority.Enabled() && user.BillingMode == model.AgencyDurableBillingMode {
 			return errors.New("user is already managed by an agency")
 		}
-		if user.BillingMode == model.AgencyProvisioningBillingMode {
+		if !opsauthority.Enabled() && user.BillingMode == model.AgencyProvisioningBillingMode {
 			// Recover a crash between a job terminal update and restoration of the
 			// temporary mode. No active job was found above, so reverting here is
 			// safe and lets Root retry instead of leaving the user permanently
@@ -131,8 +133,10 @@ func (a *App) enqueueProvisioningJob(userID int64, inviteCode string, rootID int
 		}
 		// Set the barrier before exposing the job. All quota mutation helpers
 		// consult this persisted mode and fail closed until the worker commits.
-		if err := tx.Model(&model.User{}).Where("id = ? AND billing_mode <> ?", userID, model.AgencyDurableBillingMode).Update("billing_mode", model.AgencyProvisioningBillingMode).Error; err != nil {
-			return err
+		if !opsauthority.Enabled() {
+			if err := tx.Model(&model.User{}).Where("id = ? AND billing_mode <> ?", userID, model.AgencyDurableBillingMode).Update("billing_mode", model.AgencyProvisioningBillingMode).Error; err != nil {
+				return err
+			}
 		}
 		now := time.Now().UnixMilli()
 		job = model.AgencyProvisioningJob{UserID: userID, InviteCode: inviteCode, RootActorID: rootID, Reason: reason, ExpectedUserVersion: user.AuthVersion, Status: provisioningQueued, BlockingTasks: blockingJSON, BlockReason: "", FencingToken: 0, CreatedAtMS: now, UpdatedAtMS: now}
@@ -192,7 +196,7 @@ func (a *App) ProcessProvisioningJobs(limit int) (int, error) {
 		if err := a.runProvisioningJob(candidate.ID, token); err != nil {
 			var blocked *provisioningBlockedError
 			if errors.As(err, &blocked) {
-				_ = a.markProvisioningBlocked(candidate.ID, token, blocked.Tasks)
+				_ = a.markProvisioningBlocked(candidate.ID, token, blocked.Tasks, blocked.Reason)
 				continue
 			}
 			_ = a.markProvisioningFailed(candidate.ID, token, err)
@@ -247,12 +251,16 @@ func (a *App) commitProvisioningJob(job model.AgencyProvisioningJob) error {
 		// barrier under the user lock.
 		binding, err := BindUserByInvite(tx, current.UserID, current.InviteCode, "root_bind", current.RootActorID)
 		if err != nil {
-			if strings.Contains(err.Error(), "in-flight tasks") {
+			if strings.Contains(err.Error(), "in-flight") {
 				tasks, listErr := provisioningTaskList(tx, current.UserID)
 				if listErr != nil {
 					return listErr
 				}
-				return &provisioningBlockedError{Tasks: tasks}
+				reason := "in_flight_tasks"
+				if strings.Contains(err.Error(), "OPS calls") {
+					reason = "in_flight_ops_calls"
+				}
+				return &provisioningBlockedError{Tasks: tasks, Reason: reason}
 			}
 			return err
 		}
@@ -277,15 +285,19 @@ func (a *App) commitProvisioningJob(job model.AgencyProvisioningJob) error {
 	})
 }
 
-func (a *App) markProvisioningBlocked(id, token int64, tasks []provisioningTask) error {
+func (a *App) markProvisioningBlocked(id, token int64, tasks []provisioningTask, reasons ...string) error {
 	encoded, err := encodeProvisioningTasks(tasks)
 	if err != nil {
 		return err
 	}
 	now := time.Now().UnixMilli()
+	reason := "in_flight_tasks"
+	if len(reasons) > 0 && reasons[0] == "in_flight_ops_calls" {
+		reason = reasons[0]
+	}
 	return a.db.Model(&model.AgencyProvisioningJob{}).
 		Where("id = ? AND status = ? AND fencing_token = ?", id, provisioningProcessing, token).
-		Updates(map[string]any{"status": provisioningBlocked, "blocking_tasks": encoded, "block_reason": "in_flight_tasks", "updated_at_ms": now}).Error
+		Updates(map[string]any{"status": provisioningBlocked, "blocking_tasks": encoded, "block_reason": reason, "updated_at_ms": now}).Error
 }
 
 func (a *App) markProvisioningFailed(id, token int64, cause error) error {
@@ -311,6 +323,9 @@ func (a *App) markProvisioningFailed(id, token int64, cause error) error {
 		}
 		// Restore legacy admission only if this job still owns the temporary
 		// mode. A durable binding can never be downgraded by a stale worker.
+		if opsauthority.Enabled() {
+			return nil
+		}
 		return tx.Model(&model.User{}).Where("id = ? AND billing_mode = ?", job.UserID, model.AgencyProvisioningBillingMode).Update("billing_mode", "legacy").Error
 	})
 }
@@ -335,8 +350,10 @@ func (a *App) cancelProvisioningJob(id int64, reason string, rootID int64) error
 		if err := tx.Model(&job).Updates(map[string]any{"status": provisioningCancelled, "cancel_reason": reason, "updated_at_ms": now}).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(&model.User{}).Where("id = ? AND billing_mode = ?", job.UserID, model.AgencyProvisioningBillingMode).Update("billing_mode", "legacy").Error; err != nil {
-			return err
+		if !opsauthority.Enabled() {
+			if err := tx.Model(&model.User{}).Where("id = ? AND billing_mode = ?", job.UserID, model.AgencyProvisioningBillingMode).Update("billing_mode", "legacy").Error; err != nil {
+				return err
+			}
 		}
 		return tx.Create(&model.AgencyAuditLog{EventID: fmt.Sprintf("provisioning-cancelled-%d", job.ID), ActorType: ActorTypeRoot, ActorID: rootID, Action: "provisioning.cancel", ObjectType: "provisioning", ObjectID: fmt.Sprint(job.ID), Reason: reason, CreatedAtMS: now}).Error
 	})

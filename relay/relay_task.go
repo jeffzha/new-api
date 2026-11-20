@@ -490,7 +490,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			return nil, service.TaskErrorFromAPIError(apiErr)
 		}
 	}
-	if managed && model.IsAgencyDurableUser(info.UserId) {
+	if managed && model.IsAgencyDurableUser(info.UserId) && info.BillingSource != "ops" {
 		basis := model.AgencyTaskChargeBasis{Version: model.AgencyTaskChargeBasisVersion,
 			ComponentBilling: common.GetEnvOrDefaultBool("AGENCY_COMPONENT_BILLING_ENABLED", false),
 			Mode:             "tokens", QuotaPerUnit: common.QuotaPerUnit, ModelPrice: info.PriceData.ModelPrice,
@@ -523,7 +523,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// Durable agency tasks create an immutable submission receipt before any
 	// provider I/O. This prevents an ambiguous transport failure from being
 	// mistaken for a rejected request and retried as a second video.
-	agencyAttempt := model.IsAgencyDurableUser(info.UserId) && info.Billing != nil
+	agencyAttempt := model.IsAgencyDurableUser(info.UserId) && info.Billing != nil && info.BillingSource != "ops"
 	if agencyAttempt {
 		digest := sha256.Sum256(requestBodyBytes)
 		if err := model.BeginAgencyTaskSubmission(info.UserId, info.RequestId, info.PublicTaskID,
@@ -543,6 +543,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			return nil, service.TaskErrorWrapperLocal(err, "task_dispatch_identity_conflict", http.StatusServiceUnavailable)
 		}
 		c.Set("cn_task_attempted", true)
+	}
+	if info.BillingSource == "ops" {
+		digest := sha256.Sum256(requestBodyBytes)
+		if err := model.BeginOPSTaskDispatch(model.DB, info.RequestId, info.UserId, info.PublicTaskID, hex.EncodeToString(digest[:]), info.ChannelId, string(platform)); err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "ops_task_dispatch_conflict", http.StatusServiceUnavailable)
+		}
+		c.Set("ops_authority_task_dispatched", true)
 	}
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
@@ -564,6 +571,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		if info.BillingSource == "ops" && resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusRequestTimeout && resp.StatusCode != http.StatusConflict && !c.GetBool("ops_task_ambiguous") {
+			if err := model.ResolveOPSTaskDispatch(model.DB, info.RequestId, info.UserId, "", true); err != nil {
+				return nil, service.TaskErrorWrapperLocal(err, "ops_task_rejection_receipt_failed", http.StatusServiceUnavailable)
+			}
+		}
 		if cnTaskKey != "" {
 			definitive := resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusRequestTimeout && resp.StatusCode != http.StatusConflict && !c.GetBool("ops_task_ambiguous")
 			_ = model.ResolveCNTaskSubmission(cnTaskKey, definitive)
@@ -616,6 +628,14 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		failure := service.TaskErrorWrapperLocal(errors.New("task adaptor returned an empty response"), "plugin_submit_response_invalid", http.StatusBadGateway)
 		failure.NoRetry = true
 		return nil, failure
+	}
+	if info.BillingSource == "ops" {
+		if parsed.UpstreamTaskID == "" && (parsed.Immediate == nil || parsed.Immediate.Status != model.TaskStatusSuccess && parsed.Immediate.Status != model.TaskStatusFailure) {
+			return nil, service.TaskErrorWrapperLocal(errors.New("upstream task identity missing"), "task_acceptance_identity_missing", http.StatusBadGateway)
+		}
+		if err := model.ResolveOPSTaskDispatch(model.DB, info.RequestId, info.UserId, parsed.UpstreamTaskID, false); err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "ops_task_acceptance_receipt_failed", http.StatusServiceUnavailable)
+		}
 	}
 	if cnTaskKey != "" {
 		if parsed.UpstreamTaskID == "" && (parsed.Immediate == nil || (parsed.Immediate.Status != model.TaskStatusSuccess && parsed.Immediate.Status != model.TaskStatusFailure)) {

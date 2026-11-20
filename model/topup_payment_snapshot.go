@@ -38,6 +38,25 @@ type TopupFundingSnapshot struct {
 	InitiatedByUserID int64 `json:"-"`
 }
 
+// StripeCheckoutQuote is the provider's immutable checkout quote. Keeping it
+// in PaymentParams avoids treating a changed Stripe setting as an old quote.
+type StripeCheckoutQuote struct {
+	Version             int    `json:"version"`
+	SessionID           string `json:"session_id"`
+	Currency            string `json:"currency"`
+	AmountSubtotal      int64  `json:"amount_subtotal"`
+	AllowPromotionCodes bool   `json:"allow_promotion_codes"`
+}
+
+func (q StripeCheckoutQuote) ValidatePayment(sessionID, currency string, subtotal, total int64) error {
+	if q.Version != 1 || q.SessionID == "" || q.Currency == "" || q.AmountSubtotal <= 0 ||
+		q.SessionID != sessionID || q.Currency != strings.ToUpper(currency) || q.AmountSubtotal != subtotal ||
+		total < 0 || total > subtotal || !q.AllowPromotionCodes && total != subtotal {
+		return ErrTopUpPaymentAmountMismatch
+	}
+	return nil
+}
+
 func (topUp *TopUp) settledQuota() (int64, bool) {
 	if topUp == nil {
 		return 0, false

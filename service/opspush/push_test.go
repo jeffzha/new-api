@@ -2,6 +2,7 @@ package opspush
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"maps"
@@ -16,6 +17,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
+	"github.com/QuantumNous/new-api/pkg/opsstorage"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -156,6 +159,258 @@ func TestStepDeliversRetriesAndAdvances(t *testing.T) {
 	assert.Len(t, stub.bodies, 2)
 }
 
+func TestPendingLargeBatchSurvivesSchemaUpgrade(t *testing.T) {
+	stub := &opsStub{responses: []func(http.ResponseWriter){reply(200, `{"data":{"accepted":1,"duplicates":0,"rejected":[]}}`)}}
+	pusher, db := pusherFixture(t, stub)
+	// Reproduce the original TEXT schema before upgrading. This row is still
+	// empty, so restoring the old schema cannot truncate any test evidence.
+	legacy := &struct {
+		BatchBody string `gorm:"type:text"`
+	}{}
+	require.NoError(t, db.Table("ops_push_states").Migrator().AlterColumn(legacy, "BatchBody"))
+	require.NoError(t, pusher.Migrate())
+	body, err := common.Marshal(batch{SchemaVersion: "1", BatchId: "gw-upgrade-pending", Events: []map[string]any{{"requestId": "r1", "evidence": strings.Repeat("x", 80*1024)}}})
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&State{}).Where("id = 1").Updates(map[string]any{"batch_id": "gw-upgrade-pending", "batch_last": 4, "batch_body": string(body), "attempts": 2}).Error)
+	var before State
+	require.NoError(t, db.First(&before, 1).Error)
+	for range 2 {
+		require.NoError(t, pusher.Migrate(), "a restart must not shrink a pending batch column")
+		var after State
+		require.NoError(t, db.First(&after, 1).Error)
+		assert.Equal(t, before, after, "pending bytes, identity and delivery progress survive migration")
+	}
+	assert.Zero(t, pusher.Step())
+	require.Len(t, stub.bodies, 1)
+	assert.Equal(t, string(body), stub.bodies[0], "the upgraded process sends the original bytes")
+	var delivered State
+	require.NoError(t, db.First(&delivered, 1).Error)
+	assert.Equal(t, int64(4), delivered.Cursor)
+	assert.Empty(t, delivered.BatchBody)
+}
+
+func TestCustodyStreamKeepsIndependentCursorAndNeverReplaysProductMoney(t *testing.T) {
+	stub := &opsStub{responses: []func(http.ResponseWriter){
+		reply(503, `{"error":{"code":"storage_unavailable"}}`),
+		reply(200, `{"data":{"accepted":1,"duplicates":0,"rejected":[]}}`),
+	}}
+	p, db := pusherFixture(t, stub)
+	p.Config.Scope, p.Config.StateID = "overseas-usd", 2
+	t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+	t.Setenv("OPS_PROJECT_SCOPE", "overseas-usd")
+	p.Config.Spec, p.Config.Currency, p.Config.UsageOnly, p.Config.Since = SpecV11, "USD", true, 1
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.TaskBillingReconciliation{}, &model.User{}, &model.Token{}, &model.OPSWalletAdmission{}, &model.OPSWalletHold{}, &model.OPSWalletUsage{}))
+	relayUser := model.User{Username: "relay-delivery-test", AffCode: "relay-only", Quota: 12345}
+	require.NoError(t, db.Create(&relayUser).Error)
+	relayToken := model.Token{UserId: relayUser.Id, Key: "test-only-relay-delivery", RemainQuota: 1000, Status: common.TokenStatusEnabled}
+	require.NoError(t, db.Create(&relayToken).Error)
+	_, err := model.ReserveOPSWallet(db, model.OPSWalletHoldIdentity{RequestID: "r1", UserID: relayUser.Id, TokenID: relayToken.Id, Model: "m"}, 15, model.OPSWalletPosition{UserID: relayUser.Id, EntryID: 1, Quota: 100})
+	require.NoError(t, err)
+	relayEvent, err := common.Marshal(map[string]any{"requestId": "r1", "userId": fmt.Sprint(relayUser.Id), "model": "m", "status": "success", "currency": "USD", "amount": "0.00002", "extra": map[string]any{"billing_scope": "overseas-usd", "project_relay_terminal": true, "recordKind": "usage", "direction": "debit"}})
+	require.NoError(t, err)
+	require.NoError(t, model.FinalizeOPSRelay(db, "r1", relayUser.Id, 10, relayEvent))
+	require.NoError(t, p.Config.Validate())
+	require.NoError(t, db.Model(&model.Log{}).Where("request_id = ?", "r1").Update("other", `{"billing_scope":"overseas-usd"}`).Error)
+	require.NoError(t, db.Model(&model.Log{}).Where("request_id = ?", "r2").Update("other", `{"billing_scope":"another-station"}`).Error)
+	for _, log := range []model.Log{
+		{Type: model.LogTypeConsume, UserId: 1, ModelName: "m", RequestId: "task-submit", CreatedAt: 300, Other: `{"billing_scope":"overseas-usd","task_id":"task-1"}`},
+		{Type: model.LogTypeTopup, UserId: 1, RequestId: "stripe-ref", Quota: 500000, CreatedAt: 300, Other: `{"billing_scope":"overseas-usd"}`},
+		{Type: model.LogTypeConsume, UserId: 1, ModelName: "m", RequestId: "malformed-scope", CreatedAt: 300, Other: `{"billing_scope":123}`},
+	} {
+		require.NoError(t, db.Create(&log).Error)
+	}
+	for range 2 {
+		require.NoError(t, p.Migrate())
+	}
+	assert.Greater(t, p.Step(), time.Duration(0))
+	var pendingRelay State
+	require.NoError(t, db.First(&pendingRelay, 2).Error)
+	for _, key := range []string{"amount", "currency", "model", "status", "extra"} {
+		var changed batch
+		require.NoError(t, common.UnmarshalJsonStr(string(pendingRelay.BatchBody), &changed))
+		changed.Events[0][key] = "foreign"
+		raw, err := common.Marshal(changed)
+		require.NoError(t, err)
+		candidate := pendingRelay
+		candidate.BatchBody = opsstorage.LargeText(raw)
+		require.Error(t, p.acknowledgeRelayBatch(&candidate), "changed %s must not acknowledge a debit", key)
+	}
+	assert.Zero(t, p.Step())
+	require.Len(t, stub.bodies, 2)
+	assert.Equal(t, stub.bodies[0], stub.bodies[1])
+	var sent batch
+	require.NoError(t, common.UnmarshalJsonStr(stub.bodies[0], &sent))
+	require.Len(t, sent.Events, 1)
+	assert.Equal(t, "r1", sent.Events[0]["requestId"])
+	assert.Equal(t, "USD", sent.Events[0]["currency"])
+	assert.Equal(t, "overseas-usd", sent.Events[0]["extra"].(map[string]any)["billing_scope"])
+	assert.Equal(t, idleWait, p.Step(), "the duplicate consume log is not another debit")
+	var relayDebit model.OPSWalletUsage
+	require.NoError(t, db.First(&relayDebit).Error)
+	assert.Positive(t, relayDebit.DeliveredAt)
+	var legacy, custody State
+	require.NoError(t, db.First(&legacy, 1).Error)
+	require.NoError(t, db.First(&custody, 2).Error)
+	assert.Equal(t, int64(1), legacy.Cursor)
+	assert.Zero(t, legacy.Delivered)
+	assert.Equal(t, int64(7), custody.Cursor)
+	assert.Equal(t, int64(1), custody.Delivered)
+	assert.False(t, p.ownsLog(&model.Log{Other: `{"billing_scope":123}`}))
+	assert.False(t, (&Pusher{}).ownsLog(&model.Log{Other: `{"billing_scope":"overseas-usd"}`}))
+
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.OPSWalletAdmission{}, &model.OPSWalletHold{}))
+	user := model.User{Username: "task-delivery-test", Quota: 12345}
+	require.NoError(t, db.Create(&user).Error)
+	token := model.Token{UserId: user.Id, Key: "test-only-terminal-delivery", RemainQuota: 1000, Status: common.TokenStatusEnabled}
+	require.NoError(t, db.Create(&token).Error)
+	request := opsauthority.TaskRequestID("task-original")
+	_, err = model.ReserveOPSWallet(db, model.OPSWalletHoldIdentity{RequestID: "task-original", ChargeRequestID: request, UserID: user.Id, TokenID: token.Id, Model: "m"}, 75, model.OPSWalletPosition{UserID: user.Id, EntryID: 8, Quota: 100})
+	require.NoError(t, err)
+	require.NoError(t, model.BeginOPSTaskDispatch(db, "task-original", user.Id, "public-task", fmt.Sprintf("%064x", 1), 8, "video"))
+	require.NoError(t, model.ResolveOPSTaskDispatch(db, "task-original", user.Id, "upstream-task", false))
+	for i := range 21 {
+		old := model.Task{TaskID: fmt.Sprintf("old-bridge-%d", i), Status: model.TaskStatusSuccess, OpsUsagePending: true}
+		require.NoError(t, db.Create(&old).Error)
+	}
+	frozen, err := common.Marshal(map[string]any{"requestId": request, "userId": fmt.Sprint(user.Id), "model": "m", "status": "success", "currency": "USD", "amount": "0.00012", "extra": map[string]any{"billing_scope": "overseas-usd", "project_task_terminal": true, "project_original_request": "task-original", "recordKind": "usage", "direction": "debit"}})
+	require.NoError(t, err)
+	task := model.Task{TaskID: "public-task", ChannelId: 8, Platform: "video", UserId: user.Id, Quota: 75, Status: model.TaskStatusSuccess, OpsUsagePending: true, PrivateData: model.TaskPrivateData{UpstreamTaskID: "upstream-task", BillingSource: "ops", BillingScope: opsauthority.Scope(), TokenId: token.Id, Execution: &model.TaskExecutionSnapshot{RequestID: "task-original"}}}
+	require.NoError(t, db.Create(&task).Error)
+	assert.Equal(t, idleWait, p.Step(), "a terminal row cannot send before its reservation is finalized")
+	assert.Equal(t, idleWait, p.Step())
+	task.PrivateData.OPSTerminal = &model.OPSTaskTerminal{Quota: 60, Event: frozen}
+	require.NoError(t, db.Model(&task).Update("private_data", task.PrivateData).Error)
+	stub.responses = []func(http.ResponseWriter){reply(503, `{"error":{"code":"storage_unavailable"}}`), reply(200, `{"data":{"accepted":0,"duplicates":1,"rejected":[]}}`)}
+	for range 2 {
+		assert.Equal(t, idleWait, p.Step(), "a bounded scan must pass old bridge rows without starving custody tasks")
+	}
+	assert.Greater(t, p.Step(), time.Duration(0))
+	require.Len(t, stub.bodies, 3)
+	var pendingTask State
+	require.NoError(t, db.First(&pendingTask, 2).Error)
+	for _, key := range []string{"amount", "currency", "model", "status"} {
+		var changed batch
+		require.NoError(t, common.UnmarshalJsonStr(string(pendingTask.BatchBody), &changed))
+		changed.Events[0][key] = "foreign"
+		raw, err := common.Marshal(changed)
+		require.NoError(t, err)
+		candidate := pendingTask
+		candidate.BatchBody = opsstorage.LargeText(raw)
+		require.Error(t, p.acknowledgeTaskBatch(&candidate), "changed %s must not acknowledge a task", key)
+	}
+	require.NoError(t, db.First(&task, task.ID).Error)
+	assert.True(t, task.OpsUsagePending)
+	assert.Equal(t, 60, task.Quota, "the pusher recovers committed terminal intent without provider polling")
+	assert.Equal(t, frozen, []byte(task.PrivateData.OpsUsage))
+	require.NoError(t, db.First(&token, token.Id).Error)
+	assert.Equal(t, 940, token.RemainQuota)
+	require.NoError(t, db.First(&user, user.Id).Error)
+	assert.Equal(t, 12345, user.Quota, "financial recovery never changes the local wallet")
+	// A replacement process resumes identical pending bytes after lease expiry.
+	replacement := New(db, db, p.Config)
+	replacement.Now = func() time.Time { return p.Now().Add(2 * time.Minute) }
+	assert.Zero(t, replacement.Step())
+	require.Len(t, stub.bodies, 4)
+	assert.Equal(t, stub.bodies[2], stub.bodies[3])
+	require.NoError(t, db.First(&task, task.ID).Error)
+	assert.False(t, task.OpsUsagePending)
+	require.NoError(t, db.First(&custody, 2).Error)
+	assert.Equal(t, int64(7), custody.Cursor, "terminal delivery does not skip ordinary usage")
+	assert.Equal(t, idleWait, replacement.Step())
+	assert.Len(t, stub.bodies, 4, "acknowledged terminal usage is not sent again")
+}
+
+func TestCustodyBatchesRetainUnsentEvents(t *testing.T) {
+	for _, kind := range []string{"relay", "task"} {
+		t.Run(kind, func(t *testing.T) {
+			p, db := pusherFixture(t, &opsStub{})
+			p.Config.Scope = "overseas-usd"
+			t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+			t.Setenv("OPS_PROJECT_SCOPE", p.Config.Scope)
+			require.NoError(t, db.AutoMigrate(&model.Task{}, &model.TaskBillingReconciliation{}, &model.OPSWalletHold{}, &model.OPSWalletUsage{}))
+			require.NoError(t, db.Model(&State{}).Where("id = 1").Update("owner", p.Owner).Error)
+			var taskIDs []int64
+			for i := range 2 {
+				original := fmt.Sprintf("bounded-%s-%d", kind, i)
+				request := original
+				extra := map[string]any{"billing_scope": p.Config.Scope, "project_relay_terminal": true}
+				if kind == "task" {
+					request = opsauthority.TaskRequestID(original)
+					extra = map[string]any{"billing_scope": p.Config.Scope, "project_task_terminal": true, "project_original_request": original}
+				}
+				// Relay events fit their 48 KB limit; task finalization also
+				// permits events larger than half a delivery batch.
+				size := 40 * 1024
+				if kind == "task" {
+					size = 600 * 1024
+				}
+				raw, err := common.Marshal(map[string]any{"requestId": request, "userId": "1", "model": "m", "currency": "USD", "extra": extra, "evidence": strings.Repeat("x", size)})
+				require.NoError(t, err)
+				hold := model.OPSWalletHold{ID: fmt.Sprintf("%x", sha256.Sum256([]byte(p.Config.Scope+"\x00"+original))), Scope: p.Config.Scope, RequestID: original, ChargeRequestID: request, UserID: 1, Model: "m", State: "settled", ActualQuota: 10}
+				if kind == "task" {
+					task := model.Task{TaskID: original, UserId: 1, Quota: 10, Status: model.TaskStatusSuccess, OpsUsagePending: true, PrivateData: model.TaskPrivateData{BillingSource: "ops", BillingScope: p.Config.Scope, OpsUsage: raw}}
+					require.NoError(t, db.Create(&task).Error)
+					hold.TaskID = task.ID
+					taskIDs = append(taskIDs, task.ID)
+				} else {
+					require.NoError(t, db.Create(&model.OPSWalletUsage{ID: hold.ID, Scope: p.Config.Scope, RequestID: original, UserID: 1, Quota: 10, Payload: string(raw)}).Error)
+				}
+				require.NoError(t, db.Create(&hold).Error)
+			}
+			state := State{Id: 1, Cursor: 4}
+			seen := map[string]bool{}
+			rounds, perBatch := 1, 2
+			if kind == "task" {
+				rounds, perBatch = 2, 1
+			}
+			for round := range rounds {
+				var built bool
+				var err error
+				if kind == "task" {
+					built, err = p.buildTaskBatch(&state)
+				} else {
+					built, err = p.buildRelayBatch(&state)
+				}
+				require.NoError(t, err)
+				require.True(t, built)
+				assert.LessOrEqual(t, len(state.BatchBody), maxBody)
+				assert.Equal(t, int64(4), state.BatchLast, "delivery cannot advance ordinary log search")
+				var before State
+				require.NoError(t, db.First(&before, 1).Error)
+				for range 2 {
+					require.NoError(t, p.Migrate())
+					var after State
+					require.NoError(t, db.First(&after, 1).Error)
+					assert.Equal(t, before, after, "restart retains the complete pending batch")
+				}
+				var sent batch
+				require.NoError(t, common.UnmarshalJsonStr(string(state.BatchBody), &sent))
+				require.Len(t, sent.Events, perBatch)
+				for _, event := range sent.Events {
+					request := event["requestId"].(string)
+					assert.False(t, seen[request], "the next batch must contain the retained event")
+					seen[request] = true
+				}
+				if kind == "task" {
+					if round == 0 {
+						assert.Less(t, p.taskAfter, taskIDs[1], "the unsent task must remain in the next scan")
+					}
+					require.NoError(t, p.acknowledgeTaskBatch(&state))
+				} else {
+					require.NoError(t, p.acknowledgeRelayBatch(&state))
+				}
+				var remaining int64
+				if kind == "task" {
+					require.NoError(t, db.Model(&model.Task{}).Where("ops_usage_pending = ?", true).Count(&remaining).Error)
+				} else {
+					require.NoError(t, db.Model(&model.OPSWalletUsage{}).Where("delivered_at = ?", 0).Count(&remaining).Error)
+				}
+				assert.Equal(t, int64(2-perBatch*(round+1)), remaining)
+			}
+		})
+	}
+}
+
 func TestStepDropsRejectedEventsAndKeepsBatchId(t *testing.T) {
 	stub := &opsStub{responses: []func(http.ResponseWriter){
 		reply(400, `{"error":{"code":"invalid_events","details":{"rejected":[{"index":1,"requestId":"r2","reason":"invalid_model"}],"rejectedCount":1}}}`),
@@ -212,7 +467,7 @@ func TestUsageOnlyPushDoesNotSendOrRewritePendingWalletBatch(t *testing.T) {
 	assert.Empty(t, stub.bodies)
 	var state State
 	require.NoError(t, db.First(&state, 1).Error)
-	assert.Equal(t, body, state.BatchBody)
+	assert.Equal(t, body, string(state.BatchBody))
 	assert.Equal(t, int64(1), state.Cursor)
 }
 
@@ -594,7 +849,7 @@ func TestBuildV11LinksTopupsAndKeepsV1Unchanged(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, built)
 	var v1 batch
-	require.NoError(t, common.UnmarshalJsonStr(state.BatchBody, &v1))
+	require.NoError(t, common.UnmarshalJsonStr(string(state.BatchBody), &v1))
 	assert.Equal(t, "1", v1.SchemaVersion)
 	require.Len(t, v1.Events, 3, "v1 sends calls and failures only")
 	assert.NotContains(t, state.BatchBody, "recordKind")
@@ -604,7 +859,7 @@ func TestBuildV11LinksTopupsAndKeepsV1Unchanged(t *testing.T) {
 	_, err = pusher.build(state)
 	require.NoError(t, err)
 	var v11 batch
-	require.NoError(t, common.UnmarshalJsonStr(state.BatchBody, &v11))
+	require.NoError(t, common.UnmarshalJsonStr(string(state.BatchBody), &v11))
 	assert.Equal(t, "1.1", v11.SchemaVersion)
 	require.Len(t, v11.Events, 6)
 	byId := map[string]map[string]any{}

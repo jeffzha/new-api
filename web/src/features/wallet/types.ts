@@ -20,6 +20,8 @@ For commercial licensing, please contact support@quantumnous.com
 // Wallet Type Definitions
 // ============================================================================
 
+import type { OPSWalletFields } from '@/features/ops-wallet/types'
+
 /**
  * Generic API response
  */
@@ -253,7 +255,7 @@ export interface UserCreditOverview {
   next_statement_at_ms: number
 }
 
-export interface UserWalletData {
+export interface UserWalletData extends OPSWalletFields {
   /** User ID */
   id: number
   /** Username */

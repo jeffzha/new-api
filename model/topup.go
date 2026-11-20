@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -149,14 +150,47 @@ func ValidateTopUpQuotaCapacity(userId int, creditedQuota int) error {
 // creditTopUpQuota atomically enforces the wallet ceiling while adding quota.
 // Keeping the predicate and increment in one UPDATE prevents two
 // concurrent callbacks from both passing a separate read/check.
-func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, updates map[string]interface{}) error {
+func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, updates map[string]any) error {
 	return creditTopUpQuotaWithFunding(tx, userId, creditedQuota, updates, "", "")
 }
 
-func creditTopUpQuotaWithFunding(tx *gorm.DB, userId int, creditedQuota int, updates map[string]interface{}, sourceKind, sourceID string, snapshots ...*TopupFundingSnapshot) error {
+func creditTopUpQuotaWithFunding(tx *gorm.DB, userId int, creditedQuota int, updates map[string]any, sourceKind, sourceID string, snapshots ...*TopupFundingSnapshot) error {
 	maxCurrentQuota, err := topUpQuotaMaxCurrent(creditedQuota)
 	if err != nil {
 		return err
+	}
+	if opsauthority.Enabled() {
+		var order TopUp
+		if sourceID == "" || sourceKind == "" {
+			return ErrInvalidTopUpQuota
+		}
+		if err := lockForUpdate(tx).Where("trade_no = ? AND user_id = ? AND status = ?", sourceID, userId, common.TopUpStatusSuccess).First(&order).Error; err != nil {
+			return err
+		}
+		kind := "topup"
+		var facts *OPSUSDFundingFacts
+		if sourceKind == "admin" {
+			kind = "gift"
+		} else {
+			facts = &OPSUSDFundingFacts{TradeNo: order.TradeNo, PaymentMethod: order.PaymentMethod}
+			if len(snapshots) == 1 && snapshots[0] != nil && snapshots[0].Payment != nil {
+				facts.PaidAmount = snapshots[0].Payment.ActualMoney
+				facts.PaidCurrency = snapshots[0].Payment.CurrencyCode
+			}
+		}
+		if err := QueueOPSUSDFundingTx(tx, int64(userId), int64(creditedQuota), kind, sourceKind, sourceID, facts); err != nil {
+			return err
+		}
+		// Payment metadata may still change, but quota belongs exclusively to OPS.
+		for field := range updates {
+			if field != "stripe_customer" && field != "email" {
+				return errors.New("unsupported OPS funding user update")
+			}
+		}
+		if len(updates) > 0 {
+			return tx.Model(&User{}).Where("id = ?", userId).Updates(updates).Error
+		}
+		return nil
 	}
 	// Match the relay's user -> funding lock order and keep the persisted
 	// admission mode stable through both the wallet credit and funding entry.

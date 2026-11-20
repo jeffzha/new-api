@@ -12,6 +12,9 @@ import (
 )
 
 func manageUserQuota(c *gin.Context, req ManageRequest) {
+	if manageOPSBalance(c, req) {
+		return
+	}
 	action := "generic"
 	params := model.AuditFields{
 		"target_user_id":  req.Id,

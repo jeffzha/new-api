@@ -24,6 +24,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/pkg/wsmanager"
 	"github.com/QuantumNous/new-api/relay"
@@ -32,8 +33,10 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/agencyopspush"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/service/opsbilling"
 	"github.com/QuantumNous/new-api/service/opsbridge"
 	"github.com/QuantumNous/new-api/service/opscatalog"
+	"github.com/QuantumNous/new-api/service/opsclient"
 	"github.com/QuantumNous/new-api/service/opsexport"
 	"github.com/QuantumNous/new-api/service/opsfees"
 	"github.com/QuantumNous/new-api/service/opsmonitor"
@@ -41,6 +44,7 @@ import (
 	"github.com/QuantumNous/new-api/service/opspush"
 	"github.com/QuantumNous/new-api/service/opsupstreams"
 	"github.com/QuantumNous/new-api/service/opsusers"
+	"github.com/QuantumNous/new-api/service/opswallet"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -144,7 +148,9 @@ func main() {
 	service.StartCodexCredentialAutoRefreshTask()
 
 	// Subscription quota reset task (daily/weekly/monthly/custom)
-	service.StartSubscriptionQuotaResetTask()
+	if !opsauthority.Enabled() {
+		service.StartSubscriptionQuotaResetTask()
+	}
 
 	// Report this process as a system instance so the System Info page can show
 	// all currently alive nodes in multi-instance deployments.
@@ -163,6 +169,16 @@ func main() {
 	}
 	commandWorkerCtx, stopAgencyCommandWorker := context.WithCancel(context.Background())
 	defer stopAgencyCommandWorker()
+	if err := opsbilling.StartConfigured(commandWorkerCtx); err != nil {
+		common.FatalLog("failed to initialize OPS billing reader: " + err.Error())
+		return
+	}
+	stopOPSWallet, err := opswallet.StartConfigured(commandWorkerCtx)
+	if err != nil {
+		common.FatalLog("failed to initialize OPS wallet recovery: " + err.Error())
+		return
+	}
+	defer stopOPSWallet()
 	service.StartBalanceReminderTask(commandWorkerCtx)
 	if err := opsupstreams.Start(commandWorkerCtx); err != nil {
 		common.FatalLog(err.Error())
@@ -175,7 +191,7 @@ func main() {
 		common.FatalLog("failed to initialize Ops export: " + err.Error())
 		return
 	}
-	if opsexport.Default != nil {
+	if opsexport.Default != nil && !opsauthority.Enabled() {
 		go model.RunCNWalletCancellationRecovery(commandWorkerCtx, model.DB)
 	}
 	if err := opsbridge.StartConfigured(commandWorkerCtx, service.OpsAgencyCommandExecutor{}, service.OpsBillingEventSource{}, service.OpsBillingEventSource{}); err != nil {
@@ -226,7 +242,9 @@ func main() {
 	// Realign historical agency charges whose usage record still disagrees with
 	// the funding the wallet paid. Opt-in, idempotent and audited: it keeps every
 	// earlier receipt and adds a correction revision per charge.
-	model.StartAgencyChargeCorrectionBackfill()
+	if !opsauthority.Enabled() {
+		model.StartAgencyChargeCorrectionBackfill()
+	}
 
 	// Register the periodic channel test, upstream model update, and async task
 	// polling (Midjourney / Suno / video) jobs as scheduled system tasks
@@ -391,6 +409,9 @@ func InitResources() error {
 
 	// 加载环境变量
 	common.InitEnv()
+	if err := opsauthority.Validate(); err != nil {
+		return err
+	}
 
 	logger.SetupLogger()
 
@@ -436,6 +457,14 @@ func InitResources() error {
 	if err != nil {
 		return err
 	}
+	if opsauthority.Enabled() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		client := opsclient.New(os.Getenv("OPS_BILLING_URL"), os.Getenv("OPS_BILLING_KEY_ID"), os.Getenv("OPS_BILLING_SECRET"), 8*time.Second)
+		if err := opswallet.ValidateCutover(ctx, model.DB, client); err != nil {
+			return err
+		}
+	}
 
 	// Initialize Redis
 	err = common.InitRedisClient()
@@ -467,7 +496,9 @@ func InitResources() error {
 	}
 
 	service.StartAuthArtifactCleanup()
-	service.StartAgencyRedemptionExpiry()
+	if !opsauthority.Enabled() {
+		service.StartAgencyRedemptionExpiry()
+	}
 
 	return nil
 }

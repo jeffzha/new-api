@@ -778,6 +778,13 @@ func (s *BillingSession) syncAgencyFunding(actualQuota int) {
 
 // NewBillingSession 根据用户计费偏好创建 BillingSession，处理 subscription_first / wallet_first 的回退。
 func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preConsumedQuota int) (relaycommon.BillingSettler, *types.NewAPIError) {
+	if projectAuthority() {
+		session, err := newOPSAuthoritySession(c, relayInfo, preConsumedQuota)
+		if err != nil {
+			return nil, opsAuthorityAPIError(err)
+		}
+		return session, nil
+	}
 	if relayInfo == nil {
 		return nil, types.NewError(fmt.Errorf("relayInfo is nil"), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}

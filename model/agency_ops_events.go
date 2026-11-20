@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/schema"
@@ -55,6 +56,8 @@ func AgencyOpsFactAllowed(payload AgencyOpsPayload) bool {
 		return false
 	}
 	switch event.Kind {
+	case "commissions", "balances", "withdrawals", "source_payout":
+		return opsauthority.Enabled() && os.Getenv("OPS_DISTRIBUTOR_FINANCE_AUTHORITY") == "gateway"
 	case "audit":
 		for _, prefix := range []string{"pricing.", "agency.", "operator.", "auth.", "customer.", "user.transfer", "provisioning."} {
 			if strings.HasPrefix(event.Record.Action, prefix) {

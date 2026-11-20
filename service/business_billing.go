@@ -5,6 +5,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/businessapi"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service/opsbilling"
 	"github.com/gin-gonic/gin"
 )
 
@@ -19,6 +20,15 @@ func recordBusinessSettlement(c *gin.Context, info *relaycommon.RelayInfo, actua
 		return
 	}
 	billing := businessapi.UnavailableBilling()
+	if projectAuthority() {
+		billing.Source, billing.Currency = "ops", opsbilling.Currency()
+		billing.Status, billing.Reason = "pending", "awaiting_ops_charge"
+		if *settleErr != nil {
+			billing.Status, billing.Reason = "unavailable", "ops_settlement_requires_reconciliation"
+		}
+		c.Set(businessapi.BillingKey, billing)
+		return
+	}
 	if *settleErr == nil {
 		conversion, ok := value.(businessapi.Conversion)
 		if info != nil && info.AgencyPricing != nil {

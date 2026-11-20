@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"gorm.io/gorm"
 )
 
@@ -59,6 +60,9 @@ func AdjustAgencyChargeTx(tx *gorm.DB, userID, delta int, chargeID string, targe
 }
 
 func adjustAgencyChargeTxWithRule(tx *gorm.DB, userID, delta int, chargeID string, targetQuota int64, fundingRuleVersion string) error {
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 	if tx == nil || userID <= 0 || delta == 0 || strings.TrimSpace(chargeID) == "" {
 		return ErrAgencyFundingUnavailable
 	}
@@ -150,7 +154,7 @@ func ApplyAgencyQuotaDeltaWithActor(userID, delta int64, sourceKind string, acto
 	err := AgencyOpsTransaction(DB, func(tx *gorm.DB) error {
 		return ApplyAgencyQuotaDeltaWithActorTx(tx, userID, delta, sourceKind, actorID)
 	})
-	if err == nil && common.RedisEnabled {
+	if err == nil && common.RedisEnabled && !opsauthority.Enabled() {
 		if isAgencyDurableUser(int(userID)) {
 			if cacheErr := InvalidateUserCache(int(userID)); cacheErr != nil {
 				common.SysLog("failed to invalidate agency wallet cache: " + cacheErr.Error())
@@ -200,6 +204,12 @@ func applyAgencyQuotaDeltaTx(tx *gorm.DB, userID, delta int64, sourceKind, sourc
 	}
 	if delta == 0 {
 		return nil
+	}
+	if opsauthority.Enabled() {
+		if expiresAt != 0 {
+			return errors.New("OPS wallet does not yet support expiring funding")
+		}
+		return QueueOPSUSDFundingTx(tx, userID, delta, "gift", sourceKind, sourceID, nil)
 	}
 	var user User
 	if err := AgencyLockForUpdate(tx).Select("id, quota, billing_mode").First(&user, userID).Error; err != nil {
@@ -420,6 +430,9 @@ func SetAgencyQuotaAbsolute(userID int64, target int, sourceKind string) error {
 }
 
 func SetAgencyQuotaAbsoluteWithActor(userID int64, target int, sourceKind string, actorID int64) error {
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 	if userID <= 0 || strings.TrimSpace(sourceKind) == "" {
 		return ErrAgencyFundingUnavailable
 	}
@@ -487,6 +500,9 @@ func TryReserveUserQuotaAndAgency(userID int, amount int, chargeID string, fundi
 // TryReserveUserQuotaAndAgencyTx is the transaction-scoped reservation used
 // by asynchronous task reconciliation and other multi-row billing commits.
 func TryReserveUserQuotaAndAgencyTx(tx *gorm.DB, userID, amount int, chargeID string, fundingTarget int64) (int64, error) {
+	if opsauthority.Enabled() {
+		return 0, ErrOPSLocalWalletWrite
+	}
 	if tx == nil || userID <= 0 || amount < 0 || fundingTarget < 0 || strings.TrimSpace(chargeID) == "" {
 		return 0, ErrAgencyFundingUnavailable
 	}
@@ -556,6 +572,9 @@ func TryReserveUserQuotaAndAgencyTx(tx *gorm.DB, userID, amount int, chargeID st
 // Durable agency users must use TryReserveAgencyWalletAndToken instead; this
 // helper intentionally fails closed for that billing mode.
 func TryReserveUserQuotaAndAgencyWithToken(userID, tokenID, amount int, tokenKey, chargeID string, fundingTarget int64, unlimited bool) error {
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 	if userID <= 0 || tokenID <= 0 || amount < 0 || fundingTarget < 0 || strings.TrimSpace(chargeID) == "" {
 		return ErrAgencyFundingUnavailable
 	}
@@ -704,6 +723,9 @@ func TryReserveAgencyWalletAndTokenWithSequence(userID, tokenID, amount int, tok
 }
 
 func tryReserveAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, chargeID string, fundingTarget int64, unlimited bool, snapshot *agencycontract.PricingSnapshot) (int64, int64, error) {
+	if opsauthority.Enabled() {
+		return 0, 0, ErrOPSLocalWalletWrite
+	}
 	if userID <= 0 || amount < 0 || strings.TrimSpace(chargeID) == "" || fundingTarget < 0 {
 		return 0, 0, ErrAgencyFundingUnavailable
 	}
@@ -888,6 +910,9 @@ func ValidateAgencyPricingSnapshotTx(tx *gorm.DB, userID int64, snapshot *agency
 // transaction prevents a partial release from making the wallet and token
 // projections disagree.
 func ReleaseAgencyWalletAndToken(userID, tokenID, amount int, tokenKey, chargeID string) (int64, error) {
+	if opsauthority.Enabled() {
+		return 0, ErrOPSLocalWalletWrite
+	}
 	if userID <= 0 || amount < 0 || strings.TrimSpace(chargeID) == "" {
 		return 0, ErrAgencyFundingUnavailable
 	}
@@ -980,6 +1005,9 @@ func ReleaseUserQuotaAndAgency(userID int, amount int, chargeID string) (int64, 
 
 // ReleaseUserQuotaAndAgencyTx is the transaction-scoped inverse reservation.
 func ReleaseUserQuotaAndAgencyTx(tx *gorm.DB, userID, amount int, chargeID string) (int64, error) {
+	if opsauthority.Enabled() {
+		return 0, ErrOPSLocalWalletWrite
+	}
 	if tx == nil || userID <= 0 || amount < 0 || strings.TrimSpace(chargeID) == "" {
 		return 0, ErrAgencyFundingUnavailable
 	}
@@ -1033,6 +1061,9 @@ func ReleaseUserQuotaAndAgencyTx(tx *gorm.DB, userID, amount int, chargeID strin
 // TryReserveUserQuotaAndAgencyWithToken for legacy agency-managed users.
 // Durable users must use ReleaseAgencyWalletAndToken.
 func ReleaseUserQuotaAndAgencyWithToken(userID, tokenID, amount int, tokenKey, chargeID string) error {
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 	if userID <= 0 || tokenID <= 0 || amount < 0 || strings.TrimSpace(chargeID) == "" {
 		return ErrAgencyFundingUnavailable
 	}
@@ -1297,6 +1328,9 @@ func recordAgencyTopupWithActor(tx *gorm.DB, userID int64, sourceKind, sourceID,
 // and is marked on that allocation so a later model cancellation cannot make
 // the revoked money available a second time.
 func ReverseAgencyTopupTx(tx *gorm.DB, input AgencyFundingReversalInput) ([]AgencyFundingReversalCharge, bool, error) {
+	if opsauthority.Enabled() {
+		return nil, false, ErrOPSLocalWalletWrite
+	}
 	if tx == nil || input.UserID <= 0 || strings.TrimSpace(input.RefundID) == "" ||
 		strings.TrimSpace(input.SourceOperationID) == "" || input.Quota <= 0 ||
 		input.Quota > int64(common.MaxQuota) {

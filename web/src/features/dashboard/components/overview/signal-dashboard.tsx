@@ -41,6 +41,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { getUserQuotaDates } from '../../api'
 import { useDashboardContentVisibility } from '../../hooks/use-status-data'
+import { useWalletBalance } from '../../hooks/use-wallet-balance'
 import { buildSignalUsage } from '../../lib/signal-usage'
 import { AnnouncementsPanel } from './announcements-panel'
 import { ApiInfoPanel } from './api-info-panel'
@@ -51,6 +52,7 @@ import { UptimePanel } from './uptime-panel'
 export function SignalDashboard() {
   const { t } = useTranslation()
   const user = useAuthStore((s) => s.auth.user)
+  const wallet = useWalletBalance(user)
   const visibility = useDashboardContentVisibility()
   const [days, setDays] = useState('7')
   const [anchor, setAnchor] = useState(() => Date.now())
@@ -115,8 +117,8 @@ export function SignalDashboard() {
   const metrics = [
     {
       label: t('Credit remaining'),
-      value: user ? formatQuota(user.quota ?? 0) : '-',
-      hint: t('Available balance'),
+      value: wallet.text,
+      hint: wallet.hint,
       icon: WalletCards,
     },
     {

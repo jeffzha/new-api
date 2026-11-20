@@ -31,8 +31,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { OPSBalanceValue } from '@/features/ops-wallet/balance-value'
 import { getCurrencyDisplay } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
+import { useAuthStore } from '@/stores/auth-store'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import {
@@ -49,6 +51,8 @@ export function useUsersColumns(): ColumnDef<User>[] {
   const { t } = useTranslation()
   useSystemConfigStore((state) => state.config.currency)
   const { meta: currency } = getCurrencyDisplay()
+  const currentUser = useAuthStore((state) => state.auth.user)
+  const external = currentUser?.wallet_authority === 'ops'
   const quotaUnit = currency.kind === 'tokens' ? t('Tokens') : currency.symbol
   return [
     {
@@ -179,11 +183,17 @@ export function useUsersColumns(): ColumnDef<User>[] {
     {
       id: 'quota',
       accessorKey: 'quota',
-      header: `${t('Available Balance')} (${quotaUnit})`,
+      header: external
+        ? t('OPS balance')
+        : `${t('Available Balance')} (${quotaUnit})`,
       cell: ({ row }) => {
         const user = row.original
+        if (user.wallet_authority === 'ops' || external) {
+          return <OPSBalanceValue balance={user.ops_balance} />
+        }
         return <UserQuotaCell remaining={user.quota} used={user.used_quota} />
       },
+      enableSorting: !external,
       size: 180,
       minSize: 160,
       meta: { mobileOrder: 40 },

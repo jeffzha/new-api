@@ -258,6 +258,38 @@ func TestExecuteTaskSubmissionRefundsCancellationBeforeDurableBarrier(t *testing
 	assert.False(t, c.Writer.Written())
 }
 
+func TestExecuteTaskSubmissionOPSRetainsAcceptedJobAfterDisconnect(t *testing.T) {
+	t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+	t.Setenv("OPS_PROJECT_SCOPE", "overseas-accepted-test")
+	events := make([]string, 0, 3)
+	db := setupTaskSubmissionDatabase(t, true, &events)
+	previousLog := common.LogConsumeEnabled
+	common.LogConsumeEnabled = false
+	t.Cleanup(func() { common.LogConsumeEnabled = previousLog })
+	billing := &taskSubmissionTestBilling{events: &events, reserveErr: errors.New("new admission unavailable after acceptance")}
+	c := taskSubmissionTestContext()
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	t.Cleanup(cancel)
+	c.Request = c.Request.WithContext(ctx)
+	info := taskSubmissionRelayInfo(billing)
+	info.RequestId, info.BillingSource = "accepted-request", "ops"
+	outcome, taskErr := executeTaskSubmissionWith(c, info, func(*gin.Context, *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		cancel()
+		return &relay.TaskSubmitResult{UpstreamTaskID: "accepted-upstream", Platform: "plugin", Quota: 100}, nil
+	})
+	require.Nil(t, taskErr)
+	require.NotNil(t, outcome)
+	assert.Equal(t, []string{"insert"}, events)
+	assert.Zero(t, billing.refunds)
+	var stored model.Task
+	require.NoError(t, db.First(&stored, outcome.Task.ID).Error)
+	assert.Equal(t, "accepted-upstream", stored.PrivateData.UpstreamTaskID)
+	assert.Equal(t, "ops", stored.PrivateData.BillingSource)
+	assert.Equal(t, "overseas-accepted-test", stored.PrivateData.BillingScope)
+	assert.Equal(t, "accepted-request", stored.PrivateData.Execution.RequestID)
+	assert.False(t, c.Writer.Written())
+}
+
 func TestExecuteTaskSubmissionDisconnectBeforeUpstreamAcceptanceSkipsSubmitAndRefunds(t *testing.T) {
 	events := make([]string, 0, 1)
 	setupTaskSubmissionDatabase(t, true, &events)

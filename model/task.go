@@ -147,12 +147,15 @@ type TaskPrivateData struct {
 	// other private task state so public task DTOs cannot expose it by accident.
 	Execution *TaskExecutionSnapshot `json:"execution,omitempty"`
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
-	BillingSource  string                `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
-	SubscriptionId int                   `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
-	TokenId        int                   `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
-	NodeName       string                `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
-	BillingContext *TaskBillingContext   `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
-	Endpoint       *TaskEndpointSnapshot `json:"endpoint,omitempty"`
+	BillingSource   string                `json:"billing_source,omitempty"` // "wallet" 或 "subscription"
+	BillingScope    string                `json:"billing_scope,omitempty"`
+	OPSTerminal     *OPSTaskTerminal      `json:"ops_terminal,omitempty"`
+	OPSBillingError string                `json:"ops_billing_error,omitempty"`
+	SubscriptionId  int                   `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
+	TokenId         int                   `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
+	NodeName        string                `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
+	BillingContext  *TaskBillingContext   `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+	Endpoint        *TaskEndpointSnapshot `json:"endpoint,omitempty"`
 	// ResponsesBackground records that the openai_responses create request
 	// asked for background:true. Every task is durable and survives client
 	// disconnect regardless; this only echoes the protocol-level request
@@ -165,6 +168,13 @@ type TaskPrivateData struct {
 	PollFailures int `json:"poll_failures,omitempty"`
 	// SettledTokens is the provider-reported token quantity the task was settled on (0 until then).
 	SettledTokens int64 `json:"settled_tokens,omitempty"`
+}
+
+// OPSTaskTerminal freezes the financial completion intent with the provider
+// status CAS. It contains no provider payload, credentials, or media content.
+type OPSTaskTerminal struct {
+	Quota int             `json:"quota"`
+	Event json.RawMessage `json:"event"`
 }
 
 type TaskExecutionSnapshot struct {

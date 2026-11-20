@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 /**
  * Type definitions for usage logs
  */
+import type { OPSWalletFields } from '@/features/ops-wallet/types'
 import type { RequestRuleTrace } from '@/features/pricing/lib/billing-expr'
 
 import type { UsageLog } from './data/schema'
@@ -485,7 +486,7 @@ export interface FetchLogsConfig {
 // User Info Types
 // ============================================================================
 
-export interface UserInfo {
+export interface UserInfo extends OPSWalletFields {
   id: number
   username: string
   display_name?: string

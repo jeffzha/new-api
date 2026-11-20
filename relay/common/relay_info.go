@@ -182,6 +182,9 @@ type RelayInfo struct {
 	// realtime segments. Final close settles only the difference, preventing
 	// the cumulative usage frame from being charged a second time.
 	RealtimePreConsumedQuota int
+	// RealtimeReservedUsage is the cumulative usage admitted by the OPS session.
+	// It is updated only after the corresponding reservation commits.
+	RealtimeReservedUsage *dto.RealtimeUsage
 	// AgencyRealtimeSegmentsRecorded counts immutable realtime segment journals
 	// written for this connection. Once non-zero, final close must not append a
 	// second aggregate charge event for the same charge id.

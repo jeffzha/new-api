@@ -1,5 +1,12 @@
 {
   "translation": {
+    "A saved balance adjustment could not be read. Contact an administrator before trying again.": "Не удалось прочитать сохранённую корректировку. Перед повторной попыткой обратитесь к администратору.",
+    "An adjustment is awaiting confirmation. Confirm again to retry the same operation.": "Корректировка ожидает подтверждения. Подтвердите ещё раз, чтобы повторить ту же операцию.",
+    "Balance changes are recorded in OPS. Local balance is unchanged.": "Изменения баланса учитываются в OPS. Локальный баланс не меняется.",
+    "Last known OPS balance": "Последний известный баланс OPS",
+    "OPS balance": "Баланс OPS",
+    "OPS balance unavailable": "Баланс OPS недоступен",
+    "Reading OPS balance": "Получение баланса OPS",
     "Operations price details": "Подробные цены платформы",
     "Operations list prices before discounts": "Базовые цены платформы до скидок",
     "Input context > {{count}} tokens": "Входной контекст > {{count}} tokens",

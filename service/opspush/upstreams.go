@@ -67,9 +67,12 @@ func (p *Pusher) attachUpstream(log *model.Log, event map[string]any) error {
 		return err
 	}
 	if raw, err := common.Marshal(extra); err == nil && len(raw)+len(required) > maxExtra {
+		if extra["project_task_terminal"] != nil || extra["project_relay_terminal"] != nil {
+			return errors.New("frozen OPS usage exceeds upstream metadata budget")
+		}
 		keys := billingKeys
 		if p.Config.Spec == SpecV11 || extra["recordKind"] != nil || extra["project_task_terminal"] != nil {
-			keys = append(append([]string{}, v11BillingKeys...), "recordKind", "direction", "quotaPerUnit", "usdExchangeRate", "topupPrice", "project_task_terminal", "project_original_request", "project_task_row", "billing_scope")
+			keys = append(append([]string{}, v11BillingKeys...), "recordKind", "direction", "quotaPerUnit", "usdExchangeRate", "topupPrice", "project_task_terminal", "project_original_request", "project_task_row", "project_relay_terminal", "billing_scope")
 		}
 		extra = extraWithin(extra, keys, maxExtra-len(required)-64)
 		if extra == nil {

@@ -99,6 +99,10 @@ func sweepTimedOutTasks(ctx context.Context) {
 	timedOutCount := 0
 
 	for _, task := range tasks {
+		if task.PrivateData.BillingSource == "ops" {
+			// Elapsed time is not provider evidence and cannot release money.
+			continue
+		}
 		if task.CNBillingKey != "" {
 			if err := model.MarkCNTaskRepair(ctx, task.CNBillingKey, "task_timeout_requires_provider_evidence"); err != nil {
 				logger.LogError(ctx, err.Error())
@@ -400,6 +404,7 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 			}
 			prepareOpsTaskUsage(task, ch.Type, task.Data)
 			PrepareCNTaskTerminal(adaptor, task, &responseItem.TaskInfo)
+			PrepareOPSAuthorityTask(adaptor, task, &responseItem.TaskInfo)
 		}
 		won, updateErr := task.UpdateWithStatus(snap.Status)
 		if updateErr != nil {
@@ -527,7 +532,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
 		return fmt.Errorf("task %s not found", taskId)
 	}
-	managed := model.IsAgencyDurableUser(task.UserId)
+	managed := task.PrivateData.BillingSource != "ops" && model.IsAgencyDurableUser(task.UserId)
 	key := ch.Key
 
 	privateData := task.PrivateData
@@ -691,6 +696,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
 	if isDone && snap.Status != task.Status {
 		PrepareCNTaskTerminal(adaptor, task, taskResult)
+		PrepareOPSAuthorityTask(adaptor, task, taskResult)
 		prepareOpsTaskUsage(task, ch.Type, opsResponseBody)
 		won, err := task.UpdateWithStatus(snap.Status)
 		if err != nil {
@@ -768,6 +774,12 @@ func truncateBase64(s string) string {
 //
 // 表达式求值失败会保留预扣额度，因此也视为已接管，避免错误全退。
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) bool {
+	if task.PrivateData.BillingSource == "ops" {
+		if err := finalizeOPSAuthorityTask(task); err != nil {
+			logger.LogWarn(ctx, "OPS terminal task remains pending durable recovery")
+		}
+		return true
+	}
 	if task.CNBillingKey != "" {
 		if err := model.CompleteCNTaskIntent(context.WithoutCancel(ctx), model.DB, task.CNBillingKey); err != nil {
 			logger.LogWarn(ctx, "CN task financial finalization pending durable recovery")
@@ -935,6 +947,13 @@ func recordPollFailureForTasks(ctx context.Context, adaptor TaskPollingAdaptor, 
 }
 
 func failTaskFromPoll(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, fromStatus model.TaskStatus, reason string) error {
+	if task.PrivateData.BillingSource == "ops" {
+		// HTTP failures, missing tasks and retry exhaustion do not prove that
+		// the provider performed no billable work. Retain the original hold.
+		task.PrivateData.OPSBillingError = "poll_failure_requires_provider_evidence"
+		_, err := task.UpdateWithStatus(fromStatus)
+		return err
+	}
 	now := time.Now().Unix()
 	task.Status = model.TaskStatusFailure
 	task.Progress = taskcommon.ProgressComplete

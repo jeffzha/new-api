@@ -33,6 +33,9 @@ import (
 // the function deliberately does not recalculate provider pricing. The
 // caller's existing quota engine remains the source of truth.
 func RecordAgencyRealtimeSegment(relayInfo *relaycommon.RelayInfo, segmentNo int, usage, cumulative *dto.RealtimeUsage, quota, paidAllocated int64, status string) error {
+	if projectAuthority() {
+		return nil
+	}
 	if relayInfo == nil || relayInfo.AgencyPricing == nil {
 		return nil
 	}
@@ -537,6 +540,9 @@ func AttachAgencyQuote(relayInfo *relaycommon.RelayInfo, snapshot *agencycontrac
 // call after the HTTP response was sent and on retry because all business keys
 // are unique.
 func RecordAgencyBillingEvent(relayInfo *relaycommon.RelayInfo, actualQuota int64, status string) error {
+	if projectAuthority() {
+		return nil
+	}
 	if relayInfo == nil || relayInfo.AgencyPricing == nil {
 		return nil
 	}

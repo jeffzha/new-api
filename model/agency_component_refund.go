@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"gorm.io/gorm"
 )
 
@@ -58,6 +59,9 @@ func AgencyRefundWalletCharge(input AgencyComponentRefundInput, tokenKey string)
 // AgencyRefundWalletChargeTx requires the caller's transaction. Locks follow
 // settlement order: user, funding account, journal, component/source rows.
 func AgencyRefundWalletChargeTx(tx *gorm.DB, input AgencyComponentRefundInput, tokenKey string) (agencycontract.BillingEvent, error) {
+	if opsauthority.Enabled() {
+		return agencycontract.BillingEvent{}, ErrOPSLocalWalletWrite
+	}
 	if tx == nil || input.UserID <= 0 || input.SegmentNo < 0 || input.CumulativeQuota < 0 || input.CumulativeQuota > int64(common.MaxQuota) ||
 		input.ChargeID == "" || strings.TrimSpace(input.ChargeID) != input.ChargeID || len(input.ChargeID) > 128 ||
 		input.RefundID == "" || strings.TrimSpace(input.RefundID) != input.RefundID || len(input.RefundID) > 128 ||

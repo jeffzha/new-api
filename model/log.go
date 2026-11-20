@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/pkg/businessapi"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -97,6 +98,22 @@ const (
 )
 
 func ensureLogRequestId(log *Log) {
+	if opsauthority.Enabled() && log != nil && (log.Type == LogTypeConsume || log.Type == LogTypeError || log.Type == LogTypeRefund) {
+		other := map[string]any{}
+		if log.Other != "" {
+			if err := common.UnmarshalJsonStr(log.Other, &other); err != nil {
+				common.SysError("OPS accounting scope could not be attached to malformed log metadata")
+				return
+			}
+		}
+		if other == nil {
+			other = map[string]any{}
+		}
+		other["billing_scope"] = opsauthority.Scope()
+		if encoded, err := common.Marshal(other); err == nil {
+			log.Other = string(encoded)
+		}
+	}
 	if log != nil && log.RequestId == "" {
 		log.RequestId = common.NewRequestId()
 	}

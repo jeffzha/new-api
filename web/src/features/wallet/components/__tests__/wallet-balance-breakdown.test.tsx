@@ -32,7 +32,8 @@ afterEach(cleanup)
 
 function renderCard(
   walletBalances: UserWalletData['wallet_balances'],
-  credit?: UserWalletData['credit']
+  credit?: UserWalletData['credit'],
+  walletFields?: object
 ) {
   const user: UserWalletData = {
     id: 1,
@@ -46,6 +47,7 @@ function renderCard(
     aff_history_quota: 0,
     aff_count: 0,
     group: 'default',
+    ...walletFields,
   }
   return render(
     <I18nextProvider i18n={i18n}>
@@ -53,6 +55,47 @@ function renderCard(
     </I18nextProvider>
   )
 }
+
+it('shows the OPS USD wallet without presenting the old local funds as spendable', () => {
+  renderCard([{ type: 'recharge', quota: 1000 }], undefined, {
+    wallet_authority: 'ops',
+    ops_balance: {
+      status: 'available',
+      amount: '12.345678',
+      quota: 6172839,
+      currency: 'USD',
+      stale: false,
+    },
+  })
+
+  expect(screen.getByLabelText('OPS balance')).toHaveTextContent('$12.345678')
+  expect(
+    screen.queryByRole('group', { name: 'Balance breakdown' })
+  ).not.toBeInTheDocument()
+})
+
+it('leaves an unavailable OPS balance unknown instead of displaying local quota', () => {
+  renderCard([], undefined, { wallet_authority: 'ops' })
+
+  expect(screen.getByLabelText('Reading OPS balance')).toHaveTextContent('—')
+})
+
+it('keeps the last known OPS amount visible when its snapshot becomes stale', () => {
+  renderCard([], undefined, {
+    wallet_authority: 'ops',
+    ops_balance: {
+      status: 'stale',
+      amount: '-0.000006',
+      quota: -3,
+      currency: 'USD',
+      stale: true,
+    },
+  })
+
+  expect(screen.getByLabelText('Last known OPS balance')).toHaveTextContent(
+    '-$0.000006'
+  )
+})
 
 it('shows recharge, gift, redemption and reconciled other balances', () => {
   renderCard([

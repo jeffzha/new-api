@@ -16,6 +16,9 @@ import (
 // prepareOpsTaskUsage runs before the terminal CAS. A crash after that CAS is
 // recovered from the pending bit, without relying on another provider poll.
 func prepareOpsTaskUsage(task *model.Task, channelType int, body []byte) {
+	if task != nil && task.PrivateData.BillingSource == "ops" {
+		return
+	}
 	if opsbridge.Default == nil || task.Status != model.TaskStatusSuccess || task.TaskID == "" || len(task.PrivateData.OpsUsage) != 0 {
 		return
 	}

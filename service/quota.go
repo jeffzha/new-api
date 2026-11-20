@@ -14,6 +14,7 @@ import (
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service/opswallet"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -96,6 +97,30 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 // per-segment financial journal. The legacy wrapper above preserves the
 // existing error-only API.
 func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) (int, int64, error) {
+	if projectAuthority() {
+		if relayInfo == nil || usage == nil || relayInfo.BillingSource != "ops" {
+			return 0, 0, model.ErrOPSWalletHoldConflict
+		}
+		session, ok := relayInfo.Billing.(*opswallet.Session)
+		if !ok {
+			return 0, 0, model.ErrOPSWalletHoldConflict
+		}
+		cumulative, err := realtimeUsageSum(usage, relayInfo.RealtimeReservedUsage)
+		if err != nil {
+			return 0, 0, err
+		}
+		target, err := opsAuthorityRealtimeQuota(relayInfo, cumulative)
+		if err != nil {
+			return 0, 0, err
+		}
+		if err := session.Reserve(max(session.GetPreConsumedQuota(), target)); err != nil {
+			return 0, 0, err
+		}
+		delta := max(target-relayInfo.RealtimePreConsumedQuota, 0)
+		relayInfo.RealtimePreConsumedQuota = target
+		relayInfo.RealtimeReservedUsage = cumulative
+		return delta, 0, nil
+	}
 	if CNDirectRealtimeRequested(relayInfo) {
 		// Delta-only callers have no durable response identity.
 		return 0, 0, model.ErrCNConflict
@@ -227,11 +252,16 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	}
 
 	var tieredResult *billingexpr.TieredResult
-	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, billingexpr.TokenParams{
+	params := billingexpr.TokenParams{
 		P:   float64(usage.InputTokens),
 		C:   float64(usage.OutputTokens),
 		Len: float64(usage.InputTokens),
-	})
+	}
+	if projectAuthority() && relayInfo.TieredBillingSnapshot != nil {
+		snap := relayInfo.TieredBillingSnapshot
+		params = BuildTieredTokenParams(&dto.Usage{PromptTokens: usage.InputTokens, CompletionTokens: usage.OutputTokens, TotalTokens: usage.TotalTokens, PromptTokensDetails: usage.InputTokenDetails, CompletionTokenDetails: usage.OutputTokenDetails}, false, billingexpr.UsedVarsByHash(snap.ExprString, snap.ExprHash))
+	}
+	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, params)
 	if tieredOk {
 		tieredResult = tieredRes
 	}
@@ -273,6 +303,14 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	if tieredOk {
 		quota = tieredQuota
 	}
+	if projectAuthority() {
+		var err error
+		quota, err = opsAuthorityRealtimeQuota(relayInfo, usage)
+		if err != nil {
+			logger.LogError(ctx, "OPS realtime usage requires reconciliation")
+			return
+		}
+	}
 
 	totalTokens := usage.TotalTokens
 	var logContent string
@@ -296,7 +334,12 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 
-	if relayInfo.AgencyPricing != nil && relayInfo.RequestId != "" {
+	if projectAuthority() {
+		if err := SettleBilling(ctx, relayInfo, quota, &dto.Usage{PromptTokens: usage.InputTokens, CompletionTokens: usage.OutputTokens, TotalTokens: usage.TotalTokens, PromptTokensDetails: usage.InputTokenDetails, CompletionTokenDetails: usage.OutputTokenDetails}); err != nil {
+			logger.LogError(ctx, "OPS realtime finalization requires reconciliation")
+			return
+		}
+	} else if relayInfo.AgencyPricing != nil && relayInfo.RequestId != "" {
 		// PreWssConsumeQuota reserves each successful usage segment. The final
 		// cumulative frame contributes only its delta (or releases an excess).
 		delta := quota - relayInfo.RealtimePreConsumedQuota
@@ -530,7 +573,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		}
 	}
 
-	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
+	if err := SettleBilling(ctx, relayInfo, quota, usage); err != nil {
 		logger.LogError(ctx, "error settling billing: "+err.Error())
 	}
 	upstreamevent.EmitUpstreamResponse(ctx, relayInfo, usage, map[string]interface{}{
@@ -570,6 +613,9 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 }
 
 func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
+	if projectAuthority() {
+		return model.ErrOPSWalletHoldConflict
+	}
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
@@ -602,6 +648,10 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 }
 
 func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (result postConsumeQuotaResult, err error) {
+	if projectAuthority() {
+		// Delta-only callers cannot reconstruct the immutable OPS reservation.
+		return result, model.ErrOPSWalletHoldConflict
+	}
 	if CNDirectRealtimeRequested(relayInfo) && relayInfo.BillingSource != BillingSourceSubscription {
 		s, ok := relayInfo.Billing.(*cnDirectRelaySession)
 		if !ok || s.usage == "" || preConsumedQuota != 0 || relayInfo.FinalPreConsumedQuota != 0 {

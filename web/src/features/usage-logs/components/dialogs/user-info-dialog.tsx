@@ -16,17 +16,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
 import { Label } from '@/components/ui/label'
+import { OPSBalanceValue } from '@/features/ops-wallet/balance-value'
 import { formatQuota, formatCompactNumber } from '@/lib/format'
-import { handleServerError } from '@/lib/handle-server-error'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { getUserInfo } from '../../api'
-import type { UserInfo } from '../../types'
 
 interface UserInfoDialogProps {
   userId: number | null
@@ -34,7 +35,7 @@ interface UserInfoDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-function InfoItem({ label, value }: { label: string; value: string | number }) {
+function InfoItem({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className='space-y-1.5'>
       <Label className='text-muted-foreground text-xs'>{label}</Label>
@@ -49,33 +50,21 @@ export function UserInfoDialog({
   onOpenChange,
 }: UserInfoDialogProps) {
   const { t } = useTranslation()
-  const [userInfo, setUserInfo] = useState<UserInfo | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-
-  const fetchUserInfo = useCallback(
-    async (id: number) => {
-      setIsLoading(true)
-      try {
-        const result = await getUserInfo(id)
-        if (result.success) {
-          setUserInfo(result.data || null)
-        } else {
-          handleServerError(result, t('Failed to fetch user information'))
-        }
-      } catch (error) {
-        handleServerError(error, t('Failed to fetch user information'))
-      } finally {
-        setIsLoading(false)
-      }
+  const query = useQuery({
+    queryKey: ['users', 'log-user-info', userId],
+    queryFn: async () => {
+      if (!userId) throw new Error('No user selected')
+      const result = requireServerSuccess(await getUserInfo(userId))
+      if (result.data?.id !== userId) throw new Error('Wallet identity changed')
+      return result.data
     },
-    [t]
-  )
-
-  useEffect(() => {
-    if (open && userId) {
-      fetchUserInfo(userId)
-    }
-  }, [open, userId, fetchUserInfo])
+    enabled: open && !!userId,
+    retry: false,
+    refetchInterval: (state) =>
+      open && state.state.data?.wallet_authority === 'ops' ? 15_000 : false,
+  })
+  const userInfo = query.data
+  const isLoading = query.isLoading
 
   return (
     <Dialog
@@ -111,7 +100,16 @@ export function UserInfoDialog({
           <div className='grid grid-cols-2 gap-4'>
             <InfoItem
               label={t('Balance')}
-              value={formatQuota(userInfo.quota)}
+              value={
+                userInfo.wallet_authority === 'ops' ? (
+                  <OPSBalanceValue
+                    balance={userInfo.ops_balance}
+                    failed={query.isError}
+                  />
+                ) : (
+                  formatQuota(userInfo.quota)
+                )
+              }
             />
             <InfoItem
               label={t('Used Quota')}

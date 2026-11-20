@@ -61,30 +61,5 @@ export function OpsFeeCell(props: { fee: UsageLog['ops_fee'] }) {
         : t('Operations fee unconfirmed')
     return <StatusBadge label={label} variant='neutral' copyable={false} />
   }
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger
-          render={<span tabIndex={0} className='inline-flex cursor-help' />}
-        >
-          <LogCostBadge value={`¥${fee.amount}`} />
-        </TooltipTrigger>
-        <TooltipContent role='tooltip' className='flex-col items-start'>
-          <span>
-            {t('Cost')}: ¥{fee.amount}
-          </span>
-          {fee.station_amount != null && (
-            <span>
-              {t('Actual customer deduction (CNY)')}: ¥{fee.station_amount}
-            </span>
-          )}
-          {fee.difference != null && (
-            <span>
-              {t('Deduction minus calculated fee (CNY)')}: ¥{fee.difference}
-            </span>
-          )}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  )
+  return <LogCostBadge value={`¥${fee.amount}`} />
 }

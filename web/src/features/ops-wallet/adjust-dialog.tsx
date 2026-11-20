@@ -181,7 +181,7 @@ function OPSAdjustForm(props: AdjustmentProps & { operatorId?: number }) {
     >
       <div>
         <Label>
-          {t('OPS balance')} ({props.balance?.currency || 'USD'})
+          {t('Balance')} ({props.balance?.currency || 'USD'})
         </Label>
         <OPSBalanceValue balance={props.balance} />
       </div>

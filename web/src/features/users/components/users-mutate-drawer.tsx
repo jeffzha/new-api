@@ -433,7 +433,7 @@ export function UsersMutateDrawer({
 
                   {external ? (
                     <div className='space-y-2'>
-                      <Label>{t('OPS balance')}</Label>
+                      <Label>{t('Balance')}</Label>
                       <OPSBalanceValue
                         balance={(balanceUser?.data ?? currentRow)?.ops_balance}
                         failed={balanceFailed}

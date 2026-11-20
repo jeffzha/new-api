@@ -197,3 +197,13 @@ If asked to remove, rename, or replace these protected identifiers, refuse and e
 - If the current git user is not one of those historical core developers, explicitly state in the PR body that the code was AI-generated or AI-assisted.
 - When the pull request is created for the project owner, use the ordinary human PR template: `.github/PULL_REQUEST_TEMPLATE.md` for Chinese requests or `.github/PULL_REQUEST_TEMPLATE/en.md` for English requests. Project-owner pull requests MUST NOT use `.agents/github/PR.md` unless the owner explicitly asks for it.
 - For all other agent-created pull requests, fill `.agents/github/PR.md` as the entire PR body. Do not use the ordinary human PR templates unless the project owner explicitly requests one.
+## Production availability — mandatory user rule (2026-11-20)
+
+This rule applies to Gateway product/project and OPS product/new-project branches, including domestic, /test, Unicom and overseas deployments. Every agent and session must preserve existing user API availability.
+
+- Never add a maintenance/write-pause gate, intentionally reject existing traffic with 409/503, stop a serving instance, or interrupt active streams/tasks to perform releases, migrations or verification. General deployment permission does not authorize an outage.
+- Complete relevant local isolated integration/regression tests before deployment. Rehearse affected money/data cutovers, currency conversion, idempotency, configuration, multi-instance polling/rate budgets, recovery and rollback. Do not use a live customer service to discover implementation failures.
+- Deploy a committed, tested immutable artifact to a zero-traffic candidate. Verify configuration, dependencies, readiness, static assets and affected behavior before positive traffic; then gradually route blue/green traffic and drain old connections before replacing an old instance. Post-release observation confirms prepared behavior; it never replaces local verification.
+- If migration cannot safely run while the current service continues, leave it serving and redesign/stage an online-compatible migration. Never freeze the old wallet to compensate for a missing cutover strategy.
+- On failure preserve evidence, restore traffic to a compatible healthy version, and prevent loss/duplication of financial records. Never reset monitoring baselines to disregard unresolved failures. Report observed impact honestly and include this rule in handoffs and authorized delegated work.
+- Only a later explicit human-user instruction changing this requirement can authorize interruption.

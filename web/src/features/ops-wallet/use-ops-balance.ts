@@ -33,14 +33,14 @@ export function useOPSBalance(balance?: OPSBalance, failed = false) {
     /^-?\d+(\.\d+)?$/.test(balance.amount) &&
     Number.isFinite(Number(balance.amount)) &&
     /^[A-Z]{3}$/.test(balance.currency)
-  let hint = t('OPS balance unavailable')
+  let hint = t('Balance unavailable')
   if (available) {
     hint =
       failed || balance.stale || balance.status === 'stale'
-        ? t('Last known OPS balance')
-        : t('OPS balance')
+        ? t('Last known balance')
+        : t('Balance')
   } else if (!failed && (!balance || balance.status === 'pending')) {
-    hint = t('Reading OPS balance')
+    hint = t('Reading balance')
   }
   return {
     text: available
@@ -49,6 +49,7 @@ export function useOPSBalance(balance?: OPSBalance, failed = false) {
           {
             style: 'currency',
             currency: balance.currency,
+            currencyDisplay: 'narrowSymbol',
             minimumFractionDigits: 2,
             maximumFractionDigits: 6,
           }

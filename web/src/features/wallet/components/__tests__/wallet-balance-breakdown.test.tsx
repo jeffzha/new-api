@@ -6,6 +6,8 @@ import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, expect, it } from 'vitest'
 
+import zh from '@/i18n/locales/zh.json'
+
 import type { UserWalletData } from '../../types'
 import { WalletStatsCard } from '../wallet-stats-card'
 
@@ -25,6 +27,7 @@ await i18n.init({
         'Balance category': '{{type}} balance',
       },
     },
+    zh,
   },
 })
 
@@ -68,7 +71,7 @@ it('shows the OPS USD wallet without presenting the old local funds as spendable
     },
   })
 
-  expect(screen.getByLabelText('OPS balance')).toHaveTextContent('$12.345678')
+  expect(screen.getByLabelText('Balance')).toHaveTextContent('$12.345678')
   expect(
     screen.queryByRole('group', { name: 'Balance breakdown' })
   ).not.toBeInTheDocument()
@@ -77,7 +80,27 @@ it('shows the OPS USD wallet without presenting the old local funds as spendable
 it('leaves an unavailable OPS balance unknown instead of displaying local quota', () => {
   renderCard([], undefined, { wallet_authority: 'ops' })
 
-  expect(screen.getByLabelText('Reading OPS balance')).toHaveTextContent('—')
+  expect(screen.getByLabelText('Reading balance')).toHaveTextContent('—')
+})
+
+it('uses a plain dollar symbol and balance label in Chinese without converting OPS money', async () => {
+  await i18n.changeLanguage('zh')
+  try {
+    renderCard([], undefined, {
+      wallet_authority: 'ops',
+      ops_balance: {
+        status: 'available',
+        amount: '12.345678',
+        quota: 6172839,
+        currency: 'USD',
+        stale: false,
+      },
+    })
+    expect(screen.getByLabelText('余额')).toHaveTextContent('$12.345678')
+    expect(screen.queryByText(/US\$/)).not.toBeInTheDocument()
+  } finally {
+    await i18n.changeLanguage('en')
+  }
 })
 
 it('keeps the last known OPS amount visible when its snapshot becomes stale', () => {
@@ -92,7 +115,7 @@ it('keeps the last known OPS amount visible when its snapshot becomes stale', ()
     },
   })
 
-  expect(screen.getByLabelText('Last known OPS balance')).toHaveTextContent(
+  expect(screen.getByLabelText('Last known balance')).toHaveTextContent(
     '-$0.000006'
   )
 })

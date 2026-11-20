@@ -62,7 +62,7 @@ it('shows the OPS wallet in a usage log user detail instead of local quota', asy
   })
   mountDialog()
 
-  expect(await screen.findByLabelText('OPS balance')).toHaveTextContent(
+  expect(await screen.findByLabelText('Balance')).toHaveTextContent(
     '$12.345678'
   )
 })

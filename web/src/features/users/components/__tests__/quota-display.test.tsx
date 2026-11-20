@@ -128,7 +128,7 @@ it('rejects another user balance in the user editor and labels the retained snap
     </I18nextProvider>
   )
   expect(
-    await screen.findByLabelText('Last known OPS balance')
+    await screen.findByLabelText('Last known balance')
   ).toHaveTextContent('$12.345678')
   expect(screen.queryByText('$999.00')).not.toBeInTheDocument()
 })

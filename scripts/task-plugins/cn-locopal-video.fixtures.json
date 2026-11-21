@@ -452,6 +452,40 @@
       }
     },
     {
+      "name": "h3 outer metadata result survives nested succeeded task at refund threshold",
+      "hook": "parseTaskResult",
+      "args": [
+        { "state": { "missingResultPolls": 19 } },
+        {
+          "status": "completed",
+          "metadata": { "url": "https://example.com/h3-result.mp4" },
+          "task": { "status": "succeeded", "usage": { "output_seconds": 15 } },
+          "usage": { "amount": 1.54, "currency": "CNY" }
+        }
+      ],
+      "expected": { "status": "SUCCESS", "progress": "100%", "url": "https://example.com/h3-result.mp4" }
+    },
+    {
+      "name": "h3 enclosing result download remains credentialless",
+      "hook": "buildContentRequest",
+      "args": [
+        {
+          "artifactKey": "video",
+          "data": { "data": { "metadata": { "url": "https://example.com/h3-result.mp4" }, "task": { "status": "succeeded" } } }
+        }
+      ],
+      "expected": { "url": "https://example.com/h3-result.mp4", "method": "GET", "credentialless": true }
+    },
+    {
+      "name": "h3 actual failed task is not promoted by enclosing URL",
+      "hook": "parseTaskResult",
+      "args": [
+        {},
+        { "status": "completed", "metadata": { "url": "https://example.com/h3-result.mp4" }, "task": { "status": "failed", "error": { "message": "provider failed" } } }
+      ],
+      "expected": { "status": "FAILURE", "progress": "100%", "reason": "provider failed" }
+    },
+    {
       "name": "h3 terminal usage overlay",
       "hook": "extractUsageOnComplete",
       "args": [

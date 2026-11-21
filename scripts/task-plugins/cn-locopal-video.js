@@ -78,7 +78,7 @@ export const meta = {
     en: "LocoPal Seedance and MiniMax H3 video generation",
     zh: "LocoPal Seedance 与 MiniMax H3 视频生成",
   },
-  version: "1.0.9",
+  version: "1.0.10",
   requiredCapabilities: ["media-duration@1", "image-dimensions@1"],
   author: { name: "NexusReach" },
   models: [SEEDANCE_MODEL, H3_MODEL],
@@ -466,37 +466,42 @@ export function buildQueryRequest(ctx) {
   };
 }
 
-function taskEnvelope(body) {
+function taskEnvelopes(body) {
   let envelope = objectOf(body);
+  const envelopes = [envelope];
   for (let depth = 0; depth < 4; depth++) {
     const task = objectOf(envelope.task);
     const data = objectOf(envelope.data);
     if (Object.keys(task).length) envelope = task;
     else if (Object.keys(data).length && (!envelope.status || data.task || data.status)) envelope = data;
     else break;
+    envelopes.push(envelope);
   }
-  return envelope;
+  return envelopes;
+}
+
+function taskEnvelope(body) {
+  const envelopes = taskEnvelopes(body);
+  return envelopes[envelopes.length - 1];
 }
 
 function videoUrlOf(body) {
-  const envelope = taskEnvelope(body);
-  const content = objectOf(envelope.content);
-  const result = objectOf(envelope.result);
-  const metadata = objectOf(envelope.metadata);
-  return firstString([
-    content.video_url,
-    content.url,
-    result.video_url,
-    result.url,
-    metadata.video_url,
-    metadata.url,
-    envelope.result_url,
-    envelope.video_url,
-    envelope.url,
-    body && body.result_url,
-    body && body.video_url,
-    body && body.url,
-  ]);
+  const envelopes = taskEnvelopes(body);
+  // LocoPal can put the result beside task, rather than inside it.
+  for (let index = envelopes.length - 1; index >= 0; index--) {
+    const envelope = envelopes[index];
+    const content = objectOf(envelope.content);
+    const result = objectOf(envelope.result);
+    const metadata = objectOf(envelope.metadata);
+    const url = firstString([
+      content.video_url, content.url,
+      result.video_url, result.url,
+      metadata.video_url, metadata.url,
+      envelope.result_url, envelope.video_url, envelope.url,
+    ]);
+    if (url) return url;
+  }
+  return "";
 }
 
 export function parseTaskResult(ctx, body) {

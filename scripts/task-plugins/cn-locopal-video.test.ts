@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { buildContentRequest, buildSubmitRequest, extractUsage, extractUsageOnComplete, meta, parseTaskResult, protocols } from "./cn-locopal-video.js";
+import { buildContentRequest, buildSubmitRequest, extractUsage, extractUsageOnComplete, listArtifacts, meta, parseTaskResult, protocols } from "./cn-locopal-video.js";
 
 function submit(requestBody: Record<string, unknown>, upstreamModel = "h3-video") {
   return buildSubmitRequest({ baseUrl: "https://locopalai.com", apiKey: "test-only", upstreamModel, requestBody });
@@ -12,7 +12,7 @@ test("LocoPal HEAD downloads use CDN-compatible GET without changing the artifac
 
 test("H3 ordinary image input reaches upstream content exactly once", () => {
   expect(meta.key).toBe("cn-locopal-video");
-  expect(meta.version).toBe("1.0.9");
+  expect(meta.version).toBe("1.0.10");
   const requestBody = { model: "MiniMax-H3", prompt: "a city", images: ["https://example.test/frame.png"], seconds: 5, metadata: { ratio: "adaptive" } };
   const request = submit(requestBody);
   expect(request.url).toBe("https://locopalai.com/v1/videos");
@@ -202,6 +202,45 @@ test("H3 completed tasks without a video URL fail after a bounded grace period",
   expect(current).toMatchObject({ status: "IN_PROGRESS", state: { missingResultPolls: 19 } });
   const terminal = parseTaskResult({ state: current.state }, { status: "completed" });
   expect(terminal).toMatchObject({ status: "FAILURE", reason: "LocoPal reported completion but did not return a video URL" });
+});
+
+test("H3 successful nested tasks retain the enclosing result URL for settlement and downloads", () => {
+  const url = "https://example.test/generated-video.mp4";
+  const task = { status: "succeeded", resolution: "768P", duration: 15, usage: { output_seconds: 15, input_image_count: 1, input_seconds: 0 } };
+  const completed = { status: "completed", metadata: { url }, task, usage: { amount: 1.54, currency: "CNY" } };
+  const bodies = [
+    completed,
+    { data: completed },
+    { data: { status: "completed", result: { video_url: url }, task } },
+    { content: { url }, task },
+    { task: { status: "completed", metadata: { video_url: url }, data: task } },
+    { status: "completed", task: { ...task, content: { video_url: url } } },
+    { status: "completed", video_url: url },
+  ];
+  for (const body of bodies) {
+    const result = parseTaskResult({ state: { missingResultPolls: 19 } }, body);
+    expect(result).toEqual({ status: "SUCCESS", progress: "100%", url });
+    expect(buildContentRequest({ artifactKey: "video", data: body })).toEqual({ url, method: "GET", credentialless: true });
+    const view = { status: "SUCCESS", data: body };
+    expect(listArtifacts(view)).toEqual([{ key: "video", type: "video", mimeType: "video/mp4" }]);
+    expect(protocols.openai_video.render({}, view)).toMatchObject({ status: "completed", result_url: url, url, content: { video_url: url } });
+    if (body !== bodies[6]) {
+      expect(extractUsageOnComplete({ upstreamModel: "h3-video" }, result, body)).toEqual({ seconds: 15, input_images: 1, input_video_seconds: 0, resolution: "768P" });
+    }
+  }
+  const preferred = { ...completed, task: { ...task, content: { url: "https://example.test/task-video.mp4" } } };
+  expect(parseTaskResult({}, preferred).url).toBe("https://example.test/task-video.mp4");
+});
+
+test("H3 result URLs do not override failed, pending, or unknown task status", () => {
+  for (const [status, expected] of [["failed", "FAILURE"], ["queued", "QUEUED"], ["running", "IN_PROGRESS"], ["mystery", "UNKNOWN"]]) {
+    const body = { status: "completed", metadata: { url: "https://example.test/not-proof-of-success.mp4" }, task: { status, error: { message: "provider failure" } } };
+    const result = parseTaskResult({}, body);
+    expect(result.status).toBe(expected);
+    expect(result.url).toBeUndefined();
+    if (status === "failed") expect(result.reason).toBe("provider failure");
+    expect(listArtifacts({ status: expected, data: body })).toEqual([]);
+  }
 });
 
 test("H3 multipart image files use the same canonical content contract", () => {

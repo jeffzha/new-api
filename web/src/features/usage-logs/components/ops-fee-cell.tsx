@@ -54,6 +54,31 @@ export function OpsFeeCell(props: { fee: UsageLog['ops_fee'] }) {
       </TooltipProvider>
     )
   }
+  const symbol = fee.currency === 'USD' ? '$' : `${fee.currency} `
+  // An unconfirmed historical calculation can still have a real charge receipt.
+  // Keep the independent OPS amount untouched and identify the displayed source.
+  if (
+    fee.status === 'unconfirmed' &&
+    fee.amount === null &&
+    fee.station_amount != null &&
+    /^\d+(?:\.\d+)?$/.test(fee.station_amount)
+  ) {
+    const label = t('Recorded charge; pricing review pending')
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span tabIndex={0} aria-label={label} className='inline-flex'>
+                <LogCostBadge value={`${symbol}${fee.station_amount}`} />
+              </span>
+            }
+          />
+          <TooltipContent>{label}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    )
+  }
   if (fee.status !== 'available' || fee.amount === null) {
     const label =
       fee.status === 'waiting'
@@ -61,6 +86,5 @@ export function OpsFeeCell(props: { fee: UsageLog['ops_fee'] }) {
         : t('Operations fee unconfirmed')
     return <StatusBadge label={label} variant='neutral' copyable={false} />
   }
-  const symbol = fee.currency === 'USD' ? '$' : `${fee.currency} `
   return <LogCostBadge value={`${symbol}${fee.amount}`} />
 }

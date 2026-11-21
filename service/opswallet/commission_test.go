@@ -366,7 +366,7 @@ func TestOPSCommissionInboxMismatchIsolation(t *testing.T) {
 	snapshot := &agencycontract.PricingSnapshot{UserID: 1, AgencyID: 7, BindingID: 8, OriginModelName: "local-model", CurrencyCode: "USD", ExchangeRate: "1", CommissionEligible: true, SalesBPS: sales, SettlementBPS: 4000}
 	seedCommissionHold(t, db, "historical-mismatch", 1, snapshot)
 	standard := "1"
-	mismatch := commissionEntry(2, "charge", "-0.6", "1.4")
+	mismatch := commissionEntry(2, "charge", "-2.1", "-0.1")
 	mismatch.RequestID, mismatch.Model, mismatch.StandardAmount = "historical-mismatch", "local-model", &standard
 	other := commissionEntry(3, "credit", "1", "1")
 	other.UserID = "2"

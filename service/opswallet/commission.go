@@ -479,6 +479,24 @@ func commissionCharge(entry CommissionEntry, snapshot *agencycontract.PricingSna
 		return event, err
 	}
 	if result.CustomerChargedQuota != actual {
+		// Non-paid funds never earn commission. Preserve both the OPS debit
+		// and the original quote for review while allowing its balance sequence
+		// to advance. Real payment or debt still requires an explicit correction.
+		if paid == 0 && event.DebtAllocatedQuota == 0 {
+			basis, err := common.Marshal(map[string]any{
+				"source": "ops_debit_and_frozen_quote", "review": "nonpaid_price_difference",
+				"actual_micros": actual, "quoted_micros": result.CustomerChargedQuota,
+				"standard_micros": standard, "frozen_quote": snapshot,
+			})
+			if err != nil {
+				return event, err
+			}
+			event.BillingBasis = string(basis)
+			event.CommissionEligible = false
+			event.NoncommissionableQuota = actual
+			event.CommissionSkipReason = "nonpaid_price_difference_review"
+			return event, nil
+		}
 		return event, errors.New("OPS actual debit differs from frozen agency sales; review required")
 	}
 	event.SettlementCostQuota = result.PlatformCostQuota + result.PlatformMarginQuota

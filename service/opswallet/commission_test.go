@@ -224,6 +224,8 @@ func TestOPSCommissionOpeningUnknownDebtAndFrozenBinding(t *testing.T) {
 func TestOPSCommissionCursorRestartAndPageRollback(t *testing.T) {
 	db := commissionTestDB(t)
 	entry := commissionEntry(1, "credit", "1", "1")
+	zero := commissionEntry(2, "charge", "0", "1")
+	zero.RequestID, zero.Model = "rejected-attempt", "local-model"
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -232,8 +234,8 @@ func TestOPSCommissionCursorRestartAndPageRollback(t *testing.T) {
 		items := []CommissionEntry{}
 		next := since
 		if since == "0" {
-			items = append(items, entry)
-			next = "1"
+			items = append(items, entry, zero)
+			next = "2"
 		}
 		data := map[string]any{"data": map[string]any{"currency": "USD", "commissionFactsVersion": "1", "items": items, "hasMore": false, "nextCursor": next}}
 		raw, err := common.Marshal(data)
@@ -248,19 +250,29 @@ func TestOPSCommissionCursorRestartAndPageRollback(t *testing.T) {
 	require.NoError(t, p.Step(t.Context()))
 	var cursor model.OPSAgencyCursor
 	require.NoError(t, db.First(&cursor).Error)
-	assert.Equal(t, int64(1), cursor.EntryID)
+	assert.Equal(t, int64(2), cursor.EntryID)
 	assert.Equal(t, 2, calls)
+	var zeroReceipt model.OPSAgencyReceipt
+	require.NoError(t, db.First(&zeroReceipt, "id = ?", model.OPSAgencyID("receipt", "2")).Error)
+	var projected int64
+	require.NoError(t, db.Model(&model.OPSAgencyCharge{}).Count(&projected).Error)
+	assert.Zero(t, projected, "an unexecuted zero attempt cannot create commission")
+	changed := zero
+	changed.Model = "different-model"
+	require.ErrorContains(t, db.Transaction(func(tx *gorm.DB) error { return ApplyCommissionEntryTx(tx, changed) }), "receipt changed")
+	changed.EntryID, changed.BalanceAfter = "3", "2"
+	require.ErrorContains(t, db.Transaction(func(tx *gorm.DB) error { return ApplyCommissionEntryTx(tx, changed) }), "balance discontinuity")
 	// A committed first entry followed by invalid evidence must roll back page.
 	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		good := commissionEntry(2, "credit", "1", "2")
-		bad := commissionEntry(3, "charge", "-1", "1")
+		good := commissionEntry(3, "credit", "1", "2")
+		bad := commissionEntry(4, "charge", "-1", "1")
 		bad.RequestID = "missing-hold"
-		raw, _ := common.Marshal(map[string]any{"data": map[string]any{"currency": "USD", "commissionFactsVersion": "1", "items": []CommissionEntry{good, bad}, "hasMore": false, "nextCursor": "3"}})
+		raw, _ := common.Marshal(map[string]any{"data": map[string]any{"currency": "USD", "commissionFactsVersion": "1", "items": []CommissionEntry{good, bad}, "hasMore": false, "nextCursor": "4"}})
 		_, _ = w.Write(raw)
 	})
 	require.Error(t, p.Step(t.Context()))
 	require.NoError(t, db.First(&cursor).Error)
-	assert.Equal(t, int64(1), cursor.EntryID)
+	assert.Equal(t, int64(2), cursor.EntryID)
 	var account model.OPSAgencyAccount
 	require.NoError(t, db.First(&account).Error)
 	assert.Equal(t, int64(1000000), account.BalanceMicros)

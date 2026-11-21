@@ -225,6 +225,12 @@ func ApplyCommissionEntryTx(tx *gorm.DB, entry CommissionEntry) error {
 		}
 		var hold model.OPSWalletHold
 		if err := tx.Where("account_id = ? AND charge_request_id = ? AND scope = ?", commissionAdmissionID(user), entry.RequestID, opsauthority.Scope()).First(&hold).Error; err != nil {
+			// Rejected relay attempts can have an authoritative zero ledger
+			// entry without ever reserving funds. Retain its receipt and verify
+			// balance continuity, but there is no debit or commission to project.
+			if amount == 0 && errors.Is(err, gorm.ErrRecordNotFound) {
+				break
+			}
 			return fmt.Errorf("OPS commission frozen request missing: %w", err)
 		}
 		if hold.UserID != user || hold.Model != entry.Model || hold.AgencyPricing == "" || hold.State != "settled" && hold.State != "reconciled" {

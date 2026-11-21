@@ -38,6 +38,11 @@ func run() error {
 	if len(os.Args) > 1 {
 		command = os.Args[1]
 	}
+	if command == "provision-worker" || command == "provision-once" {
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
+		return agencyhub.New(model.DB, nil, config).RunProvisioningWorker(ctx, command == "provision-once")
+	}
 	if command == "migrate" {
 		seconds := 60
 		if value, err := strconv.Atoi(os.Getenv("AGENCY_HUB_MIGRATION_TIMEOUT_SECONDS")); err == nil && value > 0 {

@@ -225,6 +225,37 @@ func TestUSDOfficialRowsRetainVideoTiersAndContextInheritance(t *testing.T) {
 	}
 }
 
+func TestUSDTaskPluginPricesRetainSeparateBillingUnits(t *testing.T) {
+	components := map[string]any{
+		"per_second": "0.041095890410958909",
+		"matrix": []any{map[string]any{
+			"when":       map[string]any{"taskPlugin": "wangpaiai", "resolution": "720p"},
+			"per_second": "0", "per_output_credit": "0.013698630136986302", "per_material_credit": "0.013698630136986302",
+		}},
+	}
+	r := New(Config{Currency: "USD"})
+	s := &snapshot{byModel: map[string][]priceEntry{"MiniMax-H3": {{Official: components}}}}
+	s.list.Currency = "USD"
+	s.list.Station.USDExchangeRate, s.list.Station.QuotaPerUnit = "1", 1000000
+	r.current.Store(s)
+	local := model.Pricing{ModelName: "MiniMax-H3", BillingExpr: `tier("local", seconds * 0.04)`}
+	row := r.Display([]model.Pricing{local}, 7.3, 500000)[0]
+	require.Equal(t, "ops", row.ListPrice.Source)
+	require.Equal(t, "USD", row.ListPrice.Currency)
+	require.Equal(t, "review", row.ListPrice.Comparison)
+	require.Equal(t, local, row.ListPrice.Local)
+	require.Len(t, row.ListPrice.Rows, 2)
+	credit, fallback := row.ListPrice.Rows[0], row.ListPrice.Rows[1]
+	require.Equal(t, "wangpaiai", credit.When["taskPlugin"])
+	require.Equal(t, "720p", credit.When["resolution"])
+	require.Equal(t, "0", credit.Prices["per_second"])
+	require.Equal(t, "0.013698630136986302", credit.Prices["per_output_credit"])
+	require.Equal(t, "0.013698630136986302", credit.Prices["per_material_credit"])
+	require.Empty(t, fallback.When)
+	require.Equal(t, "0.041095890410958909", fallback.Prices["per_second"])
+	require.Empty(t, fallback.Prices["per_output_credit"])
+}
+
 func TestScheduledUSDPricesSwitchAtBoundaryWithoutRefresh(t *testing.T) {
 	at := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
 	p := priceEntry{Official: map[string]any{"per_second": "0.08"}, Upcoming: []scheduledPrice{{EffectiveAt: at.Format(time.RFC3339), Official: map[string]any{"per_second": "0.13"}}}}

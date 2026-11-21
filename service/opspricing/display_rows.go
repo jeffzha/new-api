@@ -70,7 +70,7 @@ func displayRows(components map[string]any) ([]DisplayRow, error) {
 						return nil, errors.New("invalid reference video condition")
 					}
 					conditions[key] = flag
-				case "resolution", "size", "quality", "operation", "period":
+				case "resolution", "size", "quality", "operation", "period", "taskPlugin":
 					text, ok := value.(string)
 					if !ok || strings.TrimSpace(text) == "" || len(text) > 80 {
 						return nil, errors.New("invalid list price condition")

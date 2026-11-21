@@ -46,10 +46,11 @@ import {
 import { EXCLUDED_GROUPS, VIEW_MODES } from './constants'
 import { useFilters } from './hooks/use-filters'
 import { usePricingData } from './hooks/use-pricing-data'
+import { vendorDisplayName } from './lib/vendor-display'
 import { ListPriceNotice } from './ops-list-prices/list-price-notice'
 
 export function Pricing() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { customization } = useThemeCustomization()
   const signal = usesConsoleWorkspace(customization.preset)
   const [selectedModelName, setSelectedModelName] = useState<string | null>(
@@ -297,7 +298,10 @@ export function Pricing() {
                     <TabsTrigger
                       key={vendor.id}
                       value={vendor.name}
-                      aria-label={vendor.name}
+                      aria-label={vendorDisplayName(
+                        vendor.name,
+                        i18n.resolvedLanguage || i18n.language
+                      )}
                     >
                       <span aria-hidden>
                         {vendor.icon ? (
@@ -306,7 +310,10 @@ export function Pricing() {
                           <Building2 className='size-4' />
                         )}
                       </span>
-                      {vendor.name}
+                      {vendorDisplayName(
+                        vendor.name,
+                        i18n.resolvedLanguage || i18n.language
+                      )}
                       <span data-slot='tabs-count' aria-hidden>
                         {
                           publicModels.filter(

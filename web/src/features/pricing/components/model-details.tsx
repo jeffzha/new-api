@@ -101,6 +101,7 @@ import {
   taskUsageUnitLabel,
   taskPricingConditions,
 } from '../lib/task-price-display'
+import { vendorDisplayName } from '../lib/vendor-display'
 import { getVideoPricingTable } from '../lib/video-pricing-table'
 import { OfficialPrice } from '../ops-list-prices/official-price'
 import { getOfficialRows } from '../ops-list-prices/official-price-data'
@@ -549,7 +550,7 @@ function ModelBackendSignalsSection(props: { model: PricingModel }) {
 }
 
 function ModelBackendProviderSection(props: { model: PricingModel }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const model = props.model
   const groups = normalizeCatalogItems(model.enable_groups)
   const endpoints = normalizeCatalogItems(model.supported_endpoint_types)
@@ -559,7 +560,12 @@ function ModelBackendProviderSection(props: { model: PricingModel }) {
   if (model.vendor_name) {
     cells.push(
       <CatalogInfoCell key='provider' label={t('Provider')}>
-        <CatalogTextValue>{model.vendor_name}</CatalogTextValue>
+        <CatalogTextValue>
+          {vendorDisplayName(
+            model.vendor_name,
+            i18n.resolvedLanguage || i18n.language
+          )}
+        </CatalogTextValue>
       </CatalogInfoCell>
     )
   }
@@ -629,7 +635,7 @@ function ModelBackendDetailsSection(props: { model: PricingModel }) {
 // ----------------------------------------------------------------------------
 
 function ModelHeader(props: { model: PricingModel }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const model = props.model
   const catalogMetadata = getModelCatalogMetadata(model.model_name)
   const modelIconKey = model.icon || model.vendor_icon
@@ -654,7 +660,12 @@ function ModelHeader(props: { model: PricingModel }) {
       </div>
       <div className='mt-1 flex flex-wrap items-center gap-1.5 text-xs'>
         {model.vendor_name && (
-          <span className='text-muted-foreground'>{model.vendor_name}</span>
+          <span className='text-muted-foreground'>
+            {vendorDisplayName(
+              model.vendor_name,
+              i18n.resolvedLanguage || i18n.language
+            )}
+          </span>
         )}
         <span className='text-muted-foreground/30'>·</span>
         <ModelBillingModeBadge model={model} />

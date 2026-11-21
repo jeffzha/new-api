@@ -29,6 +29,7 @@ import { StatusBadge } from '@/components/status-badge'
 import { getLobeIcon } from '@/lib/lobe-icon'
 
 import { parseTags } from '../lib/filters'
+import { vendorDisplayName } from '../lib/vendor-display'
 import type { PricingModel } from '../types'
 import { CachedPriceCell } from './cached-price-cell'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
@@ -43,7 +44,7 @@ export type PricingColumnsOptions = ModelPriceCellOptions
 export function usePricingColumns(
   options: PricingColumnsOptions = {}
 ): ColumnDef<PricingModel>[] {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
 
   return [
     // Model column
@@ -122,7 +123,10 @@ export function usePricingColumns(
           <BadgeCell className='gap-1.5'>
             {vendorIcon}
             <StatusBadge
-              label={model.vendor_name}
+              label={vendorDisplayName(
+                model.vendor_name,
+                i18n.resolvedLanguage || i18n.language
+              )}
               autoColor={model.vendor_name}
               size='sm'
               copyable={false}

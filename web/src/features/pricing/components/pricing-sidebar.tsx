@@ -39,6 +39,7 @@ import {
 } from '../constants'
 import { hasTaskUsageSchema } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
+import { vendorDisplayName } from '../lib/vendor-display'
 import type { PricingModel, PricingVendor } from '../types'
 
 type FilterOption = {
@@ -156,7 +157,7 @@ function FilterSection(props: FilterSectionProps) {
 }
 
 export function PricingSidebar(props: PricingSidebarProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const quotaTypeLabels = getQuotaTypeLabels(t)
   const endpointTypeLabels = getEndpointTypeLabels(t)
 
@@ -169,7 +170,10 @@ export function PricingSidebar(props: PricingSidebarProps) {
     ...props.vendors
       .map((vendor) => ({
         value: vendor.name,
-        label: vendor.name,
+        label: vendorDisplayName(
+          vendor.name,
+          i18n.resolvedLanguage || i18n.language
+        ),
         count: countBy(
           props.models,
           (model) => model.vendor_name === vendor.name

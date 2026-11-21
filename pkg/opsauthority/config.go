@@ -29,7 +29,13 @@ func Scope() string {
 // TaskRequestID matches the shared project contract: one terminal charge is
 // distinct from all submission and adjustment log records.
 func TaskRequestID(original string) string {
-	return fmt.Sprintf("pt-%x", sha256.Sum256([]byte(Scope()+"\x00"+original)))
+	return TaskRequestIDForScope(Scope(), original)
+}
+
+// TaskRequestIDForScope also identifies receipts for an already stored log.
+// Readback must use the log's original scope, not the reader process's scope.
+func TaskRequestIDForScope(scope, original string) string {
+	return fmt.Sprintf("pt-%x", sha256.Sum256([]byte(scope+"\x00"+original)))
 }
 func Validate() error {
 	mode := os.Getenv("OPS_WALLET_AUTHORITY")

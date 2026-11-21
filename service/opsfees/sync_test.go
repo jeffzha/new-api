@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/QuantumNous/new-api/service/opsclient"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -204,6 +205,28 @@ func TestOpsFeeDatabaseMatrix(t *testing.T) {
 			model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: "usd-connection", Currency: "CNY"})
 			require.NoError(t, model.AttachOpsFees(ctx, usdLogs))
 			assert.Equal(t, "waiting", usdLogs[0].OpsFee.Status, "a result cannot cross currencies")
+			// An async OPS task is charged under its terminal receipt, while its
+			// visible submission log keeps the original request and prehold quota.
+			terminal := model.OpsFee{Connection: "usd-connection", RequestID: opsauthority.TaskRequestIDForScope("overseas", "video-request"), UserID: "15", Model: "video", Amount: &zero, Currency: "USD", Status: "available"}
+			require.NoError(t, db.Create(&terminal).Error)
+			model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: "usd-connection", Currency: "USD", Scope: "different-process-scope"})
+			meta := `{"is_task":true,"billing_source":"ops","billing_scope":"overseas","settlement_stage":"preconsume"}`
+			tasks := []*model.Log{
+				{UserId: 15, Type: 2, RequestId: "video-request", ModelName: "video", Other: meta, Quota: 437500},
+				{UserId: 16, Type: 2, RequestId: "video-request", ModelName: "video", Other: meta},
+				{UserId: 15, Type: 2, RequestId: "video-request", ModelName: "another", Other: meta},
+				{UserId: 15, Type: 2, RequestId: "video-request", ModelName: "video", Other: strings.ReplaceAll(meta, "overseas", "domestic")},
+				{UserId: 15, Type: 2, RequestId: "video-request", ModelName: "video", Other: strings.ReplaceAll(meta, "preconsume", "settle")},
+				{UserId: 15, Type: 2, RequestId: "video-request", ModelName: "video", Other: strings.ReplaceAll(meta, `"ops"`, `"wallet"`)},
+			}
+			require.NoError(t, model.AttachOpsFees(ctx, tasks))
+			assert.Equal(t, "available", tasks[0].OpsFee.Status)
+			assert.Equal(t, "0", *tasks[0].OpsFee.Amount, "a failed task's finalized zero is a valid result")
+			assert.Equal(t, 437500, tasks[0].Quota, "readback cannot change the prehold or wallet")
+			assert.Equal(t, meta, tasks[0].Other)
+			for _, task := range tasks[1:] {
+				assert.Equal(t, "waiting", task.OpsFee.Status)
+			}
 			if err = db.Migrator().DropTable(&model.OpsFee{}); err != nil {
 				require.FailNow(t, fmt.Sprint(err))
 			}

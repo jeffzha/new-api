@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -45,6 +46,16 @@ func TestLogFeeBatchOnlyReturnsAuthorizedFees(t *testing.T) {
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest("POST", "/admin", strings.NewReader(`{"request_ids":["other"]}`)))
 	require.Contains(t, w.Body.String(), `"status":"waiting"`)
+	// The lightweight fee refresh must retain task provenance too. It returns
+	// the original visible request ID and the independent final OPS receipt.
+	require.NoError(t, logDB.Create(&model.Log{Id: 103, UserId: 1, Type: model.LogTypeConsume, RequestId: "video-original", ModelName: "video", Other: `{"is_task":true,"billing_source":"ops","billing_scope":"overseas","settlement_stage":"preconsume"}`}).Error)
+	require.NoError(t, db.Create(&model.OpsFee{Connection: "test", RequestID: opsauthority.TaskRequestIDForScope("overseas", "video-original"), UserID: "1", Model: "video", Amount: &amount, Status: "available", Currency: "CNY"}).Error)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/self", strings.NewReader(`{"request_ids":["video-original","other"]}`)))
+	require.Equal(t, 200, w.Code)
+	require.Contains(t, w.Body.String(), `"request_id":"video-original"`)
+	require.Contains(t, w.Body.String(), `"amount":"0.42"`)
+	require.NotContains(t, w.Body.String(), `"request_id":"other"`)
 	for _, body := range []string{`{"request_ids":[]}`, `{"request_ids":[""]}`, `{"request_ids":["   "]}`, `{"request_ids":["` + strings.Repeat("x", 65) + `"]}`, `{"request_ids":[` + strings.Repeat(`"x",`, 100) + `"y"]}`, strings.Repeat(" ", 16385) + `{"request_ids":["mine"]}`, `not-json`} {
 		w = httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest("POST", "/self", strings.NewReader(body)))

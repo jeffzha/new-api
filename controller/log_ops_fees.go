@@ -48,7 +48,7 @@ func getLogOpsFees(c *gin.Context, self bool) {
 		return
 	}
 	var logs []*model.Log
-	q := model.LOG_DB.WithContext(ctx).Select("request_id,user_id,model_name,type").Where("request_id IN ? AND type = ?", ids, model.LogTypeConsume)
+	q := model.LOG_DB.WithContext(ctx).Select("request_id,user_id,model_name,type,other").Where("request_id IN ? AND type = ?", ids, model.LogTypeConsume)
 	if self {
 		q = q.Where("user_id = ?", c.GetInt("id"))
 	}

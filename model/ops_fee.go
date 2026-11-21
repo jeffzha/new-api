@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -134,6 +136,7 @@ func AttachOpsFees(ctx context.Context, logs []*Log) error {
 		return nil
 	}
 	ids := make([]string, 0, len(logs))
+	receipts := make(map[*Log]string, len(logs))
 	for _, log := range logs {
 		if log.Type != LogTypeConsume {
 			continue
@@ -144,7 +147,18 @@ func AttachOpsFees(ctx context.Context, logs []*Log) error {
 		}
 		log.OpsFee = &OpsFee{Status: "waiting", Currency: currency}
 		if log.RequestId != "" {
-			ids = append(ids, log.RequestId)
+			receipt := log.RequestId
+			var other struct {
+				IsTask        bool   `json:"is_task"`
+				BillingSource string `json:"billing_source"`
+				BillingScope  string `json:"billing_scope"`
+				Stage         string `json:"settlement_stage"`
+			}
+			if common.UnmarshalJsonStr(log.Other, &other) == nil && other.IsTask && other.BillingSource == "ops" && other.BillingScope != "" && other.Stage == "preconsume" {
+				receipt = opsauthority.TaskRequestIDForScope(other.BillingScope, log.RequestId)
+			}
+			receipts[log] = receipt
+			ids = append(ids, receipt)
 		}
 	}
 	if len(ids) == 0 {
@@ -162,7 +176,7 @@ func AttachOpsFees(ctx context.Context, logs []*Log) error {
 		if log.OpsFee == nil {
 			continue
 		}
-		fee := byID[log.RequestId]
+		fee := byID[receipts[log]]
 		if fee != nil && fee.UserID == strconv.Itoa(log.UserId) && fee.Model == log.ModelName && fee.Currency == log.OpsFee.Currency {
 			log.OpsFee = fee
 		}

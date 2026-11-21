@@ -51,7 +51,7 @@ def main():
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w") as stream:
             stream.write("".join(key + "=" + value + "\n" for key, value in values.items()))
-        base = ["docker", "run", "--read-only", "--network", args.network,
+        base = ["docker", "run", "--read-only", "--workdir", "/tmp", "--network", args.network,
                 "--cpus", "0.1", "--memory", "128m", "--pids-limit", "32",
                 "--no-healthcheck", "--env-file", name,
                 "--tmpfs", "/tmp:rw,nosuid,size=16m",

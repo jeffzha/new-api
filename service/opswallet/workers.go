@@ -29,7 +29,7 @@ func StartConfigured(ctx context.Context) (func(), error) {
 		cancel()
 		return nil, errors.New("OPS custody requires explicit Gateway distributor finance authority")
 	}
-	if err := commissions.Step(ctx); err != nil {
+	if err := commissions.CheckSource(ctx); err != nil {
 		cancel()
 		return nil, errors.New("OPS source commission readiness failed: " + err.Error())
 	}

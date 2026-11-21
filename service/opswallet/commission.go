@@ -44,9 +44,19 @@ type CommissionProjector struct {
 	Client *opsclient.Client
 }
 
+// CheckSource validates identity, transport and the source page without posting
+// accounting entries. An unresolved historical commission cannot stop HTTP.
+func (p *CommissionProjector) CheckSource(ctx context.Context) error {
+	return p.step(ctx, false)
+}
+
 // Step consumes at most one bounded page on the existing sequential worker.
 // The durable cursor is bound to the service identity and source scope.
 func (p *CommissionProjector) Step(ctx context.Context) error {
+	return p.step(ctx, true)
+}
+
+func (p *CommissionProjector) step(ctx context.Context, apply bool) error {
 	if !opsauthority.Enabled() || p.DB == nil || p.Client == nil {
 		return errors.New("OPS commission source unavailable")
 	}
@@ -91,6 +101,9 @@ func (p *CommissionProjector) Step(ctx context.Context) error {
 	}
 	if next != strconv.FormatInt(last, 10) || len(page.Items) == 0 && *page.HasMore {
 		return errors.New("OPS commission cursor invalid")
+	}
+	if !apply {
+		return nil
 	}
 	return p.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		row := model.OPSAgencyCursor{ID: id, Source: source}

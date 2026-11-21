@@ -245,13 +245,17 @@ func TestOPSCommissionCursorRestartAndPageRollback(t *testing.T) {
 	defer server.Close()
 	client := opsclient.New(server.URL, "synthetic-key", "synthetic-secret-only", time.Second)
 	p := CommissionProjector{DB: db, Client: client}
+	require.NoError(t, p.CheckSource(t.Context()))
+	var cursorCount int64
+	require.NoError(t, db.Model(&model.OPSAgencyCursor{}).Count(&cursorCount).Error)
+	assert.Zero(t, cursorCount, "readiness cannot post commission or advance a cursor")
 	require.NoError(t, p.Step(t.Context()))
 	p = CommissionProjector{DB: db.Session(&gorm.Session{NewDB: true}), Client: client}
 	require.NoError(t, p.Step(t.Context()))
 	var cursor model.OPSAgencyCursor
 	require.NoError(t, db.First(&cursor).Error)
 	assert.Equal(t, int64(2), cursor.EntryID)
-	assert.Equal(t, 2, calls)
+	assert.Equal(t, 3, calls)
 	var zeroReceipt model.OPSAgencyReceipt
 	require.NoError(t, db.First(&zeroReceipt, "id = ?", model.OPSAgencyID("receipt", "2")).Error)
 	var projected int64
@@ -270,6 +274,7 @@ func TestOPSCommissionCursorRestartAndPageRollback(t *testing.T) {
 		raw, _ := common.Marshal(map[string]any{"data": map[string]any{"currency": "USD", "commissionFactsVersion": "1", "items": []CommissionEntry{good, bad}, "hasMore": false, "nextCursor": "4"}})
 		_, _ = w.Write(raw)
 	})
+	require.NoError(t, p.CheckSource(t.Context()), "valid source with unresolved accounting must remain available")
 	require.Error(t, p.Step(t.Context()))
 	require.NoError(t, db.First(&cursor).Error)
 	assert.Equal(t, int64(2), cursor.EntryID)

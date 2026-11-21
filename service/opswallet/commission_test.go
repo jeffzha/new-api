@@ -36,7 +36,7 @@ func commissionTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, model.MigrateAgency(db))
 	require.NoError(t, db.AutoMigrate(&model.TopUp{}, &model.Token{}, &model.OPSWalletEvent{}, &model.OPSWalletHold{}, &model.OPSWalletAdmission{}))
 	for range 2 {
-		require.NoError(t, db.AutoMigrate(&model.OPSAgencyOpening{}, &model.OPSAgencyAccount{}, &model.OPSAgencyCursor{}, &model.OPSAgencyReceipt{}, &model.OPSAgencyCharge{}))
+		require.NoError(t, db.AutoMigrate(&model.OPSAgencyOpening{}, &model.OPSAgencyAccount{}, &model.OPSAgencyCursor{}, &model.OPSAgencyReceipt{}, &model.OPSAgencyCharge{}, &model.OPSAgencyPending{}))
 	}
 	return db
 }
@@ -266,21 +266,52 @@ func TestOPSCommissionCursorRestartAndPageRollback(t *testing.T) {
 	require.ErrorContains(t, db.Transaction(func(tx *gorm.DB) error { return ApplyCommissionEntryTx(tx, changed) }), "receipt changed")
 	changed.EntryID, changed.BalanceAfter = "3", "2"
 	require.ErrorContains(t, db.Transaction(func(tx *gorm.DB) error { return ApplyCommissionEntryTx(tx, changed) }), "balance discontinuity")
-	// A committed first entry followed by invalid evidence must roll back page.
+	// Unresolved accounting is retained durably. It blocks this user's newer
+	// balance sequence, while another user in the same page keeps progressing.
 	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		items := []CommissionEntry{}
 		good := commissionEntry(3, "credit", "1", "2")
 		bad := commissionEntry(4, "charge", "-1", "1")
 		bad.RequestID = "missing-hold"
-		raw, _ := common.Marshal(map[string]any{"data": map[string]any{"currency": "USD", "commissionFactsVersion": "1", "items": []CommissionEntry{good, bad}, "hasMore": false, "nextCursor": "4"}})
+		bad.Model = "local-model"
+		later := commissionEntry(5, "credit", "1", "2")
+		other := commissionEntry(6, "credit", "1", "1")
+		other.UserID = "2"
+		if r.URL.Query().Get("since") == "2" {
+			items = []CommissionEntry{good, bad, later, other}
+		}
+		raw, _ := common.Marshal(map[string]any{"data": map[string]any{"currency": "USD", "commissionFactsVersion": "1", "items": items, "hasMore": false, "nextCursor": "6"}})
 		_, _ = w.Write(raw)
 	})
 	require.NoError(t, p.CheckSource(t.Context()), "valid source with unresolved accounting must remain available")
-	require.Error(t, p.Step(t.Context()))
+	require.NoError(t, p.Step(t.Context()))
 	require.NoError(t, db.First(&cursor).Error)
-	assert.Equal(t, int64(2), cursor.EntryID)
+	assert.Equal(t, int64(6), cursor.EntryID, "source cursor acknowledges retained evidence, not completed accounting")
 	var account model.OPSAgencyAccount
-	require.NoError(t, db.First(&account).Error)
-	assert.Equal(t, int64(1000000), account.BalanceMicros)
+	require.NoError(t, db.First(&account, "id = ?", model.OPSAgencyID("account", "1")).Error)
+	assert.Equal(t, int64(2000000), account.BalanceMicros)
+	var otherAccount model.OPSAgencyAccount
+	require.NoError(t, db.First(&otherAccount, "id = ?", model.OPSAgencyID("account", "2")).Error)
+	assert.Equal(t, int64(1000000), otherAccount.BalanceMicros)
+	var retained model.OPSAgencyPending
+	require.NoError(t, db.First(&retained, "entry_id = ?", 4).Error)
+	assert.Equal(t, 1, retained.Attempts)
+	assert.Contains(t, retained.LastError, "frozen request missing")
+	p = CommissionProjector{DB: db.Session(&gorm.Session{NewDB: true}), Client: client}
+	require.NoError(t, p.Step(t.Context()))
+	require.NoError(t, db.First(&retained, "id = ?", retained.ID).Error)
+	assert.Equal(t, 1, retained.Attempts, "restart must preserve backoff")
+	seedCommissionHold(t, db, "missing-hold", 1, nil)
+	require.NoError(t, db.Model(&retained).Update("next_retry_at", 0).Error)
+	require.NoError(t, p.Step(t.Context()))
+	require.NoError(t, db.First(&account, "id = ?", account.ID).Error)
+	assert.Equal(t, int64(2000000), account.BalanceMicros, "recovery applies the retained debit then its following credit exactly once")
+	var pendingCount int64
+	require.NoError(t, db.Model(&model.OPSAgencyPending{}).Count(&pendingCount).Error)
+	assert.Zero(t, pendingCount)
+	require.NoError(t, p.Step(t.Context()))
+	require.NoError(t, db.First(&account, "id = ?", account.ID).Error)
+	assert.Equal(t, int64(2000000), account.BalanceMicros)
 	client.KeyID = "changed-station"
 	require.ErrorContains(t, p.Step(t.Context()), "source changed")
 	t.Setenv("OPS_DISTRIBUTOR_NON_WALLET_ONLY", "true")
@@ -323,6 +354,54 @@ func TestOPSCommissionTieredPricesAndUnknownFunds(t *testing.T) {
 		_, err := commissionMicros(raw)
 		require.Error(t, err)
 	}
+}
+
+func TestOPSCommissionInboxMismatchIsolation(t *testing.T) {
+	db := commissionTestDB(t)
+	for _, index := range []string{"idx_ops_agency_pending_order", "idx_ops_agency_pending_due"} {
+		require.True(t, db.Migrator().HasIndex(&model.OPSAgencyPending{}, index))
+	}
+	applyCommission(t, db, commissionEntry(1, "credit", "2", "2"))
+	sales := 5500
+	snapshot := &agencycontract.PricingSnapshot{UserID: 1, AgencyID: 7, BindingID: 8, OriginModelName: "local-model", CurrencyCode: "USD", ExchangeRate: "1", CommissionEligible: true, SalesBPS: sales, SettlementBPS: 4000}
+	seedCommissionHold(t, db, "historical-mismatch", 1, snapshot)
+	standard := "1"
+	mismatch := commissionEntry(2, "charge", "-0.6", "1.4")
+	mismatch.RequestID, mismatch.Model, mismatch.StandardAmount = "historical-mismatch", "local-model", &standard
+	other := commissionEntry(3, "credit", "1", "1")
+	other.UserID = "2"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		items := []CommissionEntry{}
+		if r.URL.Query().Get("since") == "0" {
+			items = []CommissionEntry{mismatch, other}
+		}
+		raw, _ := common.Marshal(map[string]any{"data": map[string]any{"currency": "USD", "commissionFactsVersion": "1", "items": items, "hasMore": false, "nextCursor": "3"}})
+		_, _ = w.Write(raw)
+	}))
+	defer server.Close()
+	p := CommissionProjector{DB: db, Client: opsclient.New(server.URL, "synthetic-key", "synthetic-secret-only", time.Second)}
+	require.NoError(t, p.Step(t.Context()))
+	var retained model.OPSAgencyPending
+	require.NoError(t, db.First(&retained).Error)
+	assert.Contains(t, retained.LastError, "actual debit differs")
+	assert.Equal(t, int64(2), retained.EntryID)
+	var account model.OPSAgencyAccount
+	require.NoError(t, db.First(&account, "id = ?", model.OPSAgencyID("account", "1")).Error)
+	assert.Equal(t, int64(2000000), account.BalanceMicros, "failed allocation must roll back")
+	account = model.OPSAgencyAccount{}
+	require.NoError(t, db.First(&account, "id = ?", model.OPSAgencyID("account", "2")).Error)
+	assert.Equal(t, int64(1000000), account.BalanceMicros)
+	var count int64
+	require.NoError(t, db.Model(&model.AgencyCommissionLedger{}).Count(&count).Error)
+	assert.Zero(t, count, "a mismatch cannot generate commission")
+	require.NoError(t, db.Model(&model.OPSAgencyCharge{}).Count(&count).Error)
+	assert.Zero(t, count)
+	changed := mismatch
+	changed.Amount = "-0.55"
+	require.ErrorContains(t, db.Transaction(func(tx *gorm.DB) error { return retainCommissionEntry(tx, changed) }), "evidence changed")
+	require.NoError(t, p.Step(t.Context()))
+	require.NoError(t, db.First(&retained, "id = ?", retained.ID).Error)
+	assert.Equal(t, 1, retained.Attempts, "a held mismatch cannot hammer every worker tick")
 }
 
 func TestOPSCommissionReviewedOpeningKeepsPaidBonusAndUnknownSeparate(t *testing.T) {

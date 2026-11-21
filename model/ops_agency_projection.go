@@ -52,6 +52,20 @@ type OPSAgencyCharge struct {
 	EventJSON      AgencyOpsPayload `gorm:"not null"`
 }
 
+// OPSAgencyPending retains immutable commission evidence before source
+// acknowledgement. Failed users cannot bypass their older balance sequence.
+type OPSAgencyPending struct {
+	ID          string           `gorm:"size:64;primaryKey"`
+	Scope       string           `gorm:"size:80;not null;index:idx_ops_agency_pending_order,priority:1;index:idx_ops_agency_pending_due,priority:1"`
+	UserID      int              `gorm:"not null;index:idx_ops_agency_pending_order,priority:2"`
+	EntryID     int64            `gorm:"not null;index:idx_ops_agency_pending_order,priority:3"`
+	PayloadHash string           `gorm:"size:64;not null"`
+	Payload     AgencyOpsPayload `gorm:"not null"`
+	NextRetryAt int64            `gorm:"not null;index:idx_ops_agency_pending_due,priority:2"`
+	Attempts    int              `gorm:"not null"`
+	LastError   string           `gorm:"size:255;not null"`
+}
+
 type OPSAgencyLot struct {
 	ID          string `json:"id"`
 	Source      string `json:"source"`

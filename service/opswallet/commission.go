@@ -105,7 +105,7 @@ func (p *CommissionProjector) step(ctx context.Context, apply bool) error {
 	if !apply {
 		return nil
 	}
-	return p.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = p.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		row := model.OPSAgencyCursor{ID: id, Source: source}
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 			return err
@@ -122,12 +122,16 @@ func (p *CommissionProjector) step(ctx context.Context, apply bool) error {
 			return nil
 		}
 		for _, entry := range page.Items {
-			if err := ApplyCommissionEntryTx(tx, entry); err != nil {
+			if err := retainCommissionEntry(tx, entry); err != nil {
 				return err
 			}
 		}
 		return tx.Model(&current).Update("entry_id", last).Error
 	})
+	if err != nil {
+		return err
+	}
+	return p.drainCommissionInbox(ctx, id)
 }
 
 func commissionMicros(raw string) (int64, error) {

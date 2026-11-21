@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -12,15 +13,17 @@ import (
 )
 
 func main() {
+	inboxOnly := flag.Bool("commission-inbox-only", false, "prepare only the additive commission inbox")
+	flag.Parse()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	if err := prepare(ctx); err != nil {
+	if err := prepare(ctx, *inboxOnly); err != nil {
 		fmt.Fprintln(os.Stderr, "OPS wallet schema preparation failed; active services and wallet authority are unchanged")
 		os.Exit(1)
 	}
 }
 
-func prepare(ctx context.Context) error {
+func prepare(ctx context.Context, inboxOnly bool) error {
 	db, err := model.OpenOPSWalletOperatorDB(ctx)
 	if err != nil {
 		return err
@@ -37,11 +40,17 @@ func prepare(ctx context.Context) error {
 	// idx_ops_hold_reconcile(scope,state,id): bounded hold reconciliation.
 	// idx_ops_hold_account(account_id): per-account outstanding holds.
 	// idx_ops_usage_pending(scope,delivered_at,id): durable usage outbox.
+	// idx_ops_agency_pending_order(scope,user_id,entry_id): preserve each
+	// user's balance order without blocking other users' commission recovery.
+	// idx_ops_agency_pending_due(scope,next_retry_at): bounded backoff reads.
 	tables := []any{
 		&model.OPSWalletEvent{}, &model.OPSWalletAdmission{},
 		&model.OPSWalletHold{}, &model.OPSWalletUsage{},
 		&model.OPSAgencyCursor{}, &model.OPSAgencyAccount{},
-		&model.OPSAgencyOpening{}, &model.OPSAgencyReceipt{}, &model.OPSAgencyCharge{},
+		&model.OPSAgencyOpening{}, &model.OPSAgencyReceipt{}, &model.OPSAgencyCharge{}, &model.OPSAgencyPending{},
+	}
+	if inboxOnly {
+		tables = []any{&model.OPSAgencyPending{}}
 	}
 	if err := db.WithContext(ctx).AutoMigrate(tables...); err != nil {
 		return err
@@ -49,6 +58,11 @@ func prepare(ctx context.Context) error {
 	for _, table := range tables {
 		if !db.Migrator().HasTable(table) {
 			return fmt.Errorf("required wallet table missing")
+		}
+	}
+	for _, name := range []string{"idx_ops_agency_pending_order", "idx_ops_agency_pending_due"} {
+		if !db.Migrator().HasIndex(&model.OPSAgencyPending{}, name) {
+			return fmt.Errorf("required commission inbox index missing")
 		}
 	}
 	fmt.Println("Additive Gateway primary wallet schema prepared; verify target index catalog before traffic")

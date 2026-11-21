@@ -21,6 +21,14 @@ func StartConfigured(ctx context.Context) (func(), error) {
 	if opsbilling.Default == nil || opsbilling.Default.Currency != "USD" || model.DB == nil {
 		return nil, errors.New("OPS wallet recovery requires the USD balance reader")
 	}
+	if !model.DB.Migrator().HasTable(&model.OPSAgencyPending{}) {
+		return nil, errors.New("OPS commission inbox schema must be prepared before release")
+	}
+	for _, name := range []string{"idx_ops_agency_pending_order", "idx_ops_agency_pending_due"} {
+		if !model.DB.Migrator().HasIndex(&model.OPSAgencyPending{}, name) {
+			return nil, errors.New("OPS commission inbox index must be prepared before release")
+		}
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	worker := &Reconciler{DB: model.DB, Reader: opsbilling.Default}

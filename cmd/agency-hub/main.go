@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencyhub"
+	"github.com/QuantumNous/new-api/service/agencyopspush"
 	"github.com/joho/godotenv"
 	"gorm.io/gorm"
 )
@@ -42,6 +43,20 @@ func run() error {
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
 		return agencyhub.New(model.DB, nil, config).RunProvisioningWorker(ctx, command == "provision-once")
+	}
+	if command == "distributor-check" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return agencyopspush.CheckConfigured(ctx, model.DB)
+	}
+	if command == "distributor-worker" {
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
+		err := agencyopspush.RunConfigured(ctx, model.DB)
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return err
 	}
 	if command == "migrate" {
 		seconds := 60

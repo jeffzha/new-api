@@ -148,6 +148,48 @@ func TestBridgeCommitWakesPrivateSender(t *testing.T) {
 	assert.Error(t, listenForCommits(ctx, filepath.Join(public, "wake.sock")))
 }
 
+func TestCustodySenderUsesCurrentStationCredential(t *testing.T) {
+	t.Setenv("OPS_BRIDGE_URL", "https://ops.example.test")
+	t.Setenv("OPS_GATEWAY_ID", "overseas")
+	t.Setenv("OPS_GATEWAY_KEY", "retired-key")
+	t.Setenv("OPS_PUSH_URL", "https://ops.example.test")
+	t.Setenv("OPS_PUSH_KEY_ID", "overseas")
+	t.Setenv("OPS_PUSH_SECRET", "current-local-only-credential")
+	t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+	sender, err := configuredSender(nil)
+	require.NoError(t, err)
+	assert.Equal(t, "current-local-only-credential", sender.Key)
+	t.Setenv("OPS_PUSH_KEY_ID", "domestic")
+	_, err = configuredSender(nil)
+	require.Error(t, err)
+	t.Setenv("OPS_WALLET_AUTHORITY", "gateway")
+	sender, err = configuredSender(nil)
+	require.NoError(t, err)
+	assert.Equal(t, "retired-key", sender.Key, "domestic legacy configuration is unchanged")
+}
+
+func TestStandaloneWorkerReadinessDoesNotCreateSchemaOrEvents(t *testing.T) {
+	t.Setenv("OPS_DISTRIBUTOR_EVENTS_ENABLED", "true")
+	t.Setenv("OPS_WALLET_AUTHORITY", "gateway")
+	t.Setenv("OPS_BRIDGE_URL", "https://ops.example.test")
+	t.Setenv("OPS_GATEWAY_ID", "fixture")
+	t.Setenv("OPS_GATEWAY_KEY", "local-fixture-key")
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "readiness.db")), &gorm.Config{})
+	require.NoError(t, err)
+	pool, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pool.Close() })
+	require.Error(t, CheckConfigured(t.Context(), db))
+	assert.False(t, db.Migrator().HasTable(&model.AgencyOpsEvent{}))
+	require.NoError(t, db.AutoMigrate(&model.AgencyOpsEvent{}, &model.AgencyOpsSenderLease{}))
+	require.NoError(t, CheckConfigured(t.Context(), db))
+	var count int64
+	require.NoError(t, db.Model(&model.AgencyOpsEvent{}).Count(&count).Error)
+	assert.Zero(t, count)
+	require.NoError(t, db.Model(&model.AgencyOpsSenderLease{}).Count(&count).Error)
+	assert.Zero(t, count)
+}
+
 func TestDistributorEventsAcrossDatabases(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
@@ -247,6 +289,10 @@ func TestDistributorEventsAcrossDatabases(t *testing.T) {
 				}
 				calls++
 				if calls == 1 {
+					w.WriteHeader(429)
+					return
+				}
+				if calls == 2 {
 					w.WriteHeader(503)
 					return
 				}
@@ -259,18 +305,51 @@ func TestDistributorEventsAcrossDatabases(t *testing.T) {
 			require.NoError(t, err)
 			now := time.Now()
 			sender.Now = func() time.Time { return now }
+			require.NoError(t, db.Model(&model.AgencyOpsEvent{}).Where("status = ?", "queued").Update("attempts", 7).Error)
 			_, err = sender.Step(t.Context())
 			require.NoError(t, err)
 			assert.Len(t, received, 4)
-			now = now.Add(5 * time.Second)
+			var retry model.AgencyOpsEvent
+			require.NoError(t, db.Where("status = ?", "retry").First(&retry).Error)
+			assert.Equal(t, 8, retry.Attempts)
+			now = now.Add(10 * time.Minute)
+			_, err = sender.Step(t.Context())
+			require.NoError(t, err)
+			require.NoError(t, db.First(&retry, retry.ID).Error)
+			assert.Equal(t, "retry", retry.Status, "temporary overload must not exhaust delivery")
+			now = now.Add(10 * time.Minute)
 			_, err = sender.Step(t.Context())
 			require.NoError(t, err)
 			assert.Len(t, received, 4)
 			require.NoError(t, db.Model(&model.AgencyOpsEvent{}).Where("status = ?", "delivered").Count(&count).Error)
 			assert.Equal(t, int64(4), count)
+			// The independent worker retains the shared lease between polls.
+			// Old application senders cannot consume attempts with retired keys.
+			sender.ExclusiveWorker = true
 			_, err = sender.Step(t.Context())
 			require.NoError(t, err)
-			assert.Equal(t, 2, calls)
+			var senderLease model.AgencyOpsSenderLease
+			require.NoError(t, db.First(&senderLease, 1).Error)
+			assert.Equal(t, sender.Owner, senderLease.Owner)
+			assert.Equal(t, now.Add(time.Minute).UnixMilli(), senderLease.UntilMS)
+			legacy, err := New(db, server.URL, "station", "old-key")
+			require.NoError(t, err)
+			legacy.Now = func() time.Time { return now }
+			_, err = legacy.Step(t.Context())
+			require.NoError(t, err)
+			require.NoError(t, db.First(&senderLease, 1).Error)
+			assert.Equal(t, sender.Owner, senderLease.Owner)
+			// A stopped worker can be recovered after its bounded lease expires.
+			now = now.Add(61 * time.Second)
+			_, err = legacy.Step(t.Context())
+			require.NoError(t, err)
+			require.NoError(t, db.First(&senderLease, 1).Error)
+			assert.Equal(t, legacy.Owner, senderLease.Owner)
+			assert.Zero(t, senderLease.UntilMS)
+			sender.ExclusiveWorker = false
+			_, err = sender.Step(t.Context())
+			require.NoError(t, err)
+			assert.Equal(t, 3, calls)
 			var old model.AgencyUsageFact
 			require.NoError(t, db.First(&old, existing.ID).Error)
 			assert.Equal(t, "old-fact", old.EventID)

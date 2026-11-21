@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/shirou/gopsutil/cpu"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -29,6 +30,7 @@ type Sender struct {
 	Client            *http.Client
 	Now               func() time.Time
 	Owner             string
+	ExclusiveWorker   bool
 }
 
 func New(db *gorm.DB, base, gateway, key string) (*Sender, error) {
@@ -45,11 +47,60 @@ func New(db *gorm.DB, base, gateway, key string) (*Sender, error) {
 		}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
+func configuredSender(db *gorm.DB) (*Sender, error) {
+	base, gateway, key := os.Getenv("OPS_BRIDGE_URL"), os.Getenv("OPS_GATEWAY_ID"), os.Getenv("OPS_GATEWAY_KEY")
+	if opsauthority.Enabled() {
+		// Custody rotates the signed ingest credential. Distributor facts must
+		// use that same explicit station credential, never a retired legacy key.
+		if gateway != os.Getenv("OPS_PUSH_KEY_ID") || strings.TrimRight(base, "/") != strings.TrimRight(os.Getenv("OPS_PUSH_URL"), "/") || len(os.Getenv("OPS_PUSH_SECRET")) < 16 {
+			return nil, errors.New("custody distributor credential scope mismatch")
+		}
+		key = os.Getenv("OPS_PUSH_SECRET")
+	}
+	return New(db, base, gateway, key)
+}
+
+// RunConfigured runs only durable distributor delivery, without wallet,
+// reconciliation or HTTP workers. Existing sender leases prevent duplicates.
+func RunConfigured(ctx context.Context, db *gorm.DB) error {
+	if os.Getenv("OPS_DISTRIBUTOR_EVENTS_ENABLED") != "true" {
+		return errors.New("distributor delivery is disabled")
+	}
+	s, err := configuredSender(db)
+	if err != nil {
+		return err
+	}
+	if !db.Migrator().HasTable(&model.AgencyOpsEvent{}) || !db.Migrator().HasTable(&model.AgencyOpsSenderLease{}) {
+		return errors.New("distributor event schema requires migration")
+	}
+	s.ExclusiveWorker = true
+	defer db.Model(&model.AgencyOpsSenderLease{}).Where("id = ? AND owner = ?", 1, s.Owner).Update("until_ms", 0)
+	s.Run(ctx)
+	return ctx.Err()
+}
+
+// CheckConfigured verifies a standalone worker's scope and existing schema
+// without claiming events, creating tables, or writing any financial data.
+func CheckConfigured(ctx context.Context, db *gorm.DB) error {
+	if os.Getenv("OPS_DISTRIBUTOR_EVENTS_ENABLED") != "true" {
+		return errors.New("distributor delivery is disabled")
+	}
+	if _, err := configuredSender(db); err != nil {
+		return err
+	}
+	for _, table := range []any{&model.AgencyOpsEvent{}, &model.AgencyOpsSenderLease{}} {
+		if !db.WithContext(ctx).Migrator().HasTable(table) {
+			return errors.New("distributor event schema requires migration")
+		}
+	}
+	return nil
+}
+
 func StartConfigured(ctx context.Context, db *gorm.DB) error {
 	if os.Getenv("OPS_DISTRIBUTOR_EVENTS_ENABLED") != "true" {
 		return nil
 	}
-	s, err := New(db, os.Getenv("OPS_BRIDGE_URL"), os.Getenv("OPS_GATEWAY_ID"), os.Getenv("OPS_GATEWAY_KEY"))
+	s, err := configuredSender(db)
 	if err != nil {
 		return err
 	}
@@ -91,6 +142,9 @@ func (s *Sender) Run(ctx context.Context) {
 			stepCtx, cancel := context.WithTimeout(ctx, 7*time.Second)
 			next, err := s.Step(stepCtx)
 			wait = next
+			if s.ExclusiveWorker {
+				wait = min(wait, time.Second)
+			}
 			cancel()
 			if err != nil {
 				common.SysError("distributor event delivery unavailable")
@@ -101,6 +155,15 @@ func (s *Sender) Run(ctx context.Context) {
 			}
 		} else {
 			wait = 5 * time.Second
+			if s.ExclusiveWorker {
+				// Yield sending under CPU pressure while retaining ownership.
+				// Otherwise a retired in-process sender could consume retries.
+				leaseCtx, cancel := context.WithTimeout(ctx, time.Second)
+				_ = s.DB.WithContext(leaseCtx).Model(&model.AgencyOpsSenderLease{}).
+					Where("id = ? AND owner = ?", 1, s.Owner).
+					Update("until_ms", time.Now().Add(time.Minute).UnixMilli()).Error
+				cancel()
+			}
 		}
 		timer := time.NewTimer(wait)
 		select {
@@ -142,8 +205,12 @@ func (s *Sender) Step(ctx context.Context) (time.Duration, error) {
 		}
 		// Release after the HTTP request. Another producer with a new commit
 		// need not wait for an idle process's 30-second recovery check.
+		leaseMS := int64(10000)
+		if s.ExclusiveWorker {
+			leaseMS = 60000
+		}
 		claim := tx.Model(&model.AgencyOpsSenderLease{}).Where("id = ? AND (until_ms <= ? OR owner = ?)", 1, now, s.Owner).
-			Updates(map[string]any{"owner": s.Owner, "until_ms": now + 10000})
+			Updates(map[string]any{"owner": s.Owner, "until_ms": now + leaseMS})
 		if claim.Error != nil {
 			return claim.Error
 		}
@@ -231,7 +298,9 @@ func (s *Sender) Step(ctx context.Context) (time.Duration, error) {
 		return 30 * time.Second, err
 	}
 	if len(leased) == 0 {
-		_ = s.DB.WithContext(ctx).Model(&model.AgencyOpsSenderLease{}).Where("id = ? AND owner = ?", 1, s.Owner).Update("until_ms", 0).Error
+		if !s.ExclusiveWorker {
+			_ = s.DB.WithContext(ctx).Model(&model.AgencyOpsSenderLease{}).Where("id = ? AND owner = ?", 1, s.Owner).Update("until_ms", 0).Error
+		}
 		wait := 30 * time.Second
 		for _, status := range []string{"queued", "retry"} {
 			var next model.AgencyOpsEvent
@@ -286,7 +355,7 @@ func (s *Sender) Step(ctx context.Context) (time.Duration, error) {
 			state, code, delivered := "retry", "delivery_unavailable", int64(0)
 			if ack[row.EventID] {
 				state, code, delivered = "delivered", "", s.Now().UnixMilli()
-			} else if invalid && len(leased) == 1 || !invalid && row.Attempts >= 8 {
+			} else if invalid && len(leased) == 1 {
 				state, code = "dead", "delivery_needs_review"
 			}
 			delays := []int64{1000, 5000, 15000, 60000, 300000}
@@ -301,8 +370,10 @@ func (s *Sender) Step(ctx context.Context) (time.Duration, error) {
 				return err
 			}
 		}
-		if err := tx.Model(&model.AgencyOpsSenderLease{}).Where("id = ? AND owner = ?", 1, s.Owner).Update("until_ms", 0).Error; err != nil {
-			return err
+		if !s.ExclusiveWorker {
+			if err := tx.Model(&model.AgencyOpsSenderLease{}).Where("id = ? AND owner = ?", 1, s.Owner).Update("until_ms", 0).Error; err != nil {
+				return err
+			}
 		}
 		return nil
 	})

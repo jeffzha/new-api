@@ -77,7 +77,10 @@ func (c *Client) reserveRead(ctx context.Context) error {
 	key := c.budgetKey()
 	at := time.Now()
 	var wait time.Duration
-	if common.RedisEnabled && common.RDB != nil {
+	if common.RedisEnabled {
+		if common.RDB == nil {
+			return errors.New("OPS read budget unavailable")
+		}
 		token := make([]byte, 16)
 		if _, err := rand.Read(token); err != nil {
 			return errors.New("OPS read budget unavailable")
@@ -119,7 +122,10 @@ func (c *Client) reserveRead(ctx context.Context) error {
 func (c *Client) coolReadBudget(ctx context.Context, wait time.Duration) {
 	wait = max(wait, time.Minute)
 	key := c.budgetKey()
-	if common.RedisEnabled && common.RDB != nil {
+	if common.RedisEnabled {
+		if common.RDB == nil {
+			return
+		}
 		bounded, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
 		_ = common.RDB.Eval(bounded, `local old=redis.call('PTTL',KEYS[1]); if old<tonumber(ARGV[1]) then redis.call('PSETEX',KEYS[1],ARGV[1],'1') end; return 0`, []string{key + ":cooldown"}, wait.Milliseconds()).Err()

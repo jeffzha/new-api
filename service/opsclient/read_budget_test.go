@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -74,6 +76,58 @@ func TestReadBudgetSharedAcrossInstancesResourcesAndCallPriority(t *testing.T) {
 	server.Close()
 	_, err = clients[0].Get(ctx, "/api/v1/catalog/v1/fees", time.Now())
 	require.ErrorContains(t, err, "budget unavailable")
+	common.RDB = nil
+	_, err = clients[0].Get(ctx, "/api/v1/catalog/v1/fees", time.Now())
+	require.ErrorContains(t, err, "budget unavailable")
+}
+
+// Set OPS_TEST_REDIS_ADDR to a dedicated isolated Redis. Only this test's
+// randomly named keys are removed; no shared database is flushed.
+func TestReadBudgetRealRedisOptIn(t *testing.T) {
+	addr := os.Getenv("OPS_TEST_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("OPS_TEST_REDIS_ADDR not set")
+	}
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	before, enabled := common.RDB, common.RedisEnabled
+	common.RDB, common.RedisEnabled = client, true
+	t.Cleanup(func() { client.Close(); common.RDB, common.RedisEnabled = before, enabled })
+	ctx := context.Background()
+	require.NoError(t, client.Ping(ctx).Err())
+	id := "isolated-budget-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	first, second := New("https://local.invalid", id, "test-only", time.Second), New("https://local.invalid", id, "test-only", time.Second)
+	t.Cleanup(func() { client.Del(ctx, first.budgetKey(), first.budgetKey()+":cooldown") })
+	var workers sync.WaitGroup
+	var admitted atomic.Int64
+	for i := range 100 {
+		workers.Go(func() {
+			c := first
+			if i%2 == 0 {
+				c = second
+			}
+			err := c.reserveRead(ctx)
+			if err == nil {
+				admitted.Add(1)
+				return
+			}
+			_, deferred := ReadDeferred(err)
+			if !deferred {
+				t.Errorf("unexpected budget failure: %v", err)
+			}
+		})
+	}
+	workers.Wait()
+	require.Equal(t, int64(backgroundReadLimit), admitted.Load())
+	for range readBudgetLimit - backgroundReadLimit {
+		require.NoError(t, first.reserveRead(CallBalanceContext(ctx)))
+	}
+	_, deferred := ReadDeferred(second.reserveRead(CallBalanceContext(ctx)))
+	require.True(t, deferred)
+	first.coolReadBudget(ctx, 90*time.Second)
+	second.coolReadBudget(ctx, time.Second)
+	wait, deferred := ReadDeferred(second.reserveRead(CallBalanceContext(ctx)))
+	require.True(t, deferred)
+	require.Greater(t, wait, 89*time.Second)
 }
 
 func TestReadBudgetSharesServerCooldownAndKeepsLocalFallback(t *testing.T) {

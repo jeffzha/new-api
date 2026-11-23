@@ -1,9 +1,21 @@
 package common
 
-import "github.com/QuantumNous/new-api/constant"
+import (
+	"strings"
 
-// GetEndpointTypesByChannelType 获取渠道最优先端点类型（所有的渠道都支持 OpenAI 端点）
+	"github.com/QuantumNous/new-api/constant"
+)
+
+// GetEndpointTypesByChannelType returns the inferred endpoints in preferred order.
 func GetEndpointTypesByChannelType(channelType int, modelName string) []constant.EndpointType {
+	// These adapters expose Seedream through image generation, not chat.
+	// Explicit custom routes and model metadata are resolved by the caller.
+	if strings.HasPrefix(strings.ToLower(modelName), "doubao-seedream-") {
+		switch channelType {
+		case constant.ChannelTypeOpenAI, constant.ChannelTypeVolcEngine, constant.ChannelTypeSeedreamArkOpenAI:
+			return []constant.EndpointType{constant.EndpointTypeImageGeneration}
+		}
+	}
 	var endpointTypes []constant.EndpointType
 	switch channelType {
 	case constant.ChannelTypeJina:

@@ -229,6 +229,64 @@ func TestPricingNativeChannelEndpointTypesUnchanged(t *testing.T) {
 	assert.Equal(t, []constant.EndpointType{constant.EndpointTypeAnthropic, constant.EndpointTypeOpenAI}, byModel["claude-3-5-sonnet"])
 }
 
+func TestPricingSeedreamPublishesImageEndpointInsteadOfInferredChat(t *testing.T) {
+	for _, channelType := range []int{
+		constant.ChannelTypeOpenAI,
+		constant.ChannelTypeVolcEngine,
+		constant.ChannelTypeSeedreamArkOpenAI,
+	} {
+		t.Run(fmt.Sprintf("channel-%d", channelType), func(t *testing.T) {
+			resetPricingEndpointTestTables(t)
+			insertPricingEndpointChannel(t, 204, channelType, dto.ChannelOtherSettings{})
+			models := []string{
+				"doubao-seedream-5-0-260128",
+				"doubao-seedream-5-0-pro-260628",
+				"doubao-seedream-5-0-flash-260915",
+			}
+			for _, name := range models {
+				insertPricingEndpointAbility(t, 204, name)
+			}
+			insertPricingEndpointAbility(t, 204, "doubao-seed-2-0-mini-260428")
+			insertPricingEndpointAbility(t, 204, "doubao-seedance-2.0")
+
+			byModel := pricingEndpointTypesByModel(t)
+			for _, name := range models {
+				assert.Equal(t, []constant.EndpointType{constant.EndpointTypeImageGeneration}, byModel[name], name)
+				assert.Equal(t, byModel[name], GetModelSupportEndpointTypes(name), name)
+			}
+			assert.Equal(t, "/v1/images/generations", GetSupportedEndpointMap()[string(constant.EndpointTypeImageGeneration)].Path)
+			assert.Equal(t, []constant.EndpointType{constant.EndpointTypeOpenAI}, byModel["doubao-seed-2-0-mini-260428"])
+			assert.NotContains(t, byModel["doubao-seedance-2.0"], constant.EndpointTypeImageGeneration)
+		})
+	}
+
+	t.Run("explicit chat route remains available", func(t *testing.T) {
+		resetPricingEndpointTestTables(t)
+		insertPricingEndpointChannel(t, 205, constant.ChannelTypeAdvancedCustom, pricingEndpointAdvancedCustomConfig(
+			dto.AdvancedCustomRoute{IncomingPath: "/v1/chat/completions", UpstreamPath: "/v1/chat/completions"},
+		))
+		insertPricingEndpointAbility(t, 205, "doubao-seedream-5-0-260128")
+		byModel := pricingEndpointTypesByModel(t)
+		assert.Equal(t, []constant.EndpointType{constant.EndpointTypeOpenAI}, byModel["doubao-seedream-5-0-260128"])
+	})
+
+	t.Run("explicit model metadata supplements native image route", func(t *testing.T) {
+		resetPricingEndpointTestTables(t)
+		insertPricingEndpointChannel(t, 206, constant.ChannelTypeOpenAI, dto.ChannelOtherSettings{})
+		insertPricingEndpointAbility(t, 206, "doubao-seedream-5-0-260128")
+		require.NoError(t, DB.Create(&Model{
+			ModelName: "doubao-seedream-5-0-260128",
+			Endpoints: `{"openai":"/v1/chat/completions"}`,
+			Status:    1,
+			NameRule:  NameRuleExact,
+		}).Error)
+		byModel := pricingEndpointTypesByModel(t)
+		assert.Equal(t, []constant.EndpointType{
+			constant.EndpointTypeImageGeneration, constant.EndpointTypeOpenAI,
+		}, byModel["doubao-seedream-5-0-260128"])
+	})
+}
+
 func TestInitChannelCacheInvalidatesPricingCache(t *testing.T) {
 	resetPricingEndpointTestTables(t)
 

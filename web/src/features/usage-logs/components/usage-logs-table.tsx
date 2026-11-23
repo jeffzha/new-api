@@ -130,56 +130,58 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     ],
   })
 
-  const { data, isLoading, isFetching, isPlaceholderData } = useQuery({
-    queryKey: [
-      'logs',
-      logCategory,
-      viewAccess,
-      pagination.pageIndex + 1,
-      pagination.pageSize,
-      columnFilters,
-      searchParams,
-      t,
-    ],
-    queryFn: async () => {
-      const result = await fetchLogsByCategory({
+  const { data, dataUpdatedAt, isLoading, isFetching, isPlaceholderData } =
+    useQuery({
+      queryKey: [
+        'logs',
         logCategory,
-        isAdmin,
-        page: pagination.pageIndex + 1,
-        pageSize: pagination.pageSize,
-        searchParams,
+        viewAccess,
+        pagination.pageIndex + 1,
+        pagination.pageSize,
         columnFilters,
-      })
+        searchParams,
+        t,
+      ],
+      queryFn: async () => {
+        const result = await fetchLogsByCategory({
+          logCategory,
+          isAdmin,
+          page: pagination.pageIndex + 1,
+          pageSize: pagination.pageSize,
+          searchParams,
+          columnFilters,
+        })
 
-      if (!result?.success) {
-        throw createServerError(result, t('Failed to load logs'))
-      }
+        if (!result?.success) {
+          throw createServerError(result, t('Failed to load logs'))
+        }
 
-      return result.data || DEFAULT_LOGS_DATA
-    },
-    placeholderData: (previousData, previousQuery) => {
-      const previousSearch = previousQuery?.queryKey[6] as
-        | typeof searchParams
-        | undefined
-      if (
-        previousQuery?.queryKey[1] === logCategory &&
-        previousQuery.queryKey[2] === viewAccess &&
-        hashKey([previousSearch?.type]) === hashKey([searchParams.type])
-      ) {
-        return previousData
-      }
-      return undefined
-    },
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    refetchOnMount: false,
-    refetchIntervalInBackground: false,
-  })
+        return result.data || DEFAULT_LOGS_DATA
+      },
+      placeholderData: (previousData, previousQuery) => {
+        const previousSearch = previousQuery?.queryKey[6] as
+          | typeof searchParams
+          | undefined
+        if (
+          previousQuery?.queryKey[1] === logCategory &&
+          previousQuery.queryKey[2] === viewAccess &&
+          hashKey([previousSearch?.type]) === hashKey([searchParams.type])
+        ) {
+          return previousData
+        }
+        return undefined
+      },
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      refetchOnMount: false,
+      refetchIntervalInBackground: false,
+    })
 
   const logs = useLogFees<object>(
     data?.items || [],
     isAdmin,
-    logCategory === 'common' && !isPlaceholderData
+    logCategory === 'common' && !isPlaceholderData,
+    dataUpdatedAt
   )
   const columns = useColumnsByCategory(logCategory, isAdmin, isRoot)
   const isLoadingData = isLoading || (isFetching && !data)

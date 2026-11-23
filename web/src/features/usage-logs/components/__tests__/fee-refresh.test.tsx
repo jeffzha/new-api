@@ -63,17 +63,25 @@ it('refreshes only fees of retrieved rows while preserving search time and list'
       },
     }
   })
-  const post = vi.spyOn(api, 'post').mockResolvedValue({
-    data: {
-      success: true,
-      data: [
-        {
-          request_id: 'request-1',
-          ops_fee: { status: 'available', amount: '0.42', currency: 'USD' },
-        },
-      ],
-    },
-  })
+  const post = vi
+    .spyOn(api, 'post')
+    .mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: [{ request_id: 'request-1', ops_fee: row.ops_fee }],
+      },
+    })
+    .mockResolvedValue({
+      data: {
+        success: true,
+        data: [
+          {
+            request_id: 'request-1',
+            ops_fee: { status: 'available', amount: '0.42', currency: 'USD' },
+          },
+        ],
+      },
+    })
   client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: 0 } },
   })
@@ -105,7 +113,7 @@ it('refreshes only fees of retrieved rows while preserving search time and list'
     String(Math.floor(Date.now() / 1000))
   )
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(15_000)
+    await vi.advanceTimersByTimeAsync(500)
   })
   await waitFor(() => expect(screen.getByLabelText('$0.42')).toBeVisible())
   expect(lists).toHaveLength(1)

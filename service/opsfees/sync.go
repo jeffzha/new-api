@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -21,6 +22,7 @@ import (
 )
 
 type Fee struct {
+	Currency      string  `json:"currency,omitempty"`
 	RequestID     string  `json:"requestId"`
 	UserID        string  `json:"userId"`
 	Model         string  `json:"model"`
@@ -48,6 +50,8 @@ type Worker struct {
 	nextRequest time.Time
 }
 
+var receiptConfig atomic.Pointer[Config]
+
 func StartConfigured(ctx context.Context) error {
 	if os.Getenv("OPS_FEES_ENABLED") != "true" {
 		return nil
@@ -67,6 +71,7 @@ func StartConfigured(ctx context.Context) error {
 	}
 	w := New(model.DB, model.LOG_DB, c)
 	model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: c.Connection, Since: c.Since, Currency: c.Currency})
+	receiptConfig.Store(&c)
 	go w.Run(ctx)
 	common.SysLog("OPS fee comparison enabled")
 	return nil
@@ -240,6 +245,9 @@ func decodePage(raw []byte, connection string, at int64, expectedCurrency ...str
 	}
 	rows := make([]model.OpsFee, 0, len(p.Data.Items))
 	for _, f := range p.Data.Items {
+		if f.Currency != "" && f.Currency != currency {
+			return nil, "", false, errors.New("fee item currency mismatch")
+		}
 		if f.RequestID == "" || len(f.RequestID) > 160 || f.UserID == "" || len(f.UserID) > 160 || f.Model == "" || len(f.Model) > 200 {
 			return nil, "", false, errors.New("invalid identity")
 		}

@@ -40,6 +40,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/QuantumNous/new-api/pkg/opsstorage"
 	"github.com/QuantumNous/new-api/service/opsbilling"
+	"github.com/QuantumNous/new-api/service/opsfees"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -106,6 +107,7 @@ type Pusher struct {
 	lastTaskBatch  bool
 	lastRelayBatch bool
 	taskAfter      int64
+	wakeAllowed    bool
 }
 
 // StartConfigured starts the pusher when OPS_PUSH_URL is set.
@@ -214,20 +216,43 @@ func (p *Pusher) stateID() int {
 }
 
 func (p *Pusher) Run(ctx context.Context) {
-	for {
+	wake := p.committedWake(ctx)
+	var next time.Time
+	for ctx.Err() == nil {
 		wait := p.Step()
+		// A hint cannot bypass an outage/authentication backoff.
+		var hints <-chan struct{}
+		if p.wakeAllowed {
+			hints = wake
+		}
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-time.After(wait):
+		case <-hints:
+			timer.Stop()
+			if delay := time.Until(next); delay > 0 {
+				pause := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					pause.Stop()
+					return
+				case <-pause.C:
+				}
+			}
+			next = time.Now().Add(800 * time.Millisecond)
+		case <-timer.C:
 		}
 	}
 }
 
 // Step does one unit of work and returns how long to wait before the next.
 func (p *Pusher) Step() time.Duration {
+	p.wakeAllowed = false
 	state, ok := p.lease()
 	if !ok {
+		p.wakeAllowed = true
 		return leaseSeconds * time.Second / 2
 	}
 	if state.BatchId == "" {
@@ -240,6 +265,7 @@ func (p *Pusher) Step() time.Duration {
 			return stalledWait
 		}
 		if !built {
+			p.wakeAllowed = true
 			return idleWait
 		}
 	}
@@ -558,6 +584,11 @@ func (p *Pusher) send(state *State) time.Duration {
 			if decodeErr != nil || common.Unmarshal(body, &sent) != nil || ok.Data.Accepted < 0 || ok.Data.Duplicates < 0 || len(ok.Data.Rejected) > 0 || ok.Data.Accepted+ok.Data.Duplicates != len(sent.Events) {
 				p.fail(state, "USD acknowledgement incomplete; retained original financial batch")
 				return stalledWait
+			}
+		}
+		if decodeErr == nil {
+			if err := opsfees.AcceptPushReceipts(p.Config.URL, p.Config.KeyID, p.Config.Secret, body, raw, p.Now()); err != nil {
+				common.SysError("OPS immediate fee storage unavailable; incremental reader will retry")
 			}
 		}
 		for _, item := range ok.Data.Rejected {

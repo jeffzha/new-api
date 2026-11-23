@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/opsnotify"
 	"github.com/QuantumNous/new-api/service/opsbilling"
 	"gorm.io/gorm"
 )
@@ -37,6 +38,7 @@ func (r *Reconciler) Step(ctx context.Context) error {
 			failures = append(failures, err)
 		} else {
 			r.Reader.InvalidateCall(intent.UserID)
+			opsnotify.Committed(intent.Scope)
 			if err := model.InvalidateUserTokensCache(intent.UserID); err != nil {
 				common.SysError("OPS recovered settlement token cache invalidation failed")
 			}

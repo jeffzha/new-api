@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/opsauthority"
+	"github.com/QuantumNous/new-api/pkg/opsnotify"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service/opsbilling"
 	"github.com/gin-gonic/gin"
@@ -101,6 +102,7 @@ func (s *Session) Settle(actual int) error {
 	if err := model.FinalizeOPSRelay(s.db, s.identity.RequestID, s.identity.UserID, actual, s.usageEvent); err != nil {
 		return err
 	}
+	opsnotify.Committed(opsauthority.Scope())
 	s.done = true
 	s.reader.InvalidateCall(s.identity.UserID)
 	if !s.identity.Playground {

@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/opsauthority"
+	"github.com/QuantumNous/new-api/pkg/opsnotify"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service/opspush"
 	"github.com/tidwall/gjson"
@@ -167,5 +168,6 @@ func finalizeOPSAuthorityTask(task *model.Task) error {
 	if err := model.FinalizeOPSTask(model.DB, task, execution.RequestID, intent.Quota, intent.Event); err != nil {
 		return err
 	}
+	opsnotify.Committed(task.PrivateData.BillingScope)
 	return model.DB.First(task, task.ID).Error
 }

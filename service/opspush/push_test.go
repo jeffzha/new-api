@@ -223,6 +223,7 @@ func TestCustodyStreamKeepsIndependentCursorAndNeverReplaysProductMoney(t *testi
 		require.NoError(t, p.Migrate())
 	}
 	assert.Greater(t, p.Step(), time.Duration(0))
+	assert.False(t, p.wakeAllowed, "new calls cannot bypass failed financial delivery backoff")
 	var pendingRelay State
 	require.NoError(t, db.First(&pendingRelay, 2).Error)
 	for _, key := range []string{"amount", "currency", "model", "status", "extra"} {
@@ -245,6 +246,7 @@ func TestCustodyStreamKeepsIndependentCursorAndNeverReplaysProductMoney(t *testi
 	assert.Equal(t, "USD", sent.Events[0]["currency"])
 	assert.Equal(t, "overseas-usd", sent.Events[0]["extra"].(map[string]any)["billing_scope"])
 	assert.Equal(t, idleWait, p.Step(), "the duplicate consume log is not another debit")
+	assert.True(t, p.wakeAllowed, "an idle outbox may wake immediately after a new commit")
 	var relayDebit model.OPSWalletUsage
 	require.NoError(t, db.First(&relayDebit).Error)
 	assert.Positive(t, relayDebit.DeliveredAt)
@@ -301,7 +303,7 @@ func TestCustodyStreamKeepsIndependentCursorAndNeverReplaysProductMoney(t *testi
 	require.NoError(t, db.First(&task, task.ID).Error)
 	assert.True(t, task.OpsUsagePending)
 	assert.Equal(t, 60, task.Quota, "the pusher recovers committed terminal intent without provider polling")
-	assert.Equal(t, frozen, []byte(task.PrivateData.OpsUsage))
+	assert.JSONEq(t, string(frozen), string(task.PrivateData.OpsUsage), "native JSON columns may normalize key order and whitespace")
 	require.NoError(t, db.First(&token, token.Id).Error)
 	assert.Equal(t, 940, token.RemainQuota)
 	require.NoError(t, db.First(&user, user.Id).Error)

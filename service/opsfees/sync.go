@@ -63,6 +63,7 @@ func StartConfigured(ctx context.Context, bindings ...func(Config, *model.OpsFee
 		return e
 	}
 	w := New(model.DB, model.LOG_DB, c)
+	w.Client.EnableReadBudget()
 	sharePush.Store(nil)
 	runtime := &model.OpsFeeRuntime{Connection: c.Connection, Since: c.Since, SharedLogConnection: c.SharedLogConnection, SharedLogScope: c.SharedLogScope}
 	runtime.ShareResults = shareResults(ctx, c)
@@ -170,6 +171,11 @@ func (w *Worker) Step(ctx context.Context) (time.Duration, error) {
 		stop()
 		w.nextRequest = w.Now().Add(w.Config.MinRequestGap)
 		if readErr != nil {
+			if delay, deferred := opsclient.ReadDeferred(readErr); deferred {
+				wait = max(delay, w.Config.MinRequestGap)
+				code = "request_deferred"
+				break
+			}
 			failures++
 			wait = feeRecoveryDelay(readErr, failures, w.Config.MinRequestGap)
 			code = "read_unavailable"

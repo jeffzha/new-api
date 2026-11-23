@@ -13,6 +13,9 @@ import (
 // all blue/green instances to one reader per connection. It never retries a
 // model invocation, moves a cursor, or overrides an OPS Retry-After response.
 func feeRecoveryDelay(err error, failures int, requestGap time.Duration) time.Duration {
+	if wait, deferred := opsclient.ReadDeferred(err); deferred {
+		return max(wait, requestGap)
+	}
 	wait := min(3*time.Second*time.Duration(1<<min(max(failures-1, 0), 7)), 5*time.Minute)
 	var response *opsclient.ReadError
 	if errors.As(err, &response) {

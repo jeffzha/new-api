@@ -23,6 +23,7 @@ import (
 type Client struct {
 	BaseURL, KeyID, Secret string
 	HTTP                   *http.Client
+	readBudget             bool
 }
 type ReadError struct {
 	Status     int
@@ -93,6 +94,11 @@ func (c *Client) Post(ctx context.Context, path string, body []byte, at time.Tim
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body []byte, at time.Time) ([]byte, bool, error) {
+	if method == http.MethodGet && c.readBudget {
+		if err := c.reserveRead(ctx); err != nil {
+			return nil, false, err
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, false, errors.New("OPS request invalid")
@@ -130,6 +136,9 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte, 
 		wait := time.Duration(max(0, min(retry, 3600))) * time.Second
 		if t, e := http.ParseTime(resp.Header.Get("Retry-After")); e == nil && t.After(at) {
 			wait = min(t.Sub(at), time.Hour)
+		}
+		if c.readBudget && resp.StatusCode == http.StatusTooManyRequests {
+			c.coolReadBudget(ctx, wait)
 		}
 		return nil, false, &ReadError{Status: resp.StatusCode, RetryAfter: wait, Code: code}
 	}

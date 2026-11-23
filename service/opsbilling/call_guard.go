@@ -13,19 +13,10 @@ import (
 // AdmissionPosition exposes only a fresh individual read, never the display
 // cache. The shared DB admission transaction must still subtract pending holds.
 func (r *Reader) AdmissionPosition(ctx context.Context, userID int, at time.Time) (model.OPSWalletPosition, error) {
-	if err := r.CheckCall(ctx, userID, at); err != nil && !errors.Is(err, ErrInsufficientBalance) {
+	value, err := r.callBalance(ctx, userID, 0, at)
+	if err != nil && !errors.Is(err, ErrInsufficientBalance) {
 		return model.OPSWalletPosition{}, err
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	id := strconv.Itoa(userID)
-	if ok, err := r.callDecision(id, 0, time.Now()); !ok || err != nil && !errors.Is(err, ErrInsufficientBalance) {
-		if err == nil {
-			err = ErrBalanceUnavailable
-		}
-		return model.OPSWalletPosition{}, err
-	}
-	value := r.balances[id].value
 	quota, err := r.gatewayQuota(*value)
 	if err != nil {
 		return model.OPSWalletPosition{}, err
@@ -47,36 +38,93 @@ func (r *Reader) CheckCall(ctx context.Context, userID int, at time.Time) error 
 // CheckQuota applies the wallet preflight to OPS's balance in gateway quota
 // units. It does not reserve money: OPS still settles accepted usage later.
 func (r *Reader) CheckQuota(ctx context.Context, userID, estimatedQuota int, at time.Time) error {
-	if userID <= 0 || estimatedQuota < 0 {
-		return ErrBalanceUnavailable
+	_, err := r.callBalance(ctx, userID, estimatedQuota, at)
+	return err
+}
+
+// callBalance returns the immutable individual read this caller joined. A
+// completed invocation invalidates future admissions, not other callers
+// already waiting on this read. The DB transaction still checks the ledger
+// position and subtracts pending holds across every gateway instance.
+func (r *Reader) callBalance(ctx context.Context, userID, estimatedQuota int, at time.Time) (*Balance, error) {
+	started := time.Now()
+	if userID <= 0 || estimatedQuota < 0 || ctx.Err() != nil {
+		return nil, ErrBalanceUnavailable
 	}
 	id := strconv.Itoa(userID)
 	r.mu.Lock()
 	if ok, err := r.callDecision(id, estimatedQuota, at); ok {
+		value := *r.balances[id].value
 		r.mu.Unlock()
-		return err
+		return &value, err
+	}
+	if r.balanceFlights == nil {
+		r.balanceFlights = map[string]*balanceFlight{}
+	}
+	flight := r.balanceFlights[id]
+	owner := flight == nil
+	if owner {
+		if len(r.balanceFlights) >= cacheLimit {
+			r.mu.Unlock()
+			return nil, ErrBalanceUnavailable
+		}
+		flight = &balanceFlight{done: make(chan struct{})}
+		r.balanceFlights[id] = flight
 	}
 	r.mu.Unlock()
-	// A short cancellable wait shares the reader's budget without spinning,
-	// rather than rejecting a healthy wallet just because a warmup is in flight.
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
+	if owner {
+		// The first caller owns the network read, but its cancellation must not
+		// cancel other callers waiting on this same wallet. Keep a bounded,
+		// detached context for the shared operation.
+		readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		value, readAt, err := r.refreshBalance(readCtx, id, at)
+		cancel()
+		r.mu.Lock()
+		flight.at, flight.err, flight.value = readAt, err, value
+		delete(r.balanceFlights, id)
+		close(flight.done)
+		r.mu.Unlock()
+	} else {
+		select {
+		case <-flight.done:
+		case <-ctx.Done():
+			return nil, ErrBalanceUnavailable
+		}
+	}
+	if ctx.Err() != nil {
+		return nil, ErrBalanceUnavailable
+	}
+	if flight.err != nil || flight.value == nil {
+		return nil, ErrBalanceUnavailable
+	}
+	if at.Add(time.Since(started)).After(flight.at.Add(5 * time.Second)) {
+		return nil, ErrBalanceUnavailable
+	}
+	return flight.value, r.balanceDecision(*flight.value, estimatedQuota)
+}
+
+// refreshBalance performs one authoritative per-user read while respecting
+// the shared OPS request budget. It returns the logical timestamp used for the
+// authorization decision, including any rate-limit wait.
+func (r *Reader) refreshBalance(ctx context.Context, id string, at time.Time) (*Balance, time.Time, error) {
 	started := time.Now()
 	select {
 	case r.readGate <- struct{}{}:
 	case <-ctx.Done():
-		return ErrBalanceUnavailable
+		return nil, at, ErrBalanceUnavailable
 	}
 	defer func() { <-r.readGate }()
 	at = at.Add(time.Since(started))
 	r.mu.Lock()
-	if ok, err := r.callDecision(id, estimatedQuota, at); ok {
+	if ok, _ := r.callDecision(id, 0, at); ok {
+		value := *r.balances[id].value
+		authorizedAt := r.balances[id].authorizedAt
 		r.mu.Unlock()
-		return err
+		return &value, authorizedAt, nil
 	}
 	if len(r.balances) >= cacheLimit && r.balances[id] == nil {
 		r.mu.Unlock()
-		return ErrBalanceUnavailable
+		return nil, at, ErrBalanceUnavailable
 	}
 	wait := r.nextRead.Sub(at)
 	if wait > 0 {
@@ -86,7 +134,7 @@ func (r *Reader) CheckQuota(ctx context.Context, userID, estimatedQuota int, at 
 		select {
 		case <-timer.C:
 		case <-ctx.Done():
-			return ErrBalanceUnavailable
+			return nil, at, ErrBalanceUnavailable
 		}
 		at = at.Add(wait)
 		r.mu.Lock()
@@ -97,25 +145,22 @@ func (r *Reader) CheckQuota(ctx context.Context, userID, estimatedQuota int, at 
 	r.nextRead = at.Add(2 * time.Second)
 	r.mu.Unlock()
 	raw, err := r.Client.Get(ctx, "/api/v1/catalog/v1/balances/"+id, at)
+	var value *Balance
 	if err == nil {
-		err = r.applyBalance(raw, id, at)
+		value, err = r.installBalance(raw, id, at)
 	}
 	if err != nil {
 		r.mu.Lock()
 		entry := r.balances[id]
 		entry.failed = true
 		entry.authorizedAt = time.Time{}
+		var readErr *opsclient.ReadError
+		entry.missing = errors.As(err, &readErr) && readErr.Status == 404
 		r.backoffLocked(err, at)
 		r.mu.Unlock()
-		return ErrBalanceUnavailable
+		return nil, at, err
 	}
-	r.mu.Lock()
-	ok, err := r.callDecision(id, estimatedQuota, at)
-	r.mu.Unlock()
-	if !ok {
-		return ErrBalanceUnavailable
-	}
-	return err
+	return value, at, nil
 }
 
 // A completed invocation may have changed the authoritative balance. Force
@@ -134,14 +179,18 @@ func (r *Reader) callDecision(id string, estimatedQuota int, at time.Time) (bool
 	if entry == nil || entry.value == nil || entry.failed || entry.authorizedAt.IsZero() || at.Before(entry.authorizedAt) || at.Sub(entry.authorizedAt) > 5*time.Second {
 		return false, nil
 	}
-	quota, err := r.gatewayQuota(*entry.value)
+	return true, r.balanceDecision(*entry.value, estimatedQuota)
+}
+
+func (r *Reader) balanceDecision(value Balance, estimatedQuota int) error {
+	quota, err := r.gatewayQuota(value)
 	if err != nil {
-		return true, ErrBalanceUnavailable
+		return ErrBalanceUnavailable
 	}
-	if entry.value.Negative || quota <= 0 || quota < int64(estimatedQuota) {
-		return true, ErrInsufficientBalance
+	if value.Negative || quota <= 0 || quota < int64(estimatedQuota) {
+		return ErrInsufficientBalance
 	}
-	return true, nil
+	return nil
 }
 
 func (r *Reader) backoffLocked(err error, at time.Time) {

@@ -36,6 +36,17 @@ type cachedBalance struct {
 	authorizedAt            time.Time
 }
 
+// balanceFlight coalesces concurrent call-admission reads for one user. The
+// flight is deliberately separate from readGate: readGate protects the
+// station-wide request budget, while a flight prevents callers for the same
+// wallet from queueing duplicate reads behind that budget.
+type balanceFlight struct {
+	done  chan struct{}
+	at    time.Time
+	value *Balance
+	err   error
+}
+
 type BalanceView struct {
 	Status    string  `json:"status"`
 	Source    string  `json:"source"`
@@ -57,6 +68,7 @@ type Reader struct {
 	chargeOrder           list.List
 	waiters               int
 	balances              map[string]*cachedBalance
+	balanceFlights        map[string]*balanceFlight
 	cursor                string
 	nextRead, nextBalance time.Time
 	lastWallet            bool
@@ -71,7 +83,7 @@ func New(c Config) *Reader {
 	if c.Currency == "" {
 		c.Currency = "CNY"
 	}
-	return &Reader{Currency: c.Currency, Client: opsclient.New(c.BaseURL, c.KeyID, c.Secret, c.Timeout), readGate: make(chan struct{}, 1), charges: map[chargeKey]*cachedCharge{}, balances: map[string]*cachedBalance{}}
+	return &Reader{Currency: c.Currency, Client: opsclient.New(c.BaseURL, c.KeyID, c.Secret, c.Timeout), readGate: make(chan struct{}, 1), charges: map[chargeKey]*cachedCharge{}, balances: map[string]*cachedBalance{}, balanceFlights: map[string]*balanceFlight{}}
 }
 
 // Track only records an already authorized local invocation. HTTP always runs
@@ -402,17 +414,24 @@ func (r *Reader) applyCharge(raw []byte, key chargeKey, at time.Time) error {
 }
 
 func (r *Reader) applyBalance(raw []byte, userID string, at time.Time) error {
+	_, err := r.installBalance(raw, userID, at)
+	return err
+}
+
+// installBalance returns the validated immutable response with the cache
+// update, so another invocation completing cannot erase a flight's result.
+func (r *Reader) installBalance(raw []byte, userID string, at time.Time) (*Balance, error) {
 	var envelope struct {
 		Data *Balance `json:"data"`
 	}
 	if common.Unmarshal(raw, &envelope) != nil || envelope.Data == nil || envelope.Data.UserID != userID {
-		return errors.New("invalid OPS balance response")
+		return nil, errors.New("invalid OPS balance response")
 	}
 	if err := envelope.Data.validate(); err != nil {
-		return err
+		return nil, err
 	}
 	if _, err := r.gatewayQuota(*envelope.Data); err != nil {
-		return err
+		return nil, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -423,7 +442,7 @@ func (r *Reader) applyBalance(raw []byte, userID string, at time.Time) error {
 	}
 	current, _ := envelope.Data.LastEntryID.Int64()
 	if current < previous || current == previous && entry.value != nil && !entry.value.samePosition(*envelope.Data) {
-		return errors.New("OPS balance moved backwards")
+		return nil, errors.New("OPS balance moved backwards")
 	}
 	entry.value = envelope.Data
 	entry.checked = at
@@ -433,7 +452,7 @@ func (r *Reader) applyBalance(raw []byte, userID string, at time.Time) error {
 	entry.complete = true
 	entry.warm = false
 	entry.authorizedAt = at
-	return nil
+	return envelope.Data, nil
 }
 
 func (r *Reader) applyPage(raw []byte, at time.Time) error {

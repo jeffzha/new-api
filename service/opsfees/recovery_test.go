@@ -12,9 +12,50 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service/opsclient"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestFeeBudgetDeferralPreservesCursorAndFailureHistory(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	oldRedis, enabled, oldType := common.RDB, common.RedisEnabled, common.MainDatabaseType()
+	common.RDB, common.RedisEnabled = client, true
+	t.Cleanup(func() {
+		client.Close()
+		common.RDB, common.RedisEnabled = oldRedis, enabled
+		common.SetMainDatabaseType(oldType)
+	})
+	t.Setenv("OPS_READ_BUDGET_PER_MINUTE", "3")
+	t.Setenv("OPS_BACKGROUND_READ_BUDGET_PER_MINUTE", "2")
+	db := testDB(t, "sqlite")
+	require.NoError(t, db.AutoMigrate(&model.Log{}))
+	require.NoError(t, model.MigrateOpsFees(db))
+	calls := 0
+	ops := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.Write([]byte("{}")) }))
+	defer ops.Close()
+	cfg := Config{BaseURL: ops.URL, KeyID: "budget-state", Secret: "test-only", Connection: "budget-state", ActiveInterval: 5 * time.Second, IdleInterval: 5 * time.Minute, Timeout: time.Second, RoundBudget: time.Second, MinRequestGap: 3 * time.Second, MaxPages: 1}
+	w := New(db, db, cfg)
+	require.NoError(t, w.Client.EnableReadBudget())
+	ctx := context.Background()
+	for range 2 {
+		_, err := w.Client.Get(ctx, "/api/v1/catalog/v1/prices", time.Now())
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.Create(&model.OpsFeeSync{Connection: cfg.Connection, Cursor: "keep-cursor", Failures: 2, LastError: "http_500"}).Error)
+	wait, err := w.Step(ctx)
+	require.NoError(t, err)
+	require.Greater(t, wait, 55*time.Second)
+	require.Equal(t, 2, calls)
+	var state model.OpsFeeSync
+	require.NoError(t, db.First(&state, "connection = ?", cfg.Connection).Error)
+	require.Equal(t, "keep-cursor", state.Cursor)
+	require.EqualValues(t, 2, state.Failures)
+	require.Equal(t, "request_deferred", state.LastError)
+	require.Empty(t, state.Owner)
+}
 
 func TestFeeRecoveryDelayBoundsAndServerLimits(t *testing.T) {
 	for _, tc := range []struct {

@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -62,17 +64,41 @@ return 0
 // EnableReadBudget is installed only on configured runtime readers, leaving
 // transport fixtures independent. It never gates cached responses, usage
 // delivery or money writes, and never queries the SQL database.
-func (c *Client) EnableReadBudget() { c.readBudget = true }
+func (c *Client) EnableReadBudget() error {
+	total, background := readBudgetLimit, backgroundReadLimit
+	if raw := os.Getenv("OPS_READ_BUDGET_PER_MINUTE"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 2 || n > 100000 {
+			return errors.New("invalid OPS_READ_BUDGET_PER_MINUTE")
+		}
+		total, background = n, max(1, n*7/9)
+	}
+	if raw := os.Getenv("OPS_BACKGROUND_READ_BUDGET_PER_MINUTE"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n >= total {
+			return errors.New("invalid OPS_BACKGROUND_READ_BUDGET_PER_MINUTE")
+		}
+		background = n
+	}
+	c.readBudgetLimit, c.backgroundReadLimit, c.readBudget = total, background, true
+	return nil
+}
 
 func (c *Client) budgetKey() string {
 	return fmt.Sprintf("ops-read-budget:v1:%x", sha256.Sum256([]byte(c.BaseURL+"\n"+c.KeyID)))
 }
 
 func (c *Client) reserveRead(ctx context.Context) error {
-	limit := backgroundReadLimit
+	limit := c.backgroundReadLimit
+	if limit == 0 {
+		limit = backgroundReadLimit
+	}
 	priority, _ := ctx.Value(callBalanceBudget{}).(bool)
 	if priority {
-		limit = readBudgetLimit
+		limit = c.readBudgetLimit
+		if limit == 0 {
+			limit = readBudgetLimit
+		}
 	}
 	key := c.budgetKey()
 	at := time.Now()

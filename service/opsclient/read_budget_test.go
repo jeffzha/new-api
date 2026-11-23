@@ -17,6 +17,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestReadBudgetConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name, total, background   string
+		wantTotal, wantBackground int
+		invalid                   bool
+	}{
+		{"default", "", "", 54, 42, false},
+		{"lower-server-limit", "18", "", 18, 14, false},
+		{"explicit-reserve", "18", "10", 18, 10, false},
+		{"invalid-total", "x", "", 0, 0, true},
+		{"no-reserve", "18", "18", 0, 0, true},
+		{"no-background", "18", "0", 0, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("OPS_READ_BUDGET_PER_MINUTE", tc.total)
+			t.Setenv("OPS_BACKGROUND_READ_BUDGET_PER_MINUTE", tc.background)
+			c := New("https://local.invalid", tc.name, "test-only", time.Second)
+			err := c.EnableReadBudget()
+			if tc.invalid {
+				require.Error(t, err)
+				require.False(t, c.readBudget)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.wantTotal, c.readBudgetLimit)
+			require.Equal(t, tc.wantBackground, c.backgroundReadLimit)
+		})
+	}
+}
+
 func TestReadBudgetSharedAcrossInstancesResourcesAndCallPriority(t *testing.T) {
 	server := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: server.Addr()})

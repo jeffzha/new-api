@@ -63,7 +63,9 @@ func StartConfigured(ctx context.Context, bindings ...func(Config, *model.OpsFee
 		return e
 	}
 	w := New(model.DB, model.LOG_DB, c)
-	w.Client.EnableReadBudget()
+	if err := w.Client.EnableReadBudget(); err != nil {
+		return err
+	}
 	sharePush.Store(nil)
 	runtime := &model.OpsFeeRuntime{Connection: c.Connection, Since: c.Since, SharedLogConnection: c.SharedLogConnection, SharedLogScope: c.SharedLogScope}
 	runtime.ShareResults = shareResults(ctx, c)

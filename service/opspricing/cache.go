@@ -95,7 +95,9 @@ func StartConfigured(ctx context.Context) error {
 		return err
 	}
 	Default = New(c)
-	Default.Client.EnableReadBudget()
+	if err := Default.Client.EnableReadBudget(); err != nil {
+		return err
+	}
 	go Default.Run(ctx)
 	common.SysLog("OPS list price display enabled (memory only; billing unchanged)")
 	return nil

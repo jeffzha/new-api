@@ -24,6 +24,8 @@ type Client struct {
 	BaseURL, KeyID, Secret string
 	HTTP                   *http.Client
 	readBudget             bool
+	readBudgetLimit        int
+	backgroundReadLimit    int
 }
 type ReadError struct {
 	Status     int

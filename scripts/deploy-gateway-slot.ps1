@@ -35,6 +35,7 @@ param(
     # Pack the exact dist embedded in the image with gateway-static-assets.py pack.
     [string]$StaticAssetsBundle = "",
     [string]$StaticArchiveRoot = "/opt/new-api/deploy/api-docs/gateway-assets",
+    [switch]$StaticArchiveAlreadyRouted,
     [string]$DomainUrl = "https://gateway.nexus-reach.com",
     [string]$CaddyContainerName = "new-api-seedance-caddy-1",
     [string]$Platform = "linux/amd64",
@@ -650,12 +651,13 @@ exit 1
 
     # Publish/verify all entry and async files before the separate traffic step.
     # The replacement script has released the shared lock at this point.
+    $archiveOnly = if ($StaticArchiveAlreadyRouted) { "--archive-only" } else { "" }
     Invoke-RemoteScript @"
 set -Eeuo pipefail
 umask 022
 target_id="`$(docker ps --filter 'label=com.docker.compose.project=$ComposeProject' --filter 'label=com.docker.compose.service=$targetService' --format '{{.ID}}')"
 test -n "`$target_id"
-python3 '$remoteAssetsHelper' publish --bundle '$remoteAssetsBundle' --root '$StaticArchiveRoot' --container "`$target_id" --caddyfile '$Caddyfile' --caddy-container '$CaddyContainerName' --public-url '$DomainUrl'
+python3 '$remoteAssetsHelper' publish --bundle '$remoteAssetsBundle' --root '$StaticArchiveRoot' --container "`$target_id" --caddyfile '$Caddyfile' --caddy-container '$CaddyContainerName' --public-url '$DomainUrl' $archiveOnly
 "@
 
     if (-not $KeepLocalSourceTar -and (Test-Path -LiteralPath $localSourceTar)) {

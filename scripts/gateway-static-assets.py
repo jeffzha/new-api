@@ -176,6 +176,9 @@ def publish(args):
                     raise ValueError('Corrupt bundle asset: ' + name)
                 if destination.exists() and digest(destination.read_bytes()) != expected:
                     raise ValueError('Refusing to overwrite a previously published asset: ' + name)
+            candidate = static_block(original.decode(), args.archive_upstream).encode()
+            if args.archive_only and candidate != original:
+                raise ValueError('Static archive route is not installed in the host Caddyfile')
             html = run('docker', 'exec', args.container, 'wget', '-qO-', 'http://127.0.0.1:3000/').decode()
             if entries(html) != manifest['entries']:
                 raise ValueError('Bundle does not match the running candidate')
@@ -194,7 +197,24 @@ def publish(args):
                 if not destination.exists():
                     (scratch / asset_path(name)).chmod(0o644)
                     os.link(scratch / asset_path(name), destination)
-            candidate = static_block(original.decode(), args.archive_upstream).encode()
+            def verify_and_record():
+                verify(manifest, args.public_url)
+                current_image = run('docker', 'inspect', '-f', '{{.Image}}', args.container).decode().strip()
+                if current_image != image or args.caddyfile.read_bytes() != candidate:
+                    raise ValueError('Candidate container or Caddyfile changed during static publication')
+                records = args.root / 'releases'
+                records.mkdir(exist_ok=True)
+                record = records / (image.replace(':', '-') + '.json')
+                temporary = scratch / 'record.json'
+                temporary.write_text(json.dumps(manifest, sort_keys=True))
+                os.replace(temporary, record)
+
+            if args.archive_only:
+                # The full public fetch also checks the active route, which can
+                # differ from the file on disk. Never load or roll back Caddy here.
+                verify_and_record()
+                print('Static archive verified without reloading Caddy')
+                return
             # Validate before writing the host Caddyfile. Preserve its bind inode.
             run('docker', 'exec', '-i', args.caddy_container, 'sh', '-c', 'cat > /tmp/Caddyfile.static.load', input=candidate)
             run('docker', 'exec', args.caddy_container, 'caddy', 'validate', '--config', '/tmp/Caddyfile.static.load', '--adapter', 'caddyfile')
@@ -208,16 +228,7 @@ def publish(args):
             try:
                 args.caddyfile.write_bytes(candidate)
                 run('docker', 'exec', args.caddy_container, 'caddy', 'reload', '--config', '/tmp/Caddyfile.static.load', '--adapter', 'caddyfile')
-                verify(manifest, args.public_url)
-                current_image = run('docker', 'inspect', '-f', '{{.Image}}', args.container).decode().strip()
-                if current_image != image:
-                    raise ValueError('Candidate container changed during static publication')
-                records = args.root / 'releases'
-                records.mkdir(exist_ok=True)
-                record = records / (image.replace(':', '-') + '.json')
-                temporary = scratch / 'record.json'
-                temporary.write_text(json.dumps(manifest, sort_keys=True))
-                os.replace(temporary, record)
+                verify_and_record()
             except Exception:
                 args.caddyfile.write_bytes(original)
                 run('docker', 'exec', '-i', args.caddy_container, 'sh', '-c', 'cat > /tmp/Caddyfile.static.rollback', input=original)
@@ -243,6 +254,7 @@ def main():
             sub.add_argument('--caddyfile', type=Path, required=True)
             sub.add_argument('--caddy-container', required=True)
             sub.add_argument('--archive-upstream', default='api-docs:80')
+            sub.add_argument('--archive-only', action='store_true', help='Verify the installed archive through public fetches without loading Caddy configuration')
     args = parser.parse_args()
     if args.command == 'pack':
         manifest = pack(args.dist, args.output, args.release)

@@ -115,7 +115,7 @@ suffix backend unchanged
             archive = root / 'archive'
             (archive / 'static/js').mkdir(parents=True)
             (archive / 'static/js/index.old.js').write_text('old()')
-            args = SimpleNamespace(root=archive, bundle=bundle, caddyfile=caddyfile, container='candidate', caddy_container='caddy', archive_upstream='api-docs:80', public_url='https://example.test')
+            args = SimpleNamespace(root=archive, bundle=bundle, caddyfile=caddyfile, container='candidate', caddy_container='caddy', archive_upstream='api-docs:80', public_url='https://example.test', archive_only=False)
             locks = SimpleNamespace(LOCK_EX=1, LOCK_NB=2, flock=lambda *args: None)
 
             def docker(*command, input=None):
@@ -128,6 +128,11 @@ suffix backend unchanged
                 return b''
 
             with patch.dict('sys.modules', {'fcntl': locks}), patch.object(assets, 'run', side_effect=docker) as commands, patch.object(assets, 'get_asset'):
+                args.archive_only = True
+                with self.assertRaisesRegex(ValueError, 'not installed'):
+                    assets.publish(args)
+                self.assertFalse(commands.called)
+                args.archive_only = False
                 with patch.object(assets, 'verify', side_effect=ValueError('public MIME check failed')):
                     with self.assertRaisesRegex(ValueError, 'MIME'):
                         assets.publish(args)
@@ -148,6 +153,19 @@ suffix backend unchanged
                     assets.publish(args)
                 self.assertEqual(caddyfile.read_bytes(), before)
                 self.assertEqual((archive / 'static/js/index.new.js').read_text(), 'new()')
+                (dist / 'static/js/index.new.js').write_text('new()')
+                assets.pack(dist, bundle, 'archive-only')
+                args.archive_only = True
+                commands.reset_mock()
+                with patch.object(assets, 'verify', side_effect=ValueError('public route missing')):
+                    with self.assertRaisesRegex(ValueError, 'route missing'):
+                        assets.publish(args)
+                self.assertEqual(json.loads((archive / 'releases/sha256-image.json').read_text())['release'], 'new')
+                with patch.object(assets, 'verify'):
+                    assets.publish(args)
+                self.assertEqual(json.loads((archive / 'releases/sha256-image.json').read_text())['release'], 'archive-only')
+                self.assertFalse(any('caddy' in call.args for call in commands.call_args_list))
+                self.assertEqual(caddyfile.read_bytes(), before)
 
 
 if __name__ == '__main__':

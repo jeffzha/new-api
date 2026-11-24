@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -20,6 +21,10 @@ const (
 	TaskBillingProviderOpenAISeedance   = "openai_seedance"
 	TaskBillingProviderDoubaoVideoCNY   = "doubao_video_cny"
 )
+
+func (TaskBillingReconciliation) TableName() string {
+	return opsauthority.TaskTable("task_billing_reconciliations")
+}
 
 type TaskBillingReconciliation struct {
 	ID                 int64  `json:"id" gorm:"primaryKey"`
@@ -258,7 +263,7 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 		if err := tx.Model(&User{}).Where("id = ?", task.UserId).Pluck("billing_mode", &billingMode).Error; err != nil {
 			return err
 		}
-		if billingMode == AgencyDurableBillingMode && (task.PrivateData.BillingSource != TaskBillingSourceSubscription || task.PrivateData.SubscriptionId <= 0) {
+		if task.PrivateData.BillingSource != "ops" && billingMode == AgencyDurableBillingMode && (task.PrivateData.BillingSource != TaskBillingSourceSubscription || task.PrivateData.SubscriptionId <= 0) {
 			journal, basis, pricing, basisErr := agencyTaskFrozenBasis(tx, &task)
 			if basis.Version == AgencyTaskChargeBasisVersion {
 				frozenAgencyBasis = true
@@ -301,7 +306,7 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 		result.Task = &task
 		result.PreConsumedQuota = task.Quota
 		result.QuotaDelta = settlement.ActualQuota - task.Quota
-		result.WalletAdjusted = task.PrivateData.BillingSource != TaskBillingSourceSubscription || task.PrivateData.SubscriptionId <= 0
+		result.WalletAdjusted = task.PrivateData.BillingSource != "ops" && (task.PrivateData.BillingSource != TaskBillingSourceSubscription || task.PrivateData.SubscriptionId <= 0)
 
 		// A finalized component charge is immutable. A lower confirmed total
 		// uses the original cumulative refund; a larger total requires explicit
@@ -324,7 +329,7 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 				return ErrAgencyChargeConflict
 			}
 			refundResult.Changed, refundResult.WalletAdjusted, refundResult.TokenKey = changed, true, tokenKey
-		} else {
+		} else if task.PrivateData.BillingSource != "ops" {
 			var refundErr error
 			agencyHandled, refundErr = applyAgencyTaskRefundTx(tx, &task, settlement.ActualQuota, &refundResult)
 			if refundErr != nil {
@@ -355,7 +360,7 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 				tokenPresent = true
 			case errors.Is(tokenErr, gorm.ErrRecordNotFound):
 				result.TokenUnavailable = true
-				if result.QuotaDelta < 0 {
+				if task.PrivateData.BillingSource != "ops" && result.QuotaDelta < 0 {
 					result.QuotaDelta = 0
 					result.WalletAdjusted = false
 				}
@@ -402,7 +407,7 @@ func SettleTaskBillingReconciliation(id int64, settlement TaskBillingReconciliat
 						return fmt.Errorf("task billing user %d not found", task.UserId)
 					}
 				}
-			} else {
+			} else if task.PrivateData.BillingSource != "ops" {
 				var subscription UserSubscription
 				if err := lockForUpdate(tx).Where("id = ?", task.PrivateData.SubscriptionId).First(&subscription).Error; err != nil {
 					return err

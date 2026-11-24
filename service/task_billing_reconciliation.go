@@ -153,13 +153,13 @@ func RunTaskBillingReconciliationOnce(ctx context.Context, limit int) TaskBillin
 
 		resolution, resolveErr := reconciler.ResolveTaskBilling(ctx, &task)
 		if resolveErr != nil || resolution == nil || resolution.TotalTokens < 0 || (resolution.TotalTokens == 0 && task.CNBillingKey == "") || resolution.ActualQuota < 0 ||
-			(resolution.ActualQuota == 0 && task.CNBillingKey == "" && !model.IsAgencyDurableUser(task.UserId)) {
+			(resolution.ActualQuota == 0 && task.CNBillingKey == "" && !(task.PrivateData.BillingSource != "ops" && model.IsAgencyDurableUser(task.UserId))) {
 			// Some async video upstreams (e.g. openai_seedance via laomandi)
 			// never report a billable token usage, so this reconciliation can
 			// never settle. For agency-durable users, finalize the successful
 			// charge at the quota that was actually charged instead of retrying
 			// forever with no provider bill, so the usage fact still appears.
-			if model.IsAgencyDurableUser(task.UserId) &&
+			if (task.PrivateData.BillingSource != "ops" && model.IsAgencyDurableUser(task.UserId)) &&
 				task.PrivateData.BillingContext != nil &&
 				task.PrivateData.BillingContext.AgencyPricing != nil {
 				if finErr := ensureAgencyTaskFinalUsage(&task, int64(task.Quota)); finErr != nil {
@@ -282,6 +282,9 @@ var repairedTaskSettlements sync.Map
 // canonical writer fixes both: the hub accepts the event and projects the
 // usage fact at the charge time.
 func repairNonCanonicalAgencyTaskSettlements(ctx context.Context, limit int) int {
+	if projectAuthority() {
+		return 0
+	}
 	charges, err := model.NonCanonicalTaskFinalizeCharges(limit)
 	if err != nil {
 		logger.LogError(ctx, "load non-canonical agency task finalizations failed: "+err.Error())
@@ -321,6 +324,9 @@ var repairedFinalUsageAttempts sync.Map
 // nothing. Settling at the charged quota makes both sides agree without moving
 // any money the wallet has not already paid.
 func repairPendingFinalUsageTaskSettlements(ctx context.Context, limit int) int {
+	if projectAuthority() {
+		return 0
+	}
 	charges, err := model.PendingFinalUsageTaskCharges(limit)
 	if err != nil {
 		logger.LogError(ctx, "load agency task charges pending final usage failed: "+err.Error())
@@ -349,6 +355,9 @@ func repairPendingFinalUsageTaskSettlements(ctx context.Context, limit int) int 
 }
 
 func repairPendingTerminalTaskSettlements(ctx context.Context, limit int) int {
+	if projectAuthority() {
+		return 0
+	}
 	charges, err := model.PendingTerminalTaskSettlementCharges(limit)
 	if err != nil {
 		logger.LogError(ctx, "load terminal agency task settlements failed: "+err.Error())

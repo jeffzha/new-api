@@ -1,5 +1,17 @@
 package model
 
+import (
+	"errors"
+	"fmt"
+	"strconv"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
+	"gorm.io/gorm"
+)
+
+func (Midjourney) TableName() string { return opsauthority.TaskTable("midjourneys") }
+
 type Midjourney struct {
 	Id          int    `json:"id"`
 	Code        int    `json:"code"`
@@ -25,11 +37,92 @@ type Midjourney struct {
 	Properties  string `json:"properties"`
 
 	TokenId              int                  `json:"-" gorm:"default:0"`
+	BillingSource        string               `json:"-" gorm:"size:32"`
+	OPSWalletBinding     string               `json:"-" gorm:"type:text"`
+	BillingRequestID     string               `json:"-" gorm:"size:64"`
 	BillingChannelId     int                  `json:"-" gorm:"default:0"`
 	AgencyChargeID       string               `json:"-" gorm:"size:128"`
 	AgencyBillingEventID string               `json:"-" gorm:"size:128"`
 	CNBillingKey         string               `json:"-" gorm:"size:64;index"`
 	cnBilling            *CNMidjourneyBilling `gorm:"-"`
+}
+
+// RefundOPSMidjourney atomically records the remote refund and reverses local
+// API-key/accounting projections. User.Quota is never changed. A stale poller
+// reads the persisted marker, so it cannot restore a token budget twice.
+func RefundOPSMidjourney(task *Midjourney, modelName string) (int, error) {
+	if task == nil || task.Id <= 0 || task.UserId <= 0 || task.BillingSource != "ops" {
+		return 0, errors.New("invalid OPS Midjourney refund")
+	}
+	var current Midjourney
+	var token Token
+	refunded := 0
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockTaskBillingUserTx(tx, task.UserId); err != nil {
+			return err
+		}
+		if err := lockForUpdate(tx).First(&current, task.Id).Error; err != nil {
+			return err
+		}
+		if current.UserId != task.UserId || current.MjId != task.MjId || current.Action != task.Action || current.BillingSource != "ops" || current.CNBillingKey != "" {
+			return errors.New("OPS Midjourney refund identity changed")
+		}
+		if current.Quota == 0 {
+			return nil
+		}
+		var binding opsauthority.Binding
+		if common.UnmarshalJsonStr(current.OPSWalletBinding, &binding) != nil {
+			return errors.New("accepted OPS Midjourney wallet destination missing")
+		}
+		if err := QueueOPSWalletRefundTx(tx, int64(current.UserId), int64(current.Quota), &binding, strconv.Itoa(current.Id), current.BillingRequestID, current.MjId, modelName); err != nil {
+			return err
+		}
+		if current.TokenId > 0 {
+			err := lockForUpdate(tx).Where("id = ? AND user_id = ?", current.TokenId, current.UserId).First(&token).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			// A deleted API key is not recreated by a customer wallet refund.
+			if err == nil {
+				remain, used := int64(token.RemainQuota)+int64(current.Quota), int64(token.UsedQuota)-int64(current.Quota)
+				if remain > int64(common.MaxQuota) || remain < -int64(common.MaxQuota)-1 || used > int64(common.MaxQuota) || used < -int64(common.MaxQuota)-1 {
+					return errors.New("Midjourney token refund arithmetic overflow")
+				}
+				if err := tx.Model(&Token{}).Where("id = ? AND user_id = ?", token.Id, current.UserId).Updates(map[string]any{"remain_quota": remain, "used_quota": used, "accessed_time": common.GetTimestamp()}).Error; err != nil {
+					return err
+				}
+			}
+		}
+		if err := tx.Model(&User{}).Where("id = ?", current.UserId).Update("used_quota", gorm.Expr("used_quota - ?", current.Quota)).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&Channel{}).Where("id = ?", current.GetBillingChannelId()).Update("used_quota", gorm.Expr("used_quota - ?", current.Quota)).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&Midjourney{}).Where("id = ? AND quota = ?", current.Id, current.Quota).Update("quota", 0)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return fmt.Errorf("Midjourney refund marker changed concurrently")
+		}
+		refunded = current.Quota
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	*task = current
+	task.Quota = 0
+	if refunded > 0 && token.Id > 0 && common.RedisEnabled {
+		// The transaction already restored the budget. A cache miss may have
+		// loaded that committed value before this post-commit step; adding the
+		// delta again would over-credit the API key. Refill from the database.
+		if err := InvalidateTokenCache(token.Key); err != nil {
+			common.SysLog("failed to invalidate OPS Midjourney token refund cache: " + err.Error())
+		}
+	}
+	return refunded, nil
 }
 
 // TaskQueryParams 用于包含所有搜索条件的结构体，可以根据需求添加更多字段
@@ -189,7 +282,7 @@ func (midjourney *Midjourney) UpdateBillingState() error {
 		return ErrCNConflict
 	}
 	return DB.Model(midjourney).
-		Select("quota", "token_id", "billing_channel_id", "agency_charge_id", "agency_billing_event_id").
+		Select("quota", "token_id", "billing_source", "ops_wallet_binding", "billing_request_id", "billing_channel_id", "agency_charge_id", "agency_billing_event_id").
 		Updates(midjourney).Error
 }
 

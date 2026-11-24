@@ -175,7 +175,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	// common.SetContextKey(c, constant.ContextKeyTokenCountMeta, meta)
 
-	if priceData.FreeModel {
+	if priceData.FreeModel && !service.UsesOPSWallet(relayInfo) {
 		logger.LogInfo(c, fmt.Sprintf("模型 %s 免费，跳过预扣费", relayInfo.OriginModelName))
 		if err := service.BeginCNDirectRelay(relayInfo); err != nil {
 			newAPIError = types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
@@ -832,7 +832,7 @@ func executeTaskSubmissionWith(
 		AgencyBillingEventID:     relayInfo.AgencyBillingEventID,
 	}
 	task.Quota = result.Quota
-	if model.IsAgencyDurableUser(relayInfo.UserId) {
+	if relayInfo.BillingSource != "ops" && model.IsAgencyDurableUser(relayInfo.UserId) {
 		// Durable agency tasks keep the frozen reservation until the provider
 		// reaches a terminal state and the billing journal is finalized.
 		task.Quota = relayInfo.FinalPreConsumedQuota
@@ -896,7 +896,7 @@ func executeTaskSubmissionWith(
 	diagnostics.durable(task)
 	diagnostics.settleStart(task, result.Quota)
 
-	if !model.IsAgencyDurableUser(relayInfo.UserId) {
+	if relayInfo.BillingSource == "ops" || !model.IsAgencyDurableUser(relayInfo.UserId) {
 		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
 			common.SysError("settle task billing error: " + settleErr.Error())
 			taskErr = service.TaskErrorWrapperLocal(errors.New("failed to settle task billing"), "task_billing_settlement_failed", http.StatusInternalServerError)

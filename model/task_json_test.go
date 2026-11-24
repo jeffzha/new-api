@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,6 +40,22 @@ func TestTaskBillingJSONPersistenceAcrossDialects(t *testing.T) {
 			require.NoError(t, err)
 			assert.NotContains(t, string(publicJSON), "accepted-charge")
 			assert.NotContains(t, string(publicJSON), "accepted-event")
+			binding, err := opsauthority.NewBinding("https://ops.example.invalid/test", "json-persistence", "project")
+			require.NoError(t, err)
+			for _, private := range []TaskPrivateData{
+				{OPSWalletBinding: binding},
+				{OpsUsage: []byte(`{"requestId":"committed-terminal"}`)},
+				{SettledTokens: 19},
+			} {
+				task.PrivateData = private
+				require.NoError(t, tx.Save(&task).Error)
+				require.NoError(t, tx.First(&persisted, task.ID).Error)
+				assert.Equal(t, private.OPSWalletBinding, persisted.PrivateData.OPSWalletBinding)
+				assert.Equal(t, private.SettledTokens, persisted.PrivateData.SettledTokens)
+				if private.OpsUsage != nil {
+					assert.JSONEq(t, string(private.OpsUsage), string(persisted.PrivateData.OpsUsage))
+				}
+			}
 
 			// A later payload with omitted fields cannot retain the prior task's
 			// private billing identity when database scan destinations are reused.

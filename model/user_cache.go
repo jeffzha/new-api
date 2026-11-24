@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	"github.com/gin-gonic/gin"
@@ -162,6 +163,9 @@ func cacheDecrUserQuota(userId int, delta int64) error {
 // 余额。预扣以缓存值为准（存在期间），授信不能绕过它，否则新到账的额度在
 // 缓存过期前不可用；缓存未命中无需处理，下次读取会从已提交的数据库余额水合。
 func syncCreditUserQuotaCache(userId int, quota int, operation string) {
+	if opsauthority.FundingEnabled() {
+		return
+	}
 	if quota <= 0 {
 		return
 	}

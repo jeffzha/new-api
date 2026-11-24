@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/cachex"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/samber/hot"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -758,6 +759,12 @@ func calcSubscriptionBalanceQuota(priceAmount float64) (int, error) {
 func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 	if userId <= 0 || planId <= 0 {
 		return errors.New("invalid userId or planId")
+	}
+	if opsauthority.Enabled() {
+		// An ingest ACK does not confirm a debit. Until an idempotent OPS
+		// purchase contract can confirm payment before granting entitlement,
+		// do not debit a dormant local wallet or issue a free subscription.
+		return ErrOPSLocalWalletWrite
 	}
 
 	var logPlanTitle string

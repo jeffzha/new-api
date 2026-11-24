@@ -166,6 +166,17 @@ export function UsersTable() {
       }
     },
     placeholderData: (previousData) => previousData,
+    refetchInterval: (query) => {
+      const external =
+        query.state.data?.items.filter(
+          (user) => user.wallet_authority === 'ops'
+        ) || []
+      if (external.length === 0) return false
+      return external.some((user) => user.ops_balance?.status === 'pending')
+        ? 5_000
+        : 15_000
+    },
+    refetchIntervalInBackground: false,
   })
 
   const users = data?.items || []

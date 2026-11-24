@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/QuantumNous/new-api/service/opsbridge"
 	"github.com/shopspring/decimal"
 	"github.com/tidwall/gjson"
@@ -16,6 +17,13 @@ import (
 // prepareOpsTaskUsage runs before the terminal CAS. A crash after that CAS is
 // recovered from the pending bit, without relying on another provider poll.
 func prepareOpsTaskUsage(task *model.Task, channelType int, body []byte) {
+	if task == nil {
+		return
+	}
+	if task.PrivateData.BillingSource == "ops" {
+		prepareProjectTaskUsage(task, body)
+		return
+	}
 	if opsbridge.Default == nil || task.Status != model.TaskStatusSuccess || task.TaskID == "" || len(task.PrivateData.OpsUsage) != 0 {
 		return
 	}
@@ -104,6 +112,9 @@ func PrepareOpsTaskTerminal(task *model.Task, channelType int, body []byte) {
 }
 
 func drainOpsTaskUsage(ctx context.Context) {
+	if projectAuthority() && !opsauthority.Product() {
+		return
+	} // Project terminals use the scoped usage pusher.
 	b := opsbridge.Default
 	if b == nil || ctx.Err() != nil {
 		return
@@ -117,6 +128,11 @@ func drainOpsTaskUsage(ctx context.Context) {
 	for _, task := range tasks {
 		if ctx.Err() != nil {
 			return
+		}
+		if task.PrivateData.BillingSource == "ops" {
+			// OPS-owned terminals use the native ingest outbox. A product
+			// process may also be draining older bridge-owned tasks.
+			continue
 		}
 		var record map[string]any
 		if common.Unmarshal(task.PrivateData.OpsUsage, &record) != nil {
@@ -146,6 +162,9 @@ func drainOpsTaskUsage(ctx context.Context) {
 }
 
 func finalizeOpsTaskReservation(task *model.Task) {
+	if task == nil || task.PrivateData.BillingSource == "ops" {
+		return
+	}
 	b := opsbridge.Default
 	if b == nil || task == nil || task.TaskID == "" {
 		return

@@ -33,6 +33,9 @@ import (
 // the function deliberately does not recalculate provider pricing. The
 // caller's existing quota engine remains the source of truth.
 func RecordAgencyRealtimeSegment(relayInfo *relaycommon.RelayInfo, segmentNo int, usage, cumulative *dto.RealtimeUsage, quota, paidAllocated int64, status string) error {
+	if opsWalletOwnsRequest(relayInfo) {
+		return nil
+	}
 	if relayInfo == nil || relayInfo.AgencyPricing == nil {
 		return nil
 	}
@@ -537,6 +540,9 @@ func AttachAgencyQuote(relayInfo *relaycommon.RelayInfo, snapshot *agencycontrac
 // call after the HTTP response was sent and on retry because all business keys
 // are unique.
 func RecordAgencyBillingEvent(relayInfo *relaycommon.RelayInfo, actualQuota int64, status string) error {
+	if opsWalletOwnsRequest(relayInfo) {
+		return nil
+	}
 	if relayInfo == nil || relayInfo.AgencyPricing == nil {
 		return nil
 	}
@@ -834,6 +840,9 @@ func RecordAgencyRefundEvent(relayInfo *relaycommon.RelayInfo, reversedQuota, re
 // the original commission and charged quota are read from that event so a
 // later pricing change cannot affect the reversal.
 func RecordAgencyTaskRefundEvent(task *model.Task, reversedQuota int64, reason string) error {
+	if task != nil && task.PrivateData.BillingSource == "ops" {
+		return nil
+	}
 	if task == nil || reversedQuota <= 0 || task.PrivateData.BillingContext == nil {
 		return nil
 	}

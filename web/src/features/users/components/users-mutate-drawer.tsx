@@ -20,7 +20,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
 import { CircleDollarSign, Pencil } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -62,6 +62,8 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
+import { OPSAdjustDialog } from '@/features/ops-wallet/adjust-dialog'
+import { OPSBalanceValue } from '@/features/ops-wallet/balance-value'
 import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
@@ -112,6 +114,18 @@ export function UsersMutateDrawer({
   const isUpdate = !!currentRow
   const { triggerRefresh } = useUsers()
   const currentUser = useAuthStore((s) => s.auth.user)
+  const external =
+    currentUser?.wallet_authority === 'ops' ||
+    currentRow?.wallet_authority === 'ops'
+  const { data: balanceUser } = useQuery({
+    queryKey: ['users', 'ops-balance', currentRow?.id],
+    queryFn: async () => {
+      if (!currentRow) throw new Error('No user selected')
+      return requireServerSuccess(await getUser(currentRow.id))
+    },
+    enabled: external && open && !!currentRow,
+    refetchInterval: external && open ? 15_000 : false,
+  })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [quotaDialogOpen, setQuotaDialogOpen] = useState(false)
   const [assistedPaymentOpen, setAssistedPaymentOpen] = useState(false)
@@ -158,8 +172,9 @@ export function UsersMutateDrawer({
   const currencyLabel = getCurrencyLabel()
   const tokensOnly = currencyMeta.kind === 'tokens'
 
-  const currentQuotaRaw = form.watch('quota_dollars') || 0
-  const selectedRole = form.watch('role')
+  const currentQuotaRaw =
+    useWatch({ control: form.control, name: 'quota_dollars' }) || 0
+  const selectedRole = useWatch({ control: form.control, name: 'role' })
   const canEditAdminPermissions = currentUser?.role === ROLE.SUPER_ADMIN
   const targetIsAdmin = (selectedRole ?? currentRow?.role ?? 0) >= ROLE.ADMIN
 
@@ -399,55 +414,96 @@ export function UsersMutateDrawer({
                     )}
                   />
 
-                  <FormField
-                    control={form.control}
-                    name='quota_dollars'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>
-                          {t('Remaining Quota ({{currency}})', {
-                            currency: currencyLabel,
-                          })}
-                        </FormLabel>
-                        <div className='flex flex-wrap gap-2'>
-                          <FormControl>
-                            <Input
-                              value={
-                                tokensOnly
-                                  ? String(field.value || 0)
-                                  : (field.value || 0).toFixed(6)
-                              }
-                              readOnly
-                              className='flex-1'
-                            />
-                          </FormControl>
-                          <Button
-                            type='button'
-                            variant='outline'
-                            onClick={() => setQuotaDialogOpen(true)}
-                          >
-                            <Pencil className='mr-1 h-4 w-4' />
-                            {t('Adjust Quota')}
-                          </Button>
-                          {currentUser?.role === ROLE.SUPER_ADMIN && (
+                  {external ? (
+                    <div className='space-y-2'>
+                      <Label>{t('Balance')} (CNY)</Label>
+                      <OPSBalanceValue
+                        balance={(balanceUser?.data ?? currentRow)?.ops_balance}
+                      />
+                      {(balanceUser?.data ?? currentRow)
+                        ?.wallet_adjustments_enabled && (
+                        <Button
+                          type='button'
+                          variant='outline'
+                          onClick={() => setQuotaDialogOpen(true)}
+                        >
+                          <Pencil className='mr-1 h-4 w-4' />
+                          {t('Adjust Quota')}
+                        </Button>
+                      )}
+                      {currentUser?.role === ROLE.SUPER_ADMIN && (
+                        <Button
+                          type='button'
+                          variant='outline'
+                          onClick={() => setAssistedPaymentOpen(true)}
+                          title={t('Create an assisted payment')}
+                        >
+                          <CircleDollarSign className='mr-1 h-4 w-4' />
+                          {t('Assisted payment')}
+                        </Button>
+                      )}
+                      <p className='text-muted-foreground text-sm'>
+                        {t(
+                          (balanceUser?.data ?? currentRow)
+                            ?.wallet_adjustments_enabled
+                            ? 'Balance changes are recorded in OPS. Local balance is unchanged.'
+                            : 'Manage recharge and balance adjustments in OPS'
+                        )}
+                      </p>
+                    </div>
+                  ) : (
+                    <FormField
+                      control={form.control}
+                      name='quota_dollars'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            {t('Remaining Quota ({{currency}})', {
+                              currency: currencyLabel,
+                            })}
+                          </FormLabel>
+                          <div className='flex flex-wrap gap-2'>
+                            <FormControl>
+                              <Input
+                                value={
+                                  tokensOnly
+                                    ? String(field.value || 0)
+                                    : (field.value || 0).toFixed(6)
+                                }
+                                readOnly
+                                className='flex-1'
+                              />
+                            </FormControl>
                             <Button
                               type='button'
                               variant='outline'
-                              onClick={() => setAssistedPaymentOpen(true)}
-                              title={t('Create an assisted payment')}
+                              onClick={() => setQuotaDialogOpen(true)}
                             >
-                              <CircleDollarSign className='mr-1 h-4 w-4' />
-                              {t('Assisted payment')}
+                              <Pencil className='mr-1 h-4 w-4' />
+                              {t('Adjust Quota')}
                             </Button>
-                          )}
-                        </div>
-                        <FormDescription>
-                          {formatQuota(parseQuotaFromDollars(field.value || 0))}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                            {currentUser?.role === ROLE.SUPER_ADMIN && (
+                              <Button
+                                type='button'
+                                variant='outline'
+                                onClick={() => setAssistedPaymentOpen(true)}
+                                title={t('Create an assisted payment')}
+                              >
+                                <CircleDollarSign className='mr-1 h-4 w-4' />
+                                {t('Assisted payment')}
+                              </Button>
+                            )}
+                          </div>
+                          <FormDescription>
+                            {formatQuota(
+                              parseQuotaFromDollars(field.value || 0)
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
 
                   <FormField
                     control={form.control}
@@ -606,7 +662,19 @@ export function UsersMutateDrawer({
       </Sheet>
 
       {/* Adjust Quota Dialog */}
-      {currentRow && (
+      {currentRow &&
+        external &&
+        (balanceUser?.data ?? currentRow)?.wallet_adjustments_enabled && (
+          <OPSAdjustDialog
+            key={currentRow.id}
+            open={quotaDialogOpen}
+            onOpenChange={setQuotaDialogOpen}
+            userId={currentRow.id}
+            balance={(balanceUser?.data ?? currentRow)?.ops_balance}
+            onSuccess={refreshUserData}
+          />
+        )}
+      {currentRow && !external && (
         <UserQuotaDialog
           open={quotaDialogOpen}
           onOpenChange={setQuotaDialogOpen}

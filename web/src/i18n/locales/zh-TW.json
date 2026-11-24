@@ -1,5 +1,11 @@
 {
   "translation": {
+    "An adjustment is awaiting confirmation. Confirm again to retry the same operation.": "有一筆餘額調整等待確認，再次確認將重試同一筆操作。",
+    "Balance changes are recorded in OPS. Local balance is unchanged.": "餘額變更由 OPS 記帳，本地餘額保持不變。",
+    "Balance unavailable": "餘額暫時無法取得",
+    "Last known balance": "最近一次餘額",
+    "Manage recharge and balance adjustments in OPS": "在 OPS 管理儲值和餘額調整",
+    "Reading balance": "正在讀取餘額",
     "Payments retain their original currency. Missing historical payment details are marked as not recorded.": "實付金額保留原幣別；歷史付款資訊缺失時標為未記錄。",
     "Quota adjustments and refunds are quota movements, not cash payments.": "額度調整和退款表示額度變動，不代表現金收支。",
     "Quota Adjustment": "額度調整",

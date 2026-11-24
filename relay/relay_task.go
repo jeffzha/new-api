@@ -479,8 +479,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
-	cnTask := model.CNTaskRequested() && !managed && !model.IsAgencyDurableUser(info.UserId) && platform != constant.TaskPlatformSuno && platform != "sunoapi"
-	if info.Billing == nil && (!info.PriceData.FreeModel || (managed && model.IsAgencyDurableUser(info.UserId)) || cnTask) {
+	cnTask := !service.UsesOPSWallet(info) && model.CNTaskRequested() && !managed && !model.IsAgencyDurableUser(info.UserId) && platform != constant.TaskPlatformSuno && platform != "sunoapi"
+	if info.Billing == nil && (service.UsesOPSWallet(info) || !info.PriceData.FreeModel || (managed && model.IsAgencyDurableUser(info.UserId)) || cnTask) {
 		info.ForcePreConsume = true
 		if cnTask {
 			if apiErr := service.PreConsumeCNTaskBilling(info, platform, providerBilling, info.PriceData.Quota); apiErr != nil {
@@ -490,7 +490,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			return nil, service.TaskErrorFromAPIError(apiErr)
 		}
 	}
-	if managed && model.IsAgencyDurableUser(info.UserId) {
+	if info.BillingSource != "ops" && managed && model.IsAgencyDurableUser(info.UserId) {
 		basis := model.AgencyTaskChargeBasis{Version: model.AgencyTaskChargeBasisVersion,
 			ComponentBilling: common.GetEnvOrDefaultBool("AGENCY_COMPONENT_BILLING_ENABLED", false),
 			Mode:             "tokens", QuotaPerUnit: common.QuotaPerUnit, ModelPrice: info.PriceData.ModelPrice,
@@ -523,7 +523,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// Durable agency tasks create an immutable submission receipt before any
 	// provider I/O. This prevents an ambiguous transport failure from being
 	// mistaken for a rejected request and retried as a second video.
-	agencyAttempt := model.IsAgencyDurableUser(info.UserId) && info.Billing != nil
+	agencyAttempt := info.BillingSource != "ops" && model.IsAgencyDurableUser(info.UserId) && info.Billing != nil
 	if agencyAttempt {
 		digest := sha256.Sum256(requestBodyBytes)
 		if err := model.BeginAgencyTaskSubmission(info.UserId, info.RequestId, info.PublicTaskID,

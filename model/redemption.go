@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 
 	"gorm.io/gorm"
 )
@@ -174,6 +175,14 @@ func Redeem(key string, userId int) (quota int, err error) {
 		}
 		if result.RowsAffected == 0 {
 			return errors.New("该兑换码已被使用")
+		}
+		if opsauthority.FundingEnabled() {
+			if redemption.ExpiredTime != 0 {
+				// The present OPS funding contract cannot expire the unused
+				// remainder of a grant. Roll the code claim back with the credit.
+				return errors.New("OPS funding does not support expiring redemption credit")
+			}
+			return QueueOPSWalletFundingTx(tx, int64(userId), int64(redemption.Quota), "gift", "redemption", strconv.Itoa(redemption.Id), nil)
 		}
 		return ApplyAgencyRedemptionQuotaTx(tx, int64(userId), int64(redemption.Quota), strconv.Itoa(redemption.Id), int64(userId), redemption.ExpiredTime)
 	})

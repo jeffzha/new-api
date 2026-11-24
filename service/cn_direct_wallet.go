@@ -23,6 +23,9 @@ func CNDirectRealtimeRequested(info *relaycommon.RelayInfo) bool {
 			return true
 		}
 	}
+	if opsWalletOwnsRequest(info) || (info != nil && info.BillingSource == "" && projectAuthority()) {
+		return false
+	}
 	return info != nil && model.CNDirectWalletRequested() && info.AgencyPricing == nil && !model.IsAgencyDurableUser(info.UserId)
 }
 

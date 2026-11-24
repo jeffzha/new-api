@@ -2,6 +2,8 @@ package model
 
 import (
 	"errors"
+	"fmt"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"math/rand"
 	"time"
 
@@ -96,6 +98,9 @@ func userCheckinWithTransaction(checkin *Checkin, userId int, quotaAwarded int) 
 			return errors.New("签到失败，请稍后重试")
 		}
 
+		if opsauthority.FundingEnabled() {
+			return QueueOPSWalletFundingTx(tx, int64(userId), int64(quotaAwarded), "gift", "checkin", fmt.Sprintf("%d:%s", userId, checkin.CheckinDate), nil)
+		}
 		// 步骤2: 在同一事务中增加用户额度及 durable 资金投影
 		if err := ApplyAgencyQuotaDeltaTx(tx, int64(userId), int64(quotaAwarded), "checkin"); err != nil {
 			return errors.New("签到失败：更新额度出错")

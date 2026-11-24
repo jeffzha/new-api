@@ -99,13 +99,18 @@ func sweepTimedOutTasks(ctx context.Context) {
 	timedOutCount := 0
 
 	for _, task := range tasks {
+		if task.PrivateData.BillingSource == "ops" {
+			// A timeout cannot prove that the provider did no billable work.
+			// Retain the task for a final response instead of issuing a false refund.
+			continue
+		}
 		if task.CNBillingKey != "" {
 			if err := model.MarkCNTaskRepair(ctx, task.CNBillingKey, "task_timeout_requires_provider_evidence"); err != nil {
 				logger.LogError(ctx, err.Error())
 			}
 			continue
 		}
-		if model.IsAgencyDurableUser(task.UserId) {
+		if task.PrivateData.BillingSource != "ops" && model.IsAgencyDurableUser(task.UserId) {
 			// A timeout does not prove provider failure. Keep the reservation and
 			// mark the financial journal for operator/provider reconciliation.
 			if err := model.MarkAgencyTaskReconcileRequired(task, "task_timeout"); err != nil {
@@ -398,7 +403,11 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 			if task.FinishTime == 0 {
 				task.FinishTime = time.Now().Unix()
 			}
-			prepareOpsTaskUsage(task, ch.Type, task.Data)
+			if task.PrivateData.BillingSource == "ops" {
+				prepareProjectTaskUsage(task, task.Data, &responseItem.TaskInfo)
+			} else {
+				prepareOpsTaskUsage(task, ch.Type, task.Data)
+			}
 			PrepareCNTaskTerminal(adaptor, task, &responseItem.TaskInfo)
 		}
 		won, updateErr := task.UpdateWithStatus(snap.Status)
@@ -527,7 +536,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
 		return fmt.Errorf("task %s not found", taskId)
 	}
-	managed := model.IsAgencyDurableUser(task.UserId)
+	managed := (task.PrivateData.BillingSource != "ops" && model.IsAgencyDurableUser(task.UserId))
 	key := ch.Key
 
 	privateData := task.PrivateData
@@ -567,7 +576,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	switch classifyPollHTTP(resp.StatusCode) {
 	case pollClassNotFound:
-		if task.CNBillingKey != "" {
+		if task.CNBillingKey != "" || task.PrivateData.BillingSource == "ops" {
 			return recordPollFailure(ctx, adaptor, task, snap.Status, pollClassNotFound, resp.StatusCode, "")
 		}
 		return failTaskFromPoll(ctx, adaptor, task, snap.Status, fmt.Sprintf("upstream task not found (HTTP %d)", resp.StatusCode))
@@ -691,7 +700,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
 	if isDone && snap.Status != task.Status {
 		PrepareCNTaskTerminal(adaptor, task, taskResult)
-		prepareOpsTaskUsage(task, ch.Type, opsResponseBody)
+		if task.PrivateData.BillingSource == "ops" {
+			prepareProjectTaskUsage(task, opsResponseBody, taskResult)
+		} else {
+			prepareOpsTaskUsage(task, ch.Type, opsResponseBody)
+		}
 		won, err := task.UpdateWithStatus(snap.Status)
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("UpdateWithStatus failed for task %s: %s", task.TaskID, err.Error()))
@@ -889,13 +902,16 @@ func unrecognizedPollDetail(reason string, body []byte) string {
 }
 
 func recordPollFailure(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, fromStatus model.TaskStatus, class string, statusCode int, detail string) error {
+	if task.PrivateData.BillingSource == "ops" {
+		return fmt.Errorf("project task provider outcome remains unknown: %s", class)
+	}
 	if task.CNBillingKey != "" {
 		if err := model.MarkCNTaskRepair(ctx, task.CNBillingKey, "provider_poll_outcome_unknown"); err != nil {
 			return err
 		}
 		return fmt.Errorf("CN task provider outcome requires reconciliation: %s", class)
 	}
-	if model.IsAgencyDurableUser(task.UserId) && (class == pollClassTransport || class == pollClassHookError || class == pollClassTransient || class == pollClassAuth || class == pollClassNotFound) {
+	if (task.PrivateData.BillingSource != "ops" && model.IsAgencyDurableUser(task.UserId)) && (class == pollClassTransport || class == pollClassHookError || class == pollClassTransient || class == pollClassAuth || class == pollClassNotFound) {
 		// These responses do not establish a terminal provider outcome. Never
 		// refund a durable Agency reservation on an ambiguous poll result.
 		if err := model.MarkAgencyTaskReconcileRequired(task, "provider_response_unknown"); err != nil {
@@ -942,6 +958,9 @@ func failTaskFromPoll(ctx context.Context, adaptor TaskPollingAdaptor, task *mod
 		task.FinishTime = now
 	}
 	task.FailReason = reason
+	if task.PrivateData.BillingSource == "ops" {
+		prepareProjectTaskUsage(task, nil)
+	}
 	won, err := task.UpdateWithStatus(fromStatus)
 	if err != nil {
 		return err
@@ -950,7 +969,7 @@ func failTaskFromPoll(ctx context.Context, adaptor TaskPollingAdaptor, task *mod
 		return nil
 	}
 	taskResult := relaycommon.FailTaskInfo(reason)
-	if model.IsAgencyDurableUser(task.UserId) {
+	if task.PrivateData.BillingSource != "ops" && model.IsAgencyDurableUser(task.UserId) {
 		// An explicit terminal failure is safe to finalize, but if settlement
 		// itself cannot commit the journal, retain the reservation for retry.
 		return completeAgencyTaskBilling(ctx, task, model.TaskStatusFailure, 0)

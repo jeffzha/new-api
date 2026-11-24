@@ -103,8 +103,10 @@ func ApplyTaskQuotaAdjustment(task *Task, targetQuota int) (*TaskQuotaAdjustment
 			result.AppliedQuota = current.Quota
 			return CaptureCNTaskChargeTx(tx, current, current.Quota)
 		}
-		if handled, err := applyAgencyTaskRefundTx(tx, current, targetQuota, result); handled || err != nil {
-			return err
+		if current.PrivateData.BillingSource != "ops" {
+			if handled, err := applyAgencyTaskRefundTx(tx, current, targetQuota, result); handled || err != nil {
+				return err
+			}
 		}
 
 		tokenPresent := current.PrivateData.TokenId <= 0
@@ -127,7 +129,7 @@ func ApplyTaskQuotaAdjustment(task *Task, targetQuota int) (*TaskQuotaAdjustment
 		// usage is still charged to the wallet, since the wallet is the
 		// authoritative customer liability.
 		effectiveTarget := targetQuota
-		if result.TokenUnavailable && result.QuotaDelta < 0 {
+		if current.PrivateData.BillingSource != "ops" && result.TokenUnavailable && result.QuotaDelta < 0 {
 			effectiveTarget = current.Quota
 			result.QuotaDelta = 0
 		}
@@ -137,8 +139,7 @@ func ApplyTaskQuotaAdjustment(task *Task, targetQuota int) (*TaskQuotaAdjustment
 			if err := applyTaskFundingDeltaTx(tx, current, result.QuotaDelta, effectiveTarget); err != nil {
 				return err
 			}
-			result.WalletAdjusted = current.PrivateData.BillingSource != TaskBillingSourceSubscription ||
-				current.PrivateData.SubscriptionId <= 0
+			result.WalletAdjusted = current.PrivateData.BillingSource != "ops" && (current.PrivateData.BillingSource != TaskBillingSourceSubscription || current.PrivateData.SubscriptionId <= 0)
 
 			if tokenPresent && current.PrivateData.TokenId > 0 {
 				afterRemain := int64(token.RemainQuota) - int64(result.QuotaDelta)
@@ -187,7 +188,9 @@ func ApplyTaskQuotaAdjustment(task *Task, targetQuota int) (*TaskQuotaAdjustment
 	}
 
 	if result.Changed && common.RedisEnabled {
-		if IsAgencyDurableUser(task.UserId) {
+		if task.PrivateData.BillingSource == "ops" {
+			// The shared user wallet and its cache did not change.
+		} else if IsAgencyDurableUser(task.UserId) {
 			if err := InvalidateUserCache(task.UserId); err != nil {
 				common.SysLog("failed to invalidate task billing user cache: " + err.Error())
 			}
@@ -210,6 +213,9 @@ func lockTaskBillingUserTx(tx *gorm.DB, user int) error {
 }
 
 func applyTaskFundingDeltaTx(tx *gorm.DB, task *Task, delta, targetQuota int) error {
+	if task.PrivateData.BillingSource == "ops" {
+		return nil
+	}
 	if task.PrivateData.BillingSource == TaskBillingSourceSubscription && task.PrivateData.SubscriptionId > 0 {
 		var subscription UserSubscription
 		if err := lockForUpdate(tx).Where("id = ?", task.PrivateData.SubscriptionId).First(&subscription).Error; err != nil {

@@ -7,11 +7,21 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 func manageUserQuota(c *gin.Context, req ManageRequest) {
+	if opsauthority.Enabled() && manageOPSBalance(c, req) {
+		return
+	}
+	if opsauthority.Enabled() {
+		// A missing remote write configuration must never fall through to a
+		// second local ledger. Deployment validates this before serving traffic.
+		common.ApiError(c, errors.New("运营平台余额调整尚未配置完成"))
+		return
+	}
 	action := "generic"
 	params := model.AuditFields{
 		"target_user_id":  req.Id,

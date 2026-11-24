@@ -21,6 +21,17 @@ const (
 // PreConsumeBilling 根据用户计费偏好创建 BillingSession 并执行预扣费。
 // 会话存储在 relayInfo.Billing 上，供后续 Settle / Refund 使用。
 func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
+	if UsesOPSWallet(relayInfo) {
+		if relayInfo != nil && relayInfo.QuotaClamp != nil {
+			return types.NewError(relayInfo.QuotaClamp, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry())
+		}
+		session, err := newOPSAuthoritySession(c, relayInfo, preConsumedQuota)
+		if err != nil {
+			return opsAuthorityAPIError(err)
+		}
+		relayInfo.Billing = session
+		return nil
+	}
 	if CNDirectRealtimeRequested(relayInfo) && relayInfo.RelayFormat == types.RelayFormatOpenAIRealtime {
 		if err := BeginCNDirectRealtime(relayInfo, preConsumedQuota); err != nil {
 			return cnDirectRealtimeAPIError(err)
@@ -72,6 +83,17 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 // 否则回退到旧的 PostConsumeQuota 路径（兼容按次计费等场景）。
 func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuota int) (err error) {
 	defer recordBusinessSettlement(ctx, relayInfo, actualQuota, &err)
+	if relayInfo != nil && relayInfo.BillingSource == "ops" {
+		if relayInfo.Billing == nil {
+			// Accepted usage must still settle if the wallet has since run out.
+			relayInfo.BillingSource = "ops"
+			relayInfo.Billing = &opsAuthoritySession{info: relayInfo}
+		}
+		if _, ok := relayInfo.Billing.(*opsAuthoritySession); !ok {
+			return fmt.Errorf("project billing session mismatch")
+		}
+		return relayInfo.Billing.Settle(actualQuota)
+	}
 	if relayInfo.Billing != nil {
 		preConsumed := relayInfo.Billing.GetPreConsumedQuota()
 		delta := actualQuota - preConsumed

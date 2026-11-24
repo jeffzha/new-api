@@ -30,6 +30,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service/opsclient"
 	"github.com/QuantumNous/new-api/service/opspush"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
@@ -83,6 +84,8 @@ func (Profile) TableName() string { return "ops_user_profiles" }
 
 type Config struct {
 	URL, KeyID, Secret string
+	// OmitBalance keeps the source wallet out of profile updates after OPS custody.
+	OmitBalance bool
 	// Resend, when changed, pushes every user once more (for example at the balance opening moment, spec 5.4).
 	Resend string
 }
@@ -102,6 +105,7 @@ func StartConfigured(ctx context.Context) error {
 	}
 	config := Config{URL: strings.TrimRight(os.Getenv("OPS_PUSH_URL"), "/"), KeyID: os.Getenv("OPS_PUSH_KEY_ID"),
 		Secret: os.Getenv("OPS_PUSH_SECRET"), Resend: strings.TrimSpace(os.Getenv("OPS_USER_SYNC_RESEND"))}
+	config.OmitBalance = os.Getenv("OPS_USER_SYNC_BALANCES_ENABLED") == "false"
 	if err := (opspush.Config{URL: config.URL, KeyID: config.KeyID, Secret: config.Secret}).Validate(); err != nil {
 		return errors.New("OPS_USER_SYNC_ENABLED needs a valid Ops push configuration: " + err.Error())
 	}
@@ -318,7 +322,7 @@ func (s *Syncer) build(state *State) (built, more bool, err error) {
 		tail := make([]byte, 3)
 		_, _ = rand.Read(tail)
 		id := fmt.Sprintf("users-%s-%06d-%s", now.UTC().Format("20060102"), state.Seq, hex.EncodeToString(tail))
-		body, meta, err := encode(id, changed, now)
+		body, meta, err := encode(id, changed, now, s.Config.OmitBalance)
 		if err != nil {
 			return false, false, err
 		}
@@ -423,7 +427,7 @@ func profileHash(profile map[string]any) string {
 }
 
 // encode builds the request body: each profile gets updatedAt and, when the conversion is valid, a balance snapshot.
-func encode(id string, changed []candidate, now time.Time) ([]byte, []byte, error) {
+func encode(id string, changed []candidate, now time.Time, omitBalance bool) ([]byte, []byte, error) {
 	perUnit, rate := common.QuotaPerUnit, operation_setting.USDExchangeRate
 	balanced := perUnit >= 1 && perUnit == math.Trunc(perUnit) && perUnit <= math.MaxInt32 && rate > 0 && rate <= 1000
 	at := now.UTC().Format(time.RFC3339)
@@ -437,7 +441,7 @@ func encode(id string, changed []candidate, now time.Time) ([]byte, []byte, erro
 			}
 		}
 		user["updatedAt"] = time.Unix(item.UpdatedAt, 0).UTC().Format(time.RFC3339)
-		if quota, ok := item.profile["quota"].(int64); ok && balanced {
+		if quota, ok := item.profile["quota"].(int64); ok && balanced && !omitBalance {
 			user["balance"] = map[string]any{"quota": quota, "quotaPerUnit": int64(perUnit),
 				"usdExchangeRate": strconv.FormatFloat(rate, 'f', -1, 64), "at": at}
 		}
@@ -473,6 +477,28 @@ type errorBody struct {
 
 func (s *Syncer) send(state *State) time.Duration {
 	body := []byte(state.BatchBody)
+	if s.Config.OmitBalance {
+		var stored batch
+		if common.Unmarshal(body, &stored) != nil {
+			s.fail(state, "stored user batch unreadable")
+			return stalledWait
+		}
+		for _, user := range stored.Users {
+			if _, exists := user["balance"]; exists {
+				s.fail(state, "pending balance snapshot requires review before profile-only sync")
+				return stalledWait
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	err := opsclient.ReserveIngest(ctx, s.Config.URL, s.Config.KeyID, opsclient.IngestMetadata)
+	cancel()
+	if err != nil {
+		if wait, deferred := opsclient.ReadDeferred(err); deferred {
+			return max(wait, time.Millisecond)
+		}
+		return busyWait
+	}
 	request, err := http.NewRequest(http.MethodPost, s.Config.URL+Path, bytes.NewReader(body))
 	if err != nil {
 		s.fail(state, err.Error())
@@ -519,9 +545,10 @@ func (s *Syncer) send(state *State) time.Duration {
 		s.dropRejected(state, failure)
 		return busyWait
 	case response.StatusCode == http.StatusTooManyRequests:
-		retry, _ := strconv.Atoi(response.Header.Get("Retry-After"))
+		retry := opsclient.RetryAfter(response.Header.Get("Retry-After"), s.Now())
+		opsclient.CoolIngest(context.Background(), s.Config.URL, s.Config.KeyID, retry)
 		s.fail(state, message)
-		return opspush.Backoff(state.Attempts, time.Duration(retry)*time.Second)
+		return opspush.Backoff(state.Attempts, retry)
 	case response.StatusCode >= 500 || code == "timestamp_out_of_window" || code == "nonce_reused":
 		s.fail(state, message)
 		return opspush.Backoff(state.Attempts, 0)

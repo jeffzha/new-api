@@ -1,5 +1,11 @@
 {
   "translation": {
+    "An adjustment is awaiting confirmation. Confirm again to retry the same operation.": "残高調整の確認待ちです。再度確認すると、同じ操作を再試行します。",
+    "Balance changes are recorded in OPS. Local balance is unchanged.": "残高の変更は OPS に記帳されます。ローカル残高は変更されません。",
+    "Balance unavailable": "残高を取得できません",
+    "Last known balance": "前回取得した残高",
+    "Manage recharge and balance adjustments in OPS": "OPS でチャージと残高調整を管理",
+    "Reading balance": "残高を取得中",
     "Payments retain their original currency. Missing historical payment details are marked as not recorded.": "支払額は元の通貨で表示されます。過去の支払情報がない場合は未記録と表示されます。",
     "Quota adjustments and refunds are quota movements, not cash payments.": "クォータの調整と返金は利用枠の変動であり、現金の入出金ではありません。",
     "Quota Adjustment": "クォータ調整",

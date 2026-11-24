@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { OPSWalletFields } from '@/features/ops-wallet/types'
 /**
  * Type definitions for usage logs
  */
@@ -485,7 +486,7 @@ export interface FetchLogsConfig {
 // User Info Types
 // ============================================================================
 
-export interface UserInfo {
+export interface UserInfo extends OPSWalletFields {
   id: number
   username: string
   display_name?: string

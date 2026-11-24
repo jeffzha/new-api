@@ -134,11 +134,7 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte, 
 			_ = common.Unmarshal(failure.Error, &detail)
 			code = detail.Code
 		}
-		retry, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
-		wait := time.Duration(max(0, min(retry, 3600))) * time.Second
-		if t, e := http.ParseTime(resp.Header.Get("Retry-After")); e == nil && t.After(at) {
-			wait = min(t.Sub(at), time.Hour)
-		}
+		wait := RetryAfter(resp.Header.Get("Retry-After"), at)
 		if c.readBudget && resp.StatusCode == http.StatusTooManyRequests {
 			c.coolReadBudget(ctx, wait)
 		}

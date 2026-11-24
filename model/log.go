@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/pkg/businessapi"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/QuantumNous/new-api/pkg/opsnotify"
 	"github.com/QuantumNous/new-api/types"
 
@@ -104,12 +105,33 @@ func ensureLogRequestId(log *Log) {
 }
 
 func createLog(log *Log) error {
+	if opsauthority.Enabled() && log != nil && (log.Type == LogTypeConsume || log.Type == LogTypeError || log.Type == LogTypeRefund) {
+		var other map[string]any
+		if log.Other != "" {
+			if err := common.UnmarshalJsonStr(log.Other, &other); err != nil {
+				return err
+			}
+		}
+		if other == nil {
+			other = map[string]any{}
+		}
+		// An accepted call/task can finish after configuration changes. Its
+		// persisted scope wins; the runtime value is only a legacy fallback.
+		if _, exists := other["billing_scope"]; !exists {
+			other["billing_scope"] = opsauthority.Scope()
+		}
+		raw, err := common.Marshal(other)
+		if err != nil {
+			return err
+		}
+		log.Other = string(raw)
+	}
 	ensureLogRequestId(log)
 	if LOG_DB == nil {
 		return errors.New("log database is not initialized")
 	}
 	err := LOG_DB.Create(log).Error
-	if err == nil && (log.Type == LogTypeConsume || log.Type == LogTypeError) {
+	if err == nil && (log.Type == LogTypeConsume || log.Type == LogTypeError || log.Type == LogTypeRefund) {
 		opsnotify.UsageCommitted(log.Id)
 	}
 	if err == nil && log.Type == LogTypeConsume {
@@ -292,6 +314,14 @@ func walletLogFields(source string, debit bool, fields map[string]any) map[strin
 		values["quota_direction"] = LogQuotaDebit
 	}
 	maps.Copy(values, fields)
+	if opsauthority.FundingEnabled() && !debit {
+		switch source {
+		case LogQuotaSourceOnlineTopup, LogQuotaSourceAdminTopup, LogQuotaSourceRedemption, LogQuotaSourceCheckin, LogQuotaSourceRegister, LogQuotaSourceInvitee:
+			// These business transactions already queued their immutable OPS
+			// funding event. This row is audit evidence, never a second credit.
+			values["wallet_event_owner"] = "ops_funding"
+		}
+	}
 	return values
 }
 

@@ -15,8 +15,10 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service/opsbilling"
 	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/gin-gonic/gin"
@@ -30,6 +32,53 @@ func CovertMjpActionToModelName(mjAction string) string {
 	return modelName
 }
 
+// CheckMidjourneyWallet freezes ownership before the provider accepts a task.
+// The local quota is consulted only for a locally owned wallet.
+func CheckMidjourneyWallet(c *gin.Context, info *relaycommon.RelayInfo, quota int) error {
+	if info == nil || quota < 0 || quota > common.MaxQuota {
+		return errors.New("invalid Midjourney wallet check")
+	}
+	if !UsesOPSWallet(info) {
+		value, err := model.GetUserQuota(info.UserId, false)
+		if err != nil {
+			return err
+		}
+		if value < quota {
+			return errors.New("quota_not_enough")
+		}
+		if info.BillingSource == "" {
+			info.BillingSource = BillingSourceWallet
+		}
+		return nil
+	}
+	if opsbilling.Default == nil {
+		return opsbilling.ErrBalanceUnavailable
+	}
+	if info.RequestId == "" || len(info.RequestId) > 64 {
+		return errors.New("Midjourney OPS request ID missing or invalid")
+	}
+	client := opsbilling.Default.Client
+	if info.OPSWalletBinding != nil && !info.OPSWalletBinding.Matches(client.BaseURL, client.KeyID, opsauthority.Scope()) {
+		return errors.New("accepted OPS wallet destination changed")
+	}
+	binding, err := opsauthority.NewBinding(client.BaseURL, client.KeyID, opsauthority.Scope())
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
+	if err := opsbilling.Default.CheckQuota(ctx, info.UserId, quota, time.Now()); err != nil {
+		return err
+	}
+	info.BillingSource = "ops"
+	if info.OPSWalletBinding == nil {
+		info.OPSWalletBinding = binding
+	}
+	return nil
+}
+
 // PrepareMidjourneyTaskBilling sets the durable refund marker before the task is inserted.
 func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.Midjourney, quota int, shouldBill bool) (bool, error) {
 	if task == nil {
@@ -39,17 +88,41 @@ func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.
 	task.TokenId = 0
 	task.BillingChannelId = 0
 	task.CNBillingKey = ""
+	task.BillingSource = ""
+	task.OPSWalletBinding = ""
+	task.BillingRequestID = ""
 	if !shouldBill {
 		return false, nil
 	}
 	if relayInfo == nil {
 		return false, errors.New("relay info is nil")
 	}
-	if quota < 0 {
-		return false, errors.New("quota cannot be negative")
+	if quota < 0 || quota > common.MaxQuota {
+		return false, errors.New("invalid Midjourney quota")
 	}
 	if relayInfo.BillingSource == BillingSourceSubscription {
 		return false, errors.New("legacy Midjourney billing does not support subscriptions")
+	}
+	if relayInfo.BillingSource == "" {
+		if projectAuthority() {
+			return false, errors.New("Midjourney OPS ownership must be checked before provider submission")
+		}
+		relayInfo.BillingSource = BillingSourceWallet
+	}
+	task.BillingSource = relayInfo.BillingSource
+	if opsWalletOwnsRequest(relayInfo) {
+		if relayInfo.OPSWalletBinding == nil {
+			return false, errors.New("Midjourney OPS wallet destination missing")
+		}
+		if relayInfo.RequestId == "" || len(relayInfo.RequestId) > 64 {
+			return false, errors.New("accepted Midjourney OPS request ID missing or invalid")
+		}
+		task.BillingRequestID = relayInfo.RequestId
+		binding, err := common.Marshal(relayInfo.OPSWalletBinding)
+		if err != nil {
+			return false, err
+		}
+		task.OPSWalletBinding = string(binding)
 	}
 	if relayInfo.AgencyPricing != nil && strings.TrimSpace(relayInfo.RequestId) == "" {
 		relayInfo.RequestId = common.NewRequestId()
@@ -63,7 +136,7 @@ func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.
 	if relayInfo.ChannelMeta != nil && relayInfo.ChannelId > 0 {
 		task.BillingChannelId = relayInfo.ChannelId
 	}
-	if model.CNMidjourneyRequested() {
+	if !opsWalletOwnsRequest(relayInfo) && model.CNMidjourneyRequested() {
 		if relayInfo.AgencyPricing != nil || model.IsAgencyDurableUser(relayInfo.UserId) {
 			return false, model.ErrAgencyFundingUnavailable
 		}
@@ -89,6 +162,9 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 	if task == nil || task.Id == 0 {
 		return false, errors.New("Midjourney task must be persisted before billing")
 	}
+	if (task.BillingSource == "ops") != opsWalletOwnsRequest(relayInfo) {
+		return false, errors.New("Midjourney wallet owner changed after acceptance")
+	}
 	if task.CNBillingKey != "" {
 		if relayInfo.UserId != task.UserId || relayInfo.AgencyPricing != nil || relayInfo.BillingSource == BillingSourceSubscription {
 			return false, model.ErrCNConflict
@@ -104,7 +180,7 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 	// Durable agency customers must settle the wallet/funding projection and
 	// token in the same database transaction. The legacy helper intentionally
 	// keeps its historical behavior for unmanaged users.
-	if relayInfo.AgencyPricing != nil &&
+	if !opsWalletOwnsRequest(relayInfo) && relayInfo.AgencyPricing != nil &&
 		relayInfo.RequestId != "" &&
 		model.IsAgencyDurableUser(relayInfo.UserId) &&
 		!relayInfo.IsPlayground {
@@ -131,7 +207,7 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 	} else {
 		result, billingErr = postConsumeQuotaWithResult(relayInfo, task.Quota, 0, true)
 	}
-	if !result.FundingApplied {
+	if !result.FundingApplied && !(opsWalletOwnsRequest(relayInfo) && result.TokenApplied) {
 		task.Quota = 0
 		task.TokenId = 0
 		task.BillingChannelId = 0
@@ -179,6 +255,22 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		task.Quota = 0
 		return true
 	}
+	if task.BillingSource == "ops" {
+		quota, err := model.RefundOPSMidjourney(task, CovertMjpActionToModelName(task.Action))
+		if err != nil {
+			logger.LogWarn(ctx, "OPS Midjourney refund pending durable recovery: "+err.Error())
+			return false
+		}
+		if quota > 0 {
+			other := model.NewLogOther()
+			other.SetPublic("task_id", task.MjId)
+			other.SetPublic("request_id", task.BillingRequestID)
+			other.SetPublic("reason", reason)
+			other.SetPublic("wallet_event_owner", "ops_funding")
+			model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{UserId: task.UserId, LogType: model.LogTypeRefund, ChannelId: task.GetBillingChannelId(), ModelName: CovertMjpActionToModelName(task.Action), Quota: quota, TokenId: task.TokenId, Other: other})
+		}
+		return true
+	}
 	quota := task.Quota
 	if quota == 0 {
 		return true
@@ -206,7 +298,7 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		logger.LogError(ctx, fmt.Sprintf("记录代理商 Midjourney 佣金冲正失败 task %s: %s", task.MjId, err.Error()))
 	}
 
-	if task.TokenId > 0 && !(task.AgencyChargeID != "" && model.IsAgencyDurableUser(task.UserId)) {
+	if task.TokenId > 0 && (task.BillingSource == "ops" || !(task.AgencyChargeID != "" && model.IsAgencyDurableUser(task.UserId))) {
 		if tokenKey != "" {
 			if err := model.IncreaseTokenQuota(task.TokenId, tokenKey, quota); err != nil {
 				logger.LogWarn(ctx, fmt.Sprintf("退还 Midjourney 令牌额度失败 task %s: %s", task.MjId, err.Error()))

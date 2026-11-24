@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -607,6 +608,12 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 	if float64(quota) < common.QuotaPerUnit {
 		return fmt.Errorf("转移额度最小为%s！", logger.LogQuota(common.QuotaFromFloat(common.QuotaPerUnit)))
 	}
+	if opsauthority.Enabled() {
+		// Moving a reward requires the OPS reward ledger and wallet to commit
+		// together. A local decrement followed by an unconfirmed credit is not
+		// that contract; retain both balances until it is available.
+		return ErrOPSLocalWalletWrite
+	}
 
 	// 开始数据库事务
 	tx := DB.Begin()
@@ -738,6 +745,9 @@ func (user *User) Insert(inviterId int) error {
 				return err
 			}
 			user.Quota = common.QuotaForNewUser
+			if opsauthority.FundingEnabled() {
+				user.Quota = 0
+			}
 			if user.BillingMode == "" {
 				user.BillingMode = "legacy"
 			}
@@ -750,7 +760,10 @@ func (user *User) Insert(inviterId int) error {
 				user.SetSetting(defaultSetting)
 			}
 
-			return tx.Create(user).Error
+			if err := tx.Create(user).Error; err != nil {
+				return err
+			}
+			return user.queueOPSRegistrationGiftsTx(tx, inviterId)
 		})
 	}); err != nil {
 		return err
@@ -781,7 +794,9 @@ func (user *User) finishInsert(inviterId int) {
 	}
 	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
 		if common.QuotaForInvitee > 0 {
-			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
+			if !opsauthority.FundingEnabled() {
+				_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
+			}
 			RecordQuotaLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)), common.QuotaForInvitee, LogQuotaSourceInvitee, false, nil)
 		}
 		if common.QuotaForInviter > 0 {
@@ -805,6 +820,9 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 			return err
 		}
 		user.Quota = common.QuotaForNewUser
+		if opsauthority.FundingEnabled() {
+			user.Quota = 0
+		}
 		if user.BillingMode == "" {
 			user.BillingMode = "legacy"
 		}
@@ -816,8 +834,32 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 			user.SetSetting(defaultSetting)
 		}
 
-		return tx.Create(user).Error
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
+		return user.queueOPSRegistrationGiftsTx(tx, inviterId)
 	})
+}
+
+// Registration gifts commit with the new account and OAuth binding. A failed
+// registration cannot leave a deliverable credit, and repeated post-creation
+// hooks only record audit logs rather than crediting the wallet again.
+func (user *User) queueOPSRegistrationGiftsTx(tx *gorm.DB, inviterId int) error {
+	if !opsauthority.FundingEnabled() {
+		return nil
+	}
+	if common.QuotaForNewUser < 0 || common.QuotaForInvitee < 0 {
+		return errors.New("invalid registration gift quota")
+	}
+	if common.QuotaForNewUser > 0 {
+		if err := QueueOPSWalletFundingTx(tx, int64(user.Id), int64(common.QuotaForNewUser), "gift", "registration", strconv.Itoa(user.Id), nil); err != nil {
+			return err
+		}
+	}
+	if inviterId != 0 && common.QuotaForInvitee > 0 && operation_setting.IsPaymentComplianceConfirmed() {
+		return QueueOPSWalletFundingTx(tx, int64(user.Id), int64(common.QuotaForInvitee), "gift", "invitation", strconv.Itoa(user.Id), nil)
+	}
+	return nil
 }
 
 // InsertWithTxAgency creates an agency-invited customer with zero initial
@@ -860,7 +902,9 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 	}
 	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
 		if common.QuotaForInvitee > 0 {
-			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
+			if !opsauthority.FundingEnabled() {
+				_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
+			}
 			RecordQuotaLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)), common.QuotaForInvitee, LogQuotaSourceInvitee, false, nil)
 		}
 		if common.QuotaForInviter > 0 {
@@ -1444,6 +1488,9 @@ func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 // operator identity in the durable agency funding projection. Legacy users
 // continue through the existing quota update path.
 func IncreaseUserQuotaWithActor(id int, quota int, actorID int64) error {
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 	if quota <= 0 {
 		return errors.New("quota cannot be non-positive")
 	}
@@ -1500,6 +1547,9 @@ func DecreaseUserQuota(id int, quota int, db bool) (err error) {
 }
 
 func DecreaseUserQuotaWithActor(id int, quota int, actorID int64) error {
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 	if quota < 0 {
 		return errors.New("quota cannot be negative")
 	}

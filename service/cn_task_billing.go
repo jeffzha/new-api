@@ -34,7 +34,7 @@ func CNTaskBillingKey(info *relaycommon.RelayInfo) string {
 }
 
 func PreConsumeCNTaskBilling(info *relaycommon.RelayInfo, platform constant.TaskPlatform, provider *model.TaskProviderBillingSnapshot, quota int) *types.NewAPIError {
-	if info == nil || info.ChannelMeta == nil || info.ChannelIsMultiKey || !model.CNDurableTaskAvailable() || model.CNTaskProvider(string(platform)) == "" || info.AgencyPricing != nil || model.IsAgencyDurableUser(info.UserId) || info.QuotaClamp != nil {
+	if projectAuthority() || info == nil || info.ChannelMeta == nil || info.ChannelIsMultiKey || !model.CNDurableTaskAvailable() || model.CNTaskProvider(string(platform)) == "" || info.AgencyPricing != nil || model.IsAgencyDurableUser(info.UserId) || info.QuotaClamp != nil {
 		return types.NewErrorWithStatusCode(model.ErrCNConflict, types.ErrorCodeQueryDataError, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
 	}
 	seed := model.InitTask(platform, info)

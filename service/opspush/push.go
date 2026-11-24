@@ -27,7 +27,6 @@ import (
 	"math"
 	mrand "math/rand/v2"
 	"net/http"
-	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -38,7 +37,12 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
+	"github.com/QuantumNous/new-api/pkg/opsnotify"
+	"github.com/QuantumNous/new-api/service/opsbilling"
+	"github.com/QuantumNous/new-api/service/opsclient"
 	"github.com/QuantumNous/new-api/service/opsfees"
+	"github.com/QuantumNous/new-api/service/opswallet"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -87,18 +91,28 @@ const (
 
 type Config struct {
 	URL, KeyID, Secret string
+	StateID            int
+	Scope              string
+	TaskOutbox         bool   // Keep draining accepted native tasks after disabling new OPS calls.
 	Since              int64  // first run only: start after the last log older than this; 0 = start at the newest log
 	Spec               string // SpecV1 (default) or SpecV11
 }
 
 type Pusher struct {
-	DB, LogDB     *gorm.DB
-	Config        Config
-	Client        *http.Client
-	Owner         string
-	Now           func() time.Time
-	fastMu        sync.Mutex
-	fastDelivered map[int]time.Time
+	DB, LogDB       *gorm.DB
+	Config          Config
+	Client          *http.Client
+	Owner           string
+	Now             func() time.Time
+	lastTaskBatch   bool
+	taskScanAfter   int64
+	fastMu          sync.Mutex
+	fastDelivered   map[int]time.Time
+	nextFunding     time.Time
+	fundingAttempts int
+	fundingMu       sync.Mutex
+	fundingBusy     bool
+	fundingContext  context.Context
 }
 
 // StartConfigured starts the pusher when OPS_PUSH_URL is set.
@@ -108,6 +122,11 @@ func StartConfigured(ctx context.Context) error {
 		return nil
 	}
 	config := Config{URL: base, KeyID: os.Getenv("OPS_PUSH_KEY_ID"), Secret: os.Getenv("OPS_PUSH_SECRET")}
+	config.TaskOutbox = opsauthority.Enabled() || os.Getenv("OPS_TASK_OUTBOX_ENABLED") == "true"
+	if opsauthority.Enabled() {
+		config.Scope = opsauthority.Scope()
+		config.StateID, _ = strconv.Atoi(os.Getenv("OPS_PUSH_STATE_ID"))
+	}
 	if err := config.validate(); err != nil {
 		return err
 	}
@@ -129,21 +148,26 @@ func StartConfigured(ctx context.Context) error {
 		return errors.New("Ops push needs SQL log ids; ClickHouse logs are not supported")
 	}
 	pusher := New(model.DB, model.LOG_DB, config)
+	if opsauthority.FinancialOutboxEnabled() {
+		if err := model.VerifyOPSWalletFundingSchema(model.DB); err != nil {
+			return err
+		}
+	}
 	if err := pusher.Migrate(); err != nil {
 		return err
 	}
-	go pusher.runCommitted(ctx)
 	go pusher.Run(ctx)
+	go pusher.runCommitted(ctx, opsnotify.Committed())
 	common.SysLog("Ops push enabled (" + config.Spec + "): " + base + pushPath)
 	return nil
 }
 
 func (c Config) validate() error {
-	parsed, err := url.Parse(c.URL)
-	loopback := parsed != nil && parsed.Scheme == "http" && (parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost")
-	if err != nil || (parsed.Scheme != "https" && !loopback) || parsed.Host == "" || parsed.User != nil ||
-		(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return errors.New("OPS_PUSH_URL must be an https origin (http only for loopback)")
+	if err := opsclient.ValidateBase(c.URL); err != nil {
+		return err
+	}
+	if c.Scope != "" && c.StateID < 2 {
+		return errors.New("project push requires a separate state id")
 	}
 	if !idPattern.MatchString(c.KeyID) {
 		return errors.New("OPS_PUSH_KEY_ID is missing or invalid")
@@ -186,11 +210,24 @@ func (p *Pusher) Migrate() error {
 		p.LogDB.Model(&model.Log{}).Select("COALESCE(MAX(id), 0)").Scan(&cursor)
 	}
 	// Only the first instance to start sets the starting point; later starts keep the stored cursor.
-	return p.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&State{Id: 1, Cursor: cursor}).Error
+	return p.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&State{Id: p.stateID(), Cursor: cursor}).Error
+}
+
+func (p *Pusher) stateID() int {
+	if p.Config.StateID > 0 {
+		return p.Config.StateID
+	}
+	return 1
 }
 
 func (p *Pusher) Run(ctx context.Context) {
+	p.fundingMu.Lock()
+	p.fundingContext = ctx
+	p.fundingMu.Unlock()
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		wait := p.Step()
 		select {
 		case <-ctx.Done():
@@ -206,6 +243,7 @@ func (p *Pusher) Step() time.Duration {
 	if !ok {
 		return leaseSeconds * time.Second / 2
 	}
+	p.startFundingDelivery()
 	if state.BatchId == "" {
 		built, err := p.build(state)
 		if err != nil {
@@ -222,13 +260,54 @@ func (p *Pusher) Step() time.Duration {
 	return p.send(state)
 }
 
+// Only the fleet lease holder starts a bounded funding delivery. Its remote
+// timeout must never block the usage scanner or share its retry state. Lease
+// takeover can overlap a sender; immutable event IDs make that replay safe.
+func (p *Pusher) startFundingDelivery() {
+	if !opsauthority.FinancialOutboxEnabled() {
+		return
+	}
+	p.fundingMu.Lock()
+	parent := p.fundingContext
+	if parent == nil {
+		parent = context.Background()
+	}
+	if parent.Err() != nil || p.fundingBusy || p.Now().Before(p.nextFunding) {
+		p.fundingMu.Unlock()
+		return
+	}
+	p.fundingBusy = true
+	p.fundingMu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(parent, 8*time.Second)
+		defer cancel()
+		err := opswallet.DeliverFunding(ctx, p.DB, opsclient.New(p.Config.URL, p.Config.KeyID, p.Config.Secret, 8*time.Second))
+		p.fundingMu.Lock()
+		defer p.fundingMu.Unlock()
+		p.fundingBusy = false
+		wait := idleWait
+		if err != nil {
+			p.fundingAttempts++
+			wait = backoff(p.fundingAttempts, 0)
+			var remote *opsclient.ReadError
+			if errors.As(err, &remote) {
+				wait = backoff(p.fundingAttempts, remote.RetryAfter)
+			}
+			common.SysError("Ops funding acknowledgement unavailable; immutable events retained")
+		} else {
+			p.fundingAttempts = 0
+		}
+		p.nextFunding = p.Now().Add(wait)
+	}()
+}
+
 func (p *Pusher) lease() (*State, bool) {
 	now := p.Now().Unix()
-	err := p.DB.Model(&State{}).Where("id = 1 AND (owner = ? OR lease_until < ?)", p.Owner, now).
+	err := p.DB.Model(&State{}).Where("id = ? AND (owner = ? OR lease_until < ?)", p.stateID(), p.Owner, now).
 		Updates(map[string]any{"owner": p.Owner, "lease_until": now + leaseSeconds}).Error
 	// Read the owner back: MySQL counts changed rows, so RowsAffected is 0 when the lease is renewed within a second.
 	var state State
-	if err != nil || p.DB.First(&state, 1).Error != nil || state.Owner != p.Owner {
+	if err != nil || p.DB.First(&state, p.stateID()).Error != nil || state.Owner != p.Owner {
 		return nil, false
 	}
 	return &state, true
@@ -236,11 +315,11 @@ func (p *Pusher) lease() (*State, bool) {
 
 // save writes the given columns only while this instance still holds the lease.
 func (p *Pusher) save(values map[string]any) error {
-	if err := p.DB.Model(&State{}).Where("id = 1 AND owner = ?", p.Owner).Updates(values).Error; err != nil {
+	if err := p.DB.Model(&State{}).Where("id = ? AND owner = ?", p.stateID(), p.Owner).Updates(values).Error; err != nil {
 		return err
 	}
 	var owner string
-	if err := p.DB.Model(&State{}).Where("id = 1").Select("owner").Scan(&owner).Error; err != nil || owner != p.Owner {
+	if err := p.DB.Model(&State{}).Where("id = ?", p.stateID()).Select("owner").Scan(&owner).Error; err != nil || owner != p.Owner {
 		return errors.New("lease lost")
 	}
 	return nil
@@ -263,14 +342,90 @@ type batch struct {
 
 // build persists the next batch after the cursor. It returns false when there is nothing to send.
 func (p *Pusher) build(state *State) (bool, error) {
-	v11 := p.Config.Spec == SpecV11
+	if (p.Config.Scope != "" || p.Config.TaskOutbox) && !p.lastTaskBatch {
+		var tasks []*model.Task
+		if err := p.DB.Where("ops_usage_pending = ? AND status IN ? AND billing_reconciliation_pending = ?", true, []model.TaskStatus{model.TaskStatusSuccess, model.TaskStatusFailure}, false).
+			Where("id > ?", p.taskScanAfter).
+			Where(fmt.Sprintf("NOT EXISTS (SELECT 1 FROM %s r WHERE r.task_id=%s.id AND r.status IN ?)", opsauthority.TaskTable("task_billing_reconciliations"), opsauthority.TaskTable("tasks")), []string{"pending", "processing"}).Order("id").Limit(50).Find(&tasks).Error; err != nil {
+			return false, err
+		}
+		// Bridge records have a different drainer. Advance a bounded scan past
+		// them without acknowledging them, then wrap to retry retained records.
+		// A restart simply scans from the beginning; no task is skipped durably.
+		if len(tasks) < 50 {
+			p.taskScanAfter = 0
+		} else {
+			p.taskScanAfter = tasks[len(tasks)-1].ID
+		}
+		events := []map[string]any{}
+		for _, task := range tasks {
+			if task.PrivateData.BillingSource != "ops" {
+				continue // The bridge drainer owns these records.
+			}
+			if !task.PrivateData.OPSWalletBinding.Matches(p.Config.URL, p.Config.KeyID, p.Config.Scope) {
+				return false, errors.New("accepted OPS task destination changed; durable delivery retained")
+			}
+			var event map[string]any
+			if common.Unmarshal(task.PrivateData.OpsUsage, &event) != nil {
+				return false, errors.New("invalid project task outbox")
+			}
+			extra, ok := event["extra"].(map[string]any)
+			if !ok || extra["billing_scope"] != p.Config.Scope || extra["project_task_terminal"] != true {
+				return false, errors.New("invalid project task scope")
+			}
+			extra["project_task_row"] = task.ID
+			var settled model.TaskBillingReconciliation
+			if err := p.DB.Where("task_id = ? AND status = ?", task.ID, model.TaskBillingReconciliationSettled).First(&settled).Error; err == nil {
+				facts, _ := extra["usage_facts"].(map[string]any)
+				if facts == nil {
+					facts = map[string]any{}
+				}
+				facts["total_tokens"] = settled.TotalTokens
+				extra["usage_facts"] = facts
+				event["gatewayQuota"] = settled.ActualQuota
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return false, err
+			}
+			// Terminal task events bypass the ordinary log batch. Use the frozen
+			// execution address here too, before persisting immutable batch bytes.
+			other := model.NewLogOther()
+			model.CaptureUpstreamLogReference(other, task.PrivateData.UpstreamBaseURL)
+			if err := p.attachUpstream(&model.Log{ChannelId: task.ChannelId, Type: model.LogTypeConsume, Other: other.JSONString()}, event); err != nil {
+				return false, err
+			}
+			events = append(events, event)
+		}
+		if len(events) > 0 {
+			encoded, err := common.Marshal(batch{SchemaVersion: "1.1", BatchId: fmt.Sprintf("project-task-%d-%d", tasks[0].ID, tasks[len(tasks)-1].ID), Events: events})
+			if err != nil {
+				return false, err
+			}
+			if len(encoded) > maxBody {
+				return false, errors.New("project task batch exceeds limit")
+			}
+			state.BatchBody, state.BatchLast = string(encoded), state.Cursor
+			state.BatchId = fmt.Sprintf("project-task-%d-%d", tasks[0].ID, tasks[len(tasks)-1].ID)
+			return true, p.save(map[string]any{"batch_id": state.BatchId, "batch_body": state.BatchBody, "batch_last": state.BatchLast})
+		}
+	}
+	p.lastTaskBatch = false
+	v11 := p.Config.Spec == SpecV11 && p.Config.Scope == ""
 	types, schema := []int{model.LogTypeConsume, model.LogTypeError}, "1"
+	if p.Config.Scope != "" {
+		schema = "1.1"
+	}
 	if v11 {
 		types, schema = v11Types, "1.1"
 	}
 	var logs []*model.Log
+	kinds := []int{model.LogTypeConsume, model.LogTypeError}
+	if p.Config.Scope != "" {
+		kinds = append(kinds, model.LogTypeRefund)
+	} else {
+		kinds = types
+	}
 	err := p.LogDB.Where("id > ? AND type IN ? AND created_at <= ?", state.Cursor,
-		types, p.Now().Unix()-settleSeconds).
+		kinds, p.Now().Unix()-settleSeconds).
 		Order("id").Limit(maxEvents).Find(&logs).Error
 	if err != nil || len(logs) == 0 {
 		return false, err
@@ -287,11 +442,36 @@ func (p *Pusher) build(state *State) (bool, error) {
 			if !p.ownsLog(log) || p.deliveredFast(log.Id) {
 				continue
 			}
+			if err := p.validateWalletLedger(object(json.RawMessage(log.Other))); err != nil {
+				return false, err
+			}
+			if p.Config.Scope != "" {
+				meta := object(json.RawMessage(log.Other))
+				if string(meta["is_task"]) == "true" {
+					continue
+				}
+			}
 			event := Event(log, names[log.ChannelId])
 			if v11 {
 				event = EventV11(log, names[log.ChannelId], topups[log.Id], conversion)
 			}
 			if event != nil {
+				if p.Config.Scope != "" {
+					extra, _ := event["extra"].(map[string]json.RawMessage)
+					if extra == nil {
+						extra = map[string]json.RawMessage{}
+					}
+					kind, direction := "usage", "debit"
+					if log.Type == model.LogTypeError {
+						kind = "error"
+					}
+					if log.Type == model.LogTypeRefund {
+						kind, direction = "refund", "credit"
+					}
+					extra["recordKind"], _ = common.Marshal(kind)
+					extra["direction"], _ = common.Marshal(direction)
+					event["extra"] = extra
+				}
 				if err := p.attachUpstream(log, event); err != nil {
 					return false, err
 				}
@@ -371,6 +551,58 @@ type okBody struct {
 
 func (p *Pusher) send(state *State) time.Duration {
 	body := []byte(state.BatchBody)
+	var walletBatch struct {
+		Events []struct {
+			Extra map[string]json.RawMessage `json:"extra"`
+		} `json:"events"`
+	}
+	if common.Unmarshal(body, &walletBatch) != nil || len(walletBatch.Events) == 0 {
+		p.fail(state, "invalid persisted usage batch; durable retry retained")
+		return stalledWait
+	}
+	for _, event := range walletBatch.Events {
+		if err := p.validateWalletLedger(event.Extra); err != nil {
+			p.fail(state, err.Error())
+			return stalledWait
+		}
+	}
+	if strings.HasPrefix(state.BatchId, "project-task-") {
+		var sent batch
+		if common.Unmarshal(body, &sent) != nil || len(sent.Events) == 0 {
+			p.fail(state, "invalid persisted OPS task batch; durable retry retained")
+			return stalledWait
+		}
+		ids := make([]int64, 0, len(sent.Events))
+		for _, event := range sent.Events {
+			extra, _ := event["extra"].(map[string]any)
+			id, _ := extra["project_task_row"].(float64)
+			if id <= 0 || id > 9007199254740991 || id != math.Trunc(id) || extra["billing_scope"] != p.Config.Scope || extra["project_task_terminal"] != true {
+				p.fail(state, "invalid persisted OPS task identity; durable retry retained")
+				return stalledWait
+			}
+			ids = append(ids, int64(id))
+		}
+		var tasks []*model.Task
+		if err := p.DB.Where("id IN ?", ids).Find(&tasks).Error; err != nil || len(tasks) != len(ids) {
+			p.fail(state, "persisted OPS task evidence unavailable; durable retry retained")
+			return stalledWait
+		}
+		for _, task := range tasks {
+			if task.PrivateData.BillingSource != "ops" || !task.PrivateData.OPSWalletBinding.Matches(p.Config.URL, p.Config.KeyID, p.Config.Scope) {
+				p.fail(state, "persisted OPS task destination changed; durable retry retained")
+				return stalledWait
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	err := opsclient.ReserveIngest(ctx, p.Config.URL, p.Config.KeyID, opsclient.IngestUsage)
+	cancel()
+	if err != nil {
+		if wait, deferred := opsclient.ReadDeferred(err); deferred {
+			return max(wait, time.Millisecond)
+		}
+		return idleWait
+	}
 	request, err := http.NewRequest(http.MethodPost, p.Config.URL+pushPath, bytes.NewReader(body))
 	if err != nil {
 		p.fail(state, err.Error())
@@ -390,6 +622,37 @@ func (p *Pusher) send(state *State) time.Duration {
 	if response.StatusCode == http.StatusOK {
 		var ok okBody
 		decodeErr := common.Unmarshal(raw, &ok)
+		if p.Config.Scope != "" || strings.HasPrefix(state.BatchId, "project-task-") {
+			var sent batch
+			if decodeErr != nil || common.Unmarshal(body, &sent) != nil || ok.Data.Accepted < 0 || ok.Data.Duplicates < 0 || len(ok.Data.Rejected) > 0 || ok.Data.Accepted+ok.Data.Duplicates != len(sent.Events) {
+				p.fail(state, "project usage acknowledgement incomplete; durable retry retained")
+				return stalledWait
+			}
+		}
+		if reader := opsbilling.Default; decodeErr == nil && reader != nil && p.Config.Scope != "" && reader.Client.BaseURL == p.Config.URL && reader.Client.KeyID == p.Config.KeyID && reader.Client.Secret == p.Config.Secret {
+			reader.AcceptPushReceipts(body, raw, p.Now())
+		}
+		if strings.HasPrefix(state.BatchId, "project-task-") {
+			p.lastTaskBatch = true
+			if len(ok.Data.Rejected) > 0 {
+				p.fail(state, "project task terminal rejected; manual review required")
+				return stalledWait
+			}
+			var sent batch
+			if err := common.UnmarshalJsonStr(state.BatchBody, &sent); err != nil {
+				return stalledWait
+			}
+			for _, event := range sent.Events {
+				extra, _ := event["extra"].(map[string]any)
+				id, _ := extra["project_task_row"].(float64)
+				if id <= 0 {
+					return stalledWait
+				}
+				if err := p.DB.Model(&model.Task{}).Where("id = ?", int64(id)).Update("ops_usage_pending", false).Error; err != nil {
+					return idleWait
+				}
+			}
+		}
 		if decodeErr == nil {
 			opsfees.AcceptPushReceipts(p.Config.URL, p.Config.KeyID, p.Config.Secret, body, raw, p.Now())
 		}
@@ -414,15 +677,20 @@ func (p *Pusher) send(state *State) time.Duration {
 		code = http.StatusText(response.StatusCode)
 	}
 	message := fmt.Sprintf("send %s: HTTP %d %s", state.BatchId, response.StatusCode, code)
+	if p.Config.Scope != "" && response.StatusCode == 400 {
+		p.fail(state, message)
+		return stalledWait
+	}
 	switch {
 	case response.StatusCode == http.StatusBadRequest && code == "invalid_events" && len(failure.Error.Details.Rejected) > 0:
 		// The spec lets the same batchId be resent once corrected: drop the rejected events and resend the rest.
 		p.dropRejected(state, failure)
 		return 0
 	case response.StatusCode == http.StatusTooManyRequests:
-		retry, _ := strconv.Atoi(response.Header.Get("Retry-After"))
+		retry := opsclient.RetryAfter(response.Header.Get("Retry-After"), p.Now())
+		opsclient.CoolIngest(context.Background(), p.Config.URL, p.Config.KeyID, retry)
 		p.fail(state, message)
-		return backoff(state.Attempts, time.Duration(retry)*time.Second)
+		return backoff(state.Attempts, retry)
 	case response.StatusCode >= 500 || code == "timestamp_out_of_window" || code == "nonce_reused":
 		p.fail(state, message)
 		return backoff(state.Attempts, 0)
@@ -495,8 +763,24 @@ func signWith(keyID, secret, method, target string, body []byte, timestamp, nonc
 
 // Event maps one consume or error log to a spec 4.3 event, or nil when OPS would reject it.
 func Event(log *model.Log, channelName string) map[string]any {
-	status := map[int]string{model.LogTypeConsume: "success", model.LogTypeError: "error"}[log.Type]
+	var owner string
+	if common.Unmarshal(object(json.RawMessage(log.Other))["wallet_event_owner"], &owner) == nil && owner == "ops_funding" {
+		return nil
+	}
+	status := map[int]string{model.LogTypeConsume: "success", model.LogTypeError: "error", model.LogTypeRefund: "success"}[log.Type]
 	requestId := log.RequestId
+	if log.Type == model.LogTypeRefund {
+		var taskID string
+		_ = common.Unmarshal(object(json.RawMessage(log.Other))["task_id"], &taskID)
+		base := requestId
+		if base == "" {
+			base = taskID
+		}
+		requestId = "refund-" + strconv.Itoa(log.Id)
+		if base != "" {
+			requestId = base + "-r" + strconv.Itoa(log.Id)
+		}
+	}
 	switch {
 	case requestId == "":
 		requestId = "log-" + strconv.Itoa(log.Id)
@@ -674,7 +958,7 @@ func logAttributes(other, facts map[string]json.RawMessage) map[string]any {
 // billingKeys are the `other` keys OPS shows in its usage detail and needs to price a task (its usage facts, billed or
 // estimated tokens, length, resolution, video input, the upstream's own charge and which settlement step the log is);
 // used when the whole object is over 4 KB.
-var billingKeys = []string{"model_ratio", "group_ratio", "completion_ratio", "cache_ratio", "model_price", "user_group_ratio",
+var billingKeys = []string{"billing_scope", "request_id", "model_ratio", "group_ratio", "completion_ratio", "cache_ratio", "model_price", "user_group_ratio",
 	"matched_tier", "billing_source", "request_path", "cache_tokens", "cache_creation_tokens", "image_count", "frt",
 	"task_id", "usage_facts", "billed_tokens", "estimated_tokens", "seconds", "resolution", "has_video_input", "upstream_amount",
 	"settlement_stage", "pre_consumed_quota", "actual_quota", "upstream_alert"}
@@ -703,13 +987,24 @@ func extraWithin(other map[string]json.RawMessage, keys []string, limit int) map
 			subset[key] = value
 		}
 	}
+	// Keep the immutable destination even when unrelated audit data causes
+	// the log to exceed the transport limit. Never downgrade to an unbound
+	// financial event just because its diagnostics were long.
+	if binding, ok := object(other["root_info"])["ops_wallet_binding"]; ok {
+		subset["root_info"], _ = common.Marshal(map[string]json.RawMessage{"ops_wallet_binding": binding})
+	}
 	if raw, err := common.Marshal(subset); err == nil && len(raw) > limit {
 		// A long pricing expression must not discard the actual image/video
 		// quantities OPS needs to calculate the charge.
 		delete(subset, "expr_b64")
 	}
 	if raw, err := common.Marshal(subset); err != nil || len(subset) == 0 || len(raw) > limit {
-		return nil
+		if _, bound := object(other["root_info"])["ops_wallet_binding"]; !bound {
+			return nil
+		}
+		// Preserve identity rather than turning an oversized financial event
+		// into an unbound event. Missing usage remains an explicit OPS gap.
+		subset = map[string]json.RawMessage{"root_info": subset["root_info"], "billing_scope": other["billing_scope"], "billing_source": other["billing_source"]}
 	}
 	return subset
 }
@@ -836,6 +1131,10 @@ func topupFacts(topup *model.TopUp, log *model.Log, recorded bool, price float64
 // failures keep the v1 shape; top-ups, adjustments and gifts carry no model. Every new field is inside extra.
 func EventV11(log *model.Log, channelName string, topup *model.TopUp, conversion Conversion) map[string]any {
 	other := object(json.RawMessage(log.Other))
+	var owner string
+	if common.Unmarshal(other["wallet_event_owner"], &owner) == nil && owner == "ops_funding" {
+		return nil
+	}
 	kind, direction := recordKind(log, other)
 	if kind == "" || log.UserId <= 0 {
 		return nil
@@ -943,6 +1242,11 @@ func EventV11(log *model.Log, channelName string, topup *model.TopUp, conversion
 	maps.Copy(extra, added)
 	if raw, err := common.Marshal(extra); err != nil || len(raw) > maxExtra-256 {
 		extra = added
+		if binding, ok := object(other["root_info"])["ops_wallet_binding"]; ok {
+			extra["root_info"] = map[string]json.RawMessage{"ops_wallet_binding": binding}
+			extra["billing_scope"] = other["billing_scope"]
+			extra["billing_source"] = other["billing_source"]
+		}
 	}
 	event["extra"] = extra
 	attachUpstreamAlert(other, event)

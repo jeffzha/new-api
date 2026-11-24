@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { OPSWalletFields } from '@/features/ops-wallet/types'
 import { create } from 'zustand'
 
 import type { LoginChallenge } from '@/features/auth/secure-verification/types'
@@ -27,7 +28,7 @@ export type UserPermissions = {
   admin_permissions?: AdminCapabilities
 }
 
-export interface AuthUser {
+export interface AuthUser extends OPSWalletFields {
   has_password?: boolean
   id: number
   username: string

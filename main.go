@@ -24,6 +24,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/pkg/wsmanager"
 	"github.com/QuantumNous/new-api/relay"
@@ -33,6 +34,7 @@ import (
 	"github.com/QuantumNous/new-api/service/agencyopspush"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/service/modelhealth"
+	"github.com/QuantumNous/new-api/service/opsbilling"
 	"github.com/QuantumNous/new-api/service/opsbridge"
 	"github.com/QuantumNous/new-api/service/opscatalog"
 	"github.com/QuantumNous/new-api/service/opsexport"
@@ -68,7 +70,6 @@ func main() {
 		logger.LogError(nil, message)
 	})
 	kitutil.SetSystemErrorLogging(common.SysError)
-
 	err := InitResources()
 	if err != nil {
 		common.FatalLog("failed to initialize resources: " + err.Error())
@@ -187,7 +188,17 @@ func main() {
 	if opsbridge.Default != nil {
 		defer opsbridge.Default.Close()
 	}
-	if err := opsfees.StartConfigured(commandWorkerCtx); err != nil {
+	if err := opsbilling.StartConfigured(commandWorkerCtx); err != nil {
+		common.FatalLog("failed to initialize OPS billing reads: " + err.Error())
+		return
+	}
+	if err := opsfees.StartConfigured(commandWorkerCtx, func(c opsfees.Config, runtime *model.OpsFeeRuntime) {
+		runtime.Scope = opsauthority.Scope()
+		if reader := opsbilling.Default; reader != nil && c.AcceptsReceipts(reader.Client) {
+			runtime.CachedReceipt = reader.CachedLogFee
+			opsfees.ConfigureReceiptObserver(reader.AcceptPushReceipts)
+		}
+	}); err != nil {
 		common.FatalLog("failed to initialize OPS fee comparison: " + err.Error())
 		return
 	}
@@ -389,6 +400,11 @@ func InitResources() error {
 		if common.DebugEnabled {
 			common.SysLog("No .env file found, using default environment variables. If needed, please create a .env file and set the relevant variables.")
 		}
+	}
+	// Validate the effective configuration, including .env, before opening
+	// databases or starting migrations and background money writers.
+	if err := opsauthority.Validate(); err != nil {
+		return fmt.Errorf("invalid OPS wallet configuration: %w", err)
 	}
 
 	// 加载环境变量

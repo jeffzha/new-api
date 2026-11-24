@@ -7,9 +7,11 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service/opsbilling"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -254,4 +256,54 @@ func TestTopUpLargeWalletCapacityAcrossDatabases(t *testing.T) {
 			assert.ErrorIs(t, model.ValidateTopUpQuotaCapacity(user.Id, quota), model.ErrTopUpQuotaLimitExceeded)
 		})
 	}
+}
+
+func TestOPSTopUpCapacityUsesAuthoritativeWallet(t *testing.T) {
+	t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+	previousDB, previousReader := model.DB, opsbilling.Default
+	// No local money table is available: even a pre-payment capacity check
+	// must not silently fall back to User.Quota when OPS is unavailable.
+	model.DB = nil
+	t.Cleanup(func() { model.DB, opsbilling.Default = previousDB, previousReader })
+	for _, tc := range []struct {
+		name    string
+		balance int64
+		credit  int
+		status  int
+		wantErr error
+	}{
+		{"negative balance can be funded", -10, 100, 200, nil},
+		{"zero balance can be funded", 0, 100, 200, nil},
+		{"exact capacity", common.MaxWalletQuota - 100, 100, 200, nil},
+		{"excess capacity", common.MaxWalletQuota - 99, 100, 200, model.ErrTopUpQuotaLimitExceeded},
+		{"invalid credit", 0, 0, 200, model.ErrInvalidTopUpQuota},
+		{"unknown balance", 0, 100, 503, opsbilling.ErrBalanceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/v1/catalog/v1/balances/42", r.URL.Path)
+				w.WriteHeader(tc.status)
+				raw, err := common.Marshal(map[string]any{"data": map[string]any{
+					"userId": "42", "balance": fmt.Sprint(tc.balance), "balanceQuota": tc.balance,
+					"negative": tc.balance < 0, "lastEntryId": 1, "updatedAt": "2026-11-25T00:00:00Z",
+				}})
+				assert.NoError(t, err)
+				_, _ = w.Write(raw)
+			}))
+			t.Cleanup(server.Close)
+			opsbilling.Default = opsbilling.New(opsbilling.Config{BaseURL: server.URL, KeyID: "capacity-fixture", Secret: "synthetic-capacity-secret", Timeout: time.Second})
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/api/user/amount", nil)
+			err := validateWalletTopUpCapacity(ctx, 42, tc.credit)
+			if tc.wantErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, tc.wantErr)
+			}
+		})
+	}
+	opsbilling.Default = nil
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/user/amount", nil)
+	require.ErrorIs(t, validateWalletTopUpCapacity(ctx, 42, 100), opsbilling.ErrBalanceUnavailable)
 }

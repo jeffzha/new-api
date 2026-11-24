@@ -13,7 +13,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/pkg/opsnotify"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
+	"github.com/QuantumNous/new-api/service/opsbilling"
+	"github.com/QuantumNous/new-api/service/opsclient"
 	"github.com/QuantumNous/new-api/service/opsfees"
 )
 
@@ -23,14 +25,14 @@ const committedBatch = 250
 // commit-order window. Only post-commit hints can enter this lane. It never
 // advances the durable cursor, so a crash, full queue or failed delivery falls
 // back to ordinary scanning without skipping an earlier uncommitted log.
-func (p *Pusher) runCommitted(ctx context.Context) {
+func (p *Pusher) runCommitted(ctx context.Context, committed <-chan int) {
 	var nextBatch time.Time
 	for {
 		var first int
 		select {
 		case <-ctx.Done():
 			return
-		case first = <-opsnotify.Committed():
+		case first = <-committed:
 		}
 		ids := []int{first}
 		timer := time.NewTimer(max(25*time.Millisecond, time.Until(nextBatch)))
@@ -40,7 +42,7 @@ func (p *Pusher) runCommitted(ctx context.Context) {
 			case <-ctx.Done():
 				timer.Stop()
 				return
-			case id := <-opsnotify.Committed():
+			case id := <-committed:
 				ids = append(ids, id)
 			case <-timer.C:
 				break collect
@@ -72,6 +74,9 @@ func (p *Pusher) sendCommitted(parent context.Context, ids []int) error {
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 	types := []int{model.LogTypeConsume, model.LogTypeError}
+	if p.Config.Scope != "" {
+		types = append(types, model.LogTypeRefund)
+	}
 	var logs []*model.Log
 	if err := p.LogDB.WithContext(ctx).Where("id IN ? AND type IN ?", ids, types).Order("id").Find(&logs).Error; err != nil {
 		return err
@@ -83,12 +88,30 @@ func (p *Pusher) sendCommitted(parent context.Context, ids []int) error {
 			continue
 		}
 		meta := object(json.RawMessage(log.Other))
+		if err := p.validateWalletLedger(meta); err != nil {
+			return err
+		}
 		if string(meta["is_task"]) == "true" {
 			continue
 		}
 		event := Event(log, names[log.ChannelId])
-		if p.Config.Spec == SpecV11 {
+		if p.Config.Scope == "" && p.Config.Spec == SpecV11 {
 			event = EventV11(log, names[log.ChannelId], nil, CurrentConversion())
+		} else if p.Config.Scope != "" && event != nil {
+			extra, _ := event["extra"].(map[string]json.RawMessage)
+			if extra == nil {
+				extra = map[string]json.RawMessage{}
+			}
+			kind, direction := "usage", "debit"
+			if log.Type == model.LogTypeError {
+				kind = "error"
+			}
+			if log.Type == model.LogTypeRefund {
+				kind, direction = "refund", "credit"
+			}
+			extra["recordKind"], _ = common.Marshal(kind)
+			extra["direction"], _ = common.Marshal(direction)
+			event["extra"] = extra
 		}
 		if event == nil {
 			continue
@@ -109,10 +132,10 @@ func (p *Pusher) sendCommitted(parent context.Context, ids []int) error {
 		}
 		sum := sha256.Sum256(rawEvents)
 		schema := "1"
-		if p.Config.Spec == SpecV11 {
+		if p.Config.Scope != "" || p.Config.Spec == SpecV11 {
 			schema = "1.1"
 		}
-		body, err = common.Marshal(batch{SchemaVersion: schema, BatchId: fmt.Sprintf("gw-committed-%d-%s", 1, hex.EncodeToString(sum[:16])), Events: events})
+		body, err = common.Marshal(batch{SchemaVersion: schema, BatchId: fmt.Sprintf("gw-committed-%d-%s", p.stateID(), hex.EncodeToString(sum[:16])), Events: events})
 		if err != nil {
 			return err
 		}
@@ -150,6 +173,9 @@ func (p *Pusher) sendCommitted(parent context.Context, ids []int) error {
 			}
 		}
 	}
+	if err := opsclient.ReserveIngest(ctx, p.Config.URL, p.Config.KeyID, opsclient.IngestUsage); err != nil {
+		return err
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, p.Config.URL+pushPath, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -161,6 +187,9 @@ func (p *Pusher) sendCommitted(parent context.Context, ids []int) error {
 		return err
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusTooManyRequests {
+		opsclient.CoolIngest(ctx, p.Config.URL, p.Config.KeyID, opsclient.RetryAfter(response.Header.Get("Retry-After"), p.Now()))
+	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxBody+1))
 	if err != nil || len(raw) > maxBody || response.StatusCode != http.StatusOK {
 		return fmt.Errorf("committed usage acknowledgement unavailable")
@@ -168,6 +197,9 @@ func (p *Pusher) sendCommitted(parent context.Context, ids []int) error {
 	var ack okBody
 	if common.Unmarshal(raw, &ack) != nil || ack.Data.Accepted < 0 || ack.Data.Duplicates < 0 || len(ack.Data.Rejected) != 0 || ack.Data.Accepted+ack.Data.Duplicates != len(events) {
 		return fmt.Errorf("committed usage acknowledgement incomplete")
+	}
+	if reader := opsbilling.Default; reader != nil && reader.Client.BaseURL == p.Config.URL && reader.Client.KeyID == p.Config.KeyID && reader.Client.Secret == p.Config.Secret {
+		reader.AcceptPushReceipts(body, raw, p.Now())
 	}
 	opsfees.AcceptPushReceipts(p.Config.URL, p.Config.KeyID, p.Config.Secret, body, raw, p.Now())
 
@@ -206,8 +238,28 @@ func (p *Pusher) deliveredFast(id int) bool {
 func (p *Pusher) ownsLog(log *model.Log) bool {
 	raw := object(json.RawMessage(log.Other))["billing_scope"]
 	if len(raw) == 0 {
-		return true
+		return p.Config.Scope == ""
 	}
 	var scope string
-	return common.Unmarshal(raw, &scope) == nil && scope == ""
+	return common.Unmarshal(raw, &scope) == nil && scope == p.Config.Scope
+}
+
+// A queued charge belongs to the ledger selected at acceptance. Rechecking
+// both fresh logs and persisted batches prevents a credential/URL change from
+// silently replaying financial events into a different tenant. Old unbound
+// events retain their existing delivery contract until explicitly reconciled.
+func (p *Pusher) validateWalletLedger(extra map[string]json.RawMessage) error {
+	raw, bound := object(extra["root_info"])["ops_wallet_binding"]
+	if !bound {
+		return nil
+	}
+	var binding opsauthority.Binding
+	if common.Unmarshal(raw, &binding) != nil || !binding.Matches(p.Config.URL, p.Config.KeyID, p.Config.Scope) {
+		return fmt.Errorf("accepted OPS wallet destination changed; durable retry retained")
+	}
+	var scope, source string
+	if common.Unmarshal(extra["billing_scope"], &scope) != nil || scope != binding.Scope || common.Unmarshal(extra["billing_source"], &source) != nil || source != "ops" {
+		return fmt.Errorf("accepted OPS wallet ownership is invalid; durable retry retained")
+	}
+	return nil
 }

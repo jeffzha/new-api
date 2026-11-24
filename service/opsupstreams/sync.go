@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/upstreammap"
+	"github.com/QuantumNous/new-api/service/opsclient"
 	"github.com/QuantumNous/new-api/service/opspush"
 	"gorm.io/gorm"
 )
@@ -251,6 +252,9 @@ func (s *Syncer) register(ctx context.Context, binding upstreammap.Binding) erro
 	if err != nil {
 		return err
 	}
+	if err := opsclient.ReserveIngest(ctx, s.Config.URL, s.Config.KeyID, opsclient.IngestMetadata); err != nil {
+		return err
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, s.Config.URL+Path, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -265,6 +269,9 @@ func (s *Syncer) register(ctx context.Context, binding upstreammap.Binding) erro
 	}
 	raw, readErr := io.ReadAll(io.LimitReader(response.Body, 16385))
 	response.Body.Close()
+	if response.StatusCode == http.StatusTooManyRequests {
+		opsclient.CoolIngest(ctx, s.Config.URL, s.Config.KeyID, opsclient.RetryAfter(response.Header.Get("Retry-After"), time.Now()))
+	}
 	var result struct {
 		Data struct {
 			ID      int64  `json:"ops_upstream_id"`

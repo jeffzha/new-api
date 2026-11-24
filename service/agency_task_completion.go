@@ -10,6 +10,9 @@ import (
 )
 
 func completeAgencyTaskBilling(ctx context.Context, task *model.Task, expectedStatus model.TaskStatus, totalTokens int64) error {
+	if task != nil && task.PrivateData.BillingSource == "ops" {
+		return nil
+	}
 	result, err := model.CompleteAgencyTask(task, expectedStatus, totalTokens)
 	if err != nil {
 		// Tiered and plugin video models are priced from request parameters

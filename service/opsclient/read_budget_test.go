@@ -192,3 +192,116 @@ func TestReadBudgetSharesServerCooldownAndKeepsLocalFallback(t *testing.T) {
 	_, deferred = ReadDeferred(second.reserveRead(context.Background()))
 	require.True(t, deferred)
 }
+
+func TestIngestBudgetIsolatesFundingAndSharesFleetAllowance(t *testing.T) {
+	t.Setenv("OPS_INGEST_BUDGET_ENABLED", "true")
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	before, enabled := common.RDB, common.RedisEnabled
+	common.RDB, common.RedisEnabled = client, true
+	t.Cleanup(func() { _ = client.Close(); common.RDB, common.RedisEnabled = before, enabled })
+	ctx := context.Background()
+	const base, key = "https://ops.example.test/test", "funding-fleet"
+	for _, lane := range []struct {
+		kind  IngestLane
+		limit int
+	}{{IngestFunding, 18}, {IngestMetadata, 12}, {IngestUsage, 78}} {
+		for i := range lane.limit {
+			// Separate callers and equivalent base URLs share the same lane.
+			url := base
+			if i%2 == 0 {
+				url += "/"
+			}
+			require.NoError(t, ReserveIngest(ctx, url, key, lane.kind))
+		}
+		wait, deferred := ReadDeferred(ReserveIngest(ctx, base, key, lane.kind))
+		require.True(t, deferred)
+		require.Positive(t, wait)
+	}
+	// Other stations remain independent, including a distinct /test scope.
+	require.NoError(t, ReserveIngest(ctx, base, "other-key", IngestUsage))
+	require.NoError(t, ReserveIngest(ctx, "https://ops.example.test", key, IngestUsage))
+	server.FastForward(61 * time.Second)
+	require.NoError(t, ReserveIngest(ctx, base, key, IngestUsage))
+	CoolIngest(ctx, base, key, 90*time.Second)
+	CoolIngest(ctx, base, key, time.Second)
+	for _, lane := range []IngestLane{IngestUsage, IngestFunding, IngestMetadata} {
+		wait, deferred := ReadDeferred(ReserveIngest(ctx, base, key, lane))
+		require.True(t, deferred)
+		require.Greater(t, wait, 89*time.Second)
+	}
+	server.Close()
+	require.Error(t, ReserveIngest(ctx, base, key, IngestUsage))
+	t.Setenv("OPS_INGEST_BUDGET_ENABLED", "false")
+	require.NoError(t, ReserveIngest(ctx, base, key, IngestUsage), "unconfigured deployments retain their existing contract")
+}
+
+func TestIngestBudgetRealRedisOptIn(t *testing.T) {
+	addr := os.Getenv("OPS_TEST_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("OPS_TEST_REDIS_ADDR not set")
+	}
+	t.Setenv("OPS_INGEST_BUDGET_ENABLED", "true")
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	before, enabled := common.RDB, common.RedisEnabled
+	common.RDB, common.RedisEnabled = client, true
+	t.Cleanup(func() { _ = client.Close(); common.RDB, common.RedisEnabled = before, enabled })
+	ctx := t.Context()
+	require.NoError(t, client.Ping(ctx).Err())
+	base, key := "https://ingest.example.invalid", common.GetUUID()
+	for _, lane := range []struct {
+		kind  IngestLane
+		limit int64
+	}{{IngestUsage, 78}, {IngestFunding, 18}, {IngestMetadata, 12}} {
+		t.Cleanup(func() {
+			k := ingestKey(base, key, lane.kind)
+			_ = client.Del(context.Background(), k, k+":cooldown").Err()
+		})
+		var accepted, unexpected atomic.Int64
+		var workers sync.WaitGroup
+		// More callers than the contract's allowance, representing two slots.
+		for i := range lane.limit + 2 {
+			workers.Go(func() {
+				url := base
+				if i%2 == 0 {
+					url += "/"
+				}
+				err := ReserveIngest(ctx, url, key, lane.kind)
+				if err == nil {
+					accepted.Add(1)
+					return
+				}
+				if _, deferred := ReadDeferred(err); !deferred {
+					unexpected.Add(1)
+				}
+			})
+		}
+		workers.Wait()
+		require.Zero(t, unexpected.Load())
+		require.Equal(t, lane.limit, accepted.Load())
+	}
+	CoolIngest(ctx, base, key, 90*time.Second)
+	for _, lane := range []IngestLane{IngestUsage, IngestFunding, IngestMetadata} {
+		wait, deferred := ReadDeferred(ReserveIngest(ctx, base, key, lane))
+		require.True(t, deferred)
+		require.Greater(t, wait, 89*time.Second)
+	}
+}
+
+func TestRetryAfterHonorsBothServerFormats(t *testing.T) {
+	at := time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{
+		{"90", 90 * time.Second},
+		{at.Add(90 * time.Second).Format(http.TimeFormat), 90 * time.Second},
+		{"7200", 2 * time.Hour},
+		{at.Add(2 * time.Hour).Format(http.TimeFormat), 2 * time.Hour},
+		{"9223372036854775807", time.Duration((1<<63-1)/time.Second) * time.Second},
+		{"-1", 0}, {"", 0}, {"invalid", 0},
+		{at.Add(-time.Second).Format(http.TimeFormat), 0},
+	} {
+		t.Run(tc.value, func(t *testing.T) { require.Equal(t, tc.want, RetryAfter(tc.value, at)) })
+	}
+}

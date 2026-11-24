@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { OPSWalletFields } from '@/features/ops-wallet/types'
 // ============================================================================
 // Wallet Type Definitions
 // ============================================================================
@@ -253,7 +254,7 @@ export interface UserCreditOverview {
   next_statement_at_ms: number
 }
 
-export interface UserWalletData {
+export interface UserWalletData extends OPSWalletFields {
   /** User ID */
   id: number
   /** Username */

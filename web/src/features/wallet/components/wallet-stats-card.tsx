@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useOPSBalance } from '@/features/ops-wallet/use-ops-balance'
 import { formatQuota } from '@/lib/format'
 
 import type { UserWalletData } from '../types'
@@ -39,6 +40,8 @@ interface WalletStatsCardProps {
 }
 
 export function WalletStatsCard(props: WalletStatsCardProps) {
+  const external = props.user?.wallet_authority === 'ops'
+  const opsBalance = useOPSBalance(props.user?.ops_balance)
   const { t } = useTranslation()
   if (props.loading) {
     return (
@@ -83,8 +86,8 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
   }[] = [
     {
       label: t('Current Balance'),
-      value: formatQuota(props.user?.quota ?? 0),
-      description: t('Remaining quota'),
+      value: external ? opsBalance.text : formatQuota(props.user?.quota ?? 0),
+      description: external ? opsBalance.hint : t('Remaining quota'),
       icon: WalletCards,
       tone: 'success',
     },
@@ -103,9 +106,9 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
       tone: 'chart-4',
     },
   ]
-  const balanceBreakdown = props.user?.wallet_balances ?? []
+  const balanceBreakdown = external ? [] : (props.user?.wallet_balances ?? [])
 
-  const credit = props.user?.credit
+  const credit = external ? undefined : props.user?.credit
   let creditStatusText = t('Credit not configured')
   if (credit?.configured) {
     creditStatusText =

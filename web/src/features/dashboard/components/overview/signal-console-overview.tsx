@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button'
 import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { formatNumber, formatQuota } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
+import { useWalletBalance } from '@/features/dashboard/hooks/use-wallet-balance'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { useDashboardContentVisibility } from '../../hooks/use-status-data'
@@ -38,6 +39,7 @@ import { UptimePanel } from './uptime-panel'
 export function SignalConsoleOverview() {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
+  const wallet = useWalletBalance(user)
   const { setPreset } = useThemeCustomization()
   const visibility = useDashboardContentVisibility()
   const isAdmin = (user?.role ?? 0) >= ROLE.ADMIN
@@ -105,10 +107,10 @@ export function SignalConsoleOverview() {
                     {t('Credit remaining')}
                   </p>
                   <p className='text-3xl font-semibold tracking-tight break-words tabular-nums'>
-                    {user ? formatQuota(user.quota ?? 0) : '—'}
+                    {wallet.text}
                   </p>
                   <p className='signal-account-muted text-xs'>
-                    {t('signal.balanceHint')}
+                    {wallet.external ? wallet.hint : t('signal.balanceHint')}
                   </p>
                 </div>
                 <dl className='signal-account-totals mt-auto grid gap-4 pt-5'>

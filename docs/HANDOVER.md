@@ -1,5 +1,45 @@
 # 交接文档：代理商旁路服务（Agency Hub / Distributor）
 
+## 2026-11-25 产品钱包由 OPS 接管：开发状态，禁止按此草稿上线
+
+本节是当前任务的状态记录，不覆盖下文历史发布记录。工作树 `C:/Users/16062/.codex/worktrees/product-ops-wallet-20261125/new-api`，分支 `codex/product-ops-wallet-20261125`，基于产品 `afcc9a12b`。本节所述钱包接管改动仅为隔离开发检查点，尚未合并到产品/项目或部署，提交及远程状态以该分支 Git 记录为准。原定北京时间 2026-11-25 03:20 的发布未执行；现网未切换资金归属，OPS 源码及生产数据库、运行配置均未由本任务修改。
+
+### 用户确认的资金边界
+
+- 目标：产品与项目复用同一套 OPS 资金适配；所有充值、代充、兑换、奖励、增减/覆盖、调用扣款和退款由 OPS 记账，余额/累计金额/调用前金额判断都以配对 OPS 为准。聚合保留支付验证、订单/兑换资格、用量事实、权限和可重试业务记录。
+- 不能先修改聚合本地金额，再发送第二次资金操作给 OPS。旧代码可保留但接管后不得执行本地资金写入；本地余额只能是标注来源的投影，不能失败时偷偷回退成另一套钱包。API Key 配额预算仍是独立的访问限制，不是用户资金。
+- 接口依据为 OPS 产品仓库 `docs/contracts/STATION_INTEGRATION_SPEC_v1.md`：第 9/16.7 节资金事件、16.7 节余额/扣款结果、第 17 节后台调额。管理员 add/subtract/set 走 `POST /api/v1/catalog/v1/balance-changes`，同一操作不再推 adjustment；支付/赠送/退款走有稳定业务编号的 usage-events。HTTP 接收成功不等于资金已经入账。
+- 部署必须不中断现有请求、流、任务及支付回调。不得增加维护/写暂停门禁或故意返回 409/503 来完成切换。按本仓库及技能规定完成隔离验证、不可变构建、零流量候选验证、静态资源归档、渐进蓝绿与连接排空。
+
+### 本地已实现的草稿与验证边界
+
+- 共享 OPS 余额/扣款读取及管理员调额；资金业务事实与不可变 outbox 同事务提交，不增加本地 User.Quota。事件冻结业务编号、金额换算、账本 scope/目标；超时/丢 ACK 重发不改事件身份，部分确认不清除事件。资料同步不覆盖 OPS 余额，审计日志不再次生成同一资金事件。
+- 模型请求与任务保存接受时的资金归属及 OPS 账本绑定，避免运行开关变化改变已接受请求的结算/退款归属。Midjourney 退款同事务保存 OPS 退款事件、任务退款标志、API Key 预算及统计投影；不恢复用户本地金额。重复任务轮询不重复退款，删除的 Key 不重建，Key 缓存失效后从已提交记录恢复。
+- 管理员本地 add/subtract/override 在 controller 与 model 两层阻止旁路写入；邀请奖励转余额和余额购买订阅也暂时拒绝本地资金写入。这些拒绝是未完成适配的开发保护，不代表相应 OPS 业务已接完，不能带着这些功能缺口切换线上钱包。
+- 预支付容量检查已改用 OPS 用户余额，负余额允许充值；没有可用 OPS 数据时不读取聚合旧余额。该检查不是资金预占，不能代替 OPS 入账时的并发上限保护。
+- 资金事件保留支付凭据、币种和实付金额，实付金额不从充值额度反推。提交前和发送前共同验证币种、非负金额、最多六位小数、金额上限及 CNY 一致性；重试保留原始业务事实，不使用新的汇率重估，人工补单仍是赠送资金。OPS 当前只消费契约中的 moneyCny，扩展凭据不代表 OPS 已实现完整资金来源/佣金账。
+- 页面余额优先显示 OPS 状态，不把缺失金额显示成免费/零余额；累计消费、历史金额、奖励和授信等仍有本地来源，尚未满足“所有金额展示由 OPS 提供”。没有完成本轮浏览器验收。
+
+### 尚未完成、阻止产品钱包启用的条件
+
+1. **现有 OPS 交接协议不足以直接承接不停服蓝绿切换。** 当前 wallet-custody 从收到请求时立即生效，期初用 OPS 已收到的余额快照；缺少用户快照会被跳过，没有聚合资金流水水位。费用入账主要按 occurredAt/cutoff 判断，未使用已接受请求的 owner。因此切换后才完成的旧聚合请求可能重复扣款，切换前接受的 OPS 异步任务可能漏扣。隔离诊断已复现，不是已修复项。需要兼容多写者的准备阶段、逐用户一致期初/流水水位、迟到旧账增量去重及可回滚投影。不得用钱包冻结解决。
+2. **全部资金入口尚未迁完。** 同区域 Agency Center 共主库且可独立写资金，必须一并兼容；邀请奖励转入、余额购买订阅、资金有效期、代理商授信/预占/冲正、支付原路退款和资金来源/佣金分摊尚未闭合。兑换码的有效期涉及历史资金批次到期语义，不能直接删掉草稿的有效期保护。
+3. **并发余额检查不是原子预占。** 目前 CheckQuota 只是近期 OPS 余额检查，仍可能多个请求同时通过；冷读存在有界网络等待及共享读取预算，不能宣称所有调用只读内存、任意并发均不超支或 CPU 不升高。OPS 需要配套原子预占/结算或明确的可控信用额度协议。读取默认 60 次/分钟不能当作逐调用高并发钱包接口使用。
+4. **回滚和历史归属仍需完成。** 产品继续使用原生任务表/游标 1，项目使用隔离任务表/游标 >=2；项目关闭接管后不能直接切回产品表来“补发”。草稿拒绝保留项目凭证却扫描产品任务/日志的配置。仍需 scoped 回滚 worker、既有未绑定任务兼容/核对、崩溃间隙验证及历史无绑定日志对账。
+5. **准备和容量验证仍有缺口。** 资金事件表只在聚合主库准备；索引门禁见 operations/INDEX_CHANGE_AND_RELEASE_POLICY.md。Redis 关闭时的多实例预算、最低支持 MySQL/PostgreSQL 版本、实际容量/时延、端到端资金切换与兼容回滚未验收。尚无本次生产 schema ready 回执或可发布镜像。
+
+`pkg/opsauthority.Validate()` 当前明确拒绝启用 product 钱包接管，原因是在线交接未实现和验证。不得删除这条保护来通过发布。OPS 必要配套改动的范围已向用户询问，尚未收到答复；继续 Gateway 独立工作，不假称 OPS 已修改，也不改同事工作树。
+
+### 已实际执行的隔离检查
+
+- Go 1.26.6，WSL OpsDev：`GOWORK=off GOMAXPROCS=2 GOMODCACHE=/mnt/d/DevCache/gomod CGO_ENABLED=0 go test ./controller ./service ./service/opsbilling ./service/opspush ./service/opswallet ./middleware ./router ./relay -count=1` 已通过；后续变更需重跑受影响包。Go 主应用草稿构建已通过，未作为已提交发布产物。
+- 真实 SQLite、MySQL 8.4.6、PostgreSQL 16.16 的 BusinessOperations 与 MidjourneyOwnershipSchema 矩阵通过：充值回调重复/冲突、兑换重复/事务回滚、签到重复、本地余额不变、本地调额旁路、任务退款重复与 Key 缓存读取，以及新建/既有表升级/连续两次迁移和原索引保留。运行器 `D:/DevCache/product-ops-wallet-refund-runner-20261125.py`；脱敏日志为同目录 refund-runner/refund-matrix-20261125.log。仅创建并清理本次独立测试库。后续修改相关代码必须重跑。
+- 最新支付凭据变更后，四组测试分别使用独立的真实数据库通过（共 12 个引擎子项，无 SKIP）：BusinessOperations、MidjourneyOwnershipSchema、WalletFunding、RegistrationFunding。覆盖异常现金/币种/精度/凭据拒绝、有效事实不被覆盖、原支付凭据透传、权限及奖励事务回滚。运行器 `D:/DevCache/product-ops-wallet-independent-matrix-20261125.py`，结果 `product-ops-wallet-independent-runner-20261125.log`；主应用重新构建通过。首次合跑因外部测试库共用导致其他组遗留事件进入总数断言，未修改生产实现来规避，改为逐组独立库后通过。
+- 后续修正测试自身的数据库前置假定（首轮准备可能已经由其他组完成；产品 scope 可存在其他用户事件），保留逐笔隔离与索引回执断言；四组在同一独立外部测试库合跑也通过，无 SKIP。运行器 `D:/DevCache/product-ops-wallet-combined-matrix-20261125.py`，日志 `product-ops-wallet-combined-money-runner-20261125.log`。最终受影响九包测试及 `go build ./...` 通过，真实 OPS 合约重新通过（12.11s）。没有把这些功能测试作为容量或不停服切换验收。
+- Gateway 签名资金事件到真实 OPS handler/billing/posting/PostgreSQL：`TestLocalRealDomesticFundingContract` 通过，使用临时 overlay，无 OPS 源码修改。期初 10、实付 73、赠送 7.3，丢 ACK 重试不重复入账；set10/add2/subtract1 得11，真实OPS消费1再退款1恢复11，退款丢ACK重试仍11，聚合本地额度始终123。日志 `D:/DevCache/product-ops-wallet-refund-real-ops-20261125.log`。这不代表在线交接已通过。
+- `TestDomesticCutoverContractEvidence` 仅用于证明当前 OPS 的缺失期初/owner 与时间裁定缺口，诊断测试通过不等于修复通过；临时测试源在 `D:/DevCache/product-ops-wallet-cutover-evidence-20261125_test.go`。
+- 先前前端 3 文件 16 项、typecheck/build 通过；本轮未新增 UI 修改，未浏览器验收。索引源码政策检查、git diff --check 通过；没有进行线上资金测试、生产数据修改或停服操作。
+
 > 本文档用于新旧会话交接。接手同事直接基于当前代码库与本文件即可继续开发。
 > 生成时间：2026-09-12。信息来源：`agency-hub-sidecar-design.md`、`docs/distributor-affiliate-prd.md`、当前工作区代码与 git 状态。
 

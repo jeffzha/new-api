@@ -1,6 +1,7 @@
 package opspush
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"maps"
@@ -13,11 +14,227 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestNativeTaskOutboxRetainsAcceptedLedgerAfterRollback(t *testing.T) {
+	t.Setenv("OPS_WALLET_AUTHORITY", "gateway")
+	t.Setenv("OPS_WALLET_PROFILE", "product")
+	stub := &opsStub{responses: []func(http.ResponseWriter){
+		reply(200, `{"data":{"accepted":0,"duplicates":0,"rejected":[]}}`),
+		reply(200, `{"data":{"accepted":1,"duplicates":0,"rejected":[]}}`),
+	}}
+	pusher, db := pusherFixture(t, stub)
+	pusher.Config.Spec, pusher.Config.TaskOutbox = SpecV11, true
+	require.NoError(t, db.Model(&State{}).Where("id = ?", 1).Update("cursor", 4).Error)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.TaskBillingReconciliation{}))
+	binding, err := opsauthority.NewBinding(pusher.Config.URL, pusher.Config.KeyID, "")
+	require.NoError(t, err)
+	event, err := common.Marshal(map[string]any{"requestId": "accepted-terminal", "extra": map[string]any{"billing_scope": "", "project_task_terminal": true}})
+	require.NoError(t, err)
+	bridge := model.Task{TaskID: "older-bridge-task", Status: model.TaskStatusSuccess, OpsUsagePending: true,
+		PrivateData: model.TaskPrivateData{OpsUsage: []byte(`{"bridge_scope":"legacy"}`)}}
+	require.NoError(t, db.Create(&bridge).Error)
+	// A full first page of bridge-owned records must not starve a native
+	// terminal behind it. They stay pending for their own bridge drainer.
+	for i := range 49 {
+		older := model.Task{TaskID: fmt.Sprintf("older-bridge-%d", i), Status: model.TaskStatusSuccess, OpsUsagePending: true, PrivateData: bridge.PrivateData}
+		require.NoError(t, db.Create(&older).Error)
+	}
+	task := model.Task{TaskID: "accepted-ops-task", Status: model.TaskStatusSuccess, OpsUsagePending: true,
+		PrivateData: model.TaskPrivateData{BillingSource: "ops", OPSWalletBinding: binding, OpsUsage: event}}
+	require.NoError(t, db.Create(&task).Error)
+	// A changed key must not redirect an accepted charge to another tenant.
+	pusher.Config.KeyID = "another-ledger"
+	state, leased := pusher.lease()
+	require.True(t, leased)
+	built, err := pusher.build(state)
+	require.NoError(t, err)
+	assert.False(t, built)
+	built, err = pusher.build(state)
+	require.ErrorContains(t, err, "destination changed")
+	assert.False(t, built)
+	assert.Empty(t, state.BatchId)
+	pusher.Config.KeyID = "gw-test"
+	// Secret rotation is safe; the target ledger, event and scope are unchanged.
+	pusher.Config.Secret = "rotated-fixture-secret-123"
+	assert.Positive(t, pusher.Step(), "scan past the bridge-owned first page")
+	assert.Positive(t, pusher.Step(), "HTTP 200 without complete acceptance is not delivery")
+	var stored model.Task
+	require.NoError(t, db.First(&stored, task.ID).Error)
+	assert.True(t, stored.OpsUsagePending)
+	pusher.Config.KeyID = "another-ledger"
+	assert.Positive(t, pusher.Step(), "a persisted batch must revalidate its ledger on retry")
+	require.Len(t, stub.bodies, 1, "a changed target receives no accepted task bytes")
+	pusher.Config.KeyID = "gw-test"
+	assert.Zero(t, pusher.Step())
+	require.Len(t, stub.bodies, 2)
+	assert.Equal(t, stub.bodies[0], stub.bodies[1], "retries retain the frozen accepted event")
+	assert.NotContains(t, stub.bodies[0], "bridge_scope")
+	require.NoError(t, db.First(&stored, task.ID).Error)
+	assert.False(t, stored.OpsUsagePending)
+	require.NoError(t, db.First(&bridge, bridge.ID).Error)
+	assert.True(t, bridge.OpsUsagePending, "native delivery does not acknowledge bridge-owned evidence")
+}
+
+func TestAcceptedUsageRetainsLedgerAcrossDurableRetry(t *testing.T) {
+	t.Setenv("OPS_WALLET_AUTHORITY", "gateway")
+	stub := &opsStub{responses: []func(http.ResponseWriter){
+		reply(500, `{}`),
+		reply(200, `{"data":{"accepted":1,"duplicates":0,"rejected":[]}}`),
+	}}
+	p, db := pusherFixture(t, stub)
+	p.Config.Spec = SpecV11
+	require.NoError(t, db.Model(&State{}).Where("id = ?", 1).Update("cursor", 4).Error)
+	binding, err := opsauthority.NewBinding(p.Config.URL, p.Config.KeyID, "")
+	require.NoError(t, err)
+	other, err := common.Marshal(map[string]any{"billing_source": "ops", "billing_scope": "",
+		"root_info": map[string]any{"ops_wallet_binding": binding, "diagnostics": strings.Repeat("x", 5000)}})
+	require.NoError(t, err)
+	log := model.Log{UserId: 1, Type: model.LogTypeConsume, ModelName: "m", RequestId: "accepted-wallet-request",
+		CreatedAt: p.Now().Unix() - 20, Quota: 12, Other: string(other)}
+	require.NoError(t, db.Create(&log).Error)
+	state, ok := p.lease()
+	require.True(t, ok)
+	p.Config.KeyID = "another-ledger"
+	_, err = p.build(state)
+	require.ErrorContains(t, err, "destination changed")
+	require.Empty(t, stub.bodies)
+	p.Config.KeyID = "gw-test"
+	assert.Positive(t, p.Step(), "a failed delivery retains the batch")
+	require.Len(t, stub.bodies, 1)
+	assert.Contains(t, stub.bodies[0], binding.Target, "long diagnostics must not remove the destination binding")
+	assert.NotContains(t, stub.bodies[0], "diagnostics")
+	p.Config.KeyID = "another-ledger"
+	assert.Positive(t, p.Step())
+	require.Len(t, stub.bodies, 1, "retries never redirect an accepted charge")
+	p.Config.KeyID, p.Config.Secret = "gw-test", "rotated-fixture-secret-123"
+	assert.Zero(t, p.Step())
+	require.Len(t, stub.bodies, 2)
+	assert.Equal(t, stub.bodies[0], stub.bodies[1])
+	var final State
+	require.NoError(t, db.First(&final, 1).Error)
+	assert.Equal(t, int64(log.Id), final.Cursor)
+	assert.Empty(t, final.BatchBody)
+}
+
+func TestSlowFundingDoesNotBlockUsageOrSpendItsRetryState(t *testing.T) {
+	t.Setenv("OPS_WALLET_AUTHORITY", "gateway")
+	t.Setenv("OPS_WALLET_FUNDING_ENABLED", "false")
+	stub := &opsStub{responses: []func(http.ResponseWriter){reply(200, `{"data":{"accepted":3,"duplicates":0,"rejected":[]}}`)}}
+	pusher, db := pusherFixture(t, stub)
+	require.NoError(t, db.AutoMigrate(&model.User{}))
+	require.NoError(t, model.PrepareOPSWalletFundingSchema(t.Context(), db))
+	user := model.User{Username: "funding-independent", AffCode: "funding-independent"}
+	require.NoError(t, db.Create(&user).Error)
+	t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+	t.Setenv("OPS_WALLET_FUNDING_ENABLED", "true")
+	t.Setenv("OPS_PROJECT_SCOPE", "funding-independent")
+	started, release := make(chan struct{}), make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if !strings.Contains(string(body), `"batchId":"wf-batch-`) {
+			r.Body = io.NopCloser(strings.NewReader(string(body)))
+			stub.ServeHTTP(w, r)
+			return
+		}
+		close(started)
+		<-release
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() {
+		close(release)
+		require.Eventually(t, func() bool {
+			pusher.fundingMu.Lock()
+			defer pusher.fundingMu.Unlock()
+			return !pusher.fundingBusy
+		}, 3*time.Second, time.Millisecond)
+	})
+	// Hold only the funding HTTP response; usage must still advance durably.
+	pusher.Config.URL = server.URL
+	t.Setenv("OPS_PUSH_URL", server.URL)
+	t.Setenv("OPS_PUSH_KEY_ID", pusher.Config.KeyID)
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		return model.QueueOPSWalletFundingTx(tx, int64(user.Id), 100, "gift", "checkin", "independent", nil)
+	}))
+	pusher.startFundingDelivery()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("funding request did not start")
+	}
+	finished := make(chan time.Duration, 1)
+	go func() { finished <- pusher.Step() }()
+	select {
+	case wait := <-finished:
+		require.Zero(t, wait)
+	case <-time.After(3 * time.Second):
+		t.Fatal("usage scanner blocked on an unrelated funding response")
+	}
+	var state State
+	require.NoError(t, db.First(&state, 1).Error)
+	assert.EqualValues(t, 4, state.Cursor)
+	assert.Zero(t, state.Attempts)
+	rows, err := model.ReadOPSWalletFunding(db, 100)
+	require.NoError(t, err)
+	assert.Len(t, rows, 1, "a delayed funding response is not an acknowledgement")
+}
+
+func TestFundingShutdownRetainsUnacknowledgedEvents(t *testing.T) {
+	t.Setenv("OPS_WALLET_AUTHORITY", "gateway")
+	t.Setenv("OPS_WALLET_FUNDING_ENABLED", "false")
+	pusher, db := pusherFixture(t, &opsStub{})
+	require.NoError(t, db.AutoMigrate(&model.User{}))
+	require.NoError(t, model.PrepareOPSWalletFundingSchema(t.Context(), db))
+	user := model.User{Username: "funding-shutdown", AffCode: "funding-shutdown"}
+	require.NoError(t, db.Create(&user).Error)
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		close(started)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+	t.Setenv("OPS_WALLET_FUNDING_ENABLED", "true")
+	t.Setenv("OPS_PROJECT_SCOPE", "funding-shutdown")
+	t.Setenv("OPS_PUSH_URL", server.URL)
+	t.Setenv("OPS_PUSH_KEY_ID", pusher.Config.KeyID)
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		return model.QueueOPSWalletFundingTx(tx, int64(user.Id), 100, "gift", "checkin", "shutdown", nil)
+	}))
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	pusher.fundingContext, pusher.Config.URL = ctx, server.URL
+	pusher.startFundingDelivery()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("funding request did not start")
+	}
+	cancel()
+	require.Eventually(t, func() bool {
+		pusher.fundingMu.Lock()
+		defer pusher.fundingMu.Unlock()
+		return !pusher.fundingBusy
+	}, 3*time.Second, time.Millisecond)
+	rows, err := model.ReadOPSWalletFunding(db, 100)
+	require.NoError(t, err)
+	assert.Len(t, rows, 1, "shutdown cannot acknowledge an unconfirmed credit")
+	pusher.startFundingDelivery()
+	pusher.fundingMu.Lock()
+	defer pusher.fundingMu.Unlock()
+	assert.False(t, pusher.fundingBusy, "shutdown cannot launch a replacement sender")
+}
 
 // Spec 3.6 test vectors.
 func TestSignMatchesSpecVectors(t *testing.T) {
@@ -223,9 +440,21 @@ func TestEventV11Shapes(t *testing.T) {
 	// The quota unit frozen in the log wins over the current setting.
 	frozen := extraOfEvent(t, EventV11(&model.Log{Id: 21, UserId: 9, Type: model.LogTypeConsume, ModelName: "m", Other: `{"quota_per_unit":"400000"}`}, "", nil, testConversion))
 	assert.Equal(t, float64(400000), frozen["quotaPerUnit"])
+
+	// Persisted funding ownership survives rollback/restart with the switch
+	// off. Audit rows must not become a second credit after outbox delivery.
+	for _, source := range []string{"online_topup", "admin_topup", "redemption", "checkin_gift"} {
+		log := &model.Log{Id: 22, UserId: 9, Type: model.LogTypeTopup, Quota: 500, Other: fmt.Sprintf(`{"quota_source":%q,"quota_direction":"credit"}`, source)}
+		require.NotNil(t, EventV11(log, "", nil, testConversion), source)
+		log.Other = fmt.Sprintf(`{"quota_source":%q,"quota_direction":"credit","wallet_event_owner":"ops_funding"}`, source)
+		assert.Nil(t, EventV11(log, "", nil, testConversion), source)
+	}
 }
 
 func TestEventV11RefundRequestIds(t *testing.T) {
+	audit := &model.Log{Id: 29, UserId: 9, Type: model.LogTypeRefund, ModelName: "mj_imagine", RequestId: "accepted-request", Other: `{"task_id":"task-abc","wallet_event_owner":"ops_funding"}`}
+	assert.Nil(t, Event(audit, ""), "an audit log cannot duplicate its durable refund event")
+	assert.Nil(t, EventV11(audit, "", nil, testConversion))
 	for _, c := range []struct {
 		requestId, other, expected string
 	}{

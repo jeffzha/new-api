@@ -13,7 +13,9 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/opsbilling"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -279,7 +281,7 @@ func validateTopUpQuota(amount int64) (int, error) {
 func rejectInvalidCreditedQuota(c *gin.Context, userId int, quota decimal.Decimal) bool {
 	creditedQuota, err := validateCreditedQuota(quota)
 	if err == nil {
-		err = model.ValidateTopUpQuotaCapacity(userId, creditedQuota)
+		err = validateWalletTopUpCapacity(c, userId, creditedQuota)
 	}
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
@@ -291,13 +293,23 @@ func rejectInvalidCreditedQuota(c *gin.Context, userId int, quota decimal.Decima
 func rejectInvalidTopUpQuota(c *gin.Context, userId int, amount int64) bool {
 	creditedQuota, err := validateTopUpQuota(amount)
 	if err == nil {
-		err = model.ValidateTopUpQuotaCapacity(userId, creditedQuota)
+		err = validateWalletTopUpCapacity(c, userId, creditedQuota)
 	}
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
 		return true
 	}
 	return false
+}
+
+func validateWalletTopUpCapacity(c *gin.Context, userID, quota int) error {
+	if !opsauthority.Enabled() {
+		return model.ValidateTopUpQuotaCapacity(userID, quota)
+	}
+	if opsbilling.Default == nil {
+		return opsbilling.ErrBalanceUnavailable
+	}
+	return opsbilling.Default.CheckTopUpCapacity(c.Request.Context(), userID, quota, time.Now())
 }
 
 func RequestEpay(c *gin.Context) {
@@ -435,7 +447,7 @@ func RequestAssistedEpay(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "data": "充值金额过低"})
 		return
 	}
-	if err := model.ValidateTopUpQuotaCapacity(targetID, creditedQuota); err != nil {
+	if err := validateWalletTopUpCapacity(c, targetID, creditedQuota); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "data": err.Error()})
 		return
 	}

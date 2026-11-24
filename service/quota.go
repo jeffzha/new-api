@@ -14,6 +14,7 @@ import (
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service/opsbilling"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -96,6 +97,15 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 // per-segment financial journal. The legacy wrapper above preserves the
 // existing error-only API.
 func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) (int, int64, error) {
+	if relayInfo == nil {
+		return 0, 0, errors.New("realtime billing context missing")
+	}
+	if relayInfo.BillingSource == "" {
+		relayInfo.BillingSource = BillingSourceWallet
+		if projectAuthority() {
+			relayInfo.BillingSource = "ops"
+		}
+	}
 	if CNDirectRealtimeRequested(relayInfo) {
 		// Delta-only callers have no durable response identity.
 		return 0, 0, model.ErrCNConflict
@@ -113,12 +123,24 @@ func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.Relay
 			ModelPrice: relayInfo.PriceData.ModelPrice, GroupRatio: groupRatio,
 		})
 		noteQuotaClamp(relayInfo, clamp)
+		if opsWalletOwnsRequest(relayInfo) {
+			if opsbilling.Default == nil {
+				return 0, 0, opsbilling.ErrBalanceUnavailable
+			}
+			if err := opsbilling.Default.CheckQuota(ctx.Request.Context(), relayInfo.UserId, quota, time.Now()); err != nil {
+				return 0, 0, err
+			}
+		}
 		return quota, 0, nil
 	}
 	fromDB := relayInfo.AgencyPricing != nil
-	userQuota, err := model.GetUserQuota(relayInfo.UserId, fromDB)
-	if err != nil {
-		return 0, 0, err
+	var userQuota int
+	if !opsWalletOwnsRequest(relayInfo) {
+		var err error
+		userQuota, err = model.GetUserQuota(relayInfo.UserId, fromDB)
+		if err != nil {
+			return 0, 0, err
+		}
 	}
 
 	token, err := model.GetTokenByKey(strings.TrimPrefix(relayInfo.TokenKey, "sk-"), false)
@@ -165,7 +187,15 @@ func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.Relay
 	quota, clamp := calculateAudioQuota(quotaInfo)
 	noteQuotaClamp(relayInfo, clamp)
 
-	if userQuota < quota {
+	if opsWalletOwnsRequest(relayInfo) {
+		if opsbilling.Default == nil {
+			return 0, 0, opsbilling.ErrBalanceUnavailable
+		}
+		if err := opsbilling.Default.CheckQuota(ctx.Request.Context(), relayInfo.UserId, quota, time.Now()); err != nil {
+			return 0, 0, err
+		}
+	}
+	if !opsWalletOwnsRequest(relayInfo) && userQuota < quota {
 		return 0, 0, fmt.Errorf("user quota is not enough, user quota: %s, need quota: %s", logger.FormatQuota(userQuota), logger.FormatQuota(quota))
 	}
 
@@ -174,7 +204,7 @@ func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.Relay
 	}
 
 	var paid int64
-	if relayInfo.AgencyPricing != nil && relayInfo.RequestId != "" {
+	if !opsWalletOwnsRequest(relayInfo) && relayInfo.AgencyPricing != nil && relayInfo.RequestId != "" {
 		var reserveErr error
 		if model.IsAgencyDurableUser(relayInfo.UserId) {
 			var moneySeq int64
@@ -296,7 +326,14 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 
-	if relayInfo.AgencyPricing != nil && relayInfo.RequestId != "" {
+	if opsWalletOwnsRequest(relayInfo) {
+		// Realtime segments already spent the API-key budget. Final usage
+		// contributes only the difference, never a second full reservation.
+		if err := PostConsumeQuota(relayInfo, quota-relayInfo.RealtimePreConsumedQuota, relayInfo.RealtimePreConsumedQuota, false); err != nil {
+			logger.LogError(ctx, "project realtime budget settlement failed: "+err.Error())
+		}
+		relayInfo.RealtimePreConsumedQuota = quota
+	} else if relayInfo.AgencyPricing != nil && relayInfo.RequestId != "" {
 		// PreWssConsumeQuota reserves each successful usage segment. The final
 		// cumulative frame contributes only its delta (or releases an excess).
 		delta := quota - relayInfo.RealtimePreConsumedQuota
@@ -602,6 +639,17 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 }
 
 func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (result postConsumeQuotaResult, err error) {
+	if relayInfo == nil {
+		return result, errors.New("billing context missing")
+	}
+	if opsWalletOwnsRequest(relayInfo) {
+		if int64(quota)+int64(preConsumedQuota) < 0 || int64(quota)+int64(preConsumedQuota) > int64(common.MaxQuota) {
+			return result, errors.New("invalid project quota delta")
+		}
+		s := &opsAuthoritySession{info: relayInfo}
+		err = s.adjust(quota)
+		return postConsumeQuotaResult{TokenApplied: err == nil}, err
+	}
 	if CNDirectRealtimeRequested(relayInfo) && relayInfo.BillingSource != BillingSourceSubscription {
 		s, ok := relayInfo.Billing.(*cnDirectRelaySession)
 		if !ok || s.usage == "" || preConsumedQuota != 0 || relayInfo.FinalPreConsumedQuota != 0 {

@@ -1,5 +1,11 @@
 {
   "translation": {
+    "An adjustment is awaiting confirmation. Confirm again to retry the same operation.": "Корректировка ожидает подтверждения. Подтвердите ещё раз, чтобы повторить ту же операцию.",
+    "Balance changes are recorded in OPS. Local balance is unchanged.": "Изменения баланса учитываются в OPS. Локальный баланс не изменяется.",
+    "Balance unavailable": "Баланс недоступен",
+    "Last known balance": "Последний известный баланс",
+    "Manage recharge and balance adjustments in OPS": "Управление пополнениями и корректировками баланса в OPS",
+    "Reading balance": "Загрузка баланса",
     "Payments retain their original currency. Missing historical payment details are marked as not recorded.": "Платежи указаны в исходной валюте. Отсутствующие исторические данные помечены как незаписанные.",
     "Quota adjustments and refunds are quota movements, not cash payments.": "Корректировки и возвраты квоты отражают изменение квоты, а не денежные платежи.",
     "Quota Adjustment": "Корректировка квоты",

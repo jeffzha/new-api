@@ -12,6 +12,12 @@
   "signal.page.marketplace": "Explore capabilities. Compare prices. Find your next model.",
   "signal.page.rankings": "Read the platform’s model demand and provider trends.",
   "translation": {
+    "An adjustment is awaiting confirmation. Confirm again to retry the same operation.": "An adjustment is awaiting confirmation. Confirm again to retry the same operation.",
+    "Balance changes are recorded in OPS. Local balance is unchanged.": "Balance changes are recorded in OPS. Local balance is unchanged.",
+    "Balance unavailable": "Balance unavailable",
+    "Last known balance": "Last known balance",
+    "Manage recharge and balance adjustments in OPS": "Manage recharge and balance adjustments in OPS",
+    "Reading balance": "Reading balance",
     "Payments retain their original currency. Missing historical payment details are marked as not recorded.": "Payments retain their original currency. Missing historical payment details are marked as not recorded.",
     "Quota adjustments and refunds are quota movements, not cash payments.": "Quota adjustments and refunds are quota movements, not cash payments.",
     "Quota Adjustment": "Quota Adjustment",

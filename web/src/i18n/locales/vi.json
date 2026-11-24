@@ -1,5 +1,11 @@
 {
   "translation": {
+    "An adjustment is awaiting confirmation. Confirm again to retry the same operation.": "Một điều chỉnh đang chờ xác nhận. Xác nhận lại để thử lại cùng giao dịch.",
+    "Balance changes are recorded in OPS. Local balance is unchanged.": "Thay đổi số dư được ghi nhận trong OPS. Số dư cục bộ không thay đổi.",
+    "Balance unavailable": "Không thể lấy số dư",
+    "Last known balance": "Số dư gần nhất",
+    "Manage recharge and balance adjustments in OPS": "Quản lý nạp tiền và điều chỉnh số dư trong OPS",
+    "Reading balance": "Đang đọc số dư",
     "Payments retain their original currency. Missing historical payment details are marked as not recorded.": "Khoản thanh toán giữ nguyên đơn vị tiền tệ. Thông tin thanh toán cũ bị thiếu được đánh dấu là chưa ghi nhận.",
     "Quota adjustments and refunds are quota movements, not cash payments.": "Điều chỉnh và hoàn hạn mức là thay đổi hạn mức, không phải thanh toán tiền mặt.",
     "Quota Adjustment": "Điều chỉnh hạn mức",

@@ -1,5 +1,11 @@
 {
   "translation": {
+    "An adjustment is awaiting confirmation. Confirm again to retry the same operation.": "Un ajustement attend confirmation. Confirmez à nouveau pour réessayer la même opération.",
+    "Balance changes are recorded in OPS. Local balance is unchanged.": "Les variations de solde sont comptabilisées dans OPS. Le solde local reste inchangé.",
+    "Balance unavailable": "Solde indisponible",
+    "Last known balance": "Dernier solde connu",
+    "Manage recharge and balance adjustments in OPS": "Gérer les recharges et les ajustements de solde dans OPS",
+    "Reading balance": "Lecture du solde",
     "Payments retain their original currency. Missing historical payment details are marked as not recorded.": "Les paiements conservent leur devise d’origine. Les détails historiques manquants sont signalés comme non enregistrés.",
     "Quota adjustments and refunds are quota movements, not cash payments.": "Les ajustements et remboursements de quota ne sont pas des paiements en espèces.",
     "Quota Adjustment": "Ajustement de quota",

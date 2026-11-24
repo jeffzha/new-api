@@ -196,7 +196,7 @@ func CaptureCNTaskChargeTx(tx *gorm.DB, task *Task, target int) error {
 	if task != nil && task.CNBillingKey != "" {
 		return ErrCNConflict
 	}
-	if !CNFinanceCaptureEnabled() || task == nil || task.ID <= 0 {
+	if !CNFinanceCaptureEnabled() || task == nil || task.ID <= 0 || task.PrivateData.BillingSource == "ops" {
 		return nil
 	}
 	var user User

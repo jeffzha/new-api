@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -15,14 +16,101 @@ import (
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/opsbilling"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestRelayTaskZeroLocalPriceStillBindsOPSWalletBeforeUpstream(t *testing.T) {
+	service.InitHttpClient()
+	t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+	t.Setenv("OPS_WALLET_PROFILE", "product")
+	saveBillingConfig(t)
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{}`,
+		"billing_setting.billing_expr": `{}`,
+	}))
+	prices := ratio_setting.ModelPrice2JSONString()
+	preConsumeFree := operation_setting.GetQuotaSetting().EnableFreeModelPreConsume
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(prices))
+		operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = preConsumeFree
+	})
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"declared-model":0}`))
+	operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = false
+	database := setupRelayChannelDB(t)
+	require.NoError(t, database.AutoMigrate(&model.User{}, &model.AgencyActiveUserBinding{}))
+	require.NoError(t, database.Create(&model.User{Id: 73, Username: "zero-quote-ops", Quota: 0}).Error)
+	oldReader := opsbilling.Default
+	t.Cleanup(func() { opsbilling.Default = oldReader })
+	reads := 0
+	walletAmount, walletQuota := "1", 100
+	wallet := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reads++
+		assert.Equal(t, "/api/v1/catalog/v1/balances/73", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		raw, err := common.Marshal(map[string]any{"data": map[string]any{"userId": "73", "balance": walletAmount, "balanceQuota": walletQuota, "negative": false, "lastEntryId": 1, "updatedAt": "2026-11-25T00:00:00Z"}})
+		assert.NoError(t, err)
+		_, _ = w.Write(raw)
+	}))
+	t.Cleanup(wallet.Close)
+	opsbilling.Default = opsbilling.New(opsbilling.Config{BaseURL: wallet.URL, KeyID: "zero-quote-ledger", Secret: "synthetic-zero-quote-secret", Timeout: time.Second})
+	c, info := newTaskSubmitContext(t, "declared-model", "")
+	info.UserId, info.IsPlayground = 73, true
+	info.UserGroup, info.UsingGroup = "default", "default"
+	info.OriginModelName = "declared-model"
+	c.Set("group", "default")
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls++
+		if assert.NotNil(t, info.OPSWalletBinding) {
+			assert.True(t, info.OPSWalletBinding.Matches(wallet.URL, "zero-quote-ledger", ""))
+		}
+		assert.Equal(t, "ops", info.BillingSource)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"upstream-zero-quote"}`))
+	}))
+	t.Cleanup(upstream.Close)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
+	source := strings.Replace(billingFallbackPlugin, `return {taskId:"1"};`, `return {taskId:arguments[1].body.id,taskData:arguments[1].body};`, 1)
+	pinMappingOrderPlugin(t, c, source+`export function extractUsage(){return {};}`)
+	result, taskErr := RelayTaskSubmit(c, info)
+	require.Nil(t, taskErr)
+	require.NotNil(t, result)
+	assert.True(t, info.PriceData.FreeModel, "a local free-model shortcut must not bypass the OPS wallet")
+	assert.Equal(t, "upstream-zero-quote", result.UpstreamTaskID)
+	assert.Equal(t, 1, upstreamCalls)
+	assert.Equal(t, 1, reads)
+	task := model.InitTask(result.Platform, info)
+	assert.Equal(t, info.OPSWalletBinding, task.PrivateData.OPSWalletBinding)
+	assert.Equal(t, "ops", task.PrivateData.BillingSource)
+	// A zero OPS wallet must stop the same locally free task before the
+	// provider sees it; local price configuration cannot authorize spending.
+	walletAmount, walletQuota = "0", 0
+	opsbilling.Default = opsbilling.New(opsbilling.Config{BaseURL: wallet.URL, KeyID: "zero-quote-ledger", Secret: "synthetic-zero-quote-secret", Timeout: time.Second})
+	deniedContext, deniedInfo := newTaskSubmitContext(t, "declared-model", "")
+	deniedInfo.UserId, deniedInfo.IsPlayground = 73, true
+	deniedInfo.UserGroup, deniedInfo.UsingGroup = "default", "default"
+	deniedInfo.OriginModelName = "declared-model"
+	deniedContext.Set("group", "default")
+	common.SetContextKey(deniedContext, constant.ContextKeyChannelBaseUrl, upstream.URL)
+	pinMappingOrderPlugin(t, deniedContext, source+`export function extractUsage(){return {};}`)
+	deniedResult, deniedError := RelayTaskSubmit(deniedContext, deniedInfo)
+	require.NotNil(t, deniedError)
+	assert.Equal(t, http.StatusForbidden, deniedError.StatusCode)
+	assert.Nil(t, deniedResult)
+	assert.Equal(t, 1, upstreamCalls, "insufficient OPS balance cannot reach the upstream")
+	var stored model.User
+	require.NoError(t, database.First(&stored, 73).Error)
+	assert.Zero(t, stored.Quota, "neither successful admission nor refusal changes local money")
+}
 
 func TestRelayTaskSubmitAcceptsAsyncSuccessWithoutTreatingErrorsAsTasks(t *testing.T) {
 	service.InitHttpClient()

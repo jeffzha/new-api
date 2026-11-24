@@ -74,7 +74,7 @@ func SetRelayRouter(router *gin.Engine) {
 	playgroundRouter := router.Group("/pg")
 	playgroundRouter.Use(middleware.RouteTag("relay"))
 	playgroundRouter.Use(middleware.SystemPerformanceCheck())
-	playgroundRouter.Use(middleware.UserAuth(), middleware.Distribute(), opsbridge.CallGate())
+	playgroundRouter.Use(middleware.UserAuth(), middleware.OPSCallBalanceGuard(), middleware.Distribute(), opsbridge.CallGate())
 	{
 		playgroundRouter.POST("/chat/completions", controller.Playground)
 	}
@@ -85,13 +85,13 @@ func SetRelayRouter(router *gin.Engine) {
 	{
 		// Responses WebSocket route. Channel selection happens after the first
 		// response.create event; each event runs the ordinary request limiter.
-		relayV1Router.GET("/responses", opsbridge.CallGate(), controller.ResponsesWebSocket)
+		relayV1Router.GET("/responses", middleware.OPSCallBalanceGuard(), opsbridge.CallGate(), controller.ResponsesWebSocket)
 	}
 	relayV1Router.Use(middleware.ModelRequestRateLimit())
 	{
 		// WebSocket 路由（统一到 Relay）
 		wsRouter := relayV1Router.Group("")
-		wsRouter.Use(middleware.Distribute(), opsbridge.CallGate())
+		wsRouter.Use(middleware.OPSCallBalanceGuard(), middleware.Distribute(), opsbridge.CallGate())
 		wsRouter.GET("/realtime", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIRealtime)
 		})
@@ -111,7 +111,7 @@ func SetRelayRouter(router *gin.Engine) {
 				businessCaller(c)
 			}
 		})
-		httpRouter.Use(middleware.Distribute(), opsbridge.CallGate())
+		httpRouter.Use(middleware.OPSCallBalanceGuard(), middleware.Distribute(), opsbridge.CallGate())
 
 		// claude related routes
 		// TODO: /messages/count_tokens is disabled. The current controller.CountClaudeTokens
@@ -222,6 +222,7 @@ func SetRelayRouter(router *gin.Engine) {
 	relayGeminiRouter.Use(middleware.RouteTag("relay"))
 	relayGeminiRouter.Use(middleware.SystemPerformanceCheck())
 	relayGeminiRouter.Use(middleware.TokenAuth())
+	relayGeminiRouter.Use(middleware.OPSCallBalanceGuard())
 	relayGeminiRouter.Use(middleware.ModelRequestRateLimit())
 	relayGeminiRouter.Use(middleware.Distribute())
 	relayGeminiRouter.Use(opsbridge.CallGate())
@@ -236,6 +237,11 @@ func SetRelayRouter(router *gin.Engine) {
 func registerMjRouterGroup(relayMjRouter *gin.RouterGroup) {
 	relayMjRouter.GET("/image/:id", relay.RelayMidjourneyImage)
 	relayMjRouter.Use(middleware.TokenAuth(), middleware.Distribute())
+	relayMjRouter.Use(func(c *gin.Context) {
+		if strings.Contains(c.Request.URL.Path, "/submit/") || strings.HasSuffix(c.Request.URL.Path, "/insight-face/swap") {
+			middleware.OPSCallBalanceGuard()(c)
+		}
+	})
 	relayMjRouter.Use(func(c *gin.Context) {
 		if strings.Contains(c.Request.URL.Path, "/submit/") || strings.HasSuffix(c.Request.URL.Path, "/insight-face/swap") {
 			opsbridge.CallGate()(c)

@@ -31,3 +31,13 @@
 - .github/workflows/index-policy.yml 对提交/拉取请求运行上述源码检查。远程分支保护是否要求该检查，由仓库实际配置决定；没有设置的不能声称已强制保护。
 - OPS 发布包装器会在数据库准备失败时阻断后续部署命令。它只有在发布者使用规定入口时才生效；有权限手工绕过脚本的人或智能体，不能仅靠 Markdown 从技术上绝对禁止。
 - 后续智能体必须先读根 AGENTS.md、使用规定发布入口、报告真实状态。源码检查通过不替代数据库就绪、蓝绿切流和业务接口验收；不得为文档更新重启业务服务。
+
+## OPS 钱包入金 outbox（产品接管草稿，尚未发布）
+
+- 归属：聚合主库 `ops_wallet_events`，支持 SQLite、MySQL、PostgreSQL；不在日志库、OPS 库或海外库执行。结构源为 `model/ops_wallet_event.go`。
+- `uidx_ops_wallet_event`：唯一 B-tree 索引，键为 `event_id`，无过滤条件；约束充值、兑换、奖励及异步任务退款的稳定业务事件只能登记一次。
+- `idx_ops_wallet_pending`：非唯一 B-tree 索引，顺序为 `scope,delivered_at,id`，无过滤条件；支撑产品/项目各自未确认事件的有界顺序扫描，避免共库跨接入方发送资金事件。
+- 准备命令：从发布提交构建 `cmd/ops-wallet-funding`（用 ldflags 写入 `common.Version`），在明确选择的主库执行 `prepare`，然后独立执行 `verify`。工具不转移钱包、不修改用户余额、不打开运行开关。保留目标非敏感库标识、二进制 SHA-256、源码提交和两个回执。
+- 同库多实例由数据库维护锁串行准备；PostgreSQL 对既有表缺失索引使用 `CREATE INDEX CONCURRENTLY`，不得放进迁移事务。已有同名正确索引只复核，错误定义/无效索引阻止发布，不自动删除重建。
+- 本地验证：2026-11-25，SQLite、MySQL 8.4.6、PostgreSQL 16.16；`TestOPSWalletFundingAcrossDialects` 验证基础用户表升级、重复准备、缺失补建、同名反序索引拒绝、事件/本地余额不变。最低支持版本及多写者切换尚未验收。
+- 当前状态：隔离开发检查点，未合入发布分支；目标生产库未执行，不构成钱包接管或部署就绪证据。资金切换、异步任务归属、资金来源/有效期及回滚必须另行通过隔离验收，不能用 schema 的 `ready=true` 替代。

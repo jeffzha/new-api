@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"testing"
 
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,6 +32,21 @@ func TestJSONColumnValuersReturnString(t *testing.T) {
 			name:   "TaskPrivateData",
 			valuer: TaskPrivateData{Key: "k"},
 			want:   `{"key":"k"}`,
+		},
+		{
+			name:   "TaskPrivateData terminal evidence only",
+			valuer: TaskPrivateData{OpsUsage: []byte(`{"requestId":"accepted"}`)},
+			want:   `{"ops_usage":{"requestId":"accepted"}}`,
+		},
+		{
+			name:   "TaskPrivateData settled usage only",
+			valuer: TaskPrivateData{SettledTokens: 19},
+			want:   `{"settled_tokens":19}`,
+		},
+		{
+			name:   "TaskPrivateData wallet destination only",
+			valuer: TaskPrivateData{OPSWalletBinding: &opsauthority.Binding{Version: 1, Scope: "test", Target: "frozen-ledger"}},
+			want:   `{"ops_wallet_binding":{"version":1,"scope":"test","target":"frozen-ledger"}}`,
 		},
 		{
 			name:   "JSONValue",

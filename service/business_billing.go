@@ -19,6 +19,11 @@ func recordBusinessSettlement(c *gin.Context, info *relaycommon.RelayInfo, actua
 		return
 	}
 	billing := businessapi.UnavailableBilling()
+	if opsWalletOwnsRequest(info) {
+		billing = businessapi.Billing{Source: "ops", Currency: "CNY", Status: "pending", Reason: "awaiting_ops_charge"}
+		c.Set(businessapi.BillingKey, billing)
+		return
+	}
 	if *settleErr == nil {
 		conversion, ok := value.(businessapi.Conversion)
 		if info != nil && info.AgencyPricing != nil {

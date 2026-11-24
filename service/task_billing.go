@@ -50,6 +50,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 		}
 	}
 	other := model.NewLogOther()
+	appendBillingInfo(info, other)
 	other.SetPublic("is_task", true)
 	if info.PublicTaskID != "" {
 		other.SetPublic("task_id", info.PublicTaskID)
@@ -138,6 +139,9 @@ func taskAgencyChargeID(task *model.Task) string {
 
 // taskAdjustFunding 调整任务的资金来源（钱包或订阅），delta > 0 表示扣费，delta < 0 表示退还。
 func taskAdjustFunding(task *model.Task, delta int) error {
+	if task != nil && task.PrivateData.BillingSource == "ops" {
+		return nil
+	}
 	if taskIsSubscription(task) {
 		return model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
 	}
@@ -185,6 +189,14 @@ func taskAdjustTokenQuota(ctx context.Context, task *model.Task, delta int) {
 // taskBillingOther 从 task 的 BillingContext 构建日志 Other 字段。
 func taskBillingOther(task *model.Task) *model.LogOther {
 	other := model.NewLogOther()
+	if task.PrivateData.BillingSource == "ops" {
+		other.SetPublic("billing_source", "ops")
+		if binding := task.PrivateData.OPSWalletBinding; binding != nil {
+			other.SetPublic("billing_scope", binding.Scope)
+			other.SetRoot("ops_wallet_binding", *binding)
+		}
+		other.SetPublic("is_task", true)
+	}
 	if bc := task.PrivateData.BillingContext; bc != nil {
 		other.SetPublic("model_price", bc.ModelPrice)
 		if bc.ModelRatio > 0 {

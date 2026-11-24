@@ -32,7 +32,8 @@ afterEach(cleanup)
 
 function renderCard(
   walletBalances: UserWalletData['wallet_balances'],
-  credit?: UserWalletData['credit']
+  credit?: UserWalletData['credit'],
+  wallet?: Pick<UserWalletData, 'wallet_authority' | 'ops_balance'>
 ) {
   const user: UserWalletData = {
     id: 1,
@@ -46,6 +47,7 @@ function renderCard(
     aff_history_quota: 0,
     aff_count: 0,
     group: 'default',
+    ...wallet,
   }
   return render(
     <I18nextProvider i18n={i18n}>
@@ -69,6 +71,36 @@ it('shows recharge, gift, redemption and reconciled other balances', () => {
   expect(within(breakdown).getByText('Gift balance')).toBeVisible()
   expect(within(breakdown).getByText('Redemption code balance')).toBeVisible()
   expect(within(breakdown).getByText('Other balance')).toBeVisible()
+})
+
+it('shows authoritative OPS money and hides unrelated local buckets after custody changes', () => {
+  renderCard([{ type: 'recharge', quota: 5000000 }], undefined, {
+    wallet_authority: 'ops',
+    ops_balance: {
+      status: 'available',
+      amount: '12.000053',
+      quota: 821921,
+      currency: 'CNY',
+      stale: false,
+    },
+  })
+  expect(screen.getByText(/12.000053/)).toBeVisible()
+  expect(screen.queryByRole('group', { name: 'Balance breakdown' })).not.toBeInTheDocument()
+})
+
+it('keeps unavailable OPS balance unknown instead of displaying local money', () => {
+  renderCard([{ type: 'gift', quota: 5000000 }], undefined, {
+    wallet_authority: 'ops',
+    ops_balance: {
+      status: 'unavailable',
+      amount: null,
+      quota: null,
+      currency: 'CNY',
+      stale: false,
+    },
+  })
+  expect(screen.getByText('—')).toBeVisible()
+  expect(screen.queryByRole('group', { name: 'Balance breakdown' })).not.toBeInTheDocument()
 })
 
 it('renders future balance types without changing the component contract', () => {

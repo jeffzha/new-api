@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -36,6 +37,12 @@ func AdjustUserQuotaWithActor(userID, operatorRole int, mode string, value int, 
 	}
 	if value > common.MaxWalletQuota || value < -common.MaxWalletQuota {
 		return nil, ErrWalletQuotaLimitExceeded
+	}
+	if opsauthority.Enabled() {
+		// Administrative changes must use the idempotent OPS endpoint. Keep
+		// this boundary in the model as well as the HTTP controller so another
+		// caller cannot silently write the dormant wallet.
+		return nil, ErrOPSLocalWalletWrite
 	}
 
 	var adjustment UserQuotaAdjustment

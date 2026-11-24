@@ -2,8 +2,10 @@ package model
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 
 	"gorm.io/gorm"
 )
@@ -24,6 +26,9 @@ const (
 )
 
 var ErrSystemTaskLockLost = errors.New("system task lock lost")
+
+func (SystemTask) TableName() string     { return opsauthority.TaskTable("system_tasks") }
+func (SystemTaskLock) TableName() string { return opsauthority.TaskTable("system_task_locks") }
 
 type SystemTask struct {
 	ID        int64            `json:"id" gorm:"primary_key"`
@@ -314,7 +319,7 @@ func UpdateSystemTaskState(taskID string, lockedBy string, state any) error {
 	now := common.GetTimestamp()
 	result := DB.Model(&SystemTask{}).
 		Where("task_id = ? AND status = ? AND locked_by = ?", taskID, SystemTaskStatusRunning, lockedBy).
-		Where("EXISTS (SELECT 1 FROM system_task_locks WHERE system_task_locks.task_id = system_tasks.task_id AND system_task_locks.locked_by = ? AND system_task_locks.locked_until >= ?)", lockedBy, now).
+		Where(fmt.Sprintf("EXISTS (SELECT 1 FROM %s l WHERE l.task_id = %s.task_id AND l.locked_by = ? AND l.locked_until >= ?)", (SystemTaskLock{}).TableName(), (SystemTask{}).TableName()), lockedBy, now).
 		Updates(map[string]any{
 			"state":      stateText,
 			"updated_at": now,
@@ -333,7 +338,7 @@ func UpdateSystemTaskState(taskID string, lockedBy string, state any) error {
 	var held int64
 	err = DB.Model(&SystemTask{}).
 		Where("task_id = ? AND status = ? AND locked_by = ?", taskID, SystemTaskStatusRunning, lockedBy).
-		Where("EXISTS (SELECT 1 FROM system_task_locks WHERE system_task_locks.task_id = system_tasks.task_id AND system_task_locks.locked_by = ? AND system_task_locks.locked_until >= ?)", lockedBy, now).
+		Where(fmt.Sprintf("EXISTS (SELECT 1 FROM %s l WHERE l.task_id = %s.task_id AND l.locked_by = ? AND l.locked_until >= ?)", (SystemTaskLock{}).TableName(), (SystemTask{}).TableName()), lockedBy, now).
 		Count(&held).Error
 	if err != nil {
 		return err
@@ -404,7 +409,7 @@ func FinishSystemTask(taskID string, lockedBy string, status SystemTaskStatus, r
 	now := common.GetTimestamp()
 	result := DB.Model(&SystemTask{}).
 		Where("task_id = ? AND status = ? AND locked_by = ?", taskID, SystemTaskStatusRunning, lockedBy).
-		Where("EXISTS (SELECT 1 FROM system_task_locks WHERE system_task_locks.task_id = system_tasks.task_id AND system_task_locks.locked_by = ? AND system_task_locks.locked_until >= ?)", lockedBy, now).
+		Where(fmt.Sprintf("EXISTS (SELECT 1 FROM %s l WHERE l.task_id = %s.task_id AND l.locked_by = ? AND l.locked_until >= ?)", (SystemTaskLock{}).TableName(), (SystemTask{}).TableName()), lockedBy, now).
 		Updates(map[string]any{
 			"status":     status,
 			"active_key": nil,

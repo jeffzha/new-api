@@ -101,6 +101,10 @@ func (c *Client) reserveRead(ctx context.Context) error {
 		}
 	}
 	key := c.budgetKey()
+	return reserveWindow(ctx, key, limit)
+}
+
+func reserveWindow(ctx context.Context, key string, limit int) error {
 	at := time.Now()
 	var wait time.Duration
 	if common.RedisEnabled {
@@ -146,8 +150,10 @@ func (c *Client) reserveRead(ctx context.Context) error {
 }
 
 func (c *Client) coolReadBudget(ctx context.Context, wait time.Duration) {
-	wait = max(wait, time.Minute)
-	key := c.budgetKey()
+	coolWindow(ctx, c.budgetKey(), max(wait, time.Minute))
+}
+
+func coolWindow(ctx context.Context, key string, wait time.Duration) {
 	if common.RedisEnabled {
 		if common.RDB == nil {
 			return

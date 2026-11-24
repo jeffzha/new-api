@@ -106,6 +106,9 @@ func calcViolationFeeQuotaWithClamp(amount, groupRatio float64) (int, *common.Qu
 // ChargeViolationFeeIfNeeded charges an additional fee after the normal flow finishes (including refund).
 // It uses Grok fee settings as the fee policy.
 func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, apiErr *types.NewAPIError) bool {
+	if opsWalletOwnsRequest(relayInfo) {
+		return false
+	} // OPS owns project charge policies.
 	if ctx == nil || relayInfo == nil || apiErr == nil {
 		return false
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -135,6 +136,9 @@ func ValidateTopUpQuotaCapacity(userId int, creditedQuota int) error {
 	if err != nil {
 		return err
 	}
+	if opsauthority.Enabled() {
+		return ErrOPSLocalWalletWrite
+	}
 
 	var user User
 	if err := DB.Select("quota").Where("id = ?", userId).First(&user).Error; err != nil {
@@ -157,6 +161,46 @@ func creditTopUpQuotaWithFunding(tx *gorm.DB, userId int, creditedQuota int, upd
 	maxCurrentQuota, err := topUpQuotaMaxCurrent(creditedQuota)
 	if err != nil {
 		return err
+	}
+	if opsauthority.FundingEnabled() {
+		if len(snapshots) > 1 {
+			return ErrTopupPaymentSnapshot
+		}
+		kind := "topup"
+		var facts *OPSFundingFacts
+		if sourceKind == "admin" {
+			// A manual completion establishes a platform grant, not a verified
+			// customer payment. Do not turn it into commissionable paid funding.
+			kind = "gift"
+		} else {
+			facts = &OPSFundingFacts{TradeNo: sourceID}
+		}
+		if len(snapshots) == 1 && snapshots[0] != nil && snapshots[0].Payment != nil {
+			if kind != "topup" {
+				return ErrTopupPaymentSnapshot
+			}
+			payment, err := snapshots[0].Payment.normalized()
+			if err != nil {
+				return err
+			}
+			facts.PaidMoney, facts.PaidCurrency = payment.ActualMoney, payment.CurrencyCode
+			facts.PaymentReference = payment.PaymentReference
+			if payment.CurrencyCode == "CNY" {
+				facts.MoneyCNY = payment.ActualMoney
+			}
+		}
+		if err := QueueOPSWalletFundingTx(tx, int64(userId), int64(creditedQuota), kind, sourceKind, sourceID, facts); err != nil {
+			return err
+		}
+		// Customer/provider metadata still belongs to the local business order.
+		// No balance field is permitted in this projection.
+		if _, writesQuota := updates["quota"]; writesQuota {
+			return ErrOPSLocalWalletWrite
+		}
+		if len(updates) > 0 {
+			return tx.Model(&User{}).Where("id = ?", userId).Updates(updates).Error
+		}
+		return nil
 	}
 	// Match the relay's user -> funding lock order and keep the persisted
 	// admission mode stable through both the wallet credit and funding entry.

@@ -438,6 +438,7 @@ func (p *Pusher) build(state *State) (bool, error) {
 	}
 	for len(logs) > 0 {
 		events, skipped := make([]map[string]any, 0, len(logs)), 0
+		registrationEvents := map[string]string{}
 		for _, log := range logs {
 			if !p.ownsLog(log) || p.deliveredFast(log.Id) {
 				continue
@@ -474,6 +475,19 @@ func (p *Pusher) build(state *State) (bool, error) {
 				}
 				if err := p.attachUpstream(log, event); err != nil {
 					return false, err
+				}
+				if id := registrationGiftID(log, object(json.RawMessage(log.Other))); id != "" && event["requestId"] == id {
+					encoded, err := common.Marshal(event)
+					if err != nil {
+						return false, err
+					}
+					if previous, exists := registrationEvents[id]; exists {
+						if previous != string(encoded) {
+							return false, errors.New("registration gift event identity conflict")
+						}
+						continue
+					}
+					registrationEvents[id] = string(encoded)
 				}
 				events = append(events, event)
 			} else {
@@ -1127,6 +1141,20 @@ func topupFacts(topup *model.TopUp, log *model.Log, recorded bool, price float64
 	return facts
 }
 
+// registrationGiftID identifies only server-authored registration audit facts.
+// An ordinary model request may happen to use the same request-ID prefix.
+func registrationGiftID(log *model.Log, other map[string]json.RawMessage) string {
+	if log.Type != model.LogTypeSystem {
+		return ""
+	}
+	source, _ := textValue(other["quota_source"])
+	stableID, _ := textValue(other["registration_event_id"])
+	if source == model.LogQuotaSourceRegister && stableID == "reg-gift-"+strconv.Itoa(log.UserId) || source == model.LogQuotaSourceInvitee && stableID == "invite-gift-"+strconv.Itoa(log.UserId) {
+		return stableID
+	}
+	return ""
+}
+
 // EventV11 maps any wallet-changing or failed-call log to a v1.1 event, or nil when OPS would reject it. Calls and
 // failures keep the v1 shape; top-ups, adjustments and gifts carry no model. Every new field is inside extra.
 func EventV11(log *model.Log, channelName string, topup *model.TopUp, conversion Conversion) map[string]any {
@@ -1140,10 +1168,17 @@ func EventV11(log *model.Log, channelName string, topup *model.TopUp, conversion
 		return nil
 	}
 	wallet := kind == "topup" || kind == "adjustment" || kind == "gift"
+	registrationID := registrationGiftID(log, other)
 	requestId := log.RequestId
 	switch {
 	case wallet:
 		requestId = kind + "-" + strconv.Itoa(log.Id)
+		// Registration hooks may replay after a crash. Their money already
+		// committed with the account, so mirror the business ID, not each new
+		// audit row. Older logs keep the existing log-ID contract.
+		if kind == "gift" && registrationID != "" {
+			requestId = registrationID
+		}
 	case kind == "refund":
 		base := log.RequestId
 		if base == "" {
@@ -1209,6 +1244,17 @@ func EventV11(log *model.Log, channelName string, topup *model.TopUp, conversion
 
 	added := map[string]any{"recordKind": kind, "direction": direction, "quotaPerUnit": conversion.QuotaPerUnit,
 		"usdExchangeRate": conversion.USDExchangeRate, "topupPrice": conversion.TopupPrice}
+	if kind == "gift" && registrationID != "" {
+		// Matching IDs above are server-authored registration snapshots. All
+		// conversion inputs must remain stable across later configuration changes.
+		for key, source := range map[string]string{"quotaPerUnit": "quota_per_unit", "usdExchangeRate": "usd_exchange_rate", "topupPrice": "topup_price"} {
+			value, ok := number(other[source])
+			if !ok || value <= 0 {
+				return nil
+			}
+			added[key] = value
+		}
+	}
 	if value, ok := number(other["quota_per_unit"]); ok && value > 0 {
 		added["quotaPerUnit"] = value
 	} else if raw, ok := textValue(other["quota_per_unit"]); ok {

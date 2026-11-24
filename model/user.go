@@ -11,7 +11,6 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
@@ -118,9 +117,10 @@ type User struct {
 	// BillingMode is legacy for existing users and agency-durable for invited
 	// customers. It is persisted so a gateway restart cannot silently fall
 	// back to the legacy wallet semantics for a managed customer.
-	BillingMode      string                     `json:"-" gorm:"type:varchar(32);column:billing_mode"`
-	FundingVersion   int64                      `json:"-" gorm:"type:bigint;column:funding_version"`
-	AdminPermissions map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
+	BillingMode         string                     `json:"-" gorm:"type:varchar(32);column:billing_mode"`
+	FundingVersion      int64                      `json:"-" gorm:"type:bigint;column:funding_version"`
+	RegistrationFunding string                     `json:"-" gorm:"type:text;column:registration_funding"`
+	AdminPermissions    map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -588,21 +588,6 @@ func HardDeleteUserById(id int) error {
 	return user.HardDelete()
 }
 
-func inviteUser(inviterId int) error {
-	result := DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]any{
-		"aff_count":   gorm.Expr("aff_count + ?", 1),
-		"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
-		"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
-	})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
-}
-
 func (user *User) TransferAffQuotaToQuota(quota int) error {
 	// 检查quota是否小于最小额度
 	if float64(quota) < common.QuotaPerUnit {
@@ -744,9 +729,8 @@ func (user *User) Insert(inviterId int) error {
 			if err := user.prepareForInsert(tx); err != nil {
 				return err
 			}
-			user.Quota = common.QuotaForNewUser
-			if opsauthority.FundingEnabled() {
-				user.Quota = 0
+			if err := user.prepareRegistrationFunding(inviterId); err != nil {
+				return err
 			}
 			if user.BillingMode == "" {
 				user.BillingMode = "legacy"
@@ -763,7 +747,7 @@ func (user *User) Insert(inviterId int) error {
 			if err := tx.Create(user).Error; err != nil {
 				return err
 			}
-			return user.queueOPSRegistrationGiftsTx(tx, inviterId)
+			return user.applyRegistrationFundingTx(tx)
 		})
 	}); err != nil {
 		return err
@@ -789,22 +773,7 @@ func (user *User) finishInsert(inviterId int) {
 		}
 	}
 
-	if common.QuotaForNewUser > 0 {
-		RecordQuotaLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)), common.QuotaForNewUser, LogQuotaSourceRegister, false, nil)
-	}
-	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
-		if common.QuotaForInvitee > 0 {
-			if !opsauthority.FundingEnabled() {
-				_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-			}
-			RecordQuotaLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)), common.QuotaForInvitee, LogQuotaSourceInvitee, false, nil)
-		}
-		if common.QuotaForInviter > 0 {
-			//_ = IncreaseUserQuota(inviterId, common.QuotaForInviter)
-			RecordQuotaLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)), 0, LogQuotaSourceInviter, false, map[string]any{"aff_quota": common.QuotaForInviter})
-			_ = inviteUser(inviterId)
-		}
-	}
+	user.recordRegistrationFunding()
 }
 
 func (user *User) FinishInsert(inviterId int) {
@@ -813,15 +782,14 @@ func (user *User) FinishInsert(inviterId int) {
 
 // InsertWithTx inserts a new user within an existing transaction.
 // This is used for OAuth registration where user creation and binding need to be atomic.
-// Post-creation tasks (sidebar config, logs, inviter rewards) are handled after the transaction commits.
+// Gifts and inviter rewards commit here; sidebar configuration and audit logs follow commit.
 func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 	return withNormalizedEmailLock(tx, user.Email, func(tx *gorm.DB) error {
 		if err := user.prepareForInsert(tx); err != nil {
 			return err
 		}
-		user.Quota = common.QuotaForNewUser
-		if opsauthority.FundingEnabled() {
-			user.Quota = 0
+		if err := user.prepareRegistrationFunding(inviterId); err != nil {
+			return err
 		}
 		if user.BillingMode == "" {
 			user.BillingMode = "legacy"
@@ -837,29 +805,8 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 		if err := tx.Create(user).Error; err != nil {
 			return err
 		}
-		return user.queueOPSRegistrationGiftsTx(tx, inviterId)
+		return user.applyRegistrationFundingTx(tx)
 	})
-}
-
-// Registration gifts commit with the new account and OAuth binding. A failed
-// registration cannot leave a deliverable credit, and repeated post-creation
-// hooks only record audit logs rather than crediting the wallet again.
-func (user *User) queueOPSRegistrationGiftsTx(tx *gorm.DB, inviterId int) error {
-	if !opsauthority.FundingEnabled() {
-		return nil
-	}
-	if common.QuotaForNewUser < 0 || common.QuotaForInvitee < 0 {
-		return errors.New("invalid registration gift quota")
-	}
-	if common.QuotaForNewUser > 0 {
-		if err := QueueOPSWalletFundingTx(tx, int64(user.Id), int64(common.QuotaForNewUser), "gift", "registration", strconv.Itoa(user.Id), nil); err != nil {
-			return err
-		}
-	}
-	if inviterId != 0 && common.QuotaForInvitee > 0 && operation_setting.IsPaymentComplianceConfirmed() {
-		return QueueOPSWalletFundingTx(tx, int64(user.Id), int64(common.QuotaForInvitee), "gift", "invitation", strconv.Itoa(user.Id), nil)
-	}
-	return nil
 }
 
 // InsertWithTxAgency creates an agency-invited customer with zero initial
@@ -873,6 +820,7 @@ func (user *User) InsertWithTxAgency(tx *gorm.DB) error {
 		user.Quota = 0
 		user.BillingMode = "agency-durable-v1"
 		user.FundingVersion = 1
+		user.RegistrationFunding = ""
 		user.AffCode = common.GetRandomString(4)
 		if user.Setting == "" {
 			user.SetSetting(dto.UserSetting{})
@@ -897,21 +845,7 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		}
 	}
 
-	if common.QuotaForNewUser > 0 {
-		RecordQuotaLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)), common.QuotaForNewUser, LogQuotaSourceRegister, false, nil)
-	}
-	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
-		if common.QuotaForInvitee > 0 {
-			if !opsauthority.FundingEnabled() {
-				_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-			}
-			RecordQuotaLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)), common.QuotaForInvitee, LogQuotaSourceInvitee, false, nil)
-		}
-		if common.QuotaForInviter > 0 {
-			RecordQuotaLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)), 0, LogQuotaSourceInviter, false, map[string]any{"aff_quota": common.QuotaForInviter})
-			_ = inviteUser(inviterId)
-		}
-	}
+	user.recordRegistrationFunding()
 }
 
 func (user *User) Update(updatePassword bool) error {
@@ -968,6 +902,7 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 		"aff_count",
 		"aff_quota",
 		"aff_history",
+		"registration_funding",
 		"auth_version",
 	).Updates(newUser).Error; err != nil {
 		return err

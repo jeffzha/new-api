@@ -449,6 +449,24 @@ func TestEventV11Shapes(t *testing.T) {
 		log.Other = fmt.Sprintf(`{"quota_source":%q,"quota_direction":"credit","wallet_event_owner":"ops_funding"}`, source)
 		assert.Nil(t, EventV11(log, "", nil, testConversion), source)
 	}
+
+	// Replayed registration audits mirror one business gift, independent of
+	// the new log row, runtime conversion or later account profile changes.
+	for _, source := range []struct{ source, id string }{
+		{model.LogQuotaSourceRegister, "reg-gift-9"},
+		{model.LogQuotaSourceInvitee, "invite-gift-9"},
+	} {
+		log := model.Log{Id: 51, UserId: 9, Username: "accepted-name", CreatedAt: 1792540800, Type: model.LogTypeSystem, Quota: 100, Content: "accepted gift", Other: fmt.Sprintf(`{"quota_source":%q,"wallet_event_owner":"gateway","registration_event_id":%q,"quota_per_unit":400000,"usd_exchange_rate":7.1,"topup_price":7.2}`, source.source, source.id)}
+		first := EventV11(&log, "", nil, testConversion)
+		require.NotNil(t, first)
+		assert.Equal(t, source.id, first["requestId"])
+		extra := extraOfEvent(t, first)
+		assert.Equal(t, 400000.0, extra["quotaPerUnit"])
+		assert.Equal(t, 7.1, extra["usdExchangeRate"])
+		assert.Equal(t, 7.2, extra["topupPrice"])
+		log.Id = 99
+		assert.Equal(t, first, EventV11(&log, "", nil, Conversion{QuotaPerUnit: 900000, USDExchangeRate: 8.1, TopupPrice: 8.2}))
+	}
 }
 
 func TestEventV11RefundRequestIds(t *testing.T) {
@@ -611,6 +629,34 @@ func TestBuildV11LinksTopupsAndKeepsV1Unchanged(t *testing.T) {
 	assert.Equal(t, "7.3", legacy["topup"].(map[string]any)["moneyCny"])
 	assert.Equal(t, false, legacy["quotaRecorded"])
 	assert.Contains(t, byId, "task_1-r7")
+
+	// The same committed gift can produce two post-commit audit rows. A
+	// single batch carries it once and still advances past both log IDs.
+	for range 2 {
+		require.NoError(t, db.Create(&model.Log{Type: model.LogTypeSystem, UserId: 1, CreatedAt: 600, Quota: 100,
+			Other: `{"quota_source":"register_gift","wallet_event_owner":"gateway","registration_event_id":"reg-gift-1","quota_per_unit":500000,"usd_exchange_rate":7.3,"topup_price":7.3}`}).Error)
+	}
+	_, err = pusher.build(state)
+	require.NoError(t, err)
+	require.NoError(t, common.UnmarshalJsonStr(state.BatchBody, &v11))
+	require.Len(t, v11.Events, 7)
+	assert.Equal(t, "reg-gift-1", v11.Events[6]["requestId"])
+	assert.EqualValues(t, 9, state.BatchLast)
+	// A client model request with a similar prefix is not a registration
+	// gift. Keep both usage records under the existing request contract.
+	for i := range 2 {
+		require.NoError(t, db.Create(&model.Log{Type: model.LogTypeConsume, UserId: 1, ModelName: "m", RequestId: "reg-gift-model-request", CreatedAt: int64(700 + i)}).Error)
+	}
+	_, err = pusher.build(state)
+	require.NoError(t, err)
+	require.NoError(t, common.UnmarshalJsonStr(state.BatchBody, &v11))
+	require.Len(t, v11.Events, 9)
+	assert.EqualValues(t, 11, state.BatchLast)
+	// Conflicting facts for the same actual gift are held for investigation.
+	require.NoError(t, db.Create(&model.Log{Type: model.LogTypeSystem, UserId: 1, CreatedAt: 600, Quota: 101,
+		Other: `{"quota_source":"register_gift","wallet_event_owner":"gateway","registration_event_id":"reg-gift-1","quota_per_unit":500000,"usd_exchange_rate":7.3,"topup_price":7.3}`}).Error)
+	_, err = pusher.build(state)
+	require.ErrorContains(t, err, "registration gift event identity conflict")
 }
 
 func TestImageReferenceFactsSurvivePushAndLogBackfill(t *testing.T) {

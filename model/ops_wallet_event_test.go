@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -481,13 +482,16 @@ func TestOPSRegistrationFundingAcrossDialects(t *testing.T) {
 	t.Setenv("OPS_WALLET_PROFILE", "product")
 	t.Setenv("OPS_PUSH_URL", "https://ops.example.invalid")
 	t.Setenv("OPS_PUSH_KEY_ID", "registration-fixture")
-	oldNew, oldInvitee := common.QuotaForNewUser, common.QuotaForInvitee
+	oldNew, oldInvitee, oldInviter := common.QuotaForNewUser, common.QuotaForInvitee, common.QuotaForInviter
+	oldRedis, oldBatch, oldCache := common.RedisEnabled, common.BatchUpdateEnabled, common.MemoryCacheEnabled
 	oldPayment := *operation_setting.GetPaymentSetting()
-	common.QuotaForNewUser, common.QuotaForInvitee = 200, 100
+	common.QuotaForNewUser, common.QuotaForInvitee, common.QuotaForInviter = 200, 100, 50
+	common.RedisEnabled, common.BatchUpdateEnabled, common.MemoryCacheEnabled = false, false, false
 	operation_setting.GetPaymentSetting().ComplianceConfirmed = true
 	operation_setting.GetPaymentSetting().ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
 	t.Cleanup(func() {
-		common.QuotaForNewUser, common.QuotaForInvitee = oldNew, oldInvitee
+		common.QuotaForNewUser, common.QuotaForInvitee, common.QuotaForInviter = oldNew, oldInvitee, oldInviter
+		common.RedisEnabled, common.BatchUpdateEnabled, common.MemoryCacheEnabled = oldRedis, oldBatch, oldCache
 		*operation_setting.GetPaymentSetting() = oldPayment
 	})
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
@@ -499,16 +503,37 @@ func TestOPSRegistrationFundingAcrossDialects(t *testing.T) {
 			pool, err := db.DB()
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, pool.Close()) })
-			oldDB, oldMain, oldLog := DB, common.MainDatabaseType(), common.LogDatabaseType()
-			DB = db
-			common.SetDatabaseTypes(common.DatabaseType(dialect), oldLog)
-			t.Cleanup(func() { DB = oldDB; common.SetDatabaseTypes(oldMain, oldLog) })
-			require.NoError(t, db.AutoMigrate(&User{}))
+			oldDB, oldLogs, oldMain, oldLog := DB, LOG_DB, common.MainDatabaseType(), common.LogDatabaseType()
+			DB, LOG_DB = db, db
+			common.SetDatabaseTypes(common.DatabaseType(dialect), common.DatabaseType(dialect))
+			initCol()
+			t.Cleanup(func() { DB, LOG_DB = oldDB, oldLogs; common.SetDatabaseTypes(oldMain, oldLog); initCol() })
+			// A previously released account has no registration snapshot. Upgrade
+			// twice, preserving its money and original unique/index definitions.
+			if !db.Migrator().HasTable(&User{}) {
+				require.NoError(t, db.Migrator().CreateTable(&User{}))
+				// Construct the released shape in this empty isolated fixture.
+				// GORM's embedded-field override does not omit a migrated column.
+				require.NoError(t, db.Migrator().DropColumn(&User{}, "RegistrationFunding"))
+				assert.False(t, db.Migrator().HasColumn(&User{}, "RegistrationFunding"))
+			}
+			legacy := User{Username: "legacy-registration-" + common.GetUUID()[:16], AffCode: common.GetUUID(), Quota: 777}
+			require.NoError(t, db.Omit("RegistrationFunding").Create(&legacy).Error)
+			for range 2 {
+				require.NoError(t, db.AutoMigrate(&User{}, &Log{}))
+			}
+			var upgraded User
+			require.NoError(t, db.First(&upgraded, legacy.Id).Error)
+			assert.Equal(t, 777, upgraded.Quota)
+			assert.Empty(t, upgraded.RegistrationFunding)
+			assert.True(t, db.Migrator().HasIndex(&User{}, "Username"))
 			require.NoError(t, PrepareOPSWalletFundingSchema(t.Context(), db))
 			suffix := common.GetUUID()[:16]
+			inviter := User{Username: "registration-inviter-" + suffix, AffCode: "i-" + suffix, Quota: 321}
+			require.NoError(t, db.Create(&inviter).Error)
 			password := "synthetic-registration-password"
 			user := User{Username: "registration-" + suffix, Email: suffix + "@example.invalid", Password: password}
-			require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return user.InsertWithTx(tx, 81) }))
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return user.InsertWithTx(tx, inviter.Id) }))
 			var stored User
 			require.NoError(t, db.First(&stored, user.Id).Error)
 			assert.Zero(t, stored.Quota, "registration money is owned by OPS")
@@ -521,18 +546,52 @@ func TestOPSRegistrationFundingAcrossDialects(t *testing.T) {
 				fmt.Sprintf("wf-%x", sha256.Sum256([]byte("\x00invitation\x00"+fmt.Sprint(user.Id)))),
 			}).Order("id").Find(&rows).Error)
 			require.Len(t, rows, 2)
-			require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return user.queueOPSRegistrationGiftsTx(tx, 81) }))
+			// Change every live decision before post-commit hooks, including the
+			// ledger destination. Persisted acceptance still owns these gifts.
+			t.Setenv("OPS_WALLET_AUTHORITY", "gateway")
+			t.Setenv("OPS_PUSH_URL", "https://different-ops.example.invalid")
+			common.QuotaForNewUser, common.QuotaForInvitee, common.QuotaForInviter = 900, 800, 700
+			operation_setting.GetPaymentSetting().ComplianceConfirmed = false
+			for range 2 {
+				require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return user.applyRegistrationFundingTx(tx) }))
+				reloaded := User{Id: user.Id}
+				reloaded.FinalizeOAuthUserCreation(inviter.Id + 1)
+			}
+			require.NoError(t, db.First(&stored, user.Id).Error)
+			assert.Zero(t, stored.Quota)
+			var storedInviter User
+			require.NoError(t, db.First(&storedInviter, inviter.Id).Error)
+			assert.Equal(t, 321, storedInviter.Quota)
+			assert.Equal(t, 1, storedInviter.AffCount)
+			assert.Equal(t, 50, storedInviter.AffQuota)
+			assert.Equal(t, 50, storedInviter.AffHistoryQuota)
+			var logs []Log
+			require.NoError(t, db.Where("user_id = ?", user.Id).Order("id").Find(&logs).Error)
+			require.Len(t, logs, 4)
+			for i, row := range logs {
+				assert.Equal(t, []int{200, 100}[i%2], row.Quota)
+				assert.Contains(t, row.Other, `"wallet_event_owner":"ops_funding"`)
+				assert.NotContains(t, row.Other, password)
+			}
+			// Generic profile updates cannot rewrite the immutable decision.
+			stale := User{Id: user.Id, DisplayName: "profile", RegistrationFunding: `invalid`}
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return stale.UpdateWithTx(tx, false) }))
+			assert.Equal(t, stored.RegistrationFunding, stale.RegistrationFunding)
+			t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+			t.Setenv("OPS_PUSH_URL", "https://ops.example.invalid")
+			common.QuotaForNewUser, common.QuotaForInvitee, common.QuotaForInviter = 200, 100, 50
+			operation_setting.GetPaymentSetting().ComplianceConfirmed = true
 			for _, row := range rows {
 				var replay OPSWalletEvent
 				require.NoError(t, db.First(&replay, row.ID).Error)
 				assert.Equal(t, row, replay, "replayed registration hooks cannot create a second credit")
 			}
 			duplicate := User{Username: "duplicate-" + suffix, Email: user.Email, Password: password}
-			require.ErrorIs(t, db.Transaction(func(tx *gorm.DB) error { return duplicate.InsertWithTx(tx, 81) }), ErrEmailAlreadyTaken)
+			require.ErrorIs(t, db.Transaction(func(tx *gorm.DB) error { return duplicate.InsertWithTx(tx, inviter.Id) }), ErrEmailAlreadyTaken)
 			rolledBack := User{Username: "rolledback-" + suffix, Password: password}
 			rollback := errors.New("OAuth binding rejected")
 			require.ErrorIs(t, db.Transaction(func(tx *gorm.DB) error {
-				if err := rolledBack.InsertWithTx(tx, 81); err != nil {
+				if err := rolledBack.InsertWithTx(tx, inviter.Id); err != nil {
 					return err
 				}
 				return rollback
@@ -543,9 +602,85 @@ func TestOPSRegistrationFundingAcrossDialects(t *testing.T) {
 			id := fmt.Sprintf("wf-%x", sha256.Sum256([]byte("\x00registration\x00"+fmt.Sprint(rolledBack.Id))))
 			require.NoError(t, db.Model(&OPSWalletEvent{}).Where("event_id = ?", id).Count(&count).Error)
 			assert.Zero(t, count, "a failed OAuth binding cannot leave a gift to deliver")
+			require.NoError(t, db.First(&storedInviter, inviter.Id).Error)
+			assert.Equal(t, 1, storedInviter.AffCount, "OAuth failure also rolls back inviter money")
+			assert.Equal(t, 50, storedInviter.AffQuota)
+			// Preserve legacy money semantics, but apply invitations in the account
+			// transaction so a later OPS configuration cannot lose or duplicate them.
+			t.Setenv("OPS_WALLET_AUTHORITY", "gateway")
+			local := User{Username: "legacy-new-" + suffix, Password: password}
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return local.InsertWithTx(tx, inviter.Id) }))
+			assert.Equal(t, 300, local.Quota)
+			t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+			for range 2 {
+				require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return local.applyRegistrationFundingTx(tx) }))
+				local.recordRegistrationFunding()
+			}
+			var localStored User
+			require.NoError(t, db.First(&localStored, local.Id).Error)
+			assert.Equal(t, 300, localStored.Quota)
+			require.NoError(t, db.First(&storedInviter, inviter.Id).Error)
+			assert.Equal(t, 2, storedInviter.AffCount)
+			assert.Equal(t, 100, storedInviter.AffQuota)
+			var localLogs []Log
+			require.NoError(t, db.Where("user_id = ?", local.Id).Order("id").Find(&localLogs).Error)
+			require.Len(t, localLogs, 4)
+			for i, row := range localLogs {
+				assert.Equal(t, []int{200, 100}[i%2], row.Quota)
+				assert.Contains(t, row.Other, `"wallet_event_owner":"gateway"`)
+				assert.Contains(t, row.Other, `"registration_event_id":`)
+			}
+			assert.Equal(t, localLogs[0].CreatedAt, localLogs[2].CreatedAt)
+			assert.Equal(t, localLogs[0].Content, localLogs[2].Content)
+			assert.Equal(t, localLogs[0].Other, localLogs[2].Other)
+			// Two new accounts may share an inviter. Its locked reward update
+			// must preserve both commits without a lost update or double reward.
+			results := make(chan error, 2)
+			start := make(chan struct{})
+			var workers sync.WaitGroup
+			for i := range 2 {
+				account := User{Username: fmt.Sprintf("concurrent-registration-%s-%d", suffix, i)}
+				if dialect == "sqlite" {
+					results <- db.Transaction(func(tx *gorm.DB) error { return account.InsertWithTx(tx, inviter.Id) })
+					continue
+				}
+				workers.Go(func() {
+					<-start
+					results <- db.Transaction(func(tx *gorm.DB) error { return account.InsertWithTx(tx, inviter.Id) })
+				})
+			}
+			close(start)
+			workers.Wait()
+			close(results)
+			for err := range results {
+				require.NoError(t, err)
+			}
+			require.NoError(t, db.First(&storedInviter, inviter.Id).Error)
+			assert.Equal(t, 4, storedInviter.AffCount)
+			assert.Equal(t, 200, storedInviter.AffQuota)
+			assert.Equal(t, 200, storedInviter.AffHistoryQuota)
 			for _, source := range []string{LogQuotaSourceRegister, LogQuotaSourceInvitee} {
 				assert.Equal(t, "ops_funding", walletLogFields(source, false, nil)["wallet_event_owner"])
 			}
+			// A managed account keeps the pre-existing typed funding semantics
+			// while custody is still local. Replays cannot add another lot.
+			t.Setenv("OPS_WALLET_AUTHORITY", "gateway")
+			require.NoError(t, MigrateAgency(db))
+			durable := User{Username: "durable-registration-" + suffix, BillingMode: AgencyDurableBillingMode, FundingVersion: 1}
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return durable.InsertWithTx(tx, inviter.Id) }))
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return durable.applyRegistrationFundingTx(tx) }))
+			var account AgencyFundingAccount
+			require.NoError(t, db.Where("user_id = ?", durable.Id).First(&account).Error)
+			assert.EqualValues(t, 200, account.PaidAvailable, "preserve existing opening semantics")
+			assert.EqualValues(t, 100, account.NonpaidAvailable)
+			var giftLots []AgencyFundingLot
+			require.NoError(t, db.Where("user_id = ? AND source_kind = ?", durable.Id, "quota_grant").Find(&giftLots).Error)
+			require.Len(t, giftLots, 1)
+			assert.EqualValues(t, 100, giftLots[0].BonusAvailable)
+			assert.Equal(t, fmt.Sprintf("invite-gift-%d", durable.Id), giftLots[0].SourceID)
+			var durableStored User
+			require.NoError(t, db.First(&durableStored, durable.Id).Error)
+			assert.Equal(t, 300, durableStored.Quota)
 		})
 	}
 }

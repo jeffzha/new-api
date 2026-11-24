@@ -18,6 +18,8 @@
 - 管理员本地 add/subtract/override 在 controller 与 model 两层阻止旁路写入；邀请奖励转余额和余额购买订阅也暂时拒绝本地资金写入。这些拒绝是未完成适配的开发保护，不代表相应 OPS 业务已接完，不能带着这些功能缺口切换线上钱包。
 - 预支付容量检查已改用 OPS 用户余额，负余额允许充值；没有可用 OPS 数据时不读取聚合旧余额。该检查不是资金预占，不能代替 OPS 入账时的并发上限保护。
 - 资金事件保留支付凭据、币种和实付金额，实付金额不从充值额度反推。提交前和发送前共同验证币种、非负金额、最多六位小数、金额上限及 CNY 一致性；重试保留原始业务事实，不使用新的汇率重估，人工补单仍是赠送资金。OPS 当前只消费契约中的 moneyCny，扩展凭据不代表 OPS 已实现完整资金来源/佣金账。
+- 注册事务保存不可由客户端提交/资料更新覆盖的 registration_funding 快照，冻结注册/被邀请赠额、邀请人奖励、资金归属、OPS 账本绑定及审计换算。账户、OAuth 绑定、赠额事件和原邀请奖励同事务提交；提交后回调只读取已提交事实记审计，不因运行开关/赠额配置/用户名变化重发钱。旧账户不补发赠额，Agency 邀请注册保持独立零赠额路径；原本本地管理的 durable 用户仍通过现有非实付资金 lot/ledger 入账，未改变其期初语义。邀请人奖励仍为本地 AffQuota，不能据此声称已迁至 OPS。
+- 注册审计重复写入分离日志库时，以固定业务 ID 和冻结负载镜像到 OPS；同批重复合并，负载冲突保留待核查。只对具有服务端注册赠额标记的审计去重，不把同前缀的普通模型请求当成赠额。
 - 页面余额优先显示 OPS 状态，不把缺失金额显示成免费/零余额；累计消费、历史金额、奖励和授信等仍有本地来源，尚未满足“所有金额展示由 OPS 提供”。没有完成本轮浏览器验收。
 
 ### 尚未完成、阻止产品钱包启用的条件
@@ -39,6 +41,8 @@
 - Gateway 签名资金事件到真实 OPS handler/billing/posting/PostgreSQL：`TestLocalRealDomesticFundingContract` 通过，使用临时 overlay，无 OPS 源码修改。期初 10、实付 73、赠送 7.3，丢 ACK 重试不重复入账；set10/add2/subtract1 得11，真实OPS消费1再退款1恢复11，退款丢ACK重试仍11，聚合本地额度始终123。日志 `D:/DevCache/product-ops-wallet-refund-real-ops-20261125.log`。这不代表在线交接已通过。
 - `TestDomesticCutoverContractEvidence` 仅用于证明当前 OPS 的缺失期初/owner 与时间裁定缺口，诊断测试通过不等于修复通过；临时测试源在 `D:/DevCache/product-ops-wallet-cutover-evidence-20261125_test.go`。
 - 先前前端 3 文件 16 项、typecheck/build 通过；本轮未新增 UI 修改，未浏览器验收。索引源码政策检查、git diff --check 通过；没有进行线上资金测试、生产数据修改或停服操作。
+- 注册快照补强后的最终树：独立四组和合跑四组的真实 SQLite / MySQL 8.4.6 / PostgreSQL 16.16 矩阵均通过，无 SKIP；覆盖旧用户表加列并重复迁移、密码哈希/重复邮箱、OAuth 全事务回滚、提交后配置改变、重复回调、MySQL/PG 同邀请人并发，以及 durable 用户被邀请赠额仍保留唯一非实付 lot/流水。SQLite 并发注册沿用单写者执行，未把顺序用例当成并发验收。日志在 D:/DevCache/product-ops-wallet-registration-reviewed-20261125.log 与 product-ops-wallet-registration-reviewed-combined-20261125.log。
+- 最终受影响包 `go test ./model ./controller ./service/opspush -count=1` 通过（73.200s / 55.597s / 0.645s），`go build ./...` 通过；注册审计批内去重、冲突拒绝及普通模型同前缀隔离均通过。认证参考 OWASP Authentication / Session Management Cheat Sheets；本轮保留现有密码哈希、邮箱唯一及 OAuth 原子绑定，不记录密码/令牌，未宣称完整 ASVS 认证。仍未达到在线资金交接与容量验收，禁止产品启用/发布。
 
 > 本文档用于新旧会话交接。接手同事直接基于当前代码库与本文件即可继续开发。
 > 生成时间：2026-09-12。信息来源：`agency-hub-sidecar-design.md`、`docs/distributor-affiliate-prd.md`、当前工作区代码与 git 状态。

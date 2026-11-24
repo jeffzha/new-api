@@ -314,7 +314,7 @@ func walletLogFields(source string, debit bool, fields map[string]any) map[strin
 		values["quota_direction"] = LogQuotaDebit
 	}
 	maps.Copy(values, fields)
-	if opsauthority.FundingEnabled() && !debit {
+	if _, explicitOwner := values["wallet_event_owner"]; !explicitOwner && opsauthority.FundingEnabled() && !debit {
 		switch source {
 		case LogQuotaSourceOnlineTopup, LogQuotaSourceAdminTopup, LogQuotaSourceRedemption, LogQuotaSourceCheckin, LogQuotaSourceRegister, LogQuotaSourceInvitee:
 			// These business transactions already queued their immutable OPS

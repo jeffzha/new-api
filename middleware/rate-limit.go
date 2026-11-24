@@ -281,3 +281,12 @@ func SearchRateLimit() func(c *gin.Context) {
 	}
 	return userRateLimitFactory(common.SearchRateLimitNum, common.SearchRateLimitDuration, "SR")
 }
+
+// ModelHealthReadRateLimit gives polling and interactive reads their own budget.
+func ModelHealthReadRateLimit() func(c *gin.Context) {
+	return userRateLimitFactory(90, 60, "MH:read")
+}
+
+func ModelHealthActionRateLimit() func(c *gin.Context) {
+	return userRateLimitFactory(10, 60, "MH:action")
+}

@@ -90,6 +90,7 @@ export interface ApiResponse<T = unknown> {
 
 export interface SystemStatus {
   ops_fees_enabled?: boolean
+  model_health_enabled?: boolean
   success?: boolean
   message?: string
   data?: {

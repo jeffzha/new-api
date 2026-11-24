@@ -1,0 +1,236 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Download } from 'lucide-react'
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
+
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import { StaticDataTable } from '@/components/data-table'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { NativeSelect } from '@/components/ui/native-select'
+
+import {
+  downloadEvidence,
+  loadHealth,
+  money,
+  saveHealth,
+  when,
+  type Access,
+  type OpsCosts,
+  type Run,
+} from './api'
+import { Pages, Status } from './status'
+
+export function EvidenceButton(props: { id: number; user?: boolean }) {
+  const { t } = useTranslation()
+  const download = useMutation({
+    mutationFn: () => downloadEvidence(props.id, props.user),
+  })
+  return (
+    <Button
+      size='icon'
+      variant='outline'
+      title={t('Download evidence MD')}
+      aria-label={t('Download evidence MD')}
+      disabled={download.isPending}
+      onClick={() => download.mutate()}
+    >
+      <Download aria-hidden='true' />
+    </Button>
+  )
+}
+
+export function HealthRecords(props: { access: Access }) {
+  const { t } = useTranslation()
+  const [source, setSource] = useState('')
+  const [page, setPage] = useState(1)
+  const [reconcile, setReconcile] = useState<Run>()
+  const [cost, setCost] = useState('')
+  const client = useQueryClient()
+  const history = useQuery({
+    queryKey: ['model-health', 'runs', source, page],
+    queryFn: ({ signal }) =>
+      loadHealth<Run[]>('/runs', { source, page }, signal),
+    refetchInterval: 10000,
+  })
+  const costs = useQuery({
+    queryKey: ['model-health', 'run-costs', source, page],
+    queryFn: ({ signal }) =>
+      loadHealth<OpsCosts>('/run-costs', { source, page }, signal),
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    retry: false,
+    meta: { errorToast: false },
+  })
+  const totals = costs.data
+  let pendingCost = t('OPS costs unavailable')
+  if (costs.isPending) {
+    pendingCost = t('Loading OPS costs')
+  } else if (totals?.state === 'confirmed') {
+    pendingCost = t('Awaiting OPS receipt')
+  } else if (totals?.state === 'unconfigured') {
+    pendingCost = t('OPS costs not connected')
+  }
+  const settle = useMutation({
+    mutationFn: (r: Run) =>
+      saveHealth(
+        '/reconcile',
+        { id: r.id, actual_micro: Number(cost) },
+        'post'
+      ),
+    onSuccess: () => {
+      setReconcile(undefined)
+      void client.invalidateQueries({ queryKey: ['model-health'] })
+    },
+  })
+  return (
+    <div className='space-y-3 pt-3'>
+      <dl className='grid grid-cols-2 divide-x border-y'>
+        {[
+          [t('OPS confirmed this week (Beijing time)'), totals?.week_micro],
+          [t('OPS confirmed all time'), totals?.total_micro],
+        ].map(([label, value]) => (
+          <div key={label} className='min-w-0 px-3 py-3'>
+            <dt className='text-muted-foreground text-xs'>{label}</dt>
+            <dd className='mt-1 font-semibold break-words tabular-nums'>
+              {typeof value === 'number' ? money(value) : pendingCost}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <label className='inline-flex items-center gap-2'>
+        {t('Detection source')}
+        <NativeSelect
+          value={source}
+          onChange={(e) => {
+            setSource(e.target.value)
+            setPage(1)
+          }}
+        >
+          <option value=''>{t('All')}</option>
+          <option value='manual'>{t('manual')}</option>
+          <option value='scheduled'>{t('scheduled')}</option>
+        </NativeSelect>
+      </label>
+      {history.isPending && <LoadingState />}
+      {history.isError && <ErrorState onRetry={() => void history.refetch()} />}
+      {history.data && (
+        <>
+          <StaticDataTable
+            data={history.data.slice(0, 25)}
+            tableClassName='min-w-[720px]'
+            className='overflow-x-auto'
+            getRowKey={(r) => r.id}
+            emptyContent={t('No Data')}
+            columns={[
+              {
+                id: 'model',
+                header: t('Channel and model'),
+                cell: (r) => (
+                  <div className='max-w-48 break-words whitespace-normal'>
+                    <strong>{r.model}</strong>
+                    <div className='text-muted-foreground text-xs'>
+                      #{r.channel_id} · {r.endpoint}
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                id: 'time',
+                header: t('Time'),
+                cell: (r) => when(r.created_at),
+              },
+              {
+                id: 'source',
+                header: t('Detection source'),
+                cell: (r) => t(r.source),
+              },
+              {
+                id: 'result',
+                header: t('Status'),
+                cell: (r) => (
+                  <div className='space-y-1'>
+                    <Status state={r.state} />
+                    <div className='text-muted-foreground max-w-52 text-xs break-words whitespace-normal'>
+                      {t(r.stage)} · {r.status_code || '\u2014'}{' '}
+                      {r.reason && t(r.reason)}
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                id: 'cost',
+                header: t('OPS confirmed cost'),
+                cell: (r) => {
+                  const amount = totals?.amounts[r.id]
+                  return typeof amount === 'number'
+                    ? money(amount)
+                    : pendingCost
+                },
+              },
+              {
+                id: 'action',
+                header: t('Actions'),
+                cell: (r) => (
+                  <div className='flex items-center gap-2'>
+                    {props.access.export && <EvidenceButton id={r.id} />}{' '}
+                    {props.access.rules &&
+                      r.actual_micro === null &&
+                      ['uncertain', 'failed', 'succeeded'].includes(
+                        r.state
+                      ) && (
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          onClick={() => {
+                            setCost('')
+                            setReconcile(r)
+                          }}
+                        >
+                          {t('Resolve probe hold')}
+                        </Button>
+                      )}
+                  </div>
+                ),
+              },
+            ]}
+          />
+          <Pages
+            page={page}
+            hasMore={history.data.length > 25}
+            onPage={setPage}
+          />
+        </>
+      )}
+      <ConfirmDialog
+        open={Boolean(reconcile)}
+        onOpenChange={(open) => {
+          if (!open && !settle.isPending) setReconcile(undefined)
+        }}
+        title={t('Resolve probe hold')}
+        desc={t(
+          'Verify the provider charge to release the internal probe hold. This does not record an OPS cost or charge a customer.'
+        )}
+        confirmText={t('Reconcile')}
+        disabled={!/^\d+$/.test(cost) || Number(cost) > 1e12}
+        isLoading={settle.isPending}
+        handleConfirm={() => {
+          if (reconcile) settle.mutate(reconcile)
+        }}
+      >
+        <label className='space-y-1 text-sm'>
+          {t('Verified cost (millionths of CNY)')}
+          <Input
+            type='number'
+            min='0'
+            step='1'
+            value={cost}
+            onChange={(event) => setCost(event.target.value)}
+          />
+        </label>
+      </ConfirmDialog>
+    </div>
+  )
+}

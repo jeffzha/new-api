@@ -1,0 +1,463 @@
+package modelhealth
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"errors"
+	"os"
+	"regexp"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
+	"gorm.io/gorm"
+)
+
+type validationError string
+
+func (e validationError) Error() string { return string(e) }
+func invalid(s string) error            { return validationError(s) }
+func IsValidation(err error) bool       { var e validationError; return errors.As(err, &e) }
+
+type Selection struct {
+	Channel  int    `json:"channel_id"`
+	Model    string `json:"model"`
+	Endpoint string `json:"endpoint"`
+}
+
+type Rule struct {
+	Enabled         bool  `json:"enabled"`
+	IntervalSeconds int   `json:"interval_seconds"`
+	PerCycle        int   `json:"per_cycle"`
+	PerDay          int   `json:"per_day"`
+	SlowMs          int64 `json:"slow_ms"`
+	FailAfter       int   `json:"fail_after"`
+	RecoverAfter    int   `json:"recover_after"`
+	StartHour       int   `json:"start_hour"`
+	EndHour         int   `json:"end_hour"`
+}
+
+const daySeconds = 86400
+
+var defaultRule = Rule{IntervalSeconds: 1800, PerCycle: 1, PerDay: 12, SlowMs: 20000, FailAfter: 2, RecoverAfter: 2, EndHour: 24}
+
+func paidMedia(kind string) bool { return kind == "video" || kind == "image" }
+
+func validMediaCadence(r Rule) bool {
+	return r.IntervalSeconds >= 4*daySeconds && r.IntervalSeconds <= 7*daySeconds && r.IntervalSeconds%daySeconds == 0 && r.PerCycle == 1 && r.PerDay == 1
+}
+
+func recommendedRule(kind string) Rule {
+	r := defaultRule
+	switch kind {
+	case "llm":
+		r.IntervalSeconds, r.PerDay = daySeconds, 1
+	case "video", "image":
+		days := 7
+		if kind == "image" {
+			days = 5
+		}
+		r.IntervalSeconds, r.PerDay, r.SlowMs = days*daySeconds, 1, 300000
+	case "audio", "tts", "speech2text":
+		r.IntervalSeconds, r.PerDay, r.SlowMs = 21600, 4, 300000
+	}
+	return r
+}
+
+type Budget struct {
+	Run        int64 `json:"run_micro"`
+	Day        int64 `json:"day_micro"`
+	Month      int64 `json:"month_micro"`
+	Concurrent int   `json:"concurrent"`
+	ChannelRPM int   `json:"channel_rpm"`
+	ChannelTPM int   `json:"channel_tpm"`
+}
+
+type Template struct {
+	Selection
+	Binding          string         `json:"binding"`
+	Path             string         `json:"path"`
+	Credential       string         `json:"credential"`
+	Auth             string         `json:"auth"`
+	Body             map[string]any `json:"body"`
+	MaxMicro         int64          `json:"max_micro"`
+	MaxTokens        int            `json:"max_tokens"`
+	TimeoutSeconds   int            `json:"timeout_seconds"`
+	PollPath         string         `json:"poll_path"`
+	TaskField        string         `json:"task_field"`
+	StatusField      string         `json:"status_field"`
+	SuccessValues    []string       `json:"success_values"`
+	FailureValues    []string       `json:"failure_values"`
+	PendingValues    []string       `json:"pending_values"`
+	ResultField      string         `json:"result_field"`
+	CostField        string         `json:"cost_field"`
+	Dimension        int            `json:"dimension"`
+	MinimumConfirmed bool           `json:"minimum_confirmed"`
+}
+
+var credentialRef = regexp.MustCompile(`^MODEL_HEALTH_KEY_[A-Z0-9_]{1,64}$`)
+var providerPath = regexp.MustCompile(`^/[A-Za-z0-9_./:{}-]{1,230}$`)
+
+func (p Template) validFor(t Target, endpoint string) bool {
+	return p.Binding == hash(t.ID, t.base, t.Upstream, endpoint) && p.MinimumConfirmed && p.MaxMicro > 0
+}
+
+func probeCredential(p Template, t Target) string {
+	if !credentialRef.MatchString(p.Credential) {
+		return ""
+	}
+	url, err := checkedURL(t.base)
+	if err != nil || os.Getenv(p.Credential+"_ORIGIN") != "https://"+url.Host {
+		return ""
+	}
+	return os.Getenv(p.Credential)
+}
+
+func readTemplate(db *gorm.DB, t Target, endpoint string) (Template, error) {
+	return model.ReadModelHealthConfig(db, "p-"+hash(t.ID, endpoint)[:62], Template{})
+}
+
+func validProviderPath(path string) bool {
+	return providerPath.MatchString(path) && !strings.Contains(path, "//") && !slices.Contains(strings.Split(path, "/"), "..") && !slices.Contains(strings.Split(path, "/"), ".")
+}
+
+func SaveTemplate(ctx context.Context, p Template) error {
+	db := model.DB.WithContext(ctx)
+	t, err := findTarget(db, p.Channel, p.Model, p.Endpoint)
+	if err != nil {
+		return err
+	}
+	if !validProviderPath(p.Path) || strings.ContainsAny(p.Path, "{}") || !credentialRef.MatchString(p.Credential) || p.TimeoutSeconds < 5 || p.TimeoutSeconds > 3600 || p.MaxMicro <= 0 || p.MaxMicro > 100000000 || !p.MinimumConfirmed {
+		return invalid("Confirm a supported minimum request, dedicated credential and cost ceiling")
+	}
+	if p.Auth != "bearer" && p.Auth != "anthropic" && p.Auth != "gemini" {
+		return invalid("Unsupported credential protocol")
+	}
+	if p.Body == nil || p.MaxTokens < 1 || p.MaxTokens > 8192 {
+		return invalid("A bounded request body and token ceiling are required")
+	}
+	if u, err := checkedURL(t.base); err != nil || u.RawQuery != "" {
+		return invalid("Invalid channel base URL")
+	}
+	if len(p.Body) > 32 {
+		return invalid("Template body is too large")
+	}
+	encoded, err := common.Marshal(p.Body)
+	if err != nil || len(encoded) > 8192 {
+		return invalid("Template body is too large")
+	}
+	if !safeTemplateValue(p.Body) {
+		return invalid("Use only non-sensitive public probe data; no URLs, secrets or callbacks")
+	}
+	if stream, ok := p.Body["stream"]; ok && stream != false {
+		return invalid("Streaming is not supported by this probe template")
+	}
+	if background, ok := p.Body["background"]; ok && background != false {
+		return invalid("Background mode is not supported by this probe template")
+	}
+	if n, ok := p.Body["n"]; ok && n != float64(1) {
+		return invalid("Only single-output probes are allowed")
+	}
+	for _, key := range []string{"max_tokens", "max_completion_tokens", "max_output_tokens"} {
+		if raw, ok := p.Body[key]; ok {
+			n, ok := raw.(float64)
+			if !ok || n < 1 || n > float64(p.MaxTokens) || n != float64(int(n)) {
+				return invalid("Output limit exceeds the approved token ceiling")
+			}
+		}
+	}
+	if t.Type == "llm" && p.Body["max_tokens"] == nil && p.Body["max_completion_tokens"] == nil && p.Body["max_output_tokens"] == nil {
+		return invalid("Text templates must specify an output token limit")
+	}
+	if t.Type == "embedding" && (p.Dimension < 1 || p.Dimension > 65536) {
+		return invalid("Specify the expected embedding dimension")
+	}
+	if p.PollPath != "" {
+		if !validProviderPath(p.PollPath) || strings.Count(p.PollPath, "{task_id}") != 1 || strings.ContainsAny(strings.ReplaceAll(p.PollPath, "{task_id}", ""), "{}") || p.TaskField == "" || p.StatusField == "" || len(p.SuccessValues) == 0 || len(p.FailureValues) == 0 || len(p.PendingValues) == 0 {
+			return invalid("Async templates require explicit task and status contracts")
+		}
+		seen := map[string]bool{}
+		for _, values := range [][]string{p.SuccessValues, p.FailureValues, p.PendingValues} {
+			for _, v := range values {
+				if v == "" || seen[v] {
+					return invalid("Task statuses must be nonempty and disjoint")
+				}
+				seen[v] = true
+			}
+		}
+	}
+	for _, f := range []string{p.ResultField, p.TaskField, p.StatusField, p.CostField} {
+		if len(f) > 160 || (f != "" && !fieldPath.MatchString(f)) {
+			return invalid("Invalid response field path")
+		}
+	}
+	if (t.Type == "video" && p.PollPath == "") || (slices.Contains([]string{"video", "image", "audio", "tts"}, t.Type) && p.ResultField == "" && t.Type != "tts") {
+		return invalid("A media result contract is required")
+	}
+	p.Binding = hash(t.ID, t.base, t.Upstream, p.Endpoint)
+	return model.SaveModelHealthConfig(db, "p-"+hash(t.ID, p.Endpoint)[:62], "template", p)
+}
+
+var fieldPath = regexp.MustCompile(`^[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)*$`)
+
+func safeTemplateValue(value any) bool {
+	switch v := value.(type) {
+	case string:
+		return len(v) <= 1500 && !strings.Contains(v, "://") && !strings.HasPrefix(v, "data:")
+	case []any:
+		if len(v) > 16 {
+			return false
+		}
+		for _, x := range v {
+			if !safeTemplateValue(x) {
+				return false
+			}
+		}
+	case map[string]any:
+		for k, x := range v {
+			k = strings.ToLower(k)
+			if strings.Contains(k, "callback") || strings.Contains(k, "token") && !strings.HasPrefix(k, "max_") || strings.Contains(k, "secret") || strings.Contains(k, "authorization") || strings.Contains(k, "api_key") || !safeTemplateValue(x) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func effectiveRule(db *gorm.DB, t Target, endpoint string) (Rule, string, error) {
+	return resolveRule(db, t.Type, "r-"+hash(t.ID, endpoint)[:62], "type-"+t.Type)
+}
+
+func resolveRule(db *gorm.DB, kind string, keys ...string) (Rule, string, error) {
+	// Paid media must not inherit a global rule intended for frequent probes.
+	if !paidMedia(kind) {
+		keys = append(keys, "global")
+	}
+	for _, key := range keys {
+		r, err := model.ReadModelHealthConfig(db, key, Rule{})
+		if err != nil {
+			return r, "", err
+		}
+		if r.IntervalSeconds > 0 {
+			// Preserve switches and alert thresholds when reading legacy settings.
+			if (paidMedia(kind) && !validMediaCadence(r)) || (kind == "llm" && key == "global") {
+				recommended := recommendedRule(kind)
+				r.IntervalSeconds, r.PerCycle, r.PerDay = recommended.IntervalSeconds, recommended.PerCycle, recommended.PerDay
+			}
+			return r, key, nil
+		}
+	}
+	return recommendedRule(kind), "default", nil
+}
+
+func SaveRule(ctx context.Context, scope string, selection Selection, r Rule) error {
+	db := model.DB.WithContext(ctx)
+	key := scope
+	kind := scope
+	if scope == "model" {
+		t, err := findTarget(db, selection.Channel, selection.Model, selection.Endpoint)
+		if err != nil {
+			return err
+		}
+		kind = t.Type
+		key = "r-" + hash(t.ID, selection.Endpoint)[:62]
+	} else if scope != "global" {
+		if !slices.Contains([]string{"llm", "video", "image", "embedding", "audio", "tts", "speech2text", "rerank"}, scope) {
+			return invalid("Unknown rule scope")
+		}
+		key = "type-" + scope
+	}
+	if paidMedia(kind) && !validMediaCadence(r) {
+		return invalid("Paid media schedules require one detection every 4 to 7 whole days")
+	}
+	if r.IntervalSeconds < 300 || r.IntervalSeconds > 604800 || r.PerCycle < 1 || r.PerCycle > 6 || r.IntervalSeconds/r.PerCycle < 60 || r.PerDay < 1 || r.PerDay > 288 || r.SlowMs < 1 || r.SlowMs > 3600000 || r.FailAfter < 1 || r.FailAfter > 12 || r.RecoverAfter < 1 || r.RecoverAfter > 12 || r.StartHour < 0 || r.EndHour > 24 || r.StartHour >= r.EndHour {
+		return invalid("Rule values are outside allowed bounds")
+	}
+	return model.SaveModelHealthConfig(db, key, "rule", r)
+}
+
+func SaveBudget(ctx context.Context, b Budget) error {
+	if b.Run < 0 || b.Day < b.Run || b.Month < b.Day || b.Month > 1000000000000 || b.Concurrent < 1 || b.Concurrent > 4 || b.ChannelRPM < 1 || b.ChannelRPM > 10 || b.ChannelTPM < 1 || b.ChannelTPM > 100000 {
+		return invalid("Invalid monitoring budget or rate limits")
+	}
+	return model.ModelHealthTransaction(ctx, func(tx *gorm.DB) error {
+		return model.SaveModelHealthConfig(tx, "budget", "budget", b)
+	})
+}
+
+func fitsBudget(p Template, b Budget) bool {
+	return p.MaxMicro <= b.Run && p.MaxMicro <= b.Day && p.MaxMicro <= b.Month && p.MaxTokens <= b.ChannelTPM
+}
+
+var cst = time.FixedZone("UTC+08:00", 8*3600)
+
+func dayStart(now int64) int64 {
+	t := time.Unix(now, 0).In(cst)
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, cst).Unix()
+}
+func monthStart(now int64) int64 {
+	t := time.Unix(now, 0).In(cst)
+	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, cst).Unix()
+}
+
+func spend(db *gorm.DB, from int64) (int64, error) {
+	var total int64
+	err := db.Model(&model.ModelHealthRun{}).Where("created_at >= ? OR actual_micro IS NULL", from).Select("COALESCE(SUM(COALESCE(actual_micro, reservation_micro)), 0)").Scan(&total).Error
+	return total, err
+}
+
+var activeStates = []string{"queued", "submitting", "polling", "uncertain"}
+var inFlightStates = []string{"queued", "submitting", "polling"}
+
+func admissionBlocks(db *gorm.DB, t Target, endpoint string, p Template, r Rule, b Budget, now int64) ([]string, error) {
+	var blocked []string
+	if !fitsBudget(p, b) {
+		blocked = append(blocked, "Monitoring cost or tokens exceed the configured budget")
+	}
+	checks := []struct {
+		where  string
+		args   []any
+		limit  int64
+		reason string
+	}{
+		{"target = ? AND state IN ?", []any{t.ID, activeStates}, 1, "A detection is already running or requires reconciliation"},
+		{"target = ? AND endpoint = ? AND created_at >= ?", []any{t.ID, endpoint, dayStart(now)}, int64(r.PerDay), "Daily detection limit reached"},
+		{"state IN ?", []any{inFlightStates}, int64(b.Concurrent), "Monitoring queue is at capacity"},
+	}
+	for _, check := range checks {
+		var n int64
+		if err := db.Model(&model.ModelHealthRun{}).Where(check.where, check.args...).Count(&n).Error; err != nil {
+			return nil, err
+		}
+		if n >= check.limit {
+			blocked = append(blocked, check.reason)
+		}
+	}
+	for _, limit := range []struct{ from, max int64 }{{dayStart(now), b.Day}, {monthStart(now), b.Month}} {
+		used, err := spend(db, limit.from)
+		if err != nil {
+			return nil, err
+		}
+		if used > limit.max-p.MaxMicro {
+			blocked = append(blocked, "Monitoring budget exhausted")
+			break
+		}
+	}
+	return blocked, nil
+}
+
+func WorkerEnabled() bool { return os.Getenv("MODEL_HEALTH_WORKER_ENABLED") == "true" }
+
+func nextScheduled(t Target, endpoint string, r Rule, now int64) int64 {
+	step := int64(r.IntervalSeconds / r.PerCycle)
+	digest := sha256.Sum256([]byte(t.ID + endpoint))
+	offset := int64(binary.BigEndian.Uint32(digest[:4])) % step
+	return ((now-offset)/step+1)*step + offset
+}
+
+func mediaScheduledAt(db *gorm.DB, t Target, endpoint string, r Rule, now int64) (int64, error) {
+	var last model.ModelHealthRun
+	err := db.Select("created_at", "started_at").Where("target = ? AND endpoint = ?", t.ID, endpoint).Order("id desc").Limit(1).Find(&last).Error
+	if err != nil {
+		return 0, err
+	}
+	anchor := max(last.CreatedAt, last.StartedAt)
+	var due int64
+	if anchor == 0 {
+		// Stagger the first probe within its permitted local day.
+		slot := nextScheduled(t, endpoint, r, dayStart(now)-1)
+		day := dayStart(slot)
+		window := int64(max(1, r.EndHour-r.StartHour)) * 3600
+		due = day + int64(r.StartHour)*3600 + (slot-day)%window
+	} else {
+		due = max(now, anchor+int64(r.IntervalSeconds))
+	}
+	day := dayStart(due)
+	if due >= day+int64(r.EndHour)*3600 {
+		day += daySeconds
+	}
+	return max(due, day+int64(r.StartHour)*3600), nil
+}
+
+func Enqueue(ctx context.Context, s Selection, binding string, confirmed int64) (model.ModelHealthRun, error) {
+	if !WorkerEnabled() {
+		return model.ModelHealthRun{}, invalid("Monitoring worker is disabled")
+	}
+	return admit(ctx, s, "manual", binding, confirmed, 0)
+}
+
+func admit(ctx context.Context, s Selection, source, binding string, confirmed, scheduled int64) (run model.ModelHealthRun, err error) {
+	err = model.ModelHealthTransaction(ctx, func(tx *gorm.DB) error {
+		t, err := findTarget(tx, s.Channel, s.Model, s.Endpoint)
+		if err != nil {
+			return err
+		}
+		if t.Paused {
+			return invalid("Channel monitoring is paused")
+		}
+		p, err := readTemplate(tx, t, s.Endpoint)
+		if err != nil {
+			return err
+		}
+		if !p.validFor(t, s.Endpoint) || probeCredential(p, t) == "" {
+			return invalid("A validated template and dedicated credential are required")
+		}
+		if source == "manual" && (binding != templateRevision(p) || confirmed != p.MaxMicro) {
+			return invalid("The template changed; review and confirm the current limits")
+		}
+		r, _, err := effectiveRule(tx, t, s.Endpoint)
+		if err != nil {
+			return err
+		}
+		now := time.Now().Unix()
+		if source == "scheduled" {
+			hour := time.Unix(now, 0).In(cst).Hour()
+			if !r.Enabled || hour < r.StartHour || hour >= r.EndHour {
+				return invalid("Outside the configured detection schedule")
+			}
+			if paidMedia(t.Type) {
+				due, err := mediaScheduledAt(tx, t, s.Endpoint, r, now)
+				if err != nil {
+					return err
+				}
+				if due > now {
+					return invalid("Outside the configured detection schedule")
+				}
+			} else if nextScheduled(t, s.Endpoint, r, now)-int64(r.IntervalSeconds/r.PerCycle) != scheduled {
+				return invalid("Outside the configured detection schedule")
+			}
+		}
+		b, err := readBudget(tx)
+		if err != nil {
+			return err
+		}
+		blocked, err := admissionBlocks(tx, t, s.Endpoint, p, r, b, now)
+		if err != nil {
+			return err
+		}
+		if len(blocked) > 0 {
+			return invalid(blocked[0])
+		}
+		if source == "scheduled" && !paidMedia(t.Type) {
+			var cycle int64
+			if err := tx.Model(&model.ModelHealthRun{}).Where("target = ? AND endpoint = ? AND created_at >= ?", t.ID, s.Endpoint, scheduled).Count(&cycle).Error; err != nil {
+				return err
+			}
+			if cycle != 0 {
+				return invalid("Detection already recorded for this cycle")
+			}
+		}
+		data, err := common.Marshal(p)
+		if err != nil {
+			return err
+		}
+		run = model.ModelHealthRun{Target: t.ID, ChannelID: t.ChannelID, ModelName: t.Model, UpstreamModel: t.Upstream, Endpoint: s.Endpoint, Source: source, State: "queued", Stage: "queue", CreatedAt: now, ReservationMicro: p.MaxMicro, TokenBudget: p.MaxTokens, Template: string(data)}
+		return tx.Create(&run).Error
+	})
+	return
+}
+
+func templateRevision(p Template) string { return hash(p) }

@@ -60,7 +60,9 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import type { SidebarData } from '@/components/layout/types'
+import { useStatus } from '@/hooks/use-status'
 import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 /**
  * Root navigation groups for the application sidebar.
@@ -70,6 +72,8 @@ import { ROLE } from '@/lib/roles'
  */
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
+  const { status } = useStatus()
+  const role = useAuthStore((state) => state.auth.user?.role ?? ROLE.GUEST)
   return {
     navGroups: [
       {
@@ -161,6 +165,16 @@ export function useSidebarData(): SidebarData {
             url: '/models/metadata',
             icon: Box,
           },
+          ...(status?.model_health_enabled === true && role >= ROLE.ADMIN
+            ? [
+                {
+                  title: t('Model Health'),
+                  url: '/model-health',
+                  icon: Activity,
+                  requiredRole: ROLE.ADMIN,
+                },
+              ]
+            : []),
           {
             title: t('Users'),
             url: '/users',

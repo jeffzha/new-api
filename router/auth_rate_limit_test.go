@@ -142,6 +142,80 @@ func (f *authRateLimitFixture) loginSession(t *testing.T, role int) (*model.User
 	return user, bundle
 }
 
+func TestModelHealthAdminReadAndRestrictedActions(t *testing.T) {
+	f := newAuthRateLimitFixture(t, false)
+	_, user := f.loginSession(t, common.RoleCommonUser)
+	_, admin := f.loginSession(t, common.RoleAdminUser)
+	for _, test := range []struct {
+		path   string
+		token  string
+		status int
+	}{
+		{"/api/model-health/capabilities", "", http.StatusUnauthorized},
+		{"/api/model-health/capabilities", user.AccessToken, http.StatusForbidden},
+		{"/api/model-health/capabilities", admin.AccessToken, http.StatusOK},
+		{"/api/model-health/budget", admin.AccessToken, http.StatusForbidden},
+		{"/api/model-health/evidence/1", admin.AccessToken, http.StatusForbidden},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "https://gateway.example"+test.path, nil)
+		request.RemoteAddr = f.remoteAddr
+		if test.token != "" {
+			request.Header.Set("Authorization", "Bearer "+test.token)
+		}
+		recorder := httptest.NewRecorder()
+		f.router.ServeHTTP(recorder, request)
+		assert.Equal(t, test.status, recorder.Code, test.path)
+	}
+}
+
+func TestModelHealthReadsHaveIndependentRateLimit(t *testing.T) {
+	for _, useRedis := range []bool{false, true} {
+		t.Run(fmt.Sprintf("redis=%t", useRedis), func(t *testing.T) {
+			previousEnabled := common.SearchRateLimitEnable
+			previousNum, previousDuration := common.SearchRateLimitNum, common.SearchRateLimitDuration
+			t.Cleanup(func() {
+				common.SearchRateLimitEnable = previousEnabled
+				common.SearchRateLimitNum, common.SearchRateLimitDuration = previousNum, previousDuration
+			})
+			common.SearchRateLimitEnable = true
+			common.SearchRateLimitNum, common.SearchRateLimitDuration = 2, 60
+			f := newAuthRateLimitFixture(t, useRedis)
+			require.NoError(t, f.db.AutoMigrate(&model.Token{}, &model.Channel{}, &model.ModelHealthConfig{}, &model.ModelHealthRun{}))
+			channel := model.Channel{Name: "Health fixture", Type: constant.ChannelTypeOpenAI, Models: "MiniMax-H3"}
+			require.NoError(t, f.db.Create(&channel).Error)
+			_, admin := f.loginSession(t, common.RoleRootUser)
+			get := func(path string) *httptest.ResponseRecorder {
+				r := httptest.NewRequest(http.MethodGet, "https://gateway.example"+path, nil)
+				r.RemoteAddr = f.remoteAddr
+				r.Header.Set("Authorization", "Bearer "+admin.AccessToken)
+				w := httptest.NewRecorder()
+				f.router.ServeHTTP(w, r)
+				return w
+			}
+			const search = "/api/token/search?keyword=fixture"
+			const health = "/api/model-health/capabilities"
+			template := fmt.Sprintf("/api/model-health/template?channel_id=%d&model=MiniMax-H3&endpoint=openai-video", channel.Id)
+			for range 2 {
+				w := get(search)
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			}
+			assert.Equal(t, http.StatusTooManyRequests, get(search).Code)
+			w := get(template)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), `"success":true`)
+			for range 89 {
+				w := get(health)
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			}
+			w = get(template)
+			assert.Equal(t, http.StatusTooManyRequests, w.Code)
+			assert.NotEmpty(t, w.Header().Get("Retry-After"))
+			// An invalid evidence ID reaches its handler even after the read limit.
+			assert.Equal(t, http.StatusNotFound, get("/api/model-health/evidence/0").Code)
+		})
+	}
+}
+
 func (f *authRateLimitFixture) post(path, body, token, remoteAddr string, refreshCookie *http.Cookie) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodPost, "https://gateway.example"+path, strings.NewReader(body))
 	request.RemoteAddr = remoteAddr

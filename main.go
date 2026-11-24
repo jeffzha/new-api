@@ -32,6 +32,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/agencyopspush"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/service/modelhealth"
 	"github.com/QuantumNous/new-api/service/opsbridge"
 	"github.com/QuantumNous/new-api/service/opscatalog"
 	"github.com/QuantumNous/new-api/service/opsexport"
@@ -163,6 +164,7 @@ func main() {
 	}
 	commandWorkerCtx, stopAgencyCommandWorker := context.WithCancel(context.Background())
 	defer stopAgencyCommandWorker()
+	modelhealth.Start(commandWorkerCtx)
 	service.StartBalanceReminderTask(commandWorkerCtx)
 	if err := opsupstreams.Start(commandWorkerCtx); err != nil {
 		common.FatalLog(err.Error())

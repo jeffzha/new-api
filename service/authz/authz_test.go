@@ -158,6 +158,10 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 			ActionBind: false,
 		},
 		ResourceAudit: {ActionRead: false},
+		ResourceModelHealth: {
+			ModelHealthProbe.Action: false, ModelHealthRules.Action: false,
+			ModelHealthNotify.Action: false, ModelHealthExport.Action: false,
+		},
 	}, ExplicitUserPermissions(42))
 	assert.Equal(t, PermissionsMap{
 		ResourceChannel: {
@@ -190,8 +194,23 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 			ActionBind: false,
 		},
 		ResourceAudit: {ActionRead: false},
+		ResourceModelHealth: {
+			ModelHealthProbe.Action: false, ModelHealthRules.Action: false,
+			ModelHealthNotify.Action: false, ModelHealthExport.Action: false,
+		},
 	}, ExplicitUserPermissions(42))
 	assert.Empty(t, ExplicitUserOverrides(42))
+}
+
+func TestModelHealthPermissionsDoNotGrantRelatedActions(t *testing.T) {
+	db := newAuthzTestDB(t)
+	require.NoError(t, Init(db))
+	assert.False(t, Can(42, common.RoleAdminUser, ModelHealthProbe))
+	require.NoError(t, SetUserPermissions(42, PermissionsMap{ResourceModelHealth: {ModelHealthProbe.Action: true}}))
+	assert.True(t, Can(42, common.RoleAdminUser, ModelHealthProbe))
+	assert.False(t, Can(42, common.RoleAdminUser, ModelHealthExport))
+	assert.False(t, Can(42, common.RoleAdminUser, ModelHealthRules))
+	assert.False(t, Can(42, common.RoleAdminUser, ModelHealthNotify))
 }
 
 func TestClearUserAuthorizationRemovesOverrides(t *testing.T) {

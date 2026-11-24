@@ -53,6 +53,7 @@ func GetStatus(c *gin.Context) {
 
 	data := gin.H{
 		"ops_fees_enabled":            model.OpsFeesEnabled(),
+		"model_health_enabled":        common.OptionMap["ModelHealthEnabled"] == "true",
 		"version":                     common.Version,
 		"start_time":                  common.StartTime,
 		"email_verification":          common.EmailVerificationRequired(),

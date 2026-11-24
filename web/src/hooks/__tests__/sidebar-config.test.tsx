@@ -26,6 +26,7 @@ import {
   parseSidebarModulesAdmin,
   serializeSidebarModulesAdmin,
 } from '@/features/system-settings/maintenance/config'
+import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { useSidebarConfig } from '../use-sidebar-config'
@@ -45,17 +46,23 @@ afterEach(() => {
   useAuthStore.getState().auth.reset()
 })
 
-function sidebarFor(admin?: object, user?: object, canConfigure = true) {
+function sidebarFor(
+  admin?: object,
+  user?: object,
+  canConfigure = true,
+  modelHealth?: { enabled?: boolean; role: number }
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   client.setQueryData(['status'], {
     SidebarModulesAdmin: admin ? JSON.stringify(admin) : '',
+    model_health_enabled: modelHealth?.enabled,
   })
   useAuthStore.getState().auth.setUser({
     id: 1,
     username: 'alice',
-    role: 1,
+    role: modelHealth?.role ?? ROLE.USER,
     permissions: { sidebar_settings: canConfigure },
     sidebar_modules: user ? JSON.stringify(user) : '',
   })
@@ -130,6 +137,22 @@ describe('chat sidebar entries', () => {
     expect(
       items.some((item) => 'type' in item && item.type === 'chat-presets')
     ).toBe(false)
+  })
+})
+
+describe('model health rollout', () => {
+  it.each([
+    { enabled: undefined, role: ROLE.ADMIN, visible: false },
+    { enabled: false, role: ROLE.ADMIN, visible: false },
+    { enabled: true, role: ROLE.USER, visible: false },
+    { enabled: true, role: ROLE.ADMIN, visible: true },
+  ])('requires server enablement and an admin role: %j', (scenario) => {
+    const { result } = sidebarFor(undefined, undefined, true, scenario)
+    expect(
+      result.current
+        .flatMap((group) => group.items)
+        .some((item) => item.url === '/model-health')
+    ).toBe(scenario.visible)
   })
 })
 

@@ -25,6 +25,7 @@ func SetApiRouter(router *gin.Engine) {
 	opsexport.RegisterV2(apiRouter.Group("/ops-export/v2", middleware.DisableCache()))
 	anonymousRequestBodyLimit := middleware.AnonymousRequestBodyLimit()
 	registerWorkbenchIdentityRoutes(apiRouter)
+	controller.RegisterModelHealthRoutes(apiRouter.Group("/model-health", middleware.AdminAuth(), middleware.DisableCache()), middleware.RequirePermission)
 	opsBridgeRoute := apiRouter.Group("/ops-bridge", middleware.RootAuth(), middleware.UserCriticalRateLimit("ops-bridge"), middleware.DisableCache())
 	controller.RegisterOpsBridgeRoutes(opsBridgeRoute)
 	agencyRoute := apiRouter.Group("/agency")

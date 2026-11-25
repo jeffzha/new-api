@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/shopspring/decimal"
 )
 
@@ -21,13 +22,15 @@ type TopupPaymentSnapshot struct {
 // TopupQuotaConversion records the calculation actually used by this provider.
 // It intentionally contains no inferred exchange rate or paid-money ratio.
 type TopupQuotaConversion struct {
-	SchemaVersion int    `json:"schema_version"`
-	BasisField    string `json:"basis_field"`
-	BasisValue    string `json:"basis_value"`
-	Calculation   string `json:"calculation"`
-	QuotaPerUnit  string `json:"quota_per_unit,omitempty"`
-	CreditedQuota string `json:"credited_quota"`
-	WalletOwner   string `json:"wallet_owner,omitempty"`
+	SchemaVersion  int    `json:"schema_version"`
+	BasisField     string `json:"basis_field"`
+	BasisValue     string `json:"basis_value"`
+	Calculation    string `json:"calculation"`
+	QuotaPerUnit   string `json:"quota_per_unit,omitempty"`
+	CreditedQuota  string `json:"credited_quota"`
+	WalletOwner    string `json:"wallet_owner,omitempty"`
+	FundingScope   string `json:"funding_scope,omitempty"`
+	FundingEventID string `json:"funding_event_id,omitempty"`
 }
 
 type TopupFundingSnapshot struct {
@@ -156,6 +159,14 @@ func (topUp *TopUp) fundingSnapshot(creditedQuota int, manual bool) (*TopupFundi
 		}
 	}
 	snapshot.Conversion = &conversion
+	if conversion.WalletOwner == "ops_funding" {
+		source := normalizedTopUpFundingSource(topUp)
+		if manual {
+			source = "admin"
+		}
+		conversion.FundingScope = opsauthority.Scope()
+		conversion.FundingEventID = opsWalletFundingEventID(conversion.FundingScope, source, topUp.TradeNo)
+	}
 	encoded, err := common.Marshal(conversion)
 	if err != nil {
 		return nil, err

@@ -21,6 +21,8 @@
 - 注册事务保存不可由客户端提交/资料更新覆盖的 registration_funding 快照，冻结注册/被邀请赠额、邀请人奖励、资金归属、OPS 账本绑定及审计换算。账户、OAuth 绑定、赠额事件和原邀请奖励同事务提交；提交后回调只读取已提交事实记审计，不因运行开关/赠额配置/用户名变化重发钱。旧账户不补发赠额，Agency 邀请注册保持独立零赠额路径；原本本地管理的 durable 用户仍通过现有非实付资金 lot/ledger 入账，未改变其期初语义。邀请人奖励仍为本地 AffQuota，不能据此声称已迁至 OPS。
 - 注册审计重复写入分离日志库时，以固定业务 ID 和冻结负载镜像到 OPS；同批重复合并，负载冲突保留待核查。只对具有服务端注册赠额标记的审计去重，不把同前缀的普通模型请求当成赠额。
 - 资金提交唤醒：支付/人工补单、兑换、签到、注册赠额和 Midjourney 退款成功提交后发有界合并提示；独立 funding worker 不再依附用量扫描的失败退避。单 worker 复用 HTTP 客户端、8 秒有界发送、成功突发合并 250ms，保留 3 秒补漏、租约、共享 ingest 预算和 Retry-After；发送失败不确认事件。提示不携带金额、不直接记账，不能视为 OPS 已完成入账。
+- 充值订单与到账证据分开：订单快照保存原资金 scope/事件 ID（沿用既有 JSON，不新增列/索引），用户及管理员列表按当前页分批走事件唯一索引，只读取事件 ID、scope 和接收时间，不逐笔访问 OPS、不读取完整事件负载。成功订单附可选 `wallet_credit`：queued / accepted / unconfirmed；HTTP ACK 只显示“到账请求已提交，余额待确认”，不推断 posted。旧记录/本地钱包不按当前开关猜归属，旧 OPS 记录缺少引用则待核实。该页面仍无法确认单笔实际到账，必须等待 OPS 提供逐笔记账凭据，不能以余额变大推断某张订单到账。
+- 充值邮件统一表达“订单已处理，请核对最新余额”，人工补单也不再声称收到了真实支付；人工处理确认框不承诺同步到账。界面复用 BillingHistoryDialog / StatusBadge / Label，无新增替代组件；长订单号允许截断，处理状态不被挤压。新文案七语言已补齐。
 - 页面余额优先显示 OPS 状态，不把缺失金额显示成免费/零余额；累计消费、历史金额、奖励和授信等仍有本地来源，尚未满足“所有金额展示由 OPS 提供”。没有完成本轮浏览器验收。
 
 ### 尚未完成、阻止产品钱包启用的条件
@@ -35,6 +37,9 @@
 
 ### 已实际执行的隔离检查
 
+- 充值到账证据：`TestOPSTopUpWalletCreditsAcrossDialects` 真实 SQLite / MySQL 8.4.6 / PostgreSQL 16.16 全通过、无 SKIP（0.66s），覆盖支付与人工赠送、ACK 不是 posted、缺少/历史引用、运行开关变化、取消查询及 JSON 不泄露内部引用；日志 `D:/DevCache/product-ops-wallet-credit-status-matrix-20261125.log`。首次用例缺少 users fixture，修正测试前置后通过，没有为此放宽生产校验。四组既有独立三库矩阵再次全通过、无 SKIP，日志 `D:/DevCache/product-ops-wallet-credit-status-regression-20261125.log`。没有新增 DB 列/索引，最低支持数据库版本仍未验收。
+- 本轮 `go test ./model ./controller ./service ./service/opswallet ./service/opspush -count=1` 通过（66.492s / 48.990s / 10.203s / 0.091s / 0.614s）。前端钱包 4 文件 19 项通过，最终提示/布局用例再次 4 项通过，typecheck 与所改 TS/TSX 文件 oxlint 通过；生产前端构建通过。本地模拟订单在浏览器窄视窗核对了状态提示与长单号，无线上支付或真实用户数据。i18n 使用 add-missing-keys 脚本并运行 sync，排除了 sync 对历史无关翻译的补全/排序变化。Windows Application Control 阻止 oxfmt 原生模块，未修改系统策略；相关文件已人工整理格式、lint 无错误。
+- 最终状态引用落库/重载断言通过后，再跑新增三库矩阵全通过（0.58s，无 SKIP），日志 `D:/DevCache/product-ops-wallet-credit-status-final-20261125.log`。`go build ./...` 通过；最终前端 4 项、typecheck/lint 通过，前端构建 6.22s，日志 `D:/DevCache/product-ops-wallet-credit-status-web-build-20261125.log`。真实 OPS handler/billing/PostgreSQL 资金回归通过（11.22s），日志 `D:/DevCache/product-ops-wallet-credit-status-real-ops-20261125.log`，仅临时 overlay、无 OPS 源码修改，临时数据库清理成功。以上均不是在线交接或容量验收，产品启用保护继续保留，本轮不部署。
 - 后续资金归属补强：五种支付渠道及人工补单将事务决定的 owner 持久化到既有换算快照，兑换/签到也将本次事务 owner 传到审计与缓存；提交后不再按当时开关猜测归属。OPS 已接收的充值在开关关闭后不会再增加本地缓存；本地已提交充值在开关打开后仍同步本地缓存，历史未知归属只失效缓存。重复人工补单不再生成 user=0 的日志；Creem 人工补单快照保留原人工额度换算，不改变既有补单金额。
 - 资金 worker 的最终受影响包测试通过：`go test ./model ./controller ./service/opspush ./service/opswallet ./pkg/opsnotify -count=1`（67.584s / 50.164s / 0.614s / 0.097s；opsnotify 无独立测试文件），`go build ./...` 通过。使用 Go synctest 虚拟时间验证即时唤醒、10 秒 Retry-After 不被新提示缩短、原事件/批次重放、丢提示补漏、多实例租约及接手；真实业务矩阵验证事务回滚不唤醒、退款只唤醒一次。四组独立 SQLite / MySQL 8.4.6 / PostgreSQL 16.16 矩阵全通过、无 SKIP，日志 `D:/DevCache/product-ops-wallet-funding-wake-matrix-20261125.log`；仅清理本轮独立测试库。该测试是功能和调度验证，不是容量/不停服切换或真实到账时延验收。
 - 最后将资金租约查询纳入同一次 8 秒 context，避免只限制 HTTP 而让租约 SQL 超时失控；取消后不获得/续期租约，正常请求及多实例租约仍有效。`go test ./service/opspush -count=1` 通过（0.586s）；真实 SQLite / MySQL 8.4.6 / PostgreSQL 16.16 × v1/v1.1 六项完整上报矩阵通过、无 SKIP（1.33s），日志 `D:/DevCache/product-ops-wallet-push-matrix-runner-20261125.log`，运行器同名 py。真实 OPS handler/billing/PostgreSQL 资金回归再次通过（12.22s），日志 `D:/DevCache/product-ops-wallet-funding-wake-real-ops-20261125.log`；没有修改 OPS 源码，临时库已清理。

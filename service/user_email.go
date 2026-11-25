@@ -50,8 +50,8 @@ func NotifyTopUpSuccess(tradeNo string) {
 		if err != nil || common.Validate.Var(model.NormalizeEmail(user.Email), "required,email") != nil {
 			return
 		}
-		subject := common.SystemName + " - Payment received"
-		message := fmt.Sprintf("Your payment has been received successfully.\nOrder: %s\nAmount: %.2f", topUp.TradeNo, topUp.Money)
+		subject := common.SystemName + " - Top-up order processed"
+		message := fmt.Sprintf("Your top-up order has been processed.\nOrder: %s\nOrder amount: %.2f\nCheck your latest account balance to confirm the wallet credit.", topUp.TradeNo, topUp.Money)
 		if err := SendUserEmail(user.Email, subject, message); err != nil {
 			common.SysError(fmt.Sprintf("failed to send top-up email: trade_no=%s user_id=%d error=%v", topUp.TradeNo, topUp.UserId, err))
 		}

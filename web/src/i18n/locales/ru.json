@@ -1,5 +1,11 @@
 {
   "translation": {
+    "Credit submitted; balance confirmation pending": "Запрос отправлен, баланс не подтверждён",
+    "Manually process this order? Wallet credit may still be pending after the order is processed.": "Обработать заказ вручную? После обработки пополнение может оставаться в ожидании.",
+    "Order processed": "Заказ обработан",
+    "Wallet credit": "Пополнение кошелька",
+    "Wallet credit queued": "Пополнение ожидает отправки",
+    "Wallet credit unconfirmed": "Пополнение не подтверждено",
     "An adjustment is awaiting confirmation. Confirm again to retry the same operation.": "Корректировка ожидает подтверждения. Подтвердите ещё раз, чтобы повторить ту же операцию.",
     "Balance changes are recorded in OPS. Local balance is unchanged.": "Изменения баланса учитываются в OPS. Локальный баланс не изменяется.",
     "Balance unavailable": "Баланс недоступен",

@@ -46,6 +46,10 @@ type OPSWalletEvent struct {
 
 func (OPSWalletEvent) TableName() string { return "ops_wallet_events" }
 
+func opsWalletFundingEventID(scope, source, sourceID string) string {
+	return fmt.Sprintf("wf-%x", sha256.Sum256([]byte(scope+"\x00"+source+"\x00"+sourceID)))
+}
+
 type OPSFundingSchemaReceipt struct {
 	Created []string `json:"created"`
 	Skipped []string `json:"skipped"`
@@ -413,7 +417,7 @@ func QueueOPSWalletFundingTx(tx *gorm.DB, userID, quota int64, kind, source, sou
 	if err := lockForUpdate(tx).Select("id").First(&user, userID).Error; err != nil {
 		return err
 	}
-	id := fmt.Sprintf("wf-%x", sha256.Sum256([]byte(opsauthority.Scope()+"\x00"+source+"\x00"+sourceID)))
+	id := opsWalletFundingEventID(opsauthority.Scope(), source, sourceID)
 	var existing OPSWalletEvent
 	err = tx.Where("event_id = ?", id).First(&existing).Error
 	if err == nil {
@@ -474,7 +478,7 @@ func QueueOPSWalletRefundTx(tx *gorm.DB, userID, quota int64, binding *opsauthor
 		return errors.New("invalid OPS task refund")
 	}
 	const source = "midjourney_refund"
-	id := fmt.Sprintf("wf-%x", sha256.Sum256([]byte(binding.Scope+"\x00"+source+"\x00"+sourceID)))
+	id := opsWalletFundingEventID(binding.Scope, source, sourceID)
 	intent, err := common.Marshal(map[string]any{"binding": binding, "userId": userID, "quota": quota, "sourceId": sourceID, "requestId": originalRequest, "taskId": taskID, "model": modelName})
 	if err != nil {
 		return err

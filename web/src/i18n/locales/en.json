@@ -12,6 +12,12 @@
   "signal.page.marketplace": "Explore capabilities. Compare prices. Find your next model.",
   "signal.page.rankings": "Read the platform’s model demand and provider trends.",
   "translation": {
+    "Credit submitted; balance confirmation pending": "Credit submitted; balance confirmation pending",
+    "Manually process this order? Wallet credit may still be pending after the order is processed.": "Manually process this order? Wallet credit may still be pending after the order is processed.",
+    "Order processed": "Order processed",
+    "Wallet credit": "Wallet credit",
+    "Wallet credit queued": "Wallet credit queued",
+    "Wallet credit unconfirmed": "Wallet credit unconfirmed",
     "An adjustment is awaiting confirmation. Confirm again to retry the same operation.": "An adjustment is awaiting confirmation. Confirm again to retry the same operation.",
     "Balance changes are recorded in OPS. Local balance is unchanged.": "Balance changes are recorded in OPS. Local balance is unchanged.",
     "Balance unavailable": "Balance unavailable",

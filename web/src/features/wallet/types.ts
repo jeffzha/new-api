@@ -306,6 +306,11 @@ export interface TopupRecord {
   complete_time?: number
   /** Payment status */
   status: TopupStatus
+  /** Delivery evidence only; acceptance is not a wallet posting receipt. */
+  wallet_credit?: {
+    source: 'ops'
+    status: 'queued' | 'accepted' | 'unconfirmed'
+  }
 }
 
 /**

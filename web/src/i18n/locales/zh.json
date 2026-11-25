@@ -12,6 +12,12 @@
   "signal.page.marketplace": "探索模型能力，对比调用价格，找到下一款适合你的模型。",
   "signal.page.rankings": "通过平台调用数据，洞察模型需求与服务商趋势。",
   "translation": {
+    "Credit submitted; balance confirmation pending": "到账请求已提交，余额待确认",
+    "Manually process this order? Wallet credit may still be pending after the order is processed.": "确认人工处理此订单？订单处理后，资金可能仍在等待到账。",
+    "Order processed": "订单已处理",
+    "Wallet credit": "资金到账",
+    "Wallet credit queued": "待发送到账请求",
+    "Wallet credit unconfirmed": "到账状态待核实",
     "An adjustment is awaiting confirmation. Confirm again to retry the same operation.": "有一笔调额等待确认，再次确认将重试同一笔操作。",
     "Balance changes are recorded in OPS. Local balance is unchanged.": "余额变更由 OPS 记账，本地余额保持不变。",
     "Balance unavailable": "余额暂不可用",

@@ -1,5 +1,11 @@
 {
   "translation": {
+    "Credit submitted; balance confirmation pending": "入金リクエスト送信済み、残高確認待ち",
+    "Manually process this order? Wallet credit may still be pending after the order is processed.": "この注文を手動で処理しますか？処理後も入金が保留中の場合があります。",
+    "Order processed": "注文処理済み",
+    "Wallet credit": "ウォレットへの入金",
+    "Wallet credit queued": "入金リクエスト送信待ち",
+    "Wallet credit unconfirmed": "入金状況未確認",
     "An adjustment is awaiting confirmation. Confirm again to retry the same operation.": "残高調整の確認待ちです。再度確認すると、同じ操作を再試行します。",
     "Balance changes are recorded in OPS. Local balance is unchanged.": "残高の変更は OPS に記帳されます。ローカル残高は変更されません。",
     "Balance unavailable": "残高を取得できません",

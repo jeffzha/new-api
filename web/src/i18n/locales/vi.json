@@ -1,5 +1,11 @@
 {
   "translation": {
+    "Credit submitted; balance confirmation pending": "Đã gửi yêu cầu, chờ xác nhận số dư",
+    "Manually process this order? Wallet credit may still be pending after the order is processed.": "Xử lý đơn hàng này thủ công? Tiền có thể vẫn chờ vào ví sau khi xử lý.",
+    "Order processed": "Đã xử lý đơn hàng",
+    "Wallet credit": "Tiền vào ví",
+    "Wallet credit queued": "Yêu cầu cộng tiền chờ gửi",
+    "Wallet credit unconfirmed": "Chưa xác nhận tiền vào ví",
     "An adjustment is awaiting confirmation. Confirm again to retry the same operation.": "Một điều chỉnh đang chờ xác nhận. Xác nhận lại để thử lại cùng giao dịch.",
     "Balance changes are recorded in OPS. Local balance is unchanged.": "Thay đổi số dư được ghi nhận trong OPS. Số dư cục bộ không thay đổi.",
     "Balance unavailable": "Không thể lấy số dư",

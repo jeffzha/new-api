@@ -19,6 +19,87 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestOPSTopUpWalletCreditsAcrossDialects(t *testing.T) {
+	t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+	t.Setenv("OPS_WALLET_PROFILE", "product")
+	t.Setenv("OPS_WALLET_FUNDING_ENABLED", "true")
+	t.Setenv("OPS_PUSH_URL", "https://ops.example.invalid")
+	t.Setenv("OPS_PUSH_KEY_ID", "credit-state-fixture")
+	oldUnit, oldRate := common.QuotaPerUnit, operation_setting.USDExchangeRate
+	common.QuotaPerUnit, operation_setting.USDExchangeRate = 1000, 7.3
+	t.Cleanup(func() { common.QuotaPerUnit, operation_setting.USDExchangeRate = oldUnit, oldRate })
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := agencyDialectDB(t, dialect)
+			if db == nil {
+				t.Skip("isolated external database not configured")
+			}
+			pool, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, pool.Close()) })
+			require.NoError(t, db.AutoMigrate(&User{}, &TopUp{}))
+			require.NoError(t, PrepareOPSWalletFundingSchema(t.Context(), db))
+			assert.False(t, db.Migrator().HasColumn(&TopUp{}, "wallet_credit"))
+			suffix := common.GetUUID()
+			user := User{Username: "credit-state-" + suffix, AffCode: suffix[:16]}
+			require.NoError(t, db.Create(&user).Error)
+			order := &TopUp{UserId: user.Id, TradeNo: "credit-" + suffix, Amount: 1, Money: 1, PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusSuccess}
+			snapshot, err := order.fundingSnapshot(1000, false)
+			require.NoError(t, err)
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Create(order).Error; err != nil {
+					return err
+				}
+				return QueueOPSWalletFundingTx(tx, int64(user.Id), 1000, "topup", normalizedTopUpFundingSource(order), order.TradeNo, &OPSFundingFacts{TradeNo: order.TradeNo})
+			}))
+			// The status reference survives a database reload and later edits to
+			// provider settings; it is not reconstructed from today's scope.
+			frozenSnapshot := order.QuotaConversionSnapshot
+			require.NoError(t, db.First(order, order.Id).Error)
+			assert.Equal(t, frozenSnapshot, order.QuotaConversionSnapshot)
+			manual := &TopUp{UserId: user.Id, TradeNo: "manual-credit-" + suffix, Amount: 1, Status: common.TopUpStatusSuccess}
+			_, err = manual.fundingSnapshot(1000, true)
+			require.NoError(t, err)
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+				return QueueOPSWalletFundingTx(tx, int64(user.Id), 1000, "gift", "admin", manual.TradeNo, nil)
+			}))
+			legacy := &TopUp{Status: common.TopUpStatusSuccess}
+			historical := *order
+			historical.QuotaConversionSnapshot = `{"wallet_owner":"ops_funding"}`
+			missing := *order
+			missing.TradeNo += "-missing"
+			_, err = missing.fundingSnapshot(1000, false)
+			require.NoError(t, err)
+			page := []*TopUp{order, manual, legacy, &historical, &missing, nil}
+			// Today's flags cannot change the owner or hide a queued credit.
+			t.Setenv("OPS_WALLET_AUTHORITY", "gateway")
+			require.NoError(t, PopulateTopUpWalletCredits(t.Context(), db, page))
+			assert.Equal(t, &TopUpWalletCredit{Source: "ops", Status: "queued"}, order.WalletCredit)
+			assert.Equal(t, "queued", manual.WalletCredit.Status)
+			assert.Nil(t, legacy.WalletCredit)
+			assert.Equal(t, "unconfirmed", historical.WalletCredit.Status)
+			assert.Equal(t, "unconfirmed", missing.WalletCredit.Status)
+			var row OPSWalletEvent
+			require.NoError(t, db.Where("event_id = ?", snapshot.Conversion.FundingEventID).First(&row).Error)
+			require.NoError(t, AcknowledgeOPSWalletFunding(db, row, 123))
+			require.NoError(t, PopulateTopUpWalletCredits(t.Context(), db, page))
+			assert.Equal(t, "accepted", order.WalletCredit.Status, "ACK is accepted, never posted")
+			assert.Equal(t, common.TopUpStatusSuccess, order.Status, "payment/business status remains stable")
+			encoded, err := common.Marshal(order)
+			require.NoError(t, err)
+			assert.Contains(t, string(encoded), `"wallet_credit":{"source":"ops","status":"accepted"}`)
+			assert.NotContains(t, string(encoded), "funding_event_id")
+			assert.NotContains(t, string(encoded), "funding_scope")
+			canceled, cancel := context.WithCancel(t.Context())
+			cancel()
+			require.ErrorIs(t, PopulateTopUpWalletCredits(canceled, db, page), context.Canceled)
+			// Dormant or historical pages do not require the outbox at all.
+			require.NoError(t, PopulateTopUpWalletCredits(t.Context(), nil, []*TopUp{legacy, &historical}))
+			t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+		})
+	}
+}
+
 func TestOPSFundingBusinessOperationsAcrossDialects(t *testing.T) {
 	t.Setenv("OPS_WALLET_AUTHORITY", "ops")
 	t.Setenv("OPS_WALLET_PROFILE", "product")

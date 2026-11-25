@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -27,19 +28,84 @@ type TopUp struct {
 	Money         float64 `json:"money"`
 	// MoneyDecimal preserves the exact decimal quote for assisted payments;
 	// Money remains for backwards-compatible UI and provider integrations.
-	MoneyDecimal            string `json:"-" gorm:"type:varchar(64)"`
-	TradeNo                 string `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod           string `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider         string `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	PaymentURL              string `json:"payment_url,omitempty" gorm:"type:text"`
-	PaymentParams           string `json:"-" gorm:"type:text"`
-	CreateTime              int64  `json:"create_time"`
-	CompleteTime            int64  `json:"complete_time"`
-	Status                  string `json:"status"`
-	PaymentSnapshot         string `json:"-" gorm:"type:text"`
-	QuotaConversionSnapshot string `json:"-" gorm:"type:text"`
-	InvoiceReservedCents    int64  `json:"-" gorm:"not null;default:0;index"`
-	InvoiceIssuedCents      int64  `json:"-" gorm:"not null;default:0;index"`
+	MoneyDecimal            string             `json:"-" gorm:"type:varchar(64)"`
+	TradeNo                 string             `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod           string             `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider         string             `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	PaymentURL              string             `json:"payment_url,omitempty" gorm:"type:text"`
+	PaymentParams           string             `json:"-" gorm:"type:text"`
+	CreateTime              int64              `json:"create_time"`
+	CompleteTime            int64              `json:"complete_time"`
+	Status                  string             `json:"status"`
+	PaymentSnapshot         string             `json:"-" gorm:"type:text"`
+	QuotaConversionSnapshot string             `json:"-" gorm:"type:text"`
+	InvoiceReservedCents    int64              `json:"-" gorm:"not null;default:0;index"`
+	InvoiceIssuedCents      int64              `json:"-" gorm:"not null;default:0;index"`
+	WalletCredit            *TopUpWalletCredit `json:"wallet_credit,omitempty" gorm:"-:all"`
+}
+
+// Status describes delivery evidence, not an inferred OPS ledger posting. An
+// ingest ACK cannot prove that this specific credit reached the user's wallet.
+type TopUpWalletCredit struct {
+	Source string `json:"source"`
+	Status string `json:"status"`
+}
+
+// PopulateTopUpWalletCredits uses bounded, indexed local lookups for one page.
+// Never query OPS per order or infer ownership from the current process flags.
+func PopulateTopUpWalletCredits(ctx context.Context, db *gorm.DB, topups []*TopUp) error {
+	type pendingCredit struct {
+		order *TopUp
+		scope string
+	}
+	byEvent := make(map[string][]pendingCredit)
+	ids := make([]string, 0, len(topups))
+	for _, order := range topups {
+		if order == nil {
+			continue
+		}
+		order.WalletCredit = nil
+		if order.Status != common.TopUpStatusSuccess || order.walletFundingOwner() != "ops_funding" {
+			continue
+		}
+		order.WalletCredit = &TopUpWalletCredit{Source: "ops", Status: "unconfirmed"}
+		var conversion TopupQuotaConversion
+		if common.UnmarshalJsonStr(order.QuotaConversionSnapshot, &conversion) != nil || len(conversion.FundingScope) > 80 {
+			continue
+		}
+		id := conversion.FundingEventID
+		if id != opsWalletFundingEventID(conversion.FundingScope, normalizedTopUpFundingSource(order), order.TradeNo) && id != opsWalletFundingEventID(conversion.FundingScope, "admin", order.TradeNo) {
+			continue
+		}
+		if _, exists := byEvent[id]; !exists {
+			ids = append(ids, id)
+		}
+		byEvent[id] = append(byEvent[id], pendingCredit{order: order, scope: conversion.FundingScope})
+	}
+	for start := 0; start < len(ids); start += 100 {
+		if db == nil {
+			return errors.New("OPS top-up status database missing")
+		}
+		var rows []struct {
+			EventID, Scope string
+			DeliveredAt    int64
+		}
+		if err := db.WithContext(ctx).Model(&OPSWalletEvent{}).Select("event_id", "scope", "delivered_at").Where("event_id IN ?", ids[start:min(start+100, len(ids))]).Find(&rows).Error; err != nil {
+			return err
+		}
+		for _, row := range rows {
+			for _, pending := range byEvent[row.EventID] {
+				if row.Scope != pending.scope {
+					continue
+				}
+				pending.order.WalletCredit.Status = "queued"
+				if row.DeliveredAt > 0 {
+					pending.order.WalletCredit.Status = "accepted"
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (topUp *TopUp) creditedQuotaOr(defaultQuota int, defaultErr error) (int, error) {

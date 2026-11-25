@@ -1,5 +1,11 @@
 {
   "translation": {
+    "Credit submitted; balance confirmation pending": "入帳請求已提交，餘額待確認",
+    "Manually process this order? Wallet credit may still be pending after the order is processed.": "確認人工處理此訂單？訂單處理後，資金可能仍在等待入帳。",
+    "Order processed": "訂單已處理",
+    "Wallet credit": "資金入帳",
+    "Wallet credit queued": "待傳送入帳請求",
+    "Wallet credit unconfirmed": "入帳狀態待核實",
     "An adjustment is awaiting confirmation. Confirm again to retry the same operation.": "有一筆餘額調整等待確認，再次確認將重試同一筆操作。",
     "Balance changes are recorded in OPS. Local balance is unchanged.": "餘額變更由 OPS 記帳，本地餘額保持不變。",
     "Balance unavailable": "餘額暫時無法取得",

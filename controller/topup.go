@@ -688,6 +688,10 @@ func GetUserTopUps(c *gin.Context) {
 		return
 	}
 
+	if err := model.PopulateTopUpWalletCredits(c.Request.Context(), model.DB, topups); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(topups)
 	common.ApiSuccess(c, pageInfo)
@@ -713,6 +717,10 @@ func GetAllTopUps(c *gin.Context) {
 		return
 	}
 
+	if err := model.PopulateTopUpWalletCredits(c.Request.Context(), model.DB, topups); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(topups)
 	common.ApiSuccess(c, pageInfo)

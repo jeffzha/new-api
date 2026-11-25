@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type { StatusBadgeProps } from '@/components/status-badge'
 import { formatTimestampToDate } from '@/lib/format'
 
-import type { TopupStatus } from '../types'
+import type { TopupRecord, TopupStatus } from '../types'
 
 // ============================================================================
 // Billing Utility Functions
@@ -53,6 +53,18 @@ export const STATUS_CONFIG: Record<TopupStatus, StatusConfig> = {
  */
 export function getStatusConfig(status: TopupStatus): StatusConfig {
   return STATUS_CONFIG[status] || STATUS_CONFIG.pending
+}
+
+export function getWalletCreditLabel(
+  credit: TopupRecord['wallet_credit'],
+  t: (key: string) => string
+): string | undefined {
+  if (!credit || credit.source !== 'ops') return undefined
+  if (credit.status === 'queued') return t('Wallet credit queued')
+  if (credit.status === 'accepted') {
+    return t('Credit submitted; balance confirmation pending')
+  }
+  return t('Wallet credit unconfirmed')
 }
 
 /**

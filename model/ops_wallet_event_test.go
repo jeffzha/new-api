@@ -71,6 +71,29 @@ func TestOPSFundingBusinessOperationsAcrossDialects(t *testing.T) {
 			conflict.ActualMoney = "2"
 			_, err = RechargeEpay(order.TradeNo, "alipay", "127.0.0.1", &conflict)
 			require.ErrorIs(t, err, ErrAgencyTopupConflict)
+			for _, provider := range []string{PaymentProviderStripe, PaymentProviderCreem, PaymentProviderWaffo, PaymentProviderWaffoPancake, "manual"} {
+				providerOrder := TopUp{UserId: user.Id, TradeNo: provider + "-" + suffix, Amount: 1, Money: 3, PaymentProvider: provider, Status: common.TopUpStatusPending}
+				require.NoError(t, db.Create(&providerOrder).Error)
+				if provider == "manual" {
+					require.NoError(t, ManualCompleteTopUp(providerOrder.TradeNo, "127.0.0.1"))
+				} else {
+					require.NoError(t, completePaymentSnapshotOrder(provider, providerOrder.TradeNo, payment))
+				}
+				require.NoError(t, db.First(&providerOrder, providerOrder.Id).Error)
+				assert.Equal(t, "ops_funding", providerOrder.walletFundingOwner(), provider)
+				frozen := providerOrder.QuotaConversionSnapshot
+				// Callback replay after a configuration rollback remains an
+				// acknowledgement of the original order, never a local credit.
+				t.Setenv("OPS_WALLET_AUTHORITY", "gateway")
+				if provider == "manual" {
+					require.NoError(t, ManualCompleteTopUp(providerOrder.TradeNo, "127.0.0.1"))
+				} else {
+					require.NoError(t, completePaymentSnapshotOrder(provider, providerOrder.TradeNo, payment))
+				}
+				require.NoError(t, db.First(&providerOrder, providerOrder.Id).Error)
+				assert.Equal(t, frozen, providerOrder.QuotaConversionSnapshot)
+				t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+			}
 			code := Redemption{Key: common.GetUUID(), Quota: 500, Status: common.RedemptionCodeStatusEnabled}
 			require.NoError(t, db.Create(&code).Error)
 			quota, err := Redeem(code.Key, user.Id)
@@ -110,7 +133,7 @@ func TestOPSFundingBusinessOperationsAcrossDialects(t *testing.T) {
 					businessRows = append(businessRows, row)
 				}
 			}
-			assert.Len(t, businessRows, 3, "payment, redemption and checkin each commit one durable event")
+			assert.Len(t, businessRows, 8, "five payment providers, manual grant, redemption and checkin each commit one durable event")
 			var storedUser User
 			require.NoError(t, db.First(&storedUser, user.Id).Error)
 			assert.Equal(t, 321, storedUser.Quota, "business operations cannot also credit local money")
@@ -133,6 +156,32 @@ func TestOPSFundingBusinessOperationsAcrossDialects(t *testing.T) {
 			require.NoError(t, db.Create(&token).Error)
 			require.NoError(t, db.Create(&channel).Error)
 			useUserCacheMiniRedis(t)
+			require.NoError(t, db.First(&order, order.Id).Error)
+			assert.Equal(t, "ops_funding", order.walletFundingOwner())
+			assert.Equal(t, "ops_funding", checkin.WalletEventOwner)
+			// The credit has committed to OPS. Rolling the runtime flag back
+			// before audit/cache work must never credit the local cache or emit
+			// another wallet event through the ordinary audit scanner.
+			t.Setenv("OPS_WALLET_AUTHORITY", "gateway")
+			require.NoError(t, populateUserCache(storedUser))
+			syncCreditUserQuotaCache(user.Id, 1000, "accepted OPS topup", order.walletFundingOwner())
+			cache, err := cacheGetUserBase(user.Id)
+			require.NoError(t, err)
+			assert.Equal(t, 321, cache.Quota)
+			RecordTopupLog(user.Id, "accepted OPS topup", "127.0.0.1", "alipay", PaymentProviderEpay, 1000, order.TradeNo, order.walletFundingOwner())
+			var audit Log
+			require.NoError(t, db.Where("user_id = ? AND content = ?", user.Id, "accepted OPS topup").First(&audit).Error)
+			assert.Contains(t, audit.Other, `"wallet_event_owner":"ops_funding"`)
+			// Conversely, local money committed before enabling OPS must still
+			// reach its existing cache. Unknown ownership invalidates instead.
+			t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+			syncCreditUserQuotaCache(user.Id, 10, "accepted gateway credit", "gateway")
+			cache, err = cacheGetUserBase(user.Id)
+			require.NoError(t, err)
+			assert.Equal(t, 331, cache.Quota)
+			syncCreditUserQuotaCache(user.Id, 10, "unclassified historical credit", "")
+			_, err = cacheGetUserBase(user.Id)
+			require.Error(t, err)
 			cached, err := GetTokenByKey(token.Key, true)
 			require.NoError(t, err)
 			assert.Equal(t, 900, cached.RemainQuota)
@@ -660,7 +709,7 @@ func TestOPSRegistrationFundingAcrossDialects(t *testing.T) {
 			assert.Equal(t, 200, storedInviter.AffQuota)
 			assert.Equal(t, 200, storedInviter.AffHistoryQuota)
 			for _, source := range []string{LogQuotaSourceRegister, LogQuotaSourceInvitee} {
-				assert.Equal(t, "ops_funding", walletLogFields(source, false, nil)["wallet_event_owner"])
+				assert.NotContains(t, walletLogFields(source, false, nil), "wallet_event_owner", "runtime flags do not establish historical ownership")
 			}
 			// A managed account keeps the pre-existing typed funding semantics
 			// while custody is still local. Replays cannot add another lot.

@@ -21,6 +21,15 @@ import (
 
 var ErrOPSLocalWalletWrite = errors.New("OPS owns this wallet; local balance writes are disabled")
 
+// Capture this at the business transaction, then carry it to post-commit audit
+// and cache work. A later process flag cannot change who received the credit.
+func walletFundingOwner() string {
+	if opsauthority.FundingEnabled() {
+		return "ops_funding"
+	}
+	return "gateway"
+}
+
 // OPSWalletEvent is the transactional outbox for funding owned by OPS. The
 // local order or redemption and this immutable event commit together; User.Quota
 // is not credited. A delivery retry always sends the same stored body.

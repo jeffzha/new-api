@@ -162,7 +162,11 @@ func creditTopUpQuotaWithFunding(tx *gorm.DB, userId int, creditedQuota int, upd
 	if err != nil {
 		return err
 	}
-	if opsauthority.FundingEnabled() {
+	owner := walletFundingOwner()
+	if len(snapshots) == 1 && snapshots[0] != nil && snapshots[0].Conversion != nil && snapshots[0].Conversion.WalletOwner != "" && snapshots[0].Conversion.WalletOwner != owner {
+		return errors.New("top-up funding owner changed before commit")
+	}
+	if owner == "ops_funding" {
 		if len(snapshots) > 1 {
 			return ErrTopupPaymentSnapshot
 		}
@@ -389,7 +393,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string, p
 		if quotaErr != nil || quotaToAdd <= 0 {
 			return ErrInvalidTopUpQuota
 		}
-		snapshot, err := topUp.fundingSnapshot(quotaToAdd)
+		snapshot, err := topUp.fundingSnapshot(quotaToAdd, false)
 		if err != nil {
 			return err
 		}
@@ -413,10 +417,10 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string, p
 	if alreadyDone {
 		return true, nil
 	}
-	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "epay topup")
+	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "epay topup", topUp.walletFundingOwner())
 
 	common.SysLog(fmt.Sprintf("易支付充值成功 trade_no=%s user_id=%d quota_to_add=%d money=%.2f", topUp.TradeNo, topUp.UserId, quotaToAdd, topUp.Money))
-	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%f", logger.LogQuota(quotaToAdd), topUp.Money), callerIp, topUp.PaymentMethod, PaymentProviderEpay, quotaToAdd, topUp.TradeNo)
+	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%f", logger.LogQuota(quotaToAdd), topUp.Money), callerIp, topUp.PaymentMethod, PaymentProviderEpay, quotaToAdd, topUp.TradeNo, topUp.walletFundingOwner())
 	return false, nil
 }
 
@@ -460,7 +464,7 @@ func Recharge(referenceId string, customerId string, callerIp string, payment ..
 		if err != nil || quota <= 0 {
 			return ErrInvalidTopUpQuota
 		}
-		snapshot, err := topUp.fundingSnapshot(quota)
+		snapshot, err := topUp.fundingSnapshot(quota, false)
 		if err != nil {
 			return err
 		}
@@ -481,9 +485,9 @@ func Recharge(referenceId string, customerId string, callerIp string, payment ..
 	if quota == 0 {
 		return nil
 	}
-	syncCreditUserQuotaCache(topUp.UserId, quota, "stripe topup")
+	syncCreditUserQuotaCache(topUp.UserId, quota, "stripe topup", topUp.walletFundingOwner())
 
-	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%d", logger.FormatQuota(quota), topUp.Amount), callerIp, topUp.PaymentMethod, PaymentMethodStripe, quota, topUp.TradeNo)
+	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%d", logger.FormatQuota(quota), topUp.Amount), callerIp, topUp.PaymentMethod, PaymentMethodStripe, quota, topUp.TradeNo, topUp.walletFundingOwner())
 
 	return nil
 }
@@ -660,6 +664,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	var quotaToAdd int
 	var payMoney float64
 	var paymentMethod string
+	var owner string
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		topUp := &TopUp{}
@@ -695,6 +700,11 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 			return ErrInvalidTopUpQuota
 		}
 
+		snapshot, err := topUp.fundingSnapshot(quotaToAdd, true)
+		if err != nil {
+			return err
+		}
+		owner = topUp.walletFundingOwner()
 		// 标记完成
 		topUp.CompleteTime = common.GetTimestamp()
 		topUp.Status = common.TopUpStatusSuccess
@@ -704,7 +714,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 
 		// 增加用户额度（立即写库，保持一致性）
 		// 管理员补单属于平台授信，不是客户真实支付，计入 nonpaid 资金池。
-		if err := creditTopUpQuotaWithFunding(tx, topUp.UserId, quotaToAdd, nil, "admin", topUp.TradeNo); err != nil {
+		if err := creditTopUpQuotaWithFunding(tx, topUp.UserId, quotaToAdd, nil, "admin", topUp.TradeNo, &TopupFundingSnapshot{Conversion: snapshot.Conversion}); err != nil {
 			return err
 		}
 
@@ -719,8 +729,11 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	}
 
 	// 事务外记录日志，避免阻塞
-	syncCreditUserQuotaCache(userId, quotaToAdd, "manual topup")
-	RecordTopupLog(userId, fmt.Sprintf("管理员补单成功，充值金额: %v，支付金额：%f", logger.FormatQuota(quotaToAdd), payMoney), callerIp, paymentMethod, "admin", quotaToAdd, tradeNo)
+	if quotaToAdd == 0 {
+		return nil
+	}
+	syncCreditUserQuotaCache(userId, quotaToAdd, "manual topup", owner)
+	RecordTopupLog(userId, fmt.Sprintf("管理员补单成功，充值金额: %v，支付金额：%f", logger.FormatQuota(quotaToAdd), payMoney), callerIp, paymentMethod, "admin", quotaToAdd, tradeNo, owner)
 	return nil
 }
 func RechargeCreem(referenceId string, customerEmail string, customerName string, callerIp string, payment ...*TopupPaymentSnapshot) (err error) {
@@ -762,7 +775,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		if err != nil || quota <= 0 {
 			return ErrInvalidTopUpQuota
 		}
-		snapshot, err := topUp.fundingSnapshot(quota)
+		snapshot, err := topUp.fundingSnapshot(quota, false)
 		if err != nil {
 			return err
 		}
@@ -800,9 +813,9 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	if quota == 0 {
 		return nil
 	}
-	syncCreditUserQuotaCache(topUp.UserId, quota, "creem topup")
+	syncCreditUserQuotaCache(topUp.UserId, quota, "creem topup", topUp.walletFundingOwner())
 
-	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用Creem充值成功，充值额度: %v，支付金额：%.2f", quota, topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodCreem, quota, topUp.TradeNo)
+	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用Creem充值成功，充值额度: %v，支付金额：%.2f", quota, topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodCreem, quota, topUp.TradeNo, topUp.walletFundingOwner())
 
 	return nil
 }
@@ -848,7 +861,7 @@ func RechargeWaffo(tradeNo string, callerIp string, payment ...*TopupPaymentSnap
 		if err != nil || quotaToAdd <= 0 {
 			return ErrInvalidTopUpQuota
 		}
-		snapshot, err := topUp.fundingSnapshot(quotaToAdd)
+		snapshot, err := topUp.fundingSnapshot(quotaToAdd, false)
 		if err != nil {
 			return err
 		}
@@ -866,10 +879,10 @@ func RechargeWaffo(tradeNo string, callerIp string, payment ...*TopupPaymentSnap
 		common.SysError("waffo topup failed: " + err.Error())
 		return errors.New("充值失败，请稍后重试")
 	}
-	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "waffo topup")
+	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "waffo topup", topUp.walletFundingOwner())
 
 	if quotaToAdd > 0 {
-		RecordTopupLog(topUp.UserId, fmt.Sprintf("Waffo充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodWaffo, quotaToAdd, topUp.TradeNo)
+		RecordTopupLog(topUp.UserId, fmt.Sprintf("Waffo充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodWaffo, quotaToAdd, topUp.TradeNo, topUp.walletFundingOwner())
 	}
 
 	return nil
@@ -916,7 +929,7 @@ func RechargeWaffoPancake(tradeNo string, payment ...*TopupPaymentSnapshot) (err
 		if err != nil || quotaToAdd <= 0 {
 			return ErrInvalidTopUpQuota
 		}
-		snapshot, err := topUp.fundingSnapshot(quotaToAdd)
+		snapshot, err := topUp.fundingSnapshot(quotaToAdd, false)
 		if err != nil {
 			return err
 		}
@@ -934,10 +947,10 @@ func RechargeWaffoPancake(tradeNo string, payment ...*TopupPaymentSnapshot) (err
 		common.SysError("waffo pancake topup failed: " + err.Error())
 		return errors.New("充值失败，请稍后重试")
 	}
-	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "waffo pancake topup")
+	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "waffo pancake topup", topUp.walletFundingOwner())
 
 	if quotaToAdd > 0 {
-		RecordQuotaLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("Waffo Pancake充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money), quotaToAdd, LogQuotaSourceOnlineTopup, false, map[string]any{"trade_no": topUp.TradeNo})
+		RecordQuotaLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("Waffo Pancake充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money), quotaToAdd, LogQuotaSourceOnlineTopup, false, map[string]any{"trade_no": topUp.TradeNo, "wallet_event_owner": topUp.walletFundingOwner()})
 	}
 
 	return nil

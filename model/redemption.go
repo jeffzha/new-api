@@ -7,7 +7,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/pkg/opsauthority"
 
 	"gorm.io/gorm"
 )
@@ -143,6 +142,7 @@ func Redeem(key string, userId int) (quota int, err error) {
 		return 0, errors.New("无效的 user id")
 	}
 	redemption := &Redemption{}
+	var owner string
 
 	keyCol := "`key`"
 	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
@@ -176,7 +176,8 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if result.RowsAffected == 0 {
 			return errors.New("该兑换码已被使用")
 		}
-		if opsauthority.FundingEnabled() {
+		owner = walletFundingOwner()
+		if owner == "ops_funding" {
 			if redemption.ExpiredTime != 0 {
 				// The present OPS funding contract cannot expire the unused
 				// remainder of a grant. Roll the code claim back with the credit.
@@ -190,8 +191,8 @@ func Redeem(key string, userId int) (quota int, err error) {
 		common.SysError("redemption failed: " + err.Error())
 		return 0, ErrRedeemFailed
 	}
-	syncCreditUserQuotaCache(userId, redemption.Quota, "redemption")
-	RecordQuotaLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(redemption.Quota), redemption.Id), redemption.Quota, LogQuotaSourceRedemption, false, map[string]any{"redemption_id": redemption.Id})
+	syncCreditUserQuotaCache(userId, redemption.Quota, "redemption", owner)
+	RecordQuotaLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(redemption.Quota), redemption.Id), redemption.Quota, LogQuotaSourceRedemption, false, map[string]any{"redemption_id": redemption.Id, "wallet_event_owner": owner})
 	return redemption.Quota, nil
 }
 

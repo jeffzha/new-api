@@ -80,7 +80,7 @@ func TestProviderTopupSnapshotsPreserveActualPaymentAndDistinctQuotaUnits(t *tes
 				assert.Equal(t, TopupPaymentSnapshot{ActualMoney: "12.34", CurrencyCode: "USD", PaymentReference: "provider-payment-123"}, storedPayment)
 				var conversion TopupQuotaConversion
 				require.NoError(t, common.UnmarshalJsonStr(completed.QuotaConversionSnapshot, &conversion))
-				assert.Equal(t, TopupQuotaConversion{SchemaVersion: 1, BasisField: provider.basis, BasisValue: provider.value, Calculation: provider.calculation, QuotaPerUnit: provider.multiplier, CreditedQuota: fmt.Sprint(provider.quota)}, conversion)
+				assert.Equal(t, TopupQuotaConversion{SchemaVersion: 1, BasisField: provider.basis, BasisValue: provider.value, Calculation: provider.calculation, QuotaPerUnit: provider.multiplier, CreditedQuota: fmt.Sprint(provider.quota), WalletOwner: "gateway"}, conversion)
 				common.QuotaPerUnit = 2000
 				require.NoError(t, completePaymentSnapshotOrder(provider.name, order.TradeNo, payment))
 				changed := *payment
@@ -182,6 +182,28 @@ func TestTopupWithoutPaymentEvidenceKeepsUnknownMoneyAndManualCompletionNonpaid(
 			assert.Empty(t, fact.ActualMoney)
 		})
 	}
+	t.Run("manual-creem", func(t *testing.T) {
+		user := setupPaymentSnapshotDB(t, AgencyDurableBillingMode)
+		order := TopUp{UserId: user.Id, Amount: 2, Money: 3, TradeNo: "manual-creem-evidence", PaymentProvider: PaymentProviderCreem, Status: common.TopUpStatusPending}
+		require.NoError(t, order.Insert())
+		for range 2 {
+			require.NoError(t, ManualCompleteTopUp(order.TradeNo, "127.0.0.1"))
+		}
+		require.NoError(t, DB.First(user, user.Id).Error)
+		assert.Equal(t, 2000, user.Quota, "manual completion retains its existing calculation and credits only once")
+		var fact AgencyTopupFact
+		require.NoError(t, DB.First(&fact).Error)
+		assert.Zero(t, fact.PaidQuota)
+		assert.Equal(t, int64(2000), fact.BonusQuota)
+		var conversion TopupQuotaConversion
+		require.NoError(t, common.UnmarshalJsonStr(fact.QuotaConversionSnapshot, &conversion))
+		assert.Equal(t, "multiply_quota_per_unit", conversion.Calculation, "the snapshot describes the manual calculation, not Creem callback units")
+		assert.Equal(t, "1000", conversion.QuotaPerUnit)
+		assert.Equal(t, "gateway", conversion.WalletOwner)
+		var logs []Log
+		require.NoError(t, DB.Where("user_id = ?", user.Id).Find(&logs).Error)
+		require.Len(t, logs, 1, "a repeated manual completion cannot append a user-zero or duplicate audit")
+	})
 }
 
 func TestInvalidTopupPaymentSnapshotRollsBackOrderAndWallet(t *testing.T) {

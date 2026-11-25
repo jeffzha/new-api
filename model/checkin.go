@@ -3,7 +3,6 @@ package model
 import (
 	"errors"
 	"fmt"
-	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"math/rand"
 	"time"
 
@@ -13,11 +12,12 @@ import (
 
 // Checkin 签到记录
 type Checkin struct {
-	Id           int    `json:"id" gorm:"primaryKey;autoIncrement"`
-	UserId       int    `json:"user_id" gorm:"not null;uniqueIndex:idx_user_checkin_date"`
-	CheckinDate  string `json:"checkin_date" gorm:"type:varchar(10);not null;uniqueIndex:idx_user_checkin_date"` // 格式: YYYY-MM-DD
-	QuotaAwarded int    `json:"quota_awarded" gorm:"not null"`
-	CreatedAt    int64  `json:"created_at" gorm:"bigint"`
+	Id               int    `json:"id" gorm:"primaryKey;autoIncrement"`
+	UserId           int    `json:"user_id" gorm:"not null;uniqueIndex:idx_user_checkin_date"`
+	CheckinDate      string `json:"checkin_date" gorm:"type:varchar(10);not null;uniqueIndex:idx_user_checkin_date"` // 格式: YYYY-MM-DD
+	QuotaAwarded     int    `json:"quota_awarded" gorm:"not null"`
+	CreatedAt        int64  `json:"created_at" gorm:"bigint"`
+	WalletEventOwner string `json:"-" gorm:"-:all"`
 }
 
 // CheckinRecord 用于API返回的签到记录（不包含敏感字段）
@@ -98,7 +98,8 @@ func userCheckinWithTransaction(checkin *Checkin, userId int, quotaAwarded int) 
 			return errors.New("签到失败，请稍后重试")
 		}
 
-		if opsauthority.FundingEnabled() {
+		checkin.WalletEventOwner = walletFundingOwner()
+		if checkin.WalletEventOwner == "ops_funding" {
 			return QueueOPSWalletFundingTx(tx, int64(userId), int64(quotaAwarded), "gift", "checkin", fmt.Sprintf("%d:%s", userId, checkin.CheckinDate), nil)
 		}
 		// 步骤2: 在同一事务中增加用户额度及 durable 资金投影
@@ -115,7 +116,7 @@ func userCheckinWithTransaction(checkin *Checkin, userId int, quotaAwarded int) 
 
 	// The durable projection may consume/repay different funding buckets, so
 	// invalidate its cache rather than applying a blind increment.
-	syncCreditUserQuotaCache(userId, quotaAwarded, "checkin")
+	syncCreditUserQuotaCache(userId, quotaAwarded, "checkin", checkin.WalletEventOwner)
 
 	return checkin, nil
 }

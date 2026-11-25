@@ -27,6 +27,7 @@ type TopupQuotaConversion struct {
 	Calculation   string `json:"calculation"`
 	QuotaPerUnit  string `json:"quota_per_unit,omitempty"`
 	CreditedQuota string `json:"credited_quota"`
+	WalletOwner   string `json:"wallet_owner,omitempty"`
 }
 
 type TopupFundingSnapshot struct {
@@ -129,7 +130,7 @@ func (topUp *TopUp) applyPaymentSnapshot(snapshots []*TopupPaymentSnapshot) erro
 	return nil
 }
 
-func (topUp *TopUp) fundingSnapshot(creditedQuota int) (*TopupFundingSnapshot, error) {
+func (topUp *TopUp) fundingSnapshot(creditedQuota int, manual bool) (*TopupFundingSnapshot, error) {
 	snapshot := &TopupFundingSnapshot{}
 	if topUp.PaymentSnapshot != "" {
 		snapshot.Payment = &TopupPaymentSnapshot{}
@@ -137,7 +138,7 @@ func (topUp *TopUp) fundingSnapshot(creditedQuota int) (*TopupFundingSnapshot, e
 			return nil, err
 		}
 	}
-	conversion := TopupQuotaConversion{SchemaVersion: 1, BasisField: "topup.amount", BasisValue: strconv.FormatInt(topUp.Amount, 10), Calculation: "multiply_quota_per_unit", QuotaPerUnit: decimal.NewFromFloat(common.QuotaPerUnit).String(), CreditedQuota: strconv.Itoa(creditedQuota)}
+	conversion := TopupQuotaConversion{SchemaVersion: 1, BasisField: "topup.amount", BasisValue: strconv.FormatInt(topUp.Amount, 10), Calculation: "multiply_quota_per_unit", QuotaPerUnit: decimal.NewFromFloat(common.QuotaPerUnit).String(), CreditedQuota: strconv.Itoa(creditedQuota), WalletOwner: walletFundingOwner()}
 	if topUp.CreditedQuota > 0 && strings.TrimSpace(topUp.MoneyDecimal) != "" {
 		conversion.BasisField = "topup.money_decimal"
 		conversion.BasisValue = topUp.MoneyDecimal
@@ -149,8 +150,10 @@ func (topUp *TopUp) fundingSnapshot(creditedQuota int) (*TopupFundingSnapshot, e
 		conversion.BasisField = "topup.money"
 		conversion.BasisValue = decimal.NewFromFloat(topUp.Money).String()
 	case PaymentProviderCreem:
-		conversion.Calculation = "identity"
-		conversion.QuotaPerUnit = ""
+		if !manual {
+			conversion.Calculation = "identity"
+			conversion.QuotaPerUnit = ""
+		}
 	}
 	snapshot.Conversion = &conversion
 	encoded, err := common.Marshal(conversion)
@@ -159,4 +162,17 @@ func (topUp *TopUp) fundingSnapshot(creditedQuota int) (*TopupFundingSnapshot, e
 	}
 	topUp.QuotaConversionSnapshot = string(encoded)
 	return snapshot, nil
+}
+
+// A historical order without an ownership snapshot stays unclassified; never
+// infer its financial owner from today's configuration.
+func (topUp *TopUp) walletFundingOwner() string {
+	var conversion TopupQuotaConversion
+	if common.UnmarshalJsonStr(topUp.QuotaConversionSnapshot, &conversion) != nil {
+		return ""
+	}
+	if conversion.WalletOwner == "ops_funding" || conversion.WalletOwner == "gateway" {
+		return conversion.WalletOwner
+	}
+	return ""
 }

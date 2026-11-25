@@ -314,14 +314,8 @@ func walletLogFields(source string, debit bool, fields map[string]any) map[strin
 		values["quota_direction"] = LogQuotaDebit
 	}
 	maps.Copy(values, fields)
-	if _, explicitOwner := values["wallet_event_owner"]; !explicitOwner && opsauthority.FundingEnabled() && !debit {
-		switch source {
-		case LogQuotaSourceOnlineTopup, LogQuotaSourceAdminTopup, LogQuotaSourceRedemption, LogQuotaSourceCheckin, LogQuotaSourceRegister, LogQuotaSourceInvitee:
-			// These business transactions already queued their immutable OPS
-			// funding event. This row is audit evidence, never a second credit.
-			values["wallet_event_owner"] = "ops_funding"
-		}
-	}
+	// Ownership is a committed business fact supplied by the caller. Inferring
+	// it from the current flag can duplicate a credit after configuration rollback.
 	return values
 }
 
@@ -376,14 +370,18 @@ func RecordQuotaLogWithAdminInfo(userId int, logType int, content string, quota 
 }
 
 // RecordTopupLog records a paid top-up of quota; tradeNo links it to its topups row.
-func RecordTopupLog(userId int, content string, callerIp string, paymentMethod string, callbackPaymentMethod string, quota int, tradeNo string) {
+func RecordTopupLog(userId int, content string, callerIp string, paymentMethod string, callbackPaymentMethod string, quota int, tradeNo string, owner string) {
 	source := LogQuotaSourceOnlineTopup
 	if callbackPaymentMethod == "admin" {
 		source = LogQuotaSourceAdminTopup
 	}
 	username, _ := GetUsernameById(userId, false)
 	other := NewLogOther()
-	other.MergePublic(walletLogFields(source, false, map[string]any{"trade_no": tradeNo}))
+	fields := map[string]any{"trade_no": tradeNo}
+	if owner == "ops_funding" || owner == "gateway" {
+		fields["wallet_event_owner"] = owner
+	}
+	other.MergePublic(walletLogFields(source, false, fields))
 	other.MergeAdmin(map[string]any{
 		"server_ip":               common.GetIp(),
 		"node_name":               common.NodeName,

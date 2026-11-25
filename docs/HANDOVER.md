@@ -34,6 +34,9 @@
 
 ### 已实际执行的隔离检查
 
+- 后续资金归属补强：五种支付渠道及人工补单将事务决定的 owner 持久化到既有换算快照，兑换/签到也将本次事务 owner 传到审计与缓存；提交后不再按当时开关猜测归属。OPS 已接收的充值在开关关闭后不会再增加本地缓存；本地已提交充值在开关打开后仍同步本地缓存，历史未知归属只失效缓存。重复人工补单不再生成 user=0 的日志；Creem 人工补单快照保留原人工额度换算，不改变既有补单金额。
+- 上述最终代码的 `go test ./model ./controller ./service/opspush ./service/opswallet -count=1` 通过（69.091s / 51.384s / 0.692s / 0.113s），`go build ./...` 通过。四组独立真实 SQLite / MySQL 8.4.6 / PostgreSQL 16.16 矩阵全部通过、无 SKIP：BusinessOperations、MidjourneyOwnershipSchema、WalletFunding、RegistrationFunding；日志 `D:/DevCache/product-ops-wallet-credit-owner-final-retry-20261125.log`，运行器沿用 independent-matrix。首次最终矩阵在 BusinessOperations 通过后因 WSL 清理超时中止，未重启共享 WSL，恢复后检查并清理本任务无活动连接的遗留测试库，再完整重跑通过。最低支持数据库版本和线上交接仍未验收。`git diff --check` 与索引政策检查通过；本批没有新增数据库列/索引，也没有生产变更。
+
 - Go 1.26.6，WSL OpsDev：`GOWORK=off GOMAXPROCS=2 GOMODCACHE=/mnt/d/DevCache/gomod CGO_ENABLED=0 go test ./controller ./service ./service/opsbilling ./service/opspush ./service/opswallet ./middleware ./router ./relay -count=1` 已通过；后续变更需重跑受影响包。Go 主应用草稿构建已通过，未作为已提交发布产物。
 - 真实 SQLite、MySQL 8.4.6、PostgreSQL 16.16 的 BusinessOperations 与 MidjourneyOwnershipSchema 矩阵通过：充值回调重复/冲突、兑换重复/事务回滚、签到重复、本地余额不变、本地调额旁路、任务退款重复与 Key 缓存读取，以及新建/既有表升级/连续两次迁移和原索引保留。运行器 `D:/DevCache/product-ops-wallet-refund-runner-20261125.py`；脱敏日志为同目录 refund-runner/refund-matrix-20261125.log。仅创建并清理本次独立测试库。后续修改相关代码必须重跑。
 - 最新支付凭据变更后，四组测试分别使用独立的真实数据库通过（共 12 个引擎子项，无 SKIP）：BusinessOperations、MidjourneyOwnershipSchema、WalletFunding、RegistrationFunding。覆盖异常现金/币种/精度/凭据拒绝、有效事实不被覆盖、原支付凭据透传、权限及奖励事务回滚。运行器 `D:/DevCache/product-ops-wallet-independent-matrix-20261125.py`，结果 `product-ops-wallet-independent-runner-20261125.log`；主应用重新构建通过。首次合跑因外部测试库共用导致其他组遗留事件进入总数断言，未修改生产实现来规避，改为逐组独立库后通过。

@@ -61,7 +61,7 @@ func DoCheckin(c *gin.Context) {
 		})
 		return
 	}
-	model.RecordQuotaLog(userId, model.LogTypeSystem, fmt.Sprintf("用户签到，获得额度 %s", logger.LogQuota(checkin.QuotaAwarded)), checkin.QuotaAwarded, model.LogQuotaSourceCheckin, false, nil)
+	model.RecordQuotaLog(userId, model.LogTypeSystem, fmt.Sprintf("用户签到，获得额度 %s", logger.LogQuota(checkin.QuotaAwarded)), checkin.QuotaAwarded, model.LogQuotaSourceCheckin, false, map[string]any{"wallet_event_owner": checkin.WalletEventOwner})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "签到成功",

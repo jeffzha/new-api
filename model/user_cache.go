@@ -6,7 +6,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/pkg/opsauthority"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	"github.com/gin-gonic/gin"
@@ -162,11 +161,18 @@ func cacheDecrUserQuota(userId int, delta int64) error {
 // syncCreditUserQuotaCache 在授信事务（充值/兑换等）提交后同步把增量补进缓存
 // 余额。预扣以缓存值为准（存在期间），授信不能绕过它，否则新到账的额度在
 // 缓存过期前不可用；缓存未命中无需处理，下次读取会从已提交的数据库余额水合。
-func syncCreditUserQuotaCache(userId int, quota int, operation string) {
-	if opsauthority.FundingEnabled() {
+func syncCreditUserQuotaCache(userId int, quota int, operation string, owner string) {
+	if owner == "ops_funding" {
 		return
 	}
 	if quota <= 0 {
+		return
+	}
+	if owner != "gateway" {
+		// Unknown historical ownership cannot justify a blind cache credit.
+		if err := InvalidateUserCache(userId); err != nil {
+			common.SysLog(fmt.Sprintf("failed to invalidate %s unclassified wallet cache: %s", operation, err.Error()))
+		}
 		return
 	}
 	// Durable agency balances are projected from the funding account and may

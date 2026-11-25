@@ -59,6 +59,31 @@ func TestDurableReservationRecoveryAcrossDatabases(t *testing.T) {
 			require.NoError(t, db.AutoMigrate(&model.Token{}))
 			key := model.Token{UserId: 1, Key: "isolated-" + kind, Status: common.TokenStatusEnabled, RemainQuota: 1000, ExpiredTime: -1}
 			require.NoError(t, db.Create(&key).Error)
+			// Rehearse a drained polling-owner handoff using the existing lock
+			// table. Old binaries must remain fenced between successful passes.
+			require.NoError(t, db.Migrator().DropTable(&model.SystemTask{}, &model.SystemTaskLock{}))
+			require.NoError(t, db.AutoMigrate(&model.SystemTask{}, &model.SystemTaskLock{}))
+			previousRunnerDB := model.DB
+			model.DB = db
+			func() {
+				defer func() { model.DB = previousRunnerDB }()
+				t.Setenv("SYSTEM_TASK_RELEASE_OWNER", "prepared-successor")
+				for _, taskType := range []string{model.SystemTaskTypeAsyncTaskPoll, model.SystemTaskTypeMidjourneyPoll} {
+					require.NoError(t, db.Create(&model.SystemTaskLock{Type: taskType, LockedBy: "prepared-successor", LockedUntil: 253402300799}).Error)
+					for range 2 {
+						task, err := model.CreateSystemTask(taskType, nil, nil)
+						require.NoError(t, err)
+						_, claimed, err := model.ClaimSystemTask(task.ID, taskType, "old-runner", common.GetTimestamp()+60)
+						require.NoError(t, err)
+						require.False(t, claimed)
+						_, claimed, err = model.ClaimSystemTask(task.ID, taskType, "prepared-successor", common.GetTimestamp()+60)
+						require.NoError(t, err)
+						require.True(t, claimed)
+						require.NoError(t, model.RenewSystemTaskLock(task.TaskID, "prepared-successor", common.GetTimestamp()+60))
+						require.NoError(t, model.FinishSystemTask(task.TaskID, "prepared-successor", model.SystemTaskStatusSucceeded, nil, ""))
+					}
+				}
+			}()
 			// Rehearse an upgrade from the released task schema and the first hold
 			// schema, including rows written before nullable outbox fields existed.
 			require.NoError(t, db.AutoMigrate(&model.Midjourney{}, &Intent{}))

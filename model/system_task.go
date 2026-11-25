@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"os"
 
 	"github.com/QuantumNous/new-api/common"
 
@@ -266,6 +267,15 @@ func ClaimSystemTask(id int64, taskType string, runnerID string, lockUntil int64
 }
 
 func acquireSystemTaskLock(taskType string, taskID string, lockedBy string, now int64, lockUntil int64) (bool, string, error) {
+	releaseOwner := os.Getenv("SYSTEM_TASK_RELEASE_OWNER")
+	if releaseOwner != "" && lockedBy == releaseOwner && (taskType == SystemTaskTypeAsyncTaskPoll || taskType == SystemTaskTypeMidjourneyPoll) {
+		// An explicitly prepared successor owns the existing per-type row.
+		// Older processes honor this unexpired lease without knowing the new
+		// convention. Never steal an active task, even from the same release.
+		result := DB.Model(&SystemTaskLock{}).Where("type = ? AND task_id = ? AND locked_by = ? AND locked_until = ?", taskType, "", lockedBy, int64(253402300799)).
+			Updates(map[string]any{"task_id": taskID, "updated_at": now})
+		return result.RowsAffected == 1, "", result.Error
+	}
 	lock := &SystemTaskLock{
 		Type:        taskType,
 		TaskID:      taskID,
@@ -346,16 +356,29 @@ func UpdateSystemTaskState(taskID string, lockedBy string, state any) error {
 
 func RenewSystemTaskLock(taskID string, lockedBy string, lockUntil int64) error {
 	now := common.GetTimestamp()
+	var renewal any = lockUntil
+	if owner := os.Getenv("SYSTEM_TASK_RELEASE_OWNER"); owner != "" && owner == lockedBy {
+		renewal = gorm.Expr("CASE WHEN locked_until = ? THEN locked_until ELSE ? END", int64(253402300799), lockUntil)
+	}
 	result := DB.Model(&SystemTaskLock{}).
 		Where("task_id = ? AND locked_by = ? AND locked_until >= ?", taskID, lockedBy, now).
 		Updates(map[string]any{
-			"locked_until": lockUntil,
+			"locked_until": renewal,
 			"updated_at":   now,
 		})
 	if result.Error != nil {
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
+		// MySQL reports changed rows. A pinned lease renewed in the same
+		// second is a no-op; verify ownership before treating it as lost.
+		var held int64
+		if err := DB.Model(&SystemTaskLock{}).Where("task_id = ? AND locked_by = ? AND locked_until >= ?", taskID, lockedBy, now).Count(&held).Error; err != nil {
+			return err
+		}
+		if held > 0 {
+			return nil
+		}
 		return ErrSystemTaskLockLost
 	}
 	return nil
@@ -392,6 +415,15 @@ func ExpireStaleSystemTaskLocks(now int64) error {
 }
 
 func ReleaseSystemTaskLock(taskID string, lockedBy string) error {
+	if owner := os.Getenv("SYSTEM_TASK_RELEASE_OWNER"); owner != "" && owner == lockedBy {
+		// Keep the old runner fenced after a pass finishes. Recovery and the
+		// next release transfer this row explicitly after verifying drain.
+		result := DB.Model(&SystemTaskLock{}).Where("task_id = ? AND locked_by = ? AND type IN ?", taskID, lockedBy, []string{SystemTaskTypeAsyncTaskPoll, SystemTaskTypeMidjourneyPoll}).
+			Updates(map[string]any{"task_id": "", "locked_until": int64(253402300799), "updated_at": common.GetTimestamp()})
+		if result.Error != nil || result.RowsAffected > 0 {
+			return result.Error
+		}
+	}
 	result := DB.Where("task_id = ? AND locked_by = ?", taskID, lockedBy).Delete(&SystemTaskLock{})
 	return result.Error
 }

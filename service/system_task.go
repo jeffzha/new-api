@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,6 +70,9 @@ func registeredSystemTaskHandlers() []SystemTaskHandler {
 	defer systemTaskHandlersMu.RUnlock()
 	handlers := make([]SystemTaskHandler, 0, len(systemTaskHandlers))
 	for _, h := range systemTaskHandlers {
+		if !common.IsMasterNode && os.Getenv("SYSTEM_TASK_RELEASE_OWNER") != "" && h.Type() != model.SystemTaskTypeAsyncTaskPoll && h.Type() != model.SystemTaskTypeMidjourneyPoll {
+			continue
+		}
 		handlers = append(handlers, h)
 	}
 	return handlers
@@ -122,11 +127,18 @@ func notifySystemTaskRunner() {
 
 func StartSystemTaskRunner() {
 	systemTaskRunnerOnce.Do(func() {
-		if !common.IsMasterNode {
+		if !common.IsMasterNode && os.Getenv("SYSTEM_TASK_RELEASE_OWNER") == "" {
 			return
 		}
 
 		runnerID := fmt.Sprintf("%s-%s", common.NodeName, common.GetRandomString(8))
+		if owner := os.Getenv("SYSTEM_TASK_RELEASE_OWNER"); owner != "" {
+			if len(owner) > 128 || strings.TrimSpace(owner) != owner {
+				common.FatalLog("invalid SYSTEM_TASK_RELEASE_OWNER")
+				return
+			}
+			runnerID = owner
+		}
 		gopool.Go(func() {
 			logger.LogInfo(context.Background(), fmt.Sprintf("system task runner started: runner=%s idle_interval=%s", runnerID, systemTaskRunnerIdleInterval))
 

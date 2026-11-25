@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,9 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service/opspush"
+	"github.com/QuantumNous/new-api/service/opsreserve"
 	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +32,114 @@ func CovertMjpActionToModelName(mjAction string) string {
 		modelName = "swap_face"
 	}
 	return modelName
+}
+
+// BeginOPSMidjourneyBilling reserves before the legacy submission transport.
+func BeginOPSMidjourneyBilling(c *gin.Context, info *relaycommon.RelayInfo, quota int) error {
+	if !opsreserve.Enabled() {
+		return nil
+	}
+	if info.Billing == nil {
+		session, apiErr := newOPSReservationSession(c, info, quota)
+		if apiErr != nil {
+			return apiErr
+		}
+		info.Billing = session
+	}
+	if err := BeginOPSReservationDispatch(info); err != nil {
+		info.Billing.Refund(c)
+		return err
+	}
+	return nil
+}
+
+// ObserveOPSMidjourneyResponse distinguishes a documented rejection from an
+// uncertain transport outcome. Only the former can release a dispatched hold.
+func ObserveOPSMidjourneyResponse(info *relaycommon.RelayInfo, status, code int, err error) {
+	if _, ok := info.Billing.(*opsReservationSession); !ok {
+		return
+	}
+	if err != nil || status >= 500 || status == http.StatusRequestTimeout || code == 0 {
+		info.LastError = relaytypes.NewError(errors.New("Midjourney provider outcome uncertain"), relaytypes.ErrorCodeDoRequestFailed)
+	} else if status != http.StatusOK || code != 1 && code != 21 && code != 22 {
+		info.LastError = relaytypes.NewErrorWithStatusCode(errors.New("Midjourney submission rejected"), relaytypes.ErrorCodeBadResponseStatusCode, http.StatusBadRequest)
+	}
+	ObserveOPSReservationAttempt(info, info.LastError)
+}
+
+func settleOPSMidjourney(ctx context.Context, task *model.Midjourney, refund bool, reason string) error {
+	client, err := opsreserve.Configured()
+	if err != nil || client.Transport.KeyID != task.OPSReservationGateway {
+		return opsreserve.ErrUnavailable
+	}
+	var intent model.OPSHoldIntent
+	if err = client.DB.WithContext(ctx).Where("gateway = ? AND request = ?", task.OPSReservationGateway, task.OPSReservationRequest).First(&intent).Error; err != nil {
+		return err
+	}
+	payload := intent.UsagePayload
+	if refund {
+		payload = intent.RefundPayload
+	}
+	if payload == "" {
+		other := model.NewLogOther()
+		other.SetPublic("task_id", task.MjId)
+		other.SetPublic("request_id", task.OPSReservationRequest)
+		other.SetPublic("reason", reason)
+		other.SetPublic("billing_source", "ops")
+		other.SetPublic("image_count", 1)
+		other.SetPublic("quota_per_unit", common.QuotaPerUnit)
+		other.SetAdmin("upstream", map[string]any{"base_url": task.OPSReservationBaseURL})
+		if scope := os.Getenv("OPS_PROJECT_SCOPE"); scope != "" {
+			other.SetPublic("billing_scope", scope)
+		}
+		kind, occurred := model.LogTypeConsume, task.SubmitTime/1000
+		if refund {
+			kind, occurred = model.LogTypeRefund, time.Now().Unix()
+		}
+		log := &model.Log{Id: task.Id, UserId: task.UserId, Type: kind, RequestId: task.OPSReservationRequest, CreatedAt: occurred, ModelName: CovertMjpActionToModelName(task.Action), Quota: task.Quota, TokenId: task.TokenId, ChannelId: task.GetBillingChannelId(), Other: other.JSONString()}
+		event := opspush.EventV11(log, "", nil, opspush.CurrentConversion())
+		if event == nil {
+			return opsreserve.ErrUnavailable
+		}
+		if err := opspush.AttachUpstream(client.DB, log, event); err != nil {
+			return err
+		}
+		stage := "usage"
+		if refund {
+			stage = "refund"
+		}
+		raw, err := common.Marshal(map[string]any{"schemaVersion": "1.1", "batchId": task.OPSReservationRequest + "-mj-" + stage, "events": []any{event}})
+		if err != nil {
+			return err
+		}
+		payload = string(raw)
+	}
+	if err = model.FinalizeOPSHoldMidjourney(ctx, client.DB, task, payload, refund); err != nil {
+		return err
+	}
+	// Delivery failure leaves the immutable outbox for bounded recovery.
+	if err = client.DeliverUsage(ctx, task.OPSReservationRequest); err != nil {
+		common.SysError("OPS Midjourney usage pending durable delivery")
+	}
+	if refund {
+		task.Quota = 0
+	}
+	return nil
+}
+
+// RecoverOPSMidjourney resumes only a persisted, provider-accepted submission.
+// A missing task or an unknown transport outcome never proves a free call.
+func RecoverOPSMidjourney(ctx context.Context, task *model.Midjourney) error {
+	if task.Code != 1 && task.Code != 21 && task.Code != 22 {
+		return opsreserve.ErrUnavailable
+	}
+	if err := settleOPSMidjourney(ctx, task, false, ""); err != nil {
+		return err
+	}
+	if task.Status == "FAILURE" || task.FailReason != "" {
+		return settleOPSMidjourney(ctx, task, true, task.FailReason)
+	}
+	return nil
 }
 
 // PrepareMidjourneyTaskBilling sets the durable refund marker before the task is inserted.
@@ -57,6 +169,19 @@ func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.
 
 	task.Quota = quota
 	task.BillingChannelId = task.ChannelId
+	if session, ok := relayInfo.Billing.(*opsReservationSession); ok {
+		task.OPSReservationGateway = session.ReservationGateway()
+		task.OPSReservationRequest = relayInfo.RequestId
+		task.OPSReservationBaseURL = relayInfo.ChannelBaseUrl
+		if task.OPSReservationBaseURL == "" {
+			task.OPSReservationBaseURL = constant.GetChannelBaseURL(relayInfo.ChannelType)
+		}
+		task.TokenId = relayInfo.TokenId
+		if relayInfo.IsPlayground {
+			task.TokenId = 0
+		}
+		return true, nil
+	}
 	if relayInfo.AgencyPricing != nil {
 		task.AgencyChargeID = relayInfo.RequestId
 	}
@@ -88,6 +213,17 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 	}
 	if task == nil || task.Id == 0 {
 		return false, errors.New("Midjourney task must be persisted before billing")
+	}
+	if task.OPSReservationGateway != "" {
+		if err := settleOPSMidjourney(context.Background(), task, false, ""); err != nil {
+			return false, err
+		}
+		if session, ok := relayInfo.Billing.(*opsReservationSession); ok {
+			session.mu.Lock()
+			session.done, session.actual = true, task.Quota
+			session.mu.Unlock()
+		}
+		return true, nil
 	}
 	if task.CNBillingKey != "" {
 		if relayInfo.UserId != task.UserId || relayInfo.AgencyPricing != nil || relayInfo.BillingSource == BillingSourceSubscription {
@@ -166,6 +302,13 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason string) bool {
 	if task == nil {
 		return false
+	}
+	if task.OPSReservationGateway != "" {
+		if err := settleOPSMidjourney(ctx, task, true, reason); err != nil {
+			logger.LogWarn(ctx, "OPS Midjourney refund pending reconciliation")
+			return false
+		}
+		return true
 	}
 	if task.CNBillingKey != "" {
 		if err := model.RequestCNMidjourneyRefund(ctx, model.DB, task.Id, task.UserId, task.MjId, reason); err != nil {

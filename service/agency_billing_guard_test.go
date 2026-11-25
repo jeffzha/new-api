@@ -55,6 +55,7 @@ func TestOPSReservationSignedGatewayLifecycle(t *testing.T) {
 	transport := opsclient.New(base, os.Getenv("OPS_HOLD_E2E_KEY"), os.Getenv("OPS_HOLD_E2E_SECRET"), 3*time.Second)
 	body, err := common.Marshal(map[string]any{"schemaVersion": "1", "batchId": "gateway-e2e-batch", "events": []any{map[string]any{
 		"requestId": info.RequestId, "occurredAt": "2026-07-01T00:00:00Z", "userId": "1", "username": "alice", "model": "gpt-4o", "promptTokens": 1000000, "completionTokens": 0, "gatewayQuota": 500000, "status": "success", "isStream": false,
+		"extra": map[string]any{"billing_scope": os.Getenv("OPS_HOLD_E2E_SCOPE")},
 	}}})
 	require.NoError(t, err)
 	for range 2 {
@@ -71,16 +72,56 @@ func TestOPSReservationSignedGatewayLifecycle(t *testing.T) {
 	var n int64
 	require.NoError(t, db.Model(&model.OPSHoldIntent{}).Where("request = ?", info.RequestId).Count(&n).Error)
 	require.Zero(t, n)
+	// Definitive rejection releases both holds. A timeout retained across a
+	// later rejection cannot do so without reviewed provider evidence.
+	for _, uncertain := range []bool{false, true} {
+		id := "gateway-e2e-rejected"
+		if uncertain {
+			id = "gateway-e2e-unknown"
+		}
+		requestInfo := &relaycommon.RelayInfo{RequestId: id, UserId: 1, TokenId: key.Id, OriginModelName: "gpt-4o", StartTime: time.Now()}
+		bill, failure := newOPSReservationSession(ctx, requestInfo, 10000)
+		require.Nil(t, failure)
+		requestInfo.Billing = bill
+		require.NoError(t, BeginOPSReservationDispatch(requestInfo))
+		if uncertain {
+			ObserveOPSReservationAttempt(requestInfo, types.NewError(errors.New("response lost"), types.ErrorCodeDoRequestFailed))
+		}
+		requestInfo.LastError = types.NewErrorWithStatusCode(errors.New("rejected"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+		ObserveOPSReservationAttempt(requestInfo, requestInfo.LastError)
+		bill.Refund(ctx)
+		require.NoError(t, db.First(&token, key.Id).Error)
+		if uncertain {
+			require.Equal(t, 490000, token.RemainQuota)
+			require.NoError(t, client.ResolveReviewed(context.Background(), id, "confirmed_no_charge", "isolated-provider-terminal-receipt", "test-reviewer", 0))
+		} else {
+			require.Equal(t, 500000, token.RemainQuota)
+		}
+		require.NoError(t, db.First(&token, key.Id).Error)
+		require.Equal(t, 500000, token.RemainQuota)
+	}
+	// Process rollback must not switch an in-flight session to local billing.
+	info = &relaycommon.RelayInfo{RequestId: "gateway-e2e-rollback", UserId: 1, TokenId: key.Id, OriginModelName: "gpt-4o", StartTime: time.Now()}
+	rollback, failure := newOPSReservationSession(ctx, info, 10000)
+	require.Nil(t, failure)
+	info.Billing = rollback
+	t.Setenv("OPS_WALLET_RESERVATIONS", "false")
+	require.True(t, OPSReservationActive(info))
+	rollback.Refund(ctx)
+	require.NoError(t, db.First(&token, key.Id).Error)
+	require.Equal(t, 500000, token.RemainQuota)
 }
 
 func TestOPSReservationRetainsUncertaintyAcrossRetries(t *testing.T) {
-	session := &opsReservationSession{}
+	session := &opsReservationSession{dispatched: true}
 	info := &relaycommon.RelayInfo{Billing: session}
 	rejection := types.NewErrorWithStatusCode(errors.New("rejected"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
 	ObserveOPSReservationAttempt(info, rejection)
 	require.False(t, session.uncertain)
+	require.False(t, OPSReservationRequiresReconciliation(info))
 	ObserveOPSReservationAttempt(info, types.NewError(errors.New("transport outcome unknown"), types.ErrorCodeDoRequestFailed))
 	require.True(t, session.uncertain)
+	require.True(t, OPSReservationRequiresReconciliation(info))
 	ObserveOPSReservationAttempt(info, rejection)
 	require.True(t, session.uncertain)
 	ObserveOPSReservationAttempt(info, nil)

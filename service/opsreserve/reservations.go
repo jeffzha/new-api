@@ -27,6 +27,8 @@ var ErrUnavailable = errors.New("OPS wallet reservation unavailable")
 // code alone must never switch a product wallet away from local accounting.
 var ValidateAuthority func() error
 
+var RecoverMidjourney func(context.Context, *model.Midjourney) error
+
 // A release intent survives network errors and process restarts. Accepted
 // upstream work is never released on a timer: OPS closes its hold with debit.
 type Intent = model.OPSHoldIntent
@@ -69,7 +71,16 @@ func Start(ctx context.Context) error {
 		return ErrUnavailable
 	}
 	if !Enabled() {
-		return nil
+		if model.DB == nil || !model.DB.Migrator().HasTable(&Intent{}) {
+			return nil
+		}
+		var outstanding []Intent
+		if err := model.DB.Select("gateway").Where("gateway = ? AND reconciled = ?", os.Getenv("OPS_BILLING_KEY_ID"), false).Limit(1).Find(&outstanding).Error; err != nil {
+			return err
+		}
+		if len(outstanding) == 0 {
+			return nil
+		}
 	}
 	if ValidateAuthority == nil {
 		return ErrUnavailable
@@ -87,8 +98,10 @@ func Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err = client.DB.AutoMigrate(&Intent{}); err != nil {
-		return err
+	if Enabled() {
+		if err = model.PrepareOPSHoldSchema(client.DB); err != nil {
+			return err
+		}
 	}
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
@@ -266,6 +279,9 @@ func (c *Client) release(ctx context.Context, intent Intent) error {
 			}
 			return err
 		}
+		if current.Reconciled && current.Finalized && current.Resolution == "confirmed_no_charge" && current.TokenQuota == 0 {
+			return nil
+		}
 		if !current.CancelPending || current.Finalized {
 			return ErrUnavailable
 		}
@@ -289,7 +305,7 @@ func (c *Client) Recover(ctx context.Context) error {
 	// same row lock checked by dispatch. An already dispatched request never
 	// takes this path, however long the provider takes to finish.
 	var abandoned []Intent
-	if err := c.DB.WithContext(ctx).Where("gateway = ? AND cancel_pending = ? AND dispatched = ? AND finalized = ? AND lease_until <= ?", c.Transport.KeyID, false, false, false, time.Now().Unix()).Order("updated").Limit(10).Find(&abandoned).Error; err != nil {
+	if err := c.DB.WithContext(ctx).Where("gateway = ? AND cancel_pending = ? AND reconciled = ? AND dispatched = ? AND finalized = ? AND lease_until <= ?", c.Transport.KeyID, false, false, false, false, time.Now().Unix()).Order("updated").Limit(10).Find(&abandoned).Error; err != nil {
 		return err
 	}
 	for _, row := range abandoned {
@@ -298,7 +314,7 @@ func (c *Client) Recover(ctx context.Context) error {
 		}
 	}
 	var rows []Intent
-	if err := c.DB.WithContext(ctx).Where("gateway = ? AND cancel_pending = ? AND updated <= ?", c.Transport.KeyID, true, time.Now().Add(-3*time.Second).Unix()).Order("updated").Limit(50).Find(&rows).Error; err != nil {
+	if err := c.DB.WithContext(ctx).Where("gateway = ? AND cancel_pending = ? AND reconciled = ? AND updated <= ?", c.Transport.KeyID, true, false, time.Now().Add(-3*time.Second).Unix()).Order("updated").Limit(50).Find(&rows).Error; err != nil {
 		return err
 	}
 	for _, row := range rows {
@@ -318,6 +334,36 @@ func (c *Client) Recover(ctx context.Context) error {
 		return err
 	}
 	for _, row := range rows {
+		midjourneyTerminal := row.MidjourneyID == 0
+		if row.MidjourneyID > 0 && RecoverMidjourney != nil {
+			var task model.Midjourney
+			if err := c.DB.WithContext(ctx).Where("id = ? AND user_id = ?", row.MidjourneyID, row.User).First(&task).Error; err != nil {
+				return err
+			}
+			if task.OPSReservationGateway != row.Gateway || task.OPSReservationRequest != row.Request {
+				return ErrUnavailable
+			}
+			if err := RecoverMidjourney(ctx, &task); err != nil {
+				_ = c.DB.WithContext(ctx).Model(&Intent{}).Where("gateway = ? AND request = ?", row.Gateway, row.Request).Update("updated", time.Now().Unix()).Error
+				continue
+			}
+			if err := c.DB.WithContext(ctx).Where("gateway = ? AND request = ?", row.Gateway, row.Request).First(&row).Error; err != nil {
+				return err
+			}
+			// A submitted image can fail after its initial usage was settled.
+			// Keep checking its durable terminal state until a required refund
+			// has been delivered, including a crash after failure persistence.
+			midjourneyTerminal = task.Progress == "100%" && task.Status == "SUCCESS" || row.RefundPayload != "" && row.RefundDelivered
+		}
+		if row.UsagePayload != "" {
+			if err := c.DeliverUsage(ctx, row.Request); err != nil {
+				_ = c.DB.WithContext(ctx).Model(&Intent{}).Where("gateway = ? AND request = ?", row.Gateway, row.Request).Update("updated", time.Now().Unix()).Error
+				continue
+			}
+			if err := c.DB.WithContext(ctx).Where("gateway = ? AND request = ?", row.Gateway, row.Request).First(&row).Error; err != nil {
+				return err
+			}
+		}
 		if row.TaskID != "" && !row.Finalized {
 			var task model.Task
 			err := c.DB.WithContext(ctx).Where("task_id = ? AND user_id = ?", row.TaskID, row.User).First(&task).Error
@@ -352,7 +398,13 @@ func (c *Client) Recover(ctx context.Context) error {
 			return ErrUnavailable
 		}
 		if (receipt.Data.State == "settled" && row.Finalized) || (receipt.Data.State == "released" && row.TokenQuota == 0) {
-			if row.TaskID != "" {
+			if !midjourneyTerminal {
+				if err := c.DB.WithContext(ctx).Model(&Intent{}).Where("gateway = ? AND request = ?", row.Gateway, row.Request).Update("updated", time.Now().Unix()).Error; err != nil {
+					return err
+				}
+				continue
+			}
+			if row.TaskID != "" || row.MidjourneyID > 0 {
 				// Retain a compact task replay marker after the money hold closes.
 				if err := c.DB.WithContext(ctx).Model(&Intent{}).Where("gateway = ? AND request = ? AND finalized = ? AND cancel_pending = ?", row.Gateway, row.Request, true, false).Update("reconciled", true).Error; err != nil {
 					return err
@@ -366,6 +418,41 @@ func (c *Client) Recover(ctx context.Context) error {
 			if err := c.DB.WithContext(ctx).Model(&Intent{}).Where("gateway = ? AND request = ?", row.Gateway, row.Request).Update("updated", time.Now().Unix()).Error; err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// DeliverUsage replays exactly the committed event bytes. Lost acknowledgments
+// cannot create another debit/refund because request and batch IDs are stable.
+func (c *Client) DeliverUsage(ctx context.Context, request string) error {
+	var row Intent
+	if err := c.DB.WithContext(ctx).Where("gateway = ? AND request = ?", c.Transport.KeyID, request).First(&row).Error; err != nil {
+		return err
+	}
+	for _, item := range []struct {
+		body, column string
+		delivered    bool
+	}{{row.UsagePayload, "usage_delivered", row.UsageDelivered}, {row.RefundPayload, "refund_delivered", row.RefundDelivered}} {
+		if item.body == "" || item.delivered {
+			continue
+		}
+		raw, err := c.Transport.Post(ctx, "/api/v1/ingest/v1/usage-events", []byte(item.body), time.Now())
+		if err != nil {
+			return err
+		}
+		var receipt struct {
+			Data struct {
+				Accepted   int   `json:"accepted"`
+				Duplicates int   `json:"duplicates"`
+				Rejected   []any `json:"rejected"`
+			} `json:"data"`
+		}
+		if common.Unmarshal(raw, &receipt) != nil || receipt.Data.Accepted+receipt.Data.Duplicates != 1 || len(receipt.Data.Rejected) != 0 {
+			return ErrUnavailable
+		}
+		if err = c.DB.WithContext(ctx).Model(&Intent{}).Where("gateway = ? AND request = ?", row.Gateway, row.Request).Update(item.column, true).Error; err != nil {
+			return err
 		}
 	}
 	return nil

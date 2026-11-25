@@ -2,6 +2,7 @@ package openai
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -44,8 +45,18 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	}
 	// Retain the legacy baseline only for lanes outside the durable contract.
 	var lastUpstreamUsage *dto.RealtimeUsage
+	var stateMu sync.Mutex
+	var readers sync.WaitGroup
+	readers.Add(2)
 
 	gopool.Go(func() {
+		defer readers.Done()
+		locked := false
+		defer func() {
+			if locked {
+				stateMu.Unlock()
+			}
+		}()
 		defer func() {
 			if r := recover(); r != nil {
 				errChan <- fmt.Errorf("panic in client reader: %v", r)
@@ -65,6 +76,8 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					return
 				}
 
+				stateMu.Lock()
+				locked = true
 				realtimeEvent := &dto.RealtimeEvent{}
 				err = common.Unmarshal(message, realtimeEvent)
 				if err != nil {
@@ -86,11 +99,17 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					return
 				}
 				logger.LogInfo(c, fmt.Sprintf("type: %s, textToken: %d, audioToken: %d", realtimeEvent.Type, textToken, audioToken))
+				if err := service.PrepareOPSRealtimeInput(info, textToken, audioToken); err != nil {
+					errChan <- fmt.Errorf("realtime available balance insufficient")
+					return
+				}
 				localUsage.TotalTokens += textToken + audioToken
 				localUsage.InputTokens += textToken + audioToken
 				localUsage.InputTokenDetails.TextTokens += textToken
 				localUsage.InputTokenDetails.AudioTokens += audioToken
 
+				locked = false
+				stateMu.Unlock()
 				err = helper.WssString(c, targetConn, string(message))
 				if err != nil {
 					errChan <- fmt.Errorf("error writing to target: %v", err)
@@ -106,6 +125,13 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	})
 
 	gopool.Go(func() {
+		defer readers.Done()
+		locked := false
+		defer func() {
+			if locked {
+				stateMu.Unlock()
+			}
+		}()
 		defer func() {
 			if r := recover(); r != nil {
 				errChan <- fmt.Errorf("panic in target reader: %v", r)
@@ -124,6 +150,8 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					close(targetClosed)
 					return
 				}
+				stateMu.Lock()
+				locked = true
 				info.SetFirstResponseTime()
 				realtimeEvent := &dto.RealtimeEvent{}
 				err = common.Unmarshal(message, realtimeEvent)
@@ -215,6 +243,8 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					localUsage.OutputTokenDetails.AudioTokens += audioToken
 				}
 
+				locked = false
+				stateMu.Unlock()
 				err = helper.WssString(c, clientConn, string(message))
 				if err != nil {
 					errChan <- fmt.Errorf("error writing to client: %v", err)
@@ -238,6 +268,12 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 		//return service.OpenAIErrorWrapper(err, "realtime_error", http.StatusInternalServerError), nil
 		logger.LogError(c, "realtime error: "+err.Error())
 	case <-c.Done():
+	}
+	_ = clientConn.Close()
+	_ = targetConn.Close()
+	readers.Wait()
+	if service.OPSReservationActive(info) && (terminalErr != nil || localUsage.TotalTokens != 0) {
+		return types.NewError(fmt.Errorf("realtime usage requires durable reconciliation"), types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry()), nil
 	}
 	if service.CNDirectRealtimeRequested(info) {
 		if terminalErr != nil || localUsage.TotalTokens != 0 {
@@ -374,6 +410,10 @@ func preConsumeUsageWithCumulative(ctx *gin.Context, info *relaycommon.RelayInfo
 	// key makes retries idempotent.
 	quota, paidAllocated, err := service.PreWssConsumeQuotaWithResult(ctx, info, usage)
 	if err != nil {
+		if service.OPSReservationActive(info) {
+			// These are provider facts, even when growing the hold fails.
+			*totalUsage = nextTotal
+		}
 		return err
 	}
 	if info.AgencyPricing != nil {

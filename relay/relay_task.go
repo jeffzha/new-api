@@ -573,7 +573,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			_ = model.ResolveCNTaskSubmission(cnTaskKey, definitive)
 		}
 		responseBody, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode >= 400 && resp.StatusCode < 500 && !c.GetBool("ops_task_ambiguous") {
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusRequestTimeout && resp.StatusCode != http.StatusConflict && !c.GetBool("ops_task_ambiguous") {
 			c.Set("ops_task_rejected", true)
 		} else {
 			c.Set("ops_task_ambiguous", true)

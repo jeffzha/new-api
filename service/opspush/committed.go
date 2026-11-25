@@ -204,6 +204,9 @@ func (p *Pusher) deliveredFast(id int) bool {
 // each other's usage. Missing scope belongs to the product; malformed scope
 // never becomes a product event.
 func (p *Pusher) ownsLog(log *model.Log) bool {
+	if string(object(json.RawMessage(log.Other))["ops_reservation_outbox"]) == "true" {
+		return false
+	}
 	raw := object(json.RawMessage(log.Other))["billing_scope"]
 	if len(raw) == 0 {
 		return true

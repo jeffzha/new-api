@@ -100,6 +100,25 @@ func PreWssConsumeQuotaWithResult(ctx *gin.Context, relayInfo *relaycommon.Relay
 		// Delta-only callers have no durable response identity.
 		return 0, 0, model.ErrCNConflict
 	}
+	if session, ok := relayInfo.Billing.(*opsReservationSession); ok {
+		quota, clamp := calculateAudioQuota(QuotaInfo{
+			InputDetails:  TokenDetails{TextTokens: usage.InputTokenDetails.TextTokens, AudioTokens: usage.InputTokenDetails.AudioTokens},
+			OutputDetails: TokenDetails{TextTokens: usage.OutputTokenDetails.TextTokens, AudioTokens: usage.OutputTokenDetails.AudioTokens},
+			ModelName:     relayInfo.OriginModelName, UsePrice: relayInfo.PriceData.UsePrice,
+			ModelPrice: relayInfo.PriceData.ModelPrice, ModelRatio: relayInfo.PriceData.ModelRatio,
+			GroupRatio: relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+		})
+		noteQuotaClamp(relayInfo, clamp)
+		if quota > common.MaxQuota-relayInfo.RealtimePreConsumedQuota {
+			return 0, 0, errors.New("realtime reservation quota limit exceeded")
+		}
+		target := relayInfo.RealtimePreConsumedQuota + quota
+		if err := session.Reserve(max(target, session.GetPreConsumedQuota())); err != nil {
+			return 0, 0, err
+		}
+		relayInfo.RealtimePreConsumedQuota = target
+		return quota, 0, nil
+	}
 	if relayInfo.UsePrice {
 		// Price-based realtime requests do not reserve through the legacy
 		// wallet path, but managed users still need a durable segment fact.
@@ -296,7 +315,12 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 
-	if relayInfo.AgencyPricing != nil && relayInfo.RequestId != "" {
+	if session, ok := relayInfo.Billing.(*opsReservationSession); ok {
+		if err := session.Settle(quota); err != nil {
+			logger.LogError(ctx, "OPS realtime budget settlement requires reconciliation")
+		}
+		relayInfo.RealtimePreConsumedQuota = quota
+	} else if relayInfo.AgencyPricing != nil && relayInfo.RequestId != "" {
 		// PreWssConsumeQuota reserves each successful usage segment. The final
 		// cumulative frame contributes only its delta (or releases an excess).
 		delta := quota - relayInfo.RealtimePreConsumedQuota

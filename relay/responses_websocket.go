@@ -222,6 +222,8 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			state.closeAfter = true
 		}
 		if info != nil && billingPrepared {
+			info.LastError = apiErr
+			service.ObserveOPSReservationAttempt(info, apiErr)
 			apiErr = RefundFailedRequestBilling(c, info, apiErr)
 		}
 	}()
@@ -253,6 +255,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		payload, apiErr = buildResponsesWSCreatePayload(c, info, create.Request, create.Generate)
 		if apiErr != nil {
 			return apiErr
+		}
+		if err := service.BeginOPSReservationDispatch(info); err != nil {
+			return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
 		}
 		if err := s.writeTarget(websocket.TextMessage, payload); err != nil {
 			state.closeAfter = true
@@ -304,6 +309,10 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			if !s.setTarget(target) {
 				return types.NewError(context.Canceled, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			}
+			if err := service.BeginOPSReservationDispatch(info); err != nil {
+				state.closeAfter = true
+				return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
+			}
 			if err := s.writeTarget(websocket.TextMessage, payload); err != nil {
 				state.closeAfter = true
 				return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
@@ -350,6 +359,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			if incoming.err != nil {
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, incoming.err)
 				state.closeAfter = true
+				if service.OPSReservationActive(info) {
+					return types.NewError(incoming.err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
+				}
 				ConsumeResponsesQuota(c, info, accumulator.Finish())
 				return nil
 			}
@@ -375,7 +387,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 					if rejection.Error == nil {
 						rejection.Error = &types.OpenAIError{Message: event.Message, Type: "invalid_request_error", Code: event.Code}
 					}
-					return types.WithOpenAIError(*rejection.Error, rejection.Status, types.ErrOptionWithSkipRetry())
+					failure := types.NewOpenAIError(errors.New(rejection.Error.Message), types.ErrorCodeBadResponseStatusCode, rejection.Status, types.ErrOptionWithSkipRetry())
+					failure.RelayError = *rejection.Error
+					return failure
 				}
 				if strings.HasPrefix(event.Type, "response.") {
 					accepted = true
@@ -412,10 +426,16 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		case <-idle.C:
 			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, context.DeadlineExceeded)
 			state.closeAfter = true
+			if service.OPSReservationActive(info) {
+				return types.NewError(context.DeadlineExceeded, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
+			}
 			ConsumeResponsesQuota(c, info, accumulator.Finish())
 			return nil
 		case <-s.ctx.Done():
 			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, s.ctx.Err())
+			if service.OPSReservationActive(info) {
+				return types.NewError(s.ctx.Err(), types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
+			}
 			ConsumeResponsesQuota(c, info, accumulator.Finish())
 			return nil
 		}

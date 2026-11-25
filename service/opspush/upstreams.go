@@ -13,6 +13,13 @@ import (
 
 var ErrUpstreamPending = errors.New("upstream registration pending")
 
+// AttachUpstream applies the same execution-address contract to durable
+// reservation outboxes as to ordinary committed usage logs.
+func AttachUpstream(db *gorm.DB, log *model.Log, event map[string]any) error {
+	p := &Pusher{DB: db, Config: Config{URL: os.Getenv("OPS_PUSH_URL"), KeyID: os.Getenv("OPS_PUSH_KEY_ID"), Spec: SpecV11}}
+	return p.attachUpstream(log, event)
+}
+
 // Only captured execution addresses are used. Looking up today's channel would
 // incorrectly reattribute a completed request after its URL was edited.
 func (p *Pusher) attachUpstream(log *model.Log, event map[string]any) error {

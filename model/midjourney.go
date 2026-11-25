@@ -1,5 +1,13 @@
 package model
 
+import (
+	"errors"
+	"strconv"
+	"time"
+
+	"gorm.io/gorm"
+)
+
 type Midjourney struct {
 	Id          int    `json:"id"`
 	Code        int    `json:"code"`
@@ -24,12 +32,15 @@ type Midjourney struct {
 	Buttons     string `json:"buttons"`
 	Properties  string `json:"properties"`
 
-	TokenId              int                  `json:"-" gorm:"default:0"`
-	BillingChannelId     int                  `json:"-" gorm:"default:0"`
-	AgencyChargeID       string               `json:"-" gorm:"size:128"`
-	AgencyBillingEventID string               `json:"-" gorm:"size:128"`
-	CNBillingKey         string               `json:"-" gorm:"size:64;index"`
-	cnBilling            *CNMidjourneyBilling `gorm:"-"`
+	OPSReservationGateway string               `json:"-" gorm:"size:160"`
+	OPSReservationRequest string               `json:"-" gorm:"size:160"`
+	OPSReservationBaseURL string               `json:"-" gorm:"type:text"`
+	TokenId               int                  `json:"-" gorm:"default:0"`
+	BillingChannelId      int                  `json:"-" gorm:"default:0"`
+	AgencyChargeID        string               `json:"-" gorm:"size:128"`
+	AgencyBillingEventID  string               `json:"-" gorm:"size:128"`
+	CNBillingKey          string               `json:"-" gorm:"size:64;index"`
+	cnBilling             *CNMidjourneyBilling `gorm:"-"`
 }
 
 // TaskQueryParams 用于包含所有搜索条件的结构体，可以根据需求添加更多字段
@@ -166,6 +177,21 @@ func UpdateProgress(id int, progress string) error {
 }
 
 func (midjourney *Midjourney) Insert() error {
+	if midjourney.OPSReservationGateway != "" {
+		return DB.Transaction(func(tx *gorm.DB) error {
+			var intent OPSHoldIntent
+			if err := lockForUpdate(tx).Where("gateway = ? AND request = ?", midjourney.OPSReservationGateway, midjourney.OPSReservationRequest).First(&intent).Error; err != nil {
+				return err
+			}
+			if !intent.Dispatched || intent.CancelPending || intent.Finalized || intent.MidjourneyID != 0 || intent.User != strconv.Itoa(midjourney.UserId) || intent.TokenID != midjourney.TokenId {
+				return errors.New("OPS Midjourney insertion identity mismatch")
+			}
+			if err := tx.Create(midjourney).Error; err != nil {
+				return err
+			}
+			return tx.Model(&intent).Updates(map[string]any{"midjourney_id": midjourney.Id, "updated": time.Now().Unix()}).Error
+		})
+	}
 	if midjourney.CNBillingKey != "" {
 		return cnInsertMidjourney(midjourney)
 	}
@@ -175,6 +201,10 @@ func (midjourney *Midjourney) Insert() error {
 }
 
 func (midjourney *Midjourney) Update() error {
+	if midjourney.OPSReservationGateway != "" {
+		// Polling owns task state; the reservation transaction owns quota.
+		return DB.Model(midjourney).Select("*").Omit("quota").Updates(midjourney).Error
+	}
 	if midjourney.CNBillingKey != "" {
 		_, err := cnUpdateMidjourney(midjourney, nil)
 		return err
@@ -209,7 +239,11 @@ func (midjourney *Midjourney) UpdateWithStatus(fromStatus string) (bool, error) 
 	if midjourney.CNBillingKey != "" {
 		return cnUpdateMidjourney(midjourney, &fromStatus)
 	}
-	result := DB.Model(midjourney).Where("status = ?", fromStatus).Select("*").Updates(midjourney)
+	query := DB.Model(midjourney).Where("status = ?", fromStatus).Select("*")
+	if midjourney.OPSReservationGateway != "" {
+		query = query.Omit("quota")
+	}
+	result := query.Updates(midjourney)
 	if result.Error != nil {
 		return false, result.Error
 	}

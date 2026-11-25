@@ -59,7 +59,16 @@ func (c *Client) ResolveReviewed(ctx context.Context, request, decision, evidenc
 		if err := model.LockOPSHoldTx(tx).Where("gateway = ? AND request = ?", row.Gateway, request).First(&current).Error; err != nil {
 			return err
 		}
-		if current.User != row.User || current.Model != row.Model || current.Reconciled || (current.Finalized && (decision != "posted_charge" || current.TokenQuota != quota)) {
+		if current.User != row.User || current.Model != row.Model {
+			return ErrUnavailable
+		}
+		if current.Reconciled {
+			if current.Resolution == decision && current.ReviewEvidence == evidence && current.ReviewedBy == reviewer && current.TokenQuota == quota {
+				return nil
+			}
+			return ErrUnavailable
+		}
+		if current.Finalized && (decision != "posted_charge" || current.TokenQuota != quota) {
 			return ErrUnavailable
 		}
 		if current.Resolution != "" && (current.Resolution != decision || current.ReviewEvidence != evidence || current.ReviewedBy != reviewer) {

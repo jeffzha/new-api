@@ -1,18 +1,23 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
+	"github.com/QuantumNous/new-api/relay"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -20,6 +25,68 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestOPSReservationTaskFailureDoesNotRepeatUnknownWork(t *testing.T) {
+	for _, status := range []int{400, 408, 409, 502} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			setupGenericTaskTest(t)
+			require.NoError(t, model.DB.AutoMigrate(&model.Token{}))
+			require.NoError(t, model.PrepareOPSHoldSchema(model.DB))
+			key := model.Token{UserId: 7, Key: "reservation-failure-fixture", RemainQuota: 100, Status: common.TokenStatusEnabled, ExpiredTime: -1}
+			require.NoError(t, model.DB.Create(&key).Error)
+			var releases atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var in map[string]any
+				if err := common.DecodeJson(r.Body, &in); err != nil {
+					w.WriteHeader(400)
+					return
+				}
+				state := "reserved"
+				if in["operation"] == "release" {
+					releases.Add(1)
+					state = "released"
+				}
+				raw, _ := common.Marshal(map[string]any{"data": map[string]any{"requestId": in["requestId"], "state": state}})
+				_, _ = w.Write(raw)
+			}))
+			defer server.Close()
+			t.Setenv("OPS_BILLING_URL", server.URL)
+			t.Setenv("OPS_BILLING_KEY_ID", "fixture-gateway")
+			t.Setenv("OPS_BILLING_SECRET", "isolated-fixture-secret")
+			t.Setenv("OPS_WALLET_RESERVATIONS", "true")
+			t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+			c := taskSubmissionTestContext()
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{}`))
+			var channel model.Channel
+			require.NoError(t, model.DB.First(&channel, 1).Error)
+			info := &relaycommon.RelayInfo{UserId: 7, TokenId: key.Id, RequestId: "failure-fixture", OriginModelName: "sora-2", StartTime: time.Now(), TaskRelayInfo: &relaycommon.TaskRelayInfo{LockedChannel: &channel}}
+			require.Nil(t, service.PreConsumeBilling(c, 50, info))
+			calls := 0
+			_, failure := executeTaskSubmissionWith(c, info, func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *taskdto.TaskError) {
+				calls++
+				require.NoError(t, service.BeginOPSReservationDispatch(info))
+				if status == 400 {
+					c.Set("ops_task_rejected", true)
+				} else {
+					c.Set("ops_task_ambiguous", true)
+				}
+				err := service.TaskErrorWrapper(errors.New("controlled failure"), "provider_failure", status)
+				err.NoRetry = status == 400
+				return nil, err
+			})
+			require.NotNil(t, failure)
+			assert.Equal(t, 1, calls)
+			require.NoError(t, model.DB.First(&key, key.Id).Error)
+			if status == 400 {
+				assert.Equal(t, 100, key.RemainQuota)
+				assert.EqualValues(t, 1, releases.Load())
+			} else {
+				assert.Equal(t, 50, key.RemainQuota)
+				assert.Zero(t, releases.Load())
+			}
+		})
+	}
+}
 
 // The real task controller and provider adapter must retain a reservation at
 // HTTP acceptance. A successful provider submission is not financial success.

@@ -269,7 +269,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, relayInfo)
 
-		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+		if service.OPSReservationRequiresReconciliation(relayInfo) || !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 			break
 		}
 	}
@@ -715,6 +715,14 @@ func executeTaskSubmissionWith(
 		stage = "submit"
 		result, taskErr = submit(c, relayInfo)
 		attempt.FinishTask(taskErr)
+		if taskErr != nil && service.OPSReservationActive(relayInfo) {
+			code := types.ErrorCodeDoRequestFailed
+			if c.GetBool("ops_task_rejected") && !c.GetBool("ops_task_ambiguous") {
+				code = types.ErrorCodeBadResponseStatusCode
+			}
+			relayInfo.LastError = types.NewErrorWithStatusCode(errors.New(taskErr.Message), code, taskErr.StatusCode)
+			service.ObserveOPSReservationAttempt(relayInfo, relayInfo.LastError)
+		}
 		if requestErr := c.Request.Context().Err(); requestErr != nil && service.CNTaskBillingKey(relayInfo) == "" {
 			// A caller disconnect during submission must be reported as a
 			// cancellation, regardless of the adaptor's transport error.
@@ -736,6 +744,9 @@ func executeTaskSubmissionWith(
 				taskAPIError, relayInfo)
 		}
 		if c.GetBool("cn_task_attempted") {
+			break
+		}
+		if service.OPSReservationRequiresReconciliation(relayInfo) {
 			break
 		}
 		if c.GetString("ops_task_request") != "" {

@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/opsmonitor"
+	"github.com/QuantumNous/new-api/service/opsreserve"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
@@ -212,24 +213,35 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 		}
 	}
 
-	userQuota, err := model.GetUserQuota(info.UserId, false)
-	if err != nil {
-		return &dto.MidjourneyResponse{
-			Code:        4,
-			Description: err.Error(),
+	if !opsreserve.Enabled() {
+		userQuota, err := model.GetUserQuota(info.UserId, false)
+		if err != nil {
+			return &dto.MidjourneyResponse{
+				Code:        4,
+				Description: err.Error(),
+			}
 		}
-	}
 
-	if userQuota-priceData.Quota < 0 {
-		return &dto.MidjourneyResponse{
-			Code:        4,
-			Description: "quota_not_enough",
+		if userQuota-priceData.Quota < 0 {
+			return &dto.MidjourneyResponse{
+				Code:        4,
+				Description: "quota_not_enough",
+			}
 		}
 	}
+	if err := service.BeginOPSMidjourneyBilling(c, info, priceData.Quota); err != nil {
+		return service.MidjourneyErrorWrapper(constant.MjRequestError, "midjourney_billing_unavailable")
+	}
+	defer func() {
+		if info.Billing != nil {
+			info.Billing.Refund(c)
+		}
+	}()
 	requestURL := getMjRequestPath(c.Request.URL.String())
 	baseURL := c.GetString("base_url")
 	fullRequestURL := fmt.Sprintf("%s%s", baseURL, requestURL)
 	mjResp, _, err := service.DoMidjourneyHttpRequest(c, time.Second*60, fullRequestURL)
+	service.ObserveOPSMidjourneyResponse(info, mjResp.StatusCode, mjResp.Response.Code, err)
 	if err != nil {
 		return &mjResp.Response
 	}
@@ -529,22 +541,35 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		}
 	}
 
-	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
-	if err != nil {
-		return &dto.MidjourneyResponse{
-			Code:        4,
-			Description: err.Error(),
+	if !opsreserve.Enabled() {
+		userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
+		if err != nil {
+			return &dto.MidjourneyResponse{
+				Code:        4,
+				Description: err.Error(),
+			}
+		}
+
+		if consumeQuota && userQuota-priceData.Quota < 0 {
+			return &dto.MidjourneyResponse{
+				Code:        4,
+				Description: "quota_not_enough",
+			}
 		}
 	}
-
-	if consumeQuota && userQuota-priceData.Quota < 0 {
-		return &dto.MidjourneyResponse{
-			Code:        4,
-			Description: "quota_not_enough",
+	if consumeQuota {
+		if err := service.BeginOPSMidjourneyBilling(c, relayInfo, priceData.Quota); err != nil {
+			return service.MidjourneyErrorWrapper(constant.MjRequestError, "midjourney_billing_unavailable")
 		}
+		defer func() {
+			if relayInfo.Billing != nil {
+				relayInfo.Billing.Refund(c)
+			}
+		}()
 	}
 
 	midjResponseWithStatus, responseBody, err := service.DoMidjourneyHttpRequest(c, time.Second*60, fullRequestURL)
+	service.ObserveOPSMidjourneyResponse(relayInfo, midjResponseWithStatus.StatusCode, midjResponseWithStatus.Response.Code, err)
 	if err != nil {
 		return &midjResponseWithStatus.Response
 	}

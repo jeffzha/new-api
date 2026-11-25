@@ -55,15 +55,35 @@ func TestDurableReservationRecoveryAcrossDatabases(t *testing.T) {
 			t.Cleanup(func() { _ = pool.Close() })
 			common.SetMainDatabaseType(common.DatabaseType(kind))
 			// External DSNs must refer to this task's disposable database.
-			require.NoError(t, db.Migrator().DropTable(&Intent{}, &model.Token{}, &model.Task{}))
+			require.NoError(t, db.Migrator().DropTable(&Intent{}, &model.Token{}, &model.Task{}, &model.Midjourney{}))
 			require.NoError(t, db.AutoMigrate(&model.Token{}))
 			key := model.Token{UserId: 1, Key: "isolated-" + kind, Status: common.TokenStatusEnabled, RemainQuota: 1000, ExpiredTime: -1}
 			require.NoError(t, db.Create(&key).Error)
+			// Rehearse an upgrade from the released task schema and the first hold
+			// schema, including rows written before nullable outbox fields existed.
+			require.NoError(t, db.AutoMigrate(&model.Midjourney{}, &Intent{}))
+			for _, field := range []string{"OPSReservationGateway", "OPSReservationRequest", "OPSReservationBaseURL"} {
+				require.NoError(t, db.Migrator().DropColumn(&model.Midjourney{}, field))
+			}
+			for _, field := range []string{"MidjourneyID", "UsagePayload", "RefundPayload", "UsageDelivered", "RefundDelivered", "TokenRefunded"} {
+				require.NoError(t, db.Migrator().DropColumn(&Intent{}, field))
+			}
+			require.NoError(t, db.Table("midjourneys").Create(map[string]any{"user_id": 9, "mj_id": "existing-history", "quota": 17}).Error)
 			// Upgrade a released token schema, then repeat preparation for idempotency.
 			for range 2 {
-				require.NoError(t, db.AutoMigrate(&model.Token{}, &Intent{}))
+				require.NoError(t, db.AutoMigrate(&model.Token{}, &Intent{}, &model.Midjourney{}))
+				require.NoError(t, model.PrepareOPSHoldSchema(db))
 			}
 			assert.True(t, db.Migrator().HasIndex(&Intent{}, "idx_ops_hold_release"))
+			require.NoError(t, db.Migrator().DropIndex(&Intent{}, "idx_ops_hold_release"))
+			require.NoError(t, db.Exec("CREATE INDEX idx_ops_hold_release ON ops_wallet_hold_intents (gateway, updated)").Error)
+			require.ErrorContains(t, model.PrepareOPSHoldSchema(db), "definition conflict")
+			require.NoError(t, db.Migrator().DropIndex(&Intent{}, "idx_ops_hold_release"))
+			require.NoError(t, model.PrepareOPSHoldSchema(db))
+			var history model.Midjourney
+			require.NoError(t, db.Where("mj_id = ?", "existing-history").First(&history).Error)
+			assert.Equal(t, 17, history.Quota)
+			assert.Empty(t, history.OPSReservationGateway)
 			var version string
 			query := "SELECT version()"
 			if kind == "sqlite" {
@@ -73,8 +93,38 @@ func TestDurableReservationRecoveryAcrossDatabases(t *testing.T) {
 			t.Logf("%s", version)
 			var mu sync.Mutex
 			states := map[string]string{}
+			usageBodies := []string{}
+			usageSeen := map[string]bool{}
 			fault := false
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/ingest/v1/usage-events" {
+					var body struct {
+						Batch  string
+						Events []map[string]any
+					}
+					var raw map[string]any
+					if common.DecodeJson(r.Body, &raw) != nil {
+						w.WriteHeader(400)
+						return
+					}
+					body.Batch, _ = raw["batchId"].(string)
+					encoded, _ := common.Marshal(raw)
+					mu.Lock()
+					defer mu.Unlock()
+					usageBodies = append(usageBodies, string(encoded))
+					accepted, duplicates := 1, 0
+					if usageSeen[body.Batch] {
+						accepted, duplicates = 0, 1
+					}
+					usageSeen[body.Batch] = true
+					if fault {
+						w.WriteHeader(502)
+						return
+					}
+					receipt, _ := common.Marshal(map[string]any{"data": map[string]any{"accepted": accepted, "duplicates": duplicates, "rejected": []any{}}})
+					_, _ = w.Write(receipt)
+					return
+				}
 				var in struct {
 					Request   string `json:"requestId"`
 					Operation string `json:"operation"`
@@ -216,6 +266,52 @@ func TestDurableReservationRecoveryAcrossDatabases(t *testing.T) {
 				require.NoError(t, err)
 			}
 			check(60, 40)
+			// Legacy Midjourney settlement/refund is atomic with its durable
+			// usage outbox, even when OPS commits but its acknowledgment is lost.
+			require.NoError(t, c.Reserve(ctx, "mj-hold", 1, "mj_imagine", 50))
+			require.NoError(t, c.TokenBudget(ctx, "mj-hold", 1, key.Id, 50, false))
+			require.NoError(t, c.MarkDispatch(ctx, "mj-hold"))
+			mj := model.Midjourney{UserId: 1, MjId: "mj-upstream", Quota: 40, TokenId: key.Id, OPSReservationGateway: "gateway", OPSReservationRequest: "mj-hold"}
+			previousDB := model.DB
+			model.DB = db
+			t.Cleanup(func() { model.DB = previousDB })
+			require.NoError(t, mj.Insert())
+			var linked Intent
+			require.NoError(t, db.Where("request = ?", "mj-hold").First(&linked).Error)
+			assert.Equal(t, mj.Id, linked.MidjourneyID)
+			usage := `{"batchId":"mj-hold-usage","events":[{"requestId":"mj-hold"}]}`
+			for range 2 {
+				require.NoError(t, model.FinalizeOPSHoldMidjourney(ctx, db, &mj, usage, false))
+			}
+			check(20, 80)
+			mu.Lock()
+			fault = true
+			mu.Unlock()
+			require.Error(t, c.DeliverUsage(ctx, "mj-hold"))
+			mu.Lock()
+			fault = false
+			mu.Unlock()
+			require.NoError(t, c.DeliverUsage(ctx, "mj-hold"))
+			require.NoError(t, c.DeliverUsage(ctx, "mj-hold"))
+			mu.Lock()
+			assert.Len(t, usageBodies, 2)
+			assert.Equal(t, usageBodies[0], usageBodies[1])
+			mu.Unlock()
+			refund := `{"batchId":"mj-hold-refund","events":[{"requestId":"mj-hold-r1"}]}`
+			for range 2 {
+				require.NoError(t, model.FinalizeOPSHoldMidjourney(ctx, db, &mj, refund, true))
+			}
+			check(60, 40)
+			require.NoError(t, c.DeliverUsage(ctx, "mj-hold"))
+			// A stale poll result must never overwrite a completed key refund.
+			mj.Status, mj.Progress = "FAILURE", "100%"
+			require.NoError(t, mj.Update())
+			var afterRefund model.Midjourney
+			require.NoError(t, db.First(&afterRefund, mj.Id).Error)
+			assert.Zero(t, afterRefund.Quota)
+			wrong := mj
+			wrong.OPSReservationGateway = "other"
+			require.Error(t, model.FinalizeOPSHoldMidjourney(ctx, db, &wrong, refund, true))
 			_, err = model.FinalizeOPSHoldTask(ctx, db, &task, 41)
 			require.Error(t, err)
 			otherTask := task

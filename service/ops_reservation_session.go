@@ -27,6 +27,9 @@ type opsReservationSession struct {
 	reserved, actual           int
 	done, refunded, dispatched bool
 	uncertain                  bool
+	realtimeInputQuota         int
+	realtimeWindow             int
+	lastRenew                  time.Time
 }
 
 func newOPSReservationSession(c *gin.Context, info *relaycommon.RelayInfo, quota int) (relaycommon.BillingSettler, *types.NewAPIError) {
@@ -41,7 +44,7 @@ func newOPSReservationSession(c *gin.Context, info *relaycommon.RelayInfo, quota
 	if c != nil && c.Request != nil {
 		ctx = c.Request.Context()
 	}
-	s := &opsReservationSession{ctx: ctx, info: info, client: client}
+	s := &opsReservationSession{ctx: ctx, info: info, client: client, realtimeWindow: quota}
 	// Ask OPS to price the output limit too. Local quota estimates remain only
 	// a conservative floor, never the authority for the final debit.
 	var maxOutput uint
@@ -106,9 +109,10 @@ func (s *opsReservationSession) Reserve(target int) error {
 	if target < 0 || target > common.MaxQuota || s.done || s.refunded {
 		return opsreserve.ErrUnavailable
 	}
-	if target <= s.reserved && s.reserved > 0 {
+	if target <= s.reserved && s.reserved > 0 && time.Since(s.lastRenew) < time.Minute {
 		return nil
 	}
+	target = max(target, s.reserved)
 	if err := s.client.Reserve(s.ctx, s.info.RequestId, s.info.UserId, s.info.GetOriginModelName(), target, s.quote); err != nil {
 		return err
 	}
@@ -127,6 +131,7 @@ func (s *opsReservationSession) Reserve(target int) error {
 		}
 	}
 	s.reserved = target
+	s.lastRenew = time.Now()
 	s.info.FinalPreConsumedQuota = target
 	return nil
 }
@@ -217,4 +222,60 @@ func BeginOPSReservationDispatch(info *relaycommon.RelayInfo) error {
 		s.mu.Unlock()
 	}
 	return nil
+}
+
+// PrepareOPSRealtimeInput extends the session's hold before forwarding another
+// client input. This is a rolling estimate, not a maximum provider-cost promise.
+func PrepareOPSRealtimeInput(info *relaycommon.RelayInfo, text, audio int) error {
+	if info == nil {
+		return opsreserve.ErrUnavailable
+	}
+	s, ok := info.Billing.(*opsReservationSession)
+	if !ok {
+		return nil
+	}
+	if text < 0 || audio < 0 {
+		return opsreserve.ErrUnavailable
+	}
+	quota, clamp := calculateAudioQuota(QuotaInfo{InputDetails: TokenDetails{TextTokens: text, AudioTokens: audio}, ModelName: info.OriginModelName, ModelRatio: info.PriceData.ModelRatio, GroupRatio: info.PriceData.GroupRatioInfo.GroupRatio})
+	noteQuotaClamp(info, clamp)
+	s.mu.Lock()
+	previous, window, consumed := s.realtimeInputQuota, s.realtimeWindow, s.reserved
+	s.mu.Unlock()
+	if quota > common.MaxQuota-previous || window > common.MaxQuota-previous-quota {
+		return opsreserve.ErrUnavailable
+	}
+	target := max(consumed, previous+quota+window)
+	if err := s.Reserve(target); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.realtimeInputQuota = previous + quota
+	s.mu.Unlock()
+	return nil
+}
+
+// OPSReservationActive also recognizes in-flight sessions after admission is
+// disabled. Their holds still require the original settlement contract.
+func OPSReservationActive(info *relaycommon.RelayInfo) bool {
+	if info == nil {
+		return false
+	}
+	_, ok := info.Billing.(*opsReservationSession)
+	return ok
+}
+
+// OPSReservationRequiresReconciliation forbids another provider dispatch when
+// the previous attempt may already have created billable work.
+func OPSReservationRequiresReconciliation(info *relaycommon.RelayInfo) bool {
+	if info == nil {
+		return false
+	}
+	s, ok := info.Billing.(*opsReservationSession)
+	if !ok {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dispatched && s.uncertain
 }

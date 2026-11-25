@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"time"
 
@@ -13,26 +14,122 @@ import (
 // OPSHoldIntent couples the independent API-key budget to its remote money
 // reservation. Deferred tasks retain this row until terminal key settlement.
 type OPSHoldIntent struct {
-	Gateway        string `gorm:"primaryKey;size:160;index:idx_ops_hold_release,priority:1"`
-	Request        string `gorm:"primaryKey;size:160"`
-	User           string `gorm:"size:160;not null"`
-	Model          string `gorm:"size:300;not null"`
-	CancelPending  bool   `gorm:"not null;index:idx_ops_hold_release,priority:2"`
-	Dispatched     bool   `gorm:"not null"`
-	TokenID        int    `gorm:"not null"`
-	TokenQuota     int    `gorm:"not null"`
-	Finalized      bool   `gorm:"not null"`
-	Reconciled     bool   `gorm:"not null"`
-	TaskID         string `gorm:"size:160;not null"`
-	LeaseUntil     int64  `gorm:"not null"`
-	Updated        int64  `gorm:"not null;index:idx_ops_hold_release,priority:3"`
-	ReviewEvidence string `gorm:"size:500;not null"`
-	ReviewedBy     string `gorm:"size:160;not null"`
-	Resolution     string `gorm:"size:40;not null"`
-	ResolvedAt     int64  `gorm:"not null"`
+	Gateway         string `gorm:"primaryKey;size:160;index:idx_ops_hold_release,priority:1"`
+	Request         string `gorm:"primaryKey;size:160"`
+	User            string `gorm:"size:160;not null"`
+	Model           string `gorm:"size:300;not null"`
+	CancelPending   bool   `gorm:"not null;index:idx_ops_hold_release,priority:2"`
+	Dispatched      bool   `gorm:"not null"`
+	TokenID         int    `gorm:"not null"`
+	TokenQuota      int    `gorm:"not null"`
+	Finalized       bool   `gorm:"not null"`
+	Reconciled      bool   `gorm:"not null;index:idx_ops_hold_release,priority:3"`
+	TaskID          string `gorm:"size:160;not null"`
+	LeaseUntil      int64  `gorm:"not null"`
+	Updated         int64  `gorm:"not null;index:idx_ops_hold_release,priority:4"`
+	ReviewEvidence  string `gorm:"size:500;not null"`
+	ReviewedBy      string `gorm:"size:160;not null"`
+	Resolution      string `gorm:"size:40;not null"`
+	ResolvedAt      int64  `gorm:"not null"`
+	MidjourneyID    int
+	UsagePayload    string `gorm:"type:text"`
+	RefundPayload   string `gorm:"type:text"`
+	UsageDelivered  bool
+	RefundDelivered bool
+	TokenRefunded   bool
 }
 
 func (OPSHoldIntent) TableName() string { return "ops_wallet_hold_intents" }
+
+// PrepareOPSHoldSchema rejects conflicting recovery indexes instead of silently
+// accepting an existing index with the same name and a different definition.
+func PrepareOPSHoldSchema(db *gorm.DB) error {
+	if db.Migrator().HasIndex(&OPSHoldIntent{}, "idx_ops_hold_release") {
+		if err := ValidateOPSHoldIndex(db); err != nil {
+			return err
+		}
+	}
+	if err := db.AutoMigrate(&OPSHoldIntent{}); err != nil {
+		return err
+	}
+	return ValidateOPSHoldIndex(db)
+}
+
+func ValidateOPSHoldIndex(db *gorm.DB) error {
+	indexes, err := db.Migrator().GetIndexes(&OPSHoldIntent{})
+	if err != nil {
+		return err
+	}
+	for _, index := range indexes {
+		if index.Name() == "idx_ops_hold_release" {
+			unique, known := index.Unique()
+			if !known || unique || !slices.Equal(index.Columns(), []string{"gateway", "cancel_pending", "reconciled", "updated"}) {
+				return errors.New("OPS reservation recovery index definition conflict")
+			}
+			return nil
+		}
+	}
+	return errors.New("OPS reservation recovery index missing")
+}
+
+// FinalizeOPSHoldMidjourney commits the key adjustment and the immutable OPS
+// usage/refund outbox together. The remote wallet is changed only by OPS.
+func FinalizeOPSHoldMidjourney(ctx context.Context, db *gorm.DB, task *Midjourney, payload string, refund bool) error {
+	if task == nil || task.Id <= 0 || task.OPSReservationGateway == "" || task.OPSReservationRequest == "" || payload == "" {
+		return errors.New("invalid OPS Midjourney settlement")
+	}
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var intent OPSHoldIntent
+		if err := lockForUpdate(tx).Where("gateway = ? AND request = ?", task.OPSReservationGateway, task.OPSReservationRequest).First(&intent).Error; err != nil {
+			return err
+		}
+		var current Midjourney
+		if err := lockForUpdate(tx).Where("id = ? AND user_id = ?", task.Id, task.UserId).First(&current).Error; err != nil {
+			return err
+		}
+		if intent.User != strconv.Itoa(current.UserId) || intent.CancelPending || intent.MidjourneyID != 0 && intent.MidjourneyID != current.Id || current.OPSReservationGateway != intent.Gateway || current.OPSReservationRequest != intent.Request || current.TokenId != intent.TokenID {
+			return errors.New("OPS Midjourney settlement identity mismatch")
+		}
+		target := current.Quota
+		if refund {
+			target = 0
+		}
+		if target < 0 || target > common.MaxQuota {
+			return errors.New("invalid OPS Midjourney quota")
+		}
+		if refund && intent.RefundPayload != "" {
+			return nil
+		}
+		if !refund && intent.UsagePayload != "" {
+			if intent.UsagePayload != payload {
+				return errors.New("OPS Midjourney settlement conflict")
+			}
+			return nil
+		}
+		if refund && intent.UsagePayload == "" {
+			return errors.New("OPS Midjourney usage not finalized")
+		}
+		budget := target
+		if intent.TokenID == 0 {
+			budget = 0
+		}
+		if intent.TokenID > 0 {
+			if err := AdjustOPSHoldTokenTx(tx, current.UserId, intent.TokenID, intent.TokenQuota, budget, false); err != nil {
+				return err
+			}
+		}
+		updates := map[string]any{"token_quota": budget, "finalized": true, "midjourney_id": current.Id, "reconciled": false, "updated": time.Now().Unix()}
+		if refund {
+			updates["refund_payload"], updates["token_refunded"] = payload, true
+		} else {
+			updates["usage_payload"] = payload
+		}
+		if err := tx.Model(&OPSHoldIntent{}).Where("gateway = ? AND request = ?", intent.Gateway, intent.Request).Updates(updates).Error; err != nil {
+			return err
+		}
+		return tx.Model(&Midjourney{}).Where("id = ?", current.Id).Update("quota", target).Error
+	})
+}
 
 // FinalizeOPSHoldTask commits task quota, API-key budget and the replay marker
 // together. It never writes user money or releases an OPS wallet hold.
@@ -57,7 +154,11 @@ func FinalizeOPSHoldTask(ctx context.Context, db *gorm.DB, task *Task, target in
 		if current.Status == TaskStatusFailure {
 			target = 0
 		}
-		if intent.Finalized && intent.TokenQuota != target {
+		budget := target
+		if intent.TokenID == 0 {
+			budget = 0
+		}
+		if intent.Finalized && (intent.TokenQuota != budget || current.Quota != target) {
 			return errors.New("OPS task settlement conflict")
 		}
 		result.PreConsumedQuota = current.Quota
@@ -73,7 +174,7 @@ func FinalizeOPSHoldTask(ctx context.Context, db *gorm.DB, task *Task, target in
 		if err := tx.Model(&Task{}).Where("id = ?", current.ID).Update("quota", target).Error; err != nil {
 			return err
 		}
-		return tx.Model(&OPSHoldIntent{}).Where("gateway = ? AND request = ?", intent.Gateway, intent.Request).Updates(map[string]any{"token_quota": target, "finalized": true, "updated": time.Now().Unix()}).Error
+		return tx.Model(&OPSHoldIntent{}).Where("gateway = ? AND request = ?", intent.Gateway, intent.Request).Updates(map[string]any{"token_quota": budget, "finalized": true, "updated": time.Now().Unix()}).Error
 	})
 	if err != nil {
 		return nil, err

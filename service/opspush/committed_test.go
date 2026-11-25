@@ -20,8 +20,13 @@ import (
 )
 
 func TestFastUsageBudgetIsSharedAndCancellationPreservesOutbox(t *testing.T) {
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	var server *miniredis.Miniredis
+	address := os.Getenv("OPS_PUSH_TEST_REDIS_ADDR")
+	if address == "" {
+		server = miniredis.RunT(t)
+		address = server.Addr()
+	}
+	client := redis.NewClient(&redis.Options{Addr: address})
 	oldClient, oldEnabled := common.RDB, common.RedisEnabled
 	common.RDB, common.RedisEnabled = client, true
 	t.Cleanup(func() { client.Close(); common.RDB, common.RedisEnabled = oldClient, oldEnabled })
@@ -31,13 +36,18 @@ func TestFastUsageBudgetIsSharedAndCancellationPreservesOutbox(t *testing.T) {
 	require.NoError(t, db.Create(&log).Error)
 	sum := sha256.Sum256([]byte(p.Config.URL + "\n" + p.Config.KeyID))
 	key := "ops-fast-push:" + hex.EncodeToString(sum[:])
+	t.Cleanup(func() { _ = client.Del(context.Background(), key).Err() })
 	require.NoError(t, client.Set(context.Background(), key, "another-slot", time.Minute).Err())
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	require.Error(t, p.sendCommitted(ctx, []int{log.Id}))
 	require.Empty(t, stub.bodies, "an occupied fleet budget must not send")
 	require.False(t, p.deliveredFast(log.Id))
-	server.FastForward(time.Minute)
+	if server != nil {
+		server.FastForward(time.Minute)
+	} else {
+		require.NoError(t, client.Del(context.Background(), key).Err())
+	}
 	require.NoError(t, p.sendCommitted(context.Background(), []int{log.Id}))
 	require.Len(t, stub.bodies, 1)
 }

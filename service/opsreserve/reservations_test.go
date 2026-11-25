@@ -87,6 +87,7 @@ func TestDurableReservationRecoveryAcrossDatabases(t *testing.T) {
 				require.NoError(t, db.Migrator().DropTable(&opspush.State{}))
 				require.NoError(t, db.AutoMigrate(&opspush.State{}))
 				require.NoError(t, db.Create(&opspush.State{Id: 2, Owner: "prepared-successor", Cursor: 17, BatchId: "immutable-batch", BatchBody: "immutable-payload", BatchLast: 18}).Error)
+				require.Error(t, model.TransferOPSSettlementOwner(context.Background(), db, 2, "prepared-successor", "invalid owner"))
 				require.NoError(t, model.TransferOPSSettlementOwner(context.Background(), db, 2, "prepared-successor", "recovery-successor"))
 				require.Error(t, model.TransferOPSSettlementOwner(context.Background(), db, 2, "prepared-successor", "unexpected"))
 				var uploader opspush.State

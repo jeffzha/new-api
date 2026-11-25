@@ -3,9 +3,9 @@ package model
 import (
 	"context"
 	"errors"
+	"regexp"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -118,7 +118,7 @@ func ValidateOPSHoldIndex(db *gorm.DB) error {
 // uploader cursor and immutable pending batch are preserved. Its successor
 // must be a compatible reservation-aware binary, including during rollback.
 func TransferOPSSettlementOwner(ctx context.Context, db *gorm.DB, stateID int, previous, successor string) error {
-	if stateID < 1 || successor == "" || len(successor) > 64 || strings.TrimSpace(successor) != successor || previous == successor {
+	if stateID < 1 || !regexp.MustCompile(`^[A-Za-z0-9_.:@-]{1,64}$`).MatchString(successor) || previous == successor {
 		return errors.New("invalid settlement owner handoff")
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

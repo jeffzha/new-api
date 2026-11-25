@@ -117,6 +117,29 @@ func TestProductCommittedUsageDatabaseMatrix(t *testing.T) {
 				stub.responses = []func(http.ResponseWriter){reply(200, `{"data":{"accepted":1,"duplicates":0,"rejected":[]}}`)}
 				require.NoError(t, p.sendCommitted(context.Background(), []int{100}))
 				require.Equal(t, stub.bodies[0], stub.bodies[2])
+				// A prepared release owner takes over the existing cursor. Old
+				// processes remain alive but cannot resume scanning after restart
+				// or after an ordinary lease timeout. The next log is delivered once.
+				candidate := New(db, db, p.Config)
+				candidate.Config.ReleaseOwner, candidate.Owner = "release-test-owner", "release-test-owner"
+				candidate.Now = func() time.Time { return time.Unix(10200, 0) }
+				handoff := db.Model(&State{}).Where("id = ? AND owner = ?", 1, p.Owner).
+					Updates(map[string]any{"owner": candidate.Owner, "lease_until": int64(253402300799)})
+				require.NoError(t, handoff.Error)
+				require.EqualValues(t, 1, handoff.RowsAffected)
+				p.Now = candidate.Now
+				require.Positive(t, p.Step())
+				next := fresh
+				next.Id, next.RequestId = 104, "after-handoff"
+				require.NoError(t, db.Create(&next).Error)
+				require.Zero(t, candidate.Step())
+				require.Len(t, stub.bodies, 4)
+				require.Contains(t, stub.bodies[3], "after-handoff")
+				require.NotContains(t, stub.bodies[3], "fast-product")
+				require.NoError(t, db.First(&after, 1).Error)
+				require.EqualValues(t, 104, after.Cursor)
+				require.NoError(t, candidate.Migrate())
+				require.Positive(t, p.Step(), "restart does not transfer the release owner back")
 			})
 		}
 	}

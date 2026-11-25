@@ -87,8 +87,12 @@ const (
 
 type Config struct {
 	URL, KeyID, Secret string
-	Since              int64  // first run only: start after the last log older than this; 0 = start at the newest log
-	Spec               string // SpecV1 (default) or SpecV11
+	// ReleaseOwner is an exclusive, temporary scanner owner used while old
+	// binaries drain. Its long lease must be explicitly handed to a tested
+	// successor on failure; it never changes the stored cursor or batch.
+	ReleaseOwner string
+	Since        int64  // first run only: start after the last log older than this; 0 = start at the newest log
+	Spec         string // SpecV1 (default) or SpecV11
 }
 
 type Pusher struct {
@@ -107,7 +111,7 @@ func StartConfigured(ctx context.Context) error {
 	if base == "" {
 		return nil
 	}
-	config := Config{URL: base, KeyID: os.Getenv("OPS_PUSH_KEY_ID"), Secret: os.Getenv("OPS_PUSH_SECRET")}
+	config := Config{URL: base, KeyID: os.Getenv("OPS_PUSH_KEY_ID"), Secret: os.Getenv("OPS_PUSH_SECRET"), ReleaseOwner: os.Getenv("OPS_PUSH_RELEASE_OWNER")}
 	if err := config.validate(); err != nil {
 		return err
 	}
@@ -139,6 +143,9 @@ func StartConfigured(ctx context.Context) error {
 }
 
 func (c Config) validate() error {
+	if c.ReleaseOwner != "" && (!idPattern.MatchString(c.ReleaseOwner) || len(c.ReleaseOwner) > 64) {
+		return errors.New("OPS_PUSH_RELEASE_OWNER must be a unique owner of at most 64 characters")
+	}
 	parsed, err := url.Parse(c.URL)
 	loopback := parsed != nil && parsed.Scheme == "http" && (parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost")
 	if err != nil || (parsed.Scheme != "https" && !loopback) || parsed.Host == "" || parsed.User != nil ||
@@ -161,12 +168,16 @@ func New(db, logDB *gorm.DB, config Config) *Pusher {
 	if len(host) > 40 {
 		host = host[:40]
 	}
-	return &Pusher{
+	p := &Pusher{
 		DB: db, LogDB: logDB, Config: config, Owner: host + "-" + hex.EncodeToString(raw), Now: time.Now,
 		Client: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		}},
 	}
+	if config.ReleaseOwner != "" {
+		p.Owner = config.ReleaseOwner
+	}
+	return p
 }
 
 func (p *Pusher) Migrate() error {
@@ -224,8 +235,14 @@ func (p *Pusher) Step() time.Duration {
 
 func (p *Pusher) lease() (*State, bool) {
 	now := p.Now().Unix()
+	until := now + leaseSeconds
+	if p.Config.ReleaseOwner != "" {
+		// Old binaries only understand owner/lease_until. Keep them fenced
+		// throughout a rolling release, including a candidate restart.
+		until = 253402300799 // year 9999; only an explicit owner handoff unlocks it
+	}
 	err := p.DB.Model(&State{}).Where("id = 1 AND (owner = ? OR lease_until < ?)", p.Owner, now).
-		Updates(map[string]any{"owner": p.Owner, "lease_until": now + leaseSeconds}).Error
+		Updates(map[string]any{"owner": p.Owner, "lease_until": until}).Error
 	// Read the owner back: MySQL counts changed rows, so RowsAffected is 0 when the lease is renewed within a second.
 	var state State
 	if err != nil || p.DB.First(&state, 1).Error != nil || state.Owner != p.Owner {

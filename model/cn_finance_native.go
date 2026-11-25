@@ -48,33 +48,52 @@ func cnFundingValueLotTx(tx *gorm.DB, lotID string, initial int64, amount decima
 	err := lockForUpdate(tx).Where("lot_id = ?", lotID).First(&balance).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		balance = CNFundingValueLot{LotID: lotID, InitialQuota: initial, RemainingQuota: initial, RemainingValue: amount.String(), PaidValue: amount.String(), HeldValue: "0", RetiredValue: "0"}
-		var history []CNFinanceOutbox
-		if err = tx.Order("revision DESC").Find(&history).Error; err != nil {
+		var lastID int64
+		if err = tx.Model(&CNFinanceOutbox{}).Select("COALESCE(MAX(id), 0)").Scan(&lastID).Error; err != nil {
 			return nil, err
 		}
-		seen := map[string]bool{}
-		remaining := amount
-		for _, row := range history {
-			var fact CNFact
-			if err = common.UnmarshalJsonStr(row.Payload, &fact); err != nil {
+		type allocationHead struct {
+			revision int64
+			fact     CNFact
+		}
+		heads := map[string]allocationHead{}
+		// Outboxes are immutable. Scan the initial high-water mark by primary
+		// key, retaining only this lot's latest allocations. Loading all history
+		// at once can exhaust the HTTP process while repairing an old lot.
+		for after := int64(0); after < lastID; {
+			var history []CNFinanceOutbox
+			if err = tx.Select("id", "revision", "payload").Where("id > ? AND id <= ?", after, lastID).Order("id").Limit(256).Find(&history).Error; err != nil {
 				return nil, err
 			}
-			if fact.Kind != "funding_allocation" {
-				continue
+			if len(history) == 0 {
+				break
 			}
-			id, _ := fact.Funding["allocationId"].(string)
-			if fact.Funding["lotId"] != lotID || seen[id] {
-				continue
+			for _, row := range history {
+				after = row.ID
+				var fact CNFact
+				if err = common.UnmarshalJsonStr(row.Payload, &fact); err != nil {
+					return nil, err
+				}
+				if fact.Kind != "funding_allocation" || fact.Funding["lotId"] != lotID {
+					continue
+				}
+				id, _ := fact.Funding["allocationId"].(string)
+				if prior, ok := heads[id]; ok && prior.revision >= row.Revision {
+					continue
+				}
+				heads[id] = allocationHead{revision: row.Revision, fact: fact}
 			}
-			seen[id] = true
-			if fact.Cumulative.Quota == nil || fact.Cumulative.Money == nil {
+		}
+		remaining := amount
+		for id, head := range heads {
+			if head.fact.Cumulative.Quota == nil || head.fact.Cumulative.Money == nil {
 				return nil, ErrCNConflict
 			}
-			q, e := strconv.ParseInt(*fact.Cumulative.Quota, 10, 64)
+			q, e := strconv.ParseInt(*head.fact.Cumulative.Quota, 10, 64)
 			if e != nil {
 				return nil, e
 			}
-			value, e := cnDecimal(fact.Cumulative.Money.Gross)
+			value, e := cnDecimal(head.fact.Cumulative.Money.Gross)
 			if e != nil {
 				return nil, e
 			}

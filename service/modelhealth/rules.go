@@ -78,6 +78,8 @@ type Budget struct {
 
 type Template struct {
 	Selection
+	GeneratedProfile string         `json:"generated_profile,omitempty"`
+	DraftReason      string         `json:"draft_reason,omitempty"`
 	Binding          string         `json:"binding"`
 	Path             string         `json:"path"`
 	Credential       string         `json:"credential"`
@@ -121,7 +123,15 @@ func probeCredential(p Template, t Target) string {
 }
 
 func readTemplate(db *gorm.DB, t Target, endpoint string) (Template, error) {
-	return model.ReadModelHealthConfig(db, "p-"+hash(t.ID, endpoint)[:62], Template{})
+	p, err := model.ReadModelHealthConfig(db, "p-"+hash(t.ID, endpoint)[:62], Template{})
+	if err != nil || p.Credential != "" && p.GeneratedProfile == "" {
+		return p, err
+	}
+	policy, err := model.ReadModelHealthConfig(db, "auto-templates", AutoTemplatePolicy{})
+	if err != nil || !policy.Enabled {
+		return p, err
+	}
+	return builtinTemplate(t, endpoint, policy), nil
 }
 
 func validProviderPath(path string) bool {
@@ -173,7 +183,13 @@ func SaveTemplate(ctx context.Context, p Template) error {
 			}
 		}
 	}
-	if t.Type == "llm" && p.Body["max_tokens"] == nil && p.Body["max_completion_tokens"] == nil && p.Body["max_output_tokens"] == nil {
+	if config, ok := p.Body["generationConfig"].(map[string]any); ok {
+		n, valid := config["maxOutputTokens"].(float64)
+		if !valid || n < 1 || n > float64(p.MaxTokens) || n != float64(int(n)) {
+			return invalid("Output limit exceeds the approved token ceiling")
+		}
+	}
+	if t.Type == "llm" && p.Body["max_tokens"] == nil && p.Body["max_completion_tokens"] == nil && p.Body["max_output_tokens"] == nil && p.Body["generationConfig"] == nil {
 		return invalid("Text templates must specify an output token limit")
 	}
 	if t.Type == "embedding" && (p.Dimension < 1 || p.Dimension > 65536) {
@@ -202,6 +218,9 @@ func SaveTemplate(ctx context.Context, p Template) error {
 		return invalid("A media result contract is required")
 	}
 	p.Binding = hash(t.ID, t.base, t.Upstream, p.Endpoint)
+	// Saving a per-model override transfers ownership to the operator.
+	p.GeneratedProfile = ""
+	p.DraftReason = ""
 	return model.SaveModelHealthConfig(db, "p-"+hash(t.ID, p.Endpoint)[:62], "template", p)
 }
 
@@ -223,7 +242,7 @@ func safeTemplateValue(value any) bool {
 	case map[string]any:
 		for k, x := range v {
 			k = strings.ToLower(k)
-			if strings.Contains(k, "callback") || strings.Contains(k, "token") && !strings.HasPrefix(k, "max_") || strings.Contains(k, "secret") || strings.Contains(k, "authorization") || strings.Contains(k, "api_key") || !safeTemplateValue(x) {
+			if strings.Contains(k, "callback") || strings.Contains(k, "token") && !strings.HasPrefix(k, "max_") && k != "maxoutputtokens" || strings.Contains(k, "secret") || strings.Contains(k, "authorization") || strings.Contains(k, "api_key") || !safeTemplateValue(x) {
 				return false
 			}
 		}

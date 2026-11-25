@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AxiosError, AxiosHeaders } from 'axios'
 import { afterEach, expect, it } from 'vitest'
@@ -132,7 +132,7 @@ it('offers only whole-day paid media intervals while leaving text cadence editab
     data: {
       success: true,
       data: {
-        interval_seconds: config.params.scope === 'video' ? 604800 : 86400,
+        interval_seconds: config.params?.scope === 'video' ? 604800 : 86400,
         per_cycle: 1,
         per_day: 1,
       },
@@ -160,6 +160,71 @@ it('offers only whole-day paid media intervals while leaving text cadence editab
       await screen.findByRole('spinbutton', { name: 'Detection interval' })
     ).toHaveValue(1)
     expect(screen.getByLabelText('Cycle unit')).toBeEnabled()
+  } finally {
+    view.unmount()
+    client.clear()
+  }
+})
+
+it('saves automatic templates separately without enabling scheduled detection', async () => {
+  let saved: Record<string, unknown> | undefined
+  api.defaults.adapter = async (config) => {
+    const automatic = config.url?.endsWith('/auto-templates')
+    if (config.method === 'put') {
+      expect(automatic).toBe(true)
+      saved = JSON.parse(config.data as string)
+    }
+    return {
+      config,
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      data: {
+        success: true,
+        data: automatic
+          ? {
+              enabled: false,
+              credential: 'MODEL_HEALTH_KEY_PLATFORM',
+              token_id: 42,
+              max_micro: 10000,
+            }
+          : {
+              enabled: false,
+              interval_seconds: 86400,
+              per_cycle: 1,
+              per_day: 1,
+            },
+      },
+    }
+  }
+  const client = new QueryClient()
+  const user = userEvent.setup()
+  const view = render(
+    <QueryClientProvider client={client}>
+      <HealthRules />
+    </QueryClientProvider>
+  )
+  try {
+    const automatic = within(
+      await screen.findByRole('region', { name: 'Automatic probe templates' })
+    )
+    await user.click(
+      await automatic.findByRole('checkbox', {
+        name: 'Generate probe templates automatically',
+      })
+    )
+    await user.click(automatic.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(saved).toEqual({
+        enabled: true,
+        credential: 'MODEL_HEALTH_KEY_PLATFORM',
+        token_id: 42,
+        max_micro: 10000,
+      })
+    )
+    expect(
+      screen.getByRole('checkbox', { name: 'Enable scheduled detection' })
+    ).not.toBeChecked()
   } finally {
     view.unmount()
     client.clear()

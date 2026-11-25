@@ -180,6 +180,7 @@ func main() {
 		common.FatalLog("OPS wallet reservation initialization failed")
 		return
 	}
+	modelhealth.StartAutoTemplates(commandWorkerCtx)
 	service.StartBalanceReminderTask(commandWorkerCtx)
 	if err := opsupstreams.Start(commandWorkerCtx); err != nil {
 		common.FatalLog(err.Error())

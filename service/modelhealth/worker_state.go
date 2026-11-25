@@ -26,6 +26,7 @@ type workerState struct {
 	ExpiresAt   int64    `json:"expires_at"`
 	Credentials []string `json:"credentials"`
 	Receivers   []string `json:"receivers"`
+	BindingMode string   `json:"binding_mode,omitempty"`
 }
 
 func (s workerState) active(now int64) bool {
@@ -34,7 +35,20 @@ func (s workerState) active(now int64) bool {
 
 func (s workerState) hasProbe(p Template, t Target) bool {
 	u, err := checkedURL(t.base)
-	return err == nil && slices.Contains(s.Credentials, hash(p.Credential, "https://"+u.Host))
+	if err != nil {
+		return false
+	}
+	if s.BindingMode == "platform-target-v2" {
+		return slices.Contains(s.Credentials, probeTargetBinding(p, t, u.Host))
+	}
+	return slices.Contains(s.Credentials, hash(p.Credential, "https://"+u.Host))
+}
+
+// Gateway credentials authorize a particular template revision. An unsupported
+// model on the same upstream must neither block other models nor inherit their
+// readiness. Legacy direct-upstream bindings remain readable during rollout.
+func probeTargetBinding(p Template, t Target, host string) string {
+	return hash("platform-target-v2", p.Credential, "https://"+host, t.ID, p.Endpoint, templateRevision(p))
 }
 
 func receiverBinding(d Destination) string { return hash(d.ID, d.Kind, d.URLRef, d.SignRef) }
@@ -53,6 +67,7 @@ func WorkerAvailable(ctx context.Context) bool {
 func workerBindings(db *gorm.DB) (workerState, error) {
 	s := workerState{}
 	if os.Getenv("MODEL_HEALTH_GATEWAY_URL") != "" {
+		s.BindingMode = "platform-target-v2"
 		var err error
 		s.Credentials, err = gatewayProbeBindings(db)
 		if err != nil {

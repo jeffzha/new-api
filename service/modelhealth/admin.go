@@ -49,7 +49,15 @@ func GetPlan(ctx context.Context, s Selection) (Plan, error) {
 		blocked = append(blocked, "Channel monitoring is paused")
 	}
 	if !p.validFor(t, s.Endpoint) {
-		blocked = append(blocked, "Template required")
+		if p.Credential != "" && p.Binding == hash(t.ID, t.base, t.Upstream, s.Endpoint) && !p.MinimumConfirmed {
+			reason := p.DraftReason
+			if reason == "" {
+				reason = "Confirm the model-specific minimum request and cost ceiling"
+			}
+			blocked = append(blocked, reason)
+		} else {
+			blocked = append(blocked, "Template required")
+		}
 	} else {
 		if online && !worker.hasProbe(p, t) {
 			blocked = append(blocked, "Dedicated probe credential missing or not bound to this upstream")

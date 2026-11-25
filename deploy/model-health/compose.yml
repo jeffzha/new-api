@@ -1,0 +1,22 @@
+services:
+  model-health-worker:
+    image: ${MODEL_HEALTH_IMAGE:?Use a tested immutable Gateway image}
+    entrypoint: ["/new-api"]
+    command: ["model-health-worker"]
+    env_file: ${MODEL_HEALTH_ENV_FILE:?Use a protected, region-specific worker env file}
+    restart: unless-stopped
+    stop_grace_period: 70s
+    read_only: true
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [gateway-db]
+
+# Separate Compose project; never apply it to the serving Gateway slots.
+# The env file supplies SQL_DSN, probe/robot secrets and the same legacy
+# CHANNEL_TEST_ENABLED / CHANNEL_TEST_FREQUENCY overrides as the Gateway.
+# Disable all legacy embedded executors before starting this service.
+networks:
+  gateway-db:
+    external: true
+    name: ${MODEL_HEALTH_DB_NETWORK:?Select the same-region Gateway database network}

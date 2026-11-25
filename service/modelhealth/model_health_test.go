@@ -42,7 +42,7 @@ func healthDB(t *testing.T) *gorm.DB {
 	}
 	old := model.DB
 	model.DB = db
-	models := []any{&model.ModelHealthDelivery{}, &model.ModelHealthRun{}, &model.ModelHealthConfig{}, &model.OpsRequestEvent{}, &model.OpsUpstreamAttempt{}, &model.Task{}, &model.Channel{}}
+	models := []any{&model.ModelHealthDelivery{}, &model.ModelHealthRun{}, &model.ModelHealthConfig{}, &model.OpsRequestEvent{}, &model.OpsUpstreamAttempt{}, &model.Task{}, &model.Channel{}, &model.Option{}}
 	for _, m := range models {
 		if db.Migrator().HasTable(m) {
 			t.Fatal("model health integration tests require an empty, dedicated database")
@@ -58,7 +58,7 @@ func healthDB(t *testing.T) *gorm.DB {
 		sqlDB, _ := db.DB()
 		_ = sqlDB.Close()
 	})
-	if err := db.AutoMigrate(&model.OpsRequestEvent{}, &model.OpsUpstreamAttempt{}, &model.Task{}, &model.Channel{}); err != nil {
+	if err := db.AutoMigrate(models[3:]...); err != nil {
 		t.Fatal(err)
 	}
 	return db
@@ -74,7 +74,6 @@ func seedHealth(t *testing.T, db *gorm.DB, kind string) (Selection, Plan) {
 	ctx := context.Background()
 	t.Setenv("MODEL_HEALTH_KEY_FIXTURE", "test-monitoring-key")
 	t.Setenv("MODEL_HEALTH_KEY_FIXTURE_ORIGIN", origin)
-	t.Setenv("MODEL_HEALTH_WORKER_ENABLED", "true")
 	selection := Selection{Channel: channel.Id, Model: channel.Models, Endpoint: "openai"}
 	p := Template{Selection: selection, Path: "/v1/chat/completions", Credential: "MODEL_HEALTH_KEY_FIXTURE", Auth: "bearer", Body: map[string]any{"max_tokens": float64(4)}, MaxTokens: 20, MaxMicro: 100, TimeoutSeconds: 60, MinimumConfirmed: true}
 	if kind == "video" {
@@ -96,6 +95,11 @@ func seedHealth(t *testing.T, db *gorm.DB, kind string) (Selection, Plan) {
 	if err := SaveBudget(ctx, Budget{Run: 100, Day: 200, Month: 1000, Concurrent: 2, ChannelRPM: 2, ChannelTPM: 200}); err != nil {
 		t.Fatal(err)
 	}
+	bindings, err := workerBindings(db)
+	require.NoError(t, err)
+	owned, err := acquireWorker(ctx, "fixture", bindings)
+	require.NoError(t, err)
+	require.True(t, owned)
 	plan, err := GetPlan(ctx, selection)
 	if err != nil || !plan.Ready {
 		t.Fatalf("expected ready plan: %v", err)
@@ -210,13 +214,13 @@ func TestMediaSchedulePreflightAndNotificationPages(t *testing.T) {
 	require.Equal(t, img, pl.Rule)
 	_, err = Enqueue(ctx, sel, pl.Revision, pl.Template.MaxMicro)
 	require.NoError(t, err)
-	t.Setenv("MODEL_HEALTH_WORKER_ENABLED", "false")
+	require.NoError(t, releaseWorker(ctx, "fixture"))
 	t.Setenv("MODEL_HEALTH_KEY_FIXTURE", "")
 	pl, err = GetPlan(ctx, sel)
 	require.NoError(t, err)
 	require.False(t, pl.Ready)
 	require.Contains(t, pl.Blocked, "Monitoring worker is disabled")
-	require.Contains(t, pl.Blocked, "Dedicated probe credential missing or not bound to this upstream")
+	require.NotContains(t, pl.Blocked, "Dedicated probe credential missing or not bound to this upstream")
 	require.Contains(t, pl.Blocked, "A detection is already running or requires reconciliation")
 	for i := range 21 {
 		id := fmt.Sprintf("target-%02d", i)
@@ -309,10 +313,129 @@ func TestMediaScheduleWaitsFullIntervalAfterLastProbe(t *testing.T) {
 	require.NoError(t, query().Count(&queued).Error)
 	assert.Zero(t, queued)
 	require.NoError(t, db.Model(&model.ModelHealthRun{}).Where("target = ?", target.ID).Update("started_at", start-240).Error)
+	t.Setenv("CHANNEL_TEST_ENABLED", "")
+	t.Setenv("CHANNEL_TEST_FREQUENCY", "")
+	require.NoError(t, db.Create(&model.Option{Key: "monitor_setting.auto_test_channel_enabled", Value: "true"}).Error)
+	schedule(ctx, now)
+	require.NoError(t, query().Count(&queued).Error)
+	assert.Zero(t, queued, "the legacy all-channel scheduler covers this target")
+	require.NoError(t, db.Create(&model.Option{Key: "monitor_setting.channel_test_mode", Value: "auto_ban_only"}).Error)
 	schedule(ctx, now)
 	schedule(ctx, now)
 	require.NoError(t, query().Count(&queued).Error)
 	assert.EqualValues(t, 1, queued)
+}
+
+func TestStandaloneWorkerAdmissionAndHandoff(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	ctx := context.Background()
+	sel, plan := seedHealth(t, db, "text")
+	d := Destination{ID: "ops", Name: "Ops", Kind: "feishu", URLRef: "MODEL_HEALTH_HOOK_FIXTURE", Interval: 60, MaxPerIncident: 1, MaxPerDay: 2, EndHour: 24}
+	t.Setenv(d.URLRef, "https://open.feishu.cn/open-apis/bot/v2/hook/private-fixture")
+	require.NoError(t, SaveDestination(ctx, d))
+	bindings, err := workerBindings(db)
+	require.NoError(t, err)
+	owned, err := acquireWorker(ctx, "fixture", bindings)
+	require.NoError(t, err)
+	require.True(t, owned)
+
+	// Act as an HTTP slot without either of the executor's secrets.
+	t.Setenv("MODEL_HEALTH_KEY_FIXTURE", "")
+	t.Setenv(d.URLRef, "")
+	require.True(t, WorkerAvailable(ctx))
+	current, err := GetPlan(ctx, sel)
+	require.NoError(t, err)
+	require.True(t, current.Ready)
+	var row model.ModelHealthConfig
+	require.NoError(t, db.Take(&row, "id = ?", workerStateID).Error)
+	assert.NotContains(t, row.Value, "test-monitoring-key")
+	assert.NotContains(t, row.Value, "private-fixture")
+	assert.NotContains(t, row.Value, "provider.example")
+	require.NoError(t, TestDestination(ctx, d.ID))
+	run, err := Enqueue(ctx, sel, plan.Revision, plan.Template.MaxMicro)
+	require.NoError(t, err)
+	assert.Equal(t, "queued", run.State)
+
+	owned, err = acquireWorker(ctx, "standby", workerState{})
+	require.NoError(t, err)
+	assert.False(t, owned)
+	require.NoError(t, releaseWorker(ctx, "standby"))
+	assert.True(t, WorkerAvailable(ctx))
+
+	// An expired executor is offline even if the queue serializer is still used.
+	require.NoError(t, model.SaveModelHealthConfig(db, workerStateID, "internal", workerState{Owner: "fixture", ExpiresAt: time.Now().Unix() - 1}))
+	require.NoError(t, model.ModelHealthTransaction(ctx, func(*gorm.DB) error { return nil }))
+	assert.False(t, WorkerAvailable(ctx))
+	_, err = Enqueue(ctx, sel, plan.Revision, plan.Template.MaxMicro)
+	assert.EqualError(t, err, "Monitoring worker is disabled")
+	assert.EqualError(t, TestDestination(ctx, d.ID), "Monitoring worker is disabled")
+	owned, err = acquireWorker(ctx, "standby", workerState{})
+	require.NoError(t, err)
+	require.True(t, owned)
+	require.NoError(t, releaseWorker(ctx, "fixture"))
+	assert.True(t, WorkerAvailable(ctx))
+	current, err = GetPlan(ctx, sel)
+	require.NoError(t, err)
+	assert.Contains(t, current.Blocked, "Dedicated probe credential missing or not bound to this upstream")
+	assert.EqualError(t, TestDestination(ctx, d.ID), "Notification destination is not configured on the monitoring worker")
+	require.NoError(t, releaseWorker(ctx, "standby"))
+	assert.False(t, WorkerAvailable(ctx))
+}
+
+func TestStandaloneWorkerDrainsClaimedSubmission(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	ctx, cancel := context.WithCancel(context.Background())
+	sel, plan := seedHealth(t, db, "video")
+	run, err := Enqueue(ctx, sel, plan.Revision, plan.Template.MaxMicro)
+	require.NoError(t, err)
+	require.NoError(t, releaseWorker(ctx, "fixture"))
+
+	started, finish, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	allowResponse := sync.OnceFunc(func() { close(finish) })
+	var methods []string
+	client := &http.Client{Transport: mockProvider(func(r *http.Request) (*http.Response, error) {
+		methods = append(methods, r.Method)
+		if r.Method == http.MethodGet {
+			assert.Equal(t, "/v1/videos/task-fixture", r.URL.Path)
+			return reply(200, `{"status":"queued"}`), nil
+		}
+		close(started)
+		select {
+		case <-finish:
+			return reply(202, `{"id":"task-fixture"}`), nil
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		}
+	})}
+	go func() {
+		defer close(done)
+		runWorker(ctx, client, "active")
+	}()
+	t.Cleanup(func() {
+		cancel()
+		allowResponse()
+		<-done
+	})
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("worker did not reach the queued submission")
+	}
+	cancel()
+	allowResponse()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("worker did not drain and release its lease")
+	}
+	require.NoError(t, db.First(&run, run.ID).Error)
+	require.Equal(t, "polling", run.State)
+	require.Equal(t, "task-fixture", run.UpstreamTaskID)
+	assert.False(t, WorkerAvailable(context.Background()))
+	require.NoError(t, work(context.Background(), client, run.NextPoll))
+	assert.Equal(t, []string{http.MethodPost, http.MethodGet}, methods)
 }
 
 func TestOpsCostsUseOnlyConfirmedMatchingReceipts(t *testing.T) {

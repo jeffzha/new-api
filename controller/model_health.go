@@ -61,7 +61,7 @@ func RegisterModelHealthRoutes(r *gin.RouterGroup, guard func(authz.Permission) 
 	})
 	reads.GET("/capabilities", func(c *gin.Context) {
 		id, role := c.GetInt("id"), c.GetInt("role")
-		common.ApiSuccess(c, gin.H{"probe": authz.Can(id, role, authz.ModelHealthProbe), "rules": authz.Can(id, role, authz.ModelHealthRules), "notify": authz.Can(id, role, authz.ModelHealthNotify), "export": authz.Can(id, role, authz.ModelHealthExport), "worker": modelhealth.WorkerEnabled()})
+		common.ApiSuccess(c, gin.H{"probe": authz.Can(id, role, authz.ModelHealthProbe), "rules": authz.Can(id, role, authz.ModelHealthRules), "notify": authz.Can(id, role, authz.ModelHealthNotify), "export": authz.Can(id, role, authz.ModelHealthExport), "worker": modelhealth.WorkerAvailable(c.Request.Context())})
 	})
 	planHandler := func(c *gin.Context) {
 		data, err := modelhealth.GetPlan(c.Request.Context(), modelHealthSelection(c))

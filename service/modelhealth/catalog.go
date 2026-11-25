@@ -329,6 +329,10 @@ func List(ctx context.Context, f Filter) (Overview, error) {
 	if f.From < 1 || f.To > now+60 || f.From >= f.To || f.To-f.From > 30*86400 {
 		return result, invalid("Select a time range of at most 30 days")
 	}
+	worker, err := readWorkerState(db)
+	if err != nil {
+		return result, err
+	}
 	limit := min(50, max(1, f.Limit))
 	offset := (min(10000, max(1, f.Page)) - 1) * limit
 	for _, t := range rows {
@@ -340,7 +344,7 @@ func List(ctx context.Context, f Filter) (Overview, error) {
 			result.Total++
 			continue
 		}
-		row, err := describe(db, t, f.Endpoint, f.From, f.To, now)
+		row, err := describe(db, t, f.Endpoint, f.From, f.To, now, worker)
 		if err != nil {
 			return result, err
 		}
@@ -356,7 +360,7 @@ func List(ctx context.Context, f Filter) (Overview, error) {
 	return result, nil
 }
 
-func describe(db *gorm.DB, t Target, endpoint string, from, to, now int64) (Row, error) {
+func describe(db *gorm.DB, t Target, endpoint string, from, to, now int64, worker workerState) (Row, error) {
 	row := Row{Target: t, State: "waiting"}
 	for _, name := range t.Endpoints {
 		if endpoint != "" && name != endpoint {
@@ -376,7 +380,7 @@ func describe(db *gorm.DB, t Target, endpoint string, from, to, now int64) (Row,
 			return row, err
 		}
 		e.Configured = template.validFor(t, name)
-		if e.Configured && r.Enabled && !t.Paused && WorkerEnabled() && probeCredential(template, t) != "" {
+		if e.Configured && r.Enabled && !t.Paused && worker.active(now) && worker.hasProbe(template, t) {
 			e.NextAt = nextScheduled(t, name, r, now)
 			if paidMedia(t.Type) {
 				e.NextAt, err = mediaScheduledAt(db, t, name, r, now)

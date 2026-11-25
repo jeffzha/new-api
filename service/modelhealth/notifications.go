@@ -50,11 +50,6 @@ func SaveDestination(ctx context.Context, d Destination) error {
 	if d.SignRef != "" && (!destinationRef.MatchString(d.SignRef) || !strings.HasPrefix(d.SignRef, "MODEL_HEALTH_SIGN_") || d.Kind == "webhook") {
 		return invalid("Invalid robot signing reference")
 	}
-	if raw := os.Getenv(d.URLRef); raw != "" {
-		if err := validateDestination(raw, d.Kind); err != nil {
-			return err
-		}
-	}
 	return model.SaveModelHealthConfig(model.DB.WithContext(ctx), "notify-"+d.ID, "notification", d)
 }
 
@@ -94,6 +89,22 @@ func destinations(db *gorm.DB) ([]Destination, error) {
 
 func queueDelivery(ctx context.Context, d Destination, incident, event, payload string, now int64) error {
 	return model.ModelHealthTransaction(ctx, func(tx *gorm.DB) error {
+		if event == "test" {
+			s, err := readWorkerState(tx)
+			if err != nil {
+				return err
+			}
+			if !s.active(time.Now().Unix()) {
+				return invalid("Monitoring worker is disabled")
+			}
+			current, err := model.ReadModelHealthConfig(tx, "notify-"+d.ID, Destination{})
+			if err != nil {
+				return err
+			}
+			if current != d || !slices.Contains(s.Receivers, receiverBinding(d)) {
+				return invalid("Notification destination is not configured on the monitoring worker")
+			}
+		}
 		q := tx.Model(&model.ModelHealthDelivery{}).Where("target = ?", d.ID)
 		var count int64
 		if err := q.Session(&gorm.Session{}).Where("created_at >= ?", dayStart(now)).Count(&count).Error; err != nil {
@@ -126,18 +137,12 @@ func queueDelivery(ctx context.Context, d Destination, incident, event, payload 
 }
 
 func TestDestination(ctx context.Context, id string) error {
-	if !WorkerEnabled() {
-		return invalid("Monitoring worker is disabled")
-	}
 	d, err := model.ReadModelHealthConfig(model.DB.WithContext(ctx), "notify-"+id, Destination{})
 	if err != nil {
 		return err
 	}
 	if d.ID == "" {
 		return invalid("Notification destination not found")
-	}
-	if err := validateDestination(os.Getenv(d.URLRef), d.Kind); err != nil {
-		return err
 	}
 	now := time.Now().Unix()
 	return queueDelivery(ctx, d, hash("test", now/int64(d.Interval)), "test", "[Model Health] Test notification", now)

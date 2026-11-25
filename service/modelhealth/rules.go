@@ -349,8 +349,6 @@ func admissionBlocks(db *gorm.DB, t Target, endpoint string, p Template, r Rule,
 	return blocked, nil
 }
 
-func WorkerEnabled() bool { return os.Getenv("MODEL_HEALTH_WORKER_ENABLED") == "true" }
-
 func nextScheduled(t Target, endpoint string, r Rule, now int64) int64 {
 	step := int64(r.IntervalSeconds / r.PerCycle)
 	digest := sha256.Sum256([]byte(t.ID + endpoint))
@@ -383,9 +381,6 @@ func mediaScheduledAt(db *gorm.DB, t Target, endpoint string, r Rule, now int64)
 }
 
 func Enqueue(ctx context.Context, s Selection, binding string, confirmed int64) (model.ModelHealthRun, error) {
-	if !WorkerEnabled() {
-		return model.ModelHealthRun{}, invalid("Monitoring worker is disabled")
-	}
 	return admit(ctx, s, "manual", binding, confirmed, 0)
 }
 
@@ -402,7 +397,15 @@ func admit(ctx context.Context, s Selection, source, binding string, confirmed, 
 		if err != nil {
 			return err
 		}
-		if !p.validFor(t, s.Endpoint) || probeCredential(p, t) == "" {
+		if !p.validFor(t, s.Endpoint) {
+			return invalid("A validated template and dedicated credential are required")
+		}
+		now := time.Now().Unix()
+		if source == "manual" {
+			if err := checkProbeWorker(tx, p, t, now); err != nil {
+				return err
+			}
+		} else if probeCredential(p, t) == "" {
 			return invalid("A validated template and dedicated credential are required")
 		}
 		if source == "manual" && (binding != templateRevision(p) || confirmed != p.MaxMicro) {
@@ -412,7 +415,6 @@ func admit(ctx context.Context, s Selection, source, binding string, confirmed, 
 		if err != nil {
 			return err
 		}
-		now := time.Now().Unix()
 		if source == "scheduled" {
 			hour := time.Unix(now, 0).In(cst).Hour()
 			if !r.Enabled || hour < r.StartHour || hour >= r.EndHour {

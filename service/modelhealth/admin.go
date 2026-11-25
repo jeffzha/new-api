@@ -35,8 +35,14 @@ func GetPlan(ctx context.Context, s Selection) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	worker, err := readWorkerState(db)
+	if err != nil {
+		return Plan{}, err
+	}
+	now := time.Now().Unix()
+	online := worker.active(now)
 	blocked := []string{}
-	if !WorkerEnabled() {
+	if !online {
 		blocked = append(blocked, "Monitoring worker is disabled")
 	}
 	if t.Paused {
@@ -45,14 +51,14 @@ func GetPlan(ctx context.Context, s Selection) (Plan, error) {
 	if !p.validFor(t, s.Endpoint) {
 		blocked = append(blocked, "Template required")
 	} else {
-		if probeCredential(p, t) == "" {
+		if online && !worker.hasProbe(p, t) {
 			blocked = append(blocked, "Dedicated probe credential missing or not bound to this upstream")
 		}
 		b, err := readBudget(db)
 		if err != nil {
 			return Plan{}, err
 		}
-		limits, err := admissionBlocks(db, t, s.Endpoint, p, r, b, time.Now().Unix())
+		limits, err := admissionBlocks(db, t, s.Endpoint, p, r, b, now)
 		if err != nil {
 			return Plan{}, err
 		}

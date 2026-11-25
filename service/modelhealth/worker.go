@@ -3,8 +3,10 @@ package modelhealth
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"image"
 	_ "image/gif"
@@ -23,7 +25,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/abema/go-mp4"
 	"github.com/go-audio/wav"
 	"gorm.io/gorm"
@@ -94,45 +95,85 @@ type Trace struct {
 	Response        any               `json:"response,omitempty"`
 }
 
-func Start(ctx context.Context) {
-	if !WorkerEnabled() {
-		return
+// RunWorker is the standalone process entry point. It uses the existing
+// primary database for jobs, evidence, notifications and executor coordination.
+func RunWorker(ctx context.Context) error {
+	startup, cancel := context.WithTimeout(ctx, 10*time.Second)
+	db, err := model.OpenModelHealthDB(startup)
+	cancel()
+	if err != nil {
+		return err
 	}
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		var lastSchedule, lastNotify, lastRetention int64 = -1, -1, -1
-		for {
-			if ctx.Err() != nil {
-				return
-			}
+	pool, err := db.DB()
+	if err != nil {
+		return errors.New("model health worker database pool unavailable")
+	}
+	defer pool.Close()
+	model.DB = db
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return errors.New("model health worker could not allocate a lease identity")
+	}
+	runWorker(ctx, probeClient, hex.EncodeToString(nonce[:]))
+	return nil
+}
+
+func runWorker(ctx context.Context, client *http.Client, owner string) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := releaseWorker(cleanup, owner); err != nil {
+			common.SysError("model health executor lease release failed; it will expire")
+		}
+	}()
+	var lastSchedule, lastNotify, lastRetention int64 = -1, -1, -1
+	for ctx.Err() == nil {
+		// Finish any operation already in flight on shutdown. The cycle deadline
+		// is shorter than the executor lease and the queue's submission lease.
+		cycle, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerCycleLimit)
+		bindings, err := workerBindings(model.DB.WithContext(cycle))
+		owned := false
+		if err == nil && ctx.Err() == nil {
+			owned, err = acquireWorker(cycle, owner, bindings)
+		}
+		if err != nil {
+			common.SysError("model health executor lease could not be refreshed")
+		}
+		if owned && ctx.Err() == nil {
 			now := time.Now().Unix()
 			if now/15 != lastSchedule {
 				lastSchedule = now / 15
-				schedule(ctx, now)
+				schedule(cycle, now)
 			}
-			if now/60 != lastNotify {
+			if ctx.Err() == nil {
+				if err := work(cycle, client, time.Now().Unix()); err != nil && cycle.Err() == nil {
+					common.SysError("model health worker could not persist a detection step")
+				}
+			}
+			if ctx.Err() == nil && now/60 != lastNotify {
 				lastNotify = now / 60
-				notifyIncidents(ctx, now)
+				notifyIncidents(cycle, now)
 			}
-			if common.IsMasterNode && dayStart(now) != lastRetention {
-				if err := expireEvidence(model.DB.WithContext(ctx), now); err == nil {
+			if ctx.Err() == nil {
+				if err := deliver(cycle, client, time.Now().Unix()); err != nil && cycle.Err() == nil {
+					common.SysError("model health notification state could not be persisted")
+				}
+			}
+			if ctx.Err() == nil && dayStart(now) != lastRetention {
+				if err := expireEvidence(model.DB.WithContext(cycle), now); err == nil {
 					lastRetention = dayStart(now)
 				}
 			}
-			if err := work(ctx, probeClient, now); err != nil && ctx.Err() == nil {
-				common.SysError("model health worker could not persist a detection step")
-			}
-			if err := deliver(ctx, probeClient, time.Now().Unix()); err != nil && ctx.Err() == nil {
-				common.SysError("model health notification state could not be persisted")
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
 		}
-	}()
+		cancel()
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func expireEvidence(db *gorm.DB, now int64) error {
@@ -159,11 +200,10 @@ func expireEvidence(db *gorm.DB, now int64) error {
 func schedule(ctx context.Context, now int64) {
 	// The legacy all-channel job has its own billing and no per-model exclusion.
 	// Do not run another automatic generator while it covers enabled channels.
-	legacy := operation_setting.GetMonitorSetting()
-	if legacy.AutoTestChannelEnabled && legacy.ChannelTestMode == operation_setting.ChannelTestModeScheduledAll {
+	db := model.DB.WithContext(ctx)
+	if legacy, err := legacyScheduledAll(db); err != nil || legacy {
 		return
 	}
-	db := model.DB.WithContext(ctx)
 	b, err := model.ReadModelHealthConfig(db, "budget", Budget{})
 	if err != nil || b.Run == 0 {
 		return

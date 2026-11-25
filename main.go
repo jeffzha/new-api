@@ -63,6 +63,17 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "plugin" {
 		os.Exit(jsplugin.RunCLI(os.Args[2:], os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "model-health-worker" {
+		if len(os.Args) != 2 {
+			log.Fatal("usage: new-api model-health-worker (configure through environment variables)")
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := modelhealth.RunWorker(ctx); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	startTime := time.Now()
 	kitutil.SetLogging(common.SysLog, func(message string) {
 		logger.LogError(nil, message)
@@ -164,7 +175,6 @@ func main() {
 	}
 	commandWorkerCtx, stopAgencyCommandWorker := context.WithCancel(context.Background())
 	defer stopAgencyCommandWorker()
-	modelhealth.Start(commandWorkerCtx)
 	service.StartBalanceReminderTask(commandWorkerCtx)
 	if err := opsupstreams.Start(commandWorkerCtx); err != nil {
 		common.FatalLog(err.Error())

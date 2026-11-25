@@ -160,7 +160,7 @@ func TestNativeTaskOutboxRetainsAcceptedLedgerAfterRollback(t *testing.T) {
 	require.NoError(t, db.Create(&task).Error)
 	// A changed key must not redirect an accepted charge to another tenant.
 	pusher.Config.KeyID = "another-ledger"
-	state, leased := pusher.lease()
+	state, leased := pusher.lease(t.Context())
 	require.True(t, leased)
 	built, err := pusher.build(state)
 	require.NoError(t, err)
@@ -208,7 +208,7 @@ func TestAcceptedUsageRetainsLedgerAcrossDurableRetry(t *testing.T) {
 	log := model.Log{UserId: 1, Type: model.LogTypeConsume, ModelName: "m", RequestId: "accepted-wallet-request",
 		CreatedAt: p.Now().Unix() - 20, Quota: 12, Other: string(other)}
 	require.NoError(t, db.Create(&log).Error)
-	state, ok := p.lease()
+	state, ok := p.lease(t.Context())
 	require.True(t, ok)
 	p.Config.KeyID = "another-ledger"
 	_, err = p.build(state)
@@ -710,7 +710,7 @@ func TestBuildV11LinksTopupsAndKeepsV1Unchanged(t *testing.T) {
 		Other: `{"admin_info":{"payment_method":"wxpay"}}`}).Error)
 	require.NoError(t, db.Create(&model.Log{Type: model.LogTypeRefund, UserId: 1, ModelName: "m", CreatedAt: 500, Quota: 10, Other: `{"task_id":"task_1"}`}).Error)
 
-	state, leased := pusher.lease()
+	state, leased := pusher.lease(t.Context())
 	require.True(t, leased)
 	built, err := pusher.build(state)
 	require.NoError(t, err)

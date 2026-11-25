@@ -234,7 +234,7 @@ func (p *Pusher) Run(ctx context.Context) {
 
 // Step does one unit of work and returns how long to wait before the next.
 func (p *Pusher) Step() time.Duration {
-	state, ok := p.lease()
+	state, ok := p.lease(context.Background())
 	if !ok {
 		return leaseSeconds * time.Second / 2
 	}
@@ -287,12 +287,13 @@ func (p *Pusher) runFunding(ctx context.Context, hints <-chan struct{}) {
 			timer.Reset(idleWait)
 			continue
 		}
-		if _, owned := p.lease(); !owned {
+		delivery, cancel := context.WithTimeout(ctx, 8*time.Second)
+		if _, owned := p.lease(delivery); !owned {
+			cancel()
 			wakeups = nil
 			timer.Reset(leaseSeconds * time.Second / 2)
 			continue
 		}
-		delivery, cancel := context.WithTimeout(ctx, 8*time.Second)
 		err := opswallet.DeliverFunding(delivery, p.DB.WithContext(delivery), client)
 		cancel()
 		if ctx.Err() != nil {
@@ -319,13 +320,14 @@ func (p *Pusher) runFunding(ctx context.Context, hints <-chan struct{}) {
 	}
 }
 
-func (p *Pusher) lease() (*State, bool) {
+func (p *Pusher) lease(ctx context.Context) (*State, bool) {
 	now := p.Now().Unix()
-	err := p.DB.Model(&State{}).Where("id = ? AND (owner = ? OR lease_until < ?)", p.stateID(), p.Owner, now).
+	db := p.DB.WithContext(ctx)
+	err := db.Model(&State{}).Where("id = ? AND (owner = ? OR lease_until < ?)", p.stateID(), p.Owner, now).
 		Updates(map[string]any{"owner": p.Owner, "lease_until": now + leaseSeconds}).Error
 	// Read the owner back: MySQL counts changed rows, so RowsAffected is 0 when the lease is renewed within a second.
 	var state State
-	if err != nil || p.DB.First(&state, p.stateID()).Error != nil || state.Owner != p.Owner {
+	if err != nil || db.First(&state, p.stateID()).Error != nil || state.Owner != p.Owner {
 		return nil, false
 	}
 	return &state, true

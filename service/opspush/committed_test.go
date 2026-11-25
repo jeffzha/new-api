@@ -76,6 +76,15 @@ func TestProductCommittedUsageDatabaseMatrix(t *testing.T) {
 				require.NoError(t, db.Model(&State{}).Where("id = 1").Update("cursor", 98).Error)
 				var before State
 				require.NoError(t, db.First(&before, 1).Error)
+				cancelled, cancel := context.WithCancel(t.Context())
+				cancel()
+				_, owned := p.lease(cancelled)
+				require.False(t, owned, "cancelled funding work cannot acquire or renew a lease")
+				var unchanged State
+				require.NoError(t, db.First(&unchanged, 1).Error)
+				require.Equal(t, before, unchanged)
+				_, owned = p.lease(t.Context())
+				require.True(t, owned, "live work retains the shared fleet lease contract")
 				fresh := model.Log{Id: 100, UserId: 1, Type: model.LogTypeConsume, ModelName: "m", RequestId: "fast-product", CreatedAt: 10000, Quota: 12, Other: `{"usage_facts":{"input_images":2}}`}
 				require.NoError(t, db.Create(&fresh).Error)
 				for id, other := range map[int]string{101: `{"billing_scope":"project-uac"}`, 102: `{"billing_scope":42}`, 103: `{"is_task":true}`} {

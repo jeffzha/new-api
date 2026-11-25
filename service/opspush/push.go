@@ -241,8 +241,13 @@ func (p *Pusher) lease() (*State, bool) {
 		// throughout a rolling release, including a candidate restart.
 		until = 253402300799 // year 9999; only an explicit owner handoff unlocks it
 	}
-	err := p.DB.Model(&State{}).Where("id = 1 AND (owner = ? OR lease_until < ?)", p.Owner, now).
-		Updates(map[string]any{"owner": p.Owner, "lease_until": until}).Error
+	query := p.DB.Model(&State{}).Where("id = 1 AND (owner = ? OR lease_until < ?)", p.Owner, now)
+	if p.Config.ReleaseOwner != "" {
+		// A zero-traffic candidate must wait for the operator to drain and
+		// transfer the previous owner, even when its ordinary lease expires.
+		query = p.DB.Model(&State{}).Where("id = 1 AND owner = ?", p.Owner)
+	}
+	err := query.Updates(map[string]any{"owner": p.Owner, "lease_until": until}).Error
 	// Read the owner back: MySQL counts changed rows, so RowsAffected is 0 when the lease is renewed within a second.
 	var state State
 	if err != nil || p.DB.First(&state, 1).Error != nil || state.Owner != p.Owner {

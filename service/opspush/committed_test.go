@@ -133,6 +133,10 @@ func TestProductCommittedUsageDatabaseMatrix(t *testing.T) {
 				candidate := New(db, db, p.Config)
 				candidate.Config.ReleaseOwner, candidate.Owner = "release-test-owner", "release-test-owner"
 				candidate.Now = func() time.Time { return time.Unix(10200, 0) }
+				require.NoError(t, db.Model(&State{}).Where("id = 1").Update("lease_until", 0).Error)
+				require.Positive(t, candidate.Step(), "staging cannot take over an expired ordinary lease")
+				require.NoError(t, db.First(&after, 1).Error)
+				require.Equal(t, p.Owner, after.Owner)
 				handoff := db.Model(&State{}).Where("id = ? AND owner = ?", 1, p.Owner).
 					Updates(map[string]any{"owner": candidate.Owner, "lease_until": int64(253402300799)})
 				require.NoError(t, handoff.Error)

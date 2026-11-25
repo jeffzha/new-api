@@ -22,6 +22,10 @@ func DeliverFunding(ctx context.Context, db *gorm.DB, client *opsclient.Client) 
 	if client == nil {
 		return errors.New("OPS funding client missing")
 	}
+	// The worker deadline bounds the whole delivery, including connection-pool
+	// waits and the local acknowledgement transaction after OPS accepts it.
+	// An interrupted acknowledgement leaves the original batch for safe replay.
+	db = db.WithContext(ctx)
 	rows, err := model.ReadOPSWalletFunding(db, 50)
 	if err != nil {
 		return err

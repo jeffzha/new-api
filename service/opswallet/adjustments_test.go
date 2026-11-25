@@ -7,6 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +19,8 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -143,6 +148,125 @@ func TestFundingDeliveryRetainsEventsUntilCompleteAcknowledgement(t *testing.T) 
 	completedCalls := calls
 	require.NoError(t, DeliverFunding(context.Background(), db, client))
 	assert.Equal(t, completedCalls, calls, "delivered events must not be sent again")
+}
+
+type fundingTransport func(*http.Request) (*http.Response, error)
+
+func (f fundingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+// Cancellation anywhere in a delivery must retain the entire committed batch,
+// including when OPS accepted it before the local acknowledgement failed.
+func TestFundingDeliveryCancellationAcrossDialects(t *testing.T) {
+	t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+	t.Setenv("OPS_WALLET_PROFILE", "product")
+	t.Setenv("OPS_WALLET_FUNDING_ENABLED", "true")
+	t.Setenv("OPS_PUSH_URL", "https://ops.example.invalid")
+	t.Setenv("OPS_PUSH_KEY_ID", "funding-cancellation")
+	t.Setenv("OPS_INGEST_BUDGET_ENABLED", "false")
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			var driver gorm.Dialector
+			if dialect == "sqlite" {
+				driver = sqlite.Open(filepath.Join(t.TempDir(), "funding.db"))
+			} else {
+				dsn := os.Getenv("OPS_WALLET_TEST_" + strings.ToUpper(dialect) + "_DSN")
+				if os.Getenv("OPS_WALLET_RUN_EXTERNAL_DB_TESTS") != "1" || dsn == "" {
+					t.Skip("isolated external database not configured")
+				}
+				if dialect == "mysql" {
+					driver = mysql.Open(dsn)
+				} else {
+					driver = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+				}
+			}
+			db, err := gorm.Open(driver, &gorm.Config{})
+			require.NoError(t, err)
+			if dialect == "sqlite" {
+				var version string
+				require.NoError(t, db.Raw("SELECT sqlite_version()").Scan(&version).Error)
+				t.Logf("SQLite %s", version)
+			}
+			pool, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = pool.Close() })
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.OPSWalletEvent{}))
+			user := model.User{Username: "cancel-funding", AffCode: "cancel-funding", Quota: 123}
+			require.NoError(t, db.Create(&user).Error)
+			for _, stage := range []string{"read", "after acceptance", "during acknowledgement"} {
+				t.Run(stage, func(t *testing.T) {
+					require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+						for _, source := range []string{"first", "second"} {
+							if err := model.QueueOPSWalletFundingTx(tx, int64(user.Id), 100, "gift", "checkin", stage+source, nil); err != nil {
+								return err
+							}
+						}
+						return nil
+					}))
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					updates, calls := 0, 0
+					var original []byte
+					if stage == "read" {
+						cancel()
+					}
+					if stage == "during acknowledgement" {
+						require.NoError(t, db.Callback().Update().After("gorm:update").Register("test:cancel-funding-ack", func(tx *gorm.DB) {
+							if tx.Statement.Table == "ops_wallet_events" && tx.Error == nil && tx.RowsAffected == 1 {
+								updates++
+								if updates == 1 {
+									cancel()
+								}
+							}
+						}))
+						t.Cleanup(func() { _ = db.Callback().Update().Remove("test:cancel-funding-ack") })
+					}
+					client := opsclient.New("https://ops.example.invalid", "funding-cancellation", "synthetic-secret", time.Second)
+					client.HTTP.Transport = fundingTransport(func(request *http.Request) (*http.Response, error) {
+						calls++
+						body, err := io.ReadAll(request.Body)
+						require.NoError(t, err)
+						accepted, duplicates := 0, 2
+						if original == nil {
+							original = body
+							accepted, duplicates = 2, 0
+						} else {
+							assert.Equal(t, original, body, "recovery must preserve both event IDs and batch bytes")
+						}
+						if stage == "after acceptance" && calls == 1 {
+							cancel()
+						}
+						receipt := fmt.Sprintf(`{"data":{"accepted":%d,"duplicates":%d,"rejected":[]}}`, accepted, duplicates)
+						return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(receipt))}, nil
+					})
+					err = DeliverFunding(ctx, db, client)
+					require.ErrorIs(t, err, context.Canceled)
+					if stage == "read" {
+						assert.Zero(t, calls, "cancelled database reads must not send funding")
+					} else {
+						assert.Equal(t, 1, calls)
+					}
+					if stage == "during acknowledgement" {
+						assert.Equal(t, 1, updates)
+					}
+					rows, err := model.ReadOPSWalletFunding(db, 50)
+					require.NoError(t, err)
+					assert.Len(t, rows, 2, "partial local acknowledgement must roll back")
+					require.NoError(t, DeliverFunding(t.Context(), db, client))
+					rows, err = model.ReadOPSWalletFunding(db, 50)
+					require.NoError(t, err)
+					assert.Empty(t, rows)
+					finishedCalls := calls
+					require.NoError(t, DeliverFunding(t.Context(), db, client))
+					assert.Equal(t, finishedCalls, calls)
+					var current model.User
+					require.NoError(t, db.First(&current, user.Id).Error)
+					assert.Equal(t, 123, current.Quota, "delivery cannot mutate the Gateway wallet")
+				})
+			}
+		})
+	}
 }
 
 func TestAdjustmentRejectsDifferentReceiptAndDefiniteFailures(t *testing.T) {

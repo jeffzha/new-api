@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/opsauthority"
+	"github.com/QuantumNous/new-api/pkg/opsnotify"
 	"gorm.io/gorm"
 )
 
@@ -114,6 +115,9 @@ func RefundOPSMidjourney(task *Midjourney, modelName string) (int, error) {
 	}
 	*task = current
 	task.Quota = 0
+	if refunded > 0 {
+		opsnotify.FundingCommitted()
+	}
 	if refunded > 0 && token.Id > 0 && common.RedisEnabled {
 		// The transaction already restored the budget. A cache miss may have
 		// loaded that committed value before this post-commit step; adding the

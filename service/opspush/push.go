@@ -99,20 +99,15 @@ type Config struct {
 }
 
 type Pusher struct {
-	DB, LogDB       *gorm.DB
-	Config          Config
-	Client          *http.Client
-	Owner           string
-	Now             func() time.Time
-	lastTaskBatch   bool
-	taskScanAfter   int64
-	fastMu          sync.Mutex
-	fastDelivered   map[int]time.Time
-	nextFunding     time.Time
-	fundingAttempts int
-	fundingMu       sync.Mutex
-	fundingBusy     bool
-	fundingContext  context.Context
+	DB, LogDB     *gorm.DB
+	Config        Config
+	Client        *http.Client
+	Owner         string
+	Now           func() time.Time
+	lastTaskBatch bool
+	taskScanAfter int64
+	fastMu        sync.Mutex
+	fastDelivered map[int]time.Time
 }
 
 // StartConfigured starts the pusher when OPS_PUSH_URL is set.
@@ -158,6 +153,9 @@ func StartConfigured(ctx context.Context) error {
 	}
 	go pusher.Run(ctx)
 	go pusher.runCommitted(ctx, opsnotify.Committed())
+	if opsauthority.FinancialOutboxEnabled() {
+		go pusher.runFunding(ctx, opsnotify.Funding())
+	}
 	common.SysLog("Ops push enabled (" + config.Spec + "): " + base + pushPath)
 	return nil
 }
@@ -221,9 +219,6 @@ func (p *Pusher) stateID() int {
 }
 
 func (p *Pusher) Run(ctx context.Context) {
-	p.fundingMu.Lock()
-	p.fundingContext = ctx
-	p.fundingMu.Unlock()
 	for {
 		if ctx.Err() != nil {
 			return
@@ -243,7 +238,6 @@ func (p *Pusher) Step() time.Duration {
 	if !ok {
 		return leaseSeconds * time.Second / 2
 	}
-	p.startFundingDelivery()
 	if state.BatchId == "" {
 		built, err := p.build(state)
 		if err != nil {
@@ -260,45 +254,69 @@ func (p *Pusher) Step() time.Duration {
 	return p.send(state)
 }
 
-// Only the fleet lease holder starts a bounded funding delivery. Its remote
-// timeout must never block the usage scanner or share its retry state. Lease
-// takeover can overlap a sender; immutable event IDs make that replay safe.
-func (p *Pusher) startFundingDelivery() {
-	if !opsauthority.FinancialOutboxEnabled() {
-		return
-	}
-	p.fundingMu.Lock()
-	parent := p.fundingContext
-	if parent == nil {
-		parent = context.Background()
-	}
-	if parent.Err() != nil || p.fundingBusy || p.Now().Before(p.nextFunding) {
-		p.fundingMu.Unlock()
-		return
-	}
-	p.fundingBusy = true
-	p.fundingMu.Unlock()
-	go func() {
-		ctx, cancel := context.WithTimeout(parent, 8*time.Second)
-		defer cancel()
-		err := opswallet.DeliverFunding(ctx, p.DB, opsclient.New(p.Config.URL, p.Config.KeyID, p.Config.Secret, 8*time.Second))
-		p.fundingMu.Lock()
-		defer p.fundingMu.Unlock()
-		p.fundingBusy = false
+// One funding worker is independent of usage scan errors and backoff. Only the
+// fleet lease holder sends; hints cannot bypass retry delays or ingest budgets.
+// No business transaction, payment callback or model request waits for HTTP.
+func (p *Pusher) runFunding(ctx context.Context, hints <-chan struct{}) {
+	client := &opsclient.Client{BaseURL: strings.TrimRight(p.Config.URL, "/"), KeyID: p.Config.KeyID, Secret: p.Config.Secret, HTTP: p.Client}
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	wakeups := hints
+	var notBefore time.Time
+	attempts := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, open := <-wakeups:
+			if !open {
+				hints = nil
+			}
+		case <-timer.C:
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		if delay := time.Until(notBefore); delay > 0 {
+			wakeups = nil
+			timer.Reset(delay)
+			continue
+		}
+		if !opsauthority.FinancialOutboxEnabled() {
+			wakeups = nil
+			timer.Reset(idleWait)
+			continue
+		}
+		if _, owned := p.lease(); !owned {
+			wakeups = nil
+			timer.Reset(leaseSeconds * time.Second / 2)
+			continue
+		}
+		delivery, cancel := context.WithTimeout(ctx, 8*time.Second)
+		err := opswallet.DeliverFunding(delivery, p.DB.WithContext(delivery), client)
+		cancel()
+		if ctx.Err() != nil {
+			return
+		}
 		wait := idleWait
+		wakeups = hints
 		if err != nil {
-			p.fundingAttempts++
-			wait = backoff(p.fundingAttempts, 0)
+			attempts++
+			wait = backoff(attempts, 0)
 			var remote *opsclient.ReadError
 			if errors.As(err, &remote) {
-				wait = backoff(p.fundingAttempts, remote.RetryAfter)
+				wait = backoff(attempts, remote.RetryAfter)
 			}
+			notBefore = time.Now().Add(wait)
+			wakeups = nil
 			common.SysError("Ops funding acknowledgement unavailable; immutable events retained")
 		} else {
-			p.fundingAttempts = 0
+			attempts = 0
+			// Coalesce bursts instead of one SQL/HTTP send per callback.
+			notBefore = time.Now().Add(250 * time.Millisecond)
 		}
-		p.nextFunding = p.Now().Add(wait)
-	}()
+		timer.Reset(wait)
+	}
 }
 
 func (p *Pusher) lease() (*State, bool) {

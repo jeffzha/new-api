@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/opsauthority"
+	"github.com/QuantumNous/new-api/pkg/opsnotify"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -110,8 +111,18 @@ func TestOPSFundingBusinessOperationsAcrossDialects(t *testing.T) {
 			// transaction; it cannot consume the code without a durable event.
 			unclaimed := Redemption{Key: common.GetUUID(), Quota: 100, Status: common.RedemptionCodeStatusEnabled}
 			require.NoError(t, db.Create(&unclaimed).Error)
+			select {
+			case <-opsnotify.Funding():
+			default:
+				t.Fatal("committed business credits did not wake funding delivery")
+			}
 			_, err = Redeem(unclaimed.Key, 2147483647)
 			require.Error(t, err)
+			select {
+			case <-opsnotify.Funding():
+				t.Fatal("rolled-back redemption woke funding delivery")
+			default:
+			}
 			var storedCode Redemption
 			require.NoError(t, db.First(&storedCode, unclaimed.Id).Error)
 			assert.Equal(t, common.RedemptionCodeStatusEnabled, storedCode.Status)
@@ -193,9 +204,18 @@ func TestOPSFundingBusinessOperationsAcrossDialects(t *testing.T) {
 			task := Midjourney{UserId: user.Id, MjId: "funding-refund-" + suffix, Quota: 100, TokenId: token.Id, ChannelId: channel.Id, BillingSource: "ops", OPSWalletBinding: string(rawBinding)}
 			require.NoError(t, db.Create(&task).Error)
 			stale := task
+			select {
+			case <-opsnotify.Funding():
+			default:
+			}
 			refunded, err := RefundOPSMidjourney(&task, "mj_imagine")
 			require.Error(t, err, "missing original request rolls back the complete transaction")
 			assert.Zero(t, refunded)
+			select {
+			case <-opsnotify.Funding():
+				t.Fatal("rolled-back refund woke funding delivery")
+			default:
+			}
 			require.NoError(t, db.First(&token, token.Id).Error)
 			assert.Equal(t, 900, token.RemainQuota)
 			require.NoError(t, db.First(&task, task.Id).Error)
@@ -206,9 +226,19 @@ func TestOPSFundingBusinessOperationsAcrossDialects(t *testing.T) {
 			refunded, err = RefundOPSMidjourney(&task, "mj_imagine")
 			require.NoError(t, err)
 			assert.Equal(t, 100, refunded)
+			select {
+			case <-opsnotify.Funding():
+			default:
+				t.Fatal("committed refund did not wake funding delivery")
+			}
 			refunded, err = RefundOPSMidjourney(&stale, "mj_imagine")
 			require.NoError(t, err)
 			assert.Zero(t, refunded, "a second poller uses the persisted refund marker")
+			select {
+			case <-opsnotify.Funding():
+				t.Fatal("an already refunded task woke funding delivery again")
+			default:
+			}
 			require.NoError(t, db.First(&token, token.Id).Error)
 			assert.Equal(t, 1000, token.RemainQuota)
 			assert.Zero(t, token.UsedQuota)

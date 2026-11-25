@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -20,6 +21,115 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+type fundingRoundTrip func(*http.Request) (*http.Response, error)
+
+func (f fundingRoundTrip) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestFundingWakeRetainsRetryFloorAndImmutableEvent(t *testing.T) {
+	t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+	t.Setenv("OPS_WALLET_PROFILE", "product")
+	t.Setenv("OPS_WALLET_FUNDING_ENABLED", "true")
+	t.Setenv("OPS_PUSH_URL", "https://ops.example.invalid")
+	t.Setenv("OPS_PUSH_KEY_ID", "funding-wake")
+	t.Setenv("OPS_INGEST_BUDGET_ENABLED", "false")
+	synctest.Test(t, func(t *testing.T) {
+		db, err := gorm.Open(sqlite.Open("file:funding-wake?mode=memory&cache=shared"), &gorm.Config{})
+		require.NoError(t, err)
+		pool, err := db.DB()
+		require.NoError(t, err)
+		defer pool.Close()
+		pool.SetMaxOpenConns(1)
+		require.NoError(t, db.AutoMigrate(&model.User{}, &model.Log{}))
+		require.NoError(t, model.PrepareOPSWalletFundingSchema(t.Context(), db))
+		user := model.User{Username: "funding-wake", AffCode: "funding-wake"}
+		require.NoError(t, db.Create(&user).Error)
+		pusher := New(db, db, Config{URL: "https://ops.example.invalid", KeyID: "funding-wake", Secret: "synthetic-funding-secret"})
+		require.NoError(t, pusher.Migrate())
+		var bodies []string
+		pusher.Client.Transport = fundingRoundTrip(func(request *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(request.Body)
+			require.NoError(t, err)
+			bodies = append(bodies, string(body))
+			status, response := http.StatusOK, `{"data":{"accepted":1,"duplicates":0,"rejected":[]}}`
+			header := make(http.Header)
+			if len(bodies) == 1 {
+				status, response = http.StatusTooManyRequests, `{}`
+				header.Set("Retry-After", "10")
+			}
+			return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(response))}, nil
+		})
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		hints := make(chan struct{}, 1)
+		stopped := make(chan struct{})
+		go func() {
+			defer close(stopped)
+			pusher.runFunding(ctx, hints)
+		}()
+		synctest.Wait() // Empty startup scan is idle; no funding HTTP.
+		require.Empty(t, bodies)
+		require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+			return model.QueueOPSWalletFundingTx(tx, int64(user.Id), 100, "gift", "checkin", "wake-first", nil)
+		}))
+		hints <- struct{}{}
+		time.Sleep(250 * time.Millisecond)
+		synctest.Wait()
+		require.Len(t, bodies, 1, "post-commit wake does not wait for the idle scan")
+		hints <- struct{}{}
+		synctest.Wait()
+		time.Sleep(10*time.Second - time.Nanosecond)
+		synctest.Wait()
+		require.Len(t, bodies, 1, "a new hint cannot bypass Retry-After")
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		require.Len(t, bodies, 2)
+		assert.Equal(t, bodies[0], bodies[1], "retry carries the original event and batch identity")
+		rows, err := model.ReadOPSWalletFunding(db, 50)
+		require.NoError(t, err)
+		assert.Empty(t, rows)
+		// No hint: periodic scanning recovers a committed event after hint loss.
+		require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+			return model.QueueOPSWalletFundingTx(tx, int64(user.Id), 100, "gift", "checkin", "wake-lost", nil)
+		}))
+		time.Sleep(idleWait)
+		synctest.Wait()
+		require.Len(t, bodies, 3)
+		rows, err = model.ReadOPSWalletFunding(db, 50)
+		require.NoError(t, err)
+		assert.Empty(t, rows)
+		// Another slot shares the state row: it must not send while the current
+		// owner is live, and must recover the backlog after that lease expires.
+		standby := New(db, db, pusher.Config)
+		standby.Client = pusher.Client
+		standbyCtx, stopStandby := context.WithCancel(t.Context())
+		defer stopStandby()
+		standbyDone := make(chan struct{})
+		go func() {
+			defer close(standbyDone)
+			standby.runFunding(standbyCtx, nil)
+		}()
+		synctest.Wait()
+		require.Len(t, bodies, 3, "standby cannot spend the active slot's send budget")
+		cancel()
+		synctest.Wait()
+		<-stopped
+		require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+			return model.QueueOPSWalletFundingTx(tx, int64(user.Id), 100, "gift", "checkin", "wake-takeover", nil)
+		}))
+		time.Sleep(2 * time.Minute)
+		synctest.Wait()
+		require.Len(t, bodies, 4, "standby recovers pending funding after lease expiration")
+		rows, err = model.ReadOPSWalletFunding(db, 50)
+		require.NoError(t, err)
+		assert.Empty(t, rows)
+		stopStandby()
+		synctest.Wait()
+		<-standbyDone
+	})
+}
 
 func TestNativeTaskOutboxRetainsAcceptedLedgerAfterRollback(t *testing.T) {
 	t.Setenv("OPS_WALLET_AUTHORITY", "gateway")
@@ -135,6 +245,8 @@ func TestSlowFundingDoesNotBlockUsageOrSpendItsRetryState(t *testing.T) {
 	t.Setenv("OPS_WALLET_FUNDING_ENABLED", "true")
 	t.Setenv("OPS_PROJECT_SCOPE", "funding-independent")
 	started, release := make(chan struct{}), make(chan struct{})
+	ctx, cancel := context.WithCancel(t.Context())
+	stopped := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -153,11 +265,12 @@ func TestSlowFundingDoesNotBlockUsageOrSpendItsRetryState(t *testing.T) {
 	t.Cleanup(server.Close)
 	t.Cleanup(func() {
 		close(release)
-		require.Eventually(t, func() bool {
-			pusher.fundingMu.Lock()
-			defer pusher.fundingMu.Unlock()
-			return !pusher.fundingBusy
-		}, 3*time.Second, time.Millisecond)
+		cancel()
+		select {
+		case <-stopped:
+		case <-time.After(3 * time.Second):
+			t.Error("funding worker did not stop")
+		}
 	})
 	// Hold only the funding HTTP response; usage must still advance durably.
 	pusher.Config.URL = server.URL
@@ -166,7 +279,10 @@ func TestSlowFundingDoesNotBlockUsageOrSpendItsRetryState(t *testing.T) {
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		return model.QueueOPSWalletFundingTx(tx, int64(user.Id), 100, "gift", "checkin", "independent", nil)
 	}))
-	pusher.startFundingDelivery()
+	go func() {
+		defer close(stopped)
+		pusher.runFunding(ctx, nil)
+	}()
 	select {
 	case <-started:
 	case <-time.After(3 * time.Second):
@@ -214,26 +330,27 @@ func TestFundingShutdownRetainsUnacknowledgedEvents(t *testing.T) {
 	}))
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
-	pusher.fundingContext, pusher.Config.URL = ctx, server.URL
-	pusher.startFundingDelivery()
+	pusher.Config.URL = server.URL
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		pusher.runFunding(ctx, nil)
+	}()
 	select {
 	case <-started:
 	case <-time.After(3 * time.Second):
 		t.Fatal("funding request did not start")
 	}
 	cancel()
-	require.Eventually(t, func() bool {
-		pusher.fundingMu.Lock()
-		defer pusher.fundingMu.Unlock()
-		return !pusher.fundingBusy
-	}, 3*time.Second, time.Millisecond)
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancelled funding worker did not stop")
+	}
 	rows, err := model.ReadOPSWalletFunding(db, 100)
 	require.NoError(t, err)
 	assert.Len(t, rows, 1, "shutdown cannot acknowledge an unconfirmed credit")
-	pusher.startFundingDelivery()
-	pusher.fundingMu.Lock()
-	defer pusher.fundingMu.Unlock()
-	assert.False(t, pusher.fundingBusy, "shutdown cannot launch a replacement sender")
+	pusher.runFunding(ctx, nil) // A cancelled context cannot launch a replacement sender.
 }
 
 // Spec 3.6 test vectors.

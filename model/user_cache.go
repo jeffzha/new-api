@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/opsnotify"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	"github.com/gin-gonic/gin"
@@ -163,6 +164,7 @@ func cacheDecrUserQuota(userId int, delta int64) error {
 // 缓存过期前不可用；缓存未命中无需处理，下次读取会从已提交的数据库余额水合。
 func syncCreditUserQuotaCache(userId int, quota int, operation string, owner string) {
 	if owner == "ops_funding" {
+		opsnotify.FundingCommitted()
 		return
 	}
 	if quota <= 0 {

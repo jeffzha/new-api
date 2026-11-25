@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/pkg/opsauthority"
+	"github.com/QuantumNous/new-api/pkg/opsnotify"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
 )
@@ -163,6 +164,9 @@ func (user *User) recordRegistrationFunding() {
 	fields := map[string]any{"wallet_event_owner": facts.Owner}
 	if facts.Owner == "ops" {
 		fields["wallet_event_owner"] = "ops_funding"
+		if facts.NewUserQuota > 0 || facts.InviteeQuota > 0 {
+			opsnotify.FundingCommitted()
+		}
 	}
 	// A replay may add another audit row in a separate log database. Its OPS
 	// mirror uses the same business ID and frozen payload, never log-row IDs.

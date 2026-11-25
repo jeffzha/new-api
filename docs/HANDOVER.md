@@ -20,6 +20,7 @@
 - 资金事件保留支付凭据、币种和实付金额，实付金额不从充值额度反推。提交前和发送前共同验证币种、非负金额、最多六位小数、金额上限及 CNY 一致性；重试保留原始业务事实，不使用新的汇率重估，人工补单仍是赠送资金。OPS 当前只消费契约中的 moneyCny，扩展凭据不代表 OPS 已实现完整资金来源/佣金账。
 - 注册事务保存不可由客户端提交/资料更新覆盖的 registration_funding 快照，冻结注册/被邀请赠额、邀请人奖励、资金归属、OPS 账本绑定及审计换算。账户、OAuth 绑定、赠额事件和原邀请奖励同事务提交；提交后回调只读取已提交事实记审计，不因运行开关/赠额配置/用户名变化重发钱。旧账户不补发赠额，Agency 邀请注册保持独立零赠额路径；原本本地管理的 durable 用户仍通过现有非实付资金 lot/ledger 入账，未改变其期初语义。邀请人奖励仍为本地 AffQuota，不能据此声称已迁至 OPS。
 - 注册审计重复写入分离日志库时，以固定业务 ID 和冻结负载镜像到 OPS；同批重复合并，负载冲突保留待核查。只对具有服务端注册赠额标记的审计去重，不把同前缀的普通模型请求当成赠额。
+- 资金提交唤醒：支付/人工补单、兑换、签到、注册赠额和 Midjourney 退款成功提交后发有界合并提示；独立 funding worker 不再依附用量扫描的失败退避。单 worker 复用 HTTP 客户端、8 秒有界发送、成功突发合并 250ms，保留 3 秒补漏、租约、共享 ingest 预算和 Retry-After；发送失败不确认事件。提示不携带金额、不直接记账，不能视为 OPS 已完成入账。
 - 页面余额优先显示 OPS 状态，不把缺失金额显示成免费/零余额；累计消费、历史金额、奖励和授信等仍有本地来源，尚未满足“所有金额展示由 OPS 提供”。没有完成本轮浏览器验收。
 
 ### 尚未完成、阻止产品钱包启用的条件
@@ -35,6 +36,7 @@
 ### 已实际执行的隔离检查
 
 - 后续资金归属补强：五种支付渠道及人工补单将事务决定的 owner 持久化到既有换算快照，兑换/签到也将本次事务 owner 传到审计与缓存；提交后不再按当时开关猜测归属。OPS 已接收的充值在开关关闭后不会再增加本地缓存；本地已提交充值在开关打开后仍同步本地缓存，历史未知归属只失效缓存。重复人工补单不再生成 user=0 的日志；Creem 人工补单快照保留原人工额度换算，不改变既有补单金额。
+- 资金 worker 的最终受影响包测试通过：`go test ./model ./controller ./service/opspush ./service/opswallet ./pkg/opsnotify -count=1`（67.584s / 50.164s / 0.614s / 0.097s；opsnotify 无独立测试文件），`go build ./...` 通过。使用 Go synctest 虚拟时间验证即时唤醒、10 秒 Retry-After 不被新提示缩短、原事件/批次重放、丢提示补漏、多实例租约及接手；真实业务矩阵验证事务回滚不唤醒、退款只唤醒一次。四组独立 SQLite / MySQL 8.4.6 / PostgreSQL 16.16 矩阵全通过、无 SKIP，日志 `D:/DevCache/product-ops-wallet-funding-wake-matrix-20261125.log`；仅清理本轮独立测试库。该测试是功能和调度验证，不是容量/不停服切换或真实到账时延验收。
 - 上述最终代码的 `go test ./model ./controller ./service/opspush ./service/opswallet -count=1` 通过（69.091s / 51.384s / 0.692s / 0.113s），`go build ./...` 通过。四组独立真实 SQLite / MySQL 8.4.6 / PostgreSQL 16.16 矩阵全部通过、无 SKIP：BusinessOperations、MidjourneyOwnershipSchema、WalletFunding、RegistrationFunding；日志 `D:/DevCache/product-ops-wallet-credit-owner-final-retry-20261125.log`，运行器沿用 independent-matrix。首次最终矩阵在 BusinessOperations 通过后因 WSL 清理超时中止，未重启共享 WSL，恢复后检查并清理本任务无活动连接的遗留测试库，再完整重跑通过。最低支持数据库版本和线上交接仍未验收。`git diff --check` 与索引政策检查通过；本批没有新增数据库列/索引，也没有生产变更。
 
 - Go 1.26.6，WSL OpsDev：`GOWORK=off GOMAXPROCS=2 GOMODCACHE=/mnt/d/DevCache/gomod CGO_ENABLED=0 go test ./controller ./service ./service/opsbilling ./service/opspush ./service/opswallet ./middleware ./router ./relay -count=1` 已通过；后续变更需重跑受影响包。Go 主应用草稿构建已通过，未作为已提交发布产物。

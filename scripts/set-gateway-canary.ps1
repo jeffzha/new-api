@@ -205,7 +205,7 @@ function Wait-ForNextSshConnection {
     }
 }
 
-$currentCaddyfileBase64 = (Get-RemoteOutput "set -eu; test -f '$Caddyfile'; base64 -w 0 '$Caddyfile'").Trim()
+$currentCaddyfileBase64 = (Get-RemoteOutput "set -eu; if test -f '$RemoteDir/releases/gateway-routing-mode.json'; then echo 'Gateway uses private DNS routing; use the recorded routing controller instead of reloading Caddy.' >&2; exit 1; fi; test -f '$Caddyfile'; base64 -w 0 '$Caddyfile'").Trim()
 $currentCaddyfileBytes = [Convert]::FromBase64String($currentCaddyfileBase64)
 $currentCaddyfile = [Text.Encoding]::UTF8.GetString($currentCaddyfileBytes)
 $sha256 = [Security.Cryptography.SHA256]::Create()

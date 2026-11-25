@@ -255,6 +255,10 @@ try {
     $remoteStateCommand = @"
 set -eu
 test -d '$RemoteDir'
+if test -f '$RemoteDir/releases/gateway-routing-mode.json'; then
+  echo 'Gateway uses private DNS routing; use the recorded release controller instead of replacing Compose slots.' >&2
+  exit 1
+fi
 test -f '$ComposeFile'
 test -f '$Caddyfile'
 command -v docker >/dev/null

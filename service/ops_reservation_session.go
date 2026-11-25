@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -91,6 +92,25 @@ func newOPSReservationSession(c *gin.Context, info *relaycommon.RelayInfo, quota
 			// for the requested public model, which also owns the money hold.
 			usage := *log
 			usage.ModelName = info.GetOriginModelName()
+			// The financial journal precedes optional display-log enrichment.
+			// Capture its authenticated accounting scope before persisting facts.
+			if os.Getenv("OPS_WALLET_AUTHORITY") == "ops" && os.Getenv("OPS_PROJECT_SCOPE") != "" {
+				var other map[string]any
+				if usage.Other != "" {
+					if err := common.UnmarshalJsonStr(usage.Other, &other); err != nil {
+						return err
+					}
+				}
+				if other == nil {
+					other = map[string]any{}
+				}
+				other["billing_scope"] = os.Getenv("OPS_PROJECT_SCOPE")
+				raw, err := common.Marshal(other)
+				if err != nil {
+					return err
+				}
+				usage.Other = string(raw)
+			}
 			facts, err := common.Marshal(struct {
 				Log         *model.Log
 				Conversion  opspush.Conversion

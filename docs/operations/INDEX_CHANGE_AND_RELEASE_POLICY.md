@@ -56,3 +56,5 @@
 - 上线必须先升级全部OPS资金writer和唯一后台worker，保留旧登录owner；Gateway扫描owner和async/MJ结算owner经排空显式交接后才能开启预占。回退只用兼容占款版本，不能让旧writer忽略占款；不停止现有调用、不强制注销会话、不设维护拦截。
 - 临时UAC发布适配仅项目分支：显式SID摘要到旧owner映射，仅本地family缺失且为切换前会话时请求owner正常鉴权；本地撤销/过期不回退，不复制UAC凭证。真实旧版b8be256a7与候选middleware/controller两进程验证会话、刷新轮换和撤销通过，原owner登出路由须保留。依据OWASP Authentication/Session Management Cheat Sheets与ASVS5.0.0校验服务端会话、撤销、时限、拒绝和无敏感日志；不是全面合规认证。
 - 当前仅源码本机验收；未启用联通预占、未部署wallet镜像、未推送项目。本记录需在实际发布后追加目标库索引、版本、切流和接口/分销同步实测结果，不能把本地结果写成线上通过。
+
+- 2026-11-26候选验收补充：财务journal在createLog之前生成，必须在不可变事实持久化前附加OPS_PROJECT_SCOPE；关闭显示日志也必须保留。新增回归覆盖原public model及scope，产品基础先改、项目合入。本地Linux测试通过。联通候选发现缺运行角色DML及scope遗漏，仍未对公众启用Gateway候选，修复后复验。

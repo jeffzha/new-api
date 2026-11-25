@@ -24,6 +24,8 @@ import (
 )
 
 func TestOPSReservationUsageSurvivesDisabledDisplayLog(t *testing.T) {
+	t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+	t.Setenv("OPS_PROJECT_SCOPE", "isolated-project")
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "journal.db")+"?_txlock=immediate"), &gorm.Config{})
 	require.NoError(t, err)
 	pool, err := db.DB()
@@ -87,6 +89,7 @@ func TestOPSReservationUsageSurvivesDisabledDisplayLog(t *testing.T) {
 	require.Equal(t, 1, deliveries, "acknowledged journals must not send twice")
 	require.Contains(t, string(delivery), `"promptTokens":3`)
 	require.Contains(t, string(delivery), `"completionTokens":2`)
+	require.Contains(t, string(delivery), `"billing_scope":"isolated-project"`)
 	require.Contains(t, string(delivery), `"model":"gpt-4o"`)
 	require.NotContains(t, string(delivery), "local-price-alias")
 	var token model.Token
@@ -152,7 +155,8 @@ func TestOPSReservationSignedGatewayLifecycle(t *testing.T) {
 	ctx.Set(common.RequestIdKey, info.RequestId)
 	other := model.NewLogOther()
 	if scope := os.Getenv("OPS_HOLD_E2E_SCOPE"); scope != "" {
-		other.SetPublic("billing_scope", scope)
+		t.Setenv("OPS_WALLET_AUTHORITY", "ops")
+		t.Setenv("OPS_PROJECT_SCOPE", scope)
 	}
 	model.RecordConsumeLog(ctx, 1, model.RecordConsumeLogParams{ModelName: "gpt-4o", TokenId: key.Id, Quota: 500000, PromptTokens: 1000000, Other: other})
 	var journal model.OPSHoldIntent

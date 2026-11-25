@@ -15,7 +15,6 @@ import (
 	"github.com/QuantumNous/new-api/pkg/agencycontract"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
-	"github.com/QuantumNous/new-api/service/opsclient"
 	"github.com/QuantumNous/new-api/service/opspush"
 	"github.com/QuantumNous/new-api/service/opsreserve"
 	"github.com/gin-gonic/gin"
@@ -161,21 +160,17 @@ func TestOPSReservationSignedGatewayLifecycle(t *testing.T) {
 	var facts struct{ Log *model.Log }
 	require.NoError(t, common.UnmarshalJsonStr(journal.UsageLog, &facts))
 	require.NotNil(t, facts.Log)
-	transport := opsclient.New(base, os.Getenv("OPS_HOLD_E2E_KEY"), os.Getenv("OPS_HOLD_E2E_SECRET"), 3*time.Second)
-	body, err := common.Marshal(map[string]any{"schemaVersion": "1", "batchId": "gateway-e2e-batch", "events": []any{map[string]any{
-		"requestId": info.RequestId, "occurredAt": time.Unix(facts.Log.CreatedAt, 0).UTC().Format(time.RFC3339), "userId": "1", "username": "alice", "model": "gpt-4o", "promptTokens": 1000000, "completionTokens": 0, "gatewayQuota": 500000, "status": "success", "isStream": false,
-		"extra": map[string]any{"billing_scope": os.Getenv("OPS_HOLD_E2E_SCOPE")},
-	}}})
-	require.NoError(t, err)
+	client := session.(*opsReservationSession).client
+	previousRecover := opsreserve.RecoverUsage
+	opsreserve.RecoverUsage = RecoverOPSUsage
+	t.Cleanup(func() { opsreserve.RecoverUsage = previousRecover })
 	for range 2 {
-		_, err = transport.Post(context.Background(), "/api/v1/ingest/v1/usage-events", body, time.Now())
-		require.NoError(t, err)
+		require.NoError(t, client.SendJournalUsage(context.Background(), info.RequestId))
 	}
 	var token model.Token
 	require.NoError(t, db.First(&token, key.Id).Error)
 	require.Equal(t, 500000, token.RemainQuota)
 	require.Equal(t, 500000, token.UsedQuota)
-	client := session.(*opsReservationSession).client
 	require.NoError(t, db.Model(&model.OPSHoldIntent{}).Where("request = ?", info.RequestId).Update("updated", int64(1)).Error)
 	require.NoError(t, client.Recover(context.Background()))
 	var n int64

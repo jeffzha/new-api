@@ -47,6 +47,27 @@ requires `SQL_DSN=local` and an absolute existing `SQLITE_PATH`. The executor
 does not need the Gateway session secret, payment settings or log database.
 Keep dedicated probe credentials, their `_ORIGIN` bindings and robot secrets
 on the executor. The shared lease contains binding hashes, not secrets.
+
+For end-to-end probes through this Gateway, set `MODEL_HEALTH_GATEWAY_URL`
+to its regional public HTTPS origin. Bind the dedicated
+`MODEL_HEALTH_KEY_...` and `_ORIGIN` to that Gateway origin, not the
+upstream. The executor sends the public model name to the configured platform
+endpoint using the existing administrator token channel pin (single attempt);
+the Gateway performs model mapping, authentication, billing and upstream relay.
+It retains the `X-Oneapi-Request-Id` response for correlation. No platform
+key is sent directly to an upstream or media download.
+
+Use an enabled dedicated administrator service identity without a management
+access token or interactive credentials. Its API token must have a
+`model-health/` name, finite expiry, finite positive quota, an explicit model
+allowlist and no automatic cross-group retry. The executor checks these fields
+before publishing readiness and before every submission/poll step. Revoke the
+token to withdraw detection readiness. Keep platform wallet funds, monitoring
+budgets and actual-cost reconciliation separate from customer accounts; do not
+mark an unknown charge as zero. Gateway mode accepts only known platform
+endpoint paths and its standard video polling path. Existing upstream templates
+must be reviewed for platform response contracts before switching the worker.
+
 Keep `CHANNEL_TEST_ENABLED` and `CHANNEL_TEST_FREQUENCY` overrides aligned
 with the Gateway's legacy channel-test configuration to prevent overlapping
 automatic probes. An optional standby must have the same configuration and

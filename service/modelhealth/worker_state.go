@@ -52,13 +52,21 @@ func WorkerAvailable(ctx context.Context) bool {
 
 func workerBindings(db *gorm.DB) (workerState, error) {
 	s := workerState{}
-	for _, entry := range os.Environ() {
-		name, value, _ := strings.Cut(entry, "=")
-		if value == "" || !credentialRef.MatchString(name) {
-			continue
+	if os.Getenv("MODEL_HEALTH_GATEWAY_URL") != "" {
+		var err error
+		s.Credentials, err = gatewayProbeBindings(db)
+		if err != nil {
+			return workerState{}, err
 		}
-		if origin := os.Getenv(name + "_ORIGIN"); origin != "" {
-			s.Credentials = append(s.Credentials, hash(name, origin))
+	} else {
+		for _, entry := range os.Environ() {
+			name, value, _ := strings.Cut(entry, "=")
+			if value == "" || !credentialRef.MatchString(name) {
+				continue
+			}
+			if origin := os.Getenv(name + "_ORIGIN"); origin != "" {
+				s.Credentials = append(s.Credentials, hash(name, origin))
+			}
 		}
 	}
 	receivers, err := destinations(db)

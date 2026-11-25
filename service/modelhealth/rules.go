@@ -109,7 +109,11 @@ func probeCredential(p Template, t Target) string {
 	if !credentialRef.MatchString(p.Credential) {
 		return ""
 	}
-	url, err := checkedURL(t.base)
+	base := t.base
+	if gateway := os.Getenv("MODEL_HEALTH_GATEWAY_URL"); gateway != "" {
+		base = gateway
+	}
+	url, err := checkedURL(base)
 	if err != nil || os.Getenv(p.Credential+"_ORIGIN") != "https://"+url.Host {
 		return ""
 	}

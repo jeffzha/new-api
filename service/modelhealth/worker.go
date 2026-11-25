@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -344,6 +345,10 @@ func execute(ctx context.Context, client *http.Client, run model.ModelHealthRun,
 		return err
 	}
 	key := probeCredential(p, t)
+	gateway := os.Getenv("MODEL_HEALTH_GATEWAY_URL")
+	if gateway != "" {
+		key = gatewayProbeKey(db, p, t)
+	}
 	if err != nil || !p.validFor(t, run.Endpoint) || key == "" || (t.Paused && run.State == "submitting") {
 		if run.State == "submitting" {
 			return update("skipped", "configuration", "target_or_credential_changed", &zero)
@@ -353,7 +358,11 @@ func execute(ctx context.Context, client *http.Client, run model.ModelHealthRun,
 	if run.State == "polling" && now-run.StartedAt >= int64(p.TimeoutSeconds) {
 		return update("uncertain", "polling", "generation_timeout", nil)
 	}
-	base, err := checkedURL(t.base)
+	baseURL := t.base
+	if gateway != "" {
+		baseURL = gateway
+	}
+	base, err := checkedURL(baseURL)
 	if err != nil || base.RawQuery != "" {
 		return update("uncertain", run.Stage, "invalid_upstream_address", nil)
 	}
@@ -364,6 +373,9 @@ func execute(ctx context.Context, client *http.Client, run model.ModelHealthRun,
 		method, path = http.MethodGet, strings.ReplaceAll(p.PollPath, "{task_id}", run.UpstreamTaskID)
 	} else {
 		p.Body["model"] = run.UpstreamModel
+		if gateway != "" {
+			p.Body["model"] = run.ModelName
+		}
 		payload, err = common.Marshal(p.Body)
 		if err != nil {
 			return err
@@ -412,7 +424,7 @@ func execute(ctx context.Context, client *http.Client, run model.ModelHealthRun,
 	step.WaitMs = common.GetPointer(time.Since(started).Milliseconds())
 	step.ResponseHeaders = evidenceHeaders(resp.Header, resp.ContentLength)
 	if method == http.MethodPost {
-		for _, h := range []string{"x-request-id", "request-id", "x-tt-logid"} {
+		for _, h := range []string{common.RequestIdKey, "x-request-id", "request-id", "x-tt-logid"} {
 			v := resp.Header.Get(h)
 			if identifier.MatchString(v) && !strings.Contains(v, key) {
 				run.RequestID = v

@@ -56,6 +56,11 @@ func AcceptPushReceipts(base, key, secret string, sent, response []byte, at time
 	if common.Unmarshal(sent, &batch) != nil || common.Unmarshal(response, &ack) != nil || len(batch.Events) > 500 || len(ack.Data.Charges) > 500 {
 		return
 	}
+	// The sending process also needs the actual-debit receipt immediately.
+	// Redis deliberately skips its own publication; it only wakes other slots.
+	if observer := receiptObserver.Load(); observer != nil {
+		(*observer)(sent, response, at)
+	}
 	if publication := sharePush.Load(); publication != nil {
 		// The sent identities are enough for the existing charge validator.
 		identities, _ := common.Marshal(batch)

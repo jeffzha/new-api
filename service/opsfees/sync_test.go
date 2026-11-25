@@ -176,6 +176,10 @@ func TestSharedLogFeeSourcePreservesScopeAndAuthorization(t *testing.T) {
 }
 
 func TestPushLogFeeMemoryAndCorrection(t *testing.T) {
+	observed := 0
+	oldObserver := receiptObserver.Load()
+	ConfigureReceiptObserver(func(sent, response []byte, at time.Time) { observed++ })
+	t.Cleanup(func() { receiptObserver.Store(oldObserver) })
 	oldDB, oldLogs := model.DB, model.LOG_DB
 	db := testDB(t, "sqlite")
 	model.DB, model.LOG_DB = db, db
@@ -193,10 +197,12 @@ func TestPushLogFeeMemoryAndCorrection(t *testing.T) {
 	sent := []byte(`{"events":[{"requestId":"fast","userId":"15","model":"sample"}]}`)
 	response := []byte(`{"data":{"charges":[{"requestId":"fast","userId":"15","status":"station_billed","logFee":{"requestId":"fast","userId":"15","model":"sample","opsAmount":"0.000006","stationAmount":"0.000011","difference":"0.000005","refundAmount":"0","chargedAt":"2026-11-17T01:00:00Z"}}]}}`)
 	AcceptPushReceipts(c.BaseURL, "unbound", c.Secret, sent, response, time.Now())
+	assert.Zero(t, observed, "unbound transport cannot publish a debit receipt")
 	assert.Equal(t, "waiting", model.WaitOpsFee(context.Background(), log, 0).Status)
 	AcceptPushReceipts(c.BaseURL, "push", c.Secret, sent, []byte(strings.ReplaceAll(string(response), "station_billed", "pending")), time.Now())
 	assert.Equal(t, "waiting", model.WaitOpsFee(context.Background(), log, 0).Status, "unfinished receipts must not publish a final fee")
 	AcceptPushReceipts(c.BaseURL, "push", c.Secret, sent, response, time.Now())
+	assert.Equal(t, 2, observed, "pending and final acknowledgements reach the sending process's validated debit reader")
 	got := model.WaitOpsFee(context.Background(), log, 0)
 	require.NotNil(t, got)
 	require.NotNil(t, got.Amount)

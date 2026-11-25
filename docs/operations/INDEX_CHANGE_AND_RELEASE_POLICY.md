@@ -43,3 +43,16 @@
 
 - 续测：新增四列恢复索引定义验证，同名错误字段顺序立即拒绝；真实三库均验证缺失补建、重复准备和冲突定义。任务408/409/5xx或丢失响应停止再次付费派发，保留占款；400明确拒绝释放。Midjourney占款关联、不可变用量/退款outbox及旧轮询结果不覆盖退款额度。Responses WebSocket非终态断开保留占款，不把不完整用量当最终结算。
 - 2026-11-25本地继续验证：service/relay/controller完整套件通过（controller须从包目录执行以加载既有测试夹具），产品前端Bun构建与go build ./...通过。容量、所有模态和滚动启用尚未完成，当前提交为开发检查点，禁止据此直接启用生产。
+
+
+## 2026-11-25 原子钱包预占：本机验收与发布准备（未部署）
+
+- 最新用户范围：产品基础先实现并本地提交，产品两分支暂不推送、不部署；只推送项目两分支并发布联通测试119.39.149.67。国内、海外、联通正式服务器不操作。供应商2条/模型绑定4条已独立配置；不等于钱包上线。
+- OPS持久预占及实际扣款同事务；调额不能花掉在途占款；关闭准入开关仍保护、查询、释放和结算原占款。费用超出估计且余额不足时保留待结算责任、阻止后续准入，回执不得假称已扣款，充值后幂等补扣。预占不是所有模态的费用上限承诺；不限制输出、工具、动态价格等仍可能产生超估计消费。
+- Gateway独立Key额度及不可变用量日志在主库同事务，独立显示日志库故障不丢结算凭据。受限异步队列与批量上报共用Redis发送预算；保留扫描补漏和重放去重。任务未知响应不自动重发付费调用；已派发占款不按年龄释放。WS不完整用量、派发后进程崩溃但没有最终凭据等仍需人工核对，不能把留置占款冒充全部自动恢复。
+- Gateway真实SQLite3.50.4/MySQL8.4.6/PostgreSQL16.16验证预占意图、并发Key预算、迁移重复准备、错误索引定义拒绝、恢复、任务及显式owner交接。最新project-reserve40全三库通过；project-service35全套、project-push31全套/三库、project-push37真实Redis预算、project-e2e31真实签名journal到OPS项目套件通过。OPS project-station37全套、project-billing2、真实PG索引维护及构建/vet通过。首次验证中发现的夹具隔离、CRLF及脚本问题已修复，原失败日志保留。
+- OPS本地两个服务实例、32并发共256次占款，精确核对占款3840微元，约59.5次/秒、p95约618ms；不代表模型总延迟、任意并发1秒或CPU上限保证。现有全局数据库写锁仍限制容量。并发限流验证独立reservation预算，不挤占GET读取配额。
+- Gateway新增ops_wallet_hold_intents及idx_ops_hold_release(gateway,cancel_pending,reconciled,updated)，主库专属。ops-hold-operator -prepare实际本地CLI连续执行两次通过；-handoff-from/-handoff-to保留游标和原待发送批次，拒绝活动任务和错误owner。OPS发布必须用本版本fee-indexes及prepare_fee_indexes.py准备第7项ops_wallet_reservations_open_user并独立验证；现网尚未执行，不得声称已完成。
+- 上线必须先升级全部OPS资金writer和唯一后台worker，保留旧登录owner；Gateway扫描owner和async/MJ结算owner经排空显式交接后才能开启预占。回退只用兼容占款版本，不能让旧writer忽略占款；不停止现有调用、不强制注销会话、不设维护拦截。
+- 临时UAC发布适配仅项目分支：显式SID摘要到旧owner映射，仅本地family缺失且为切换前会话时请求owner正常鉴权；本地撤销/过期不回退，不复制UAC凭证。真实旧版b8be256a7与候选middleware/controller两进程验证会话、刷新轮换和撤销通过，原owner登出路由须保留。依据OWASP Authentication/Session Management Cheat Sheets与ASVS5.0.0校验服务端会话、撤销、时限、拒绝和无敏感日志；不是全面合规认证。
+- 当前仅源码本机验收；未启用联通预占、未部署wallet镜像、未推送项目。本记录需在实际发布后追加目标库索引、版本、切流和接口/分销同步实测结果，不能把本地结果写成线上通过。

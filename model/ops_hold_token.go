@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -111,6 +112,51 @@ func ValidateOPSHoldIndex(db *gorm.DB) error {
 		}
 	}
 	return errors.New("OPS reservation recovery index missing")
+}
+
+// TransferOPSSettlementOwner is an explicit, drained release handoff. The
+// uploader cursor and immutable pending batch are preserved. Its successor
+// must be a compatible reservation-aware binary, including during rollback.
+func TransferOPSSettlementOwner(ctx context.Context, db *gorm.DB, stateID int, previous, successor string) error {
+	if stateID < 1 || successor == "" || len(successor) > 64 || strings.TrimSpace(successor) != successor || previous == successor {
+		return errors.New("invalid settlement owner handoff")
+	}
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var state struct {
+			ID    int
+			Owner string
+		}
+		if err := lockForUpdate(tx.Table("ops_push_states")).Where("id = ?", stateID).Take(&state).Error; err != nil {
+			return err
+		}
+		if state.Owner != previous {
+			return errors.New("settlement owner changed")
+		}
+		types := []string{SystemTaskTypeAsyncTaskPoll, SystemTaskTypeMidjourneyPoll}
+		var active int64
+		if err := tx.Model(&SystemTask{}).Where("type IN ? AND status = ?", types, SystemTaskStatusRunning).Count(&active).Error; err != nil {
+			return err
+		}
+		if active != 0 {
+			return errors.New("settlement task is still running")
+		}
+		for _, taskType := range types {
+			var lease SystemTaskLock
+			err := lockForUpdate(tx).Where("type = ?", taskType).Take(&lease).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				err = tx.Create(&SystemTaskLock{Type: taskType, LockedBy: successor, LockedUntil: 253402300799}).Error
+			} else if err == nil {
+				if lease.TaskID != "" || lease.LockedBy != previous {
+					return errors.New("settlement task lease is not drained")
+				}
+				err = tx.Model(&SystemTaskLock{}).Where("type = ? AND locked_by = ? AND task_id = ?", taskType, previous, "").Updates(map[string]any{"locked_by": successor, "locked_until": int64(253402300799), "updated_at": time.Now().Unix()}).Error
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return tx.Table("ops_push_states").Where("id = ? AND owner = ?", stateID, previous).Updates(map[string]any{"owner": successor, "lease_until": int64(253402300799)}).Error
+	})
 }
 
 // FinalizeOPSHoldMidjourney commits the key adjustment and the immutable OPS

@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service/opsclient"
+	"github.com/QuantumNous/new-api/service/opspush"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -83,6 +84,25 @@ func TestDurableReservationRecoveryAcrossDatabases(t *testing.T) {
 						require.NoError(t, model.FinishSystemTask(task.TaskID, "prepared-successor", model.SystemTaskStatusSucceeded, nil, ""))
 					}
 				}
+				require.NoError(t, db.Migrator().DropTable(&opspush.State{}))
+				require.NoError(t, db.AutoMigrate(&opspush.State{}))
+				require.NoError(t, db.Create(&opspush.State{Id: 2, Owner: "prepared-successor", Cursor: 17, BatchId: "immutable-batch", BatchBody: "immutable-payload", BatchLast: 18}).Error)
+				require.NoError(t, model.TransferOPSSettlementOwner(context.Background(), db, 2, "prepared-successor", "recovery-successor"))
+				require.Error(t, model.TransferOPSSettlementOwner(context.Background(), db, 2, "prepared-successor", "unexpected"))
+				var uploader opspush.State
+				require.NoError(t, db.First(&uploader, 2).Error)
+				assert.EqualValues(t, 17, uploader.Cursor)
+				assert.Equal(t, "immutable-payload", uploader.BatchBody)
+				assert.Equal(t, "recovery-successor", uploader.Owner)
+				t.Setenv("SYSTEM_TASK_RELEASE_OWNER", "recovery-successor")
+				task, err := model.CreateSystemTask(model.SystemTaskTypeAsyncTaskPoll, nil, nil)
+				require.NoError(t, err)
+				_, claimed, err := model.ClaimSystemTask(task.ID, task.Type, "recovery-successor", common.GetTimestamp()+60)
+				require.NoError(t, err)
+				require.True(t, claimed)
+				require.Error(t, model.TransferOPSSettlementOwner(context.Background(), db, 2, "recovery-successor", "too-early"))
+				require.NoError(t, model.FinishSystemTask(task.TaskID, "recovery-successor", model.SystemTaskStatusSucceeded, nil, ""))
+				require.NoError(t, model.TransferOPSSettlementOwner(context.Background(), db, 2, "recovery-successor", "next-compatible"))
 			}()
 			// Rehearse an upgrade from the released task schema and the first hold
 			// schema, including rows written before nullable outbox fields existed.

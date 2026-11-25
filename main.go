@@ -175,6 +175,7 @@ func main() {
 	}
 	commandWorkerCtx, stopAgencyCommandWorker := context.WithCancel(context.Background())
 	defer stopAgencyCommandWorker()
+	modelhealth.StartAutoTemplates(commandWorkerCtx)
 	service.StartBalanceReminderTask(commandWorkerCtx)
 	if err := opsupstreams.Start(commandWorkerCtx); err != nil {
 		common.FatalLog(err.Error())

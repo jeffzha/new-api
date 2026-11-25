@@ -16,95 +16,105 @@ afterEach(() => {
   for (const client of clients.splice(0)) client.clear()
 })
 
-it('shows an unconfigured video as waiting and does not let the admin submit a probe', async () => {
-  const data: Overview = {
-    rows: [
-      {
-        id: 'video-4',
-        channel_id: 4,
-        channel: 'Fixture provider',
-        model: 'Video model',
-        upstream: 'upstream-video',
-        type: 'video',
-        groups: ['default'],
-        state: 'waiting',
-        paused: false,
-        details: [
-          {
-            name: 'openai-video',
-            state: 'waiting',
-            stale: false,
-            configured: false,
-            next_at: 0,
-            last_user: 0,
-            last_probe: 0,
-            last_probe_source: '',
-            user_count: 0,
-            user_ok: 0,
-            probe_count: 0,
-            probe_ok: 0,
-            excluded: 0,
-            recent: [],
-          },
-        ],
+it.each([
+  ['missing', 'Template required'],
+  ['draft', 'Template needs confirmation'],
+] as const)(
+  'shows a %s video template as waiting and prevents submission',
+  async (templateState, label) => {
+    const data: Overview = {
+      rows: [
+        {
+          id: 'video-4',
+          channel_id: 4,
+          channel: 'Fixture provider',
+          model: 'Video model',
+          upstream: 'upstream-video',
+          type: 'video',
+          groups: ['default'],
+          state: 'waiting',
+          paused: false,
+          details: [
+            {
+              name: 'openai-video',
+              state: 'waiting',
+              stale: false,
+              configured: false,
+              template_state: templateState,
+              next_at: 0,
+              last_user: 0,
+              last_probe: 0,
+              last_probe_source: '',
+              user_count: 0,
+              user_ok: 0,
+              probe_count: 0,
+              probe_ok: 0,
+              excluded: 0,
+              recent: [],
+            },
+          ],
+        },
+      ],
+      total: 1,
+      counts: { waiting: 1 },
+    }
+    api.defaults.adapter = async (config) => ({
+      data: {
+        success: true,
+        data: config.url?.endsWith('/plan')
+          ? { template: {}, ready: false, blocked: ['Template required'] }
+          : data,
       },
-    ],
-    total: 1,
-    counts: { waiting: 1 },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    })
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    clients.push(client)
+    const user = userEvent.setup()
+    render(
+      <QueryClientProvider client={client}>
+        <HealthOverview
+          access={{
+            probe: true,
+            rules: true,
+            notify: true,
+            export: true,
+            worker: true,
+          }}
+          onRules={vi.fn()}
+        />
+      </QueryClientProvider>
+    )
+
+    const row = await screen.findByRole('row', { name: /Video model/ })
+    const distribution = screen.getByRole('region', {
+      name: 'Health distribution',
+    })
+    expect(within(distribution).getByText('waiting')).toBeVisible()
+    expect(within(distribution).getAllByText('1')).toHaveLength(1)
+    const outcomes = screen.getByRole('region', { name: 'Call outcomes' })
+    expect(within(outcomes).getByText('No completed samples')).toBeVisible()
+    expect(within(row).getByText('waiting')).toBeVisible()
+    expect(within(row).queryByText('upstream-video')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('columnheader').at(-1)).toHaveTextContent(
+      'Actions'
+    )
+    await user.click(within(row).getByRole('button', { name: /openai-video/ }))
+    expect(await screen.findByText(label)).toBeVisible()
+    await user.keyboard('{Escape}')
+    await user.click(within(row).getByRole('button', { name: 'Run detection' }))
+
+    const details = await screen.findByRole('alertdialog')
+    expect(await within(details).findByText('Template required')).toBeVisible()
+    expect(
+      within(details).getByRole('button', { name: 'Run detection' })
+    ).toBeDisabled()
   }
-  api.defaults.adapter = async (config) => ({
-    data: {
-      success: true,
-      data: config.url?.endsWith('/plan')
-        ? { template: {}, ready: false, blocked: ['Template required'] }
-        : data,
-    },
-    status: 200,
-    statusText: 'OK',
-    headers: {},
-    config,
-  })
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
-  clients.push(client)
-  const user = userEvent.setup()
-  render(
-    <QueryClientProvider client={client}>
-      <HealthOverview
-        access={{
-          probe: true,
-          rules: true,
-          notify: true,
-          export: true,
-          worker: true,
-        }}
-        onRules={vi.fn()}
-      />
-    </QueryClientProvider>
-  )
-
-  const row = await screen.findByRole('row', { name: /Video model/ })
-  const distribution = screen.getByRole('region', {
-    name: 'Health distribution',
-  })
-  expect(within(distribution).getByText('waiting')).toBeVisible()
-  expect(within(distribution).getAllByText('1')).toHaveLength(1)
-  const outcomes = screen.getByRole('region', { name: 'Call outcomes' })
-  expect(within(outcomes).getByText('No completed samples')).toBeVisible()
-  expect(within(row).getByText('waiting')).toBeVisible()
-  expect(within(row).queryByText('upstream-video')).not.toBeInTheDocument()
-  expect(screen.getAllByRole('columnheader').at(-1)).toHaveTextContent(
-    'Actions'
-  )
-  await user.click(within(row).getByRole('button', { name: 'Run detection' }))
-
-  const details = await screen.findByRole('alertdialog')
-  expect(await within(details).findByText('Template required')).toBeVisible()
-  expect(
-    within(details).getByRole('button', { name: 'Run detection' })
-  ).toBeDisabled()
-})
+)
 
 it('keeps the outcome totals scoped to the filtered page and shows an empty state when no models match', async () => {
   api.defaults.adapter = async (config) => {

@@ -142,6 +142,7 @@ type Endpoint struct {
 	State           string                `json:"state"`
 	Stale           bool                  `json:"stale"`
 	Configured      bool                  `json:"configured"`
+	TemplateState   string                `json:"template_state"`
 	NextAt          int64                 `json:"next_at"`
 	Run             *model.ModelHealthRun `json:"run,omitempty"`
 	LastUser        int64                 `json:"last_user"`
@@ -380,6 +381,12 @@ func describe(db *gorm.DB, t Target, endpoint string, from, to, now int64, worke
 			return row, err
 		}
 		e.Configured = template.validFor(t, name)
+		e.TemplateState = "missing"
+		if e.Configured {
+			e.TemplateState = "ready"
+		} else if template.GeneratedProfile != "" {
+			e.TemplateState = "draft"
+		}
 		if e.Configured && r.Enabled && !t.Paused && worker.active(now) && worker.hasProbe(template, t) {
 			e.NextAt = nextScheduled(t, name, r, now)
 			if paidMedia(t.Type) {

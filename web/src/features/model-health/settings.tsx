@@ -289,6 +289,12 @@ export function HealthRules(props: { selection?: Selection }) {
         ? loadHealth<Plan>('/template', target)
         : loadHealth<Values>('/rule', { scope }),
   })
+  const automatic = useQuery({
+    ...ruleReadOptions,
+    queryKey: ['model-health', 'auto-templates'],
+    queryFn: () => loadHealth<Values>('/auto-templates'),
+    enabled: !target && scope === 'global',
+  })
   const plan = target ? (rules.data as Plan | undefined) : undefined
   const rule = target ? plan?.rule : (rules.data as Values | undefined)
   const kind = plan?.kind ?? scope
@@ -329,6 +335,55 @@ export function HealthRules(props: { selection?: Selection }) {
   ]
   return (
     <div className='space-y-5 pt-3'>
+      {!target && scope === 'global' && (
+        <section
+          className='space-y-3 border-b pb-4'
+          aria-label={t('Automatic probe templates')}
+        >
+          <h2 className='font-semibold'>{t('Automatic probe templates')}</h2>
+          <p className='text-muted-foreground text-sm'>
+            {t(
+              'Generate templates for existing and new models. Manual overrides are preserved. Scheduled detection is configured separately.'
+            )}
+          </p>
+          {automatic.isPending && <LoadingState />}
+          {automatic.isError && (
+            <RuleReadError
+              error={automatic.error}
+              onRetry={() => void automatic.refetch()}
+            />
+          )}
+          {automatic.data && (
+            <HealthForm
+              key={JSON.stringify(automatic.data)}
+              initial={automatic.data}
+              save={(data) => saveHealth('/auto-templates', data)}
+              fields={[
+                {
+                  key: 'enabled',
+                  label: t('Generate probe templates automatically'),
+                  type: 'checkbox',
+                },
+                {
+                  key: 'credential',
+                  label: t('Credential environment reference'),
+                  type: 'text',
+                },
+                {
+                  key: 'token_id',
+                  label: t('Dedicated monitoring token ID'),
+                  type: 'number',
+                },
+                {
+                  key: 'max_micro',
+                  label: t('Cost ceiling (millionths of CNY)'),
+                  type: 'number',
+                },
+              ]}
+            />
+          )}
+        </section>
+      )}
       <section className='space-y-3 border-b pb-4'>
         <h2 className='font-semibold'>{t('Schedule')}</h2>
         <label className='flex flex-wrap items-center gap-2'>
@@ -394,6 +449,16 @@ export function HealthRules(props: { selection?: Selection }) {
               {t('Edit template')}
             </Button>
           </div>
+          <p className='text-muted-foreground text-sm'>
+            {t(
+              'A probe template defines the smallest test request, output limit, timeout and cost ceiling. Standard models inherit defaults; special models need confirmation.'
+            )}
+          </p>
+          {plan.template.draft_reason && (
+            <p role='status' className='text-sm'>
+              {t(String(plan.template.draft_reason))}
+            </p>
+          )}
           {templateOpen && (
             <HealthForm
               key={`${target.channel_id}-${target.model}-${target.endpoint}`}

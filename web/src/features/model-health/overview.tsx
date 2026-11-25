@@ -271,7 +271,13 @@ export function HealthOverview(props: {
                   <Badge variant='outline'>{t('Evidence expired')}</Badge>
                 )}
                 {!detail.configured && (
-                  <Badge variant='outline'>{t('Template required')}</Badge>
+                  <Badge variant='outline'>
+                    {t(
+                      detail.template_state === 'draft'
+                        ? 'Template needs confirmation'
+                        : 'Template required'
+                    )}
+                  </Badge>
                 )}
                 {detail.run && <Status state={detail.run.state} />}
               </div>

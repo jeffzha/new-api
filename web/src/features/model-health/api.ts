@@ -33,6 +33,7 @@ export type Endpoint = {
   state: string
   stale: boolean
   configured: boolean
+  template_state?: 'missing' | 'draft' | 'ready'
   next_at: number
   run?: Run
   last_user: number
@@ -74,6 +75,7 @@ export type Plan = {
     max_micro: number
     path: string
     body: Record<string, unknown>
+    draft_reason?: string
   }
   revision: string
   ready: boolean

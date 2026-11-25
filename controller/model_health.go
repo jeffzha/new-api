@@ -69,6 +69,10 @@ func RegisterModelHealthRoutes(r *gin.RouterGroup, guard func(authz.Permission) 
 	}
 	reads.GET("/plan", guard(authz.ModelHealthProbe), planHandler)
 	reads.GET("/template", guard(authz.ModelHealthRules), planHandler)
+	reads.GET("/auto-templates", guard(authz.ModelHealthRules), func(c *gin.Context) {
+		p, err := modelhealth.GetAutoTemplatePolicy(c.Request.Context())
+		modelHealthReply(c, p, err)
+	})
 	reads.GET("/runs", func(c *gin.Context) {
 		data, err := modelhealth.ListRuns(c.Request.Context(), c.Query("source"), int(modelHealthNumber(c, "page")))
 		modelHealthReply(c, data, err)
@@ -123,6 +127,9 @@ func RegisterModelHealthRoutes(r *gin.RouterGroup, guard func(authz.Permission) 
 	}))
 	actions.PUT("/template", guard(authz.ModelHealthRules), healthMutation("template", func(c *gin.Context, p modelhealth.Template) (any, error) {
 		return nil, modelhealth.SaveTemplate(c.Request.Context(), p)
+	}))
+	actions.PUT("/auto-templates", guard(authz.ModelHealthRules), healthMutation("auto_templates", func(c *gin.Context, p modelhealth.AutoTemplatePolicy) (any, error) {
+		return nil, modelhealth.SaveAutoTemplatePolicy(c.Request.Context(), p)
 	}))
 	type ruleInput struct {
 		modelhealth.Selection

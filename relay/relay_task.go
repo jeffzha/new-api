@@ -28,6 +28,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/opsbridge"
+	"github.com/QuantumNous/new-api/service/opsreserve"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
@@ -480,9 +481,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
 	cnTask := model.CNTaskRequested() && !managed && !model.IsAgencyDurableUser(info.UserId) && platform != constant.TaskPlatformSuno && platform != "sunoapi"
-	if info.Billing == nil && (!info.PriceData.FreeModel || (managed && model.IsAgencyDurableUser(info.UserId)) || cnTask) {
+	if info.Billing == nil && (!info.PriceData.FreeModel || (managed && model.IsAgencyDurableUser(info.UserId)) || cnTask || opsreserve.Enabled()) {
 		info.ForcePreConsume = true
-		if cnTask {
+		if cnTask && !opsreserve.Enabled() {
 			if apiErr := service.PreConsumeCNTaskBilling(info, platform, providerBilling, info.PriceData.Quota); apiErr != nil {
 				return nil, service.TaskErrorFromAPIError(apiErr)
 			}
@@ -532,6 +533,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 
+	if err := service.BeginOPSReservationDispatch(info); err != nil {
+		return nil, service.TaskErrorWrapperLocal(err, "ops_reservation_unavailable", http.StatusBadGateway)
+	}
 	// 9. 发送请求
 	if err := opsbridge.BeforeTaskDispatch(c); err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "ops_task_state_unavailable", http.StatusServiceUnavailable)

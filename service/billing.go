@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service/opsreserve"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
 	"github.com/gin-gonic/gin"
 )
@@ -54,6 +55,14 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 			http.StatusBadRequest,
 			types.ErrOptionWithSkipRetry(),
 		)
+	}
+	if opsreserve.Enabled() {
+		session, apiErr := newOPSReservationSession(c, relayInfo, preConsumedQuota)
+		if apiErr != nil {
+			return apiErr
+		}
+		relayInfo.Billing = session
+		return nil
 	}
 	session, apiErr := NewBillingSession(c, relayInfo, preConsumedQuota)
 	if apiErr != nil {

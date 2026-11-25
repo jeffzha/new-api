@@ -31,3 +31,12 @@
 - .github/workflows/index-policy.yml 对提交/拉取请求运行上述源码检查。远程分支保护是否要求该检查，由仓库实际配置决定；没有设置的不能声称已强制保护。
 - OPS 发布包装器会在数据库准备失败时阻断后续部署命令。它只有在发布者使用规定入口时才生效；有权限手工绕过脚本的人或智能体，不能仅靠 Markdown 从技术上绝对禁止。
 - 后续智能体必须先读根 AGENTS.md、使用规定发布入口、报告真实状态。源码检查通过不替代数据库就绪、蓝绿切流和业务接口验收；不得为文档更新重启业务服务。
+
+## 钱包预占开发记录（2026-11-25，尚未发布）
+
+- 通用能力先在产品基础开发：OPS 持久化原子占款，聚合仅维护独立 API Key 额度及恢复凭据，不重复扣用户钱包。默认关闭；启用须同时设置 `OPS_WALLET_RESERVATIONS=true`、`OPS_WALLET_AUTHORITY=ops` 并安装已验证的钱包归属适配器。产品默认没有该适配器，不能仅靠设置开关切换钱包。
+- 聚合主库新增 `ops_wallet_hold_intents`，复合主键 `(gateway,request)`；`idx_ops_hold_release(gateway,cancel_pending,updated)` 用于按凭证分批恢复。定义在 `model/ops_hold_token.go`，使用 ORM 支持 SQLite/MySQL/PostgreSQL。日志库不存预占凭据。准备使用相同模型 AutoMigrate；实际目录必须确认索引存在、字段顺序正确后才可启用候选实例。
+- 本地真实 SQLite 3.50.4、MySQL 8.4.6、PostgreSQL 16.16 覆盖新表、原 token 表升级、连续迁移两次、同 Key 并发、重放、释放失败重启、过期未派发释放、已派发保留、异步终态及人工证据恢复。测试入口：`go test ./service/opsreserve -run TestDurableReservationRecoveryAcrossDatabases -count=1`；两个外部数据库用 `OPS_HOLD_TEST_MYSQL_DSN`、`OPS_HOLD_TEST_POSTGRES_DSN` 指向独立可销毁测试库。
+- `cmd/ops-hold-operator` 仅读取显式 SQL_DSN 的既有主库，不迁移。默认列出最多100条未核对记录；变更必须显式提供 request、decision、evidence、reviewer。`confirmed_no_charge` 仍须远端确认 released 才退 Key；`posted_charge` 须远端已 settled，并传经复核的 Key quota。证据引用及复核人保留在原记录，不能用超时或年龄代替上游终态凭据。成功任务崩溃后持久化 quota 可能仍为估计值，禁止自动把该值当最终费用。
+- 当前预占按估计值及 OPS 报价保底，不能声称覆盖所有上游实际费用上限。实际费用超过可用资金时保留待结算责任，不能生成负钱包或把未过账显示为已扣款。异步项目映射、端到端、容量、滚动启用及联通发布仍需独立验证。
+- 本记录仅源码和本地测试交付；联通供应商配置另有已执行操作，不能把配置完成等同钱包部署。尚无联通预占索引门禁回执、应用发布或性能结论。

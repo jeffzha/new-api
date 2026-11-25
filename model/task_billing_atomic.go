@@ -50,6 +50,11 @@ func ApplyTaskQuotaAdjustment(task *Task, targetQuota int) (*TaskQuotaAdjustment
 	if modelMax := int64(common.MaxQuota); int64(targetQuota) > modelMax {
 		return nil, errors.New("task quota adjustment exceeds quota limit")
 	}
+	if task.PrivateData.OPSReservationGateway != "" {
+		// Persisted ownership survives feature rollback. Older tasks retain
+		// their original contract without scanning the reservation table.
+		return FinalizeOPSHoldTask(context.Background(), DB, task, targetQuota)
+	}
 	if task.CNBillingKey != "" {
 		before := task.Quota
 		if err := RequestCNTaskAdjustment(task, targetQuota, task.Status == TaskStatusSuccess || task.Status == TaskStatusFailure); err != nil {

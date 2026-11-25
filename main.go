@@ -40,6 +40,7 @@ import (
 	"github.com/QuantumNous/new-api/service/opsmonitor"
 	"github.com/QuantumNous/new-api/service/opspricing"
 	"github.com/QuantumNous/new-api/service/opspush"
+	"github.com/QuantumNous/new-api/service/opsreserve"
 	"github.com/QuantumNous/new-api/service/opsupstreams"
 	"github.com/QuantumNous/new-api/service/opsusers"
 	"github.com/QuantumNous/new-api/service/upstreamevent"
@@ -175,6 +176,10 @@ func main() {
 	}
 	commandWorkerCtx, stopAgencyCommandWorker := context.WithCancel(context.Background())
 	defer stopAgencyCommandWorker()
+	if err := opsreserve.Start(commandWorkerCtx); err != nil {
+		common.FatalLog("OPS wallet reservation initialization failed")
+		return
+	}
 	service.StartBalanceReminderTask(commandWorkerCtx)
 	if err := opsupstreams.Start(commandWorkerCtx); err != nil {
 		common.FatalLog(err.Error())

@@ -134,7 +134,8 @@ func (m Properties) Value() (driver.Value, error) {
 }
 
 type TaskPrivateData struct {
-	UpstreamBaseURL string `json:"upstream_base_url,omitempty"`
+	OPSReservationGateway string `json:"ops_reservation_gateway,omitempty"`
+	UpstreamBaseURL       string `json:"upstream_base_url,omitempty"`
 	// OpsUsage is a credential-free terminal record committed with the task CAS.
 	OpsUsage       json.RawMessage `json:"ops_usage,omitempty"`
 	Key            string          `json:"key,omitempty"`
@@ -410,7 +411,7 @@ func (p *TaskPrivateData) Scan(val interface{}) error {
 
 func (p TaskPrivateData) Value() (driver.Value, error) {
 	if p.UpstreamBaseURL == "" && p.Key == "" && p.UpstreamTaskID == "" && p.ResultURL == "" &&
-		p.Execution == nil && p.BillingSource == "" && p.SubscriptionId == 0 &&
+		p.Execution == nil && p.OPSReservationGateway == "" && p.BillingSource == "" && p.SubscriptionId == 0 &&
 		p.TokenId == 0 && p.NodeName == "" && p.BillingContext == nil &&
 		!p.ResponsesBackground && len(p.PluginState) == 0 && p.PollFailures == 0 {
 		return nil, nil
@@ -437,6 +438,11 @@ type SyncTaskQueryParams struct {
 func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) *Task {
 	properties := Properties{}
 	privateData := TaskPrivateData{}
+	if relayInfo != nil {
+		if reservation, ok := relayInfo.Billing.(interface{ ReservationGateway() string }); ok {
+			privateData.OPSReservationGateway = reservation.ReservationGateway()
+		}
+	}
 	if relayInfo != nil && relayInfo.ChannelMeta != nil {
 		privateData.UpstreamBaseURL = relayInfo.ChannelBaseUrl
 		if privateData.UpstreamBaseURL == "" {

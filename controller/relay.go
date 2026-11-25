@@ -27,6 +27,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/opsbridge"
 	"github.com/QuantumNous/new-api/service/opsmonitor"
+	"github.com/QuantumNous/new-api/service/opsreserve"
 	"github.com/QuantumNous/new-api/service/upstreamalerts"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -175,7 +176,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	// common.SetContextKey(c, constant.ContextKeyTokenCountMeta, meta)
 
-	if priceData.FreeModel {
+	if priceData.FreeModel && !opsreserve.Enabled() {
 		logger.LogInfo(c, fmt.Sprintf("模型 %s 免费，跳过预扣费", relayInfo.OriginModelName))
 		if err := service.BeginCNDirectRelay(relayInfo); err != nil {
 			newAPIError = types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
@@ -239,6 +240,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = concurrencyErr
 			break
 		}
+		if err := service.BeginOPSReservationDispatch(relayInfo); err != nil {
+			newAPIError = types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
+			attempt.FinishRelay(newAPIError)
+			break
+		}
 
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
@@ -251,6 +257,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = relayHandler(c, relayInfo)
 		}
 		attempt.FinishRelay(newAPIError)
+		service.ObserveOPSReservationAttempt(relayInfo, newAPIError)
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil

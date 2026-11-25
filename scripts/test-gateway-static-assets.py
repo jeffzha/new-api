@@ -16,6 +16,10 @@ spec.loader.exec_module(assets)
 
 
 class StaticAssetsTests(unittest.TestCase):
+    def test_rsbuild_relative_entries_use_the_same_archive_paths(self):
+        self.assertEqual(assets.entries('<script src="static/js/index.js"></script><link href="static/css/index.css">'),
+                         ['/static/css/index.css', '/static/js/index.js'])
+
     def test_new_hash_and_async_chunks_are_packed_with_old_build_independent(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -30,6 +30,9 @@ class Entries(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         value = attrs.get('src' if tag == 'script' else 'href', '')
+        # Rsbuild's auto asset prefix emits root-page relative references.
+        if value.startswith('static/'):
+            value = '/' + value
         if tag in ('script', 'link') and value.startswith('/static/'):
             self.paths.add(value)
 

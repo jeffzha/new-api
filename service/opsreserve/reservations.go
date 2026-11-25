@@ -3,6 +3,9 @@ package opsreserve
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -13,6 +16,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service/opsclient"
+	"github.com/QuantumNous/new-api/service/opsfees"
+	"github.com/QuantumNous/new-api/service/opspush"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -28,6 +33,18 @@ var ErrUnavailable = errors.New("OPS wallet reservation unavailable")
 var ValidateAuthority func() error
 
 var RecoverMidjourney func(context.Context, *model.Midjourney) error
+var RecoverUsage func(context.Context, *Intent) error
+
+// Usage hints are bounded and expendable. The committed main-database journal
+// remains the source of truth when the queue is full or the process restarts.
+var usageHints = make(chan string, 256)
+
+func NotifyUsage(request string) {
+	select {
+	case usageHints <- request:
+	default:
+	}
+}
 
 // A release intent survives network errors and process restarts. Accepted
 // upstream work is never released on a timer: OPS closes its hold with debit.
@@ -103,6 +120,7 @@ func Start(ctx context.Context) error {
 			return err
 		}
 	}
+	go client.runUsage(ctx)
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
@@ -118,6 +136,129 @@ func Start(ctx context.Context) error {
 		}
 	}()
 	return nil
+}
+
+// runUsage has one worker per process, rather than a goroutine per request.
+// HTTP delivery stays off the model response path; the slow recovery scanner
+// also retries the same immutable event after a lost hint or acknowledgement.
+func (c *Client) runUsage(ctx context.Context) {
+	var next time.Time
+	for {
+		var request string
+		select {
+		case <-ctx.Done():
+			return
+		case request = <-usageHints:
+		}
+		requests := []string{request}
+		timer := time.NewTimer(max(25*time.Millisecond, time.Until(next)))
+	collect:
+		for len(requests) < 250 {
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case request := <-usageHints:
+				requests = append(requests, request)
+			case <-timer.C:
+				break collect
+			}
+		}
+		timer.Stop()
+		if delay := time.Until(next); delay > 0 {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+		interval := 1500 * time.Millisecond
+		if common.RedisEnabled && common.RDB != nil {
+			interval = 800 * time.Millisecond
+		}
+		next = time.Now().Add(interval)
+		work, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_ = c.SendJournalBatch(work, requests)
+		cancel()
+	}
+}
+
+func (c *Client) SendJournalUsage(ctx context.Context, request string) error {
+	return c.SendJournalBatch(ctx, []string{request})
+}
+
+// SendJournalBatch sends bounded immutable events with one fleet send permit.
+// A partial or lost acknowledgement leaves every journal eligible for replay.
+func (c *Client) SendJournalBatch(ctx context.Context, requests []string) error {
+	if len(requests) == 0 || len(requests) > 250 {
+		return ErrUnavailable
+	}
+	var rows []Intent
+	if err := c.DB.WithContext(ctx).Where("gateway = ? AND request IN ? AND finalized = ? AND cancel_pending = ? AND usage_delivered = ?", c.Transport.KeyID, requests, true, false, false).Order("request").Find(&rows).Error; err != nil {
+		return err
+	}
+	events := []json.RawMessage{}
+	delivered := []string{}
+	size := 0
+	for _, row := range rows {
+		if row.UsageLog == "" {
+			continue
+		}
+		if row.UsagePayload == "" {
+			if RecoverUsage == nil {
+				return ErrUnavailable
+			}
+			if err := RecoverUsage(ctx, &row); err != nil {
+				return err
+			}
+		}
+		var payload struct {
+			Schema string            `json:"schemaVersion"`
+			Events []json.RawMessage `json:"events"`
+		}
+		if common.UnmarshalJsonStr(row.UsagePayload, &payload) != nil || payload.Schema != "1.1" || len(payload.Events) != 1 {
+			return ErrUnavailable
+		}
+		if size+len(payload.Events[0]) > 900*1024 {
+			break // Remaining committed rows are recovered by the scanner.
+		}
+		events = append(events, payload.Events[0])
+		delivered = append(delivered, row.Request)
+		size += len(payload.Events[0])
+	}
+	if len(events) == 0 {
+		return nil
+	}
+	rawEvents, err := common.Marshal(events)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(rawEvents)
+	body, err := common.Marshal(map[string]any{"schemaVersion": "1.1", "batchId": "reserved-" + hex.EncodeToString(sum[:16]), "events": events})
+	if err != nil {
+		return err
+	}
+	if err = opspush.WaitUsageBudget(ctx, c.Transport.BaseURL, c.Transport.KeyID); err != nil {
+		return err
+	}
+	raw, err := c.Transport.Post(ctx, "/api/v1/ingest/v1/usage-events", body, time.Now())
+	if err != nil {
+		return err
+	}
+	var receipt struct {
+		Data struct {
+			Accepted   int   `json:"accepted"`
+			Duplicates int   `json:"duplicates"`
+			Rejected   []any `json:"rejected"`
+		} `json:"data"`
+	}
+	if common.Unmarshal(raw, &receipt) != nil || receipt.Data.Accepted < 0 || receipt.Data.Duplicates < 0 || receipt.Data.Accepted+receipt.Data.Duplicates != len(events) || len(receipt.Data.Rejected) != 0 {
+		return ErrUnavailable
+	}
+	opsfees.AcceptPushReceipts(c.Transport.BaseURL, c.Transport.KeyID, c.Transport.Secret, body, raw, time.Now())
+	return c.DB.WithContext(ctx).Model(&Intent{}).Where("gateway = ? AND request IN ?", c.Transport.KeyID, delivered).Update("usage_delivered", true).Error
 }
 
 func (c *Client) Reserve(ctx context.Context, request string, user int, modelName string, quota int, quote ...map[string]any) error {
@@ -334,6 +475,12 @@ func (c *Client) Recover(ctx context.Context) error {
 		return err
 	}
 	for _, row := range rows {
+		if row.UsageLog != "" && row.UsagePayload == "" && RecoverUsage != nil {
+			if err := RecoverUsage(ctx, &row); err != nil {
+				_ = c.DB.WithContext(ctx).Model(&Intent{}).Where("gateway = ? AND request = ?", row.Gateway, row.Request).Update("updated", time.Now().Unix()).Error
+				continue
+			}
+		}
 		midjourneyTerminal := row.MidjourneyID == 0
 		if row.MidjourneyID > 0 && RecoverMidjourney != nil {
 			var task model.Midjourney

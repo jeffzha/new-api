@@ -65,7 +65,7 @@ func TestDurableReservationRecoveryAcrossDatabases(t *testing.T) {
 			for _, field := range []string{"OPSReservationGateway", "OPSReservationRequest", "OPSReservationBaseURL"} {
 				require.NoError(t, db.Migrator().DropColumn(&model.Midjourney{}, field))
 			}
-			for _, field := range []string{"MidjourneyID", "UsagePayload", "RefundPayload", "UsageDelivered", "RefundDelivered", "TokenRefunded"} {
+			for _, field := range []string{"MidjourneyID", "UsagePayload", "UsageLog", "RefundPayload", "UsageDelivered", "RefundDelivered", "TokenRefunded"} {
 				require.NoError(t, db.Migrator().DropColumn(&Intent{}, field))
 			}
 			require.NoError(t, db.Table("midjourneys").Create(map[string]any{"user_id": 9, "mj_id": "existing-history", "quota": 17}).Error)
@@ -357,6 +357,23 @@ func TestDurableReservationRecoveryAcrossDatabases(t *testing.T) {
 				require.NoError(t, err)
 			}
 			check(60, 40)
+			// Final key accounting and recoverable pricing facts commit together,
+			// without depending on the separately configured display-log database.
+			require.NoError(t, c.Reserve(ctx, "journal", 1, "model", 30))
+			require.NoError(t, c.TokenBudget(ctx, "journal", 1, key.Id, 30, false))
+			require.NoError(t, c.MarkDispatch(ctx, "journal"))
+			journalLog := &model.Log{UserId: 1, TokenId: key.Id, ModelName: "model", RequestId: "journal", Quota: 20}
+			for range 2 {
+				require.NoError(t, model.FinalizeOPSHoldUsage(ctx, db, "gateway", journalLog, "immutable-pricing-facts"))
+			}
+			check(40, 60)
+			require.Error(t, model.FinalizeOPSHoldUsage(ctx, db, "gateway", journalLog, "changed-facts"))
+			journalLog.TokenId++
+			require.Error(t, model.FinalizeOPSHoldUsage(ctx, db, "gateway", journalLog, "immutable-pricing-facts"))
+			journalLog.TokenId--
+			journalLog.UserId = 2
+			require.Error(t, model.FinalizeOPSHoldUsage(ctx, db, "gateway", journalLog, "immutable-pricing-facts"))
+			check(40, 60)
 		})
 	}
 }

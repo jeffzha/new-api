@@ -16,11 +16,109 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service/opsclient"
+	"github.com/QuantumNous/new-api/service/opspush"
+	"github.com/QuantumNous/new-api/service/opsreserve"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestOPSReservationUsageSurvivesDisabledDisplayLog(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "journal.db")+"?_txlock=immediate"), &gorm.Config{})
+	require.NoError(t, err)
+	pool, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pool.Close() })
+	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.OPSHoldIntent{}, &model.User{}))
+	oldDB, oldLogDB, oldLogging, oldRedis := model.DB, model.LOG_DB, common.LogConsumeEnabled, common.RedisEnabled
+	model.DB, model.LOG_DB, common.LogConsumeEnabled, common.RedisEnabled = db, nil, false, false
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB, common.LogConsumeEnabled, common.RedisEnabled = oldDB, oldLogDB, oldLogging, oldRedis
+	})
+	key := model.Token{UserId: 1, Key: "journal-fixture", Status: common.TokenStatusEnabled, ExpiredTime: -1, RemainQuota: 1000}
+	require.NoError(t, db.Create(&key).Error)
+	var delivery []byte
+	deliveries := 0
+	reject := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == opsreserve.Path {
+			_, _ = w.Write([]byte(`{"data":{"requestId":"journal-request","state":"reserved"}}`))
+			return
+		}
+		var payload map[string]any
+		require.NoError(t, common.DecodeJson(r.Body, &payload))
+		delivery, err = common.Marshal(payload)
+		require.NoError(t, err)
+		deliveries++
+		if reject {
+			_, _ = w.Write([]byte(`{"data":{"accepted":0,"duplicates":0,"rejected":[{}]}}`))
+			return
+		}
+		count := len(payload["events"].([]any))
+		ack, marshalErr := common.Marshal(map[string]any{"data": map[string]any{"accepted": count, "duplicates": 0, "rejected": []any{}}})
+		require.NoError(t, marshalErr)
+		_, _ = w.Write(ack)
+	}))
+	defer server.Close()
+	t.Setenv("OPS_BILLING_URL", server.URL)
+	t.Setenv("OPS_BILLING_KEY_ID", "journal-gateway")
+	t.Setenv("OPS_BILLING_SECRET", "isolated-journal-signing-fixture")
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	ctx.Set(common.RequestIdKey, "journal-request")
+	info := &relaycommon.RelayInfo{RequestId: "journal-request", UserId: 1, TokenId: key.Id, OriginModelName: "gpt-4o", StartTime: time.Now()}
+	bill, apiErr := newOPSReservationSession(ctx, info, 100)
+	require.Nil(t, apiErr)
+	info.Billing = bill
+	require.NoError(t, BeginOPSReservationDispatch(info))
+	require.NoError(t, bill.Settle(60))
+	model.RecordConsumeLog(ctx, 1, model.RecordConsumeLogParams{ModelName: "local-price-alias", TokenId: key.Id, Quota: 60, PromptTokens: 3, CompletionTokens: 2})
+	var row model.OPSHoldIntent
+	require.NoError(t, db.First(&row).Error)
+	require.NotEmpty(t, row.UsageLog)
+	require.True(t, row.Finalized)
+	client, err := opsreserve.Configured()
+	require.NoError(t, err)
+	previous := opsreserve.RecoverUsage
+	opsreserve.RecoverUsage = RecoverOPSUsage
+	t.Cleanup(func() { opsreserve.RecoverUsage = previous })
+	require.NoError(t, client.SendJournalUsage(context.Background(), row.Request))
+	require.NoError(t, client.SendJournalUsage(context.Background(), row.Request))
+	require.Equal(t, 1, deliveries, "acknowledged journals must not send twice")
+	require.Contains(t, string(delivery), `"promptTokens":3`)
+	require.Contains(t, string(delivery), `"completionTokens":2`)
+	require.Contains(t, string(delivery), `"model":"gpt-4o"`)
+	require.NotContains(t, string(delivery), "local-price-alias")
+	var token model.Token
+	require.NoError(t, db.First(&token, key.Id).Error)
+	require.Equal(t, 940, token.RemainQuota)
+	// Rejected batches retain every immutable event for replay. One HTTP
+	// request delivers several journals, rather than a request per model call.
+	for _, request := range []string{"batch-a", "batch-b"} {
+		row.Request, row.UsagePayload, row.UsageDelivered = request, "", false
+		var facts struct {
+			Log        *model.Log
+			Conversion opspush.Conversion
+		}
+		require.NoError(t, common.UnmarshalJsonStr(row.UsageLog, &facts))
+		facts.Log.RequestId = request
+		raw, marshalErr := common.Marshal(facts)
+		require.NoError(t, marshalErr)
+		row.UsageLog = string(raw)
+		require.NoError(t, db.Create(&row).Error)
+	}
+	reject = true
+	require.Error(t, client.SendJournalBatch(context.Background(), []string{"batch-b", "batch-a"}))
+	failedBody := string(delivery)
+	var pending int64
+	require.NoError(t, db.Model(&model.OPSHoldIntent{}).Where("usage_delivered = ?", false).Count(&pending).Error)
+	require.EqualValues(t, 2, pending)
+	reject = false
+	require.NoError(t, client.SendJournalBatch(context.Background(), []string{"batch-a", "batch-b"}))
+	require.Equal(t, failedBody, string(delivery), "retry preserves exact event bytes and batch identity")
+	require.Equal(t, 3, deliveries)
+}
 
 // Invoked by the OPS real-PostgreSQL suite with a disposable signed station.
 func TestOPSReservationSignedGatewayLifecycle(t *testing.T) {
@@ -33,10 +131,10 @@ func TestOPSReservationSignedGatewayLifecycle(t *testing.T) {
 	pool, err := db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = pool.Close() })
-	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.OPSHoldIntent{}))
-	oldDB, oldRedis := model.DB, common.RedisEnabled
-	model.DB, common.RedisEnabled = db, false
-	t.Cleanup(func() { model.DB, common.RedisEnabled = oldDB, oldRedis })
+	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.OPSHoldIntent{}, &model.User{}))
+	oldDB, oldRedis, oldLogging := model.DB, common.RedisEnabled, common.LogConsumeEnabled
+	model.DB, common.RedisEnabled, common.LogConsumeEnabled = db, false, false
+	t.Cleanup(func() { model.DB, common.RedisEnabled, common.LogConsumeEnabled = oldDB, oldRedis, oldLogging })
 	key := model.Token{UserId: 1, Key: "isolated-e2e", Status: common.TokenStatusEnabled, ExpiredTime: -1, RemainQuota: 1000000}
 	require.NoError(t, db.Create(&key).Error)
 	t.Setenv("OPS_BILLING_URL", base)
@@ -52,9 +150,20 @@ func TestOPSReservationSignedGatewayLifecycle(t *testing.T) {
 	for range 2 {
 		require.NoError(t, session.Settle(500000))
 	}
+	ctx.Set(common.RequestIdKey, info.RequestId)
+	other := model.NewLogOther()
+	if scope := os.Getenv("OPS_HOLD_E2E_SCOPE"); scope != "" {
+		other.SetPublic("billing_scope", scope)
+	}
+	model.RecordConsumeLog(ctx, 1, model.RecordConsumeLogParams{ModelName: "gpt-4o", TokenId: key.Id, Quota: 500000, PromptTokens: 1000000, Other: other})
+	var journal model.OPSHoldIntent
+	require.NoError(t, db.First(&journal).Error)
+	var facts struct{ Log *model.Log }
+	require.NoError(t, common.UnmarshalJsonStr(journal.UsageLog, &facts))
+	require.NotNil(t, facts.Log)
 	transport := opsclient.New(base, os.Getenv("OPS_HOLD_E2E_KEY"), os.Getenv("OPS_HOLD_E2E_SECRET"), 3*time.Second)
 	body, err := common.Marshal(map[string]any{"schemaVersion": "1", "batchId": "gateway-e2e-batch", "events": []any{map[string]any{
-		"requestId": info.RequestId, "occurredAt": "2026-07-01T00:00:00Z", "userId": "1", "username": "alice", "model": "gpt-4o", "promptTokens": 1000000, "completionTokens": 0, "gatewayQuota": 500000, "status": "success", "isStream": false,
+		"requestId": info.RequestId, "occurredAt": time.Unix(facts.Log.CreatedAt, 0).UTC().Format(time.RFC3339), "userId": "1", "username": "alice", "model": "gpt-4o", "promptTokens": 1000000, "completionTokens": 0, "gatewayQuota": 500000, "status": "success", "isStream": false,
 		"extra": map[string]any{"billing_scope": os.Getenv("OPS_HOLD_E2E_SCOPE")},
 	}}})
 	require.NoError(t, err)

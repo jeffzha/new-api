@@ -177,6 +177,7 @@ func main() {
 	commandWorkerCtx, stopAgencyCommandWorker := context.WithCancel(context.Background())
 	defer stopAgencyCommandWorker()
 	opsreserve.RecoverMidjourney = service.RecoverOPSMidjourney
+	opsreserve.RecoverUsage = service.RecoverOPSUsage
 	if err := opsreserve.Start(commandWorkerCtx); err != nil {
 		common.FatalLog("OPS wallet reservation initialization failed")
 		return

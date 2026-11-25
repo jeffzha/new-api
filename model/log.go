@@ -441,7 +441,8 @@ type RecordConsumeLogParams struct {
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
-	if !common.LogConsumeEnabled {
+	journal, financial := c.Get(OPSReservationLogKey)
+	if !common.LogConsumeEnabled && !financial {
 		return
 	}
 	if billing, ok := businessapi.BillingFromContext(c); ok {
@@ -455,6 +456,12 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	createdAt := common.GetTimestamp()
+	if financial {
+		if params.Other == nil {
+			params.Other = NewLogOther()
+		}
+		params.Other.SetPublic("ops_reservation_outbox", true)
+	}
 	params.Other = captureRequestUpstream(c, params.Other)
 	otherStr := businessCallerLogJSON(c, params.Other)
 	// 判断是否需要记录 IP
@@ -489,6 +496,16 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		RequestId:         requestId,
 		UpstreamRequestId: upstreamRequestId,
 		Other:             otherStr,
+	}
+	if financial {
+		if write, ok := journal.(func(*Log) error); !ok {
+			logger.LogError(c, "OPS usage journal callback unavailable")
+		} else if err := write(log); err != nil {
+			logger.LogError(c, "OPS usage journal requires reconciliation")
+		}
+	}
+	if !common.LogConsumeEnabled {
+		return
 	}
 	err := createLog(log)
 	if err != nil {

@@ -127,28 +127,8 @@ func (p *Pusher) sendCommitted(parent context.Context, ids []int) error {
 		keep := len(events) / 2
 		events, delivered = events[:keep], delivered[:keep]
 	}
-	if common.RedisEnabled && common.RDB != nil {
-		// One fleet-wide fast batch per interval, independent of which blue/
-		// green slot handled calls. Busy/outage work stays in the SQL outbox.
-		sum := sha256.Sum256([]byte(p.Config.URL + "\n" + p.Config.KeyID))
-		for {
-			gate, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-			delay, err := common.RDB.Eval(gate, "if redis.call('SET',KEYS[1],'1','NX','PX',800) then return 0 else return redis.call('PTTL',KEYS[1]) end", []string{"ops-fast-push:" + hex.EncodeToString(sum[:])}).Int64()
-			cancel()
-			if err != nil {
-				return err
-			}
-			if delay == 0 {
-				break
-			}
-			timer := time.NewTimer(time.Duration(max(delay, 1)) * time.Millisecond)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
-			}
-		}
+	if err := WaitUsageBudget(ctx, p.Config.URL, p.Config.KeyID); err != nil {
+		return err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, p.Config.URL+pushPath, bytes.NewReader(body))
 	if err != nil {
@@ -184,6 +164,35 @@ func (p *Pusher) sendCommitted(parent context.Context, ids []int) error {
 	for _, id := range delivered {
 		if len(p.fastDelivered) < 2048 {
 			p.fastDelivered[id] = p.Now()
+		}
+	}
+	return nil
+}
+
+// WaitUsageBudget shares the fast-delivery allowance between display-log and
+// financial-journal workers across all slots using this OPS credential.
+func WaitUsageBudget(ctx context.Context, base, key string) error {
+	if common.RedisEnabled && common.RDB != nil {
+		// One fleet-wide fast batch per interval, independent of which blue/
+		// green slot handled calls. Busy/outage work stays in the SQL outbox.
+		sum := sha256.Sum256([]byte(base + "\n" + key))
+		for {
+			gate, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+			delay, err := common.RDB.Eval(gate, "if redis.call('SET',KEYS[1],'1','NX','PX',800) then return 0 else return redis.call('PTTL',KEYS[1]) end", []string{"ops-fast-push:" + hex.EncodeToString(sum[:])}).Int64()
+			cancel()
+			if err != nil {
+				return err
+			}
+			if delay == 0 {
+				break
+			}
+			timer := time.NewTimer(time.Duration(max(delay, 1)) * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
 		}
 	}
 	return nil

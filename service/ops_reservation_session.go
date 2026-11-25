@@ -9,9 +9,12 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service/opspush"
 	"github.com/QuantumNous/new-api/service/opsreserve"
 	"github.com/gin-gonic/gin"
 )
@@ -27,6 +30,7 @@ type opsReservationSession struct {
 	reserved, actual           int
 	done, refunded, dispatched bool
 	uncertain                  bool
+	journal                    bool
 	realtimeInputQuota         int
 	realtimeWindow             int
 	lastRenew                  time.Time
@@ -80,7 +84,63 @@ func newOPSReservationSession(c *gin.Context, info *relaycommon.RelayInfo, quota
 		}
 	}
 	info.BillingSource = "ops"
+	if c != nil && info.TaskRelayInfo == nil && info.RelayFormat != types.RelayFormatTask && info.RelayFormat != types.RelayFormatMjProxy && info.RelayFormat != types.RelayFormatOpenAIRealtime {
+		s.journal = true
+		c.Set(model.OPSReservationLogKey, func(log *model.Log) error {
+			// The display log may use a local pricing alias. OPS owns prices
+			// for the requested public model, which also owns the money hold.
+			usage := *log
+			usage.ModelName = info.GetOriginModelName()
+			facts, err := common.Marshal(struct {
+				Log         *model.Log
+				Conversion  opspush.Conversion
+				ChannelName string
+			}{&usage, opspush.CurrentConversion(), c.GetString(string(constant.ContextKeyChannelName))})
+			if err != nil {
+				return err
+			}
+			journalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 4*time.Second)
+			defer cancel()
+			if err := model.FinalizeOPSHoldUsage(journalCtx, client.DB, client.Transport.KeyID, &usage, string(facts)); err != nil {
+				return err
+			}
+			opsreserve.NotifyUsage(log.RequestId)
+			return nil
+		})
+	}
 	return s, nil
+}
+
+// RecoverOPSUsage rebuilds only from committed usage facts, including their
+// original conversion snapshot. A lost display log is never treated as free.
+func RecoverOPSUsage(ctx context.Context, row *opsreserve.Intent) error {
+	var facts struct {
+		Log         *model.Log
+		Conversion  opspush.Conversion
+		ChannelName string
+	}
+	if common.UnmarshalJsonStr(row.UsageLog, &facts) != nil || facts.Log == nil || facts.Log.RequestId != row.Request || strconv.Itoa(facts.Log.UserId) != row.User {
+		return opsreserve.ErrUnavailable
+	}
+	client, err := opsreserve.Configured()
+	if err != nil || client.Transport.KeyID != row.Gateway {
+		return opsreserve.ErrUnavailable
+	}
+	event := opspush.EventV11(facts.Log, facts.ChannelName, nil, facts.Conversion)
+	if event == nil {
+		return opsreserve.ErrUnavailable
+	}
+	if err = opspush.AttachUpstream(client.DB, facts.Log, event); err != nil {
+		return err
+	}
+	body, err := common.Marshal(map[string]any{"schemaVersion": "1.1", "batchId": row.Request + "-reserved-usage", "events": []any{event}})
+	if err != nil {
+		return err
+	}
+	if err = client.DB.WithContext(ctx).Model(&model.OPSHoldIntent{}).Where("gateway = ? AND request = ? AND (usage_payload IS NULL OR usage_payload = ?)", row.Gateway, row.Request, "").Update("usage_payload", string(body)).Error; err != nil {
+		return err
+	}
+	return client.DB.WithContext(ctx).Where("gateway = ? AND request = ?", row.Gateway, row.Request).First(row).Error
 }
 
 func reservationAPIError(err error) *types.NewAPIError {
@@ -160,6 +220,12 @@ func (s *opsReservationSession) Settle(actual int) error {
 		if err := s.client.AttachTask(ctx, s.info.RequestId, s.info.PublicTaskID); err != nil {
 			return err
 		}
+		s.done, s.actual = true, actual
+		return nil
+	}
+	if s.journal {
+		// RecordConsumeLog journals the final usage facts and key adjustment in
+		// one main-database transaction. Do not finalize the key ahead of it.
 		s.done, s.actual = true, actual
 		return nil
 	}

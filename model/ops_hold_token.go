@@ -33,6 +33,7 @@ type OPSHoldIntent struct {
 	ResolvedAt      int64  `gorm:"not null"`
 	MidjourneyID    int
 	UsagePayload    string `gorm:"type:text"`
+	UsageLog        string `gorm:"type:text"`
 	RefundPayload   string `gorm:"type:text"`
 	UsageDelivered  bool
 	RefundDelivered bool
@@ -40,6 +41,46 @@ type OPSHoldIntent struct {
 }
 
 func (OPSHoldIntent) TableName() string { return "ops_wallet_hold_intents" }
+
+// OPSReservationLogKey carries the request's financial journal callback. It
+// runs independently of optional display logs and never contains a credential.
+const OPSReservationLogKey = "ops-reservation-usage-journal"
+
+// FinalizeOPSHoldUsage commits final API-key usage together with the durable
+// pricing facts. An unavailable log database cannot lose the wallet settlement.
+func FinalizeOPSHoldUsage(ctx context.Context, db *gorm.DB, gateway string, log *Log, facts string) error {
+	if log == nil || log.RequestId == "" || log.UserId <= 0 || log.Quota < 0 || log.Quota > common.MaxQuota || facts == "" {
+		return errors.New("invalid OPS usage journal")
+	}
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var row OPSHoldIntent
+		if err := lockForUpdate(tx).Where("gateway = ? AND request = ?", gateway, log.RequestId).First(&row).Error; err != nil {
+			return err
+		}
+		if row.User != strconv.Itoa(log.UserId) || row.Model != log.ModelName || row.TokenID != log.TokenId || !row.Dispatched || row.CancelPending || row.TaskID != "" || row.MidjourneyID != 0 {
+			return errors.New("OPS usage journal identity mismatch")
+		}
+		budget := log.Quota
+		if row.TokenID == 0 {
+			budget = 0
+		}
+		if row.Finalized && row.TokenQuota != budget {
+			return errors.New("OPS usage journal quota conflict")
+		}
+		if row.UsageLog != "" {
+			if row.UsageLog != facts {
+				return errors.New("OPS usage journal facts conflict")
+			}
+			return nil
+		}
+		if row.TokenID > 0 {
+			if err := AdjustOPSHoldTokenTx(tx, log.UserId, row.TokenID, row.TokenQuota, budget, false); err != nil {
+				return err
+			}
+		}
+		return tx.Model(&OPSHoldIntent{}).Where("gateway = ? AND request = ?", gateway, log.RequestId).Updates(map[string]any{"usage_log": facts, "token_quota": budget, "finalized": true, "updated": time.Now().Unix()}).Error
+	})
+}
 
 // PrepareOPSHoldSchema rejects conflicting recovery indexes instead of silently
 // accepting an existing index with the same name and a different definition.

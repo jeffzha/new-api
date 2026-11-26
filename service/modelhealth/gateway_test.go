@@ -15,7 +15,10 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/task/doubao"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -241,6 +244,77 @@ func TestVideoBudgetWaitsForCommittedFinalSettlement(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 }
 
+func TestLegacyDoubaoProbeHoldRequiresMatchingFinalAdjustment(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	previous := model.LOG_DB
+	model.LOG_DB = db
+	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.Log{}))
+	t.Cleanup(func() {
+		model.LOG_DB = previous
+		require.NoError(t, db.Migrator().DropTable(&model.Token{}, &model.Log{}))
+	})
+	token := model.Token{UserId: 273, Name: "model-health/video"}
+	require.NoError(t, db.Create(&token).Error)
+	run := model.ModelHealthRun{ChannelID: 2, ModelName: "doubao-seedance-2-0-260128", State: "succeeded", CreatedAt: 100, RequestID: "legacy-request", UpstreamTaskID: "legacy-task", Template: `{"quota_per_unit":"500000"}`}
+	require.NoError(t, db.Create(&run).Error)
+	task := model.Task{TaskID: run.UpstreamTaskID, ChannelId: run.ChannelID, UserId: 273, Status: model.TaskStatusSuccess, Quota: 40000, PrivateData: model.TaskPrivateData{TokenId: token.Id, Execution: &model.TaskExecutionSnapshot{RequestID: run.RequestID}, BillingContext: &model.TaskBillingContext{OriginModelName: run.ModelName, ProviderBilling: &model.TaskProviderBillingSnapshot{Provider: model.TaskBillingProviderDoubaoVideoCNY, Currency: "CNY", CNYPerUSD: "7.3"}}}}
+	require.NoError(t, db.Create(&task).Error)
+	for _, data := range []struct {
+		channel int
+		other   string
+	}{
+		{2, `{"task_id":"legacy-task","settlement_stage":"submit","actual_quota":40000}`},
+		{3, `{"task_id":"legacy-task","settlement_stage":"settle","actual_quota":40000}`},
+		{2, `{"task_id":"another-task","settlement_stage":"settle","actual_quota":40000}`},
+		{2, `{"task_id":"legacy-task","settlement_stage":"settle","actual_quota":50000}`},
+	} {
+		require.NoError(t, db.Create(&model.Log{UserId: 273, TokenId: token.Id, ChannelId: data.channel, ModelName: run.ModelName, CreatedAt: 101, Type: model.LogTypeConsume, Other: data.other}).Error)
+	}
+	require.NoError(t, syncProbeTaskBudgetReceipt(context.Background(), run))
+	require.NoError(t, db.First(&run, run.ID).Error)
+	assert.Nil(t, run.ActualMicro)
+	require.NoError(t, db.Create(&model.Log{UserId: 273, TokenId: token.Id, ChannelId: 2, ModelName: run.ModelName, CreatedAt: 102, Type: model.LogTypeRefund, Other: `{"task_id":"legacy-task","settlement_stage":"settle","actual_quota":40000}`}).Error)
+	require.NoError(t, syncProbeTaskBudgetReceipt(context.Background(), run))
+	require.NoError(t, db.First(&run, run.ID).Error)
+	require.NotNil(t, run.ActualMicro)
+	assert.Equal(t, int64(584000), *run.ActualMicro)
+}
+
+func TestDoubaoProbeHoldWaitsForFinalDurableWalletReceipt(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.CNTaskBilling{}))
+	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(&model.Token{}, &model.CNTaskBilling{})) })
+	token := model.Token{UserId: 273, Name: "model-health/video"}
+	require.NoError(t, db.Create(&token).Error)
+	template, err := common.Marshal(Template{QuotaPerUnit: "500000"})
+	require.NoError(t, err)
+	run := model.ModelHealthRun{ChannelID: 2, ModelName: "doubao-seedance-2-0-260128", State: "succeeded", RequestID: "doubao-request", UpstreamTaskID: "doubao-task", ReservationMicro: 5000000, Template: string(template)}
+	require.NoError(t, db.Create(&run).Error)
+	task := model.Task{TaskID: run.UpstreamTaskID, ChannelId: run.ChannelID, UserId: 273, Status: model.TaskStatusSuccess, Quota: 40000, CNBillingKey: "receipt", PrivateData: model.TaskPrivateData{TokenId: token.Id, Execution: &model.TaskExecutionSnapshot{RequestID: run.RequestID}, BillingContext: &model.TaskBillingContext{OriginModelName: run.ModelName, ProviderBilling: &model.TaskProviderBillingSnapshot{Provider: model.TaskBillingProviderDoubaoVideoCNY, Currency: "CNY", CNYPerUSD: "99"}}}}
+	require.NoError(t, db.Create(&task).Error)
+	receipt := model.CNTaskBilling{Key: task.CNBillingKey, State: "active", TaskID: task.ID, RequestID: run.RequestID, PublicTaskID: task.TaskID, UserID: task.UserId, TokenID: token.Id, ChannelID: run.ChannelID, Actual: task.Quota, Currency: "CNY", QuotaPerUnit: "500000", ExchangeRate: "7.3", FactID: "committed-fact"}
+	require.NoError(t, syncProbeTaskBudgetReceipt(context.Background(), run), "a receipt not yet written must remain pending without blocking later reconciliation")
+	require.NoError(t, db.Create(&receipt).Error)
+	require.NoError(t, syncProbeTaskBudgetReceipt(context.Background(), run))
+	require.NoError(t, db.First(&run, run.ID).Error)
+	assert.Nil(t, run.ActualMicro, "successful generation does not confirm the wallet settlement")
+	require.NoError(t, db.Model(&receipt).Updates(map[string]any{"state": "final", "actual": 50000}).Error)
+	require.NoError(t, syncProbeTaskBudgetReceipt(context.Background(), run))
+	require.NoError(t, db.First(&run, run.ID).Error)
+	assert.Nil(t, run.ActualMicro, "a mismatched receipt must not release the hold")
+	require.NoError(t, db.Model(&receipt).Update("actual", task.Quota).Error)
+	require.NoError(t, syncProbeTaskBudgetReceipt(context.Background(), run))
+	require.NoError(t, syncProbeTaskBudgetReceipt(context.Background(), run))
+	require.NoError(t, db.First(&run, run.ID).Error)
+	require.NotNil(t, run.ActualMicro)
+	assert.Equal(t, int64(584000), *run.ActualMicro, "use the receipt's frozen FX rather than a current setting or estimate")
+	var count int64
+	require.NoError(t, db.Model(&model.ModelHealthConfig{}).Where("kind = ?", "budget-receipt").Count(&count).Error)
+	assert.Equal(t, int64(1), count)
+}
+
 func TestDeferredFirstVideoDetectionRemainsDueAfterBudgetDayChanges(t *testing.T) {
 	db := healthDB(t)
 	migrateHealth(t, db)
@@ -304,81 +378,182 @@ func TestWeeklyScheduleServesOldestDeferredVideoBeforeEarlierChannel(t *testing.
 }
 
 func TestSeedancePlatformProbeDownloadsOriginalTaskWithoutResubmission(t *testing.T) {
+	for _, channelType := range []int{constant.ChannelTypeOpenAISeedance, constant.ChannelTypeDoubaoVideo} {
+		t.Run(strconv.Itoa(channelType), func(t *testing.T) {
+			db := healthDB(t)
+			migrateHealth(t, db)
+			ctx := context.Background()
+			_, _ = seedHealth(t, db, "video")
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}))
+			t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(&model.Token{}, &model.User{})) })
+			t.Setenv("MODEL_HEALTH_GATEWAY_URL", "https://gateway.example")
+			t.Setenv("MODEL_HEALTH_KEY_FIXTURE", "fixturekey")
+			t.Setenv("MODEL_HEALTH_KEY_FIXTURE_ORIGIN", "https://gateway.example")
+			user := model.User{Username: "media-probe", Role: common.RoleAdminUser, Status: common.UserStatusEnabled}
+			require.NoError(t, db.Create(&user).Error)
+			ch := model.Channel{Name: "Seedance fixture", Type: channelType, Status: 1, Key: "unused", Models: "doubao-seedance-2-0-260128", BaseURL: common.GetPointer("https://provider.example")}
+			require.NoError(t, db.Create(&ch).Error)
+			token := model.Token{UserId: user.Id, Name: "model-health/media", Key: "fixturekey", Status: 1, ExpiredTime: time.Now().Unix() + 3600, RemainQuota: 100, ModelLimitsEnabled: true, ModelLimits: ch.Models}
+			require.NoError(t, db.Create(&token).Error)
+			target := targetFor(&ch, ch.Models)
+			p := builtinTemplate(target, "openai-video", AutoTemplatePolicy{Credential: "MODEL_HEALTH_KEY_FIXTURE", MaxMicro: 10000})
+			assert.True(t, p.MinimumConfirmed)
+			assert.Equal(t, int64(5000000), p.MaxMicro)
+			assert.Equal(t, false, p.Body["generate_audio"])
+			assert.Equal(t, "16:9", p.Body["ratio"])
+			if channelType == constant.ChannelTypeDoubaoVideo {
+				encoded, err := common.Marshal(p.Body)
+				require.NoError(t, err)
+				var request relaycommon.TaskSubmitReq
+				require.NoError(t, common.Unmarshal(encoded, &request))
+				request.Model = ch.Models
+				c, _ := gin.CreateTestContext(nil)
+				info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}, TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+				relaycommon.StoreTaskRequest(c, info, constant.TaskActionGenerate, request)
+				body, err := (&doubao.TaskAdaptor{}).BuildRequestBody(c, info)
+				require.NoError(t, err)
+				var upstream struct {
+					Duration      int    `json:"duration"`
+					Resolution    string `json:"resolution"`
+					Ratio         string `json:"ratio"`
+					GenerateAudio *bool  `json:"generate_audio"`
+				}
+				require.NoError(t, common.DecodeJson(body, &upstream))
+				assert.Equal(t, 4, upstream.Duration)
+				assert.Equal(t, "720p", upstream.Resolution)
+				assert.Equal(t, "16:9", upstream.Ratio)
+				require.NotNil(t, upstream.GenerateAudio)
+				assert.False(t, *upstream.GenerateAudio)
+			}
+			// Preserve the explicitly configured weekly schedule; budgets still gate it.
+			rule := recommendedRule("video")
+			rule.Enabled = true
+			require.NoError(t, SaveRule(ctx, "video", Selection{}, rule))
+			require.NoError(t, model.SaveModelHealthConfig(db, "p-"+hash(target.ID, "openai-video")[:62], "template", p))
+			effective, _, err := effectiveRule(db, target, "openai-video")
+			require.NoError(t, err)
+			assert.True(t, effective.Enabled)
+			assert.Equal(t, 604800, effective.IntervalSeconds)
+			require.NoError(t, SaveTemplate(ctx, p))
+			assert.False(t, fitsBudget(p, Budget{Run: 10000, Day: 100000, Month: 1000000, ChannelTPM: 256}), "video must not silently bypass the configured budget")
+			require.NoError(t, SaveBudget(ctx, Budget{Run: 10000000, Day: 20000000, Month: 100000000, Concurrent: 1, ChannelRPM: 1, ChannelTPM: 256}))
+			bindings, err := workerBindings(db)
+			require.NoError(t, err)
+			_, err = acquireWorker(ctx, "fixture", bindings)
+			require.NoError(t, err)
+			sel := p.Selection
+			plan, err := GetPlan(ctx, sel)
+			require.NoError(t, err)
+			require.True(t, plan.Ready, plan.Blocked)
+			run, err := Enqueue(ctx, sel, plan.Revision, p.MaxMicro)
+			require.NoError(t, err)
+			media, err := os.ReadFile(filepath.Join("..", "..", "web", "public", "images", "home", "underwater.mp4"))
+			require.NoError(t, err)
+			posts, downloads := 0, 0
+			client := &http.Client{Transport: mockProvider(func(req *http.Request) (*http.Response, error) {
+				assert.Equal(t, "gateway.example", req.URL.Host)
+				assert.Equal(t, "Bearer sk-fixturekey-"+strconv.Itoa(ch.Id), req.Header.Get("Authorization"))
+				if req.Method == http.MethodPost {
+					posts++
+					return reply(200, `{"id":"task-fixture"}`), nil
+				}
+				if req.URL.Path == "/v1/videos/task-fixture/content" {
+					downloads++
+					if downloads == 1 {
+						return reply(503, "temporary content failure"), nil
+					}
+					return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"video/mp4"}}, Body: io.NopCloser(bytes.NewReader(media))}, nil
+				}
+				return reply(200, `{"status":"completed"}`), nil
+			})}
+			require.NoError(t, work(ctx, client, time.Now().Unix()))
+			require.NoError(t, db.Model(&run).Update("next_poll", 0).Error)
+			require.NoError(t, work(ctx, client, time.Now().Unix()))
+			require.NoError(t, db.First(&run, run.ID).Error)
+			assert.Equal(t, "polling", run.State)
+			assert.Equal(t, 1, posts)
+			require.NoError(t, db.Model(&run).Update("next_poll", 0).Error)
+			require.NoError(t, work(ctx, client, time.Now().Unix()))
+			require.NoError(t, db.First(&run, run.ID).Error)
+			assert.Equal(t, "succeeded", run.State, run.Reason)
+			assert.Equal(t, 1, posts)
+			assert.Equal(t, 2, downloads)
+			assert.Nil(t, run.ActualMicro, "generation success is not a cost receipt")
+		})
+	}
+}
+
+func TestDetectionCostsReusePersistedOPSFeesWithoutMixingConnectionsOrLocalCharges(t *testing.T) {
 	db := healthDB(t)
 	migrateHealth(t, db)
-	ctx := context.Background()
-	_, _ = seedHealth(t, db, "video")
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}))
-	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(&model.Token{}, &model.User{})) })
-	t.Setenv("MODEL_HEALTH_GATEWAY_URL", "https://gateway.example")
-	t.Setenv("MODEL_HEALTH_KEY_FIXTURE", "fixturekey")
-	t.Setenv("MODEL_HEALTH_KEY_FIXTURE_ORIGIN", "https://gateway.example")
-	user := model.User{Username: "media-probe", Role: common.RoleAdminUser, Status: common.UserStatusEnabled}
-	require.NoError(t, db.Create(&user).Error)
-	ch := model.Channel{Name: "Seedance fixture", Type: constant.ChannelTypeOpenAISeedance, Status: 1, Key: "unused", Models: "doubao-seedance-2-0-260128", BaseURL: common.GetPointer("https://vedioapi.laomandi.com")}
-	require.NoError(t, db.Create(&ch).Error)
-	token := model.Token{UserId: user.Id, Name: "model-health/media", Key: "fixturekey", Status: 1, ExpiredTime: time.Now().Unix() + 3600, RemainQuota: 100, ModelLimitsEnabled: true, ModelLimits: ch.Models}
+	previous := model.LOG_DB
+	model.LOG_DB = db
+	model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: "domestic-product"})
+	t.Cleanup(func() {
+		model.LOG_DB = previous
+		model.ConfigureOpsFees(nil)
+		require.NoError(t, db.Migrator().DropTable(&model.Log{}, &model.Token{}, &model.OpsFee{}))
+	})
+	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.Token{}, &model.OpsFee{}))
+	token := model.Token{UserId: 273, Name: "model-health/fixture"}
 	require.NoError(t, db.Create(&token).Error)
-	target := targetFor(&ch, ch.Models)
-	p := builtinTemplate(target, "openai-video", AutoTemplatePolicy{Credential: "MODEL_HEALTH_KEY_FIXTURE", MaxMicro: 10000})
-	assert.True(t, p.MinimumConfirmed)
-	assert.Equal(t, int64(5000000), p.MaxMicro)
-	assert.Equal(t, false, p.Body["generate_audio"])
-	assert.Equal(t, "16:9", p.Body["ratio"])
-	// Preserve the explicitly configured weekly schedule; budgets still gate it.
-	rule := recommendedRule("video")
-	rule.Enabled = true
-	require.NoError(t, SaveRule(ctx, "video", Selection{}, rule))
-	require.NoError(t, model.SaveModelHealthConfig(db, "p-"+hash(target.ID, "openai-video")[:62], "template", p))
-	effective, _, err := effectiveRule(db, target, "openai-video")
-	require.NoError(t, err)
-	assert.True(t, effective.Enabled)
-	assert.Equal(t, 604800, effective.IntervalSeconds)
-	require.NoError(t, SaveTemplate(ctx, p))
-	assert.False(t, fitsBudget(p, Budget{Run: 10000, Day: 100000, Month: 1000000, ChannelTPM: 256}), "video must not silently bypass the configured budget")
-	require.NoError(t, SaveBudget(ctx, Budget{Run: 10000000, Day: 20000000, Month: 100000000, Concurrent: 1, ChannelRPM: 1, ChannelTPM: 256}))
-	bindings, err := workerBindings(db)
-	require.NoError(t, err)
-	_, err = acquireWorker(ctx, "fixture", bindings)
-	require.NoError(t, err)
-	sel := p.Selection
-	plan, err := GetPlan(ctx, sel)
-	require.NoError(t, err)
-	require.True(t, plan.Ready, plan.Blocked)
-	run, err := Enqueue(ctx, sel, plan.Revision, p.MaxMicro)
-	require.NoError(t, err)
-	media, err := os.ReadFile(filepath.Join("..", "..", "web", "public", "images", "home", "underwater.mp4"))
-	require.NoError(t, err)
-	posts, downloads := 0, 0
-	client := &http.Client{Transport: mockProvider(func(req *http.Request) (*http.Response, error) {
-		assert.Equal(t, "gateway.example", req.URL.Host)
-		assert.Equal(t, "Bearer sk-fixturekey-"+strconv.Itoa(ch.Id), req.Header.Get("Authorization"))
-		if req.Method == http.MethodPost {
-			posts++
-			return reply(200, `{"id":"task-fixture"}`), nil
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, cst)
+	entries := []struct {
+		request, amount, connection, status, currency, source string
+		days, channel, user                                   int
+	}{
+		{"confirmed", "0.000249", "domestic-product", "available", "CNY", "manual", 0, 2, 273},
+		{"previous-week", "0.1", "domestic-product", "available", "CNY", "scheduled", -8, 2, 273},
+		{"wrong-connection", "99", "project", "available", "CNY", "manual", 0, 2, 273},
+		{"wrong-channel", "99", "domestic-product", "available", "CNY", "manual", 0, 3, 273},
+		{"wrong-user", "99", "domestic-product", "available", "CNY", "manual", 0, 2, 274},
+		{"unconfirmed", "99", "domestic-product", "unconfirmed", "CNY", "manual", 0, 2, 273},
+		{"wrong-currency", "99", "domestic-product", "available", "USD", "manual", 0, 2, 273},
+		{"invalid-amount", "1e99999", "domestic-product", "available", "CNY", "manual", 0, 2, 273},
+		{"zero", "0", "domestic-product", "available", "CNY", "manual", 0, 2, 273},
+	}
+	var confirmedID, zeroID int64
+	for _, entry := range entries {
+		run := model.ModelHealthRun{ChannelID: 2, ModelName: "fixture", RequestID: entry.request, Source: entry.source, State: "succeeded", CreatedAt: now.AddDate(0, 0, entry.days).Unix(), ActualMicro: common.GetPointer(int64(999999))}
+		require.NoError(t, db.Create(&run).Error)
+		if entry.request == "confirmed" {
+			confirmedID = run.ID
 		}
-		if req.URL.Path == "/v1/videos/task-fixture/content" {
-			downloads++
-			if downloads == 1 {
-				return reply(503, "temporary content failure"), nil
-			}
-			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"video/mp4"}}, Body: io.NopCloser(bytes.NewReader(media))}, nil
+		if entry.request == "zero" {
+			zeroID = run.ID
 		}
-		return reply(200, `{"status":"completed"}`), nil
-	})}
-	require.NoError(t, work(ctx, client, time.Now().Unix()))
-	require.NoError(t, db.Model(&run).Update("next_poll", 0).Error)
-	require.NoError(t, work(ctx, client, time.Now().Unix()))
-	require.NoError(t, db.First(&run, run.ID).Error)
-	assert.Equal(t, "polling", run.State)
-	assert.Equal(t, 1, posts)
-	require.NoError(t, db.Model(&run).Update("next_poll", 0).Error)
-	require.NoError(t, work(ctx, client, time.Now().Unix()))
-	require.NoError(t, db.First(&run, run.ID).Error)
-	assert.Equal(t, "succeeded", run.State, run.Reason)
-	assert.Equal(t, 1, posts)
-	assert.Equal(t, 2, downloads)
-	assert.Nil(t, run.ActualMicro, "generation success is not a cost receipt")
+		require.NoError(t, db.Create(&model.Log{RequestId: entry.request, UserId: 273, TokenId: token.Id, ModelName: run.ModelName, ChannelId: entry.channel, Type: model.LogTypeConsume}).Error)
+		require.NoError(t, db.Create(&model.OpsFee{Connection: entry.connection, RequestID: entry.request, UserID: strconv.Itoa(entry.user), Model: run.ModelName, Amount: common.GetPointer(entry.amount), StationAmount: common.GetPointer("8"), Status: entry.status, Currency: entry.currency}).Error)
+	}
+	// A second OPS connection contains the same request; count the active one once.
+	require.NoError(t, db.Create(&model.OpsFee{Connection: "project", RequestID: "confirmed", UserID: "273", Model: "fixture", Amount: common.GetPointer("99"), Status: "available", Currency: "CNY"}).Error)
+	result, err := readPlatformOpsCosts(context.Background(), "manual", 1, now)
+	require.NoError(t, err)
+	assert.Equal(t, "confirmed", result.State)
+	assert.Equal(t, map[int64]int64{confirmedID: 249, zeroID: 0}, result.Amounts)
+	require.NotNil(t, result.WeekMicro)
+	assert.Equal(t, int64(249), *result.WeekMicro)
+	assert.Equal(t, int64(100249), *result.TotalMicro, "totals include all detection sources and pages")
+	// A correction received through the normal feed is visible after persistence.
+	require.NoError(t, db.Model(&model.OpsFee{}).Where("connection = ? AND request_id = ?", "domestic-product", "confirmed").Update("amount", "0.0003").Error)
+	result, err = readPlatformOpsCosts(context.Background(), "manual", 1, now)
+	require.NoError(t, err)
+	assert.Equal(t, int64(300), result.Amounts[confirmedID])
+	assert.Equal(t, int64(100300), *result.TotalMicro)
+	// Async receipts are linked through the original task request, even when
+	// settlement logs use another generated request ID.
+	run := model.ModelHealthRun{ChannelID: 2, ModelName: "fixture", RequestID: "video-original", UpstreamTaskID: "video-public-id", State: "succeeded", Source: "manual", CreatedAt: now.Unix()}
+	require.NoError(t, db.Create(&run).Error)
+	task := model.Task{TaskID: run.UpstreamTaskID, ChannelId: 2, UserId: 273, Status: model.TaskStatusSuccess, Properties: model.Properties{OriginModelName: "fixture"}, PrivateData: model.TaskPrivateData{TokenId: token.Id, Execution: &model.TaskExecutionSnapshot{RequestID: run.RequestID}}}
+	require.NoError(t, db.Create(&task).Error)
+	require.NoError(t, db.Create(&model.OpsFee{Connection: "domestic-product", RequestID: run.RequestID, UserID: "273", Model: "fixture", Amount: common.GetPointer("1.23"), Currency: "CNY", Status: "available"}).Error)
+	result, err = readPlatformOpsCosts(context.Background(), "manual", 1, now)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1230000), result.Amounts[run.ID])
+	require.NoError(t, db.Model(&task).Update("channel_id", 3).Error)
+	result, err = readPlatformOpsCosts(context.Background(), "manual", 1, now)
+	require.NoError(t, err)
+	assert.NotContains(t, result.Amounts, run.ID)
 }
 
 func TestGatewayProbeUsesPlatformKeyPublicModelAndPinnedChannel(t *testing.T) {

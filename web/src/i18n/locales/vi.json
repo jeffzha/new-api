@@ -7142,6 +7142,10 @@
     "The model catalog shows list prices before discounts. Actual charges are shown in usage logs.": "Danh mục hiển thị giá niêm yết chưa giảm. Xem phí thực tế trong nhật ký sử dụng.",
     "No operations fee for this call": "Lượt gọi này không thuộc phạm vi tính phí OPS",
     "Actual customer deduction (CNY)": "Số tiền thực trừ của khách hàng (CNY)",
-    "Deduction minus calculated fee (CNY)": "Chênh lệch tiền thực trừ và phí tính toán (CNY)"
+    "Deduction minus calculated fee (CNY)": "Chênh lệch tiền thực trừ và phí tính toán (CNY)",
+    "Verify detection cost": "Verify detection cost",
+    "Verified cost (CNY)": "Verified cost (CNY)",
+    "Confirm the original request has finished and verify its final charge before releasing the detection budget. This only reconciles the internal detection budget; it does not change wallet balances or OPS fees.": "Confirm the original request has finished and verify its final charge before releasing the detection budget. This only reconciles the internal detection budget; it does not change wallet balances or OPS fees.",
+    "Enter an amount from 0 to 1000000 CNY with at most six decimal places": "Enter an amount from 0 to 1000000 CNY with at most six decimal places"
   }
 }

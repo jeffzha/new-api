@@ -7494,6 +7494,10 @@
     "Detection cycle budget is insufficient": "本周期检测预算不足（含待核实费用预留），检测将等待预算恢复。",
     "The overall cycle budget is required": "必须设置整体周期预算。",
     "Use a positive cycle budget and a per-detection limit up to CNY 5": "请输入大于 0 的周期预算，单次上限最多 5 元。",
-    "Overall remaining budget is below the per-detection limit": "整体周期剩余额度低于单次上限，请关注剩余额度。"
+    "Overall remaining budget is below the per-detection limit": "整体周期剩余额度低于单次上限，请关注剩余额度。",
+    "Verify detection cost": "核实检测费用",
+    "Verified cost (CNY)": "已核实费用（元）",
+    "Confirm the original request has finished and verify its final charge before releasing the detection budget. This only reconciles the internal detection budget; it does not change wallet balances or OPS fees.": "请先确认原请求已经结束，并核实最终费用，再释放检测预算。此操作仅核销内部检测预算，不会修改钱包余额或 OPS 费用。",
+    "Enter an amount from 0 to 1000000 CNY with at most six decimal places": "请输入 0 至 1000000 元的金额，最多保留六位小数"
   }
 }

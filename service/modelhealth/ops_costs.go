@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service/opsclient"
+	"github.com/shopspring/decimal"
 )
 
 const opsCostsPath = "/api/v1/catalog/v1/model-health/costs"
@@ -46,6 +47,9 @@ var probeCostReader = sync.OnceValues(func() (*opsclient.Client, string) {
 func GetOpsCosts(ctx context.Context, source string, page int) (OpsCosts, error) {
 	client, state := probeCostReader()
 	if client == nil {
+		if state == "unconfigured" && model.OpsFeesEnabled() {
+			return readPlatformOpsCosts(ctx, source, page, time.Now())
+		}
 		return OpsCosts{State: state, Amounts: map[int64]int64{}}, nil
 	}
 	runs, err := ListRuns(ctx, source, page)
@@ -55,8 +59,61 @@ func GetOpsCosts(ctx context.Context, source string, page int) (OpsCosts, error)
 	return readOpsCosts(ctx, client, runs[:min(25, len(runs))], time.Now()), nil
 }
 
+// Reuse durable, identity-matched OPS results already fetched for usage logs.
+// This does no network I/O, repricing, wallet adjustment or budget reconciliation.
+func readPlatformOpsCosts(ctx context.Context, source string, page int, now time.Time) (OpsCosts, error) {
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	result := OpsCosts{State: "unavailable", Amounts: map[int64]int64{}}
+	runs, err := ListRuns(ctx, source, page)
+	if err != nil {
+		return result, err
+	}
+	rows, err := model.ModelHealthOpsReceipts(ctx)
+	if err != nil {
+		return result, err
+	}
+	visible := make(map[int64]bool, len(runs))
+	for _, run := range runs[:min(25, len(runs))] {
+		visible[run.ID] = true
+	}
+	counts := make(map[string]int, len(rows))
+	for _, row := range rows {
+		counts[row.RequestID]++
+	}
+	day := now.In(cst)
+	monday := time.Unix(dayStart(now.Unix()), 0).In(cst).AddDate(0, 0, -(int(day.Weekday())+6)%7).Unix()
+	week, total := decimal.Zero, decimal.Zero
+	for _, row := range rows {
+		if counts[row.RequestID] != 1 || !identifier.MatchString(row.RequestID) || len(row.Amount) == 0 || len(row.Amount) > 80 || strings.ContainsAny(row.Amount, "eE+ \t\r\n") {
+			continue
+		}
+		amount, err := decimal.NewFromString(row.Amount)
+		if err != nil || amount.IsNegative() || amount.Exponent() < -18 {
+			continue
+		}
+		micro := amount.Mul(decimal.NewFromInt(1000000))
+		if micro.GreaterThan(decimal.NewFromInt(maxMoneyMicros)) {
+			continue
+		}
+		total = total.Add(micro)
+		if row.CreatedAt >= monday {
+			week = week.Add(micro)
+		}
+		if total.GreaterThan(decimal.NewFromInt(maxMoneyMicros)) {
+			return OpsCosts{State: "unavailable", Amounts: map[int64]int64{}}, nil
+		}
+		if visible[row.ID] {
+			result.Amounts[row.ID] = micro.Round(0).IntPart()
+		}
+	}
+	w, all := week.Round(0).IntPart(), total.Round(0).IntPart()
+	result.State, result.WeekMicro, result.TotalMicro = "confirmed", &w, &all
+	return result, nil
+}
+
 // Only OPS-confirmed probe receipts are displayed. Provider response amounts,
-// safety reservations and customer fee records are intentionally not consulted.
+// safety reservations and unrelated customer fees are never substituted.
 func readOpsCosts(ctx context.Context, client *opsclient.Client, runs []model.ModelHealthRun, now time.Time) OpsCosts {
 	result := OpsCosts{State: "unavailable", Amounts: map[int64]int64{}}
 	day := now.In(cst)

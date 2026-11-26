@@ -7142,6 +7142,10 @@
     "The model catalog shows list prices before discounts. Actual charges are shown in usage logs.": "モデル一覧は割引前の定価です。実際の請求額は利用ログで確認できます。",
     "No operations fee for this call": "この呼び出しは運用側の課金対象外です",
     "Actual customer deduction (CNY)": "ユーザーの実際の引き落とし額（人民元）",
-    "Deduction minus calculated fee (CNY)": "引き落とし額と計算料金の差額（人民元）"
+    "Deduction minus calculated fee (CNY)": "引き落とし額と計算料金の差額（人民元）",
+    "Verify detection cost": "Verify detection cost",
+    "Verified cost (CNY)": "Verified cost (CNY)",
+    "Confirm the original request has finished and verify its final charge before releasing the detection budget. This only reconciles the internal detection budget; it does not change wallet balances or OPS fees.": "Confirm the original request has finished and verify its final charge before releasing the detection budget. This only reconciles the internal detection budget; it does not change wallet balances or OPS fees.",
+    "Enter an amount from 0 to 1000000 CNY with at most six decimal places": "Enter an amount from 0 to 1000000 CNY with at most six decimal places"
   }
 }

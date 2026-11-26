@@ -24,7 +24,7 @@ type AutoTemplatePolicy struct {
 	MaxMicro   int64  `json:"max_micro"`
 }
 
-const defaultTemplateProfile = "builtin-v2"
+const defaultTemplateProfile = "builtin-v3"
 
 func SaveAutoTemplatePolicy(ctx context.Context, policy AutoTemplatePolicy) error {
 	if !credentialRef.MatchString(policy.Credential) || policy.TokenID < 1 || policy.MaxMicro < 1 || policy.MaxMicro > 100000000 {
@@ -121,11 +121,15 @@ func builtinTemplate(t Target, endpoint string, policy AutoTemplatePolicy) Templ
 		p.SuccessValues, p.FailureValues, p.PendingValues = []string{"completed"}, []string{"failed", "cancelled"}, []string{"queued", "in_progress"}
 		p.TimeoutSeconds = 600
 		p.DraftReason = "Confirm the minimum video duration, resolution and cost ceiling"
-		// The native OpenAI Seedance adaptor validates this exact 4s contract.
+		// Both native Seedance adaptors validate this exact 4s contract.
 		// Other video providers retain drafts until their own contract is known.
-		if t.channelType == constant.ChannelTypeOpenAISeedance {
+		if t.channelType == constant.ChannelTypeOpenAISeedance || t.channelType == constant.ChannelTypeDoubaoVideo {
 			if price, ok := seedancepricing.GetUnitPriceCNY(t.Model, "720p", false); ok {
 				p.Body["ratio"], p.Body["generate_audio"] = "16:9", false
+				if t.channelType == constant.ChannelTypeDoubaoVideo {
+					// The native adaptor reads these optional controls from metadata.
+					p.Body["metadata"] = map[string]any{"ratio": "16:9", "generate_audio": false}
+				}
 				// 4s * 1280 * 720 * 24 / 1024 = 86400 video tokens.
 				// Reserve 125% and round upward to whole CNY; budget admission
 				// still rejects this when the administrator's ceiling is lower.

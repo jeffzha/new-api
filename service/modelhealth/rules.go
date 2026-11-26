@@ -223,7 +223,7 @@ func SaveTemplate(ctx context.Context, p Template) error {
 			return invalid("Invalid response field path")
 		}
 	}
-	platformVideo := t.Type == "video" && t.channelType == constant.ChannelTypeOpenAISeedance && p.Endpoint == "openai-video" && p.Path == "/v1/videos" && p.PollPath == "/v1/videos/{task_id}"
+	platformVideo := t.Type == "video" && (t.channelType == constant.ChannelTypeOpenAISeedance || t.channelType == constant.ChannelTypeDoubaoVideo) && p.Endpoint == "openai-video" && p.Path == "/v1/videos" && p.PollPath == "/v1/videos/{task_id}"
 	if (t.Type == "video" && p.PollPath == "") || (slices.Contains([]string{"video", "image", "audio", "tts"}, t.Type) && p.ResultField == "" && t.Type != "tts" && !platformVideo) {
 		return invalid("A media result contract is required")
 	}

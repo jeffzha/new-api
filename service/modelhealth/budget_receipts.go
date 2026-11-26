@@ -2,6 +2,7 @@ package modelhealth
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -101,7 +102,7 @@ func syncProbeBudgetReceipts(ctx context.Context) error {
 func syncProbeTaskBudgetReceipt(ctx context.Context, run model.ModelHealthRun) error {
 	return model.ModelHealthTransaction(ctx, func(tx *gorm.DB) error {
 		var tasks []model.Task
-		if err := tx.Select("id", "task_id", "channel_id", "user_id", "status", "quota", "private_data", "billing_reconciliation_pending").Where("task_id = ? AND channel_id = ?", run.UpstreamTaskID, run.ChannelID).Limit(2).Find(&tasks).Error; err != nil {
+		if err := tx.Select("id", "task_id", "channel_id", "user_id", "status", "quota", "private_data", "billing_reconciliation_pending", "cn_billing_key").Where("task_id = ? AND channel_id = ?", run.UpstreamTaskID, run.ChannelID).Limit(2).Find(&tasks).Error; err != nil {
 			return err
 		}
 		if len(tasks) != 1 {
@@ -119,6 +120,10 @@ func syncProbeTaskBudgetReceipt(ctx context.Context, run model.ModelHealthRun) e
 		if token.Id == 0 || !strings.HasPrefix(token.Name, "model-health/") {
 			return nil
 		}
+		provider := pd.BillingContext.ProviderBilling
+		if provider.Provider == model.TaskBillingProviderDoubaoVideoCNY && provider.Currency == "CNY" && !provider.AsyncReconciliationRequired {
+			return syncProbeDoubaoBudgetReceipt(ctx, tx, run, task)
+		}
 		var receipts []model.TaskBillingReconciliation
 		if err := tx.Where("task_id = ? AND channel_id = ? AND status = ?", task.ID, run.ChannelID, model.TaskBillingReconciliationSettled).Limit(2).Find(&receipts).Error; err != nil {
 			return err
@@ -126,7 +131,6 @@ func syncProbeTaskBudgetReceipt(ctx context.Context, run model.ModelHealthRun) e
 		if len(receipts) != 1 || receipts[0].ActualQuota != task.Quota || task.Quota < 0 {
 			return nil
 		}
-		provider := pd.BillingContext.ProviderBilling
 		rate, err := decimal.NewFromString(provider.CNYPerUSD)
 		var template Template
 		if common.UnmarshalJsonStr(run.Template, &template) != nil {
@@ -157,4 +161,68 @@ func syncProbeTaskBudgetReceipt(ctx context.Context, run model.ModelHealthRun) e
 		}
 		return model.SaveModelHealthConfig(tx, "receipt-"+strconv.FormatInt(run.ID, 10), "budget-receipt", map[string]any{"run_id": run.ID, "task_id": task.TaskID, "settlement_id": receipts[0].ID, "request_id": run.RequestID, "source": "platform_task_settlement", "currency": "CNY", "amount": amount.String(), "budget_micro": micro, "reconciled_at": time.Now().Unix()})
 	})
+}
+
+// Doubao settles from its final usage rather than a supplier-bill job. Require
+// the committed durable task receipt, or an identity-matched final adjustment
+// log; a successful task row or its submission estimate alone is insufficient.
+func syncProbeDoubaoBudgetReceipt(ctx context.Context, tx *gorm.DB, run model.ModelHealthRun, task model.Task) error {
+	var template Template
+	if common.UnmarshalJsonStr(run.Template, &template) != nil {
+		return nil
+	}
+	unit, unitErr := decimal.NewFromString(template.QuotaPerUnit)
+	rate, rateErr := decimal.NewFromString(task.PrivateData.BillingContext.ProviderBilling.CNYPerUSD)
+	source := "platform_task_adjustment"
+	if task.CNBillingKey != "" {
+		var receipt model.CNTaskBilling
+		if err := tx.Where(map[string]any{"key": task.CNBillingKey}).Take(&receipt).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		if receipt.State != "final" || receipt.Pending || receipt.FinalError != "" || receipt.FactID == "" || receipt.TaskID != task.ID || receipt.RequestID != run.RequestID || receipt.PublicTaskID != task.TaskID || receipt.UserID != task.UserId || receipt.TokenID != task.PrivateData.TokenId || receipt.ChannelID != run.ChannelID || receipt.Actual != task.Quota || receipt.Currency != "CNY" {
+			return nil
+		}
+		unit, unitErr = decimal.NewFromString(receipt.QuotaPerUnit)
+		rate, rateErr = decimal.NewFromString(receipt.ExchangeRate)
+		source = "platform_durable_task_settlement"
+	} else {
+		if model.LOG_DB == nil || task.PrivateData.BillingContext.AgencyPricing != nil {
+			return nil
+		}
+		var logs []model.Log
+		if err := model.LOG_DB.WithContext(ctx).Select("other").Where("user_id = ? AND token_id = ? AND channel_id = ? AND model_name = ? AND type IN ? AND created_at >= ?", task.UserId, task.PrivateData.TokenId, run.ChannelID, run.ModelName, []int{model.LogTypeConsume, model.LogTypeRefund}, run.CreatedAt).Order("id desc").Limit(100).Find(&logs).Error; err != nil {
+			return err
+		}
+		matched := false
+		for _, log := range logs {
+			var final struct {
+				Task  string `json:"task_id"`
+				Stage string `json:"settlement_stage"`
+				Quota *int   `json:"actual_quota"`
+			}
+			if common.UnmarshalJsonStr(log.Other, &final) == nil && final.Task == task.TaskID && final.Stage == "settle" && final.Quota != nil && *final.Quota == task.Quota {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil
+		}
+	}
+	if unitErr != nil || !unit.IsPositive() || rateErr != nil || !rate.IsPositive() || rate.GreaterThan(decimal.NewFromInt(1000)) || task.Quota < 0 {
+		return nil
+	}
+	amount := decimal.NewFromInt(int64(task.Quota)).Div(unit).Mul(rate)
+	if amount.GreaterThan(decimal.NewFromInt(1000000)) {
+		return nil
+	}
+	micro := amount.Mul(decimal.NewFromInt(1000000)).Ceil().IntPart()
+	q := tx.Model(&model.ModelHealthRun{}).Where("id = ? AND actual_micro IS NULL AND state IN ?", run.ID, []string{"succeeded", "failed"}).Update("actual_micro", micro)
+	if q.Error != nil || q.RowsAffected == 0 {
+		return q.Error
+	}
+	return model.SaveModelHealthConfig(tx, "receipt-"+strconv.FormatInt(run.ID, 10), "budget-receipt", map[string]any{"run_id": run.ID, "task_id": task.TaskID, "request_id": run.RequestID, "source": source, "currency": "CNY", "amount": amount.String(), "budget_micro": micro, "reconciled_at": time.Now().Unix()})
 }

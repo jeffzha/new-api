@@ -1,14 +1,65 @@
 package opsfees
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"net/url"
 	"strconv"
 	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service/opsclient"
+	"gorm.io/gorm/clause"
 )
+
+// RecoverReceipt reads one original request, independently of the incremental
+// cursor. It never submits usage, changes that cursor, or adjusts a wallet.
+func RecoverReceipt(ctx context.Context, client *opsclient.Client, connection, request, user, modelName string, at time.Time) (*model.OpsFee, error) {
+	raw, err := client.Get(ctx, "/api/v1/catalog/v1/charges/"+url.PathEscape(request), at)
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Data struct {
+			Request string `json:"requestId"`
+			User    string `json:"userId"`
+			Status  string `json:"status"`
+			Fee     *Fee   `json:"logFee"`
+		} `json:"data"`
+	}
+	if common.Unmarshal(raw, &response) != nil {
+		return nil, errors.New("invalid OPS receipt")
+	}
+	d := response.Data
+	if d.Status != "charged" && d.Status != "station_billed" || d.Fee == nil || d.Fee.Amount == nil {
+		return nil, nil
+	}
+	if d.Request != request || d.User != user || d.Fee.RequestID != request || d.Fee.UserID != user || d.Fee.Model != modelName {
+		return nil, errors.New("OPS receipt identity mismatch")
+	}
+	encoded, err := common.Marshal(map[string]any{"data": map[string]any{"items": []Fee{*d.Fee}, "nextCursor": "recovered", "hasMore": false}})
+	if err != nil {
+		return nil, err
+	}
+	rows, _, _, err := decodePage(encoded, connection, at.Unix())
+	if err != nil {
+		return nil, err
+	}
+	return &rows[0], nil
+}
+
+// PersistRecoveredReceipt stores the validated OPS result, including later
+// refund fields, without moving the normal fee-reader lease or cursor.
+func PersistRecoveredReceipt(ctx context.Context, row model.OpsFee) error {
+	if err := model.DB.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "connection"}, {Name: "request_id"}}, DoUpdates: clause.AssignmentColumns([]string{"user_id", "model", "amount", "station_amount", "refund_amount", "difference", "currency", "charged_at", "fetched_at", "status"})}).Create(&row).Error; err != nil {
+		return err
+	}
+	model.AcceptOpsFeeResults(row.Connection, []model.OpsFee{row}, true)
+	return nil
+}
 
 var receiptConfig atomic.Pointer[Config]
 

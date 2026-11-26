@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +18,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service/opsclient"
+	"github.com/QuantumNous/new-api/service/opsfees"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -554,6 +557,106 @@ func TestDetectionCostsReusePersistedOPSFeesWithoutMixingConnectionsOrLocalCharg
 	result, err = readPlatformOpsCosts(context.Background(), "manual", 1, now)
 	require.NoError(t, err)
 	assert.NotContains(t, result.Amounts, run.ID)
+}
+
+func TestDetectionOPSRecoveryPersistsMissingReceiptsAndRefundsWithoutRebilling(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.Log{}, &model.OpsFee{}))
+	previous := model.LOG_DB
+	model.LOG_DB = db
+	model.ConfigureOpsFees(&model.OpsFeeRuntime{Connection: "domestic-product"})
+	t.Cleanup(func() {
+		model.LOG_DB = previous
+		model.ConfigureOpsFees(nil)
+		require.NoError(t, db.Migrator().DropTable(&model.Token{}, &model.Log{}, &model.OpsFee{}))
+	})
+	ctx := context.Background()
+	token := model.Token{UserId: 273, Name: "model-health/fixture"}
+	require.NoError(t, db.Create(&token).Error)
+	require.NoError(t, model.SaveModelHealthConfig(db, "auto-templates", "auto-templates", AutoTemplatePolicy{Enabled: true, TokenID: token.Id}))
+	now := time.Now()
+	runs := make(map[string]model.ModelHealthRun)
+	for _, name := range []string{"wrong-owner", "missing", "refunded", "mismatch", "zero", "waiting", "invalid-amount"} {
+		run := model.ModelHealthRun{ChannelID: 2, ModelName: "fixture", RequestID: name, State: "succeeded", Source: "manual", CreatedAt: now.Unix(), UpstreamTaskID: "task-" + name, ReservationMicro: 3000000}
+		status := model.TaskStatus(model.TaskStatusSuccess)
+		quota, owner := 10, token.UserId
+		if name == "refunded" {
+			run.State, status, quota = "failed", model.TaskStatusFailure, 0
+		}
+		if name == "wrong-owner" {
+			owner++
+		}
+		require.NoError(t, db.Create(&run).Error)
+		require.NoError(t, db.Create(&model.Task{TaskID: run.UpstreamTaskID, ChannelId: run.ChannelID, UserId: owner, Status: status, Quota: quota, Properties: model.Properties{OriginModelName: run.ModelName}, PrivateData: model.TaskPrivateData{TokenId: token.Id, Execution: &model.TaskExecutionSnapshot{RequestID: name}}}).Error)
+		runs[name] = run
+	}
+	require.NoError(t, db.Create(&model.OpsFee{Connection: "domestic-product", RequestID: "refunded", UserID: "273", Model: "fixture", Amount: common.GetPointer("2"), StationAmount: common.GetPointer("2"), Currency: "CNY", Status: "available"}).Error)
+	require.NoError(t, db.Create(&model.OpsFee{Connection: "project", RequestID: "missing", UserID: "273", Model: "fixture", Amount: common.GetPointer("99"), Currency: "CNY", Status: "available"}).Error)
+	calls := 0
+	client := opsclient.New("https://ops.example", "fixture", "local-receipt-fixture-secret", time.Second)
+	client.HTTP = &http.Client{Transport: mockProvider(func(req *http.Request) (*http.Response, error) {
+		calls++
+		assert.Equal(t, http.MethodGet, req.Method)
+		assert.Empty(t, req.URL.RawQuery, "recovery must not rewind the normal fee feed")
+		name := strings.TrimPrefix(req.URL.Path, "/api/v1/catalog/v1/charges/")
+		assert.NotEqual(t, "wrong-owner", name)
+		fee := opsfees.Fee{RequestID: name, UserID: "273", Model: "fixture", Amount: common.GetPointer("2.7181"), ChargedAt: now.UTC().Format(time.RFC3339)}
+		if name == "refunded" {
+			fee.Amount, fee.StationAmount, fee.RefundAmount = common.GetPointer("2"), common.GetPointer("0"), common.GetPointer("1.999996")
+		}
+		if name == "mismatch" {
+			fee.UserID = "274"
+		}
+		if name == "zero" {
+			fee.Amount = common.GetPointer("0")
+		}
+		if name == "invalid-amount" {
+			fee.Amount = common.GetPointer("1e99999")
+		}
+		status := "station_billed"
+		if name == "waiting" {
+			status = "pending"
+		}
+		body, err := common.Marshal(map[string]any{"data": map[string]any{"requestId": name, "userId": "273", "status": status, "logFee": fee}})
+		require.NoError(t, err)
+		return reply(200, string(body)), nil
+	})}
+	config := opsfees.Config{Connection: "domestic-product"}
+	require.NoError(t, syncProbeOpsReceipts(ctx, config, client, now))
+	require.NoError(t, syncProbeOpsReceipts(ctx, config, client, now))
+	assert.Equal(t, 1, calls, "another HTTP slot must not duplicate the recovery request")
+	for i := 1; i <= 5; i++ {
+		err := syncProbeOpsReceipts(ctx, config, client, now.Add(time.Duration(i)*31*time.Second))
+		if i == 2 || i == 5 {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+		}
+	}
+	assert.Equal(t, 6, calls)
+	var rows []model.OpsFee
+	require.NoError(t, db.Where("connection = ?", config.Connection).Order("request_id").Find(&rows).Error)
+	require.Len(t, rows, 3)
+	assert.Equal(t, "missing", rows[0].RequestID)
+	assert.Equal(t, "2.7181", *rows[0].Amount)
+	assert.Equal(t, "refunded", rows[1].RequestID)
+	assert.Equal(t, "2", *rows[1].Amount, "OPS calculation remains separate from refunded net debit")
+	assert.Equal(t, "0", *rows[1].StationAmount)
+	assert.Equal(t, "1.999996", *rows[1].RefundAmount)
+	assert.Equal(t, "zero", rows[2].RequestID)
+	assert.Equal(t, "0", *rows[2].Amount)
+	result, err := readPlatformOpsCosts(ctx, "manual", 1, now)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2718100), result.Amounts[runs["missing"].ID])
+	assert.Equal(t, int64(0), result.Amounts[runs["zero"].ID])
+	assert.NotContains(t, result.Amounts, runs["mismatch"].ID)
+	var refunded model.ModelHealthRun
+	require.NoError(t, db.First(&refunded, runs["refunded"].ID).Error)
+	assert.Nil(t, refunded.ActualMicro, "OPS display recovery must not release a budget hold")
+	var task model.Task
+	require.NoError(t, db.Where("task_id = ?", refunded.UpstreamTaskID).First(&task).Error)
+	assert.Zero(t, task.Quota)
 }
 
 func TestGatewayProbeUsesPlatformKeyPublicModelAndPinnedChannel(t *testing.T) {

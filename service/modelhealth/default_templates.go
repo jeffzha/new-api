@@ -262,6 +262,9 @@ func StartAutoTemplates(ctx context.Context) {
 			if err := SyncAutoTemplates(cycle); err != nil && ctx.Err() == nil {
 				common.SysError("model health automatic template synchronization failed")
 			}
+			if err := recoverProbeOpsReceipts(cycle); err != nil && ctx.Err() == nil {
+				common.SysError("model health OPS receipt recovery deferred")
+			}
 			cancel()
 			select {
 			case <-ctx.Done():

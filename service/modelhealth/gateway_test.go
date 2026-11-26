@@ -1,10 +1,14 @@
 package modelhealth
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +20,366 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCycleBudgetHierarchyKeepsOverallCapAndCarriesUnknownCharges(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	ctx := context.Background()
+	sel, _ := seedHealth(t, db, "video")
+	target, err := findTarget(db, sel.Channel, sel.Model, sel.Endpoint)
+	require.NoError(t, err)
+	global := CycleBudgetInput{Scope: "global", Override: true, Amount: 200000000, Run: 5000000, IntervalSeconds: 604800}
+	require.NoError(t, SaveCycleBudget(ctx, global))
+	require.NoError(t, SaveCycleBudget(ctx, CycleBudgetInput{Scope: "video", Override: true, Amount: 60000000, Run: 4000000, IntervalSeconds: 604800}))
+	require.NoError(t, SaveCycleBudget(ctx, CycleBudgetInput{Selection: sel, Scope: "model", Override: true, Amount: 6000000, Run: 3000000, IntervalSeconds: 604800}))
+	status, err := GetCycleBudget(ctx, "model", sel)
+	require.NoError(t, err)
+	assert.Equal(t, "model", status.Source)
+	require.NoError(t, db.Create(&model.ModelHealthRun{Target: target.ID, Endpoint: sel.Endpoint, State: "succeeded", ReservationMicro: 4000000, ActualMicro: common.GetPointer(int64(4000000))}).Error)
+	limits, err := cycleBudgetBlocks(db, target, sel.Endpoint, 3000000, time.Now().Unix(), 0)
+	require.NoError(t, err)
+	assert.Contains(t, limits, "Detection cycle budget is insufficient")
+	require.NoError(t, SaveCycleBudget(ctx, CycleBudgetInput{Selection: sel, Scope: "model"}))
+	status, err = GetCycleBudget(ctx, "model", sel)
+	require.NoError(t, err)
+	assert.Equal(t, "video", status.Source)
+	require.NoError(t, SaveCycleBudget(ctx, CycleBudgetInput{Scope: "video"}))
+	status, err = GetCycleBudget(ctx, "model", sel)
+	require.NoError(t, err)
+	assert.Equal(t, "global", status.Source)
+	assert.Equal(t, int64(4000000), status.Used)
+	anchor := status.Start
+	global.Amount = 100000000
+	require.NoError(t, SaveCycleBudget(ctx, global))
+	status, err = GetCycleBudget(ctx, "global", Selection{})
+	require.NoError(t, err)
+	assert.Equal(t, anchor, status.Start, "editing the amount must not reset the cycle")
+	assert.Equal(t, int64(4000000), status.Used)
+	require.NoError(t, db.Create(&model.ModelHealthRun{State: "uncertain", Endpoint: sel.Endpoint, ReservationMicro: 99000000, CreatedAt: anchor - 86400}).Error)
+	limits, err = cycleBudgetBlocks(db, target, sel.Endpoint, 1000000, anchor+604800, 0)
+	require.NoError(t, err)
+	assert.Empty(t, limits, "settled prior-cycle charges expire but unknown reservations carry over")
+	limits, err = cycleBudgetBlocks(db, target, sel.Endpoint, 2000000, anchor+604800, 0)
+	require.NoError(t, err)
+	assert.Contains(t, limits, "Detection cycle budget is insufficient")
+}
+
+func TestCycleBudgetRejectsInvalidValuesAndCannotResetByChangingPeriod(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	ctx := context.Background()
+	input := CycleBudgetInput{Scope: "global", Override: true, Amount: 200000000, Run: 5000000, IntervalSeconds: 604800}
+	require.NoError(t, SaveCycleBudget(ctx, input))
+	for _, amount := range []int64{-1, 0, 1000000000001} {
+		invalidInput := input
+		invalidInput.Amount = amount
+		require.Error(t, SaveCycleBudget(ctx, invalidInput))
+	}
+	require.NoError(t, db.Create(&model.ModelHealthRun{State: "succeeded", ReservationMicro: 100000000, ActualMicro: common.GetPointer(int64(100000000))}).Error)
+	input.IntervalSeconds = 86400
+	require.NoError(t, SaveCycleBudget(ctx, input))
+	status, err := GetCycleBudget(ctx, "global", Selection{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(100000000), status.Used)
+	assert.Equal(t, 604800, status.IntervalSeconds, "the active period remains fixed until its next boundary")
+	assert.Equal(t, 86400, status.NextIntervalSeconds)
+}
+
+func TestCycleBudgetAdmissionAndClaimShareTheCapWithoutDoubleReserving(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	ctx := context.Background()
+	sel, plan := seedHealth(t, db, "llm")
+	rule := recommendedRule("llm")
+	rule.PerDay = 12
+	require.NoError(t, SaveRule(ctx, "llm", Selection{}, rule))
+	global := CycleBudgetInput{Scope: "global", Override: true, Amount: 150, Run: 100, IntervalSeconds: 604800}
+	require.NoError(t, SaveCycleBudget(ctx, global))
+	var wg sync.WaitGroup
+	results := make(chan error, 2)
+	for range 2 {
+		wg.Go(func() { _, err := Enqueue(ctx, sel, plan.Revision, plan.Template.MaxMicro); results <- err })
+	}
+	wg.Wait()
+	close(results)
+	var admitted int
+	for err := range results {
+		if err == nil {
+			admitted++
+		}
+	}
+	assert.Equal(t, 1, admitted)
+	run, err := claim(ctx, time.Now().Unix())
+	require.NoError(t, err)
+	require.NotZero(t, run.ID, "claim must exclude its own reservation when checking the cap")
+	require.Equal(t, "submitting", run.State)
+	require.NoError(t, db.Model(&run).Updates(map[string]any{"state": "succeeded", "actual_micro": 60}).Error)
+	_, err = Enqueue(ctx, sel, plan.Revision, plan.Template.MaxMicro)
+	require.ErrorContains(t, err, "Detection cycle budget is insufficient", "legacy day/month limits must not admit a cycle overspend")
+	global.Amount = 200
+	require.NoError(t, SaveCycleBudget(ctx, global))
+	queued, err := Enqueue(ctx, sel, plan.Revision, plan.Template.MaxMicro)
+	require.NoError(t, err)
+	global.Amount = 150
+	require.NoError(t, SaveCycleBudget(ctx, global))
+	run, err = claim(ctx, time.Now().Unix())
+	require.NoError(t, err)
+	require.Zero(t, run.ID, "reducing the cap must prevent an unsubmitted queued run from calling upstream")
+	require.NoError(t, db.First(&queued, queued.ID).Error)
+	assert.Equal(t, "skipped", queued.State)
+	require.NotNil(t, queued.ActualMicro)
+	assert.Zero(t, *queued.ActualMicro)
+}
+
+func TestCycleBudgetSharesOverallCapAcrossDifferentModelsAndTypes(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	ctx := context.Background()
+	text, textPlan := seedHealth(t, db, "llm")
+	video, videoPlan := seedHealth(t, db, "video")
+	require.NoError(t, SaveCycleBudget(ctx, CycleBudgetInput{Scope: "global", Override: true, Amount: 150, Run: 100, IntervalSeconds: 604800}))
+	for _, selection := range []Selection{text, video} {
+		require.NoError(t, SaveCycleBudget(ctx, CycleBudgetInput{Selection: selection, Scope: "model", Override: true, Amount: 1000, Run: 100, IntervalSeconds: 604800}))
+	}
+	var wg sync.WaitGroup
+	results := make(chan error, 2)
+	for _, probe := range []struct {
+		selection Selection
+		plan      Plan
+	}{{text, textPlan}, {video, videoPlan}} {
+		wg.Go(func() {
+			_, err := Enqueue(ctx, probe.selection, probe.plan.Revision, probe.plan.Template.MaxMicro)
+			results <- err
+		})
+	}
+	wg.Wait()
+	close(results)
+	var admitted int
+	for err := range results {
+		if err == nil {
+			admitted++
+		} else {
+			require.ErrorContains(t, err, "Detection cycle budget is insufficient")
+		}
+	}
+	assert.Equal(t, 1, admitted, "different model overrides must still share one overall cap")
+	status, err := GetCycleBudget(ctx, "global", Selection{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(100), status.Used)
+	assert.Equal(t, int64(50), status.GlobalRemaining)
+}
+
+func TestProbeBudgetReconcilesOnlySettledDedicatedPlatformCharges(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	previous := model.LOG_DB
+	model.LOG_DB = db
+	t.Cleanup(func() { model.LOG_DB = previous })
+	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.Token{}))
+	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(&model.Log{}, &model.Token{})) })
+	token := model.Token{UserId: 12, Name: "model-health/receipt-fixture"}
+	require.NoError(t, db.Create(&token).Error)
+	runs := []model.ModelHealthRun{
+		{ChannelID: 9, ModelName: "fixture", State: "succeeded", RequestID: "paid", ReservationMicro: 10000},
+		{ChannelID: 9, ModelName: "fixture", State: "failed", RequestID: "unknown", ReservationMicro: 10000},
+		{ChannelID: 9, ModelName: "fixture", State: "succeeded", RequestID: "pending", ReservationMicro: 10000},
+		{ChannelID: 9, ModelName: "fixture", State: "succeeded", RequestID: "duplicate", ReservationMicro: 10000},
+	}
+	require.NoError(t, db.Create(&runs).Error)
+	require.NoError(t, db.Model(&model.ModelHealthRun{}).Where("id IN ?", []int64{runs[0].ID, runs[1].ID, runs[2].ID, runs[3].ID}).Update("created_at", time.Now().Unix()-86400).Error)
+	for _, entry := range []struct{ request, status, amount string }{{"paid", "settled", "0.0007738"}, {"pending", "pending", "0"}, {"duplicate", "settled", "0.01"}, {"duplicate", "settled", "0.02"}} {
+		other, err := common.Marshal(map[string]any{"billing": map[string]any{"status": entry.status, "amount": entry.amount, "currency": "CNY", "source": "gateway", "quota": 53}})
+		require.NoError(t, err)
+		require.NoError(t, db.Create(&model.Log{UserId: 12, TokenId: token.Id, ChannelId: 9, ModelName: "fixture", RequestId: entry.request, Type: model.LogTypeConsume, Quota: 53, Other: string(other)}).Error)
+	}
+	require.NoError(t, syncProbeBudgetReceipts(context.Background()))
+	require.NoError(t, syncProbeBudgetReceipts(context.Background()))
+	require.NoError(t, db.Order("id").Find(&runs).Error)
+	require.NotNil(t, runs[0].ActualMicro)
+	assert.Equal(t, int64(774), *runs[0].ActualMicro)
+	for _, run := range runs[1:] {
+		assert.Nil(t, run.ActualMicro)
+	}
+	used, err := spend(db, time.Now().Unix())
+	require.NoError(t, err)
+	assert.Equal(t, int64(30000), used, "only unresolved reservations carry across days")
+	var receipts int64
+	require.NoError(t, db.Model(&model.ModelHealthConfig{}).Where("kind = ?", "budget-receipt").Count(&receipts).Error)
+	assert.Equal(t, int64(1), receipts, "repeated readers must reconcile exactly once")
+}
+
+func TestVideoBudgetWaitsForCommittedFinalSettlement(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	ctx := context.Background()
+	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.Task{}, &model.TaskBillingReconciliation{}))
+	t.Cleanup(func() {
+		require.NoError(t, db.Migrator().DropTable(&model.TaskBillingReconciliation{}, &model.Task{}, &model.Token{}))
+	})
+	token := model.Token{UserId: 12, Name: "model-health/video-receipt"}
+	require.NoError(t, db.Create(&token).Error)
+	run := model.ModelHealthRun{ChannelID: 9, ModelName: "fixture-video", State: "succeeded", RequestID: "video-request", UpstreamTaskID: "task-fixture", ReservationMicro: 5000000}
+	template, err := common.Marshal(Template{QuotaPerUnit: "500000"})
+	require.NoError(t, err)
+	run.Template = string(template)
+	require.NoError(t, db.Create(&run).Error)
+	task := model.Task{TaskID: "task-fixture", ChannelId: 9, UserId: 12, Status: model.TaskStatusSuccess, Quota: 40000, PrivateData: model.TaskPrivateData{TokenId: token.Id, Execution: &model.TaskExecutionSnapshot{RequestID: run.RequestID}, BillingContext: &model.TaskBillingContext{OriginModelName: run.ModelName, ProviderBilling: &model.TaskProviderBillingSnapshot{Provider: model.TaskBillingProviderOpenAISeedance, Currency: "CNY", CNYPerUSD: "7.3"}}}}
+	require.NoError(t, db.Create(&task).Error)
+	receipt := model.TaskBillingReconciliation{TaskID: task.ID, ChannelID: 9, Provider: model.TaskBillingProviderOpenAISeedance, Status: model.TaskBillingReconciliationPending, ActualQuota: task.Quota}
+	require.NoError(t, db.Create(&receipt).Error)
+	require.NoError(t, syncProbeTaskBudgetReceipt(ctx, run))
+	require.NoError(t, db.First(&run, run.ID).Error)
+	assert.Nil(t, run.ActualMicro, "generation success and pre-consumption do not release the hold")
+	require.NoError(t, db.Model(&receipt).Update("status", model.TaskBillingReconciliationSettled).Error)
+	require.NoError(t, syncProbeTaskBudgetReceipt(ctx, run))
+	require.NoError(t, syncProbeTaskBudgetReceipt(ctx, run))
+	require.NoError(t, db.First(&run, run.ID).Error)
+	require.NotNil(t, run.ActualMicro)
+	assert.Equal(t, int64(584000), *run.ActualMicro)
+	var count int64
+	require.NoError(t, db.Model(&model.ModelHealthConfig{}).Where("kind = ?", "budget-receipt").Count(&count).Error)
+	assert.Equal(t, int64(1), count)
+}
+
+func TestDeferredFirstVideoDetectionRemainsDueAfterBudgetDayChanges(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	sel, _ := seedHealth(t, db, "video")
+	target, err := findTarget(db, sel.Channel, sel.Model, sel.Endpoint)
+	require.NoError(t, err)
+	rule := recommendedRule("video")
+	today := dayStart(time.Now().Unix()) + 12*3600
+	require.NoError(t, model.SaveModelHealthConfig(db, "s-"+hash(target.ID, sel.Endpoint)[:62], "media-schedule", today-3600))
+	// Yesterday's confirmed spend exhausted that day's budget but not tomorrow's.
+	require.NoError(t, db.Create(&model.ModelHealthRun{Target: "another-model", State: "succeeded", CreatedAt: dayStart(today) + 1, ReservationMicro: 200, ActualMicro: common.GetPointer(int64(200))}).Error)
+	plan, err := GetPlan(context.Background(), sel)
+	require.NoError(t, err)
+	blocked, err := admissionBlocks(db, target, sel.Endpoint, plan.Template, rule, Budget{Run: 100, Day: 200, Month: 1000, Concurrent: 2, ChannelRPM: 2, ChannelTPM: 200}, today)
+	require.NoError(t, err)
+	assert.Contains(t, blocked, "Monitoring budget exhausted")
+	tomorrow := today + 86400
+	// A queued probe rejected before submission is not a completed detection.
+	require.NoError(t, db.Create(&model.ModelHealthRun{Target: target.ID, ChannelID: sel.Channel, ModelName: sel.Model, Endpoint: sel.Endpoint, State: "skipped", CreatedAt: tomorrow, Reason: "budget_changed", ActualMicro: common.GetPointer(int64(0))}).Error)
+	blocked, err = admissionBlocks(db, target, sel.Endpoint, plan.Template, rule, Budget{Run: 100, Day: 200, Month: 1000, Concurrent: 2, ChannelRPM: 2, ChannelTPM: 200}, tomorrow)
+	require.NoError(t, err)
+	assert.Empty(t, blocked)
+	due, err := mediaScheduledAt(db, target, sel.Endpoint, rule, tomorrow)
+	require.NoError(t, err)
+	assert.Equal(t, tomorrow, due, "budget deferral must not reset the weekly interval")
+}
+
+func TestWeeklyScheduleServesOldestDeferredVideoBeforeEarlierChannel(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	ctx := context.Background()
+	first, _ := seedHealth(t, db, "video")
+	second, plan := seedHealth(t, db, "video")
+	rule := recommendedRule("video")
+	rule.Enabled = true
+	require.NoError(t, SaveRule(ctx, "video", Selection{}, rule))
+	require.NoError(t, SaveBudget(ctx, Budget{Run: 100, Day: 200, Month: 1000, Concurrent: 1, ChannelRPM: 2, ChannelTPM: 200}))
+	now := time.Now().Unix()
+	for i, sel := range []Selection{first, second} {
+		target, err := findTarget(db, sel.Channel, sel.Model, sel.Endpoint)
+		require.NoError(t, err)
+		require.NoError(t, model.SaveModelHealthConfig(db, "s-"+hash(target.ID, sel.Endpoint)[:62], "media-schedule", now-int64(i+1)*86400))
+	}
+	bindings, err := workerBindings(db)
+	require.NoError(t, err)
+	_, err = acquireWorker(ctx, "fixture", bindings)
+	require.NoError(t, err)
+	schedule(ctx, now)
+	var runs []model.ModelHealthRun
+	require.NoError(t, db.Order("id").Find(&runs).Error)
+	require.Len(t, runs, 1)
+	assert.Equal(t, second.Channel, runs[0].ChannelID, "the oldest deadline wins even when its channel is listed last")
+	assert.Equal(t, plan.Template.MaxMicro, runs[0].ReservationMicro)
+	// Once that attempt has a final charge, the untouched target still runs
+	// instead of waiting for its next weekly slot.
+	require.NoError(t, db.Model(&runs[0]).Updates(map[string]any{"state": "succeeded", "actual_micro": 100}).Error)
+	schedule(ctx, now)
+	require.NoError(t, db.Order("id").Find(&runs).Error)
+	require.Len(t, runs, 2)
+	assert.Equal(t, first.Channel, runs[1].ChannelID)
+}
+
+func TestSeedancePlatformProbeDownloadsOriginalTaskWithoutResubmission(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	ctx := context.Background()
+	_, _ = seedHealth(t, db, "video")
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}))
+	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(&model.Token{}, &model.User{})) })
+	t.Setenv("MODEL_HEALTH_GATEWAY_URL", "https://gateway.example")
+	t.Setenv("MODEL_HEALTH_KEY_FIXTURE", "fixturekey")
+	t.Setenv("MODEL_HEALTH_KEY_FIXTURE_ORIGIN", "https://gateway.example")
+	user := model.User{Username: "media-probe", Role: common.RoleAdminUser, Status: common.UserStatusEnabled}
+	require.NoError(t, db.Create(&user).Error)
+	ch := model.Channel{Name: "Seedance fixture", Type: constant.ChannelTypeOpenAISeedance, Status: 1, Key: "unused", Models: "doubao-seedance-2-0-260128", BaseURL: common.GetPointer("https://vedioapi.laomandi.com")}
+	require.NoError(t, db.Create(&ch).Error)
+	token := model.Token{UserId: user.Id, Name: "model-health/media", Key: "fixturekey", Status: 1, ExpiredTime: time.Now().Unix() + 3600, RemainQuota: 100, ModelLimitsEnabled: true, ModelLimits: ch.Models}
+	require.NoError(t, db.Create(&token).Error)
+	target := targetFor(&ch, ch.Models)
+	p := builtinTemplate(target, "openai-video", AutoTemplatePolicy{Credential: "MODEL_HEALTH_KEY_FIXTURE", MaxMicro: 10000})
+	assert.True(t, p.MinimumConfirmed)
+	assert.Equal(t, int64(5000000), p.MaxMicro)
+	assert.Equal(t, false, p.Body["generate_audio"])
+	assert.Equal(t, "16:9", p.Body["ratio"])
+	// Preserve the explicitly configured weekly schedule; budgets still gate it.
+	rule := recommendedRule("video")
+	rule.Enabled = true
+	require.NoError(t, SaveRule(ctx, "video", Selection{}, rule))
+	require.NoError(t, model.SaveModelHealthConfig(db, "p-"+hash(target.ID, "openai-video")[:62], "template", p))
+	effective, _, err := effectiveRule(db, target, "openai-video")
+	require.NoError(t, err)
+	assert.True(t, effective.Enabled)
+	assert.Equal(t, 604800, effective.IntervalSeconds)
+	require.NoError(t, SaveTemplate(ctx, p))
+	assert.False(t, fitsBudget(p, Budget{Run: 10000, Day: 100000, Month: 1000000, ChannelTPM: 256}), "video must not silently bypass the configured budget")
+	require.NoError(t, SaveBudget(ctx, Budget{Run: 10000000, Day: 20000000, Month: 100000000, Concurrent: 1, ChannelRPM: 1, ChannelTPM: 256}))
+	bindings, err := workerBindings(db)
+	require.NoError(t, err)
+	_, err = acquireWorker(ctx, "fixture", bindings)
+	require.NoError(t, err)
+	sel := p.Selection
+	plan, err := GetPlan(ctx, sel)
+	require.NoError(t, err)
+	require.True(t, plan.Ready, plan.Blocked)
+	run, err := Enqueue(ctx, sel, plan.Revision, p.MaxMicro)
+	require.NoError(t, err)
+	media, err := os.ReadFile(filepath.Join("..", "..", "web", "public", "images", "home", "underwater.mp4"))
+	require.NoError(t, err)
+	posts, downloads := 0, 0
+	client := &http.Client{Transport: mockProvider(func(req *http.Request) (*http.Response, error) {
+		assert.Equal(t, "gateway.example", req.URL.Host)
+		assert.Equal(t, "Bearer sk-fixturekey-"+strconv.Itoa(ch.Id), req.Header.Get("Authorization"))
+		if req.Method == http.MethodPost {
+			posts++
+			return reply(200, `{"id":"task-fixture"}`), nil
+		}
+		if req.URL.Path == "/v1/videos/task-fixture/content" {
+			downloads++
+			if downloads == 1 {
+				return reply(503, "temporary content failure"), nil
+			}
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"video/mp4"}}, Body: io.NopCloser(bytes.NewReader(media))}, nil
+		}
+		return reply(200, `{"status":"completed"}`), nil
+	})}
+	require.NoError(t, work(ctx, client, time.Now().Unix()))
+	require.NoError(t, db.Model(&run).Update("next_poll", 0).Error)
+	require.NoError(t, work(ctx, client, time.Now().Unix()))
+	require.NoError(t, db.First(&run, run.ID).Error)
+	assert.Equal(t, "polling", run.State)
+	assert.Equal(t, 1, posts)
+	require.NoError(t, db.Model(&run).Update("next_poll", 0).Error)
+	require.NoError(t, work(ctx, client, time.Now().Unix()))
+	require.NoError(t, db.First(&run, run.ID).Error)
+	assert.Equal(t, "succeeded", run.State, run.Reason)
+	assert.Equal(t, 1, posts)
+	assert.Equal(t, 2, downloads)
+	assert.Nil(t, run.ActualMicro, "generation success is not a cost receipt")
+}
 
 func TestGatewayProbeUsesPlatformKeyPublicModelAndPinnedChannel(t *testing.T) {
 	db := healthDB(t)

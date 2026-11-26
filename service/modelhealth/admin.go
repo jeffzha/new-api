@@ -81,7 +81,15 @@ func GetBudget(ctx context.Context) (Budget, error) {
 }
 
 func readBudget(db *gorm.DB) (Budget, error) {
-	return model.ReadModelHealthConfig(db, "budget", Budget{Concurrent: 1, ChannelRPM: 1, ChannelTPM: 1024})
+	b, err := model.ReadModelHealthConfig(db, "budget", Budget{Concurrent: 1, ChannelRPM: 1, ChannelTPM: 1024})
+	if err != nil {
+		return b, err
+	}
+	c, err := model.ReadModelHealthConfig(db, "cycle-budget", cycleBudgetConfig{})
+	if c.Override {
+		b.Run, b.Day, b.Month, b.Cycle = c.Run, c.Amount, c.Amount, true
+	}
+	return b, err
 }
 
 func GetRule(ctx context.Context, scope string) (Rule, error) {

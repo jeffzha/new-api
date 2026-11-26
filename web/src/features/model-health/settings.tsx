@@ -28,6 +28,7 @@ import {
   type Plan,
   type Selection,
 } from './api'
+import { HealthCycleBudget } from './budget-settings'
 import { Pages, Status } from './status'
 
 type Values = Record<string, unknown>
@@ -436,6 +437,7 @@ export function HealthRules(props: { selection?: Selection }) {
             }
           />
         )}
+        {rule && <HealthCycleBudget scope={scope} selection={target} />}
       </section>
       {target && plan && (
         <section className='space-y-3 border-b pb-4'>

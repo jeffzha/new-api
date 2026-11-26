@@ -47,6 +47,9 @@ type responseTask struct {
 	Content  struct {
 		VideoURL string `json:"video_url"`
 	} `json:"content"`
+	Metadata struct {
+		URL string `json:"url"`
+	} `json:"metadata"`
 	Usage struct {
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`

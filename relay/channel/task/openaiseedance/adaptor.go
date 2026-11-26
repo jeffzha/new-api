@@ -482,6 +482,9 @@ func (a *TaskAdaptor) ParseTaskResult(_ *model.Task, _ *http.Response, respBody 
 		if result.Url == "" {
 			result.Url = resTask.ResultURL
 		}
+		if result.Url == "" {
+			result.Url = resTask.Metadata.URL
+		}
 		result.Progress = taskcommon.ProgressComplete
 	case "failed", "cancelled", "error":
 		result.Status = model.TaskStatusFailure

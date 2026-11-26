@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/task/openaiseedance"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
@@ -115,8 +116,21 @@ func VideoProxy(c *gin.Context) {
 		}
 		return
 	}
+	channel, err := model.CacheGetChannel(task.ChannelId)
+	if err != nil {
+		videoProxyError(c, http.StatusServiceUnavailable, "server_error", "Failed to retrieve channel information")
+		return
+	}
+	resultURL := task.GetResultURL()
 	if descriptor == nil {
-		resultURL := task.GetResultURL()
+		// Recover already completed OpenAI Seedance tasks whose saved fallback
+		// points back to this endpoint. No task, billing or wallet write occurs.
+		if channel.Type == constant.ChannelTypeOpenAISeedance && isTaskMediaFallbackLoop(resultURL, task.TaskID) {
+			result, parseErr := (&openaiseedance.TaskAdaptor{}).ParseTaskResult(task, nil, task.Data)
+			if parseErr == nil && result.Status == model.TaskStatusSuccess && strings.TrimSpace(result.Url) != "" {
+				resultURL = result.Url
+			}
+		}
 		if isTaskMediaFallbackLoop(resultURL, task.TaskID) {
 			writeTaskMediaProxyError(c, &taskMediaProxyError{
 				status: http.StatusGone, code: "artifact_gone",
@@ -124,11 +138,6 @@ func VideoProxy(c *gin.Context) {
 			})
 			return
 		}
-	}
-	channel, err := model.CacheGetChannel(task.ChannelId)
-	if err != nil {
-		videoProxyError(c, http.StatusServiceUnavailable, "server_error", "Failed to retrieve channel information")
-		return
 	}
 	baseURL := channel.GetBaseURL()
 	if baseURL == "" {
@@ -181,7 +190,7 @@ func VideoProxy(c *gin.Context) {
 		req.Header.Set("Authorization", "Bearer "+channel.Key)
 	default:
 		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
-		videoURL = task.GetResultURL()
+		videoURL = resultURL
 	}
 
 	videoURL = strings.TrimSpace(videoURL)

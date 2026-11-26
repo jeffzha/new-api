@@ -204,6 +204,38 @@ func TestVideoProxyUsesPluginContentRequestDescriptor(t *testing.T) {
 	}
 }
 
+func TestVideoProxyRecoversCompletedSeedanceMetadataURLWithoutRebilling(t *testing.T) {
+	db := setupVideoProxyControllerTestDB(t)
+	requests := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		assert.Empty(t, r.Header.Get("Authorization"), "platform key must not reach the result host")
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("completed-seedance-video"))
+	}))
+	defer upstream.Close()
+	channel := model.Channel{Type: constant.ChannelTypeOpenAISeedance, Key: "fixture-key", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(&channel).Error)
+	task := model.Task{TaskID: "task_metadata_video", UserId: 273, ChannelId: channel.Id, Status: model.TaskStatusSuccess, Quota: 123,
+		PrivateData: model.TaskPrivateData{ResultURL: "https://gateway.example/v1/videos/task_metadata_video/content"}}
+	task.SetData(map[string]any{"status": "completed", "metadata": map[string]any{"url": upstream.URL}})
+	require.NoError(t, db.Create(&task).Error)
+	before := task.PrivateData.ResultURL
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/"+task.TaskID+"/content", nil)
+	ctx.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	ctx.Set("id", task.UserId)
+	VideoProxy(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "completed-seedance-video", recorder.Body.String())
+	require.Equal(t, 1, requests)
+	var saved model.Task
+	require.NoError(t, db.First(&saved, task.ID).Error)
+	require.Equal(t, before, saved.PrivateData.ResultURL)
+	require.Equal(t, 123, saved.Quota)
+}
+
 func TestTaskMediaHeadFallsBackOnlyForCredentiallessCDN(t *testing.T) {
 	db := setupVideoProxyControllerTestDB(t)
 	channel := model.Channel{Type: constant.ChannelTypeTaskPlugin, Key: "test-key", Status: common.ChannelStatusEnabled, Name: "head-test"}

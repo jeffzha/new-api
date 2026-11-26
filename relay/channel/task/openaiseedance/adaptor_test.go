@@ -266,6 +266,13 @@ func TestOpenAISeedanceParsesUppercaseSuccessStatus(t *testing.T) {
 	assert.Equal(t, "https://example.test/video.mp4", result.Url)
 }
 
+func TestOpenAISeedanceParsesMetadataVideoURL(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResult(nil, nil, []byte(`{"status":"completed","metadata":{"url":"https://cdn.example/result.mp4"}}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSuccess, result.Status)
+	require.Equal(t, "https://cdn.example/result.mp4", result.Url)
+}
+
 func TestOpenAISeedanceRejectsLaomandiSeedance20Below720p(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())

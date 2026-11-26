@@ -56,7 +56,11 @@ func healthMutation[T any](action string, apply func(*gin.Context, T) (any, erro
 func RegisterModelHealthRoutes(r *gin.RouterGroup, guard func(authz.Permission) func(*gin.Context)) {
 	reads := r.Group("", middleware.ModelHealthReadRateLimit())
 	reads.GET("/overview", func(c *gin.Context) {
-		result, err := modelhealth.List(c.Request.Context(), modelhealth.Filter{Search: c.Query("q"), Channel: c.Query("channel"), Kind: c.Query("type"), Group: c.Query("group"), Endpoint: c.Query("endpoint"), State: c.Query("state"), From: modelHealthNumber(c, "from"), To: modelHealthNumber(c, "to"), Page: int(modelHealthNumber(c, "page")), Limit: 20})
+		limit := int(modelHealthNumber(c, "limit"))
+		if limit <= 0 {
+			limit = 20
+		}
+		result, err := modelhealth.List(c.Request.Context(), modelhealth.Filter{Search: c.Query("q"), Channel: c.Query("channel"), Kind: c.Query("type"), Group: c.Query("group"), Endpoint: c.Query("endpoint"), State: c.Query("state"), From: modelHealthNumber(c, "from"), To: modelHealthNumber(c, "to"), Page: int(modelHealthNumber(c, "page")), Limit: limit})
 		modelHealthReply(c, result, err)
 	})
 	reads.GET("/capabilities", func(c *gin.Context) {
@@ -74,11 +78,11 @@ func RegisterModelHealthRoutes(r *gin.RouterGroup, guard func(authz.Permission) 
 		modelHealthReply(c, p, err)
 	})
 	reads.GET("/runs", func(c *gin.Context) {
-		data, err := modelhealth.ListRuns(c.Request.Context(), c.Query("source"), int(modelHealthNumber(c, "page")))
+		data, err := modelhealth.ListRuns(c.Request.Context(), c.Query("source"), int(modelHealthNumber(c, "page")), int(modelHealthNumber(c, "limit")))
 		modelHealthReply(c, data, err)
 	})
 	reads.GET("/run-costs", func(c *gin.Context) {
-		data, err := modelhealth.GetOpsCosts(c.Request.Context(), c.Query("source"), int(modelHealthNumber(c, "page")))
+		data, err := modelhealth.GetOpsCosts(c.Request.Context(), c.Query("source"), int(modelHealthNumber(c, "page")), int(modelHealthNumber(c, "limit")))
 		modelHealthReply(c, data, err)
 	})
 	reads.GET("/budget", guard(authz.ModelHealthRules), func(c *gin.Context) {

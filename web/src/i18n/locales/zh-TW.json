@@ -1,5 +1,13 @@
 {
   "translation": {
+    "Reset filters": "重設篩選",
+    "Enabled channels and models only": "僅顯示啟用的渠道與模型",
+    "All matching models · {{hours}} hours": "全部符合模型 · 最近 {{hours}} 小時",
+    "original_task_verified": "原任務複核成功",
+    "original_failure": "原失敗記錄",
+    "rechecking": "原任務複核中",
+    "existing_task_recheck_incomplete": "原任務複核未完成",
+    "original_task_identity_changed": "原任務歸屬已變更",
     "Automatic probe templates": "自动检测模板",
     "Generate probe templates automatically": "自动生成检测模板",
     "Dedicated monitoring token ID": "专用检测令牌 ID",

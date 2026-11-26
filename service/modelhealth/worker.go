@@ -275,7 +275,7 @@ func claim(ctx context.Context, now int64) (model.ModelHealthRun, error) {
 		if err := tx.Model(&model.ModelHealthRun{}).Where("state = ? AND lease_until <= ?", "submitting", now).Updates(map[string]any{"state": "uncertain", "reason": "submission_outcome_unknown", "finished_at": now}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("state = ? OR (state = ? AND next_poll <= ? AND lease_until <= ?)", "queued", "polling", now, now).Order("id").Take(&run).Error; err != nil {
+		if err := tx.Where("state = ? OR (state IN ? AND next_poll <= ? AND lease_until <= ?)", "queued", []string{"polling", "rechecking"}, now, now).Order("id").Take(&run).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil
 			}
@@ -345,8 +345,11 @@ var identifier = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 func work(ctx context.Context, client *http.Client, now int64) error {
 	run, err := claim(ctx, now)
-	if err != nil || run.ID == 0 {
+	if err != nil {
 		return err
+	}
+	if run.ID == 0 {
+		return recoverCompletedVideo(ctx, now)
 	}
 	return execute(ctx, client, run, now)
 }
@@ -360,6 +363,15 @@ func execute(ctx context.Context, client *http.Client, run model.ModelHealthRun,
 	var trace []Trace
 	_ = common.UnmarshalJsonStr(run.Evidence, &trace)
 	update := func(state, stage, reason string, actual *int64) error {
+		if run.State == "rechecking" {
+			actual = run.ActualMicro
+			if state == "polling" {
+				state, stage, reason = "failed", "validation", "existing_task_recheck_incomplete"
+			}
+			if state == "succeeded" {
+				stage, reason = "complete", "original_task_verified"
+			}
+		}
 		encoded, err := common.Marshal(trace)
 		if err != nil {
 			return err
@@ -398,6 +410,15 @@ func execute(ctx context.Context, client *http.Client, run model.ModelHealthRun,
 	if run.State == "polling" && now-run.StartedAt >= int64(p.TimeoutSeconds) {
 		return update("uncertain", "polling", "generation_timeout", nil)
 	}
+	if run.State == "rechecking" {
+		owned, err := completedProbeTask(db, run, p, t)
+		if err != nil {
+			return err
+		}
+		if !owned {
+			return update("failed", "validation", "original_task_identity_changed", run.ActualMicro)
+		}
+	}
 	baseURL := t.base
 	if gateway != "" {
 		baseURL = gateway
@@ -410,7 +431,7 @@ func execute(ctx context.Context, client *http.Client, run model.ModelHealthRun,
 	var payload []byte
 	contentType := "application/json"
 	var reqBody any
-	if run.State == "polling" {
+	if run.State == "polling" || run.State == "rechecking" {
 		method, path = http.MethodGet, strings.ReplaceAll(p.PollPath, "{task_id}", run.UpstreamTaskID)
 	} else {
 		p.Body["model"] = run.UpstreamModel

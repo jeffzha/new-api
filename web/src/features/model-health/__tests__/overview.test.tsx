@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 
@@ -116,7 +116,7 @@ it.each([
   }
 )
 
-it('keeps the outcome totals scoped to the filtered page and shows an empty state when no models match', async () => {
+it('keeps all matching outcome totals unchanged across pages and page sizes', async () => {
   api.defaults.adapter = async (config) => {
     const empty = config.params.q === 'missing-model'
     return {
@@ -127,10 +127,26 @@ it('keeps the outcome totals scoped to the filtered page and shows an empty stat
       data: {
         success: true,
         data: empty
-          ? { total: 0, counts: {}, rows: [] }
+          ? {
+              total: 0,
+              counts: {},
+              rows: [],
+              outcomes: {
+                user_count: 0,
+                user_ok: 0,
+                probe_count: 0,
+                probe_ok: 0,
+              },
+            }
           : {
               total: 25,
-              counts: { healthy: 1 },
+              counts: { healthy: 25 },
+              outcomes: {
+                user_count: 106,
+                user_ok: 104,
+                probe_count: 33,
+                probe_ok: 32,
+              },
               rows: [
                 {
                   id: 'text-1',
@@ -176,15 +192,33 @@ it('keeps the outcome totals scoped to the filtered page and shows an empty stat
     await screen.findByRole('region', { name: 'Call outcomes' })
   )
   expect(
-    outcomes.getByText('succeeded: 4 · Failed or unconfirmed: 2')
+    outcomes.getByText('succeeded: 104 · Failed or unconfirmed: 2')
   ).toBeVisible()
   expect(
-    outcomes.getByText('succeeded: 2 · Failed or unconfirmed: 1')
+    outcomes.getByText('succeeded: 32 · Failed or unconfirmed: 1')
   ).toBeVisible()
-  expect(screen.getByText('25')).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Go to next page' }))
+  expect(
+    await screen.findByText('succeeded: 104 · Failed or unconfirmed: 2')
+  ).toBeVisible()
+  expect(screen.getByPlaceholderText('Channel or model')).toHaveAccessibleName(
+    'Channel or model'
+  )
+  expect(screen.getByRole('region', { name: 'Monitored models' })).toHaveClass(
+    'overflow-hidden'
+  )
+  await user.click(screen.getByRole('combobox', { name: '' }))
+  await user.click(await screen.findByRole('option', { name: /^50$/ }))
+  await waitFor(() =>
+    expect(
+      screen.getByText('succeeded: 104 · Failed or unconfirmed: 2')
+    ).toBeVisible()
+  )
   await user.type(screen.getByLabelText('Channel or model'), 'missing-model')
   await user.click(screen.getByRole('button', { name: 'Search' }))
-  expect(await screen.findByText('No models on this page')).toBeVisible()
+  expect(
+    await screen.findByText('No matching models', { selector: 'p' })
+  ).toBeVisible()
   expect(screen.getByText('No completed samples')).toBeVisible()
   expect(screen.queryByText('Text fixture')).not.toBeInTheDocument()
 })

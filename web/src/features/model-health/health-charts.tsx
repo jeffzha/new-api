@@ -26,11 +26,7 @@ const healthColors = {
   waiting: 'var(--muted-foreground)',
 }
 
-export function HealthCharts(props: {
-  data: Overview
-  page: number
-  hours: string
-}) {
+export function HealthCharts(props: { data: Overview; hours: string }) {
   const { t } = useTranslation()
   const health = (
     Object.keys(healthColors) as (keyof typeof healthColors)[]
@@ -40,15 +36,16 @@ export function HealthCharts(props: {
     count: props.data.counts[state] ?? 0,
     fill: healthColors[state],
   }))
-  const user = { name: t('User calls'), success: 0, incomplete: 0 }
-  const probe = { name: t('Active detections'), success: 0, incomplete: 0 }
-  for (const row of props.data.rows) {
-    for (const endpoint of row.details) {
-      user.success += endpoint.user_ok
-      user.incomplete += endpoint.user_count - endpoint.user_ok
-      probe.success += endpoint.probe_ok
-      probe.incomplete += endpoint.probe_count - endpoint.probe_ok
-    }
+  const totals = props.data.outcomes
+  const user = {
+    name: t('User calls'),
+    success: totals?.user_ok ?? 0,
+    incomplete: (totals?.user_count ?? 0) - (totals?.user_ok ?? 0),
+  }
+  const probe = {
+    name: t('Active detections'),
+    success: totals?.probe_ok ?? 0,
+    incomplete: (totals?.probe_count ?? 0) - (totals?.probe_ok ?? 0),
   }
   const outcomes = [user, probe]
   const outcomeConfig = {
@@ -60,25 +57,11 @@ export function HealthCharts(props: {
   } satisfies ChartConfig
 
   return (
-    <div className='space-y-2'>
-      <div className='text-muted-foreground flex flex-wrap justify-between gap-x-4 gap-y-1 text-xs tabular-nums'>
-        <span>
-          {t('Monitored models')}:{' '}
-          <strong className='text-foreground'>
-            {props.data.total.toLocaleString()}
-          </strong>
-        </span>
-        <span>
-          {t('Page {{page}} · {{hours}} hours', {
-            page: props.page,
-            hours: props.hours,
-          })}
-        </span>
-      </div>
-      <div className='grid min-w-0 gap-x-6 divide-y border-y xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] xl:divide-y-0'>
+    <div className='shrink-0'>
+      <div className='grid min-w-0 grid-cols-2 gap-3 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]'>
         <section
           aria-label={t('Health distribution')}
-          className='min-w-0 py-3 xl:border-e xl:pe-6'
+          className='bg-card min-w-0 rounded-xl border px-4 py-3'
         >
           <h2 className='flex items-center gap-2 text-sm font-semibold'>
             <CircleGauge
@@ -87,11 +70,14 @@ export function HealthCharts(props: {
             />
             {t('Health distribution')}
           </h2>
-          {props.data.rows.length ? (
-            <div className='grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-center gap-4 py-2'>
+          <p className='text-muted-foreground mt-1 text-xs'>
+            {t('All matching models · {{hours}} hours', { hours: props.hours })}
+          </p>
+          {props.data.total ? (
+            <div className='grid min-w-0 items-center gap-4 pt-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'>
               <ChartContainer
                 config={{}}
-                className='aspect-auto h-40 w-full min-w-0'
+                className='aspect-auto h-28 w-full min-w-0 max-sm:hidden'
               >
                 <PieChart accessibilityLayer>
                   <Pie
@@ -129,12 +115,15 @@ export function HealthCharts(props: {
               </dl>
             </div>
           ) : (
-            <p className='text-muted-foreground grid min-h-44 place-items-center text-sm'>
-              {t('No models on this page')}
+            <p className='text-muted-foreground grid min-h-28 place-items-center text-sm'>
+              {t('No matching models')}
             </p>
           )}
         </section>
-        <section aria-label={t('Call outcomes')} className='min-w-0 py-3'>
+        <section
+          aria-label={t('Call outcomes')}
+          className='bg-card min-w-0 rounded-xl border px-4 py-3'
+        >
           <h2 className='flex items-center gap-2 text-sm font-semibold'>
             <Activity
               aria-hidden='true'
@@ -143,13 +132,13 @@ export function HealthCharts(props: {
             {t('Call outcomes')}
           </h2>
           <p className='text-muted-foreground mt-1 text-xs'>
-            {t('Completed samples on this page')}
+            {t('All matching models · {{hours}} hours', { hours: props.hours })}
           </p>
           {outcomes.some((item) => item.success + item.incomplete > 0) ? (
             <>
               <ChartContainer
                 config={outcomeConfig}
-                className='mt-2 aspect-auto h-28 w-full'
+                className='mt-2 aspect-auto h-20 w-full max-sm:hidden'
               >
                 <BarChart
                   accessibilityLayer
@@ -196,7 +185,7 @@ export function HealthCharts(props: {
               </dl>
             </>
           ) : (
-            <p className='text-muted-foreground grid min-h-36 place-items-center text-sm'>
+            <p className='text-muted-foreground grid min-h-28 place-items-center text-sm'>
               {t('No completed samples')}
             </p>
           )}

@@ -1,5 +1,13 @@
 {
   "translation": {
+    "Reset filters": "Réinitialiser les filtres",
+    "Enabled channels and models only": "Canaux et modèles actifs uniquement",
+    "All matching models · {{hours}} hours": "Tous les modèles correspondants · {{hours}} heures",
+    "original_task_verified": "Tâche initiale vérifiée avec succès",
+    "original_failure": "Échec initial",
+    "rechecking": "Vérification de la tâche initiale",
+    "existing_task_recheck_incomplete": "Vérification de la tâche initiale incomplète",
+    "original_task_identity_changed": "Identité de la tâche initiale modifiée",
     "Automatic probe templates": "Automatic probe templates",
     "Generate probe templates automatically": "Generate probe templates automatically",
     "Dedicated monitoring token ID": "Dedicated monitoring token ID",

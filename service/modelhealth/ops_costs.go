@@ -44,28 +44,28 @@ var probeCostReader = sync.OnceValues(func() (*opsclient.Client, string) {
 	return client, "unavailable"
 })
 
-func GetOpsCosts(ctx context.Context, source string, page int) (OpsCosts, error) {
+func GetOpsCosts(ctx context.Context, source string, page int, limits ...int) (OpsCosts, error) {
 	client, state := probeCostReader()
 	if client == nil {
 		if state == "unconfigured" && model.OpsFeesEnabled() {
-			return readPlatformOpsCosts(ctx, source, page, time.Now())
+			return readPlatformOpsCosts(ctx, source, page, time.Now(), limits...)
 		}
 		return OpsCosts{State: state, Amounts: map[int64]int64{}}, nil
 	}
-	runs, err := ListRuns(ctx, source, page)
+	runs, err := ListRuns(ctx, source, page, limits...)
 	if err != nil {
 		return OpsCosts{}, err
 	}
-	return readOpsCosts(ctx, client, runs[:min(25, len(runs))], time.Now()), nil
+	return readOpsCosts(ctx, client, runs[:min(runPageSize(limits), len(runs))], time.Now()), nil
 }
 
 // Reuse durable, identity-matched OPS results already fetched for usage logs.
 // This does no network I/O, repricing, wallet adjustment or budget reconciliation.
-func readPlatformOpsCosts(ctx context.Context, source string, page int, now time.Time) (OpsCosts, error) {
+func readPlatformOpsCosts(ctx context.Context, source string, page int, now time.Time, limits ...int) (OpsCosts, error) {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	result := OpsCosts{State: "unavailable", Amounts: map[int64]int64{}}
-	runs, err := ListRuns(ctx, source, page)
+	runs, err := ListRuns(ctx, source, page, limits...)
 	if err != nil {
 		return result, err
 	}
@@ -74,7 +74,7 @@ func readPlatformOpsCosts(ctx context.Context, source string, page int, now time
 		return result, err
 	}
 	visible := make(map[int64]bool, len(runs))
-	for _, run := range runs[:min(25, len(runs))] {
+	for _, run := range runs[:min(runPageSize(limits), len(runs))] {
 		visible[run.ID] = true
 	}
 	counts := make(map[string]int, len(rows))

@@ -120,13 +120,21 @@ func ListDeliveries(ctx context.Context, page int) (NotificationPage[model.Model
 	return NotificationPage[model.ModelHealthDelivery]{Items: rows[:min(notificationPageSize, len(rows))], HasMore: page < 10000 && len(rows) > notificationPageSize}, err
 }
 
-func ListRuns(ctx context.Context, source string, page int) ([]model.ModelHealthRun, error) {
+func runPageSize(limits []int) int {
+	if len(limits) == 0 || limits[0] <= 0 {
+		return 25
+	}
+	return min(100, limits[0])
+}
+
+func ListRuns(ctx context.Context, source string, page int, limits ...int) ([]model.ModelHealthRun, error) {
 	rows := []model.ModelHealthRun{}
 	q := model.DB.WithContext(ctx).Select("id", "target", "channel_id", "model_name", "upstream_model", "endpoint", "source", "state", "stage", "reason", "status_code", "created_at", "started_at", "finished_at", "reservation_micro", "actual_micro", "request_id", "upstream_task_id")
 	if source != "" {
 		q = q.Where("source = ?", source)
 	}
-	err := q.Order("id desc").Offset((min(10000, max(1, page)) - 1) * 25).Limit(26).Find(&rows).Error
+	limit := runPageSize(limits)
+	err := q.Order("id desc").Offset((min(10000, max(1, page)) - 1) * limit).Limit(limit + 1).Find(&rows).Error
 	return rows, err
 }
 

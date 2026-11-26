@@ -62,6 +62,14 @@ export type Overview = {
   rows: Row[]
   total: number
   counts: Record<string, number>
+  outcomes?: {
+    user_count: number
+    user_ok: number
+    probe_count: number
+    probe_ok: number
+  }
+  groups?: string[]
+  endpoints?: string[]
 }
 export type Access = {
   probe: boolean

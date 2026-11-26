@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service/businessapi"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Target struct {
@@ -28,6 +29,9 @@ type Target struct {
 	Endpoints   []string `json:"endpoints"`
 	base        string
 	channelType int
+	pluginKey   string
+	pluginHash  string
+	contract    string
 }
 
 func hash(parts ...any) string {
@@ -81,6 +85,28 @@ func targetFor(ch *model.Channel, name string) Target {
 	}
 	t := Target{ID: hash(ch.Id, name), ChannelID: ch.Id, Channel: ch.Name, Model: name, Upstream: up, Type: kind, Groups: ch.GetGroups(), Paused: ch.Status != common.ChannelStatusEnabled || !mappingValid, base: ch.GetBaseURL()}
 	t.channelType = ch.Type
+	var setting dto.ChannelSettings
+	if ch.Setting != nil && common.UnmarshalJsonStr(*ch.Setting, &setting) != nil {
+		t.Paused = true
+	}
+	t.pluginKey = setting.TaskPluginKey
+	var protocol dto.ChannelOtherSettings
+	if ch.OtherSettings != "" && common.UnmarshalJsonStr(ch.OtherSettings, &protocol) != nil {
+		t.Paused = true
+	}
+	// Detection timestamps and discovered-model lists do not change the relay
+	// contract. Only request conversion settings invalidate a saved template.
+	protocol.UpstreamModelUpdateLastCheckTime = 0
+	protocol.UpstreamModelUpdateLastDetectedModels = nil
+	protocol.UpstreamModelUpdateLastRemovedModels = nil
+	protocol.UpstreamModelUpdateIgnoredModels = nil
+	protocol.UpstreamModelUpdateCheckEnabled = false
+	protocol.UpstreamModelUpdateAutoSyncEnabled = false
+	// Preserve legacy text/embedding/rerank bindings. These new media profiles
+	// require the provider-specific request contract to be part of confirmation.
+	if kind == "video" || kind == "image" || kind == "speech2text" {
+		t.contract = hash(ch.Type, t.pluginKey, protocol)
+	}
 	for _, endpoint := range endpoints {
 		t.Endpoints = append(t.Endpoints, string(endpoint))
 	}
@@ -88,7 +114,7 @@ func targetFor(ch *model.Channel, name string) Target {
 }
 
 func catalog(db *gorm.DB, channelID int) ([]Target, error) {
-	q := db.Model(&model.Channel{}).Select("id", "type", "status", "name", "base_url", "models", "group", "model_mapping", "settings").Order("id")
+	q := db.Model(&model.Channel{}).Select("id", "type", "status", "name", "base_url", "models", "group", "model_mapping", "settings", "setting").Order("id")
 	if channelID > 0 {
 		q = q.Where("id = ?", channelID)
 	}
@@ -96,13 +122,37 @@ func catalog(db *gorm.DB, channelID int) ([]Target, error) {
 	if err := q.Find(&channels).Error; err != nil {
 		return nil, err
 	}
+	var pluginKeys []any
+	for _, ch := range channels {
+		if ch.Type == constant.ChannelTypeTaskPlugin {
+			var setting dto.ChannelSettings
+			if ch.Setting != nil && common.UnmarshalJsonStr(*ch.Setting, &setting) == nil && setting.TaskPluginKey != "" {
+				pluginKeys = append(pluginKeys, setting.TaskPluginKey)
+			}
+		}
+	}
+	pluginHashes := map[string]string{}
+	if len(pluginKeys) > 0 {
+		var plugins []model.TaskPlugin
+		if err := db.Select("key", "source_hash").Where(clause.IN{Column: clause.Column{Name: "key"}, Values: pluginKeys}).Where("active = ? AND enabled = ?", true, true).Find(&plugins).Error; err != nil {
+			return nil, err
+		}
+		for _, plugin := range plugins {
+			pluginHashes[plugin.Key] = plugin.SourceHash
+		}
+	}
 	rows := make([]Target, 0)
 	for i := range channels {
 		names := channels[i].GetModels()
 		slices.Sort(names)
 		for _, name := range slices.Compact(names) {
 			if name = strings.TrimSpace(name); name != "" {
-				rows = append(rows, targetFor(&channels[i], name))
+				target := targetFor(&channels[i], name)
+				if target.pluginKey != "" && target.contract != "" {
+					target.pluginHash = pluginHashes[target.pluginKey]
+					target.contract = hash(target.contract, target.pluginHash)
+				}
+				rows = append(rows, target)
 			}
 		}
 	}

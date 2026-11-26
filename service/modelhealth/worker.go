@@ -57,7 +57,7 @@ func publicIP(ip netip.Addr) bool {
 }
 
 var probeClient = &http.Client{
-	Timeout:       30 * time.Second,
+	Timeout:       180 * time.Second,
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	Transport: &http.Transport{
 		MaxResponseHeaderBytes: 64 << 10, MaxIdleConns: 4, IdleConnTimeout: 30 * time.Second, TLSHandshakeTimeout: 8 * time.Second,
@@ -281,7 +281,7 @@ func claim(ctx context.Context, now int64) (model.ModelHealthRun, error) {
 			}
 			return err
 		}
-		fields := map[string]any{"lease_until": now + 90}
+		fields := map[string]any{"lease_until": now + int64(probeLease/time.Second)}
 		if run.State == "queued" {
 			b, err := readBudget(tx)
 			if err != nil {
@@ -335,7 +335,7 @@ func claim(ctx context.Context, now int64) (model.ModelHealthRun, error) {
 			run.State, run.Stage, run.StartedAt = "submitting", "submission", now
 			fields["state"], fields["stage"], fields["started_at"] = run.State, run.Stage, now
 		}
-		run.LeaseUntil = now + 90
+		run.LeaseUntil = now + int64(probeLease/time.Second)
 		return tx.Model(&run).Updates(fields).Error
 	})
 	return run, err
@@ -408,6 +408,7 @@ func execute(ctx context.Context, client *http.Client, run model.ModelHealthRun,
 	}
 	method, path := http.MethodPost, p.Path
 	var payload []byte
+	contentType := "application/json"
 	var reqBody any
 	if run.State == "polling" {
 		method, path = http.MethodGet, strings.ReplaceAll(p.PollPath, "{task_id}", run.UpstreamTaskID)
@@ -416,24 +417,31 @@ func execute(ctx context.Context, client *http.Client, run model.ModelHealthRun,
 		if gateway != "" {
 			p.Body["model"] = run.ModelName
 		}
-		payload, err = common.Marshal(p.Body)
+		payload, contentType, err = probePayload(p)
 		if err != nil {
-			return err
+			return update("skipped", "configuration", "invalid_probe_input", &zero)
 		}
 		reqBody = p.Body
+		if p.InputFixture != "" {
+			reqBody = map[string]any{"fields": p.Body, "input_fixture": p.InputFixture, "file_bytes": len(speechHello)}
+		}
 	}
 	base.Path = strings.TrimRight(base.Path, "/") + path
 	step := Trace{At: now, Stage: run.Stage, Method: method, Host: base.Hostname(), Path: p.Path, Request: redacted(reqBody)}
 	if method == http.MethodGet {
 		step.Path = path
 	}
-	stepCtx, cancel := context.WithTimeout(ctx, min(30*time.Second, time.Duration(p.TimeoutSeconds)*time.Second))
+	stepLimit := 30 * time.Second
+	if method == http.MethodPost && p.PollPath == "" && (t.Type == "image" || t.Type == "speech2text") {
+		stepLimit = 180 * time.Second
+	}
+	stepCtx, cancel := context.WithTimeout(ctx, min(stepLimit, time.Duration(p.TimeoutSeconds)*time.Second))
 	defer cancel()
 	req, err := http.NewRequestWithContext(stepCtx, method, base.String(), bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 	switch p.Auth {
 	case "anthropic":
 		req.Header.Set("x-api-key", key)

@@ -17,8 +17,9 @@ import (
 const workerStateID = "executor-v1"
 
 const (
-	workerCycleLimit = 60 * time.Second
-	workerLease      = 75 * time.Second
+	workerCycleLimit = 210 * time.Second
+	workerLease      = 225 * time.Second
+	probeLease       = 240 * time.Second
 )
 
 type workerState struct {

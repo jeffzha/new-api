@@ -49,7 +49,7 @@ func GetPlan(ctx context.Context, s Selection) (Plan, error) {
 		blocked = append(blocked, "Channel monitoring is paused")
 	}
 	if !p.validFor(t, s.Endpoint) {
-		if p.Credential != "" && p.Binding == hash(t.ID, t.base, t.Upstream, s.Endpoint) && !p.MinimumConfirmed {
+		if p.Credential != "" && p.Binding == templateBinding(t, s.Endpoint) && !p.MinimumConfirmed {
 			reason := p.DraftReason
 			if reason == "" {
 				reason = "Confirm the model-specific minimum request and cost ceiling"

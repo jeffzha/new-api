@@ -42,6 +42,9 @@ func gatewayProbePath(p Template, t Target) bool {
 	if p.Endpoint == "audio_speech" {
 		info.Path, supported = "/v1/audio/speech", true
 	}
+	if p.Endpoint == "audio_transcription" {
+		info.Path, supported = "/v1/audio/transcriptions", true
+	}
 	if p.Endpoint == "gemini" {
 		info.Path = strings.ReplaceAll(info.Path, "{model}", t.Model)
 	}

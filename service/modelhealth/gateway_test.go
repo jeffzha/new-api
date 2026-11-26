@@ -666,7 +666,18 @@ func TestAutomaticTemplatesCoverExistingAndNewModelsWithoutEnablingSchedules(t *
 	cacheKey := "token:" + common.GenerateHMAC(token.Key)
 	require.NoError(t, common.RDB.HSet(ctx, cacheKey, "Id", token.Id, "Name", token.Name, "ModelLimits", token.ModelLimits, "RemainQuota", 870, "UsedQuota", 130).Err())
 	policy := AutoTemplatePolicy{Enabled: true, Credential: "MODEL_HEALTH_KEY_PLATFORM", TokenID: token.Id, MaxMicro: 10000}
+	t.Setenv("MODEL_HEALTH_TEMPLATE_PROFILE_GATE", "true")
 	require.NoError(t, SaveAutoTemplatePolicy(ctx, policy))
+	var staged int64
+	require.NoError(t, db.Model(&model.ModelHealthConfig{}).Where("kind = ?", "template").Count(&staged).Error)
+	require.Zero(t, staged, "candidate must not publish contracts before profile activation")
+	policy.Profile = defaultTemplateProfile
+	require.NoError(t, SaveAutoTemplatePolicy(ctx, policy))
+	policy.Profile = ""
+	require.NoError(t, SaveAutoTemplatePolicy(ctx, policy))
+	retained, err := GetAutoTemplatePolicy(ctx)
+	require.NoError(t, err)
+	require.Equal(t, defaultTemplateProfile, retained.Profile, "existing UI saves retain the active profile")
 	reloaded, err := model.GetTokenByKey(token.Key, false)
 	require.NoError(t, err)
 	assert.NotContains(t, stale.ModelLimits, "deepseek-v4-flash")

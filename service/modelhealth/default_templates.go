@@ -2,6 +2,7 @@ package modelhealth
 
 import (
 	"context"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -22,15 +23,26 @@ type AutoTemplatePolicy struct {
 	Credential string `json:"credential"`
 	TokenID    int    `json:"token_id"`
 	MaxMicro   int64  `json:"max_micro"`
+	Profile    string `json:"profile,omitempty"`
 }
 
-const defaultTemplateProfile = "builtin-v3"
+const defaultTemplateProfile = "builtin-v4"
 
 func SaveAutoTemplatePolicy(ctx context.Context, policy AutoTemplatePolicy) error {
+	if policy.Profile != "" && policy.Profile != defaultTemplateProfile {
+		return invalid("Unsupported automatic template profile")
+	}
 	if !credentialRef.MatchString(policy.Credential) || policy.TokenID < 1 || policy.MaxMicro < 1 || policy.MaxMicro > 100000000 {
 		return invalid("Specify a dedicated platform token and a bounded detection budget")
 	}
 	db := model.DB.WithContext(ctx)
+	if policy.Profile == "" {
+		previous, err := model.ReadModelHealthConfig(db, "auto-templates", AutoTemplatePolicy{})
+		if err != nil {
+			return err
+		}
+		policy.Profile = previous.Profile
+	}
 	if policy.Enabled {
 		if _, err := autoTemplateToken(db, policy.TokenID); err != nil {
 			return err
@@ -114,6 +126,7 @@ func builtinTemplate(t Target, endpoint string, policy AutoTemplatePolicy) Templ
 		p.Body = map[string]any{"prompt": "A small red circle on a white background.", "n": float64(1), "size": "1024x1024"}
 		p.ResultField, p.TimeoutSeconds = "data.0.url", 180
 		p.DraftReason = "Confirm the minimum image size, response format and cost ceiling"
+		confirmImageProfile(t, &p)
 	case "openai-video":
 		p.Path, p.PollPath = "/v1/videos", "/v1/videos/{task_id}"
 		p.Body = map[string]any{"prompt": "A red ball resting on a white table.", "seconds": "4", "resolution": "720p"}
@@ -124,21 +137,30 @@ func builtinTemplate(t Target, endpoint string, policy AutoTemplatePolicy) Templ
 		// Both native Seedance adaptors validate this exact 4s contract.
 		// Other video providers retain drafts until their own contract is known.
 		if t.channelType == constant.ChannelTypeOpenAISeedance || t.channelType == constant.ChannelTypeDoubaoVideo {
-			if price, ok := seedancepricing.GetUnitPriceCNY(t.Model, "720p", false); ok {
+			resolution, tokens := "720p", int64(86400)
+			if t.Model == seedancepricing.Seedance25Model || t.Model == seedancepricing.AimodelSeedance25Model {
+				resolution, tokens = "480p", 38430
+			}
+			p.Body["resolution"] = resolution
+			if price, ok := seedancepricing.GetUnitPriceCNY(t.Model, resolution, false); ok {
 				p.Body["ratio"], p.Body["generate_audio"] = "16:9", false
 				if t.channelType == constant.ChannelTypeDoubaoVideo {
 					// The native adaptor reads these optional controls from metadata.
 					p.Body["metadata"] = map[string]any{"ratio": "16:9", "generate_audio": false}
 				}
-				// 4s * 1280 * 720 * 24 / 1024 = 86400 video tokens.
+				// Four seconds at 720p use 86400 estimated video tokens;
+				// the 2.5 minimum at 480p uses 38430.
 				// Reserve 125% and round upward to whole CNY; budget admission
 				// still rejects this when the administrator's ceiling is lower.
-				ceiling := price.Mul(decimal.NewFromInt(86400)).Mul(decimal.RequireFromString("1.25")).Div(decimal.NewFromInt(1000000)).Ceil().Mul(decimal.NewFromInt(1000000))
+				ceiling := price.Mul(decimal.NewFromInt(tokens)).Mul(decimal.RequireFromString("1.25")).Div(decimal.NewFromInt(1000000)).Ceil().Mul(decimal.NewFromInt(1000000))
 				if ceiling.IsPositive() && ceiling.LessThanOrEqual(decimal.NewFromInt(100000000)) {
 					p.MaxMicro = max(p.MaxMicro, ceiling.IntPart())
 					p.ResultField, p.MinimumConfirmed = "", true
 				}
 			}
+		}
+		if !p.MinimumConfirmed {
+			confirmVideoProfile(t, &p)
 		}
 	case "audio_speech":
 		p.Path, p.Body = "/v1/audio/speech", map[string]any{"input": "Hello.", "voice": "alloy", "response_format": "wav"}
@@ -147,6 +169,11 @@ func builtinTemplate(t Target, endpoint string, policy AutoTemplatePolicy) Templ
 		p.Path, p.ResultField = "/v1/audio/transcriptions", "text"
 		p.Body = map[string]any{"response_format": "json"}
 		p.DraftReason = "A supported public audio fixture and upload adapter are required"
+		if t.channelType == constant.ChannelTypeAli && t.Upstream == "fun-asr-flash-2026-06-15" {
+			p.InputFixture = "speech-hello-v1"
+			p.TimeoutSeconds = 180
+			confirmMediaPrice(t, &p, map[string]any{"seconds": float64(5)}, false, false)
+		}
 	case "audio_generation":
 		p.Path = "/v1/chat/completions"
 		p.Body = map[string]any{"messages": []any{map[string]any{"role": "user", "content": "Say hello."}}, "modalities": []any{"text", "audio"}, "audio": map[string]any{"voice": "alloy", "format": "wav"}, "max_tokens": float64(128), "stream": false}
@@ -157,7 +184,7 @@ func builtinTemplate(t Target, endpoint string, policy AutoTemplatePolicy) Templ
 	} else if p.DraftReason == "" {
 		p.DraftReason = "Confirm the model-specific minimum request and cost ceiling"
 	}
-	p.Binding = hash(t.ID, t.base, t.Upstream, endpoint)
+	p.Binding = templateBinding(t, endpoint)
 	return p
 }
 
@@ -170,6 +197,12 @@ func SyncAutoTemplates(ctx context.Context) error {
 	policy, err := model.ReadModelHealthConfig(db, "auto-templates", AutoTemplatePolicy{})
 	if err != nil || !policy.Enabled {
 		return err
+	}
+	// Zero-traffic candidates must not publish new paid request contracts while
+	// old HTTP writers/executors are still serving. The release activates this
+	// profile through the existing policy API only after their safe drain.
+	if os.Getenv("MODEL_HEALTH_TEMPLATE_PROFILE_GATE") == "true" && policy.Profile != defaultTemplateProfile {
+		return nil
 	}
 	targets, err := catalog(db, 0)
 	if err != nil {

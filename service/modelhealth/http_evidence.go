@@ -20,7 +20,7 @@ func evidenceHeaders(header http.Header, length int64) map[string]string {
 	if raw := header.Get("Content-Type"); raw != "" {
 		value, _, _ := mime.ParseMediaType(raw)
 		switch value {
-		case "application/json", "application/problem+json", "application/octet-stream", "text/plain", "text/html", "video/mp4", "video/webm", "image/png", "image/jpeg", "image/webp", "audio/wav", "audio/mpeg":
+		case "application/json", "application/problem+json", "application/octet-stream", "multipart/form-data", "text/plain", "text/html", "video/mp4", "video/webm", "image/png", "image/jpeg", "image/webp", "audio/wav", "audio/mpeg":
 			out["Content-Type"] = value
 		default:
 			out["Content-Type"] = "[other media type redacted]"

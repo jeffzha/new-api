@@ -7143,6 +7143,10 @@
     "The model catalog shows list prices before discounts. Actual charges are shown in usage logs.": "模型廣場顯示未折扣的牌價，實際消費金額請查看使用紀錄。",
     "No operations fee for this call": "此呼叫未納入營運扣費",
     "Actual customer deduction (CNY)": "使用者實際扣款（人民幣）",
-    "Deduction minus calculated fee (CNY)": "實扣與計算費用差額（人民幣）"
+    "Deduction minus calculated fee (CNY)": "實扣與計算費用差額（人民幣）",
+    "Verify detection cost": "Verify detection cost",
+    "Verified cost (CNY)": "Verified cost (CNY)",
+    "Confirm the original request has finished and verify its final charge before releasing the detection budget. This only reconciles the internal detection budget; it does not change wallet balances or OPS fees.": "Confirm the original request has finished and verify its final charge before releasing the detection budget. This only reconciles the internal detection budget; it does not change wallet balances or OPS fees.",
+    "Enter an amount from 0 to 1000000 CNY with at most six decimal places": "Enter an amount from 0 to 1000000 CNY with at most six decimal places"
   }
 }

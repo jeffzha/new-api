@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -56,6 +57,101 @@ type ModelHealthDelivery struct {
 	NextAt     int64  `json:"next_at"`
 	LeaseUntil int64  `json:"-"`
 	Payload    string `json:"-" gorm:"type:text"`
+}
+
+type ModelHealthOpsReceipt struct {
+	ID        int64
+	CreatedAt int64
+	RequestID string
+	Amount    string
+	UserID    string
+	ChannelID int
+	ModelName string
+	TaskID    string
+}
+
+// Read only this deployment's normal OPS receipts for dedicated probe users.
+// The same request in another OPS connection must never supply a detection fee.
+func ModelHealthOpsReceipts(ctx context.Context) ([]ModelHealthOpsReceipt, error) {
+	config := opsFeeRuntime.Load()
+	if config == nil {
+		return nil, nil
+	}
+	db := DB.WithContext(ctx)
+	var tokens []Token
+	if err := db.Select("id", "user_id").Where("name LIKE ?", "model-health/%").Find(&tokens).Error; err != nil {
+		return nil, err
+	}
+	if len(tokens) == 0 {
+		return nil, nil
+	}
+	owners := make(map[int]int, len(tokens))
+	ids := make([]string, len(tokens))
+	for i, token := range tokens {
+		owners[token.Id] = token.UserId
+		ids[i] = strconv.Itoa(token.UserId)
+	}
+	var rows []ModelHealthOpsReceipt
+	err := db.Table("model_health_runs AS h").
+		Select("h.id, h.created_at, h.request_id, f.amount, f.user_id, h.channel_id, h.model_name, h.upstream_task_id AS task_id").
+		Joins("JOIN ops_fees AS f ON f.request_id = h.request_id AND f.model = h.model_name AND f.connection = ?", config.Connection).
+		Where("h.request_id <> '' AND h.channel_id > 0 AND f.user_id IN ? AND f.status = ? AND f.currency = ? AND f.amount IS NOT NULL", ids, "available", "CNY").
+		Where("h.created_at >= ?", config.Since).
+		Find(&rows).Error
+	if err != nil || len(rows) == 0 || LOG_DB == nil {
+		return nil, err
+	}
+	verified := make([]ModelHealthOpsReceipt, 0, len(rows))
+	for start := 0; start < len(rows); start += 100 {
+		batch := rows[start:min(start+100, len(rows))]
+		requests := make([]string, len(batch))
+		for i, row := range batch {
+			requests[i] = row.RequestID
+		}
+		var logs []Log
+		if err := LOG_DB.WithContext(ctx).Select("request_id", "user_id", "token_id", "channel_id", "model_name").Where("request_id IN ? AND type = ?", requests, LogTypeConsume).Find(&logs).Error; err != nil {
+			return nil, err
+		}
+		byRequest := make(map[string][]Log, len(logs))
+		for _, log := range logs {
+			byRequest[log.RequestId] = append(byRequest[log.RequestId], log)
+		}
+		var taskIDs []string
+		for _, row := range batch {
+			if row.TaskID != "" {
+				taskIDs = append(taskIDs, row.TaskID)
+			}
+		}
+		var tasks []Task
+		if len(taskIDs) > 0 {
+			if err := db.Select("task_id", "channel_id", "user_id", "properties", "private_data", "status").Where("task_id IN ?", taskIDs).Find(&tasks).Error; err != nil {
+				return nil, err
+			}
+		}
+		byTask := make(map[string][]Task, len(tasks))
+		for _, task := range tasks {
+			byTask[task.TaskID] = append(byTask[task.TaskID], task)
+		}
+		for _, row := range batch {
+			if row.TaskID != "" {
+				matched := byTask[row.TaskID]
+				if len(matched) == 1 {
+					task := matched[0]
+					if task.UserId > 0 && owners[task.PrivateData.TokenId] == task.UserId && row.UserID == strconv.Itoa(task.UserId) && row.ChannelID == task.ChannelId && row.ModelName == task.Properties.OriginModelName && task.PrivateData.Execution != nil && task.PrivateData.Execution.RequestID == row.RequestID && (task.Status == TaskStatusSuccess || task.Status == TaskStatusFailure) {
+						verified = append(verified, row)
+					}
+				}
+				continue
+			}
+			for _, log := range byRequest[row.RequestID] {
+				if log.UserId > 0 && owners[log.TokenId] == log.UserId && row.UserID == strconv.Itoa(log.UserId) && row.ChannelID == log.ChannelId && row.ModelName == log.ModelName {
+					verified = append(verified, row)
+					break
+				}
+			}
+		}
+	}
+	return verified, nil
 }
 
 // Serialize admission, worker claims and notification reservations across slots.

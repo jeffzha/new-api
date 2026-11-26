@@ -1,0 +1,389 @@
+{
+  "environment": "domestic-product-sanitized",
+  "prices": [
+    {
+      "key": "USDExchangeRate",
+      "value": "7.3"
+    },
+    {
+      "key": "ModelPrice",
+      "value": "{\"MiniMax-H3-2K\":1.643836,\"qwen-image-2.0\":0.0273972602739726,\"qwen-image-3.0\":0.0246575342465753,\"wan3.0-video\":0.0821917808219178,\"wan3.0-video-prime\":0.1232876712328767}"
+    },
+    {
+      "key": "seedance_video_pricing.prices_cny",
+      "value": "{\"doubao-seedance-2-0-260128\":{\"720p\":{\"without_video\":46,\"with_video\":28},\"1080p\":{\"without_video\":51,\"with_video\":31},\"4k\":{\"without_video\":26,\"with_video\":16}},\"doubao-seedance-2-0-fast-260128\":{\"default\":{\"without_video\":37,\"with_video\":22}}}"
+    },
+    {
+      "key": "billing_setting.billing_expr",
+      "value": "{\"MiniMax-H3\":\"u(\\\"resolution\\\") == \\\"480P\\\" ? tier(\\\"480P\\\", u(\\\"seconds\\\") * 0.010958904109589043) : u(\\\"resolution\\\") == \\\"720P\\\" ? tier(\\\"720P\\\", u(\\\"seconds\\\") * 0.020547945205479454) : u(\\\"resolution\\\") == \\\"1080P\\\" ? tier(\\\"1080P\\\", u(\\\"seconds\\\") * 0.027397260273972605) : tier(\\\"2K\\\", u(\\\"seconds\\\") * 0.041095890410958909)\",\"MiniMax-H3-2K\":\"tier(\\\"15s-2K\\\", u(\\\"seconds\\\") * 0.017351598173515986)\",\"MiniMax-H3-Sensitive\":\"u(\\\"resolution\\\") == \\\"480P\\\" ? tier(\\\"480P\\\", u(\\\"seconds\\\") * 0.010958904109589043) : u(\\\"resolution\\\") == \\\"720P\\\" ? tier(\\\"720P\\\", u(\\\"seconds\\\") * 0.020547945205479454) : u(\\\"resolution\\\") == \\\"1080P\\\" ? tier(\\\"1080P\\\", u(\\\"seconds\\\") * 0.027397260273972605) : tier(\\\"2K\\\", u(\\\"seconds\\\") * 0.041095890410958909)\",\"deepseek-flash\":\"tier(\\\"base\\\", p * 0.279452054795 + c * 1.117808219178 + cr * 0.002515068493 + cc * 0.002515068493)\",\"deepseek-v4-1-flash-1017\":\"tier(\\\"base\\\", p * 0.273972602739726 + cr * 0.00547945205479452 + c * 1.095890410958904)\",\"deepseek-v4-flash\":\"tier(\\\"base\\\", p * 0.260821917808 + c * 0.521643835616 + cr * 0.00521643835616)\",\"deepseek-v4-pro\":\"!is_holiday(\\\"Asia/Shanghai\\\") \\u0026\\u0026 weekday(\\\"Asia/Shanghai\\\") \\u003e= 1 \\u0026\\u0026 weekday(\\\"Asia/Shanghai\\\") \\u003c= 5 \\u0026\\u0026 ((hour(\\\"Asia/Shanghai\\\") \\u003e= 9 \\u0026\\u0026 hour(\\\"Asia/Shanghai\\\") \\u003c 12) || (hour(\\\"Asia/Shanghai\\\") \\u003e= 14 \\u0026\\u0026 hour(\\\"Asia/Shanghai\\\") \\u003c 18)) ? tier(\\\"peak\\\", p * 1.232876712328767 + cr * 0.0410958904109589 + c * 3.698630136986301) : tier(\\\"off_peak\\\", p * 0.6164383561643836 + cr * 0.02054794520547945 + c * 1.849315068493151)\",\"deepseek-v4.1-flash\":\"!is_holiday(\\\"Asia/Shanghai\\\") \\u0026\\u0026 weekday(\\\"Asia/Shanghai\\\") \\u003e= 1 \\u0026\\u0026 weekday(\\\"Asia/Shanghai\\\") \\u003c= 5 \\u0026\\u0026 ((hour(\\\"Asia/Shanghai\\\") \\u003e= 9 \\u0026\\u0026 hour(\\\"Asia/Shanghai\\\") \\u003c 12) || (hour(\\\"Asia/Shanghai\\\") \\u003e= 14 \\u0026\\u0026 hour(\\\"Asia/Shanghai\\\") \\u003c 18)) ? tier(\\\"peak\\\", p * 0.273972602739726 + cr * 0.00547945205479452 + c * 1.095890410958904) : tier(\\\"off_peak\\\", p * 0.136986301369863 + cr * 0.00273972602739726 + c * 0.547945205479452)\",\"deepseek-v4.1-flash-unit\":\"!is_holiday(\\\"Asia/Shanghai\\\") \\u0026\\u0026 weekday(\\\"Asia/Shanghai\\\") \\u003e= 1 \\u0026\\u0026 weekday(\\\"Asia/Shanghai\\\") \\u003c= 5 \\u0026\\u0026 ((hour(\\\"Asia/Shanghai\\\") \\u003e= 9 \\u0026\\u0026 hour(\\\"Asia/Shanghai\\\") \\u003c 12) || (hour(\\\"Asia/Shanghai\\\") \\u003e= 14 \\u0026\\u0026 hour(\\\"Asia/Shanghai\\\") \\u003c 18)) ? tier(\\\"peak\\\", p * 0.273972602739726 + cr * 0.00547945205479452 + c * 1.095890410958904) : tier(\\\"off_peak\\\", p * 0.136986301369863 + cr * 0.00273972602739726 + c * 0.547945205479452)\",\"doubao-seed-2-0-mini-260428\":\"len \\u003c= 32000 ? tier(\\\"32K\\\", p * 0.0273972602739726 + c * 0.273972602739726 + cr * 0.00547945205479452 + ai * 2.794520547945205) : len \\u003c= 128000 ? tier(\\\"128K\\\", p * 0.0547945205479452 + c * 0.547945205479452 + cr * 0.010958904109589 + ai * 2.794520547945205) : tier(\\\"256K\\\", p * 0.1095890410958904 + c * 1.095890410958904 + cr * 0.0219178082191781 + ai * 2.794520547945205)\",\"doubao-seed-2.1-lite\":\"tier(\\\"standard\\\", p * 0.1095890410958904 + c * 0.3698630136986301 + cr * 0.0219178082191781 + ai * 1.643835616438356)\",\"doubao-seedance-2-0-fast-260128\":\"u(\\\"resolution\\\") == \\\"480p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"none\\\" ? tier(\\\"480p·none\\\", u(\\\"tokens\\\") * 5.068493150685 / 1000000) : u(\\\"resolution\\\") == \\\"480p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"480p·video\\\", u(\\\"tokens\\\") * 3.013698630137 / 1000000) : u(\\\"resolution\\\") == \\\"720p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"none\\\" ? tier(\\\"720p·none\\\", u(\\\"tokens\\\") * 5.068493150685 / 1000000) : u(\\\"resolution\\\") == \\\"720p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"720p·video\\\", u(\\\"tokens\\\") * 3.013698630137 / 1000000) : u(\\\"resolution\\\") == \\\"1080p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"none\\\" ? tier(\\\"1080p·none\\\", u(\\\"tokens\\\") * 5.068493150685 / 1000000) : u(\\\"resolution\\\") == \\\"1080p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"1080p·video\\\", u(\\\"tokens\\\") * 3.013698630137 / 1000000) : u(\\\"resolution\\\") == \\\"4k\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"none\\\" ? tier(\\\"4k·none\\\", u(\\\"tokens\\\") * 5.068493150685 / 1000000) : tier(\\\"4k·video\\\", u(\\\"tokens\\\") * 3.013698630137 / 1000000)\",\"doubao-seedream-5-0-260128\":\"tier(\\\"image\\\", fixed(0.030136986301369864)) * image_count\",\"doubao-seedream-5-0-flash-260915\":\"tier(\\\"image\\\", fixed(0.01643835616438356)) * image_count\",\"doubao-seedream-5-0-lite\":\"len \\u003c= 32000 ? tier(\\\"base\\\", p * 0.0821917808219178 + c * 0.4931506849315068 + cr * 0.01643835616438356) : len \\u003e 128000 ? tier(\\\"long_context\\\", p * 0.2465753424657534 + c * 1.4794520547945205 + cr * 0.04931506849315068) : tier(\\\"medium_context\\\", p * 0.1232876712328767 + c * 0.7397260273972602 + cr * 0.02465753424657534)\",\"doubao-seedream-5-0-pro-260628\":\"tier(\\\"image\\\", fixed(0.0410958904109589)) * image_count\",\"qwen3-rerank\":\"tier(\\\"base\\\", p * 0.0684931506849315)\",\"qwen3.7-text-embedding-flash\":\"tier(\\\"base\\\", p * 0.017123287671232876)\",\"wan3.0-video\":\"u(\\\"resolution\\\") == \\\"480P\\\" ? tier(\\\"480P\\\", u(\\\"seconds\\\") * 0.0410958904109589) : u(\\\"resolution\\\") == \\\"1080P\\\" ? tier(\\\"1080P\\\", u(\\\"seconds\\\") * 0.1643835616438356) : tier(\\\"720P\\\", u(\\\"seconds\\\") * 0.0821917808219178)\",\"wan3.0-video-prime\":\"u(\\\"resolution\\\") == \\\"480P\\\" ? tier(\\\"480P\\\", u(\\\"seconds\\\") * 0.06164383561643835) : u(\\\"resolution\\\") == \\\"1080P\\\" ? tier(\\\"1080P\\\", u(\\\"seconds\\\") * 0.2465753424657534) : tier(\\\"720P\\\", u(\\\"seconds\\\") * 0.1232876712328767)\"}"
+    },
+    {
+      "key": "billing_setting.billing_mode",
+      "value": "{\"MiniMax-H3\":\"tiered_expr\",\"MiniMax-H3-2K\":\"tiered_expr\",\"MiniMax-H3-Sensitive\":\"tiered_expr\",\"claude-fable-5\":\"ratio\",\"claude-opus-5\":\"ratio\",\"deepseek-flash\":\"tiered_expr\",\"deepseek-v4-1-flash-1017\":\"tiered_expr\",\"deepseek-v4-flash\":\"tiered_expr\",\"deepseek-v4-pro\":\"tiered_expr\",\"deepseek-v4.1-flash\":\"tiered_expr\",\"deepseek-v4.1-flash-unit\":\"tiered_expr\",\"doubao-seed-2-0-mini-260428\":\"tiered_expr\",\"doubao-seed-2.1-lite\":\"tiered_expr\",\"doubao-seedance-2-0-fast-260128\":\"tiered_expr\",\"doubao-seedream-5-0-260128\":\"tiered_expr\",\"doubao-seedream-5-0-flash-260915\":\"tiered_expr\",\"doubao-seedream-5-0-lite\":\"tiered_expr\",\"doubao-seedream-5-0-pro-260628\":\"tiered_expr\",\"qwen-image-2.0\":\"ratio\",\"qwen-image-3.0\":\"tiered_expr\",\"qwen3-rerank\":\"tiered_expr\",\"qwen3.7-text-embedding-flash\":\"tiered_expr\",\"wan3.0-video\":\"tiered_expr\",\"wan3.0-video-prime\":\"tiered_expr\"}"
+    },
+    {
+      "key": "billing_setting.plugin_billing_expr",
+      "value": "{\"cn-locopal-video::MiniMax-H3\":\"u(\\\"resolution\\\") == \\\"2K\\\" ? tier(\\\"h3-2k\\\", u(\\\"seconds\\\") * 0.10958904109589041 + u(\\\"input_video_seconds\\\") * 0.10958904109589041 + u(\\\"input_images\\\") * 0.027397260273972604) : tier(\\\"h3-768p\\\", u(\\\"seconds\\\") * 0.0684931506849315 + u(\\\"input_video_seconds\\\") * 0.0684931506849315 + u(\\\"input_images\\\") * 0.027397260273972604)\",\"newapi-video::MiniMax-H3\":\"tier(\\\"upstream\\\", u(\\\"output_credits\\\") * 0.013698630136986302 + u(\\\"material_credits\\\") * 0.013698630136986302)\",\"newapi-video::MiniMax-H3-2K\":\"tier(\\\"upstream\\\", u(\\\"output_credits\\\") * 0.013698630136986302 + u(\\\"material_credits\\\") * 0.013698630136986302)\",\"newapi-video::MiniMax-H3-Sensitive\":\"tier(\\\"upstream\\\", u(\\\"output_credits\\\") * 0.013698630136986302 + u(\\\"material_credits\\\") * 0.013698630136986302)\",\"oiioii::doubao-seedance-2-0-260128\":\"u(\\\"resolution\\\") == \\\"4k\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"4k_video\\\", u(\\\"tokens\\\") * 16/7.3/1000000) : u(\\\"resolution\\\") == \\\"4k\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"none\\\" ? tier(\\\"4k_none\\\", u(\\\"tokens\\\") * 26/7.3/1000000) : u(\\\"resolution\\\") == \\\"1080p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"1080p_video\\\", u(\\\"tokens\\\") * 31/7.3/1000000) : u(\\\"resolution\\\") == \\\"1080p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"none\\\" ? tier(\\\"1080p_none\\\", u(\\\"tokens\\\") * 51/7.3/1000000) : u(\\\"resolution\\\") == \\\"720p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"720p_video\\\", u(\\\"tokens\\\") * 28/7.3/1000000) : u(\\\"resolution\\\") == \\\"480p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"480p_video\\\", u(\\\"tokens\\\") * 28/7.3/1000000) : tier(\\\"base\\\", u(\\\"tokens\\\") * 46/7.3/1000000)\",\"oiioii::doubao-seedance-2-5-260628\":\"u(\\\"resolution\\\") == \\\"1080p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"1080p_video\\\", u(\\\"tokens\\\") * 46/7.3/1000000) : u(\\\"resolution\\\") == \\\"1080p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"none\\\" ? tier(\\\"1080p_none\\\", u(\\\"tokens\\\") * 77/7.3/1000000) : u(\\\"resolution\\\") == \\\"720p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"720p_video\\\", u(\\\"tokens\\\") * 42/7.3/1000000) : u(\\\"resolution\\\") == \\\"480p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"480p_video\\\", u(\\\"tokens\\\") * 42/7.3/1000000) : tier(\\\"base\\\", u(\\\"tokens\\\") * 70/7.3/1000000)\",\"oiioii::doubao-seedance-2.0\":\"u(\\\"resolution\\\") == \\\"4k\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"4k_video\\\", u(\\\"tokens\\\") * 16/7.3/1000000) : u(\\\"resolution\\\") == \\\"4k\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"none\\\" ? tier(\\\"4k_none\\\", u(\\\"tokens\\\") * 26/7.3/1000000) : u(\\\"resolution\\\") == \\\"1080p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"1080p_video\\\", u(\\\"tokens\\\") * 31/7.3/1000000) : u(\\\"resolution\\\") == \\\"1080p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"none\\\" ? tier(\\\"1080p_none\\\", u(\\\"tokens\\\") * 51/7.3/1000000) : u(\\\"resolution\\\") == \\\"720p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"720p_video\\\", u(\\\"tokens\\\") * 28/7.3/1000000) : u(\\\"resolution\\\") == \\\"480p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"480p_video\\\", u(\\\"tokens\\\") * 28/7.3/1000000) : tier(\\\"base\\\", u(\\\"tokens\\\") * 46/7.3/1000000)\",\"oiioii::doubao-seedance-2.5\":\"u(\\\"resolution\\\") == \\\"1080p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"1080p_video\\\", u(\\\"tokens\\\") * 46/7.3/1000000) : u(\\\"resolution\\\") == \\\"1080p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"none\\\" ? tier(\\\"1080p_none\\\", u(\\\"tokens\\\") * 77/7.3/1000000) : u(\\\"resolution\\\") == \\\"720p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"720p_video\\\", u(\\\"tokens\\\") * 42/7.3/1000000) : u(\\\"resolution\\\") == \\\"480p\\\" \\u0026\\u0026 u(\\\"video_input\\\") == \\\"video\\\" ? tier(\\\"480p_video\\\", u(\\\"tokens\\\") * 42/7.3/1000000) : tier(\\\"base\\\", u(\\\"tokens\\\") * 70/7.3/1000000)\"}"
+    }
+  ],
+  "recorded_at": "2026-11-26",
+  "channels": [
+    {
+      "type": 1002,
+      "setting": "{\"task_plugin_key\":null}",
+      "targets": [
+        {
+          "model": "doubao-seedance-2-0-260128",
+          "endpoint": "openai-video"
+        }
+      ],
+      "base_url": "https://api.laomandi.com",
+      "model_mapping": "",
+      "id": 1,
+      "settings": "{}",
+      "status": 2,
+      "group": "default",
+      "models": "doubao-seedance-2-0-260128"
+    },
+    {
+      "type": 54,
+      "setting": "{\"task_plugin_key\":null}",
+      "targets": [
+        {
+          "model": "doubao-seedance-2-0-260128",
+          "endpoint": "openai-video"
+        },
+        {
+          "model": "doubao-seedance-2-5-260628",
+          "endpoint": "openai-video"
+        }
+      ],
+      "base_url": "https://ai.hwdrama.com",
+      "model_mapping": "",
+      "id": 2,
+      "settings": "{\"doubao_video_endpoints\":{\"submit_path\":\"/api/v3/contents/generations/tasks\",\"fetch_path\":\"/api/v3/contents/generations/tasks/{task_id}\"}}",
+      "status": 1,
+      "group": "default",
+      "models": "doubao-seedance-2-0-260128,doubao-seedance-2-5-260628"
+    },
+    {
+      "type": 1003,
+      "setting": "{\"task_plugin_key\":null}",
+      "targets": [
+        {
+          "model": "doubao-seedance-2.0",
+          "endpoint": "openai-video"
+        }
+      ],
+      "base_url": "https://zhenze-huhehaote.cmecloud.cn/api/v3",
+      "model_mapping": "",
+      "id": 3,
+      "settings": "{}",
+      "status": 3,
+      "group": "default",
+      "models": "doubao-seedance-2.0"
+    },
+    {
+      "type": 54,
+      "setting": "{\"task_plugin_key\":null}",
+      "targets": [
+        {
+          "model": "doubao-seedance-2-0-260128",
+          "endpoint": "openai-video"
+        }
+      ],
+      "base_url": "https://api.uzoomtech.com",
+      "model_mapping": "",
+      "id": 12,
+      "settings": "{\"doubao_video_endpoints\":{\"submit_path\":\"/v1/videos\",\"fetch_path\":\"/v1/videos/{task_id}\"}}",
+      "status": 1,
+      "group": "default",
+      "models": "doubao-seedance-2-0-260128"
+    },
+    {
+      "type": 17,
+      "setting": "{\"task_plugin_key\":null}",
+      "targets": [
+        {
+          "model": "wan3.0-video-prime",
+          "endpoint": "openai-video"
+        },
+        {
+          "model": "qwen-image-2.0",
+          "endpoint": "image-generation"
+        },
+        {
+          "model": "wan3.0-video",
+          "endpoint": "openai-video"
+        }
+      ],
+      "base_url": "https://api.yunwoke.com/ali",
+      "model_mapping": "",
+      "id": 15,
+      "settings": "{}",
+      "status": 2,
+      "group": "default",
+      "models": "wan3.0-video,wan3.0-video-prime,qwen-image-2.0"
+    },
+    {
+      "type": 1000,
+      "setting": "{\"task_plugin_key\":null}",
+      "targets": [
+        {
+          "model": "doubao-seedance-2.5",
+          "endpoint": "openai-video"
+        },
+        {
+          "model": "doubao-seedream-5-0-lite",
+          "endpoint": "image-generation"
+        }
+      ],
+      "base_url": "https://aimodel.szhtp.com",
+      "model_mapping": "{\"doubao-seedance-2.0-mini\": \"doubao-seedance-2.0-D-mini\", \"doubao-seedream-5-0-lite\": \"Doubao-Seedream-5.0-lite\"}",
+      "id": 16,
+      "settings": "{}",
+      "status": 1,
+      "group": "default",
+      "models": "doubao-seedance-2.0,doubao-seedance-2.5,doubao-seedance-2.0-mini,doubao-seedream-5-0-lite"
+    },
+    {
+      "type": 1001,
+      "setting": "{\"task_plugin_key\":null}",
+      "targets": [
+        {
+          "model": "HappyHorse1.1",
+          "endpoint": "openai-video"
+        }
+      ],
+      "base_url": "https://api.yunwoke.com/ali",
+      "model_mapping": "",
+      "id": 18,
+      "settings": "{}",
+      "status": 2,
+      "group": "default",
+      "models": "HappyHorse1.1"
+    },
+    {
+      "type": 1004,
+      "setting": "{\"task_plugin_key\":null}",
+      "targets": [
+        {
+          "model": "doubao-seedream-5-0-260128",
+          "endpoint": "image-generation"
+        },
+        {
+          "model": "doubao-seedream-5-0-pro-260628",
+          "endpoint": "image-generation"
+        }
+      ],
+      "base_url": "https://api.uzoomtech.com",
+      "model_mapping": "",
+      "id": 20,
+      "settings": "{}",
+      "status": 1,
+      "group": "default",
+      "models": "doubao-seedream-5-0-pro-260628,doubao-seedream-5-0-260128"
+    },
+    {
+      "type": 1,
+      "setting": "{\"task_plugin_key\":null}",
+      "targets": [
+        {
+          "model": "doubao-seedream-5-0-pro-260628",
+          "endpoint": "image-generation"
+        },
+        {
+          "model": "doubao-seedream-5-0-260128",
+          "endpoint": "image-generation"
+        },
+        {
+          "model": "doubao-seedream-5-0-flash-260915",
+          "endpoint": "image-generation"
+        }
+      ],
+      "base_url": "https://locopalai.com",
+      "model_mapping": "{\"doubao-seed-2.1-lite\":\"doubao-seed-2-1-lite-260915\"}",
+      "id": 22,
+      "settings": "{}",
+      "status": 1,
+      "group": "default",
+      "models": "doubao-seedream-5-0-260128,doubao-seedream-5-0-flash-260915,doubao-seedream-5-0-pro-260628,doubao-seed-2.1-lite"
+    },
+    {
+      "type": 54,
+      "setting": "{\"task_plugin_key\":null}",
+      "targets": [
+        {
+          "model": "doubao-seedance-2.0",
+          "endpoint": "openai-video"
+        },
+        {
+          "model": "doubao-seedance-2.5",
+          "endpoint": "openai-video"
+        },
+        {
+          "model": "doubao-seedance-2-0-260128",
+          "endpoint": "openai-video"
+        },
+        {
+          "model": "doubao-seedance-2-0-fast-260128",
+          "endpoint": "openai-video"
+        },
+        {
+          "model": "doubao-seedance-2-5-260628",
+          "endpoint": "openai-video"
+        }
+      ],
+      "base_url": "http://model-mock-server:8080",
+      "model_mapping": null,
+      "id": 25,
+      "settings": "{}",
+      "status": 1,
+      "group": "default",
+      "models": "doubao-seedance-2-0-260128,doubao-seedance-2-0-fast-260128,doubao-seedance-2-5-260628,doubao-seedance-2.0,doubao-seedance-2.5"
+    },
+    {
+      "type": 17,
+      "setting": "{\"task_plugin_key\":null}",
+      "targets": [
+        {
+          "model": "wan3.0-video",
+          "endpoint": "openai-video"
+        },
+        {
+          "model": "wan3.0-video-prime",
+          "endpoint": "openai-video"
+        },
+        {
+          "model": "fun-asr-flash-2026-06-15",
+          "endpoint": "audio_transcription"
+        },
+        {
+          "model": "qwen-image-2.0",
+          "endpoint": "image-generation"
+        },
+        {
+          "model": "qwen-image-3.0",
+          "endpoint": "image-generation"
+        }
+      ],
+      "base_url": "https://ws-6qhq3nyhsv0n8l4b.cn-beijing.maas.aliyuncs.com",
+      "model_mapping": "",
+      "id": 32,
+      "settings": "{}",
+      "status": 1,
+      "group": "default",
+      "models": "qwen3.8-flash,qwen3.8-max,qwen-image-3.0,wan3.0-video,wan3.0-video-prime,qwen-image-2.0,fun-asr-flash-2026-06-15,qwen3-rerank,qwen3.7-text-embedding-flash"
+    },
+    {
+      "type": 1001,
+      "setting": "{\"task_plugin_key\":null}",
+      "targets": [
+        {
+          "model": "HappyHorse1.1",
+          "endpoint": "openai-video"
+        }
+      ],
+      "base_url": "https://ws-6qhq3nyhsv0n8l4b.cn-beijing.maas.aliyuncs.com",
+      "model_mapping": "{\n  \"HappyHorse1.1\": \"happyhorse-1.1\"\n}",
+      "id": 33,
+      "settings": "{}",
+      "status": 1,
+      "group": "default",
+      "models": "HappyHorse1.1"
+    },
+    {
+      "type": 1000,
+      "setting": "{\"task_plugin_key\":null}",
+      "targets": [
+        {
+          "model": "doubao-seedance-2.5",
+          "endpoint": "openai-video"
+        }
+      ],
+      "base_url": "https://locopalai.com",
+      "model_mapping": "{\n  \"doubao-seedance-2.0\": \"doubao-seedance-2.0-D\",\n  \"doubao-seedance-2.5\": \"doubao-seedance-2.5-D\"\n}",
+      "id": 35,
+      "settings": "{}",
+      "status": 1,
+      "group": "default",
+      "models": "doubao-seedance-2.0,doubao-seedance-2.5,doubao-seedance-2-0-fast-260128"
+    },
+    {
+      "type": 61,
+      "setting": "{\"task_plugin_key\":\"newapi-video\"}",
+      "targets": [
+        {
+          "model": "MiniMax-H3-Sensitive",
+          "endpoint": "openai-video"
+        },
+        {
+          "model": "MiniMax-H3-261013",
+          "endpoint": "openai-video"
+        }
+      ],
+      "base_url": "https://llm.ai.nexus-reach.com",
+      "model_mapping": "{\n  \"MiniMax-H3-261013\": \"MiniMax-H3\"\n}",
+      "id": 38,
+      "settings": "{}",
+      "status": 2,
+      "group": "default",
+      "models": "MiniMax-H3-261013,MiniMax-H3-Sensitive"
+    },
+    {
+      "type": 61,
+      "setting": "{\"task_plugin_key\":\"cn-locopal-video\"}",
+      "targets": [
+        {
+          "model": "doubao-seedance-2-0-fast-260128",
+          "endpoint": "openai-video"
+        }
+      ],
+      "base_url": "https://locopalai.com",
+      "model_mapping": "",
+      "id": 39,
+      "settings": "{}",
+      "status": 2,
+      "group": "default",
+      "models": "doubao-seedance-2-0-fast-260128"
+    },
+    {
+      "type": 61,
+      "setting": "{\"task_plugin_key\":\"cn-locopal-video\"}",
+      "targets": [
+        {
+          "model": "MiniMax-H3",
+          "endpoint": "openai-video"
+        }
+      ],
+      "base_url": "https://locopalai.com",
+      "model_mapping": "{\"MiniMax-H3\":\"h3-video\"}",
+      "id": 40,
+      "settings": "{}",
+      "status": 1,
+      "group": "default",
+      "models": "MiniMax-H3"
+    },
+    {
+      "type": 61,
+      "setting": "{\"task_plugin_key\":\"oiioii\"}",
+      "targets": [
+        {
+          "model": "doubao-seedance-2.0",
+          "endpoint": "openai-video"
+        },
+        {
+          "model": "doubao-seedance-2.5",
+          "endpoint": "openai-video"
+        }
+      ],
+      "base_url": "https://api.oiioii.tv",
+      "model_mapping": "{\"doubao-seedance-2.0\":\"doubao-seedance-2-0-260128\",\"doubao-seedance-2.5\":\"doubao-seedance-2-5-260628\"}",
+      "id": 46,
+      "settings": "{}",
+      "status": 1,
+      "group": "default",
+      "models": "doubao-seedance-2.0,doubao-seedance-2.5"
+    }
+  ]
+}

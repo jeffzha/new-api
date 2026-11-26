@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Download } from 'lucide-react'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -8,6 +8,12 @@ import { StaticDataTable } from '@/components/data-table'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
+import {
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 
@@ -48,6 +54,14 @@ export function HealthRecords(props: { access: Access }) {
   const [page, setPage] = useState(1)
   const [reconcile, setReconcile] = useState<Run>()
   const [cost, setCost] = useState('')
+  const costId = useId()
+  const [whole, fraction = ''] = cost.split('.')
+  const actualMicro =
+    Number(whole) * 1_000_000 + Number(fraction.padEnd(6, '0'))
+  const validCost =
+    /^\d+(?:\.\d{1,6})?$/.test(cost) &&
+    Number.isSafeInteger(actualMicro) &&
+    actualMicro <= 1e12
   const client = useQueryClient()
   const history = useQuery({
     queryKey: ['model-health', 'runs', source, page],
@@ -75,11 +89,7 @@ export function HealthRecords(props: { access: Access }) {
   }
   const settle = useMutation({
     mutationFn: (r: Run) =>
-      saveHealth(
-        '/reconcile',
-        { id: r.id, actual_micro: Number(cost) },
-        'post'
-      ),
+      saveHealth('/reconcile', { id: r.id, actual_micro: actualMicro }, 'post'),
     onSuccess: () => {
       setReconcile(undefined)
       void client.invalidateQueries({ queryKey: ['model-health'] })
@@ -189,7 +199,7 @@ export function HealthRecords(props: { access: Access }) {
                             setReconcile(r)
                           }}
                         >
-                          {t('Resolve probe hold')}
+                          {t('Verify detection cost')}
                         </Button>
                       )}
                   </div>
@@ -209,27 +219,42 @@ export function HealthRecords(props: { access: Access }) {
         onOpenChange={(open) => {
           if (!open && !settle.isPending) setReconcile(undefined)
         }}
-        title={t('Resolve probe hold')}
+        title={t('Verify detection cost')}
         desc={t(
-          'Verify the provider charge to release the internal probe hold. This does not record an OPS cost or charge a customer.'
+          'Confirm the original request has finished and verify its final charge before releasing the detection budget. This only reconciles the internal detection budget; it does not change wallet balances or OPS fees.'
         )}
         confirmText={t('Reconcile')}
-        disabled={!/^\d+$/.test(cost) || Number(cost) > 1e12}
+        disabled={!validCost}
         isLoading={settle.isPending}
         handleConfirm={() => {
-          if (reconcile) settle.mutate(reconcile)
+          if (reconcile && validCost) settle.mutate(reconcile)
         }}
       >
-        <label className='space-y-1 text-sm'>
-          {t('Verified cost (millionths of CNY)')}
-          <Input
-            type='number'
-            min='0'
-            step='1'
-            value={cost}
-            onChange={(event) => setCost(event.target.value)}
-          />
-        </label>
+        <FieldGroup>
+          <Field data-invalid={cost !== '' && !validCost}>
+            <FieldLabel htmlFor={costId}>{t('Verified cost (CNY)')}</FieldLabel>
+            <Input
+              id={costId}
+              type='number'
+              min='0'
+              max='1000000'
+              step='0.000001'
+              value={cost}
+              aria-invalid={cost !== '' && !validCost}
+              aria-describedby={
+                cost !== '' && !validCost ? `${costId}-error` : undefined
+              }
+              onChange={(event) => setCost(event.target.value)}
+            />
+            {cost !== '' && !validCost && (
+              <FieldError id={`${costId}-error`}>
+                {t(
+                  'Enter an amount from 0 to 1000000 CNY with at most six decimal places'
+                )}
+              </FieldError>
+            )}
+          </Field>
+        </FieldGroup>
       </ConfirmDialog>
     </div>
   )

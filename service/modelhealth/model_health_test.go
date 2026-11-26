@@ -42,7 +42,7 @@ func healthDB(t *testing.T) *gorm.DB {
 	}
 	old := model.DB
 	model.DB = db
-	models := []any{&model.ModelHealthDelivery{}, &model.ModelHealthRun{}, &model.ModelHealthConfig{}, &model.OpsRequestEvent{}, &model.OpsUpstreamAttempt{}, &model.Task{}, &model.Channel{}, &model.Option{}}
+	models := []any{&model.ModelHealthDelivery{}, &model.ModelHealthRun{}, &model.ModelHealthConfig{}, &model.OpsRequestEvent{}, &model.OpsUpstreamAttempt{}, &model.Task{}, &model.Channel{}, &model.Option{}, &model.TaskPlugin{}}
 	for _, m := range models {
 		if db.Migrator().HasTable(m) {
 			t.Fatal("model health integration tests require an empty, dedicated database")

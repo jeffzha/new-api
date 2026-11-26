@@ -7304,6 +7304,10 @@
     "The model catalog shows list prices before discounts. Actual charges are shown in usage logs.": "The model catalog shows list prices before discounts. Actual charges are shown in usage logs.",
     "No operations fee for this call": "No operations fee for this call",
     "Actual customer deduction (CNY)": "Actual customer deduction (CNY)",
-    "Deduction minus calculated fee (CNY)": "Deduction minus calculated fee (CNY)"
+    "Deduction minus calculated fee (CNY)": "Deduction minus calculated fee (CNY)",
+    "Verify detection cost": "Verify detection cost",
+    "Verified cost (CNY)": "Verified cost (CNY)",
+    "Confirm the original request has finished and verify its final charge before releasing the detection budget. This only reconciles the internal detection budget; it does not change wallet balances or OPS fees.": "Confirm the original request has finished and verify its final charge before releasing the detection budget. This only reconciles the internal detection budget; it does not change wallet balances or OPS fees.",
+    "Enter an amount from 0 to 1000000 CNY with at most six decimal places": "Enter an amount from 0 to 1000000 CNY with at most six decimal places"
   }
 }

@@ -7142,6 +7142,10 @@
     "The model catalog shows list prices before discounts. Actual charges are shown in usage logs.": "В каталоге указаны цены до скидок. Фактические расходы — в журнале использования.",
     "No operations fee for this call": "Этот вызов не учитывается в списании OPS",
     "Actual customer deduction (CNY)": "Фактическое списание клиента (CNY)",
-    "Deduction minus calculated fee (CNY)": "Разница списания и расчётной стоимости (CNY)"
+    "Deduction minus calculated fee (CNY)": "Разница списания и расчётной стоимости (CNY)",
+    "Verify detection cost": "Verify detection cost",
+    "Verified cost (CNY)": "Verified cost (CNY)",
+    "Confirm the original request has finished and verify its final charge before releasing the detection budget. This only reconciles the internal detection budget; it does not change wallet balances or OPS fees.": "Confirm the original request has finished and verify its final charge before releasing the detection budget. This only reconciles the internal detection budget; it does not change wallet balances or OPS fees.",
+    "Enter an amount from 0 to 1000000 CNY with at most six decimal places": "Enter an amount from 0 to 1000000 CNY with at most six decimal places"
   }
 }

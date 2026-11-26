@@ -6,9 +6,33 @@ import { afterEach, expect, it } from 'vitest'
 
 import { api } from '@/lib/http-client'
 
+import { HealthCycleBudget } from '../budget-settings'
 import { HealthNotifications, HealthRules } from '../settings'
 
 const originalAdapter = api.defaults.adapter
+const cycleStatus = {
+  scope: 'global',
+  override: true,
+  configured: true,
+  source: 'global',
+  amount_micro: 200000000,
+  run_micro: 5000000,
+  interval_seconds: 604800,
+  next_interval_seconds: 0,
+  start: 1795622400,
+  end: 1796227200,
+  used_micro: 190000000,
+  reserved_micro: 10000000,
+  remaining_micro: 10000000,
+  global_remaining_micro: 10000000,
+  recommended_micro: 200000000,
+  recommended_run_micro: 5000000,
+  estimated_round_micro: 60000000,
+  targets: 16,
+  missing_templates: 0,
+  over_run: 1,
+  warnings: ['Remaining cycle budget may not cover all scheduled detections'],
+}
 
 afterEach(() => {
   api.defaults.adapter = originalAdapter
@@ -65,6 +89,9 @@ it('shows a rule read limit and loads the template on retry without requesting t
   api.defaults.adapter = async (config) => {
     expect(config.url).not.toMatch(/\/budget$/)
     const isTemplate = config.url?.endsWith('/template')
+    let data: object = {}
+    if (isTemplate) data = { template: {}, rule: {}, ready: false }
+    if (config.url?.endsWith('/cycle-budget')) data = cycleStatus
     const headers = new AxiosHeaders()
     if (isTemplate && templateLimited) {
       headers.set('Retry-After', '60')
@@ -89,7 +116,7 @@ it('shows a rule read limit and loads the template on retry without requesting t
       headers,
       data: {
         success: true,
-        data: isTemplate ? { template: {}, rule: {}, ready: false } : {},
+        data,
       },
     }
   }
@@ -131,11 +158,13 @@ it('offers only whole-day paid media intervals while leaving text cadence editab
     headers: {},
     data: {
       success: true,
-      data: {
-        interval_seconds: config.params?.scope === 'video' ? 604800 : 86400,
-        per_cycle: 1,
-        per_day: 1,
-      },
+      data: config.url?.endsWith('/cycle-budget')
+        ? cycleStatus
+        : {
+            interval_seconds: config.params?.scope === 'video' ? 604800 : 86400,
+            per_cycle: 1,
+            per_day: 1,
+          },
     },
   })
   const client = new QueryClient()
@@ -170,6 +199,21 @@ it('saves automatic templates separately without enabling scheduled detection', 
   let saved: Record<string, unknown> | undefined
   api.defaults.adapter = async (config) => {
     const automatic = config.url?.endsWith('/auto-templates')
+    let data: object = {
+      enabled: false,
+      interval_seconds: 86400,
+      per_cycle: 1,
+      per_day: 1,
+    }
+    if (automatic) {
+      data = {
+        enabled: false,
+        credential: 'MODEL_HEALTH_KEY_PLATFORM',
+        token_id: 42,
+        max_micro: 10000,
+      }
+    }
+    if (config.url?.endsWith('/cycle-budget')) data = cycleStatus
     if (config.method === 'put') {
       expect(automatic).toBe(true)
       saved = JSON.parse(config.data as string)
@@ -181,19 +225,7 @@ it('saves automatic templates separately without enabling scheduled detection', 
       headers: {},
       data: {
         success: true,
-        data: automatic
-          ? {
-              enabled: false,
-              credential: 'MODEL_HEALTH_KEY_PLATFORM',
-              token_id: 42,
-              max_micro: 10000,
-            }
-          : {
-              enabled: false,
-              interval_seconds: 86400,
-              per_cycle: 1,
-              per_day: 1,
-            },
+        data,
       },
     }
   }
@@ -225,6 +257,105 @@ it('saves automatic templates separately without enabling scheduled detection', 
     expect(
       screen.getByRole('checkbox', { name: 'Enable scheduled detection' })
     ).not.toBeChecked()
+  } finally {
+    view.unmount()
+    client.clear()
+  }
+})
+
+it('shows insufficient budget and saves CNY amounts with the chosen cycle without a monthly field', async () => {
+  let saved: Record<string, unknown> | undefined
+  api.defaults.adapter = async (config) => {
+    if (config.method === 'put') saved = JSON.parse(config.data as string)
+    return {
+      config,
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      data: { success: true, data: cycleStatus },
+    }
+  }
+  const client = new QueryClient()
+  const user = userEvent.setup()
+  const view = render(
+    <QueryClientProvider client={client}>
+      <HealthCycleBudget scope='global' />
+    </QueryClientProvider>
+  )
+  try {
+    expect(
+      await screen.findByText(
+        'Remaining cycle budget may not cover all scheduled detections'
+      )
+    ).toBeVisible()
+    expect(screen.queryByLabelText(/month/i)).not.toBeInTheDocument()
+    const amount = screen.getByLabelText('Cycle budget (CNY)')
+    await user.clear(amount)
+    await user.type(amount, '180.25')
+    await user.click(screen.getByRole('button', { name: 'Save cycle budget' }))
+    await waitFor(() =>
+      expect(saved).toEqual({
+        scope: 'global',
+        override: true,
+        amount_micro: 180250000,
+        run_micro: 5000000,
+        interval_seconds: 604800,
+      })
+    )
+  } finally {
+    view.unmount()
+    client.clear()
+  }
+})
+
+it('inherits the type budget until a model override is enabled and rejects a run limit over five yuan', async () => {
+  let saved = false
+  api.defaults.adapter = async (config) => {
+    if (config.method === 'put') saved = true
+    return {
+      config,
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      data: {
+        success: true,
+        data: {
+          ...cycleStatus,
+          scope: 'model',
+          source: 'video',
+          override: false,
+        },
+      },
+    }
+  }
+  const client = new QueryClient()
+  const user = userEvent.setup()
+  const view = render(
+    <QueryClientProvider client={client}>
+      <HealthCycleBudget
+        scope='model'
+        selection={{
+          channel_id: 1,
+          model: 'example-video',
+          endpoint: 'openai-video',
+        }}
+      />
+    </QueryClientProvider>
+  )
+  try {
+    expect(await screen.findByLabelText('Cycle budget (CNY)')).toBeDisabled()
+    await user.click(
+      screen.getByRole('checkbox', {
+        name: 'Set a separate budget for this scope',
+      })
+    )
+    expect(screen.getByLabelText('Cycle budget (CNY)')).toBeEnabled()
+    const run = screen.getByLabelText('Per-detection limit (CNY)')
+    await user.clear(run)
+    await user.type(run, '6')
+    await user.click(screen.getByRole('button', { name: 'Save cycle budget' }))
+    expect(saved).toBe(false)
+    expect(run).toBeInvalid()
   } finally {
     view.unmount()
     client.clear()

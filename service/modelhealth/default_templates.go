@@ -9,6 +9,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	seedancepricing "github.com/QuantumNous/new-api/setting/seedance_video_pricing"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -22,7 +24,7 @@ type AutoTemplatePolicy struct {
 	MaxMicro   int64  `json:"max_micro"`
 }
 
-const defaultTemplateProfile = "builtin-v1"
+const defaultTemplateProfile = "builtin-v2"
 
 func SaveAutoTemplatePolicy(ctx context.Context, policy AutoTemplatePolicy) error {
 	if !credentialRef.MatchString(policy.Credential) || policy.TokenID < 1 || policy.MaxMicro < 1 || policy.MaxMicro > 100000000 {
@@ -64,6 +66,7 @@ func autoTemplateToken(db *gorm.DB, id int) (model.Token, error) {
 // request. Unsupported model contracts receive an editable, unconfirmed draft.
 func builtinTemplate(t Target, endpoint string, policy AutoTemplatePolicy) Template {
 	p := Template{Selection: Selection{Channel: t.ChannelID, Model: t.Model, Endpoint: endpoint}, GeneratedProfile: defaultTemplateProfile, Credential: policy.Credential, Auth: "bearer", MaxMicro: policy.MaxMicro, MaxTokens: 128, TimeoutSeconds: 30}
+	p.QuotaPerUnit = decimal.NewFromFloat(common.QuotaPerUnit).String()
 	if info, ok := common.GetDefaultEndpointInfo(constant.EndpointType(endpoint)); ok {
 		p.Path = info.Path
 	}
@@ -118,6 +121,21 @@ func builtinTemplate(t Target, endpoint string, policy AutoTemplatePolicy) Templ
 		p.SuccessValues, p.FailureValues, p.PendingValues = []string{"completed"}, []string{"failed", "cancelled"}, []string{"queued", "in_progress"}
 		p.TimeoutSeconds = 600
 		p.DraftReason = "Confirm the minimum video duration, resolution and cost ceiling"
+		// The native OpenAI Seedance adaptor validates this exact 4s contract.
+		// Other video providers retain drafts until their own contract is known.
+		if t.channelType == constant.ChannelTypeOpenAISeedance {
+			if price, ok := seedancepricing.GetUnitPriceCNY(t.Model, "720p", false); ok {
+				p.Body["ratio"], p.Body["generate_audio"] = "16:9", false
+				// 4s * 1280 * 720 * 24 / 1024 = 86400 video tokens.
+				// Reserve 125% and round upward to whole CNY; budget admission
+				// still rejects this when the administrator's ceiling is lower.
+				ceiling := price.Mul(decimal.NewFromInt(86400)).Mul(decimal.RequireFromString("1.25")).Div(decimal.NewFromInt(1000000)).Ceil().Mul(decimal.NewFromInt(1000000))
+				if ceiling.IsPositive() && ceiling.LessThanOrEqual(decimal.NewFromInt(100000000)) {
+					p.MaxMicro = max(p.MaxMicro, ceiling.IntPart())
+					p.ResultField, p.MinimumConfirmed = "", true
+				}
+			}
+		}
 	case "audio_speech":
 		p.Path, p.Body = "/v1/audio/speech", map[string]any{"input": "Hello.", "voice": "alloy", "response_format": "wav"}
 		p.DraftReason = "Confirm the supported voice, audio format and cost ceiling"
@@ -201,6 +219,9 @@ func StartAutoTemplates(ctx context.Context) {
 		defer ticker.Stop()
 		for {
 			cycle, cancel := context.WithTimeout(ctx, 10*time.Second)
+			if err := syncProbeBudgetReceipts(cycle); err != nil && ctx.Err() == nil {
+				common.SysError("model health budget receipt reconciliation failed")
+			}
 			if err := SyncAutoTemplates(cycle); err != nil && ctx.Err() == nil {
 				common.SysError("model health automatic template synchronization failed")
 			}

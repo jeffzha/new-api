@@ -85,6 +85,10 @@ func RegisterModelHealthRoutes(r *gin.RouterGroup, guard func(authz.Permission) 
 		data, err := modelhealth.GetBudget(c.Request.Context())
 		modelHealthReply(c, data, err)
 	})
+	reads.GET("/cycle-budget", guard(authz.ModelHealthRules), func(c *gin.Context) {
+		data, err := modelhealth.GetCycleBudget(c.Request.Context(), c.Query("scope"), modelHealthSelection(c))
+		modelHealthReply(c, data, err)
+	})
 	reads.GET("/rule", guard(authz.ModelHealthRules), func(c *gin.Context) {
 		data, err := modelhealth.GetRule(c.Request.Context(), c.Query("scope"))
 		modelHealthReply(c, data, err)
@@ -141,6 +145,9 @@ func RegisterModelHealthRoutes(r *gin.RouterGroup, guard func(authz.Permission) 
 	}))
 	actions.PUT("/budget", guard(authz.ModelHealthRules), healthMutation("budget", func(c *gin.Context, p modelhealth.Budget) (any, error) {
 		return nil, modelhealth.SaveBudget(c.Request.Context(), p)
+	}))
+	actions.PUT("/cycle-budget", guard(authz.ModelHealthRules), healthMutation("cycle_budget", func(c *gin.Context, p modelhealth.CycleBudgetInput) (any, error) {
+		return nil, modelhealth.SaveCycleBudget(c.Request.Context(), p)
 	}))
 	actions.PUT("/notifications", guard(authz.ModelHealthNotify), healthMutation("notification", func(c *gin.Context, p modelhealth.Destination) (any, error) {
 		return nil, modelhealth.SaveDestination(c.Request.Context(), p)

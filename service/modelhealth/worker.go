@@ -2,6 +2,7 @@ package modelhealth
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -29,6 +30,7 @@ import (
 	"github.com/abema/go-mp4"
 	"github.com/go-audio/wav"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var rejectNetworks = []netip.Prefix{
@@ -205,7 +207,7 @@ func schedule(ctx context.Context, now int64) {
 	if legacy, err := legacyScheduledAll(db); err != nil || legacy {
 		return
 	}
-	b, err := model.ReadModelHealthConfig(db, "budget", Budget{})
+	b, err := readBudget(db)
 	if err != nil || b.Run == 0 {
 		return
 	}
@@ -217,6 +219,12 @@ func schedule(ctx context.Context, now int64) {
 	if err != nil {
 		return
 	}
+	type scheduledProbe struct {
+		selection Selection
+		slot      int64
+		due       int64
+	}
+	var pending []scheduledProbe
 	for _, t := range targets {
 		if t.Paused || ctx.Err() != nil {
 			continue
@@ -231,9 +239,14 @@ func schedule(ctx context.Context, now int64) {
 				continue
 			}
 			var slot int64
+			due := now
 			if paidMedia(t.Type) {
-				due, err := mediaScheduledAt(db, t, ep, r, now)
-				if err != nil || due > now {
+				due, err = mediaDueAt(db, t, ep, r, now)
+				if err != nil {
+					continue
+				}
+				value, err := common.Marshal(due)
+				if err != nil || db.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.ModelHealthConfig{ID: "s-" + hash(t.ID, ep)[:62], Kind: "media-schedule", Value: string(value)}).Error != nil || due > now {
 					continue
 				}
 			} else {
@@ -242,8 +255,17 @@ func schedule(ctx context.Context, now int64) {
 					continue
 				}
 			}
-			_, _ = admit(ctx, Selection{Channel: t.ChannelID, Model: t.Model, Endpoint: ep}, "scheduled", "", 0, slot)
+			pending = append(pending, scheduledProbe{selection: Selection{Channel: t.ChannelID, Model: t.Model, Endpoint: ep}, slot: slot, due: due})
 		}
+	}
+	// Budget and concurrency deferrals keep their original deadlines. A fixed
+	// channel order must not let newer probes repeatedly overtake overdue media.
+	slices.SortStableFunc(pending, func(a, b scheduledProbe) int { return cmp.Compare(a.due, b.due) })
+	for _, probe := range pending {
+		if ctx.Err() != nil {
+			return
+		}
+		_, _ = admit(ctx, probe.selection, "scheduled", "", 0, probe.slot)
 	}
 }
 
@@ -261,19 +283,37 @@ func claim(ctx context.Context, now int64) (model.ModelHealthRun, error) {
 		}
 		fields := map[string]any{"lease_until": now + 90}
 		if run.State == "queued" {
-			b, err := model.ReadModelHealthConfig(tx, "budget", Budget{})
+			b, err := readBudget(tx)
 			if err != nil {
 				return err
 			}
-			day, err := spend(tx, dayStart(now))
-			if err != nil {
-				return err
+			overBudget := run.ReservationMicro > b.Run || run.TokenBudget > b.ChannelTPM
+			if b.Cycle {
+				target, err := findTarget(tx, run.ChannelID, run.ModelName, run.Endpoint)
+				if err != nil && !IsValidation(err) {
+					return err
+				}
+				if IsValidation(err) {
+					overBudget = true
+				} else {
+					blocks, err := cycleBudgetBlocks(tx, target, run.Endpoint, run.ReservationMicro, now, run.ID)
+					if err != nil {
+						return err
+					}
+					overBudget = overBudget || len(blocks) > 0
+				}
+			} else {
+				day, err := spend(tx, dayStart(now))
+				if err != nil {
+					return err
+				}
+				month, err := spend(tx, monthStart(now))
+				if err != nil {
+					return err
+				}
+				overBudget = overBudget || day > b.Day || month > b.Month
 			}
-			month, err := spend(tx, monthStart(now))
-			if err != nil {
-				return err
-			}
-			if run.ReservationMicro > b.Run || day > b.Day || month > b.Month || run.TokenBudget > b.ChannelTPM {
+			if overBudget {
 				if err := tx.Model(&run).Updates(map[string]any{"state": "skipped", "stage": "configuration", "reason": "budget_changed", "actual_micro": 0, "finished_at": now}).Error; err != nil {
 					return err
 				}
@@ -473,6 +513,34 @@ func execute(ctx context.Context, client *http.Client, run model.ModelHealthRun,
 		case !slices.Contains(p.SuccessValues, status):
 			return update("uncertain", "polling", "unexpected_task_status: "+p.StatusField, nil)
 		}
+	}
+	if gateway != "" && t.Type == "video" && p.ResultField == "" && method == http.MethodGet {
+		// Fetch only the platform-owned task content path with the dedicated key.
+		// Do not forward this key to a result URL supplied by an upstream.
+		contentURL := *base
+		contentURL.Path = strings.TrimRight(strings.TrimSuffix(base.Path, path), "/") + "/v1/videos/" + run.UpstreamTaskID + "/content"
+		contentReq, err := http.NewRequestWithContext(stepCtx, http.MethodGet, contentURL.String(), nil)
+		if err != nil {
+			return update("failed", "validation", "invalid_platform_content_path", nil)
+		}
+		contentReq.Header.Set("Authorization", "Bearer "+key)
+		contentRes, err := client.Do(contentReq)
+		if err != nil {
+			return update("polling", "polling", "content_transport_failure", nil)
+		}
+		defer contentRes.Body.Close()
+		data, err = readBounded(contentRes.Body, 24<<20)
+		trace = appendTrace(trace, Trace{At: now, Stage: "download", Method: http.MethodGet, Host: contentURL.Hostname(), Path: contentURL.Path, HTTP: contentRes.StatusCode, ResponseHeaders: evidenceHeaders(contentRes.Header, contentRes.ContentLength), Response: evidenceBody(data, err)})
+		if contentRes.StatusCode >= 500 || contentRes.StatusCode == 429 {
+			return update("polling", "polling", "content_temporarily_unavailable", nil)
+		}
+		if err != nil || contentRes.StatusCode != http.StatusOK {
+			return update("failed", "validation", "platform_content_download_failed", nil)
+		}
+		if evidenceHeaders(contentRes.Header, contentRes.ContentLength)["Content-Type"] != "video/mp4" {
+			return update("failed", "validation", "video_download_content_type_mismatch", nil)
+		}
+		step.ResponseHeaders = evidenceHeaders(contentRes.Header, contentRes.ContentLength)
 	}
 	if t.Type == "video" && p.ResultField == "" && hasMP4Header(data) && step.ResponseHeaders["Content-Type"] != "video/mp4" {
 		return update("failed", "validation", "video_download_content_type_mismatch", actualCost(result, p))

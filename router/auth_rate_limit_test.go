@@ -155,6 +155,7 @@ func TestModelHealthAdminReadAndRestrictedActions(t *testing.T) {
 		{"/api/model-health/capabilities", user.AccessToken, http.StatusForbidden},
 		{"/api/model-health/capabilities", admin.AccessToken, http.StatusOK},
 		{"/api/model-health/budget", admin.AccessToken, http.StatusForbidden},
+  {"/api/model-health/cycle-budget?scope=global", admin.AccessToken, http.StatusForbidden},
 		{"/api/model-health/evidence/1", admin.AccessToken, http.StatusForbidden},
 	} {
 		request := httptest.NewRequest(http.MethodGet, "https://gateway.example"+test.path, nil)

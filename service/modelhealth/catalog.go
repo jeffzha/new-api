@@ -17,16 +17,17 @@ import (
 )
 
 type Target struct {
-	ID        string   `json:"id"`
-	ChannelID int      `json:"channel_id"`
-	Channel   string   `json:"channel"`
-	Model     string   `json:"model"`
-	Upstream  string   `json:"upstream"`
-	Type      string   `json:"type"`
-	Groups    []string `json:"groups"`
-	Paused    bool     `json:"paused"`
-	Endpoints []string `json:"endpoints"`
-	base      string
+	ID          string   `json:"id"`
+	ChannelID   int      `json:"channel_id"`
+	Channel     string   `json:"channel"`
+	Model       string   `json:"model"`
+	Upstream    string   `json:"upstream"`
+	Type        string   `json:"type"`
+	Groups      []string `json:"groups"`
+	Paused      bool     `json:"paused"`
+	Endpoints   []string `json:"endpoints"`
+	base        string
+	channelType int
 }
 
 func hash(parts ...any) string {
@@ -79,6 +80,7 @@ func targetFor(ch *model.Channel, name string) Target {
 		endpoints = []constant.EndpointType{"audio_generation"}
 	}
 	t := Target{ID: hash(ch.Id, name), ChannelID: ch.Id, Channel: ch.Name, Model: name, Upstream: up, Type: kind, Groups: ch.GetGroups(), Paused: ch.Status != common.ChannelStatusEnabled || !mappingValid, base: ch.GetBaseURL()}
+	t.channelType = ch.Type
 	for _, endpoint := range endpoints {
 		t.Endpoints = append(t.Endpoints, string(endpoint))
 	}

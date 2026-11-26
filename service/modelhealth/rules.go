@@ -134,7 +134,7 @@ func probeCredential(p Template, t Target) string {
 }
 
 func readTemplate(db *gorm.DB, t Target, endpoint string) (Template, error) {
-	p, err := model.ReadModelHealthConfig(db, "p-"+hash(t.ID, endpoint)[:62], Template{})
+	p, err := healthConfig(db, "p-"+hash(t.ID, endpoint)[:62], Template{})
 	if err != nil || p.Credential != "" && p.GeneratedProfile == "" {
 		return p, err
 	}
@@ -143,7 +143,7 @@ func readTemplate(db *gorm.DB, t Target, endpoint string) (Template, error) {
 	if p.GeneratedProfile == defaultTemplateProfile && p.Binding == templateBinding(t, endpoint) {
 		return p, nil
 	}
-	policy, err := model.ReadModelHealthConfig(db, "auto-templates", AutoTemplatePolicy{})
+	policy, err := healthConfig(db, "auto-templates", AutoTemplatePolicy{})
 	if err != nil || !policy.Enabled {
 		return p, err
 	}
@@ -281,7 +281,7 @@ func resolveRule(db *gorm.DB, kind string, keys ...string) (Rule, string, error)
 		keys = append(keys, "global")
 	}
 	for _, key := range keys {
-		r, err := model.ReadModelHealthConfig(db, key, Rule{})
+		r, err := healthConfig(db, key, Rule{})
 		if err != nil {
 			return r, "", err
 		}
@@ -353,8 +353,8 @@ func spend(db *gorm.DB, from int64) (int64, error) {
 	return total, err
 }
 
-var activeStates = []string{"queued", "submitting", "polling", "uncertain"}
-var inFlightStates = []string{"queued", "submitting", "polling"}
+var activeStates = []string{"queued", "submitting", "polling", "rechecking", "uncertain"}
+var inFlightStates = []string{"queued", "submitting", "polling", "rechecking"}
 
 func admissionBlocks(db *gorm.DB, t Target, endpoint string, p Template, r Rule, b Budget, now int64) ([]string, error) {
 	var blocked []string
@@ -420,7 +420,12 @@ func mediaScheduledAt(db *gorm.DB, t Target, endpoint string, r Rule, now int64)
 // Preserve the original deadline so overdue targets can be served oldest first.
 func mediaDueAt(db *gorm.DB, t Target, endpoint string, r Rule, now int64) (int64, error) {
 	var last model.ModelHealthRun
-	err := db.Select("created_at", "started_at").Where("target = ? AND endpoint = ? AND state <> ?", t.ID, endpoint, "skipped").Order("id desc").Limit(1).Find(&last).Error
+	var err error
+	if snapshot := overviewSnapshotFor(db); snapshot != nil {
+		last = snapshot.last[t.ID+"/"+endpoint]
+	} else {
+		err = db.Select("created_at", "started_at").Where("target = ? AND endpoint = ? AND state <> ?", t.ID, endpoint, "skipped").Order("id desc").Limit(1).Find(&last).Error
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -429,7 +434,7 @@ func mediaDueAt(db *gorm.DB, t Target, endpoint string, r Rule, now int64) (int6
 	if anchor == 0 {
 		// Keep an overdue first detection due across day boundaries. Recomputing
 		// its hash slot tomorrow could otherwise postpone it another week.
-		firstDue, err := model.ReadModelHealthConfig(db, "s-"+hash(t.ID, endpoint)[:62], int64(0))
+		firstDue, err := healthConfig(db, "s-"+hash(t.ID, endpoint)[:62], int64(0))
 		if err != nil {
 			return 0, err
 		}

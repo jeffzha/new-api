@@ -1,5 +1,13 @@
 {
   "translation": {
+    "Reset filters": "Сбросить фильтры",
+    "Enabled channels and models only": "Только активные каналы и модели",
+    "All matching models · {{hours}} hours": "Все подходящие модели · {{hours}} ч",
+    "original_task_verified": "Исходная задача успешно проверена",
+    "original_failure": "Исходная ошибка",
+    "rechecking": "Повторная проверка исходной задачи",
+    "existing_task_recheck_incomplete": "Проверка исходной задачи не завершена",
+    "original_task_identity_changed": "Владелец исходной задачи изменён",
     "Automatic probe templates": "Automatic probe templates",
     "Generate probe templates automatically": "Generate probe templates automatically",
     "Dedicated monitoring token ID": "Dedicated monitoring token ID",

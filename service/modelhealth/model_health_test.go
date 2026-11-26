@@ -42,7 +42,7 @@ func healthDB(t *testing.T) *gorm.DB {
 	}
 	old := model.DB
 	model.DB = db
-	models := []any{&model.ModelHealthDelivery{}, &model.ModelHealthRun{}, &model.ModelHealthConfig{}, &model.OpsRequestEvent{}, &model.OpsUpstreamAttempt{}, &model.Task{}, &model.Channel{}, &model.Option{}, &model.TaskPlugin{}}
+	models := []any{&model.ModelHealthDelivery{}, &model.ModelHealthRun{}, &model.ModelHealthConfig{}, &model.OpsRequestEvent{}, &model.OpsUpstreamAttempt{}, &model.Task{}, &model.Channel{}, &model.Option{}, &model.TaskPlugin{}, &model.Model{}}
 	for _, m := range models {
 		if db.Migrator().HasTable(m) {
 			t.Fatal("model health integration tests require an empty, dedicated database")
@@ -613,6 +613,79 @@ func TestOverviewIsReadOnlyAndThirtyDayRangeIsAccepted(t *testing.T) {
 	filter.From--
 	_, err = List(context.Background(), filter)
 	assert.True(t, IsValidation(err))
+}
+
+func TestOverviewTotalsIncludeEveryActiveTargetRegardlessOfPage(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	now := time.Now().Unix()
+	channel := model.Channel{Name: "Active", Type: constant.ChannelTypeOpenAI, Models: "example-a,example-b"}
+	require.NoError(t, db.Create(&channel).Error)
+	disabled := model.Channel{Name: "Disabled", Type: constant.ChannelTypeOpenAI, Models: "removed"}
+	require.NoError(t, db.Create(&disabled).Error)
+	require.NoError(t, db.Model(&disabled).Update("status", common.ChannelStatusManuallyDisabled).Error)
+	for i := range 65 {
+		require.NoError(t, db.Create(&model.OpsRequestEvent{RequestID: fmt.Sprintf("all-%d", i), ChannelID: channel.Id, ModelName: "example-a", UpstreamModelName: "example-a", Method: "POST", Path: "/v1/chat/completions", OccurredAtMs: now * 1000, CompletedAtMs: now * 1000, Success: true}).Error)
+		target := targetFor(&channel, "example-a")
+		require.NoError(t, db.Create(&model.ModelHealthRun{Target: target.ID, ChannelID: channel.Id, ModelName: target.Model, UpstreamModel: target.Upstream, Endpoint: "openai", Source: "manual", State: "succeeded", CreatedAt: now, FinishedAt: now}).Error)
+	}
+	var previous Overview
+	for page := 1; page <= 2; page++ {
+		result, err := List(context.Background(), Filter{Page: page, Limit: 1, From: now - 1, To: now + 1})
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+		assert.Equal(t, 2, result.Total)
+		assert.Equal(t, 65, result.Outcomes.UserOK)
+		assert.Equal(t, 65, result.Outcomes.ProbeOK)
+		assert.Equal(t, map[string]int{"healthy": 1, "waiting": 1}, result.Counts)
+		if page == 2 {
+			assert.Equal(t, previous.Outcomes, result.Outcomes)
+		}
+		previous = result
+	}
+	metadata := model.Model{ModelName: "example-a", Status: 2}
+	require.NoError(t, db.Create(&metadata).Error)
+	result, err := List(context.Background(), Filter{Limit: 20})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Total, "disabled model metadata must be hidden")
+	require.NoError(t, db.Delete(&metadata).Error)
+	result, err = List(context.Background(), Filter{Limit: 20})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Total, "a deleted model must not reappear through a remaining channel entry")
+	require.NoError(t, db.Model(&channel).Update("models", "example-b").Error)
+	_, err = findTarget(db, channel.Id, "example-a", "openai")
+	assert.True(t, IsValidation(err))
+}
+
+func TestQueuedDetectionIsNotSubmittedAfterTargetIsRetired(t *testing.T) {
+	for _, retired := range []string{"channel disabled", "channel deleted", "model disabled", "model removed"} {
+		t.Run(retired, func(t *testing.T) {
+			db := healthDB(t)
+			migrateHealth(t, db)
+			sel, plan := seedHealth(t, db, "llm")
+			run, err := Enqueue(context.Background(), sel, plan.Revision, plan.Template.MaxMicro)
+			require.NoError(t, err)
+			switch retired {
+			case "channel disabled":
+				require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", sel.Channel).Update("status", common.ChannelStatusManuallyDisabled).Error)
+			case "channel deleted":
+				require.NoError(t, db.Delete(&model.Channel{}, sel.Channel).Error)
+			case "model disabled":
+				require.NoError(t, db.Create(&model.Model{ModelName: sel.Model, Status: 2}).Error)
+			case "model removed":
+				require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", sel.Channel).Update("models", "").Error)
+			}
+			calls := 0
+			client := &http.Client{Transport: mockProvider(func(*http.Request) (*http.Response, error) { calls++; return reply(200, `{}`), nil })}
+			require.NoError(t, work(context.Background(), client, time.Now().Unix()))
+			require.NoError(t, db.First(&run, run.ID).Error)
+			assert.Equal(t, "skipped", run.State)
+			assert.Zero(t, calls)
+			rows, err := catalog(db, 0)
+			require.NoError(t, err)
+			assert.Empty(t, rows)
+		})
+	}
 }
 
 func TestUnverifiedPreviousMonthChargeStillReservesBudget(t *testing.T) {

@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
+import { TableScrollArea } from '@/components/ui/table-scroll-area'
 
 import {
   downloadEvidence,
@@ -52,6 +53,7 @@ export function HealthRecords(props: { access: Access }) {
   const { t } = useTranslation()
   const [source, setSource] = useState('')
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
   const [reconcile, setReconcile] = useState<Run>()
   const [cost, setCost] = useState('')
   const costId = useId()
@@ -64,15 +66,19 @@ export function HealthRecords(props: { access: Access }) {
     actualMicro <= 1e12
   const client = useQueryClient()
   const history = useQuery({
-    queryKey: ['model-health', 'runs', source, page],
+    queryKey: ['model-health', 'runs', source, page, pageSize],
     queryFn: ({ signal }) =>
-      loadHealth<Run[]>('/runs', { source, page }, signal),
+      loadHealth<Run[]>('/runs', { source, page, limit: pageSize }, signal),
     refetchInterval: 10000,
   })
   const costs = useQuery({
-    queryKey: ['model-health', 'run-costs', source, page],
+    queryKey: ['model-health', 'run-costs', source, page, pageSize],
     queryFn: ({ signal }) =>
-      loadHealth<OpsCosts>('/run-costs', { source, page }, signal),
+      loadHealth<OpsCosts>(
+        '/run-costs',
+        { source, page, limit: pageSize },
+        signal
+      ),
     staleTime: 60_000,
     refetchInterval: 60_000,
     retry: false,
@@ -96,8 +102,8 @@ export function HealthRecords(props: { access: Access }) {
     },
   })
   return (
-    <div className='space-y-3 pt-3'>
-      <dl className='grid grid-cols-2 divide-x border-y'>
+    <div className='flex h-full min-h-0 flex-col gap-3 pt-3'>
+      <dl className='bg-card grid shrink-0 grid-cols-2 divide-x rounded-xl border'>
         {[
           [t('OPS confirmed this week (Beijing time)'), totals?.week_micro],
           [t('OPS confirmed all time'), totals?.total_micro],
@@ -110,7 +116,7 @@ export function HealthRecords(props: { access: Access }) {
           </div>
         ))}
       </dl>
-      <label className='inline-flex items-center gap-2'>
+      <label className='inline-flex shrink-0 items-center gap-2'>
         {t('Detection source')}
         <NativeSelect
           value={source}
@@ -128,90 +134,115 @@ export function HealthRecords(props: { access: Access }) {
       {history.isError && <ErrorState onRetry={() => void history.refetch()} />}
       {history.data && (
         <>
-          <StaticDataTable
-            data={history.data.slice(0, 25)}
-            tableClassName='min-w-[720px]'
-            className='overflow-x-auto'
-            getRowKey={(r) => r.id}
-            emptyContent={t('No Data')}
-            columns={[
-              {
-                id: 'model',
-                header: t('Channel and model'),
-                cell: (r) => (
-                  <div className='max-w-48 break-words whitespace-normal'>
-                    <strong>{r.model}</strong>
-                    <div className='text-muted-foreground text-xs'>
-                      #{r.channel_id} · {r.endpoint}
-                    </div>
-                  </div>
-                ),
-              },
-              {
-                id: 'time',
-                header: t('Time'),
-                cell: (r) => when(r.created_at),
-              },
-              {
-                id: 'source',
-                header: t('Detection source'),
-                cell: (r) => t(r.source),
-              },
-              {
-                id: 'result',
-                header: t('Status'),
-                cell: (r) => (
-                  <div className='space-y-1'>
-                    <Status state={r.state} />
-                    <div className='text-muted-foreground max-w-52 text-xs break-words whitespace-normal'>
-                      {t(r.stage)} · {r.status_code || '\u2014'}{' '}
-                      {r.reason && t(r.reason)}
-                    </div>
-                  </div>
-                ),
-              },
-              {
-                id: 'cost',
-                header: t('OPS confirmed cost'),
-                cell: (r) => {
-                  const amount = totals?.amounts[r.id]
-                  return typeof amount === 'number'
-                    ? money(amount)
-                    : pendingCost
-                },
-              },
-              {
-                id: 'action',
-                header: t('Actions'),
-                cell: (r) => (
-                  <div className='flex items-center gap-2'>
-                    {props.access.export && <EvidenceButton id={r.id} />}{' '}
-                    {props.access.rules &&
-                      r.actual_micro === null &&
-                      ['uncertain', 'failed', 'succeeded'].includes(
-                        r.state
-                      ) && (
-                        <Button
-                          size='sm'
-                          variant='outline'
-                          onClick={() => {
-                            setCost('')
-                            setReconcile(r)
-                          }}
-                        >
-                          {t('Verify detection cost')}
-                        </Button>
-                      )}
-                  </div>
-                ),
-              },
-            ]}
-          />
-          <Pages
-            page={page}
-            hasMore={history.data.length > 25}
-            onPage={setPage}
-          />
+          <div className='min-h-0 flex-1 overflow-hidden'>
+            <TableScrollArea className='table-scroll-area-fill h-full max-h-none'>
+              <StaticDataTable
+                data={history.data.slice(0, pageSize)}
+                tableClassName='min-w-[720px] [&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10 [&_thead]:bg-muted'
+                className='bg-card contents!'
+                tableProps={{ withContainer: false }}
+                getRowKey={(r) => r.id}
+                emptyContent={t('No Data')}
+                columns={[
+                  {
+                    id: 'model',
+                    header: t('Channel and model'),
+                    cell: (r) => (
+                      <div className='max-w-48 break-words whitespace-normal'>
+                        <strong>{r.model}</strong>
+                        <div className='text-muted-foreground text-xs'>
+                          #{r.channel_id} · {r.endpoint}
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: 'time',
+                    header: t('Time'),
+                    cell: (r) => when(r.created_at),
+                  },
+                  {
+                    id: 'source',
+                    header: t('Detection source'),
+                    cell: (r) => t(r.source),
+                  },
+                  {
+                    id: 'result',
+                    header: t('Status'),
+                    cell: (r) => (
+                      <div className='space-y-1'>
+                        <Status state={r.state} />
+                        <div className='text-muted-foreground max-w-52 text-xs break-words whitespace-normal'>
+                          {t(r.stage)} · {r.status_code || '\u2014'}{' '}
+                          {r.reason && t(r.reason)}
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: 'cost',
+                    header: t('OPS confirmed cost'),
+                    cell: (r) => {
+                      const amount = totals?.amounts[r.id]
+                      return typeof amount === 'number'
+                        ? money(amount)
+                        : pendingCost
+                    },
+                  },
+                  {
+                    id: 'action',
+                    header: t('Actions'),
+                    cell: (r) => (
+                      <div className='flex items-center gap-2'>
+                        {props.access.export && <EvidenceButton id={r.id} />}{' '}
+                        {props.access.rules &&
+                          r.actual_micro === null &&
+                          ['uncertain', 'failed', 'succeeded'].includes(
+                            r.state
+                          ) && (
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              onClick={() => {
+                                setCost('')
+                                setReconcile(r)
+                              }}
+                            >
+                              {t('Verify detection cost')}
+                            </Button>
+                          )}
+                      </div>
+                    ),
+                  },
+                ]}
+              />
+            </TableScrollArea>
+          </div>
+          <div className='flex shrink-0 items-center justify-between gap-3 border-t'>
+            <label className='flex items-center gap-2 text-sm'>
+              <span className='text-muted-foreground'>
+                {t('Rows per page')}
+              </span>
+              <NativeSelect
+                value={pageSize}
+                onChange={(event) => {
+                  setPageSize(Number(event.target.value))
+                  setPage(1)
+                }}
+              >
+                {[10, 20, 30, 40, 50, 100].map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </NativeSelect>
+            </label>
+            <Pages
+              page={page}
+              hasMore={history.data.length > pageSize}
+              onPage={setPage}
+            />
+          </div>
         </>
       )}
       <ConfirmDialog

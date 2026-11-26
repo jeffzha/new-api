@@ -28,14 +28,18 @@ export function ModelHealth() {
   }
 
   return (
-    <SectionPageLayout>
+    <SectionPageLayout fixedContent>
       <SectionPageLayout.Title>{t('Model Health')}</SectionPageLayout.Title>
       <SectionPageLayout.Content>
         {access.isPending && <LoadingState />}
         {access.isError && <ErrorState onRetry={() => void access.refetch()} />}
         {access.data && (
-          <Tabs value={tab} onValueChange={setTab}>
-            <div className='overflow-x-auto border-b pb-1'>
+          <Tabs
+            value={tab}
+            onValueChange={setTab}
+            className='h-full min-h-0 gap-0 [--background:var(--color-white)] [--border:var(--color-slate-200)] [--card:var(--color-white)] [--muted:var(--color-slate-50)] dark:[--background:var(--color-slate-950)] dark:[--border:var(--color-slate-700)] dark:[--card:var(--color-slate-900)] dark:[--muted:var(--color-slate-800)]'
+          >
+            <div className='shrink-0 overflow-x-auto border-b pb-2'>
               <TabsList variant='line' aria-label={t('Model Health')}>
                 <TabsTrigger value='overview' icon={<Activity />}>
                   {t('Health overview')}
@@ -55,19 +59,19 @@ export function ModelHealth() {
                 )}
               </TabsList>
             </div>
-            <TabsContent value='overview'>
+            <TabsContent value='overview' className='min-h-0 overflow-hidden'>
               <HealthOverview access={access.data} onRules={openRules} />
             </TabsContent>
-            <TabsContent value='records'>
+            <TabsContent value='records' className='min-h-0 overflow-hidden'>
               <HealthRecords access={access.data} />
             </TabsContent>
             {access.data.rules && (
-              <TabsContent value='rules'>
+              <TabsContent value='rules' className='min-h-0 overflow-y-auto'>
                 <HealthRules selection={selection} />
               </TabsContent>
             )}
             {access.data.notify && (
-              <TabsContent value='notify'>
+              <TabsContent value='notify' className='min-h-0 overflow-y-auto'>
                 <HealthNotifications worker={access.data.worker} />
               </TabsContent>
             )}

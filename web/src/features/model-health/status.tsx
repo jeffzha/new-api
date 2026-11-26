@@ -29,6 +29,7 @@ const colors: Record<string, StatusVariant> = {
   queued: 'info',
   submitting: 'info',
   polling: 'info',
+  rechecking: 'info',
   sending: 'info',
 }
 
@@ -52,7 +53,7 @@ export function Pages(props: {
 }) {
   const { t } = useTranslation()
   return (
-    <div className='flex items-center justify-end gap-2 py-3'>
+    <div className='flex shrink-0 items-center justify-end gap-2 py-3'>
       <Button
         size='icon'
         variant='outline'

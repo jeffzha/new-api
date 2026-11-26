@@ -118,6 +118,7 @@ func catalog(db *gorm.DB, channelID int) ([]Target, error) {
 	if channelID > 0 {
 		q = q.Where("id = ?", channelID)
 	}
+	q = q.Where("status = ?", common.ChannelStatusEnabled)
 	var channels []model.Channel
 	if err := q.Find(&channels).Error; err != nil {
 		return nil, err
@@ -142,11 +143,39 @@ func catalog(db *gorm.DB, channelID int) ([]Target, error) {
 		}
 	}
 	rows := make([]Target, 0)
+	var modelNames []string
+	for _, channel := range channels {
+		modelNames = append(modelNames, channel.GetModels()...)
+	}
+	visible := make(map[string]bool, len(modelNames))
+	if db.Migrator().HasTable(&model.Model{}) {
+		var err error
+		visible, err = model.PublicModelNames(db, modelNames)
+		if err != nil {
+			return nil, err
+		}
+		var removed []string
+		activeNames := db.Model(&model.Model{}).Select("model_name").Where("name_rule = ?", model.NameRuleExact)
+		if err := db.Unscoped().Model(&model.Model{}).Where("name_rule = ? AND deleted_at IS NOT NULL", model.NameRuleExact).
+			Where("model_name NOT IN (?)", activeNames).Pluck("model_name", &removed).Error; err != nil {
+			return nil, err
+		}
+		for _, name := range removed {
+			visible[name] = false
+		}
+	} else {
+		for _, name := range modelNames {
+			visible[name] = true
+		}
+	}
 	for i := range channels {
 		names := channels[i].GetModels()
 		slices.Sort(names)
 		for _, name := range slices.Compact(names) {
 			if name = strings.TrimSpace(name); name != "" {
+				if !visible[name] {
+					continue
+				}
 				target := targetFor(&channels[i], name)
 				if target.pluginKey != "" && target.contract != "" {
 					target.pluginHash = pluginHashes[target.pluginKey]
@@ -219,9 +248,19 @@ type Filter struct {
 	Page, Limit                                   int
 }
 type Overview struct {
-	Rows   []Row          `json:"rows"`
-	Total  int            `json:"total"`
-	Counts map[string]int `json:"counts"`
+	Rows      []Row          `json:"rows"`
+	Total     int            `json:"total"`
+	Counts    map[string]int `json:"counts"`
+	Outcomes  Outcomes       `json:"outcomes"`
+	Groups    []string       `json:"groups"`
+	Endpoints []string       `json:"endpoints"`
+}
+
+type Outcomes struct {
+	UserCount  int `json:"user_count"`
+	UserOK     int `json:"user_ok"`
+	ProbeCount int `json:"probe_count"`
+	ProbeOK    int `json:"probe_ok"`
 }
 
 func matches(t Target, f Filter) bool {
@@ -254,7 +293,13 @@ func eventFilter(db *gorm.DB, t Target, endpoint string) *gorm.DB {
 
 func samples(db *gorm.DB, t Target, endpoint string, from, to int64) ([]Sample, error) {
 	var events []model.OpsRequestEvent
-	err := eventFilter(db, t, endpoint).Select("id", "request_id", "completed_at_ms", "duration_ms", "status_code", "upstream_status_code", "success", "error_owner", "business_limited", "error_code", "task_id", "user_id", "channel_key_index").Where("occurred_at_ms >= ? AND occurred_at_ms < ?", from*1000, to*1000).Order("occurred_at_ms desc, id desc").Limit(60).Find(&events).Error
+	var err error
+	snapshot := overviewSnapshotFor(db)
+	if snapshot != nil {
+		events = snapshot.eventsFor(t, endpoint)
+	} else {
+		err = eventFilter(db, t, endpoint).Select("id", "request_id", "completed_at_ms", "duration_ms", "status_code", "upstream_status_code", "success", "error_owner", "business_limited", "error_code", "task_id", "user_id", "channel_key_index").Where("occurred_at_ms >= ? AND occurred_at_ms < ?", from*1000, to*1000).Order("occurred_at_ms desc, id desc").Limit(60).Find(&events).Error
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +320,7 @@ func samples(db *gorm.DB, t Target, endpoint string, from, to int64) ([]Sample, 
 			s.State, s.Stage = "pending", "submission"
 			if e.TaskID != "" {
 				var task model.Task
-				err := db.Select("status", "finish_time", "submit_time", "channel_id", "properties").Where("task_id = ? AND user_id = ? AND channel_id = ?", e.TaskID, e.UserID, t.ChannelID).Take(&task).Error
+				err := overviewTask(db, e.TaskID, e.UserID, t.ChannelID, &task)
 				if err != nil && err != gorm.ErrRecordNotFound {
 					return nil, err
 				}
@@ -299,8 +344,12 @@ func samples(db *gorm.DB, t Target, endpoint string, from, to int64) ([]Sample, 
 		rows = append(rows, s)
 	}
 	var runs []model.ModelHealthRun
-	if err := db.Select("id", "source", "state", "stage", "reason", "status_code", "created_at", "started_at", "finished_at", "request_id").Where("target = ? AND endpoint = ? AND upstream_model = ? AND created_at >= ? AND created_at < ?", t.ID, endpoint, t.Upstream, from, to).Order("id desc").Limit(30).Find(&runs).Error; err != nil {
-		return nil, err
+	if snapshot != nil {
+		runs = snapshot.recent[overviewKey(t, endpoint)]
+	} else {
+		if err := db.Select("id", "source", "state", "stage", "reason", "status_code", "created_at", "started_at", "finished_at", "request_id").Where("target = ? AND endpoint = ? AND upstream_model = ? AND created_at >= ? AND created_at < ?", t.ID, endpoint, t.Upstream, from, to).Order("id desc").Limit(30).Find(&runs).Error; err != nil {
+			return nil, err
+		}
 	}
 	for _, r := range runs {
 		rows = append(rows, Sample{Source: r.Source, State: r.State, Stage: r.Stage, Reason: r.Reason, At: max(r.FinishedAt, r.CreatedAt), Duration: max(0, r.FinishedAt-r.StartedAt) * 1000, HTTP: r.StatusCode, RunID: r.ID, RequestID: r.RequestID, KeyIndex: -1})
@@ -386,15 +435,17 @@ func List(ctx context.Context, f Filter) (Overview, error) {
 	if err != nil {
 		return result, err
 	}
-	limit := min(50, max(1, f.Limit))
+	snapshot, err := loadOverviewSnapshot(db, rows, f)
+	if err != nil {
+		return result, err
+	}
+	db = db.WithContext(context.WithValue(db.Statement.Context, overviewContextKey{}, snapshot))
+	limit := min(100, max(1, f.Limit))
 	offset := (min(10000, max(1, f.Page)) - 1) * limit
 	for _, t := range rows {
+		result.Groups = append(result.Groups, t.Groups...)
+		result.Endpoints = append(result.Endpoints, t.Endpoints...)
 		if !matches(t, f) {
-			continue
-		}
-		// Overview counters describe the displayed page; the catalog total is separate.
-		if f.State == "" && (result.Total < offset || len(result.Rows) >= limit) {
-			result.Total++
 			continue
 		}
 		row, err := describe(db, t, f.Endpoint, f.From, f.To, now, worker)
@@ -406,10 +457,21 @@ func List(ctx context.Context, f Filter) (Overview, error) {
 		}
 		if result.Total >= offset && len(result.Rows) < limit {
 			result.Rows = append(result.Rows, row)
-			result.Counts[row.State]++
+		}
+		result.Counts[row.State]++
+		for _, ep := range row.Details {
+			totals := snapshot.outcomes[overviewKey(t, ep.Name)]
+			result.Outcomes.UserCount += totals.UserCount
+			result.Outcomes.UserOK += totals.UserOK
+			result.Outcomes.ProbeCount += totals.ProbeCount
+			result.Outcomes.ProbeOK += totals.ProbeOK
 		}
 		result.Total++
 	}
+	slices.Sort(result.Groups)
+	result.Groups = slices.Compact(result.Groups)
+	slices.Sort(result.Endpoints)
+	result.Endpoints = slices.Compact(result.Endpoints)
 	return result, nil
 }
 
@@ -448,13 +510,17 @@ func describe(db *gorm.DB, t Target, endpoint string, from, to, now int64, worke
 				}
 			}
 		}
-		var run model.ModelHealthRun
-		q := db.Where("target = ? AND endpoint = ? AND upstream_model = ? AND state IN ?", t.ID, name, t.Upstream, activeStates).Order("id desc").Limit(1).Find(&run)
-		if q.Error != nil {
-			return row, q.Error
-		}
-		if q.RowsAffected > 0 {
-			e.Run = &run
+		if snapshot := overviewSnapshotFor(db); snapshot != nil {
+			e.Run = snapshot.active[overviewKey(t, name)]
+		} else {
+			var run model.ModelHealthRun
+			q := db.Where("target = ? AND endpoint = ? AND upstream_model = ? AND state IN ?", t.ID, name, t.Upstream, activeStates).Order("id desc").Limit(1).Find(&run)
+			if q.Error != nil {
+				return row, q.Error
+			}
+			if q.RowsAffected > 0 {
+				e.Run = &run
+			}
 		}
 		row.Details = append(row.Details, e)
 		switch {

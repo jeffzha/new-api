@@ -10,35 +10,38 @@ import { HealthRecords } from '../records'
 it('shows only OPS amounts and distinguishes an explicit zero from an unmatched run', async () => {
   const adapter = api.defaults.adapter
   const client = new QueryClient()
+  const sizes: number[] = []
   api.defaults.adapter = async (config) => ({
     config,
     status: 200,
     statusText: 'OK',
     headers: {},
-    data: {
-      success: true,
-      data: config.url?.endsWith('/run-costs')
-        ? {
-            state: 'confirmed',
-            week_micro: 50,
-            total_micro: 100,
-            amounts: { 1: 0 },
-          }
-        : [
-            {
-              id: 1,
-              model: 'Confirmed model',
-              state: 'succeeded',
-              actual_micro: 888,
-            },
-            {
-              id: 2,
-              model: 'Unmatched model',
-              state: 'failed',
-              actual_micro: 999,
-            },
-          ],
-    },
+    data:
+      (sizes.push(config.params.limit),
+      {
+        success: true,
+        data: config.url?.endsWith('/run-costs')
+          ? {
+              state: 'confirmed',
+              week_micro: 50,
+              total_micro: 100,
+              amounts: { 1: 0 },
+            }
+          : [
+              {
+                id: 1,
+                model: 'Confirmed model',
+                state: 'succeeded',
+                actual_micro: 888,
+              },
+              {
+                id: 2,
+                model: 'Unmatched model',
+                state: 'failed',
+                actual_micro: 999,
+              },
+            ],
+      }),
   })
   const view = render(
     <QueryClientProvider client={client}>
@@ -67,6 +70,10 @@ it('shows only OPS amounts and distinguishes an explicit zero from an unmatched 
       )
     ).toBeVisible()
     expect(screen.queryByText(/0\.000(888|999)/)).not.toBeInTheDocument()
+    await userEvent
+      .setup()
+      .selectOptions(screen.getByLabelText('Rows per page'), '50')
+    await waitFor(() => expect(sizes.slice(-2)).toEqual([50, 50]))
   } finally {
     view.unmount()
     client.clear()

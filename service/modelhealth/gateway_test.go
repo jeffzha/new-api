@@ -482,6 +482,34 @@ func TestSeedancePlatformProbeDownloadsOriginalTaskWithoutResubmission(t *testin
 			assert.Equal(t, 1, posts)
 			assert.Equal(t, 2, downloads)
 			assert.Nil(t, run.ActualMicro, "generation success is not a cost receipt")
+			// Revalidate the very same failed record after its original task is
+			// available. Preserve the failure evidence, request and settled cost.
+			run.RequestID = "original-video-request"
+			task := model.Task{TaskID: run.UpstreamTaskID, ChannelId: ch.Id, UserId: user.Id, Status: model.TaskStatusSuccess,
+				Properties:  model.Properties{OriginModelName: ch.Models, UpstreamModelName: ch.Models},
+				PrivateData: model.TaskPrivateData{TokenId: token.Id, Execution: &model.TaskExecutionSnapshot{RequestID: run.RequestID}}}
+			require.NoError(t, db.Create(&task).Error)
+			require.NoError(t, db.Model(&run).Updates(map[string]any{"state": "failed", "stage": "validation", "reason": "platform_content_download_failed", "actual_micro": 12345, "request_id": run.RequestID}).Error)
+			for _, foreign := range []map[string]any{{"user_id": user.Id + 1}, {"channel_id": ch.Id + 1}, {"private_data": `{}`}, {"properties": `{}`}} {
+				require.NoError(t, db.Model(&model.Task{}).Where("id = ?", task.ID).Updates(foreign).Error)
+				owned, err := completedProbeTask(db, run, p, target)
+				require.NoError(t, err)
+				assert.False(t, owned, "a different task identity cannot rewrite this detection")
+				require.NoError(t, db.Save(&task).Error)
+			}
+			require.NoError(t, recoverCompletedVideo(ctx, time.Now().Unix()))
+			require.NoError(t, work(ctx, client, time.Now().Unix()))
+			require.NoError(t, db.First(&run, run.ID).Error)
+			assert.Equal(t, "succeeded", run.State)
+			assert.Equal(t, "original_task_verified", run.Reason)
+			assert.Contains(t, run.Evidence, "original_failure")
+			assert.Contains(t, run.Evidence, "platform_content_download_failed")
+			require.NotNil(t, run.ActualMicro)
+			assert.EqualValues(t, 12345, *run.ActualMicro)
+			assert.Equal(t, 1, posts, "revalidation must never submit another paid task")
+			assert.Equal(t, 3, downloads)
+			require.NoError(t, recoverCompletedVideo(ctx, time.Now().Unix()+31))
+			assert.Equal(t, 1, posts)
 		})
 	}
 }

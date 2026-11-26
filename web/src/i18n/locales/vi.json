@@ -1,5 +1,13 @@
 {
   "translation": {
+    "Reset filters": "Đặt lại bộ lọc",
+    "Enabled channels and models only": "Chỉ kênh và mô hình đang bật",
+    "All matching models · {{hours}} hours": "Tất cả mô hình phù hợp · {{hours}} giờ",
+    "original_task_verified": "Xác minh tác vụ gốc thành công",
+    "original_failure": "Lỗi ban đầu",
+    "rechecking": "Đang xác minh lại tác vụ gốc",
+    "existing_task_recheck_incomplete": "Chưa xác minh xong tác vụ gốc",
+    "original_task_identity_changed": "Danh tính tác vụ gốc đã thay đổi",
     "Automatic probe templates": "Automatic probe templates",
     "Generate probe templates automatically": "Generate probe templates automatically",
     "Dedicated monitoring token ID": "Dedicated monitoring token ID",

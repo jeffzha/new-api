@@ -1,5 +1,13 @@
 {
   "translation": {
+    "Reset filters": "フィルターをリセット",
+    "Enabled channels and models only": "有効なチャネルとモデルのみ",
+    "All matching models · {{hours}} hours": "一致するすべてのモデル · 過去 {{hours}} 時間",
+    "original_task_verified": "元のタスクの検証に成功",
+    "original_failure": "元の失敗記録",
+    "rechecking": "元のタスクを再検証中",
+    "existing_task_recheck_incomplete": "元のタスクの検証が未完了",
+    "original_task_identity_changed": "元のタスクの所有情報が変更されました",
     "Automatic probe templates": "Automatic probe templates",
     "Generate probe templates automatically": "Generate probe templates automatically",
     "Dedicated monitoring token ID": "Dedicated monitoring token ID",

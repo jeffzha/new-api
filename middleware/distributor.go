@@ -39,13 +39,30 @@ func Distribute() func(c *gin.Context) {
 			Kind:        taskdto.FilterRequestPath,
 			RequestPath: c.Request.URL.Path,
 		})
-		service.AppendTaskPluginIdentityFilter(c, c.GetString("expected_task_plugin_key"))
 		assetAffinityFound := false
 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
 		if err != nil {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
+		// Retrieval renders an existing owned task; it does not select a new
+		// provider. An empty submit-plugin identity otherwise rejects type-61
+		// channels when an administrator token carries a channel pin. The fetch
+		// controller enforces ownership and uses the task's persisted adaptor.
+		if c.Request.Method == http.MethodGet && c.GetInt("relay_mode") == relayconstant.RelayModeVideoFetchByID {
+			if common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
+				limits, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
+				allowed, valid := limits.(map[string]bool)
+				if !ok || !valid || !tokenModelLimitAllows(allowed, modelRequest.Model) {
+					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
+					return
+				}
+			}
+			common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+			c.Next()
+			return
+		}
+		service.AppendTaskPluginIdentityFilter(c, c.GetString("expected_task_plugin_key"))
 		affinityChannelID, found, affinityErr := resolveAssetRequestChannel(c)
 		if affinityErr != nil {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, affinityErr.Error())

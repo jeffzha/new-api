@@ -86,7 +86,7 @@
 | HappyHorse1.1 | duration=3、480P，移除会被适配器忽略的 seconds | 1.687501 |
 | cn-locopal-video 的 MiniMax-H3 → h3-video | 4 秒、768P、16:9、纯文本 | 2.5 |
 | oiioii 的 Seedance 2.0 / 2.5 | 4 秒、480p、16:9、无音频 | 2.209726 / 3.362626 |
-| Seedream 标准 / Pro / Flash | 一张 1024×1024，URL 返回 | 0.275001 / 0.375 / 0.15 |
+| Seedream 标准 / Pro / Flash | 一张 2048×2048，URL 返回；标准版至少 3686400 像素 | 0.275001 / 0.375 / 0.15 |
 | Seedream Lite | 一张 2K，URL 返回 | 0.073824 |
 | 阿里 Qwen Image 2.0 / 3.0 | 一张 1328×1328，URL 返回 | 0.25 / 0.225 |
 | 阿里 Fun-ASR-Flash 2026-06-15 | 自有固定 PCM WAV，约 3.58 秒，按 5 秒预估，multipart 上传 | 0.01 |

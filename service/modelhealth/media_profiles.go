@@ -49,7 +49,9 @@ func confirmImageProfile(t Target, p *Template) {
 		p.Body["size"] = "1328x1328"
 	case (t.channelType == constant.ChannelTypeOpenAI || t.channelType == constant.ChannelTypeSeedreamArkOpenAI) && slices.Contains([]string{"doubao-seedream-5-0-260128", "doubao-seedream-5-0-pro-260628", "doubao-seedream-5-0-flash-260915"}, t.Upstream):
 		// All these channels expose the existing OpenAI Images contract.
-		p.Body["size"] = "1024x1024"
+		// Standard Seedream requires at least 3,686,400 pixels. A 2K square
+		// also stays within the Pro/Flash contracts on these channels.
+		p.Body["size"] = "2048x2048"
 	case t.channelType == constant.ChannelTypeOpenAISeedance && t.Model == "doubao-seedream-5-0-lite" && t.Upstream == "Doubao-Seedream-5.0-lite":
 		p.Body["size"] = "2K"
 	default:

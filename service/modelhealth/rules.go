@@ -471,6 +471,12 @@ func admit(ctx context.Context, s Selection, source, binding string, confirmed, 
 		if !p.validFor(t, s.Endpoint) {
 			return invalid("A validated template and dedicated credential are required")
 		}
+		// Platform relay mode changes where the executor sends the request,
+		// not which upstream contracts automatic probes may confirm. Apply the
+		// same origin restriction to scheduled and manual admission.
+		if u, err := checkedURL(t.base); err != nil || u.RawQuery != "" {
+			return invalid("Invalid channel base URL")
+		}
 		now := time.Now().Unix()
 		if source == "manual" {
 			if err := checkProbeWorker(tx, p, t, now); err != nil {

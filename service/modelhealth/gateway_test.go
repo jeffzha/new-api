@@ -497,6 +497,27 @@ func TestSeedancePlatformProbeDownloadsOriginalTaskWithoutResubmission(t *testin
 				assert.False(t, owned, "a different task identity cannot rewrite this detection")
 				require.NoError(t, db.Save(&task).Error)
 			}
+			// Historical internal mocks and disabled targets must never be
+			// downloaded through the public gateway by the recovery worker.
+			for _, unavailable := range []map[string]any{
+				{"base_url": "http://model-mock-server:8080"},
+				{"base_url": "https://127.0.0.1"},
+				{"base_url": "https://provider.example?key=invalid"},
+				{"status": common.ChannelStatusManuallyDisabled},
+			} {
+				require.NoError(t, db.Model(&run).First(&run).Error)
+				before := run
+				require.NoError(t, db.Model(&ch).Updates(unavailable).Error)
+				require.NoError(t, recoverCompletedVideo(ctx, time.Now().Unix()))
+				require.NoError(t, work(ctx, client, time.Now().Unix()))
+				require.NoError(t, db.First(&run, run.ID).Error)
+				assert.Equal(t, before, run, "ineligible recovery must preserve the detection and settled cost")
+				assert.Equal(t, 1, posts)
+				assert.Equal(t, 2, downloads, "ineligible recovery must make no gateway request")
+				require.NoError(t, db.Model(&ch).Updates(map[string]any{"base_url": "https://provider.example", "status": common.ChannelStatusEnabled}).Error)
+				require.NoError(t, model.SaveModelHealthConfig(db, "video-recheck-cursor", "recovery", int64(0)))
+				require.NoError(t, model.SaveModelHealthConfig(db, "video-recheck-at", "recovery", int64(0)))
+			}
 			require.NoError(t, recoverCompletedVideo(ctx, time.Now().Unix()))
 			require.NoError(t, work(ctx, client, time.Now().Unix()))
 			require.NoError(t, db.First(&run, run.ID).Error)

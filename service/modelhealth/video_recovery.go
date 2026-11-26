@@ -44,8 +44,12 @@ func recoverCompletedVideo(ctx context.Context, now int64) error {
 			if err != nil {
 				return err
 			}
+			upstream, err := checkedURL(target.base)
+			if target.Paused || err != nil || upstream.RawQuery != "" {
+				continue
+			}
 			var p Template
-			if common.UnmarshalJsonStr(run.Template, &p) != nil || !p.validFor(target, run.Endpoint) || p.PollPath != "/v1/videos/{task_id}" || p.ResultField != "" {
+			if common.UnmarshalJsonStr(run.Template, &p) != nil || !p.validFor(target, run.Endpoint) || !gatewayProbePath(p, target) || p.PollPath != "/v1/videos/{task_id}" || p.ResultField != "" {
 				continue
 			}
 			owned, err := completedProbeTask(tx, run, p, target)

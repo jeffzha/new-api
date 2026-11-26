@@ -88,6 +88,37 @@ func TestKnownMediaProfilesAreProviderSpecificAndBounded(t *testing.T) {
 	}
 }
 
+func TestSeedreamProbeMeetsStandardMinimumPixels(t *testing.T) {
+	for _, channelType := range []int{constant.ChannelTypeOpenAI, constant.ChannelTypeSeedreamArkOpenAI} {
+		for _, name := range []string{"doubao-seedream-5-0-260128", "doubao-seedream-5-0-pro-260628", "doubao-seedream-5-0-flash-260915"} {
+			target := targetFor(&model.Channel{Id: 3, Type: channelType, BaseURL: common.GetPointer("https://provider.example")}, name)
+			p := builtinTemplate(target, "image-generation", AutoTemplatePolicy{Credential: "MODEL_HEALTH_KEY_FIXTURE", MaxMicro: 10000})
+			require.Equal(t, "2048x2048", p.Body["size"])
+			require.GreaterOrEqual(t, 2048*2048, 3686400)
+		}
+	}
+}
+
+func TestScheduledAdmissionRejectsInternalMockEvenThroughPlatform(t *testing.T) {
+	db := healthDB(t)
+	migrateHealth(t, db)
+	sel, _ := seedHealth(t, db, "video")
+	t.Setenv("MODEL_HEALTH_GATEWAY_URL", "https://gateway.example")
+	t.Setenv("MODEL_HEALTH_KEY_FIXTURE_ORIGIN", "https://gateway.example")
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", sel.Channel).Update("base_url", "http://model-mock-server:8080").Error)
+	target, err := findTarget(db, sel.Channel, sel.Model, sel.Endpoint)
+	require.NoError(t, err)
+	p, err := readTemplate(db, target, sel.Endpoint)
+	require.NoError(t, err)
+	p.Binding = templateBinding(target, sel.Endpoint)
+	require.NoError(t, model.SaveModelHealthConfig(db, "p-"+hash(target.ID, sel.Endpoint)[:62], "template", p))
+	_, err = admit(t.Context(), sel, "scheduled", "", 0, 0)
+	require.ErrorContains(t, err, "Invalid channel base URL")
+	var count int64
+	require.NoError(t, db.Model(&model.ModelHealthRun{}).Count(&count).Error)
+	require.Zero(t, count)
+}
+
 func TestMediaProbeNativeVideoConversion(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

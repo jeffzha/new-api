@@ -28,6 +28,7 @@ import {
   type OpsCosts,
   type Run,
 } from './api'
+import { HealthModelName } from './model-name'
 import { Pages, Status } from './status'
 
 export function EvidenceButton(props: { id: number; user?: boolean }) {
@@ -149,7 +150,7 @@ export function HealthRecords(props: { access: Access }) {
                     header: t('Channel and model'),
                     cell: (r) => (
                       <div className='max-w-48 break-words whitespace-normal'>
-                        <strong>{r.model}</strong>
+                        <HealthModelName model={r.model} />
                         <div className='text-muted-foreground text-xs'>
                           #{r.channel_id} · {r.endpoint}
                         </div>

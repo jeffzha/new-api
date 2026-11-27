@@ -42,6 +42,7 @@ import {
   type Selection,
 } from './api'
 import { HealthCharts } from './health-charts'
+import { HealthModelName } from './model-name'
 import { EvidenceButton } from './records'
 import { Status } from './status'
 
@@ -273,7 +274,7 @@ export function HealthOverview(props: {
                       header: t('Channel and model'),
                       cell: (r) => (
                         <div className='max-w-64 min-w-44 py-1 break-words whitespace-normal'>
-                          <div className='font-semibold'>{r.model}</div>
+                          <HealthModelName model={r.model} />
                           <div
                             data-table-text='secondary'
                             className='text-muted-foreground mt-1 text-xs'
